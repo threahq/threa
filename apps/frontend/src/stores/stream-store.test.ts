@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import Dexie, { liveQuery } from "dexie"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { computeTimelineHoles } from "@/sync/contiguity"
@@ -23,6 +23,7 @@ import {
 } from "./workspace-table-registry"
 import { makeCachedStream } from "@/test/workspace-rows"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
+import { requestStreamEventReadRefresh } from "./stream-event-read-refresh"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -40,6 +41,26 @@ function makeRealEvent(streamId: string, sequence: string): CachedEvent {
     actorType: "user",
     createdAt: new Date(2026, 0, 1, 0, 0, sequenceNum).toISOString(),
     _cachedAt: Date.now(),
+  }
+}
+
+async function putRawEvent(event: CachedEvent): Promise<void> {
+  const request = indexedDB.open(db.name)
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("events", "readwrite")
+      transaction.objectStore("events").put(event)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+  } finally {
+    database.close()
   }
 }
 
@@ -875,6 +896,24 @@ describe("useStreamEvents with the bounded read armed", () => {
 
   beforeEach(async () => {
     await db.events.clear()
+  })
+
+  it("re-reads IDB on resume when a frozen page missed the service worker's write notification", async () => {
+    await seed(STREAM, 1)
+    const { result } = renderHook(() => useStreamEvents(STREAM, 1))
+    await waitFor(() => expect(result.current?.map((event) => event.sequence)).toEqual(["1"]))
+
+    await putRawEvent(makeRealEvent(STREAM, "2"))
+    expect((await db.events.where("streamId").equals(STREAM).toArray()).map((event) => event.sequence)).toEqual([
+      "1",
+      "2",
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(result.current?.map((event) => event.sequence)).toEqual(["1"])
+
+    await act(() => requestStreamEventReadRefresh([STREAM]))
+
+    await waitFor(() => expect(result.current?.map((event) => event.sequence)).toEqual(["1", "2"]))
   })
 
   it("paging older widens the prefix and never re-opens the tail range", async () => {

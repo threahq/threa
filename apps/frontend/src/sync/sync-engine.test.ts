@@ -86,13 +86,36 @@ describe("SyncEngine.handlePageResume", () => {
     ])
   })
 
-  it("is a no-op when the engine has never connected", async () => {
+  it("skips network work when the engine has never connected", async () => {
     const engine = new SyncEngine(makeDeps())
     const refreshSpy = vi.spyOn(engine, "refreshAfterConnectivityResume")
 
     await engine.handlePageResume()
 
     expect(refreshSpy).not.toHaveBeenCalled()
+  })
+
+  it("wakes the current stream's IDB read before socket work", async () => {
+    const engine = new SyncEngine(makeDeps())
+    engine.setCurrentStreamId("stream_1")
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    await db.events.put({
+      id: "evt_resume",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      sequence: "1",
+      _sequenceNum: 1,
+      eventType: "message_created",
+      payload: { messageId: "msg_resume", contentMarkdown: "new" },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _cachedAt: 1,
+    })
+
+    await engine.handlePageResume()
+
+    await vi.waitFor(async () => expect((await db.events.get("evt_resume"))?._cachedAt).toBeGreaterThan(1))
   })
 
   it("soft refreshes visible data even before the first socket connect", async () => {
