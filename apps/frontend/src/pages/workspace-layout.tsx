@@ -57,7 +57,6 @@ import {
   useBackgroundBootstrapSync,
 } from "@/hooks"
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
-import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { isServerStreamId } from "@/lib/stream-ids"
@@ -342,20 +341,14 @@ function WorkspaceSyncHandler({
   // only below once the current-workspace check has passed — so a pending mark
   // never lands in the wrong workspace on a switch.
   const { markAsRead } = useUnreadCounts(workspaceId)
-  const autoReadRevamp = useFeatureFlag(workspaceId, "autoReadRevamp") === "on"
   const readCommitQueueRef = useRef<ReadCommitQueue | null>(null)
   let readCommitQueue = readCommitQueueRef.current
   if (!readCommitQueue || readCommitQueue.workspaceId !== workspaceId || readCommitQueue.isDisposed) {
     readCommitQueue?.dispose()
-    readCommitQueue = new ReadCommitQueue({
-      workspaceId,
-      commitRef: { current: markAsRead },
-      flushOnLeaveRef: { current: autoReadRevamp },
-    })
+    readCommitQueue = new ReadCommitQueue({ workspaceId, commitRef: { current: markAsRead } })
     readCommitQueueRef.current = readCommitQueue
   }
   readCommitQueue.commitRef.current = markAsRead
-  readCommitQueue.flushOnLeaveRef.current = autoReadRevamp
   // Unlike the SyncEngine (whose destroy would break the socket-connect
   // effect under StrictMode), the queue is safe to dispose on unmount — the
   // recreate check above sees a disposed queue and builds a fresh one on the

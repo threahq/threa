@@ -53,20 +53,13 @@ export class ReadCommitQueue {
   // cancelled timer was.
   private readonly onPageHide = () => this.flushAll()
 
-  /** The `autoReadRevamp` kill-switch, kept fresh by the owning layout: false
-   *  makes `flush`/`flushAll`/dispose DROP pending marks instead of committing
-   *  them — the pre-#1881 leave semantics. The debounce fire is unaffected. */
-  readonly flushOnLeaveRef: { current: boolean }
-
   constructor(deps: {
     workspaceId: string
     commitRef: { current: (streamId: string, lastEventId: string, opts: { partial: boolean }) => void }
-    flushOnLeaveRef?: { current: boolean }
     debounceMs?: number
   }) {
     this.workspaceId = deps.workspaceId
     this.commitRef = deps.commitRef
-    this.flushOnLeaveRef = deps.flushOnLeaveRef ?? { current: true }
     this.debounceMs = deps.debounceMs ?? READ_COMMIT_DEBOUNCE_MS
     window.addEventListener("pagehide", this.onPageHide)
   }
@@ -92,10 +85,6 @@ export class ReadCommitQueue {
   }
 
   flush(streamId: string): void {
-    if (!this.flushOnLeaveRef.current) {
-      this.cancel(streamId)
-      return
-    }
     const mark = this.pending.get(streamId)
     if (!mark) return
     clearTimeout(mark.timer)
@@ -138,7 +127,7 @@ export class ReadCommitQueue {
     const marks = [...this.pending.entries()]
     this.pending.clear()
     for (const [, mark] of marks) clearTimeout(mark.timer)
-    if (marks.length === 0 || !this.flushOnLeaveRef.current) return
+    if (marks.length === 0) return
     queueMicrotask(() => {
       for (const [streamId, mark] of marks) this.send(streamId, mark)
     })

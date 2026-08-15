@@ -70,31 +70,6 @@ describe("ReadCommitQueue", () => {
     expect(commit).toHaveBeenCalledWith("stream_b", "event_b", { partial: true })
   })
 
-  it("flush and pagehide DROP pending marks when the autoReadRevamp kill-switch is off", () => {
-    const flushOnLeaveRef = { current: false }
-    const gated = new ReadCommitQueue({
-      workspaceId: "ws_1",
-      commitRef: { current: (streamId, lastEventId, opts) => commit(streamId, lastEventId, opts) },
-      flushOnLeaveRef,
-    })
-    try {
-      gated.report("stream_a", "event_1", false)
-      gated.flush("stream_a")
-      window.dispatchEvent(new Event("pagehide"))
-      vi.advanceTimersByTime(READ_COMMIT_DEBOUNCE_MS * 2)
-      expect(commit).not.toHaveBeenCalled()
-      expect(gated.lastCommitted("stream_a")).toBeNull()
-
-      // The debounce fire itself is NOT gated — only leave-flushes are.
-      flushOnLeaveRef.current = false
-      gated.report("stream_a", "event_2", false)
-      vi.advanceTimersByTime(READ_COMMIT_DEBOUNCE_MS)
-      expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_2", { partial: false })
-    } finally {
-      gated.dispose()
-    }
-  })
-
   it("resetCommitted forgets the record so a fresh open can re-commit the same mark", () => {
     queue.report("stream_a", "event_1", false)
     vi.advanceTimersByTime(READ_COMMIT_DEBOUNCE_MS)

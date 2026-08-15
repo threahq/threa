@@ -33,16 +33,22 @@ export function pickVisibleRange(rows: VisibleRow[], viewportTop: number, viewpo
 
 /**
  * Advance the read frontier through a contiguous run only. The frontier moves to
- * the bottom of the viewport when the viewport's top is at or above the first
- * unread row (`frontier + 1`) — i.e. there is no gap of unseen rows between the
- * read frontier and what's on screen. Landing at the live bottom leaves such a
- * gap, so the frontier (and the read pointer) stays put. `topIdx` is the
- * sweep-effective top: recompute substitutes the previous scan's top when two
- * scans link into one continuous user scroll (see SWEEP_LINK_MS), so a fast
- * fling — whose per-frame viewport jumps exceed the viewport height — still
- * reads as the continuous sweep it visually was.
+ * the bottom of the viewport when the viewport's top is at or above `gateIdx` —
+ * i.e. no unread content sits between the read frontier and what's on screen.
+ * Landing at the live bottom leaves such a gap, so the frontier (and the read
+ * pointer) stays put.
+ *
+ * `gateIdx` is {@link readGateIndex}: the first unread MESSAGE after the
+ * frontier, so rows carrying nothing to read are bridged. Never give it a
+ * `frontier + 1` default: raw adjacency cannot advance past chrome the viewport
+ * never showed, which strands replies bracketed by agent-session events unread.
+ *
+ * `topIdx` is the sweep-effective top: recompute substitutes the previous scan's
+ * top when two scans link into one continuous user scroll (see SWEEP_LINK_MS), so
+ * a fast fling — whose per-frame viewport jumps exceed the viewport height —
+ * still reads as the continuous sweep it visually was.
  */
-export function advanceFrontier(frontier: number, topIdx: number, botIdx: number, gateIdx = frontier + 1): number {
+export function advanceFrontier(frontier: number, topIdx: number, botIdx: number, gateIdx: number): number {
   if (topIdx <= gateIdx && botIdx > frontier) return botIdx
   return frontier
 }
@@ -124,12 +130,6 @@ interface UseLastSeenEventOptions {
    * SWEEP_LINK_MS): a jump must remain a gap, not a read-through.
    */
   programmaticScrollAtRef?: React.RefObject<number>
-  /**
-   * The `autoReadRevamp` kill-switch: false disables sweep-linking entirely,
-   * reverting to strict scan-overlap contiguity (pre-#1881 semantics).
-   * Defaults true.
-   */
-  sweepLinkEnabled?: boolean
 }
 
 interface UseLastSeenEventResult {
@@ -166,7 +166,6 @@ export function useLastSeenEvent({
   lastReadEventId,
   enabled,
   programmaticScrollAtRef,
-  sweepLinkEnabled = true,
 }: UseLastSeenEventOptions): UseLastSeenEventResult {
   const [lastSeenEventId, setLastSeenEventId] = useState<string | undefined>(undefined)
   const [atLastRow, setAtLastRow] = useState(false)
@@ -224,10 +223,6 @@ export function useLastSeenEvent({
   // by event id, not index: a prepend shifts every index but virtua holds the
   // viewport on the same rows, and an id re-resolves to its post-shift index.
   const prevScanRef = useRef<{ topId: string; at: number } | null>(null)
-  // Ref so a live flag flip applies on the next scan without re-creating the
-  // stable recompute closure (which would re-arm listeners mid-gesture).
-  const sweepLinkEnabledRef = useRef(sweepLinkEnabled)
-  sweepLinkEnabledRef.current = sweepLinkEnabled
 
   const recompute = useCallback(() => {
     const el = scrollContainerRef.current
@@ -272,12 +267,7 @@ export function useLastSeenEvent({
     const now = performance.now()
     const prevScan = prevScanRef.current
     let effTopIdx = topIdx
-    if (
-      sweepLinkEnabledRef.current &&
-      prevScan &&
-      now - prevScan.at <= SWEEP_LINK_MS &&
-      (programmaticScrollAtRef?.current ?? 0) < prevScan.at
-    ) {
+    if (prevScan && now - prevScan.at <= SWEEP_LINK_MS && (programmaticScrollAtRef?.current ?? 0) < prevScan.at) {
       const prevTopIdx = map.get(prevScan.topId)
       if (prevTopIdx !== undefined && prevTopIdx < effTopIdx) effTopIdx = prevTopIdx
     }

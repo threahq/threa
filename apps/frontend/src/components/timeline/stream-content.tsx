@@ -28,7 +28,6 @@ import {
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
   useEffectiveArchived,
-  useFeatureFlag,
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
@@ -2284,7 +2283,6 @@ export function StreamContent({
   // no settle phase (`isInitialSettling` would never clear there), so exempt it.
   const settledAtBottom = !useVirtualized || !virtualIsInitialSettling
   const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom
-  const autoReadRevamp = useFeatureFlag(workspaceId, "autoReadRevamp") === "on"
   const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
     // The virtualized scroller late-mounts via a ref callback, AFTER
@@ -2304,9 +2302,6 @@ export function StreamContent({
     lastReadEventId: frontierLastReadEventId,
     enabled: autoMarkEnabled,
     programmaticScrollAtRef,
-    // Kill-switch (autoReadRevamp "off" reverts to strict scan-overlap
-    // contiguity); the flush half of the switch lives on the ReadCommitQueue.
-    sweepLinkEnabled: autoReadRevamp,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, {
     enabled: autoMarkEnabled,

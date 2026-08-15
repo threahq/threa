@@ -71,38 +71,38 @@ describe("advanceFrontier", () => {
     // Read up to row 4; viewport shows rows 27..30 (the tail). The gap 5..26 is
     // unseen, so the frontier must stay at 4 — opening at the bottom keeps the
     // unread above unread.
-    expect(advanceFrontier(4, 27, 30)).toBe(4)
+    expect(advanceFrontier(4, 27, 30, 5)).toBe(4)
   })
 
   it("advances to the bottom of the viewport when contiguous with the frontier", () => {
     // Jumped to the first unread (row 5, frontier+1) and it's at the top; advance
     // through what's on screen.
-    expect(advanceFrontier(4, 5, 8)).toBe(8)
+    expect(advanceFrontier(4, 5, 8, 5)).toBe(8)
   })
 
   it("advances when the viewport top sits above the frontier (overlap)", () => {
-    expect(advanceFrontier(7, 5, 12)).toBe(12)
+    expect(advanceFrontier(7, 5, 12, 8)).toBe(12)
   })
 
   it("does not advance when flinging past leaves a gap above the viewport", () => {
     // Frontier at 7, but a fast scroll put rows 20..25 on screen without 8..19
     // ever being visible — they stay unseen.
-    expect(advanceFrontier(7, 20, 25)).toBe(7)
+    expect(advanceFrontier(7, 20, 25, 8)).toBe(7)
   })
 
   it("does not retract when scrolling back up (bottom below the frontier)", () => {
-    expect(advanceFrontier(20, 10, 15)).toBe(20)
+    expect(advanceFrontier(20, 10, 15, 21)).toBe(20)
   })
 
   it("advances past bridged chrome when the gate says the first unread message is further down", () => {
     // Frontier at 1, a session card at 2 that never came on screen, the unread
     // message at 3. Raw adjacency (gate = 2) blocks; the real gate is 3.
-    expect(advanceFrontier(1, 3, 3)).toBe(1)
+    expect(advanceFrontier(1, 3, 3, 2)).toBe(1)
     expect(advanceFrontier(1, 3, 3, 3)).toBe(3)
   })
 
   it("treats an exactly-contiguous top (frontier + 1) as no gap", () => {
-    expect(advanceFrontier(9, 10, 14)).toBe(14)
+    expect(advanceFrontier(9, 10, 14, 10)).toBe(14)
   })
 })
 
