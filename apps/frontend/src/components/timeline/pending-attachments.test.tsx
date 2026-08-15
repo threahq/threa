@@ -305,6 +305,19 @@ describe("mobile rollup and drawer", () => {
     expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
   })
 
+  it("resets to each responsive mode's default when the input mode changes", () => {
+    const { rerender } = render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
+    expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
+
+    vi.mocked(usePointerModule.useIsMobileOrCoarse).mockReturnValue(false)
+    rerender(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
+    expect(screen.getByText("ok.png")).toBeInTheDocument()
+
+    vi.mocked(usePointerModule.useIsMobileOrCoarse).mockReturnValue(true)
+    rerender(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
+    expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
+  })
+
   it("opens the drawer with full filenames, live status, and per-row recovery", () => {
     const retrySpy = vi.spyOn(uploadManager, "retryUpload").mockResolvedValue(undefined)
     const onRemove = vi.fn()

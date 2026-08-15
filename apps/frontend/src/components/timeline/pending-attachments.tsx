@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react"
 import {
   Loader2,
   FileText,
@@ -480,6 +480,7 @@ export function PendingAttachments({
   // already competes with the keyboard for the viewport; the drawer holds the
   // full list. Desktop keeps the chips open.
   const [collapsed, setCollapsed] = useState(isMobile)
+  useLayoutEffect(() => setCollapsed(isMobile), [isMobile])
   const [drawerOpen, setDrawerOpen] = useState(false)
   // True from close until vaul's exit animation lands, so removing the last
   // attachment from the open sheet slides it out instead of snapping the whole

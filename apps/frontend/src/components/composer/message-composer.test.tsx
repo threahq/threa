@@ -953,8 +953,11 @@ describe("MessageComposer", () => {
       expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
     })
 
-    it("grows the minimum height by the formatting toolbar so one editor line remains", () => {
-      localStorage.setItem("threa:composer-drag-height", "104")
+    it.each([
+      { savedHeight: 104, openHeight: 144, label: "minimum" },
+      { savedHeight: 200, openHeight: 240, label: "intermediate height with fullscreen headroom" },
+    ])("grows from $label before the formatting toolbar consumes editor space", ({ savedHeight, openHeight }) => {
+      localStorage.setItem("threa:composer-drag-height", String(savedHeight))
       const originalRect = HTMLElement.prototype.getBoundingClientRect
       vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
         if (this.getAttribute("data-testid") === "composer-format-toolbar") {
@@ -964,14 +967,14 @@ describe("MessageComposer", () => {
       })
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const root = container.firstElementChild as HTMLElement
-      expect(root.style.minHeight).toBe("104px")
+      expect(root.style.minHeight).toBe(`${savedHeight}px`)
 
       fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
       expect(screen.getByTestId("composer-format-toolbar")).toBeInTheDocument()
-      expect(root.style.minHeight).toBe("144px")
+      expect(root.style.minHeight).toBe(`${openHeight}px`)
 
       fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
-      expect(root.style.minHeight).toBe("104px")
+      expect(root.style.minHeight).toBe(`${savedHeight}px`)
     })
 
     it("keeps the floor when 75% of a short viewport would dip below it", () => {
@@ -1196,7 +1199,7 @@ describe("MessageComposer", () => {
       try {
         const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
         const root = container.firstElementChild as HTMLElement
-        root.parentElement!.style.paddingTop = "12px"
+        root.parentElement!.style.paddingBottom = "12px"
         act(() => visualViewport.dispatchEvent(new Event("resize")))
 
         fireEvent.click(screen.getByRole("button", { name: "Expand composer" }))
@@ -1211,6 +1214,27 @@ describe("MessageComposer", () => {
         else Reflect.deleteProperty(window, "visualViewport")
         if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight)
         else Reflect.deleteProperty(window, "innerHeight")
+      }
+    })
+
+    it("matches fullscreen top spacing to the shell bottom inset on coarse sm layouts", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const visualViewport = new EventTarget() as EventTarget & { height: number }
+      visualViewport.height = 800
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+        root.parentElement!.style.paddingTop = "24px"
+        root.parentElement!.style.paddingBottom = "16px"
+        act(() => visualViewport.dispatchEvent(new Event("resize")))
+
+        fireEvent.click(screen.getByRole("button", { name: "Expand composer" }))
+        expect(root.style.minHeight).toBe("784px")
+        expect(root.style.maxHeight).toBe("784px")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
       }
     })
 

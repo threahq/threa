@@ -358,6 +358,8 @@ export function MessageComposer({
   const mobileFormatToolbarRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
   const [mobileFormatToolbarHeight, setMobileFormatToolbarHeight] = useState(0)
+  const mobileFormatToolbarHeightRef = useRef(mobileFormatToolbarHeight)
+  mobileFormatToolbarHeightRef.current = mobileFormatToolbarHeight
   const [formatOpen, setFormatOpen] = useState(false)
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
@@ -418,8 +420,9 @@ export function MessageComposer({
       return
     }
     setMobileExpanded(false)
-    mobileDragHeightRef.current = next
-    setMobileDragHeightState(next)
+    const nextPreference = Math.max(drag.minPx, next - mobileFormatToolbarHeightRef.current)
+    mobileDragHeightRef.current = nextPreference
+    setMobileDragHeightState(nextPreference)
   }, [])
   const handleResizePointerEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = resizeDragRef.current
@@ -533,11 +536,11 @@ export function MessageComposer({
       const measuredRootBottom = root?.getBoundingClientRect().bottom ?? 0
       const top = Math.max(zoneTop ?? viewportTop, viewportTop)
       const bottom = Math.min(measuredRootBottom, viewportBottom)
-      const parentPaddingTop = root?.parentElement
-        ? Number.parseFloat(getComputedStyle(root.parentElement).paddingTop)
+      const parentPaddingBottom = root?.parentElement
+        ? Number.parseFloat(getComputedStyle(root.parentElement).paddingBottom)
         : 0
-      const topInset = Number.isFinite(parentPaddingTop) ? parentPaddingTop : 0
-      const available = Math.max(0, (bottom > top ? Math.round(bottom - top) : effectiveHeight) - topInset)
+      const fullscreenInset = Number.isFinite(parentPaddingBottom) ? parentPaddingBottom : 0
+      const available = Math.max(0, (bottom > top ? Math.round(bottom - top) : effectiveHeight) - fullscreenInset)
       mobileFullscreenHeightRef.current = available
       setMobileFullscreenHeight((current) => (current === available ? current : available))
     }
@@ -1519,10 +1522,13 @@ export function MessageComposer({
     )
   }
 
-  const mobileComposerFloor = MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight + mobileFormatToolbarHeight
-  const mobileKeyboardCap = Math.max(
-    mobileComposerFloor,
-    Math.round(mobileViewportHeight * MOBILE_COMPOSER_KEYBOARD_MAX_RATIO)
+  const mobileComposerBaseFloor = MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight
+  const mobileComposerFloor = mobileComposerBaseFloor + mobileFormatToolbarHeight
+  const mobileNaturalCap = Math.max(
+    mobileComposerBaseFloor,
+    mobileKeyboardOpen
+      ? Math.round(mobileViewportHeight * MOBILE_COMPOSER_KEYBOARD_MAX_RATIO)
+      : MOBILE_COMPOSER_DEFAULT_MAX_PX
   )
   const mobileFullscreenCap = Math.max(mobileComposerFloor, mobileFullscreenHeight)
   mobileFullscreenHeightRef.current = mobileFullscreenCap
@@ -1530,10 +1536,17 @@ export function MessageComposer({
     if (!isMobile || !mobileChromeOpen) return undefined
     if (mobileExpanded) return { minHeight: mobileFullscreenCap, maxHeight: mobileFullscreenCap }
     if (mobileDragHeight !== null) {
-      const explicitHeight = Math.min(Math.max(mobileDragHeight, mobileComposerFloor), mobileFullscreenCap)
+      const requestedHeight = Math.max(mobileDragHeight, mobileComposerBaseFloor) + mobileFormatToolbarHeight
+      const explicitHeight = Math.min(requestedHeight, mobileFullscreenCap)
       return { minHeight: explicitHeight, maxHeight: explicitHeight }
     }
-    if (mobileKeyboardOpen) return { maxHeight: mobileKeyboardCap }
+    if (mobileKeyboardOpen || mobileFormatToolbarHeight > 0) {
+      const naturalCap = Math.min(
+        Math.max(mobileComposerFloor, mobileNaturalCap + mobileFormatToolbarHeight),
+        mobileFullscreenCap
+      )
+      return { maxHeight: naturalCap }
+    }
     return undefined
   })()
 
