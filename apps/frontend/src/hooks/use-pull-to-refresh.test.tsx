@@ -16,17 +16,21 @@ function Harness() {
 }
 
 describe("usePullToRefresh", () => {
-  it("ignores gestures that start inside a suppressed subtree", () => {
+  it("tracks gestures that start outside a suppressed subtree", () => {
     render(<Harness />)
     const plain = screen.getByTestId("plain")
     fireEvent.touchStart(plain, { touches: [{ clientY: 100 }] })
-    fireEvent.touchMove(plain, { touches: [{ clientY: 200 }] })
-    expect(screen.getByRole("status")).toHaveTextContent("40")
-    fireEvent.touchEnd(plain)
 
+    expect(fireEvent.touchMove(plain, { touches: [{ clientY: 200 }] })).toBe(false)
+    expect(screen.getByRole("status")).toHaveTextContent("40")
+  })
+
+  it("ignores gestures that start inside a suppressed subtree", () => {
+    render(<Harness />)
     const suppressed = screen.getByTestId("suppressed")
     fireEvent.touchStart(suppressed, { touches: [{ clientY: 100 }] })
-    fireEvent.touchMove(suppressed, { touches: [{ clientY: 400 }] })
+
+    expect(fireEvent.touchMove(suppressed, { touches: [{ clientY: 400 }] })).toBe(true)
     expect(screen.getByRole("status")).toHaveTextContent("0")
   })
 })

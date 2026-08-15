@@ -54,6 +54,7 @@ test("mobile composer resizes from its top edge without losing the editor bottom
     await editor.pressSequentially(`line ${i}`)
     await page.keyboard.press("Shift+Enter")
   }
+  const contentBeforeResize = await editor.textContent()
 
   await scroller.evaluate((el) => {
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 24)
@@ -78,7 +79,7 @@ test("mobile composer resizes from its top edge without losing the editor bottom
     })
 
   const before = await measure()
-  expect(before.handleWidth).toBeLessThanOrEqual(64)
+  expect(Math.abs(before.handleWidth - 64)).toBeLessThanOrEqual(1)
   expect(before.editorInset).toBeLessThanOrEqual(16)
 
   const cdp = await page.context().newCDPSession(page)
@@ -113,6 +114,7 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   const afterTouch = await measure()
   expect(afterTouch.cardHeight).toBeLessThan(touchBefore.cardHeight)
   expect(Math.abs(afterTouch.cardBottom - touchBefore.cardBottom)).toBeLessThanOrEqual(1)
+  expect(Math.abs(afterTouch.scrollBottom - touchBefore.scrollBottom)).toBeLessThanOrEqual(1)
 
   await page.evaluate(() =>
     (
@@ -121,7 +123,7 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   )
   await expect.poll(async () => (await measure()).cardHeight).toBeLessThanOrEqual(250)
   const constrained = await measure()
-  expect(constrained.scrollBottom).toBeLessThanOrEqual(afterTouch.scrollBottom + 1)
+  expect(Math.abs(constrained.scrollBottom - afterTouch.scrollBottom)).toBeLessThanOrEqual(1)
 
   const box = (await handle.boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -133,6 +135,7 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   expect(after.cardHeight).toBeLessThan(constrained.cardHeight)
   expect(after.cardTop).toBeGreaterThan(constrained.cardTop)
   expect(after.cardBottom).toBeCloseTo(constrained.cardBottom, 0)
-  expect(after.scrollBottom).toBeLessThanOrEqual(constrained.scrollBottom + 1)
+  expect(Math.abs(after.scrollBottom - constrained.scrollBottom)).toBeLessThanOrEqual(1)
+  expect(await editor.textContent()).toBe(contentBeforeResize)
   await context.close()
 })
