@@ -371,6 +371,7 @@ export function MessageComposer({
     minPx: number
     scrollBottomPx: number
     startPreferredHeight: number
+    ended: boolean
   } | null>(null)
   const handleResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const root = mobileRootRef.current
@@ -397,27 +398,36 @@ export function MessageComposer({
       minPx: MOBILE_COMPOSER_DRAG_MIN_PX + Math.max(0, rootHeight - (cardHeight ?? rootHeight)),
       scrollBottomPx,
       startPreferredHeight: mobileDragHeightRef.current ?? rootHeight,
+      ended: false,
     }
   }, [])
   const handleResizePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = resizeDragRef.current
-    if (!drag || e.pointerId !== drag.pointerId) return
+    if (!drag || drag.ended || e.pointerId !== drag.pointerId) return
     const maxPx = Math.max(mobileFullscreenHeightRef.current, drag.minPx)
     const delta = drag.startY - e.clientY
     const growing = delta >= 0
     const baseHeight = growing ? Math.max(drag.startHeight, drag.startPreferredHeight) : drag.startHeight
     const preferenceCeiling = growing ? Math.max(maxPx, drag.startPreferredHeight) : maxPx
     const next = Math.round(Math.min(Math.max(baseHeight + delta, drag.minPx), preferenceCeiling))
-    setMobileExpanded(next === maxPx)
+    if (next === maxPx) {
+      setMobileExpanded(true)
+      return
+    }
+    setMobileExpanded(false)
     mobileDragHeightRef.current = next
     setMobileDragHeightState(next)
   }, [])
   const handleResizePointerEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (resizeDragRef.current?.pointerId !== e.pointerId) return
-    resizeDragRef.current = null
+    const drag = resizeDragRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    // The last pointermove and pointerup can batch before React commits; keep
+    // the anchor record through that commit so the layout effect can restore it.
+    drag.ended = true
     if (mobileDragHeightRef.current !== null) persistMobileComposerDragHeight(mobileDragHeightRef.current)
     const settledAnchor = resizeScrollBottomRef.current
     requestAnimationFrame(() => {
+      if (resizeDragRef.current === drag) resizeDragRef.current = null
       if (resizeScrollBottomRef.current === settledAnchor) resizeScrollBottomRef.current = null
     })
   }, [])
@@ -479,14 +489,17 @@ export function MessageComposer({
       }, MOBILE_KEYBOARD_SETTLE_MS)
     }
     const applyViewportGeometry = (height: number) => {
-      setMobileViewportHeight((current) => (current === height ? current : height))
+      const phantomShrink =
+        !!visualViewport && !isEditableFocused() && height < window.innerHeight - KEYBOARD_VIEWPORT_THRESHOLD_PX
+      const effectiveHeight = phantomShrink ? window.innerHeight : height
+      setMobileViewportHeight((current) => (current === effectiveHeight ? current : effectiveHeight))
       const viewportTop = visualViewport?.offsetTop ?? 0
-      const viewportBottom = viewportTop + height
+      const viewportBottom = viewportTop + effectiveHeight
       const zoneTop = root?.closest<HTMLElement>("[data-editor-zone]")?.getBoundingClientRect().top
       const measuredRootBottom = root?.getBoundingClientRect().bottom ?? 0
       const top = Math.max(zoneTop ?? viewportTop, viewportTop)
       const bottom = Math.min(measuredRootBottom, viewportBottom)
-      const available = bottom > top ? Math.round(bottom - top) : height
+      const available = bottom > top ? Math.round(bottom - top) : effectiveHeight
       mobileFullscreenHeightRef.current = available
       setMobileFullscreenHeight((current) => (current === available ? current : available))
     }

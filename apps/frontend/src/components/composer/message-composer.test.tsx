@@ -156,10 +156,10 @@ const MockEditorActionBar = (props: Record<string, unknown>) => (
     </button>
     <button
       type="button"
-      aria-label="Expand composer"
-      onClick={() => (props.onMobileExpandedChange as (v: boolean) => void)?.(true)}
+      aria-label={props.mobileExpanded ? "Minimize composer" : "Expand composer"}
+      onClick={() => (props.onMobileExpandedChange as (v: boolean) => void)?.(!(props.mobileExpanded as boolean))}
     >
-      Expand
+      {props.mobileExpanded ? "Minimize" : "Expand"}
     </button>
     {props.trailingContent as any}
   </div>
@@ -1143,6 +1143,49 @@ describe("MessageComposer", () => {
       } finally {
         if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
         else Reflect.deleteProperty(window, "visualViewport")
+      }
+    })
+
+    it("lets the minimize control leave fullscreen after the handle reaches its maximum", () => {
+      const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+      const root = container.firstElementChild as HTMLElement
+      const handle = screen.getByTestId("composer-resize-handle")
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: -600 })
+      expect(root).toHaveAttribute("data-composer-expanded", "true")
+
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: -600 })
+      fireEvent.click(screen.getByRole("button", { name: "Minimize composer" }))
+
+      expect(root).not.toHaveAttribute("data-composer-expanded")
+      expect(root.style.minHeight).toBe("")
+      expect(root.style.maxHeight).toBe("")
+    })
+
+    it("ignores a stale keyboard-sized visual viewport until an editor is focused", () => {
+      const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+      const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight")
+      const visualViewport = new EventTarget() as EventTarget & { height: number }
+      visualViewport.height = 400
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: visualViewport })
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 })
+      try {
+        const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
+        const root = container.firstElementChild as HTMLElement
+
+        fireEvent.click(screen.getByRole("button", { name: "Expand composer" }))
+        expect(root.style.minHeight).toBe("800px")
+        expect(root.style.maxHeight).toBe("800px")
+
+        act(() => screen.getByTestId("rich-editor").focus())
+        expect(root.style.minHeight).toBe("400px")
+        expect(root.style.maxHeight).toBe("400px")
+      } finally {
+        if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+        else Reflect.deleteProperty(window, "visualViewport")
+        if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight)
+        else Reflect.deleteProperty(window, "innerHeight")
       }
     })
 

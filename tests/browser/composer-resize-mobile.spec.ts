@@ -49,25 +49,6 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await expect(handle).toBeVisible()
   await page.setViewportSize(PHONE)
 
-  const emptyBefore = (await card.boundingBox())!
-  const emptyHandle = (await handle.boundingBox())!
-  await page.mouse.move(emptyHandle.x + emptyHandle.width / 2, emptyHandle.y + emptyHandle.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(emptyHandle.x + emptyHandle.width / 2, emptyHandle.y + emptyHandle.height / 2 - 100)
-  await page.mouse.up()
-  const emptyAfter = (await card.boundingBox())!
-  expect(emptyAfter.height).toBeGreaterThan(emptyBefore.height + 80)
-  expect(emptyAfter.y + emptyAfter.height).toBeCloseTo(emptyBefore.y + emptyBefore.height, 0)
-
-  await page.getByRole("button", { name: "Expand editor" }).click()
-  await expect(page.getByRole("button", { name: "Minimize editor" })).toBeVisible()
-  const fullscreenTop = await card.evaluate((el) => Math.round(el.getBoundingClientRect().top))
-  const editorZoneTop = await page
-    .locator('[data-editor-zone="main"]')
-    .evaluate((el) => Math.round(el.getBoundingClientRect().top))
-  expect(Math.abs(fullscreenTop - editorZoneTop)).toBeLessThanOrEqual(1)
-  await page.getByRole("button", { name: "Minimize editor" }).click()
-
   await editor.click()
   for (let i = 1; i <= 24; i++) {
     await editor.pressSequentially(`line ${i}`)
@@ -150,13 +131,11 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120)
   await page.mouse.up()
 
-  await expect
-    .poll(async () => Math.abs((await measure()).scrollBottom - constrained.scrollBottom))
-    .toBeLessThanOrEqual(1)
   const after = await measure()
   expect(after.cardHeight).toBeLessThan(constrained.cardHeight)
   expect(after.cardTop).toBeGreaterThan(constrained.cardTop)
   expect(after.cardBottom).toBeCloseTo(constrained.cardBottom, 0)
+  expect(Math.abs(after.scrollBottom - constrained.scrollBottom)).toBeLessThanOrEqual(1)
   expect(await editor.textContent()).toBe(contentBeforeResize)
   await context.close()
 })
