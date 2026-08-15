@@ -460,6 +460,10 @@ export function isChromeStripCollapsed(scrollerClientHeightPx: number, composerH
   return scrollerClientHeightPx - composerHeightPx < CHROME_MIN_STRIP_PX
 }
 
+export function isTypingChromeHidden(stripCollapsed: boolean, mobileComposerTyping: boolean): boolean {
+  return stripCollapsed || mobileComposerTyping
+}
+
 /**
  * Atomic stream landing (INV-70): the ONE decision about where the viewport
  * starts when a stream opens. Exactly one verdict per stream open, priority:
@@ -651,6 +655,7 @@ export function StreamContent({
   const [deepLinkHoldExpired, setDeepLinkHoldExpired] = useState(false)
   const user = useUser()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [mobileComposerTyping, setMobileComposerTyping] = useState(false)
   // True while an out-of-window search navigation is fetching its event window —
   // drives the search bar's spinner so a tap that needs a round-trip is visibly
   // loading instead of appearing dead. Versioned so a superseding navigation's
@@ -1676,6 +1681,8 @@ export function StreamContent({
     // isLoading: the plain (thread) scroller mounts behind the loading
     // skeleton, and only a state dep re-runs this effect once it exists.
   }, [useVirtualized, virtualScrollerEl, plainScrollRef, isLoading, streamId])
+
+  const typingChromeHidden = isTypingChromeHidden(chromeCollapsed, mobileComposerTyping)
 
   const handleComposerHeightChange = useCallback(
     (_px: number, opts: { initial: boolean }) => {
@@ -2995,7 +3002,7 @@ export function StreamContent({
                           batchPointerHandlers={batchPointerHandlers}
                           conversationOverlay={activeConversationOverlay}
                           onJumpToDate={handleJumpToDate}
-                          chromeCollapsed={chromeCollapsed}
+                          floatingChromeHidden={typingChromeHidden}
                         />
                         {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -3081,9 +3088,9 @@ export function StreamContent({
                     )}
                   </div>
                   {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
-              Positioned above the floating composer pill. Hidden while the
-              strip above the composer is too short to overlay (chromeCollapsed). */}
-                  {(isJumpMode || isScrolledFarFromBottom) && !chromeCollapsed && (
+              Positioned above the floating composer pill. Hidden when that
+              strip is too short or focused mobile typing needs the space. */}
+                  {(isJumpMode || isScrolledFarFromBottom) && !typingChromeHidden && (
                     <div
                       className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
                       style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
@@ -3213,6 +3220,7 @@ export function StreamContent({
                       disabledReason={disabledReason}
                       autoFocus={autoFocus}
                       onComposerHeightChange={handleComposerHeightChange}
+                      onMobileTypingChange={setMobileComposerTyping}
                     />
                   )}
                 </div>
@@ -3266,7 +3274,7 @@ function TimelineMessageList({
   batchPointerHandlers,
   conversationOverlay,
   onJumpToDate,
-  chromeCollapsed,
+  floatingChromeHidden,
 }: {
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
@@ -3329,8 +3337,8 @@ function TimelineMessageList({
   conversationOverlay?: ConversationOverlayContext
   /** Jump to the first message on or after a date (floating date header). */
   onJumpToDate: (date: Date) => void
-  /** True while the strip above the composer is too short for floating chrome. */
-  chromeCollapsed: boolean
+  /** True while floating date/jump chrome must yield to the composer. */
+  floatingChromeHidden: boolean
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -3711,7 +3719,7 @@ function TimelineMessageList({
       </div>
       <StreamDateHeader
         dayStartMs={topDayMs}
-        visible={datePillVisible && !chromeCollapsed}
+        visible={datePillVisible && !floatingChromeHidden}
         onJumpToDate={onJumpToDate}
         scrollerRef={scrollerRef}
       />

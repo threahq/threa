@@ -293,16 +293,16 @@ describe("mobile rollup and drawer", () => {
     expect(screen.queryByText("context-ref-pill")).not.toBeInTheDocument()
   })
 
-  it("folds the chips away behind the rollup line and restores them", () => {
+  it("starts folded behind the rollup line and lets the user reveal the chips", () => {
     render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
-    expect(screen.getByText("ok.png")).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole("button", { name: "Hide attachment chips" }))
     expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Show all attachments" })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "Show attachment chips" }))
     expect(screen.getByText("ok.png")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide attachment chips" }))
+    expect(screen.queryByText("ok.png")).not.toBeInTheDocument()
   })
 
   it("opens the drawer with full filenames, live status, and per-row recovery", () => {

@@ -894,6 +894,24 @@ describe("MessageComposer", () => {
     })
   })
 
+  it("reports focused mobile typing only while the draft has text", () => {
+    isMobileMockValue = true
+    const onMobileTypingChange = vi.fn()
+    const draft: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Draft" }] }],
+    }
+    const { rerender } = render(
+      <MessageComposer {...defaultProps} content={draft} onMobileTypingChange={onMobileTypingChange} />
+    )
+
+    fireEvent.focus(screen.getByTestId("rich-editor"))
+    expect(onMobileTypingChange).toHaveBeenLastCalledWith(true)
+
+    rerender(<MessageComposer {...defaultProps} content={EMPTY_DOC} onMobileTypingChange={onMobileTypingChange} />)
+    expect(onMobileTypingChange).toHaveBeenLastCalledWith(false)
+  })
+
   describe("mobile drag-resize", () => {
     beforeEach(() => {
       isMobileMockValue = true
@@ -921,6 +939,7 @@ describe("MessageComposer", () => {
       // one-line floor: a 260px upward pull lands at 260px.
       fireEvent.pointerDown(handle, { pointerId: 1, clientY: 600 })
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 340 })
+      expect(root.style.minHeight).toBe("260px")
       expect(root.style.maxHeight).toBe("260px")
       fireEvent.pointerUp(handle, { pointerId: 1, clientY: 340 })
       expect(localStorage.getItem("threa:composer-drag-height")).toBe("260")
@@ -1099,24 +1118,28 @@ describe("MessageComposer", () => {
       try {
         const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
         const root = container.firstElementChild as HTMLElement
-        expect(root.style.maxHeight).toBe("600px")
+        expect(root.style.minHeight).toBe("700px")
+        expect(root.style.maxHeight).toBe("700px")
         act(() => screen.getByTestId("rich-editor").focus())
 
         visualViewport.height = 400
         act(() => visualViewport.dispatchEvent(new Event("resize")))
 
-        expect(root.style.maxHeight).toBe("200px")
+        expect(root.style.minHeight).toBe("400px")
+        expect(root.style.maxHeight).toBe("400px")
 
         const handle = screen.getByTestId("composer-resize-handle")
         fireEvent.pointerDown(handle, { pointerId: 1, clientY: 300 })
         fireEvent.pointerMove(handle, { pointerId: 1, clientY: 280 })
         fireEvent.pointerUp(handle, { pointerId: 1, clientY: 280 })
-        expect(root.style.maxHeight).toBe("200px")
+        expect(root.style.minHeight).toBe("400px")
+        expect(root.style.maxHeight).toBe("400px")
         expect(localStorage.getItem("threa:composer-drag-height")).toBe("700")
 
         visualViewport.height = 800
         act(() => visualViewport.dispatchEvent(new Event("resize")))
-        expect(root.style.maxHeight).toBe("600px")
+        expect(root.style.minHeight).toBe("700px")
+        expect(root.style.maxHeight).toBe("700px")
       } finally {
         if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
         else Reflect.deleteProperty(window, "visualViewport")
@@ -1138,14 +1161,13 @@ describe("MessageComposer", () => {
         visualViewport.height = 400
         act(() => visualViewport.dispatchEvent(new Event("resize")))
 
-        expect(root.style.minHeight).toBe("200px")
-        expect(root.style.maxHeight).toBe("200px")
+        expect(root.style.minHeight).toBe("400px")
+        expect(root.style.maxHeight).toBe("400px")
 
         visualViewport.height = 800
         act(() => visualViewport.dispatchEvent(new Event("resize")))
-        expect(root.style.minHeight).toBe("")
-        expect(root.style.maxHeight).toBe("")
-        expect(root).toHaveClass("min-h-[75dvh]", "max-h-[75dvh]")
+        expect(root.style.minHeight).toBe("800px")
+        expect(root.style.maxHeight).toBe("800px")
       } finally {
         if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
         else Reflect.deleteProperty(window, "visualViewport")
