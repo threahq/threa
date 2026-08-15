@@ -156,6 +156,12 @@ describe("mobile composer drag height", () => {
     expect(loadMobileComposerDragHeight()).toBeNull()
   })
 
+  it("persists fullscreen heights allowed by a tall coarse-pointer viewport", () => {
+    vi.stubGlobal("visualViewport", { width: 1024, height: 1366 })
+    persistMobileComposerDragHeight(1300)
+    expect(loadMobileComposerDragHeight()).toBe(1300)
+  })
+
   it("returns null when never dragged", () => {
     expect(loadMobileComposerDragHeight()).toBeNull()
   })
