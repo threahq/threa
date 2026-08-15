@@ -2301,7 +2301,13 @@ export function StreamContent({
     // contiguity); the flush half of the switch lives on the ReadCommitQueue.
     sweepLinkEnabled: autoReadRevamp,
   })
-  useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
+  useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, {
+    enabled: autoMarkEnabled,
+    partial: !atLastRow,
+    // Raw watermark, not the thread-remapped frontier seed: the heal's anchor
+    // must be the id the server already stores so the advance stays a no-op.
+    readPointerEventId: lastReadEventId,
+  })
   const canAutoRead = useAutoReadAttention()
 
   const isMobile = useIsMobile()

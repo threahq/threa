@@ -49,6 +49,15 @@ async function serverUnreadCount(page: Page, workspaceId: string, streamId: stri
   return counts[streamId] ?? 0
 }
 
+async function serverActivityCount(page: Page, workspaceId: string, streamId: string): Promise<number> {
+  const res = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
+  await expectApiOk(res, "Workspace bootstrap")
+  const body = (await res.json()) as { data?: { activityCounts?: Record<string, number> } }
+  const counts = body.data?.activityCounts
+  if (!counts) throw new Error(`Bootstrap response missing activityCounts; keys: ${Object.keys(body).join(",")}`)
+  return counts[streamId] ?? 0
+}
+
 async function distanceFromBottom(page: Page): Promise<number | null> {
   return page.evaluate(() => {
     const el = document.querySelector("[data-suppress-pull-refresh]")
@@ -451,5 +460,64 @@ test.describe("Timeline auto-read", () => {
       .toBe(0)
 
     await otherContext.close()
+  })
+
+  test("being added to a channel: visiting it dismisses the 'you were added' activity", async ({ page, browser }) => {
+    // The add born-reads the member_added event for the added user — their
+    // watermark IS the stream's tail, so no frontier advance is ever available
+    // — while also creating a MEMBER_ADDED activity that lights their sidebar.
+    // The activity's only dismissal is a markAsRead, so without the
+    // watermark-anchored heal the row stays lit through every visit.
+    const owner = await loginAndCreateWorkspace(page, "auto-read")
+    const testId = owner.testId
+    const prefix = `[${testId}]`
+
+    await createChannel(page, `added-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    await seedFrom(page, workspaceId, streamId, 5, prefix)
+
+    const other = await loginInNewContext(browser, `added-b-${testId}@example.com`, `Added B ${testId}`)
+    const joinRes = await other.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
+      data: { role: "member", name: `Added B ${testId}` },
+    })
+    await expectApiOk(joinRes, "Second user joins workspace")
+    const joined = (await joinRes.json()) as { user?: { id?: string } }
+    if (!joined.user?.id) throw new Error("dev workspace join did not return the joined user")
+
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/members`, {
+        data: { memberId: joined.user.id },
+      }),
+      "Owner adds second user to the channel"
+    )
+
+    // The wedge state is real server-side: an unread activity with zero unread
+    // messages — nothing for a scroll to ever mark.
+    await expect
+      .poll(() => serverActivityCount(other.page, workspaceId, streamId), {
+        timeout: 10000,
+        message: "the add should create an unread MEMBER_ADDED activity",
+      })
+      .toBeGreaterThan(0)
+    expect(await serverUnreadCount(other.page, workspaceId, streamId)).toBe(0)
+
+    await other.page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(
+      other.page
+        .getByRole("main")
+        .locator(".message-item")
+        .filter({ hasText: `${prefix} msg-005` })
+    ).toBeVisible({ timeout: 20000 })
+
+    await expect
+      .poll(() => serverActivityCount(other.page, workspaceId, streamId), {
+        timeout: 15000,
+        message: "visiting the stream should dismiss the added activity",
+      })
+      .toBe(0)
+    // The heal anchors at the watermark — read state must be undisturbed.
+    expect(await serverUnreadCount(other.page, workspaceId, streamId)).toBe(0)
+
+    await other.context.close()
   })
 })
