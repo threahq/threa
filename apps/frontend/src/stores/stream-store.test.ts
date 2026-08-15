@@ -24,6 +24,7 @@ import {
 import { makeCachedStream } from "@/test/workspace-rows"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 import { requestStreamEventReadRefresh } from "./stream-event-read-refresh"
+import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -914,6 +915,56 @@ describe("useStreamEvents with the bounded read armed", () => {
     await act(() => requestStreamEventReadRefresh([STREAM]))
 
     await waitFor(() => expect(result.current?.map((event) => event.sequence)).toEqual(["1", "2"]))
+  })
+
+  it("re-reads event-type rails when a newer event falls outside their observed index ranges", async () => {
+    await db.events.bulkPut([
+      { ...makeRealEvent(STREAM, "0"), eventType: "agent:follow_up_scheduled", payload: {} },
+      makeRealEvent(STREAM, "1"),
+    ])
+    let boardEventIds: string[] = []
+    let messageEventIds: string[] = []
+    const boardSubscription = liveQuery(() =>
+      db.events
+        .where("[streamId+eventType]")
+        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [STREAM, eventType]))
+        .toArray()
+    ).subscribe((events) => {
+      boardEventIds = events.map((event) => event.id).sort()
+    })
+    const messageSubscription = liveQuery(() =>
+      db.events.where("[streamId+eventType]").equals([STREAM, "message_created"]).toArray()
+    ).subscribe((events) => {
+      messageEventIds = events.map((event) => event.id).sort()
+    })
+
+    try {
+      await waitFor(() =>
+        expect({ boardEventIds, messageEventIds }).toEqual({
+          boardEventIds: [`evt_${STREAM}_0`, `evt_${STREAM}_1`],
+          messageEventIds: [`evt_${STREAM}_1`],
+        })
+      )
+      await putRawEvent(makeRealEvent(STREAM, "2"))
+      await putRawEvent({ ...makeRealEvent(STREAM, "3"), eventType: "member_joined", payload: {} })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect({ boardEventIds, messageEventIds }).toEqual({
+        boardEventIds: [`evt_${STREAM}_0`, `evt_${STREAM}_1`],
+        messageEventIds: [`evt_${STREAM}_1`],
+      })
+
+      await act(() => requestStreamEventReadRefresh([STREAM]))
+
+      await waitFor(() =>
+        expect({ boardEventIds, messageEventIds }).toEqual({
+          boardEventIds: [`evt_${STREAM}_0`, `evt_${STREAM}_1`, `evt_${STREAM}_2`],
+          messageEventIds: [`evt_${STREAM}_1`, `evt_${STREAM}_2`],
+        })
+      )
+    } finally {
+      boardSubscription.unsubscribe()
+      messageSubscription.unsubscribe()
+    }
   })
 
   it("paging older widens the prefix and never re-opens the tail range", async () => {
