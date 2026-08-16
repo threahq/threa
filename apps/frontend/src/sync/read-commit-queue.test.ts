@@ -209,6 +209,24 @@ describe("ReadCommitQueue", () => {
     expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_6", { partial: false })
   })
 
+  it("releases unread against the locally reconciled pointer when a newer frontier superseded the response", async () => {
+    let resolveUnread!: (eventId: string | null) => void
+    const unread = queue.runExplicitUnread(
+      "stream_a",
+      "event_3",
+      () => new Promise<string | null>((resolve) => (resolveUnread = resolve))
+    )
+    await Promise.resolve()
+
+    queue.observeReadPointer("stream_a", "event_4")
+    resolveUnread("event_4")
+    await unread
+
+    queue.report("stream_a", "event_5", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_5", { partial: false })
+  })
+
   it("releases unread when its expected pointer was observed before a later cross-device read", async () => {
     let resolveUnread!: (eventId: string | null) => void
     const unread = queue.runExplicitUnread(
@@ -226,6 +244,42 @@ describe("ReadCommitQueue", () => {
     queue.report("stream_a", "event_5", false)
     await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
     expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_5", { partial: false })
+  })
+
+  it("drains a newer mark queued behind an in-flight request during disposal", async () => {
+    let releaseFirst!: () => void
+    commit.mockImplementationOnce(() => new Promise<void>((resolve) => (releaseFirst = resolve)))
+    queue.report("stream_a", "event_1", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    queue.report("stream_a", "event_2", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+
+    queue.dispose()
+    releaseFirst()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(commit.mock.calls).toEqual([
+      ["stream_a", "event_1", { partial: false }],
+      ["stream_a", "event_2", { partial: false }],
+    ])
+  })
+
+  it("retries an in-flight request that fails after disposal", async () => {
+    let rejectFirst!: (error: Error) => void
+    commit
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => (rejectFirst = reject)))
+      .mockResolvedValueOnce(undefined)
+    queue.report("stream_a", "event_1", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+
+    queue.dispose()
+    rejectFirst(new Error("offline"))
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_RETRY_MS)
+
+    expect(commit).toHaveBeenCalledTimes(2)
+    expect(queue.lastCommitted("stream_a")).toEqual({ lastEventId: "event_1", partial: false })
   })
 
   it("dispose flushes pending marks (a microtask later — it can run in render) and refuses further reports", async () => {

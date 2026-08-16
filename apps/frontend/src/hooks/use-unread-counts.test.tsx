@@ -747,6 +747,39 @@ describe("useUnreadCounts", () => {
     expect(await db.streamMemberships.get("ws_1:stream_1")).toMatchObject({ notificationLevel: "everything" })
   })
 
+  it("returns the newer locally reconciled pointer when it supersedes the unread response", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    let resolveUnread!: (value: Awaited<ReturnType<typeof mockMarkUnread>>) => void
+    mockMarkUnread.mockImplementationOnce(() => new Promise((resolve) => (resolveUnread = resolve)))
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    let operation!: Promise<string | null | undefined>
+    act(() => {
+      operation = result.current.markUnread("stream_1", "msg_target")
+    })
+    await waitFor(() => expect(mockMarkUnread).toHaveBeenCalledWith("ws_1", "stream_1", "msg_target"))
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_newer",
+      lastReadSequence: "3",
+      lastReadAt: null,
+      _cachedAt: Date.now() + 10_000,
+    })
+    resolveUnread({
+      membership: null,
+      readState: { lastReadEventId: "evt_response", lastReadSequence: "1", lastReadAt: null },
+    })
+
+    await expect(operation).resolves.toBe("evt_newer")
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_newer",
+      lastReadSequence: "3",
+    })
+  })
+
   it("markUnread applies the returned frontier for a non-member without fabricating membership", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())

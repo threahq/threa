@@ -45,6 +45,7 @@ export class ReadCommitQueue {
   private readonly committed = new Map<string, ReadCommitMark>()
   private readonly explicitUnread = new Map<string, ExplicitUnread>()
   private readonly explicitUnreadTail = new Map<string, Promise<void>>()
+  private readonly draining = new Set<string>()
   private disposed = false
 
   private readonly onPageHide = () => this.flushAll()
@@ -105,7 +106,7 @@ export class ReadCommitQueue {
 
   /**
    * Serialize an explicit unread behind any older read request, then hold new
-   * read reports until the canonical read pointer reflects the read-set echo.
+   * read reports until the operation's locally reconciled pointer is observed.
    */
   async runExplicitUnread(
     streamId: string,
@@ -145,10 +146,14 @@ export class ReadCommitQueue {
     const marks = [...this.pending.entries()]
     this.pending.clear()
     for (const [, mark] of marks) clearTimeout(mark.timer)
-    if (marks.length === 0) return
-    queueMicrotask(() => {
-      for (const [streamId, mark] of marks) this.dispatch(streamId, mark, true)
-    })
+    for (const streamId of new Set([...this.inFlight.keys(), ...this.queued.keys(), ...marks.map(([id]) => id)])) {
+      this.draining.add(streamId)
+    }
+    if (marks.length > 0) {
+      queueMicrotask(() => {
+        for (const [streamId, mark] of marks) this.dispatch(streamId, mark, true)
+      })
+    }
   }
 
   private schedule(streamId: string, mark: ReadCommitMark, attempt: number, delay: number): void {
@@ -164,13 +169,14 @@ export class ReadCommitQueue {
   }
 
   private dispatch(streamId: string, mark: QueuedMark, allowDisposed = false): void {
-    if ((!allowDisposed && this.disposed) || this.hasExplicitUnread(streamId)) return
+    const canDrain = allowDisposed || this.draining.has(streamId)
+    if ((!canDrain && this.disposed) || this.hasExplicitUnread(streamId)) return
     if (this.inFlight.has(streamId)) {
       this.queued.set(streamId, mark)
       return
     }
 
-    const promise = this.execute(streamId, mark, allowDisposed)
+    const promise = this.execute(streamId, mark, canDrain)
     this.inFlight.set(streamId, promise)
   }
 
@@ -187,10 +193,11 @@ export class ReadCommitQueue {
       this.failed.delete(streamId)
     } catch {
       const newerMarkExists = this.pending.has(streamId) || this.queued.has(streamId)
-      if (!newerMarkExists && !this.hasExplicitUnread(streamId) && !this.disposed) {
+      const canRetry = !this.disposed || allowDisposed || this.draining.has(streamId)
+      if (!newerMarkExists && !this.hasExplicitUnread(streamId) && canRetry) {
         if (mark.attempt < READ_COMMIT_MAX_RETRIES) {
           this.schedule(streamId, mark, mark.attempt + 1, READ_COMMIT_RETRY_MS * 2 ** mark.attempt)
-        } else {
+        } else if (!this.disposed) {
           this.failed.set(streamId, { lastEventId: mark.lastEventId, partial: mark.partial })
           this.schedule(streamId, mark, READ_COMMIT_MAX_RETRIES, READ_COMMIT_PARKED_RETRY_MS)
         }
@@ -201,6 +208,8 @@ export class ReadCommitQueue {
       if (next) {
         this.queued.delete(streamId)
         this.dispatch(streamId, next, allowDisposed)
+      } else if (!this.pending.has(streamId)) {
+        this.draining.delete(streamId)
       }
     }
   }

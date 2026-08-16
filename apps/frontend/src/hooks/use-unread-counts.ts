@@ -412,9 +412,12 @@ export function useUnreadCounts(workspaceId: string) {
   }, [markAllAsReadMutation])
 
   const markUnread = useCallback(
-    (streamId: string, messageId: string) =>
-      markUnreadMutation.mutateAsync({ streamId, messageId }).then(({ readState }) => readState?.lastReadEventId),
-    [markUnreadMutation]
+    async (streamId: string, messageId: string) => {
+      const { readState } = await markUnreadMutation.mutateAsync({ streamId, messageId })
+      const reconciled = await db.streamReadState.get(`${workspaceId}:${streamId}`)
+      return reconciled ? reconciled.lastReadEventId : readState?.lastReadEventId
+    },
+    [markUnreadMutation, workspaceId]
   )
 
   return {
