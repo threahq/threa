@@ -54,6 +54,20 @@ export async function readStateTouchedSince(workspaceId: string, streamId: strin
   return effectiveFreshness(workspaceId, "streamReadState", row.id, row._cachedAt) >= since
 }
 
+export async function putReadStateIdbIfUntouchedSince(
+  workspaceId: string,
+  streamId: string,
+  fields: StreamReadFrontier,
+  since: number,
+  now = Date.now()
+): Promise<boolean> {
+  return db.transaction("rw", [db.streamReadState], async () => {
+    if (await readStateTouchedSince(workspaceId, streamId, since)) return false
+    await putReadStateIdb(workspaceId, streamId, fields, now)
+    return true
+  })
+}
+
 /** Merge one stream's standalone frontier into the workspace bootstrap query cache. */
 export function mergeReadStateIntoBootstrapCache(
   queryClient: QueryClient,

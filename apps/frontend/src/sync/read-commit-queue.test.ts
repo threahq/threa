@@ -179,6 +179,36 @@ describe("ReadCommitQueue", () => {
     expect(commit).toHaveBeenCalledTimes(2)
   })
 
+  it("serializes overlapping explicit unread requests so the newer request cannot complete first", async () => {
+    const starts: string[] = []
+    let resolveFirst!: (eventId: string | null) => void
+    let resolveSecond!: (eventId: string | null) => void
+    const first = queue.runExplicitUnread("stream_a", "event_5", () => {
+      starts.push("first")
+      return new Promise<string | null>((resolve) => (resolveFirst = resolve))
+    })
+    await Promise.resolve()
+
+    const second = queue.runExplicitUnread("stream_a", "event_5", () => {
+      starts.push("second")
+      return new Promise<string | null>((resolve) => (resolveSecond = resolve))
+    })
+    await Promise.resolve()
+    expect(starts).toEqual(["first"])
+
+    resolveFirst("event_3")
+    await first
+    await Promise.resolve()
+    expect(starts).toEqual(["first", "second"])
+
+    resolveSecond("event_1")
+    await second
+    queue.observeReadPointer("stream_a", "event_1")
+    queue.report("stream_a", "event_6", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_6", { partial: false })
+  })
+
   it("releases unread when its expected pointer was observed before a later cross-device read", async () => {
     let resolveUnread!: (eventId: string | null) => void
     const unread = queue.runExplicitUnread(

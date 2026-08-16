@@ -12,6 +12,7 @@ import {
   publishReadAllFrontiersToCache,
   putReadAllFrontiersIdb,
   putReadStateIdb,
+  putReadStateIdbIfUntouchedSince,
   readStateTouchedSince,
   resolveReadAllFrontiers,
   type ReadStateSnapshot,
@@ -275,9 +276,7 @@ export function useUnreadCounts(workspaceId: string) {
       return { ...result, startedAt }
     },
     onSuccess: async ({ readState, startedAt }, { streamId }) => {
-      if (!readState || (await readStateTouchedSince(workspaceId, streamId, startedAt))) return
-      const now = Date.now()
-      await putReadStateIdb(workspaceId, streamId, readState, now)
+      if (!readState || !(await putReadStateIdbIfUntouchedSince(workspaceId, streamId, readState, startedAt))) return
       mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, readState)
       queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
         if (!old || typeof old !== "object") return old

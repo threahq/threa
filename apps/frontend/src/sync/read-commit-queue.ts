@@ -44,6 +44,7 @@ export class ReadCommitQueue {
   private readonly inFlight = new Map<string, Promise<void>>()
   private readonly committed = new Map<string, ReadCommitMark>()
   private readonly explicitUnread = new Map<string, ExplicitUnread>()
+  private readonly explicitUnreadTail = new Map<string, Promise<void>>()
   private disposed = false
 
   private readonly onPageHide = () => this.flushAll()
@@ -69,7 +70,7 @@ export class ReadCommitQueue {
   }
 
   report(streamId: string, lastEventId: string, partial: boolean): void {
-    if (this.disposed || this.explicitUnread.has(streamId)) return
+    if (this.disposed || this.hasExplicitUnread(streamId)) return
     this.failed.delete(streamId)
     this.schedule(streamId, { lastEventId, partial }, 0, this.debounceMs)
   }
@@ -112,21 +113,14 @@ export class ReadCommitQueue {
     operation: () => Promise<string | null | undefined>
   ): Promise<void> {
     this.cancel(streamId)
-    const state: ExplicitUnread = {
-      initialReadEventId,
-      observedReadEventIds: new Set([initialReadEventId]),
-      expectedReadEventId: undefined,
-      operationDone: false,
-    }
-    this.explicitUnread.set(streamId, state)
-    await this.inFlight.get(streamId)
+    const previous = this.explicitUnreadTail.get(streamId)
+    const start = () => this.executeExplicitUnread(streamId, initialReadEventId, operation)
+    const current = previous ? previous.then(start, start) : start()
+    this.explicitUnreadTail.set(streamId, current)
     try {
-      state.expectedReadEventId = await operation()
-      state.operationDone = true
-      this.releaseExplicitUnreadIfReady(streamId, state)
-    } catch (error) {
-      if (this.explicitUnread.get(streamId) === state) this.explicitUnread.delete(streamId)
-      throw error
+      await current
+    } finally {
+      if (this.explicitUnreadTail.get(streamId) === current) this.explicitUnreadTail.delete(streamId)
     }
   }
 
@@ -170,7 +164,7 @@ export class ReadCommitQueue {
   }
 
   private dispatch(streamId: string, mark: QueuedMark, allowDisposed = false): void {
-    if ((!allowDisposed && this.disposed) || this.explicitUnread.has(streamId)) return
+    if ((!allowDisposed && this.disposed) || this.hasExplicitUnread(streamId)) return
     if (this.inFlight.has(streamId)) {
       this.queued.set(streamId, mark)
       return
@@ -193,7 +187,7 @@ export class ReadCommitQueue {
       this.failed.delete(streamId)
     } catch {
       const newerMarkExists = this.pending.has(streamId) || this.queued.has(streamId)
-      if (!newerMarkExists && !this.explicitUnread.has(streamId) && !this.disposed) {
+      if (!newerMarkExists && !this.hasExplicitUnread(streamId) && !this.disposed) {
         if (mark.attempt < READ_COMMIT_MAX_RETRIES) {
           this.schedule(streamId, mark, mark.attempt + 1, READ_COMMIT_RETRY_MS * 2 ** mark.attempt)
         } else {
@@ -208,6 +202,34 @@ export class ReadCommitQueue {
         this.queued.delete(streamId)
         this.dispatch(streamId, next, allowDisposed)
       }
+    }
+  }
+
+  private hasExplicitUnread(streamId: string): boolean {
+    return this.explicitUnread.has(streamId) || this.explicitUnreadTail.has(streamId)
+  }
+
+  private async executeExplicitUnread(
+    streamId: string,
+    initialReadEventId: string | null | undefined,
+    operation: () => Promise<string | null | undefined>
+  ): Promise<void> {
+    const state: ExplicitUnread = {
+      initialReadEventId,
+      observedReadEventIds: new Set([initialReadEventId]),
+      expectedReadEventId: undefined,
+      operationDone: false,
+    }
+    this.explicitUnread.set(streamId, state)
+    const inFlight = this.inFlight.get(streamId)
+    if (inFlight) await inFlight
+    try {
+      state.expectedReadEventId = await operation()
+      state.operationDone = true
+      this.releaseExplicitUnreadIfReady(streamId, state)
+    } catch (error) {
+      if (this.explicitUnread.get(streamId) === state) this.explicitUnread.delete(streamId)
+      throw error
     }
   }
 

@@ -942,6 +942,56 @@ describe("applyStreamBootstrap — per-stream unread count", () => {
     expect(cached?.messageCounts?.[streamId]).toBe(6)
   })
 
+  it("skips query-cache publication when a newer counter lands after the IDB transaction", async () => {
+    const streamId = "stream_public"
+    const fetchStartedAt = 100
+    const seeded = {
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { [streamId]: 3 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { [streamId]: 10 },
+      mutedStreamIds: [],
+      counterTouchedAt: {},
+      _cachedAt: 90,
+    }
+    await db.unreadState.put(seeded)
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      unreadCounts: { [streamId]: 3 },
+      messageCounts: { [streamId]: 10 },
+    } as unknown as WorkspaceBootstrap)
+    const get = vi
+      .spyOn(db.unreadState, "get")
+      .mockResolvedValueOnce(seeded)
+      .mockResolvedValueOnce({
+        ...seeded,
+        unreadCounts: { [streamId]: 4 },
+        latestOrdinals: { [streamId]: 11 },
+        counterTouchedAt: { [streamId]: 101 },
+      })
+
+    try {
+      await applyStreamBootstrap(
+        "ws_1",
+        streamId,
+        { ...makeBootstrap([], streamId), unreadCount: 1, messageCount: 8 },
+        { fetchStartedAt, queryClient }
+      )
+    } finally {
+      get.mockRestore()
+    }
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached).toMatchObject({
+      unreadCounts: { [streamId]: 3 },
+      messageCounts: { [streamId]: 10 },
+    })
+  })
+
   it("preserves a counter touched after the bootstrap request departed", async () => {
     const streamId = "stream_public"
     const fetchStartedAt = Date.now() - 100

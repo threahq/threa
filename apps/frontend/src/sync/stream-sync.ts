@@ -722,18 +722,25 @@ export async function applyStreamBootstrap(
     mergeReadStateIntoBootstrapCache(options.queryClient, workspaceId, streamId, preservedReadState)
   }
   if (appliedUnreadCount && options?.queryClient) {
-    options.queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
-      current
-        ? {
-            ...current,
-            unreadCounts: { ...current.unreadCounts, [streamId]: bootstrap.unreadCount },
-            messageCounts:
-              bootstrap.messageCount !== undefined
-                ? { ...current.messageCounts, [streamId]: bootstrap.messageCount }
-                : current.messageCounts,
-          }
-        : current
-    )
+    const unreadState = await db.unreadState.get(workspaceId)
+    const touchedAt = unreadState?.counterTouchedAt?.[streamId]
+    const remainsCurrent =
+      unreadState !== undefined &&
+      (options.fetchStartedAt === undefined || touchedAt === undefined || touchedAt < options.fetchStartedAt)
+    if (remainsCurrent) {
+      options.queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
+        current
+          ? {
+              ...current,
+              unreadCounts: { ...current.unreadCounts, [streamId]: unreadState.unreadCounts[streamId] ?? 0 },
+              messageCounts:
+                bootstrap.messageCount !== undefined
+                  ? { ...current.messageCounts, [streamId]: unreadState.latestOrdinals?.[streamId] ?? 0 }
+                  : current.messageCounts,
+            }
+          : current
+      )
+    }
   }
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }
