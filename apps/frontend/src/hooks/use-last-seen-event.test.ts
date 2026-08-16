@@ -185,9 +185,9 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const events = [
-      { id: "e0", sequence: "0" },
-      { id: "e1", sequence: "1" },
-      { id: "e2", sequence: "2" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
@@ -287,6 +287,144 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.lastSeenEventId).toBeUndefined()
   })
 
+  // Trailing chrome (agent-session terminals, command terminals, reactions)
+  // renders NO `[data-event-id]` row, so the last loaded index is unreachable by
+  // the frontier and by the viewport's bottom row. Before the gate bridged them,
+  // every bot reply left atLastRow/tailVisible pinned false: auto-read went
+  // permanently partial and the activity heal (gated on tailVisible) was dead.
+  function mountWithRows(
+    positions: Record<string, { top: number; bottom: number }>,
+    events: StreamEvent[],
+    lastReadEventId: string | null
+  ) {
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+    return renderHook(() =>
+      useLastSeenEvent({
+        scrollContainerRef: { current: container },
+        events,
+        streamId: "stream_1",
+        lastReadEventId,
+        enabled: true,
+      })
+    )
+  }
+
+  it("counts a full read when the loaded window ends in agent-session chrome that renders no row", () => {
+    const { result } = mountWithRows(
+      {
+        e0: { top: -50, bottom: -10 }, // the read pointer, scrolled above
+        e1: { top: 10, bottom: 60 }, // the bot reply — the last rendered row
+      },
+      [
+        { id: "e0", sequence: "0", eventType: "message_created" },
+        { id: "e1", sequence: "1", eventType: "message_created" },
+        { id: "e2", sequence: "2", eventType: "agent_session:started" },
+        { id: "e3", sequence: "3", eventType: "agent_session:completed" },
+      ] as unknown as StreamEvent[],
+      "e0"
+    )
+
+    expect({
+      lastSeenEventId: result.current.lastSeenEventId,
+      atLastRow: result.current.atLastRow,
+      tailVisible: result.current.tailVisible,
+    }).toEqual({ lastSeenEventId: "e1", atLastRow: true, tailVisible: true })
+  })
+
+  it.each(["reaction_added", "command_completed"])(
+    "counts a full read when the window ends in a zero-height %s event",
+    (trailingType) => {
+      const { result } = mountWithRows(
+        {
+          e0: { top: -50, bottom: -10 },
+          e1: { top: 10, bottom: 60 },
+        },
+        [
+          { id: "e0", sequence: "0", eventType: "message_created" },
+          { id: "e1", sequence: "1", eventType: "message_created" },
+          { id: "e2", sequence: "2", eventType: trailingType },
+        ] as unknown as StreamEvent[],
+        "e0"
+      )
+
+      expect({
+        lastSeenEventId: result.current.lastSeenEventId,
+        atLastRow: result.current.atLastRow,
+        tailVisible: result.current.tailVisible,
+      }).toEqual({ lastSeenEventId: "e1", atLastRow: true, tailVisible: true })
+    }
+  )
+
+  it("still reports a partial read when a trailing MESSAGE sits below the viewport", () => {
+    // The counterpart to the bridging above: a real message at the tail blocks,
+    // so auto-read stays partial and the heal stays off.
+    const { result } = mountWithRows(
+      {
+        e0: { top: -50, bottom: -10 },
+        e1: { top: 10, bottom: 60 },
+        e2: { top: 130, bottom: 180 }, // below the fold — unread content
+      },
+      [
+        { id: "e0", sequence: "0", eventType: "message_created" },
+        { id: "e1", sequence: "1", eventType: "message_created" },
+        { id: "e2", sequence: "2", eventType: "message_created" },
+      ] as unknown as StreamEvent[],
+      "e0"
+    )
+
+    expect({
+      lastSeenEventId: result.current.lastSeenEventId,
+      atLastRow: result.current.atLastRow,
+      tailVisible: result.current.tailVisible,
+    }).toEqual({ lastSeenEventId: "e1", atLastRow: false, tailVisible: false })
+  })
+
+  it("drives unreadAboveViewport off the first unread MESSAGE, not the trailing chrome", () => {
+    const { result } = mountWithRows(
+      {
+        e0: { top: -260, bottom: -210 }, // the read pointer
+        e1: { top: -180, bottom: -140 }, // an unread message, scrolled off the top
+        e2: { top: 10, bottom: 60 }, // what the viewer is looking at
+      },
+      [
+        { id: "e0", sequence: "0", eventType: "message_created" },
+        { id: "e1", sequence: "1", eventType: "message_created" },
+        { id: "e2", sequence: "2", eventType: "message_created" },
+        { id: "e3", sequence: "3", eventType: "agent_session:completed" },
+      ] as unknown as StreamEvent[],
+      "e0"
+    )
+
+    expect({
+      unreadAboveViewport: result.current.unreadAboveViewport,
+      atLastRow: result.current.atLastRow,
+    }).toEqual({ unreadAboveViewport: true, atLastRow: false })
+  })
+
+  it("clears unreadAboveViewport once the last unread MESSAGE is read, trailing chrome notwithstanding", () => {
+    const { result } = mountWithRows(
+      {
+        e0: { top: -50, bottom: -10 },
+        e1: { top: 10, bottom: 60 },
+      },
+      [
+        { id: "e0", sequence: "0", eventType: "message_created" },
+        { id: "e1", sequence: "1", eventType: "message_created" },
+        { id: "e2", sequence: "2", eventType: "agent_session:completed" },
+      ] as unknown as StreamEvent[],
+      "e0"
+    )
+
+    expect(result.current.unreadAboveViewport).toBe(false)
+  })
+
   it("re-arms the scan when the virtualized scroller late-mounts after enabled (scrollContainerEl)", () => {
     // The bug behind the stuck-unread divider: the virtualized timeline flips
     // `enabled` true BEFORE virtua mounts its scroller (a ref callback). The
@@ -309,9 +447,9 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const events = [
-      { id: "e0", sequence: "0" },
-      { id: "e1", sequence: "1" },
-      { id: "e2", sequence: "2" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     // The ref starts null (scroller not mounted) and is populated by virtua's ref
     // callback when it mounts — mirrored here by mutating `.current`.
@@ -372,8 +510,8 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const events = [
-      { id: "e0", sequence: "0" },
-      { id: "e1", sequence: "1" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
@@ -417,10 +555,10 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const events = [
-      { id: "e0", sequence: "0" },
-      { id: "e1", sequence: "1" },
-      { id: "e2", sequence: "2" },
-      { id: "e3", sequence: "3" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
+      { id: "e3", sequence: "3", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
@@ -465,7 +603,7 @@ describe("useLastSeenEvent re-scan triggers", () => {
     row.getBoundingClientRect = () => rect(positions.e0.top, positions.e0.bottom)
     container.appendChild(row)
 
-    const events = [{ id: "e0", sequence: "0" }] as unknown as StreamEvent[]
+    const events = [{ id: "e0", sequence: "0", eventType: "message_created" }] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
     const { result, rerender } = renderHook(
@@ -516,11 +654,11 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const events = [
-      { id: "e0", sequence: "0" },
-      { id: "e1", sequence: "1" },
-      { id: "e2", sequence: "2" },
-      { id: "e3", sequence: "3" },
-      { id: "e4", sequence: "4" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
+      { id: "e3", sequence: "3", eventType: "message_created" },
+      { id: "e4", sequence: "4", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
@@ -565,11 +703,11 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const events = [
-      { id: "e0", sequence: "0" },
-      { id: "e1", sequence: "1" },
-      { id: "e2", sequence: "2" },
-      { id: "e3", sequence: "3" },
-      { id: "e4", sequence: "4" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
+      { id: "e3", sequence: "3", eventType: "message_created" },
+      { id: "e4", sequence: "4", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
@@ -613,8 +751,8 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const optimisticEvents = [
-      { id: "e0", sequence: "0" },
-      { id: "temp_abc", sequence: "1" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "temp_abc", sequence: "1", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
@@ -631,8 +769,8 @@ describe("useLastSeenEvent re-scan triggers", () => {
     // array length — no scroll or resize accompanies this.
     container.querySelector('[data-event-id="temp_abc"]')!.setAttribute("data-event-id", "evt_real")
     const reconciledEvents = [
-      { id: "e0", sequence: "0" },
-      { id: "evt_real", sequence: "1" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "evt_real", sequence: "1", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     act(() => rerender({ events: reconciledEvents }))
 
@@ -661,7 +799,7 @@ describe("useLastSeenEvent re-scan triggers", () => {
       container.appendChild(row)
     }
 
-    const events = [{ id: "e0", sequence: "2" }] as unknown as StreamEvent[]
+    const events = [{ id: "e0", sequence: "2", eventType: "message_created" }] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 
     const { result } = renderHook(() =>
@@ -686,6 +824,7 @@ describe("useLastSeenEvent re-scan triggers", () => {
     const events = ["e0", "e1", "e2"].map((id, index) => ({
       id,
       sequence: String(100 + index),
+      eventType: "message_created",
     })) as unknown as StreamEvent[]
     for (const [index, event] of events.entries()) {
       const row = document.createElement("div")
@@ -739,11 +878,11 @@ describe("useLastSeenEvent re-scan triggers", () => {
     }
 
     const events = [
-      { id: "e0", sequence: "0" },
-      { id: "e1", sequence: "1" },
-      { id: "e2", sequence: "2" },
-      { id: "e3", sequence: "3" },
-      { id: "e4", sequence: "4" },
+      { id: "e0", sequence: "0", eventType: "message_created" },
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
+      { id: "e3", sequence: "3", eventType: "message_created" },
+      { id: "e4", sequence: "4", eventType: "message_created" },
     ] as unknown as StreamEvent[]
     const scrollContainerRef = { current: container }
 

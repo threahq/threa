@@ -232,6 +232,103 @@ test.describe("Timeline auto-read", () => {
     await otherContext.close()
   })
 
+  test("a caught-up stream trailed by zero-height chrome (reaction) still heals its activity", async ({
+    page,
+    browser,
+  }) => {
+    // The #1895 regression class: a trailing event that renders no timeline row
+    // of its own (a reaction, an agent-session terminal, a command terminal)
+    // left the last loaded index unreachable, pinning `tailVisible` false and
+    // killing the watermark-anchored activity heal — the reaction activity on a
+    // fully-read stream stayed lit through every visit. The watermark cannot
+    // advance here (nothing unread), so the heal is the ONLY dismissal path and
+    // the assert fails deterministically without the gate-bridged tail.
+    const owner = await loginAndCreateWorkspace(page, "auto-read")
+    const testId = owner.testId
+    const prefix = `[${testId}]`
+
+    await createChannel(page, `healreact-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    // Reactions notify a channel message's author only at the ACTIVITY /
+    // EVERYTHING notification level — the default level drops them.
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/notification-level`, {
+        data: { notificationLevel: "everything" },
+      }),
+      "Owner opts into reaction activity"
+    )
+    await seedFrom(page, workspaceId, streamId, 4, prefix)
+
+    // The second user joins BEFORE the reaction target is posted: their
+    // member_joined chrome renders a row, and a rendered row above the trailing
+    // reaction would give the frontier something to advance onto — the ordinary
+    // mark path would then clear the activity and mask a dead heal.
+    const other = await loginInNewContext(browser, `healreact-b-${testId}@example.com`, `HealReact B ${testId}`)
+    await expectApiOk(
+      await other.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
+        data: { role: "member", name: `HealReact B ${testId}` },
+      }),
+      "Second user joins workspace"
+    )
+    await expectApiOk(
+      await other.page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/join`, { data: {} }),
+      "Second user joins the channel"
+    )
+
+    // The reaction target, posted directly so its id is known. The owner's own
+    // send advances their watermark server-side, so the trailing
+    // `reaction_added` — which draws no row of its own — becomes the ONLY event
+    // past the watermark: an activity with zero unread messages and no frontier
+    // advance available. The heal is the only dismissal path.
+    const targetRes = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+      data: { streamId, content: `${prefix} target msg-005` },
+    })
+    await expectApiOk(targetRes, "Reaction target message")
+    const { message } = (await targetRes.json()) as { message: { id: string } }
+
+    await page.goto(`/w/${workspaceId}/drafts`)
+    await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/drafts`))
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await other.page.request.post(`/api/workspaces/${workspaceId}/messages/${message.id}/reactions`, {
+              data: { emoji: "👍" },
+            })
+          ).ok(),
+        { timeout: 10000, message: "second user's reaction should be accepted after joining" }
+      )
+      .toBe(true)
+
+    await expect
+      .poll(() => serverActivityCount(page, workspaceId, streamId), {
+        timeout: 10000,
+        message: "the reaction should create an unread activity for the owner",
+      })
+      .toBeGreaterThan(0)
+    expect(await serverUnreadCount(page, workspaceId, streamId)).toBe(0)
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(
+      page
+        .getByRole("main")
+        .locator(".message-item")
+        .filter({ hasText: `${prefix} target msg-005` })
+    ).toBeVisible({ timeout: 20000 })
+
+    await expect
+      .poll(() => serverActivityCount(page, workspaceId, streamId), {
+        timeout: 15000,
+        message: "visiting the caught-up stream must heal the reaction activity despite the trailing chrome",
+      })
+      .toBe(0)
+    // The heal anchors at the watermark — read state must be undisturbed.
+    expect(await serverUnreadCount(page, workspaceId, streamId)).toBe(0)
+
+    await other.context.close()
+  })
+
   test("blur → arrival → refocus → another arrival: every step re-marks once attentive", async ({ page, browser }) => {
     // The prod trace for the reported miss: watermark wrote seconds after a
     // refocus (the parked mark firing), then a message arrived 4s later while
