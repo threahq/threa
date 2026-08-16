@@ -701,9 +701,15 @@ export async function applyStreamBootstrap(
       )
       const unreadState = await db.unreadState.get(workspaceId)
       const touchedAt = unreadState?.counterTouchedAt?.[streamId]
+      // Counters apply only under a known fetch start: without `fetchStartedAt`
+      // the touched-at guard cannot order this snapshot against a live ordinal
+      // that raised the count while the fetch was in flight, and applying
+      // anyway would absorb that ordinal into `latestOrdinals` (max-merge) so
+      // the re-delivered activity could never raise unread again.
       if (
         unreadState &&
-        (options?.fetchStartedAt === undefined || touchedAt === undefined || touchedAt < options.fetchStartedAt)
+        options?.fetchStartedAt !== undefined &&
+        (touchedAt === undefined || touchedAt < options.fetchStartedAt)
       ) {
         await db.unreadState.put({
           ...unreadState,
@@ -726,7 +732,8 @@ export async function applyStreamBootstrap(
     const touchedAt = unreadState?.counterTouchedAt?.[streamId]
     const remainsCurrent =
       unreadState !== undefined &&
-      (options.fetchStartedAt === undefined || touchedAt === undefined || touchedAt < options.fetchStartedAt)
+      options.fetchStartedAt !== undefined &&
+      (touchedAt === undefined || touchedAt < options.fetchStartedAt)
     if (remainsCurrent) {
       options.queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
         current
