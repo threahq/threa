@@ -35,6 +35,10 @@ export function usePageActivity(): PageActivityState {
 
     const updateVisibility = () => setIsVisible(document.visibilityState === "visible")
     const updateFocus = () => setIsFocused(document.hasFocus())
+    const updatePageShow = () => {
+      updateVisibility()
+      updateFocus()
+    }
 
     updateVisibility()
     updateFocus()
@@ -42,11 +46,13 @@ export function usePageActivity(): PageActivityState {
     document.addEventListener("visibilitychange", updateVisibility)
     window.addEventListener("focus", updateFocus)
     window.addEventListener("blur", updateFocus)
+    window.addEventListener("pageshow", updatePageShow)
 
     return () => {
       document.removeEventListener("visibilitychange", updateVisibility)
       window.removeEventListener("focus", updateFocus)
       window.removeEventListener("blur", updateFocus)
+      window.removeEventListener("pageshow", updatePageShow)
     }
   }, [])
 

@@ -149,6 +149,26 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: false })
   })
 
+  it("reopens phone auto-read after a bfcache restore without visibility or focus events", () => {
+    visibilityState = "hidden"
+    hasFocus = false
+    isMobileViewport = true
+    isCoarsePointer = true
+
+    const { rerender } = renderHook(({ lastEventId }) => useAutoMarkAsRead("ws_123", "stream_123", lastEventId), {
+      initialProps: { lastEventId: undefined as string | undefined },
+    })
+
+    visibilityState = "visible"
+    const pageShow = new Event("pageshow")
+    Object.defineProperty(pageShow, "persisted", { value: true, configurable: true })
+    act(() => window.dispatchEvent(pageShow))
+    rerender({ lastEventId: "event_after_resume" })
+    act(() => vi.advanceTimersByTime(500))
+
+    expect(mockMarkAsRead).toHaveBeenCalledExactlyOnceWith("stream_123", "event_after_resume", { partial: false })
+  })
+
   it("does NOT mark read on a coarse-but-wide device (tablet / iPad split view) while unfocused", () => {
     // A coarse pointer alone is not "phone-like": an iPad in Split View / Stage
     // Manager is coarse but wide, and an unfocused pane there means the user is
