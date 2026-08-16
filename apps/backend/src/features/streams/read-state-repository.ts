@@ -85,8 +85,8 @@ export const ReadStateRepository = {
    * park the watermark before the first message. No sequence comparison: this
    * deliberately moves the pointer backward.
    */
-  async set(db: Querier, streamId: string, userId: string, eventId: string | null): Promise<void> {
-    await db.query(
+  async set(db: Querier, streamId: string, userId: string, eventId: string | null): Promise<StreamReadState | null> {
+    const result = await db.query<StreamReadStateRow>(
       `
       INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
       SELECT s.workspace_id, $1, $2, $3, NOW(), NOW()
@@ -96,9 +96,11 @@ export const ReadStateRepository = {
       SET last_read_event_id = EXCLUDED.last_read_event_id,
           last_read_at = EXCLUDED.last_read_at,
           updated_at = EXCLUDED.updated_at
+      RETURNING ${SELECT_FIELDS}
       `,
       [streamId, userId, eventId]
     )
+    return result.rows[0] ? mapRowToReadState(result.rows[0]) : null
   },
 
   /**

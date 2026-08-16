@@ -124,7 +124,6 @@ import {
   pruneCounterTouches,
   upsertActivity,
 } from "./unread-counters"
-import { isAutoReadAttentiveNow } from "@/lib/auto-read-attention"
 import {
   commitCounterMutation,
   commitStreamPreview,
@@ -1318,29 +1317,21 @@ export function registerWorkspaceSocketHandlers(
       commitPreview(payload.streamId, payload.lastMessagePreview)
 
       // Counter: membership and author identity resolve from the workspace
-      // bootstrap (the synchronous read model both reactive surfaces share), then
-      // the absolute ordinal apply folds through commitCounter. Own messages never
-      // raise unread (authorId is a userId — match via user.workosUserId): the
-      // server auto-advances the author's read pointer in the send transaction
-      // without emitting stream:read. Viewing pins the read position to latest —
-      // gated on the SAME attention signal `useAutoMarkAsRead` uses: the pin is
-      // optimistic against the auto-read confirm, so pinning while unattentive
-      // (stream open in a blurred window, reconnect catch-up replays) zeroes the
-      // local count with no server confirm ever coming, and the stream vanishes
-      // from the sidebar's Unread section while genuinely unread.
+      // bootstrap, then the absolute ordinal apply folds through commitCounter.
+      // Own messages never raise unread because the server advances the author's
+      // pointer in the send transaction. An open route is not evidence that an
+      // incoming message crossed the viewport frontier, so other authors always
+      // raise unread until the read commit acknowledges it.
       const old = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
       if (!old) return
       const isMember = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
-      if (!isMember) return
+      if (!isMember && !isViewingStream) return
       const currentUser = refs.getCurrentUser()
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
       const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
 
       commitCounter((state) =>
-        applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, {
-          isOwnMessage,
-          isViewing: isViewingStream && isAutoReadAttentiveNow(),
-        })
+        applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, { isOwnMessage })
       )
     } finally {
       stopActivityApply()
@@ -1842,21 +1833,9 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
 
     const a = payload.activity
-    // Viewing pins activity exactly as it pins the message counter above: a row
-    // for the stream the viewer is attentively looking at is about to be cleared
-    // by the auto-read confirm, so holding it lights the sidebar row and the
-    // activity badge for the whole debounce + round trip — on a stream the user
-    // is staring at. That flash reads as a bug precisely because the counter IS
-    // pinned: the row lit up while never entering the Unread section. Gated on
-    // the SAME `isAutoReadAttentiveNow()` signal for the same reason documented
-    // there — suppressing while unattentive would zero a count no confirm is
-    // coming for. A row suppressed but never read server-side (the viewer is
-    // parked above the fold, so the frontier never advances past it) comes back
-    // on the next bootstrap, which is the counter pin's recovery too.
-    if (a.streamId && refs.getCurrentStreamId() === a.streamId && isAutoReadAttentiveNow()) {
-      invalidateActivityFeed(true)
-      return
-    }
+    // Route focus alone cannot dismiss an activity: the viewer may be detached
+    // above the tail or have the timeline covered. Hold the row until a concrete
+    // viewport frontier produces the coupled read commit.
     // The held set is the source of truth (D3/D4): upsert the row by its stable
     // id so a replayed event (sync-log catch-up, INV-53) updates in place rather
     // than duplicating; the derived counts follow. Self rows are skipped inside

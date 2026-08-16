@@ -3660,8 +3660,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
-  it("pins the read position to latest while viewing the stream attentively", async () => {
-    const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true)
+  it("raises unread for another author's message even while its route is focused", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
     const { emit, cleanup } = register(queryClient, "stream_1")
@@ -3675,19 +3674,40 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
       lastMessagePreview: preview,
     })
 
-    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(0)
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(2)
     await vi.waitFor(async () => {
-      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(0)
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(2)
     })
 
     cleanup()
-    focusSpy.mockRestore()
   })
 
-  it("does NOT pin while the viewed stream's window is unfocused — unread rises like any other stream", async () => {
-    // The pin is optimistic against the auto-read confirm, which only fires
-    // when attentive (useAutoReadAttention). Pinning here would zero the local
-    // count with no server confirm coming — the sticky-zero divergence bug.
+  it("raises unread for the currently viewed stream without a direct membership", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"), (current) =>
+      current ? { ...current, streamMemberships: [] } : current
+    )
+    const { emit, cleanup } = register(queryClient, "stream_1")
+
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: preview,
+    })
+
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    })
+
+    cleanup()
+  })
+
+  it("raises unread for the viewed stream while its window is unfocused", async () => {
     const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(false)
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
@@ -3822,12 +3842,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
-  it("does not hold an activity for the stream being viewed attentively (no lit-row flash)", async () => {
-    // The counter is already pinned while viewing, so holding the activity row
-    // lit the sidebar row — via activityCount — for the whole auto-read round
-    // trip, on a stream the user was looking at, and without it ever entering
-    // the Unread section. Same gate as the counter pin.
-    const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(true)
+  it("holds activity for a focused route until a viewport read clears it", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
     const { emit, cleanup } = register(queryClient, "stream_1")
@@ -3851,16 +3866,13 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     })
 
     const after = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-    expect(after?.activityCounts.stream_1).toBe(before?.activityCounts.stream_1)
-    expect(after?.unreadActivityCount).toBe(before?.unreadActivityCount)
+    expect(after?.activityCounts.stream_1).toBe((before?.activityCounts.stream_1 ?? 0) + 1)
+    expect(after?.unreadActivityCount).toBe((before?.unreadActivityCount ?? 0) + 1)
 
     cleanup()
-    focusSpy.mockRestore()
   })
 
-  it("holds an activity for the viewed stream when unfocused, and for other streams always", async () => {
-    // The mirror of the counter pin's guard: suppressing while unattentive
-    // would zero a count no auto-read confirm is coming for.
+  it("holds an activity for the viewed stream when unfocused, and for other streams", async () => {
     const focusSpy = vi.spyOn(document, "hasFocus").mockReturnValue(false)
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)

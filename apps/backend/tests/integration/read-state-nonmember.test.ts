@@ -240,9 +240,12 @@ describe("read state — non-member unlock", () => {
       const events = await StreamEventRepository.list(pool, sid)
 
       await streamService.markAsRead(wid, sid, viewer, events[1].id)
-      const membership = await streamService.markUnread(wid, sid, viewer, msg2)
+      const result = await streamService.markUnread(wid, sid, viewer, msg2)
 
-      expect(membership).toBeNull()
+      expect(result).toMatchObject({
+        membership: null,
+        readState: { lastReadEventId: events[0].id, lastReadSequence: "1" },
+      })
       expect(await membershipCount(sid, viewer)).toBe(0)
 
       const row = await ReadStateRepository.get(pool, sid, viewer)
@@ -270,9 +273,12 @@ describe("read state — non-member unlock", () => {
       await seedChannel(wid, sid, author)
       const [msg1] = await sendMessages(wid, sid, author, 2)
 
-      const membership = await streamService.markUnread(wid, sid, viewer, msg1)
+      const result = await streamService.markUnread(wid, sid, viewer, msg1)
 
-      expect(membership).toBeNull()
+      expect(result).toMatchObject({
+        membership: null,
+        readState: { lastReadEventId: null, lastReadSequence: null },
+      })
       const row = await ReadStateRepository.get(pool, sid, viewer)
       expect(row).not.toBeNull()
       expect(row?.lastReadEventId).toBeNull()

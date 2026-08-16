@@ -12,6 +12,7 @@ import {
   applyReadStateSnapshotsIdb,
   commitReadAll,
   commitReadStateSnapshot,
+  putReadStateIdbIfUntouchedSince,
   resolveReadAllFrontiers,
   type ReadStateSnapshot,
 } from "./read-state"
@@ -72,6 +73,67 @@ async function seedMembership() {
     _cachedAt: Date.now(),
   })
 }
+
+describe("putReadStateIdbIfUntouchedSince", () => {
+  beforeEach(async () => {
+    resetRowConfirmations()
+    await db.streamReadState.clear()
+  })
+
+  it("checks freshness and writes the replacement in one transaction", async () => {
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_old",
+      lastReadSequence: "1",
+      lastReadAt: null,
+      _cachedAt: 10,
+    })
+
+    await expect(
+      putReadStateIdbIfUntouchedSince(
+        "ws_1",
+        "stream_1",
+        { lastReadEventId: "evt_response", lastReadSequence: "2", lastReadAt: null },
+        11,
+        12
+      )
+    ).resolves.toBe(true)
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_response",
+      lastReadSequence: "2",
+      _cachedAt: 12,
+    })
+  })
+
+  it("rejects a response when a newer frontier already owns the stream", async () => {
+    await db.streamReadState.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_newer",
+      lastReadSequence: "3",
+      lastReadAt: null,
+      _cachedAt: 13,
+    })
+
+    await expect(
+      putReadStateIdbIfUntouchedSince(
+        "ws_1",
+        "stream_1",
+        { lastReadEventId: "evt_stale", lastReadSequence: "2", lastReadAt: null },
+        11,
+        14
+      )
+    ).resolves.toBe(false)
+    expect(await db.streamReadState.get("ws_1:stream_1")).toMatchObject({
+      lastReadEventId: "evt_newer",
+      lastReadSequence: "3",
+      _cachedAt: 13,
+    })
+  })
+})
 
 describe("applyReadStateSnapshotsIdb", () => {
   beforeEach(async () => {

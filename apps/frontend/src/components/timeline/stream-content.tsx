@@ -46,6 +46,7 @@ import {
   useWorkspaceStreamReadStates,
 } from "@/stores/workspace-store"
 import { resolveFrontierEventId, resolveFrontierSequence } from "@/lib/read-frontier"
+import { useReadCommitQueue } from "@/sync/read-commit-queue"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { useUser } from "@/auth"
 import { Button } from "@/components/ui/button"
@@ -1019,6 +1020,12 @@ export function StreamContent({
     () => (isThread ? remapSuppressedWatermark(lastReadEventId, events, displayEvents) : lastReadEventId),
     [isThread, lastReadEventId, events, displayEvents]
   )
+  const frontierLastReadSequence = useMemo(() => {
+    if (frontierLastReadEventId === lastReadEventId) return frontierSequence
+    if (frontierLastReadEventId == null) return frontierLastReadEventId
+    const remapped = displayEvents.find((event) => event.id === frontierLastReadEventId)
+    return remapped ? BigInt(remapped.sequence) : undefined
+  }, [displayEvents, frontierLastReadEventId, frontierSequence, lastReadEventId])
 
   // Conversation lookup for the always-on provenance chips (mechanism A below).
   const conversationsById = useMemo(() => {
@@ -2283,7 +2290,7 @@ export function StreamContent({
   // no settle phase (`isInitialSettling` would never clear there), so exempt it.
   const settledAtBottom = !useVirtualized || !virtualIsInitialSettling
   const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom
-  const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
+  const { lastSeenEventId, atLastRow, tailVisible, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
     // The virtualized scroller late-mounts via a ref callback, AFTER
     // `autoMarkEnabled` flips true — pass the mounted element so the read-frontier
@@ -2300,6 +2307,7 @@ export function StreamContent({
     events: displayEvents,
     streamId,
     lastReadEventId: frontierLastReadEventId,
+    lastReadSequence: frontierLastReadSequence,
     enabled: autoMarkEnabled,
     programmaticScrollAtRef,
   })
@@ -2309,10 +2317,12 @@ export function StreamContent({
     // Raw watermark, not the thread-remapped frontier seed: the heal's anchor
     // must be the id the server already stores so the advance stays a no-op.
     readPointerEventId: lastReadEventId,
+    activityHealEnabled: tailVisible,
   })
   const canAutoRead = useAutoReadAttention()
 
   const isMobile = useIsMobile()
+  const readCommitQueue = useReadCommitQueue()
   const { markAsRead, markUnread, getUnreadCount } = useUnreadCounts(workspaceId)
   const unreadCount = getUnreadCount(streamId)
 
@@ -2387,6 +2397,9 @@ export function StreamContent({
   markAsReadRef.current = markAsRead
   const markUnreadRef = useRef(markUnread)
   markUnreadRef.current = markUnread
+  useEffect(() => {
+    readCommitQueue.observeReadPointer(streamId, lastReadEventId)
+  }, [lastReadEventId, readCommitQueue, streamId])
 
   // "Escape the unread block": mark the stream fully read, dismiss the
   // persistent unread divider, and resume tailing the live bottom. Shared by
@@ -2455,9 +2468,11 @@ export function StreamContent({
   useEffect(() => {
     return addMarkUnreadListener((detail) => {
       if (detail.streamId !== streamId) return
-      markUnreadRef.current(streamId, detail.messageId)
+      void readCommitQueue
+        .runExplicitUnread(streamId, lastReadEventId, () => markUnreadRef.current(streamId, detail.messageId))
+        .catch(() => undefined)
     })
-  }, [streamId])
+  }, [lastReadEventId, readCommitQueue, streamId])
 
   const queryClient = useQueryClient()
   const isPublicChannel = stream?.type === StreamTypes.CHANNEL && stream?.visibility === Visibilities.PUBLIC

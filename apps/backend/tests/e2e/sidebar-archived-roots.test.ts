@@ -32,6 +32,7 @@ function createSocket(client: TestClient): Socket {
     },
     transports: ["websocket"],
     autoConnect: false,
+    forceNew: true,
   })
 }
 

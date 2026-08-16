@@ -122,6 +122,8 @@ interface UseLastSeenEventOptions {
    * frontier so marking resumes from where the viewer left off.
    */
   lastReadEventId: string | null | undefined
+  /** Authoritative sequence, including when the pointer's event is outside the loaded window. */
+  lastReadSequence?: bigint | null
   /** Off while loading/jumping/draft — no scroller to read, nothing to track. */
   enabled: boolean
   /**
@@ -141,8 +143,10 @@ interface UseLastSeenEventResult {
    * scroll down through it (or press Escape) for the pointer to advance.
    */
   lastSeenEventId: string | undefined
-  /** Whether the read frontier has reached the last rendered row (a full read). */
+  /** Whether the read frontier has reached the last loaded row (a full read). */
   atLastRow: boolean
+  /** Whether the last rendered row currently intersects the viewport. */
+  tailVisible: boolean
   /**
    * Whether unread sits above the current viewport — i.e. the first unread row
    * is scrolled off the top. Drives the "N new ↑" jump affordance.
@@ -164,11 +168,13 @@ export function useLastSeenEvent({
   events,
   streamId,
   lastReadEventId,
+  lastReadSequence,
   enabled,
   programmaticScrollAtRef,
 }: UseLastSeenEventOptions): UseLastSeenEventResult {
   const [lastSeenEventId, setLastSeenEventId] = useState<string | undefined>(undefined)
   const [atLastRow, setAtLastRow] = useState(false)
+  const [tailVisible, setTailVisible] = useState(false)
   const [unreadAboveViewport, setUnreadAboveViewport] = useState(false)
 
   const indexById = useMemo(() => {
@@ -194,9 +200,10 @@ export function useLastSeenEvent({
   // the pointer's OWN past sequence (see below), so it is sequence- not index-based.
   const readSeq = useMemo<bigint | null>(() => {
     if (lastReadEventId == null) return -1n
+    if (lastReadSequence !== undefined) return lastReadSequence ?? -1n
     const ev = readIndex >= 0 ? events[readIndex] : undefined
     return ev ? BigInt(ev.sequence) : null
-  }, [lastReadEventId, readIndex, events])
+  }, [lastReadEventId, lastReadSequence, readIndex, events])
   const readSeqRef = useRef(readSeq)
   readSeqRef.current = readSeq
 
@@ -256,7 +263,7 @@ export function useLastSeenEvent({
     const topIdx = map.get(range.topId)
     const botIdx = map.get(range.bottomId)
     if (topIdx === undefined || botIdx === undefined) return
-    const lastRenderedIdx = map.get(rows[rows.length - 1].id) ?? botIdx
+    const lastLoadedIdx = eventsRef.current.length - 1
 
     // Sweep-link with the previous scan: within SWEEP_LINK_MS and with no
     // programmatic scroll write since that scan, the movement between the two
@@ -288,10 +295,11 @@ export function useLastSeenEvent({
     }
 
     const frontier = frontierRef.current
-    setAtLastRow(frontier >= lastRenderedIdx)
+    setAtLastRow(frontier >= lastLoadedIdx)
+    setTailVisible(botIdx >= lastLoadedIdx)
     // Unread sits above the viewport when the first unread row (frontier + 1)
     // exists in the window and is scrolled off the top.
-    setUnreadAboveViewport(frontier + 1 <= lastRenderedIdx && frontier + 1 < topIdx)
+    setUnreadAboveViewport(frontier + 1 <= lastLoadedIdx && frontier + 1 < topIdx)
     // `lastSeenEventId` is derived, not a forward-only latch: it names the
     // frontier's row only while the frontier sits PAST the read pointer. Once the
     // pointer catches up to (or passes) the frontier — the round-trip landed, or a
@@ -302,7 +310,7 @@ export function useLastSeenEvent({
     // window (e.g. mark-as-unread on the oldest loaded row moves it below the
     // window) — read progress is then unknowable, so emit nothing rather than
     // re-marking up to the stale frontier.
-    const pointerResolved = readSeqRef.current != null
+    const pointerResolved = readSeqRef.current != null && (readIndexRef.current >= 0 || readSeqRef.current === -1n)
     if (pointerResolved && frontier > readIndexRef.current && frontier >= 0) {
       const id = eventsRef.current[frontier]?.id
       if (id) setLastSeenEventId((prev) => (prev === id ? prev : id))
@@ -320,6 +328,7 @@ export function useLastSeenEvent({
     prevScanRef.current = null
     setLastSeenEventId(undefined)
     setAtLastRow(false)
+    setTailVisible(false)
     setUnreadAboveViewport(false)
   }, [streamId])
 
@@ -405,5 +414,5 @@ export function useLastSeenEvent({
     return () => cancelAnimationFrame(raf)
   }, [enabled, events, streamId, lastReadEventId, readIndex, recompute])
 
-  return { lastSeenEventId, atLastRow, unreadAboveViewport }
+  return { lastSeenEventId, atLastRow, tailVisible, unreadAboveViewport }
 }

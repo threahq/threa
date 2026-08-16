@@ -21,6 +21,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
+import { applyStreamReadOrdinal } from "./unread-counters"
 import { sharedMessageSlotKey } from "@threa/types"
 import type {
   AttachmentSummary,
@@ -897,6 +898,120 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     ])
 
     expect(await getLatestPersistedSequence(streamId)).toBe("200")
+  })
+})
+
+describe("applyStreamBootstrap — per-stream unread count", () => {
+  beforeEach(async () => {
+    await Promise.all([db.unreadState.clear(), db.events.clear(), db.streams.clear()])
+  })
+
+  it("publishes the stream bootstrap count for access-without-membership viewers", async () => {
+    const streamId = "stream_public"
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: {},
+      mutedStreamIds: [],
+      counterTouchedAt: {},
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      unreadCounts: {},
+    } as WorkspaceBootstrap)
+    const bootstrap = { ...makeBootstrap([], streamId), unreadCount: 4, messageCount: 6 }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt: Date.now(), queryClient })
+
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.unreadCounts[streamId]).toBe(4)
+    expect(state?.latestOrdinals?.[streamId]).toBe(6)
+    expect(
+      applyStreamReadOrdinal({ ...state!, unreadActivities: state?.unreadActivities ?? [] }, streamId, 3).unreadCounts[
+        streamId
+      ]
+    ).toBe(3)
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.unreadCounts[streamId]).toBe(4)
+    expect(cached?.messageCounts?.[streamId]).toBe(6)
+  })
+
+  it("skips query-cache publication when a newer counter lands after the IDB transaction", async () => {
+    const streamId = "stream_public"
+    const fetchStartedAt = 100
+    const seeded = {
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { [streamId]: 3 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { [streamId]: 10 },
+      mutedStreamIds: [],
+      counterTouchedAt: {},
+      _cachedAt: 90,
+    }
+    await db.unreadState.put(seeded)
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      unreadCounts: { [streamId]: 3 },
+      messageCounts: { [streamId]: 10 },
+    } as unknown as WorkspaceBootstrap)
+    const get = vi
+      .spyOn(db.unreadState, "get")
+      .mockResolvedValueOnce(seeded)
+      .mockResolvedValueOnce({
+        ...seeded,
+        unreadCounts: { [streamId]: 4 },
+        latestOrdinals: { [streamId]: 11 },
+        counterTouchedAt: { [streamId]: 101 },
+      })
+
+    try {
+      await applyStreamBootstrap(
+        "ws_1",
+        streamId,
+        { ...makeBootstrap([], streamId), unreadCount: 1, messageCount: 8 },
+        { fetchStartedAt, queryClient }
+      )
+    } finally {
+      get.mockRestore()
+    }
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached).toMatchObject({
+      unreadCounts: { [streamId]: 3 },
+      messageCounts: { [streamId]: 10 },
+    })
+  })
+
+  it("preserves a counter touched after the bootstrap request departed", async () => {
+    const streamId = "stream_public"
+    const fetchStartedAt = Date.now() - 100
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { [streamId]: 3 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: {},
+      mutedStreamIds: [],
+      counterTouchedAt: { [streamId]: Date.now() },
+      _cachedAt: Date.now(),
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, { ...makeBootstrap([], streamId), unreadCount: 1 }, { fetchStartedAt })
+
+    expect((await db.unreadState.get("ws_1"))?.unreadCounts[streamId]).toBe(3)
   })
 })
 

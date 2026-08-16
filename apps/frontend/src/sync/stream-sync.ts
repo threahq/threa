@@ -687,9 +687,10 @@ export async function applyStreamBootstrap(
 ): Promise<void> {
   const now = Date.now()
   let preservedReadState: StreamReadFrontier | undefined
+  let appliedUnreadCount = false
   await db.transaction(
     "rw",
-    [db.events, db.streams, db.streamReadState, db.pendingMessages, db.pendingOperations, db.slots],
+    [db.events, db.streams, db.streamReadState, db.unreadState, db.pendingMessages, db.pendingOperations, db.slots],
     async () => {
       preservedReadState = await writeBootstrapEventsAndStream(
         workspaceId,
@@ -698,10 +699,48 @@ export async function applyStreamBootstrap(
         now,
         options?.fetchStartedAt
       )
+      const unreadState = await db.unreadState.get(workspaceId)
+      const touchedAt = unreadState?.counterTouchedAt?.[streamId]
+      if (
+        unreadState &&
+        (options?.fetchStartedAt === undefined || touchedAt === undefined || touchedAt < options.fetchStartedAt)
+      ) {
+        await db.unreadState.put({
+          ...unreadState,
+          unreadCounts: { ...unreadState.unreadCounts, [streamId]: bootstrap.unreadCount },
+          latestOrdinals:
+            bootstrap.messageCount !== undefined
+              ? { ...unreadState.latestOrdinals, [streamId]: bootstrap.messageCount }
+              : unreadState.latestOrdinals,
+          _cachedAt: now,
+        })
+        appliedUnreadCount = true
+      }
     }
   )
   if (preservedReadState && options?.queryClient) {
     mergeReadStateIntoBootstrapCache(options.queryClient, workspaceId, streamId, preservedReadState)
+  }
+  if (appliedUnreadCount && options?.queryClient) {
+    const unreadState = await db.unreadState.get(workspaceId)
+    const touchedAt = unreadState?.counterTouchedAt?.[streamId]
+    const remainsCurrent =
+      unreadState !== undefined &&
+      (options.fetchStartedAt === undefined || touchedAt === undefined || touchedAt < options.fetchStartedAt)
+    if (remainsCurrent) {
+      options.queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (current) =>
+        current
+          ? {
+              ...current,
+              unreadCounts: { ...current.unreadCounts, [streamId]: unreadState.unreadCounts[streamId] ?? 0 },
+              messageCounts:
+                bootstrap.messageCount !== undefined
+                  ? { ...current.messageCounts, [streamId]: unreadState.latestOrdinals?.[streamId] ?? 0 }
+                  : current.messageCounts,
+            }
+          : current
+      )
+    }
   }
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }

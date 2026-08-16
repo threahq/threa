@@ -650,12 +650,21 @@ export class ActivityService {
   }
 
   async markStreamActivityAsRead(userId: string, workspaceId: string, streamId: string): Promise<void> {
-    await withTransaction(this.pool, async (client) => {
-      const cleared = await ActivityRepository.markStreamAsRead(client, workspaceId, userId, streamId)
-      if (cleared.length === 0) return
-      logger.debug({ userId, streamId, count: cleared.length }, "Marked stream activity as read")
-      await this.emitActivityRead(client, workspaceId, userId, cleared, true)
-    })
+    await withTransaction(this.pool, (client) =>
+      this.markStreamActivityAsReadInTransaction(client, userId, workspaceId, streamId)
+    )
+  }
+
+  async markStreamActivityAsReadInTransaction(
+    client: PoolClient,
+    userId: string,
+    workspaceId: string,
+    streamId: string
+  ): Promise<void> {
+    const cleared = await ActivityRepository.markStreamAsRead(client, workspaceId, userId, streamId)
+    if (cleared.length === 0) return
+    logger.debug({ userId, streamId, count: cleared.length }, "Marked stream activity as read")
+    await this.emitActivityRead(client, workspaceId, userId, cleared, true)
   }
 
   async markAllAsRead(userId: string, workspaceId: string): Promise<void> {
