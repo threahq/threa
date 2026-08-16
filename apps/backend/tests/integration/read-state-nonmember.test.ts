@@ -286,7 +286,17 @@ describe("read state — non-member unlock", () => {
         lastReadOrdinal: 2,
         readMessageIds: [],
       })
-      expect((await outboxFor("stream:read", sid)).length).toBe(1)
+      expect(await outboxFor("stream:read", sid)).toEqual([
+        {
+          workspaceId: wid,
+          authorId: viewer,
+          streamId: sid,
+          lastReadEventId: events[1].id,
+          lastReadSequence: events[1].sequence.toString(),
+          lastReadOrdinal: 2,
+          readMessageIds: [],
+        },
+      ])
     })
 
     test("an event id from another stream is a no-op — null readState, no write, no stream:read", async () => {
