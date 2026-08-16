@@ -187,7 +187,7 @@ describe("read state — non-member unlock", () => {
       await sendMessages(wid, sid, author, 3)
       const events = await StreamEventRepository.list(pool, sid)
 
-      const membership = await streamService.markAsRead(wid, sid, viewer, events[1].id)
+      const { membership } = await streamService.markAsRead(wid, sid, viewer, events[1].id)
 
       expect(membership).toBeNull()
       expect(await membershipCount(sid, viewer)).toBe(0)
@@ -263,6 +263,57 @@ describe("read state — non-member unlock", () => {
           readMessageIds: [],
         },
       ])
+    })
+
+    test("markAsRead returns the post-write truth — frontier, ordinal, overlay", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const viewer = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 3)
+      const events = await StreamEventRepository.list(pool, sid)
+
+      const result = await streamService.markAsRead(wid, sid, viewer, events[1].id)
+
+      expect(result).toEqual({
+        membership: null,
+        readState: {
+          lastReadEventId: events[1].id,
+          lastReadSequence: events[1].sequence.toString(),
+          lastReadAt: (await ReadStateRepository.get(pool, sid, viewer))!.lastReadAt!.toISOString(),
+        },
+        lastReadOrdinal: 2,
+        readMessageIds: [],
+      })
+      expect((await outboxFor("stream:read", sid)).length).toBe(1)
+    })
+
+    test("an event id from another stream is a no-op — null readState, no write, no stream:read", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const otherSid = streamId()
+      const author = userId()
+      const viewer = userId()
+      await seedChannel(wid, sid, author)
+      await seedChannel(wid, otherSid, author)
+      await sendMessages(wid, sid, author, 2)
+      await sendMessages(wid, otherSid, author, 1)
+      const events = await StreamEventRepository.list(pool, sid)
+      const foreign = await StreamEventRepository.list(pool, otherSid)
+
+      // Seed a real frontier first: the no-op must leave it exactly where it was.
+      await streamService.markAsRead(wid, sid, viewer, events[0].id)
+
+      const unknown = await streamService.markAsRead(wid, sid, viewer, "event_does_not_exist")
+      const crossStream = await streamService.markAsRead(wid, sid, viewer, foreign[0].id)
+
+      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+      expect(crossStream).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+      const row = await ReadStateRepository.get(pool, sid, viewer)
+      expect(row?.lastReadEventId).toBe(events[0].id)
+      // Only the seeding read emitted — neither no-op did.
+      expect((await outboxFor("stream:read", sid)).map((p) => p.lastReadEventId)).toEqual([events[0].id])
     })
 
     test("markUnread on the first message parks the frontier before it (null watermark)", async () => {

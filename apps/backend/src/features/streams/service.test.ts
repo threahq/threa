@@ -1712,7 +1712,12 @@ describe("StreamService.markAsRead", () => {
 
     expect(mockInsertOutbox).not.toHaveBeenCalled()
     expect(mockReadStateAdvance).not.toHaveBeenCalled()
-    expect(result?.memberId).toBe("usr_1")
+    expect(result).toEqual({
+      membership: { streamId: "stream_1", memberId: "usr_1" } as never,
+      readState: null,
+      lastReadOrdinal: null,
+      readMessageIds: null,
+    })
   })
 
   test("advances the frontier and emits stream:read for a non-member — membership fetched read-only, never written", async () => {
@@ -1724,7 +1729,12 @@ describe("StreamService.markAsRead", () => {
 
     const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
 
-    expect(result).toBeNull()
+    expect(result).toEqual({
+      membership: null,
+      readState: { lastReadEventId: "evt_9", lastReadSequence: "42", lastReadAt: null },
+      lastReadOrdinal: 7,
+      readMessageIds: [],
+    })
     expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9")
     expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)

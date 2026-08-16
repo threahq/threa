@@ -62,6 +62,7 @@ describe("useAutoMarkAsRead", () => {
       commitRef: {
         current: async (streamId, lastEventId, opts) => {
           mockMarkAsRead(streamId, lastEventId, opts)
+          return { applied: true }
         },
       },
     })

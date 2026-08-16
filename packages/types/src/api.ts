@@ -1957,6 +1957,17 @@ export interface MarkAsReadInput {
 export interface MarkAsReadResponse {
   /** Null when the viewer has access but no membership row (INV-62: non-member thread leg, unjoined public channel) — an activity-only read. */
   membership: StreamMember | null
+  /**
+   * The canonical post-write read frontier. `null` means the request was a
+   * no-op — the event id resolved to no row in this stream, so nothing moved
+   * and the client must write nothing locally. Absent only on responses from
+   * before the field shipped.
+   */
+  readState?: StreamReadFrontier | null
+  /** Absolute message ordinal of the post-write frontier — the counter's authoritative read position. Null on the no-op path. */
+  lastReadOrdinal?: number | null
+  /** The post-write sparse read overlay (message ids above the watermark). Null on the no-op path. */
+  readMessageIds?: string[] | null
 }
 
 export interface MarkAllAsReadResponse {
