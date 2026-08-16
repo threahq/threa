@@ -253,7 +253,9 @@ export class ReadCommitQueue {
       state.postOperationPointerChanged ||
       (state.expectedReadEventId !== undefined
         ? state.observedReadEventIds.has(state.expectedReadEventId)
-        : [...state.observedReadEventIds].some((eventId) => eventId !== state.initialReadEventId))
+        : [...state.observedReadEventIds].some(
+            (eventId) => eventId !== undefined && eventId !== state.initialReadEventId
+          ))
     if (!pointerMatches) return
     this.explicitUnread.delete(streamId)
     this.committed.delete(streamId)

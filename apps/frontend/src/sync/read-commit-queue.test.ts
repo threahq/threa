@@ -242,6 +242,21 @@ describe("ReadCommitQueue", () => {
     expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_6", { partial: false })
   })
 
+  it("keeps unread blocked when an unresolved pointer is observed after the operation", async () => {
+    const unread = queue.runExplicitUnread("stream_a", "event_5", async () => undefined)
+    await unread
+
+    queue.observeReadPointer("stream_a", undefined)
+    queue.report("stream_a", "event_6", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(commit).not.toHaveBeenCalled()
+
+    queue.observeReadPointer("stream_a", "event_4")
+    queue.report("stream_a", "event_6", false)
+    await vi.advanceTimersByTimeAsync(READ_COMMIT_DEBOUNCE_MS)
+    expect(commit).toHaveBeenCalledExactlyOnceWith("stream_a", "event_6", { partial: false })
+  })
+
   it("releases unread when its expected pointer was observed before a later cross-device read", async () => {
     let resolveUnread!: (eventId: string | null) => void
     const unread = queue.runExplicitUnread(
