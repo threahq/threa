@@ -26,6 +26,7 @@ interface ExplicitUnread {
   observedReadEventIds: Set<string | null | undefined>
   expectedReadEventId: string | null | undefined
   operationDone: boolean
+  postOperationPointerChanged: boolean
 }
 
 /**
@@ -129,6 +130,9 @@ export class ReadCommitQueue {
     const state = this.explicitUnread.get(streamId)
     if (!state) return
     state.observedReadEventIds.add(readEventId)
+    if (state.operationDone && readEventId !== undefined && readEventId !== state.initialReadEventId) {
+      state.postOperationPointerChanged = true
+    }
     this.releaseExplicitUnreadIfReady(streamId, state)
   }
 
@@ -228,6 +232,7 @@ export class ReadCommitQueue {
       observedReadEventIds: new Set([initialReadEventId]),
       expectedReadEventId: undefined,
       operationDone: false,
+      postOperationPointerChanged: false,
     }
     this.explicitUnread.set(streamId, state)
     const inFlight = this.inFlight.get(streamId)
@@ -245,9 +250,10 @@ export class ReadCommitQueue {
   private releaseExplicitUnreadIfReady(streamId: string, state: ExplicitUnread): void {
     if (!state.operationDone || this.explicitUnread.get(streamId) !== state) return
     const pointerMatches =
-      state.expectedReadEventId !== undefined
+      state.postOperationPointerChanged ||
+      (state.expectedReadEventId !== undefined
         ? state.observedReadEventIds.has(state.expectedReadEventId)
-        : [...state.observedReadEventIds].some((eventId) => eventId !== state.initialReadEventId)
+        : [...state.observedReadEventIds].some((eventId) => eventId !== state.initialReadEventId))
     if (!pointerMatches) return
     this.explicitUnread.delete(streamId)
     this.committed.delete(streamId)
