@@ -992,6 +992,47 @@ describe("applyStreamBootstrap — per-stream unread count", () => {
     })
   })
 
+  it("skips counter publication entirely when the caller provides no fetchStartedAt", async () => {
+    // Without a fetch-start timestamp the touched-at guard cannot order the
+    // snapshot against a live ordinal, so the counters must not apply at all —
+    // a caller that wants counter publication passes `fetchStartedAt`.
+    const streamId = "stream_public"
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { [streamId]: 3 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { [streamId]: 10 },
+      mutedStreamIds: [],
+      counterTouchedAt: {},
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      unreadCounts: { [streamId]: 3 },
+      messageCounts: { [streamId]: 10 },
+    } as unknown as WorkspaceBootstrap)
+
+    await applyStreamBootstrap(
+      "ws_1",
+      streamId,
+      { ...makeBootstrap([], streamId), unreadCount: 1, messageCount: 8 },
+      { queryClient }
+    )
+
+    expect(await db.unreadState.get("ws_1")).toMatchObject({
+      unreadCounts: { [streamId]: 3 },
+      latestOrdinals: { [streamId]: 10 },
+    })
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))).toMatchObject({
+      unreadCounts: { [streamId]: 3 },
+      messageCounts: { [streamId]: 10 },
+    })
+  })
+
   it("preserves a counter touched after the bootstrap request departed", async () => {
     const streamId = "stream_public"
     const fetchStartedAt = Date.now() - 100
