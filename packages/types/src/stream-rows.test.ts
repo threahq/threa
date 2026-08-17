@@ -64,6 +64,17 @@ describe("STREAM_ROW_SPEC", () => {
     for (const type of THREAD_ANCHORABLE_EVENT_TYPES) expect(STREAM_ROW_SPEC[type].rendersAsOwnRow).toBe(true)
   })
 
+  test("every read-blocking type renders as its own row", () => {
+    // The read frontier advances through visible rows only, so a read-blocking
+    // type that renders no row of its own could never be passed: the gate would
+    // point at an index the viewport can never reach and auto-read would wedge
+    // permanently (the regression class behind #1895).
+    for (const type of EVENT_TYPES) {
+      const spec = STREAM_ROW_SPEC[type]
+      if (spec.readBlocking) expect(spec.rendersAsOwnRow).toBe(true)
+    }
+  })
+
   test("a grouped or patched row is never also its own standalone row", () => {
     for (const type of EVENT_TYPES) {
       const spec = STREAM_ROW_SPEC[type]

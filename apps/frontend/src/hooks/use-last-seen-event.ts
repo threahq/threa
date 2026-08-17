@@ -143,9 +143,9 @@ interface UseLastSeenEventResult {
    * scroll down through it (or press Escape) for the pointer to advance.
    */
   lastSeenEventId: string | undefined
-  /** Whether the read frontier has reached the last loaded row (a full read). */
+  /** Whether no read-blocking content remains after the read frontier (a full read). */
   atLastRow: boolean
-  /** Whether the last rendered row currently intersects the viewport. */
+  /** Whether no read-blocking content remains after the viewport's bottom row. */
   tailVisible: boolean
   /**
    * Whether unread sits above the current viewport — i.e. the first unread row
@@ -295,11 +295,13 @@ export function useLastSeenEvent({
     }
 
     const frontier = frontierRef.current
-    setAtLastRow(frontier >= lastLoadedIdx)
-    setTailVisible(botIdx >= lastLoadedIdx)
-    // Unread sits above the viewport when the first unread row (frontier + 1)
-    // exists in the window and is scrolled off the top.
-    setUnreadAboveViewport(frontier + 1 <= lastLoadedIdx && frontier + 1 < topIdx)
+    // Trailing non-read-blocking chrome (agent-session/command terminals,
+    // reactions) renders no `[data-event-id]` row, so `lastLoadedIdx` itself is
+    // unreachable by the frontier or the viewport — both bridge through the gate.
+    const firstUnreadIdx = readGateIndex(eventsRef.current, frontier)
+    setAtLastRow(firstUnreadIdx > lastLoadedIdx)
+    setTailVisible(readGateIndex(eventsRef.current, botIdx) > lastLoadedIdx)
+    setUnreadAboveViewport(firstUnreadIdx <= lastLoadedIdx && firstUnreadIdx < topIdx)
     // `lastSeenEventId` is derived, not a forward-only latch: it names the
     // frontier's row only while the frontier sits PAST the read pointer. Once the
     // pointer catches up to (or passes) the frontier — the round-trip landed, or a
