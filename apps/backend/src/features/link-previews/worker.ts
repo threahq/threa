@@ -378,6 +378,7 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
 export async function parseHtmlMeta(html: string, url: string): Promise<UpdateLinkPreviewParams> {
   const meta: Record<string, string> = {}
   let titleText = ""
+  let titleIndex = -1
   let faviconHref = ""
 
   const rewriter = new HTMLRewriter()
@@ -400,8 +401,14 @@ export async function parseHtmlMeta(html: string, url: string): Promise<UpdateLi
       },
     })
     .on("title", {
+      // The selector matches every <title> in the document, including the accessibility
+      // <title> inside each inline <svg> icon (githubstatus.com has ten of those) — only
+      // the first one is the document title, so text from later matches is dropped.
+      element() {
+        titleIndex++
+      },
       text(chunk) {
-        titleText += chunk.text
+        if (titleIndex === 0) titleText += chunk.text
       },
     })
     .on('link[rel="icon"], link[rel="shortcut icon"]', {
