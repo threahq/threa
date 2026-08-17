@@ -78,6 +78,25 @@ describe("usePageActivity", () => {
     expect(result.current).toEqual({ isVisible: false, isFocused: false, isActive: false })
   })
 
+  it("removes every interaction listener on unmount, each with its registered callback and capture flag", () => {
+    const added = vi.spyOn(window, "addEventListener")
+    const removed = vi.spyOn(window, "removeEventListener")
+    const { unmount } = renderHook(() => usePageActivity())
+
+    const interactionTypes = ["pointerdown", "keydown", "wheel", "touchstart"]
+    const registered = new Map(
+      added.mock.calls.filter(([type]) => interactionTypes.includes(type as string)).map(([type, cb]) => [type, cb])
+    )
+    expect([...registered.keys()].sort()).toEqual([...interactionTypes].sort())
+
+    unmount()
+
+    const removedInteraction = removed.mock.calls.filter(([type]) => interactionTypes.includes(type as string))
+    expect(removedInteraction.sort()).toEqual(
+      [...registered.entries()].map(([type, cb]) => [type, cb, { capture: true }]).sort()
+    )
+  })
+
   it("still tracks visibilitychange", () => {
     const { result } = renderHook(() => usePageActivity())
 
