@@ -149,6 +149,21 @@ describe("parseHtmlMeta", () => {
     expect(result.title).toBe("Page Title")
   })
 
+  test("ignores <title> elements inside inline SVGs (githubstatus.com)", async () => {
+    const html = `
+      <html><head>
+        <title>GitHub Status</title>
+        <meta name="description" content="Welcome to GitHub's home for real-time and historical data on system performance.">
+      </head><body>
+        <svg><title>GitHub Octicon logo</title></svg>
+        <svg><title>GitHub text logo</title></svg>
+        <svg><title>GitHub X</title></svg>
+      </body></html>
+    `
+    const result = await parseHtmlMeta(html, "https://www.githubstatus.com/")
+    expect(result.title).toBe("GitHub Status")
+  })
+
   test("falls back to meta description", async () => {
     const html = `
       <html><head>
