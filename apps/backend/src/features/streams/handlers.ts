@@ -939,9 +939,14 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const membership = await streamReadService.markAsRead(workspaceId, streamId, userId, data.lastEventId)
+      const { membership, readState, lastReadOrdinal, readMessageIds } = await streamReadService.markAsRead(
+        workspaceId,
+        streamId,
+        userId,
+        data.lastEventId
+      )
 
-      res.json({ membership: membership ?? null })
+      res.json({ membership: membership ?? null, readState, lastReadOrdinal, readMessageIds })
     },
 
     async markUnread(req: Request, res: Response) {

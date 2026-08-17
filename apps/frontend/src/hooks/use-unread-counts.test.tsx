@@ -9,6 +9,7 @@ import {
   DEFAULT_WORKSPACE_SETTINGS,
   type Activity,
   type MarkAllAsReadResponse,
+  type MarkAsReadResponse,
   type StreamMember,
   type StreamReadFrontier,
   type WorkspaceBootstrap,
@@ -19,7 +20,21 @@ import { workspaceKeys } from "./use-workspaces"
 import { useUnreadCounts } from "./use-unread-counts"
 
 const mockMarkAsRead =
-  vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<StreamMember | null>>()
+  vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<MarkAsReadResponse>>()
+
+/** A response from a backend that predates the post-write reconciliation fields. */
+function legacyReadResponse(membership: StreamMember | null = memberRow()): MarkAsReadResponse {
+  return { membership }
+}
+
+function memberRow(): StreamMember {
+  return {
+    streamId: "stream_1",
+    memberId: "member_1",
+    notificationLevel: "everything",
+    joinedAt: new Date().toISOString(),
+  }
+}
 type MarkUnreadResponse = { membership: StreamMember | null; readState: StreamReadFrontier }
 const mockMarkUnread =
   vi.fn<(workspaceId: string, streamId: string, messageId: string) => Promise<MarkUnreadResponse>>()
@@ -225,12 +240,7 @@ describe("useUnreadCounts", () => {
     })
     await seedEvent("event_new", "stream_1", "77")
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), {
       wrapper: createWrapper(queryClient),
@@ -269,12 +279,7 @@ describe("useUnreadCounts", () => {
     })
     await seedEvent("evt_5", "stream_1", "42")
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
     act(() => {
@@ -308,12 +313,7 @@ describe("useUnreadCounts", () => {
     })
     await seedEvent("evt_5", "stream_1", "42")
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
     act(() => {
@@ -346,12 +346,7 @@ describe("useUnreadCounts", () => {
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
     await seedEvent("evt_5", "stream_1", "42")
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
     act(() => {
@@ -391,12 +386,7 @@ describe("useUnreadCounts", () => {
     await seedEvent("client_pending", "stream_1", String(Date.now()))
     await db.events.update("client_pending", { _clientId: "client_pending", _status: "pending" })
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
     act(() => {
@@ -434,12 +424,7 @@ describe("useUnreadCounts", () => {
     })
     await seedEvent("evt_300", "stream_1", "300")
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
     act(() => {
@@ -493,12 +478,7 @@ describe("useUnreadCounts", () => {
       _cachedAt: Date.now(),
     })
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
     act(() => {
@@ -533,12 +513,7 @@ describe("useUnreadCounts", () => {
 
     await seedEvent("event_mid", "stream_1", "33")
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), {
       wrapper: createWrapper(queryClient),
@@ -560,16 +535,99 @@ describe("useUnreadCounts", () => {
     expect(await db.unreadState.get("ws_1")).toMatchObject({ unreadCounts: { stream_1: 2 } })
   })
 
+  it("reconciles a partial read's badge from the response ordinal, with no socket echo", async () => {
+    // The response's post-write ordinal IS the authoritative remainder, so the
+    // partial path no longer waits for `stream:read` to resolve the badge.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+      ...makeBootstrap(),
+      unreadCounts: { stream_1: 5 },
+      messageCounts: { stream_1: 10 },
+    })
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 5 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { stream_1: 10 },
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkAsRead.mockResolvedValue({
+      membership: memberRow(),
+      readState: { lastReadEventId: "event_mid", lastReadSequence: "33", lastReadAt: new Date().toISOString() },
+      lastReadOrdinal: 8,
+      readMessageIds: [],
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "event_mid", { partial: true })
+    })
+
+    await waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(2)
+    // The frontier comes straight from the response — no cached event needed.
+    expect(bootstrap?.streamReadState?.stream_1).toMatchObject({
+      lastReadEventId: "event_mid",
+      lastReadSequence: "33",
+    })
+    await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+      lastReadEventId: "event_mid",
+      lastReadSequence: "33",
+    })
+  })
+
+  it("writes nothing when the server reports the read as a no-op", async () => {
+    // A 200 with a null readState means the event id resolved to nothing: the
+    // server wrote nothing, so neither counters nor frontier may move locally.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+    await seedEvent("event_new", "stream_1", "77")
+
+    mockMarkAsRead.mockResolvedValue({
+      membership: null,
+      readState: null,
+      lastReadOrdinal: null,
+      readMessageIds: null,
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "event_new")
+    })
+
+    await waitForReadHandlerToSettle(queryClient)
+    expect(await db.streamReadState.get("ws_1:stream_1")).toBeUndefined()
+    expect(await db.unreadState.get("ws_1")).toMatchObject({ unreadCounts: { stream_1: 2 } })
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(2)
+    expect(bootstrap?.streamReadState?.stream_1).toBeUndefined()
+  })
+
   it("skips an optimistic temp_ read pointer but still sends a confirmed event id", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), {
       wrapper: createWrapper(queryClient),
@@ -599,12 +657,7 @@ describe("useUnreadCounts", () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
 
-    mockMarkAsRead.mockResolvedValue({
-      streamId: "stream_1",
-      memberId: "member_1",
-      notificationLevel: "everything",
-      joinedAt: new Date().toISOString(),
-    })
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), {
       wrapper: createWrapper(queryClient),
@@ -676,7 +729,7 @@ describe("useUnreadCounts", () => {
 
     await seedEvent("event_new", "stream_thread", "88")
 
-    mockMarkAsRead.mockResolvedValue(null)
+    mockMarkAsRead.mockResolvedValue(legacyReadResponse(null))
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), {
       wrapper: createWrapper(queryClient),
@@ -991,7 +1044,7 @@ describe("useUnreadCounts", () => {
       _cachedAt: Date.now() - 5000,
     })
 
-    let resolveRead!: (membership: StreamMember | null) => void
+    let resolveRead!: (response: MarkAsReadResponse) => void
     mockMarkAsRead.mockReturnValue(new Promise((resolve) => (resolveRead = resolve)))
 
     const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
@@ -1015,7 +1068,7 @@ describe("useUnreadCounts", () => {
 
     // The stale read response finally resolves — it must NOT restore evt_100.
     await act(async () => {
-      resolveRead(memberResponse())
+      resolveRead({ membership: memberResponse() })
       await new Promise((resolve) => setTimeout(resolve, 10))
     })
 

@@ -1,7 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
-import type { StreamMember } from "./member-repository"
-import type { StreamService } from "./service"
+import type { MarkAsReadResult, StreamService } from "./service"
 
 interface ActivityReadService {
   markStreamActivityAsReadInTransaction(
@@ -21,14 +20,9 @@ interface StreamReadServiceDeps {
 export class StreamReadService {
   constructor(private readonly deps: StreamReadServiceDeps) {}
 
-  async markAsRead(
-    workspaceId: string,
-    streamId: string,
-    userId: string,
-    eventId: string
-  ): Promise<StreamMember | null> {
+  async markAsRead(workspaceId: string, streamId: string, userId: string, eventId: string): Promise<MarkAsReadResult> {
     return withTransaction(this.deps.pool, async (client) => {
-      const membership = await this.deps.streamService.markAsReadInTransaction(
+      const result = await this.deps.streamService.markAsReadInTransaction(
         client,
         workspaceId,
         streamId,
@@ -36,7 +30,7 @@ export class StreamReadService {
         eventId
       )
       await this.deps.activityService.markStreamActivityAsReadInTransaction(client, userId, workspaceId, streamId)
-      return membership
+      return result
     })
   }
 }

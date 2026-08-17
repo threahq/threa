@@ -14,6 +14,7 @@ import type {
   CompanionMode,
   ToolPrivacyPolicy,
   StreamReadFrontier,
+  MarkAsReadResponse,
 } from "@threa/types"
 
 /**
@@ -210,12 +211,10 @@ export const streamsApi = {
     return res.data.membership
   },
 
-  async markAsRead(workspaceId: string, streamId: string, lastEventId: string): Promise<StreamMember | null> {
-    const res = await api.post<{ membership: StreamMember | null }>(
-      `/api/workspaces/${workspaceId}/streams/${streamId}/read`,
-      { lastEventId }
-    )
-    return res.membership
+  /** Returns the whole envelope: the post-write frontier/ordinal/overlay are the
+   *  reconciliation source. An older backend omits them — callers fall back. */
+  async markAsRead(workspaceId: string, streamId: string, lastEventId: string): Promise<MarkAsReadResponse> {
+    return api.post<MarkAsReadResponse>(`/api/workspaces/${workspaceId}/streams/${streamId}/read`, { lastEventId })
   },
 
   async markUnread(

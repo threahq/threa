@@ -10,7 +10,16 @@ export const READ_COMMIT_RETRY_MS = 1_000
 export const READ_COMMIT_MAX_RETRIES = 3
 export const READ_COMMIT_PARKED_RETRY_MS = 30_000
 
-type CommitRead = (streamId: string, lastEventId: string, opts: { partial: boolean }) => Promise<void>
+/**
+ * Resolves with whether the server actually moved the frontier. `applied:
+ * false` is a clean no-op (the server ignored the read pointer), not a failure:
+ * the frontier stays uncommitted so the same mark can be reported again.
+ */
+export interface ReadCommitOutcome {
+  applied: boolean
+}
+
+type CommitRead = (streamId: string, lastEventId: string, opts: { partial: boolean }) => Promise<ReadCommitOutcome>
 
 interface ScheduledMark extends ReadCommitMark {
   timer: ReturnType<typeof setTimeout>
@@ -186,14 +195,16 @@ export class ReadCommitQueue {
 
   private async execute(streamId: string, mark: QueuedMark, allowDisposed: boolean): Promise<void> {
     try {
-      let operation: Promise<void>
+      let operation: Promise<ReadCommitOutcome>
       try {
         operation = this.commitRef.current(streamId, mark.lastEventId, { partial: mark.partial })
       } catch (error) {
         operation = Promise.reject(error)
       }
-      await operation
-      this.committed.set(streamId, { lastEventId: mark.lastEventId, partial: mark.partial })
+      const outcome = await operation
+      // A no-op commit is clean but NOT committed: recording it would let dedup
+      // block re-reporting a frontier the server never took.
+      if (outcome.applied) this.committed.set(streamId, { lastEventId: mark.lastEventId, partial: mark.partial })
       this.failed.delete(streamId)
     } catch {
       const newerMarkExists = this.pending.has(streamId) || this.queued.has(streamId)

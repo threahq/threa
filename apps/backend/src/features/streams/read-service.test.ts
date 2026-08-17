@@ -24,7 +24,13 @@ describe("StreamReadService.markAsRead", () => {
       notificationLevel: null,
       joinedAt: new Date(),
     }
-    const markAsReadInTransaction = mock(() => Promise.resolve(membership))
+    const markResult = {
+      membership,
+      readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
+      lastReadOrdinal: 7,
+      readMessageIds: [],
+    }
+    const markAsReadInTransaction = mock(() => Promise.resolve(markResult))
     const markStreamActivityAsReadInTransaction = mock(() => Promise.resolve())
     const service = new StreamReadService({
       pool: {} as never,
@@ -34,7 +40,7 @@ describe("StreamReadService.markAsRead", () => {
 
     const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_1")
 
-    expect(result).toBe(membership)
+    expect(result).toBe(markResult)
     expect(markAsReadInTransaction).toHaveBeenCalledWith(client, "ws_1", "stream_1", "usr_1", "evt_1")
     expect(markStreamActivityAsReadInTransaction).toHaveBeenCalledWith(client, "usr_1", "ws_1", "stream_1")
   })
@@ -42,7 +48,11 @@ describe("StreamReadService.markAsRead", () => {
   it("fails the transaction when the activity clear fails", async () => {
     const service = new StreamReadService({
       pool: {} as never,
-      streamService: { markAsReadInTransaction: mock(() => Promise.resolve(null)) } as never,
+      streamService: {
+        markAsReadInTransaction: mock(() =>
+          Promise.resolve({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+        ),
+      } as never,
       activityService: {
         markStreamActivityAsReadInTransaction: mock(() => Promise.reject(new Error("activity write failed"))),
       },

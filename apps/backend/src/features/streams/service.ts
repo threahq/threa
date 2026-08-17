@@ -155,6 +155,18 @@ export interface MarkUnreadResult {
   readState: StreamReadFrontier
 }
 
+/**
+ * A mark-as-read outcome. `readState` is null exactly when the read was a
+ * no-op (the event id resolved to no row in this stream): nothing was written,
+ * no `stream:read` was emitted, and the caller must not reconcile from it.
+ */
+export interface MarkAsReadResult {
+  membership: StreamMember | null
+  readState: StreamReadFrontier | null
+  lastReadOrdinal: number | null
+  readMessageIds: string[] | null
+}
+
 const createThreadParamsSchema = z.object({
   workspaceId: z.string(),
   parentStreamId: z.string(),
@@ -2123,7 +2135,7 @@ export class StreamService {
     streamId: string,
     memberId: string,
     eventId: string
-  ): Promise<StreamMember | null> {
+  ): Promise<MarkAsReadResult> {
     return withTransaction(this.pool, (client) =>
       this.markAsReadInTransaction(client, workspaceId, streamId, memberId, eventId)
     )
@@ -2135,7 +2147,7 @@ export class StreamService {
     streamId: string,
     memberId: string,
     eventId: string
-  ): Promise<StreamMember | null> {
+  ): Promise<MarkAsReadResult> {
     // The read pointer must reference a real event in THIS stream. A client can
     // briefly hold an optimistic event id (temp_…) as its frontier right after a
     // send, before the server echo swaps it for the persisted id. Persisting an
@@ -2146,7 +2158,14 @@ export class StreamService {
     const position = await StreamEventRepository.getMessageOrdinalForEvent(client, streamId, eventId)
     if (!position) {
       logger.warn({ workspaceId, streamId, memberId, eventId }, "Ignored mark-as-read: event not found in stream")
-      return StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
+      // Explicit no-op: a null readState tells the caller nothing was written,
+      // so a 200 can never be mistaken for a committed frontier.
+      return {
+        membership: await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId),
+        readState: null,
+        lastReadOrdinal: null,
+        readMessageIds: null,
+      }
     }
 
     // Read state is user-anchored, not membership-gated: the advance runs for
@@ -2189,7 +2208,16 @@ export class StreamService {
       lastReadOrdinal: readPosition.messageOrdinal,
       readMessageIds,
     })
-    return membership
+    return {
+      membership,
+      readState: {
+        lastReadEventId: readEventId,
+        lastReadSequence: readPosition.sequence.toString(),
+        lastReadAt: postWrite?.lastReadAt?.toISOString() ?? null,
+      },
+      lastReadOrdinal: readPosition.messageOrdinal,
+      readMessageIds,
+    }
   }
 
   /**

@@ -496,7 +496,14 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
 
   it("returns null membership for a non-member viewer", async () => {
     const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
-    const markAsRead = mock(() => Promise.resolve(null))
+    const markAsRead = mock(() =>
+      Promise.resolve({
+        membership: null,
+        readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
+        lastReadOrdinal: 7,
+        readMessageIds: [],
+      })
+    )
     const markStreamActivityAsRead = mock(() => Promise.resolve())
     const handlers = makeHandlers({ validateStreamAccess, markAsRead } as Partial<StreamService>, {
       markStreamActivityAsRead,
@@ -508,7 +515,12 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     // Access (not membership) gates the read: a viewer who inherits thread
     // access from the root (INV-62) gets an activity-only read, not a 404.
     expect(captured.status).not.toBe(404)
-    expect(captured.body).toEqual({ membership: null })
+    expect(captured.body).toEqual({
+      membership: null,
+      readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
+      lastReadOrdinal: 7,
+      readMessageIds: [],
+    })
     expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
   })
 
@@ -575,7 +587,14 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       joinedAt: new Date(),
     }
     const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
-    const markAsRead = mock(() => Promise.resolve(membership))
+    const markAsRead = mock(() =>
+      Promise.resolve({
+        membership,
+        readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
+        lastReadOrdinal: 7,
+        readMessageIds: [],
+      })
+    )
     const markStreamActivityAsRead = mock(() => Promise.resolve())
     const handlers = makeHandlers({ validateStreamAccess, markAsRead } as Partial<StreamService>, {
       markStreamActivityAsRead,
@@ -585,7 +604,12 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
     await handlers.markAsRead(makeReq(), res)
 
     expect(captured.status).toBe(200)
-    expect(captured.body).toEqual({ membership })
+    expect(captured.body).toEqual({
+      membership,
+      readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
+      lastReadOrdinal: 7,
+      readMessageIds: [],
+    })
     expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
   })
 })

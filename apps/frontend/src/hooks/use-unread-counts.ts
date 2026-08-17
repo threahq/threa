@@ -5,7 +5,8 @@ import { workspaceKeys } from "./use-workspaces"
 import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { db } from "@/db"
-import { deriveActivityCounts } from "@/sync/unread-counters"
+import { applyStreamReadOrdinal, deriveActivityCounts } from "@/sync/unread-counters"
+import { commitCounterMutation } from "@/sync/catch-up-batch"
 import {
   applyReadStateSnapshotsIdb,
   mergeReadStateIntoBootstrapCache,
@@ -35,6 +36,29 @@ function withoutOverlay(
   const next = { ...map }
   delete next[streamId]
   return next
+}
+
+/**
+ * The counter patch a mark-as-read applies when the response carries no
+ * ordinal (older backend): drop the stream's held activity rows on both paths,
+ * and on a full read zero its message unread and overlay.
+ */
+function localCounterPatch(
+  state: Pick<WorkspaceBootstrap, "unreadActivities" | "unreadCounts" | "readMessageIds">,
+  streamId: string,
+  partial: boolean | undefined
+) {
+  const rows = (state.unreadActivities ?? []).filter((a) => a.streamId !== streamId)
+  return {
+    unreadActivities: rows,
+    ...deriveActivityCounts(rows),
+    ...(partial
+      ? {}
+      : {
+          unreadCounts: { ...state.unreadCounts, [streamId]: 0 },
+          readMessageIds: withoutOverlay(state.readMessageIds, streamId),
+        }),
+  }
 }
 
 /**
@@ -98,10 +122,17 @@ export function useUnreadCounts(workspaceId: string) {
   const markAsReadMutation = useMutation({
     mutationFn: async ({ streamId, lastEventId }: { streamId: string; lastEventId: string; partial?: boolean }) => {
       const startedAt = Date.now()
-      const membership = await streamService.markAsRead(workspaceId, streamId, lastEventId)
-      return { membership, startedAt }
+      const response = await streamService.markAsRead(workspaceId, streamId, lastEventId)
+      return { ...response, startedAt }
     },
-    onSuccess: async ({ membership, startedAt }, { streamId, lastEventId, partial }) => {
+    onSuccess: async (
+      { membership, readState, lastReadOrdinal, readMessageIds, startedAt },
+      { streamId, lastEventId, partial }
+    ) => {
+      // A null readState is the server saying the read was a no-op — the event
+      // id resolved to nothing, so nothing was written and nothing local may
+      // move. Absent (older backend) keeps the legacy local-resolution path.
+      if (readState === null) return
       // Ordering guard (touched-at): a read-state write that landed after this
       // mutation departed — the request's own socket echo, or a later action
       // (an explicit unread this stale read must not erase) — owns the stream.
@@ -116,36 +147,26 @@ export function useUnreadCounts(workspaceId: string) {
       // membership row in IDB.
       const hasMembership = membership !== null
 
-      // Coupling (D2/D4): reading a stream clears its held activity rows on BOTH
-      // the partial and full paths — activity (e.g. a reaction) is read by opening
-      // the stream regardless of message scroll position. The derived activity/
-      // mention counts follow the rows.
-      //
-      // Message unread (`unreadCounts`) is separate and stays on the FULL path
-      // only: a partial read advances the read pointer to a mid-window event with
-      // unread still below it. Zeroing it optimistically would be wrong AND
-      // sticky — the ordinal read position MAX-merges (see `applyStreamReadOrdinal`),
-      // so once forced to "read = latest" the server's `stream:read` for the mid
-      // event can never restore the remaining count. So for a partial read only
-      // the read POINTER moves; the badge resolves to the true remainder on the
-      // `stream:read` round-trip.
+      // The response's post-write ordinal IS the authoritative remainder, so it
+      // reconciles the counters on BOTH paths through the same pure apply the
+      // `stream:read` echo uses (INV-35) — the partial path no longer waits for
+      // the echo to resolve the badge, and the full path lands on the same
+      // zero. Without an ordinal (older backend) the legacy optimistic patch
+      // stands: activity drop on both paths, message unread on the full path
+      // only, since a partial read leaves unread below the pointer and the
+      // ordinal read position MAX-merges — forcing "read = latest" there would
+      // be sticky.
+      const reconcileFromOrdinal = typeof lastReadOrdinal === "number"
+      if (reconcileFromOrdinal) {
+        commitCounterMutation(queryClient, workspaceId, (state) =>
+          applyStreamReadOrdinal(state, streamId, lastReadOrdinal, readMessageIds ?? undefined)
+        )
+      }
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
-        const rows = (old.unreadActivities ?? []).filter((a) => a.streamId !== streamId)
-        // A full read advances the watermark to latest, so every overlay message
-        // for this stream is now below it and pruned server-side — clear the set
-        // optimistically to keep the invariant (the server echo re-SETs it).
-        const messageCounters = partial
-          ? {}
-          : {
-              unreadCounts: { ...old.unreadCounts, [streamId]: 0 },
-              readMessageIds: withoutOverlay(old.readMessageIds, streamId),
-            }
         return {
           ...old,
-          unreadActivities: rows,
-          ...deriveActivityCounts(rows),
-          ...messageCounters,
+          ...(reconcileFromOrdinal ? {} : localCounterPatch(old, streamId, partial)),
           // Membership is participation only — merge the fresh row (no watermark).
           streamMemberships: hasMembership
             ? old.streamMemberships.map((existingMembership) =>
@@ -157,10 +178,12 @@ export function useUnreadCounts(workspaceId: string) {
 
       // Read frontier (sole source): the optimistic advance must move it for
       // EVERY viewer with access — member or not — or the divider stalls until
-      // the socket echo. The response carries no sequence, so resolve the read
-      // event's real one from the cache — an id advanced without its sequence
-      // reads as "never read" downstream. Resolution happens before the
-      // transaction below so the transaction stays as narrow as it was.
+      // the socket echo. The response's `readState` is the server's post-write
+      // truth, so it is used verbatim when present. Without it (older backend)
+      // the id has no sequence, so resolve the read event's real one from the
+      // cache — an id advanced without its sequence reads as "never read"
+      // downstream. Resolution happens before the transaction below so the
+      // transaction stays as narrow as it was.
       // An unconfirmed row is cached under its client id with a Date.now()-scale
       // placeholder sequence (`nextOptimisticSequence`), so it resolves here even
       // though the server has no such event — it no-ops the read and emits no
@@ -169,9 +192,9 @@ export function useUnreadCounts(workspaceId: string) {
       // since every later echo and bootstrap merge is monotonic. Treat it as
       // unresolvable, like an id with no row at all. Reachable whenever the
       // viewer's own send is the bottom row when auto-read fires.
-      const cached = await db.events.get(lastEventId)
+      const cached = readState ? undefined : await db.events.get(lastEventId)
       const readEvent = cached && (cached._status === "pending" || cached._status === "failed") ? undefined : cached
-      if (!readEvent) {
+      if (!readState && !readEvent) {
         console.warn("Read frontier not advanced — read pointer has no confirmed event", { streamId, lastEventId })
       }
       // Monotonic, like the server: `ReadStateRepository.advance` rejects a
@@ -181,16 +204,19 @@ export function useUnreadCounts(workspaceId: string) {
       // unread until the echo lands. A sanctioned downward move is markUnread's
       // `stream:read_set`, not this path.
       const storedSequence = (await db.streamReadState.get(`${workspaceId}:${streamId}`))?.lastReadSequence
+      const advanceSequence = readState ? readState.lastReadSequence : (readEvent?.sequence ?? null)
       const movesBackward =
-        readEvent != null && storedSequence != null && BigInt(readEvent.sequence) < BigInt(storedSequence)
-      const frontier =
-        readEvent && !movesBackward
-          ? {
-              lastReadEventId: lastEventId,
-              lastReadSequence: readEvent.sequence,
-              lastReadAt: new Date().toISOString(),
-            }
-          : null
+        advanceSequence != null && storedSequence != null && BigInt(advanceSequence) < BigInt(storedSequence)
+      const frontier = movesBackward
+        ? null
+        : readState ||
+          (readEvent
+            ? {
+                lastReadEventId: lastEventId,
+                lastReadSequence: readEvent.sequence,
+                lastReadAt: new Date().toISOString(),
+              }
+            : null)
       // Re-check before the cache writes, not just before the IDB write below:
       // the two resolution reads above are await points the old synchronous path
       // did not have, so an echo landing in that window would otherwise leave the
@@ -214,21 +240,14 @@ export function useUnreadCounts(workspaceId: string) {
         // transaction still wins over the stale response.
         if (await readStateTouchedSince(workspaceId, streamId, startedAt)) return
         const now = Date.now()
-        const state = await db.unreadState.get(workspaceId)
+        // `commitCounterMutation` owns the counter row when the response
+        // reconciled it (it persists and stamps `counterTouchedAt` itself);
+        // writing a snapshot read here would race it back.
+        const state = reconcileFromOrdinal ? undefined : await db.unreadState.get(workspaceId)
         if (state) {
-          // Activity drop applies on both paths; `unreadCounts` only on the full
-          // path (mirrors the query-cache branch above).
-          const rows = (state.unreadActivities ?? []).filter((a) => a.streamId !== streamId)
           await db.unreadState.put({
             ...state,
-            unreadActivities: rows,
-            ...deriveActivityCounts(rows),
-            ...(partial
-              ? {}
-              : {
-                  unreadCounts: { ...state.unreadCounts, [streamId]: 0 },
-                  readMessageIds: withoutOverlay(state.readMessageIds, streamId),
-                }),
+            ...localCounterPatch(state, streamId, partial),
             // Touch stamp: an in-flight bootstrap's per-stream merge must not
             // resurrect the pre-read snapshot (mergeBootstrapUnreadFields).
             counterTouchedAt: { ...state.counterTouchedAt, [streamId]: now },
@@ -392,7 +411,7 @@ export function useUnreadCounts(workspaceId: string) {
       // and reports the whole stream — including the user's own messages — as
       // unread. The auto-read effect re-fires with the real id once the server echo
       // swaps it in.
-      if (lastEventId.startsWith("temp_")) return Promise.resolve()
+      if (lastEventId.startsWith("temp_")) return Promise.resolve({ applied: false })
       const commit = markAsReadMutation.mutateAsync({ streamId, lastEventId, partial: opts?.partial })
       // Dismiss any push notification for this stream — advancing the read pointer
       // (auto-read, manual "Mark as read", or Escape) means the user is here, so
@@ -402,7 +421,10 @@ export function useUnreadCounts(workspaceId: string) {
       // their own socket echo when open, or the bootstrap sweep on next open
       // (lib/notification-sweep.ts) — never via push, which would burn quota.
       navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
-      return commit.then(() => undefined)
+      // `applied: false` = the server no-op'd (the event id resolved to nothing),
+      // so the queue must not record the frontier as committed. An older backend
+      // omits `readState`; that keeps today's meaning — a 200 is a commit.
+      return commit.then((response) => ({ applied: response.readState !== null }))
     },
     [markAsReadMutation]
   )
