@@ -10,7 +10,6 @@ import {
   extractAttachmentDirectives,
   formatInboundAttachmentManifest,
   guessMimeType,
-  safeFilename,
   selectInboundAttachments,
   selectSealedInboundRefs,
   uploadReplyAttachments,
@@ -57,16 +56,6 @@ describe("guessMimeType", () => {
     expect(guessMimeType("report.pdf")).toBe("application/pdf")
     expect(guessMimeType("data.json")).toBe("application/json")
     expect(guessMimeType("noext")).toBe("application/octet-stream")
-  })
-})
-
-describe("safeFilename", () => {
-  test("replaces path separators and other unsafe characters", () => {
-    expect(safeFilename("a/b\\c:d?.txt")).toBe("a_b_c_d_.txt")
-  })
-
-  test("falls back when the name reduces to empty", () => {
-    expect(safeFilename("")).toBe("attachment")
   })
 })
 
@@ -327,7 +316,7 @@ describe("downloadSealedInboundAttachments", () => {
         log: () => undefined,
       })
       expect(downloaded).toHaveLength(1)
-      expect(downloaded[0]!.localPath).toBe(join(dir, ".threa-attachments", "binv_s", "notes.txt"))
+      expect(downloaded[0]!.localPath).toBe(join(dir, ".threa-attachments", "binv_s", "a_sealed", "notes.txt"))
       expect(Array.from(readFileSync(downloaded[0]!.localPath))).toEqual([42, 43, 44])
       expect(downloaded[0]!.attachment).toMatchObject({ id: "a_sealed", filename: "notes.txt" })
     } finally {
@@ -429,9 +418,43 @@ describe("downloadInboundAttachments", () => {
       })
       expect(downloaded).toHaveLength(1)
       const localPath = downloaded[0]!.localPath
-      expect(localPath).toBe(join(dir, ".threa-attachments", "binv_1", "src.pdf"))
+      expect(localPath).toBe(join(dir, ".threa-attachments", "binv_1", "a_src", "src.pdf"))
       expect(existsSync(localPath)).toBe(true)
       expect(Array.from(readFileSync(localPath))).toEqual([9, 8, 7])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("keeps two same-named attachments side by side", async () => {
+    const dir = tempDir()
+    const client = {
+      async listStreamMessages(): Promise<StreamMessageSummary[]> {
+        return [
+          { id: "m_src", attachments: [summary({ id: "a_new", filename: "image.png" })] },
+          { id: "m_ctx", attachments: [summary({ id: "a_old", filename: "image.png" })] },
+        ]
+      },
+      async getAttachmentDownloadUrl(id: string): Promise<string> {
+        return `https://signed.example/${id}`
+      },
+    }
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      return new Response(new Uint8Array(String(input).endsWith("a_new") ? [1] : [2]))
+    }) as typeof fetch)
+    try {
+      const downloaded = await downloadInboundAttachments(client, {
+        streamId: "stream_1",
+        sourceMessageId: "m_src",
+        contextMessageIds: ["m_ctx"],
+        invocationId: "binv_dupe",
+        cwd: dir,
+        scanLimit: 30,
+        log: () => undefined,
+      })
+      const byId = new Map(downloaded.map((d) => [d.attachment.id, d.localPath]))
+      expect(Array.from(readFileSync(byId.get("a_new")!))).toEqual([1])
+      expect(Array.from(readFileSync(byId.get("a_old")!))).toEqual([2])
     } finally {
       fetchSpy.mockRestore()
     }

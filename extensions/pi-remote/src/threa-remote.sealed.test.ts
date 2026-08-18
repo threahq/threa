@@ -236,7 +236,7 @@ describe("sealed attachments (inbound)", () => {
     expect(lines.contextLines[0]).toContain("[attached to the source message]")
     expect(lines.sourceLines).toHaveLength(1)
     expect(lines.sourceLines[0]).not.toContain("[attached to the source message]")
-    const localPath = join(dir, ".threa-attachments", "binv_1", "notes.md")
+    const localPath = join(dir, ".threa-attachments", "binv_1", "att_in_1", "notes.md")
     expect(new TextDecoder().decode(readFileSync(localPath))).toBe("inbound secret")
   })
 

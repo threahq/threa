@@ -1,11 +1,16 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { basename, join, resolve } from "node:path"
-import { decryptAttachmentBytes, encryptAttachmentBytes, type AttachmentRef } from "@threa/bot-runtime-client"
+import { basename, dirname, join, resolve } from "node:path"
+import {
+  attachmentLocalPath,
+  decryptAttachmentBytes,
+  encryptAttachmentBytes,
+  type AttachmentRef,
+} from "@threa/bot-runtime-client"
 import type { AttachmentSummary, StreamMessageSummary, ThreaClient } from "./client"
 
 /** A reply line `THREA_ATTACH: ./out.png` tells the channel to upload that file and attach it to the reply. */
 export const ATTACH_DIRECTIVE_RE = /^THREA_ATTACH:\s*(.+?)\s*$/
-/** Inbound attachments land under `<cwd>/.threa-attachments/<invocationId>/`, fresh per turn. */
+/** Inbound attachments land under `<cwd>/.threa-attachments/<invocationId>/<attachmentId>/`, fresh per turn. */
 export const ATTACHMENT_DIR = ".threa-attachments"
 
 export interface SelectedAttachment {
@@ -47,10 +52,6 @@ export function guessMimeType(path: string): string {
   if (lower.endsWith(".json")) return "application/json"
   if (lower.endsWith(".pdf")) return "application/pdf"
   return "application/octet-stream"
-}
-
-export function safeFilename(filename: string): string {
-  return filename.replace(/[\\/:*?"<>|]/g, "_").slice(0, 180) || "attachment"
 }
 
 /**
@@ -120,8 +121,9 @@ export async function fetchAttachmentBytes(url: string, timeoutMs = DOWNLOAD_TIM
 
 /**
  * Discover the attachments on the messages Claude is being shown, download them
- * into `<cwd>/.threa-attachments/<invocationId>/`, and return what landed. A
- * per-attachment failure is logged and skipped rather than aborting the turn.
+ * into `<cwd>/.threa-attachments/<invocationId>/<attachmentId>/`, and return
+ * what landed. A per-attachment failure is logged and skipped rather than
+ * aborting the turn.
  */
 export async function downloadInboundAttachments(
   client: Pick<ThreaClient, "listStreamMessages" | "getAttachmentDownloadUrl">,
@@ -139,13 +141,13 @@ export async function downloadInboundAttachments(
   const selected = selectInboundAttachments(messages, params.sourceMessageId, params.contextMessageIds)
   if (selected.length === 0) return []
   const dir = join(params.cwd, ATTACHMENT_DIR, params.invocationId)
-  mkdirSync(dir, { recursive: true })
   const downloaded: DownloadedAttachment[] = []
   for (const item of selected) {
     try {
       const url = await client.getAttachmentDownloadUrl(item.attachment.id)
       const bytes = await fetchAttachmentBytes(url)
-      const localPath = join(dir, safeFilename(item.attachment.filename))
+      const localPath = attachmentLocalPath(dir, item.attachment.id, item.attachment.filename)
+      mkdirSync(dirname(localPath), { recursive: true })
       writeFileSync(localPath, bytes)
       downloaded.push({ ...item, localPath })
     } catch (error) {
@@ -297,7 +299,7 @@ export function selectSealedInboundRefs(
 
 /**
  * Download + decrypt a sealed turn's inbound attachments into
- * `<cwd>/.threa-attachments/<invocationId>/`. The S3 object is opaque
+ * `<cwd>/.threa-attachments/<invocationId>/<attachmentId>/`. The S3 object is opaque
  * ciphertext; the ref's key/iv (opened from the sealed message payload) decrypt
  * it locally, and the file lands under its REAL name — decrypted bytes never
  * transit the server. A per-attachment failure is logged and skipped.
@@ -313,14 +315,14 @@ export async function downloadSealedInboundAttachments(
 ): Promise<DownloadedAttachment[]> {
   if (params.refs.length === 0) return []
   const dir = join(params.cwd, ATTACHMENT_DIR, params.invocationId)
-  mkdirSync(dir, { recursive: true })
   const downloaded: DownloadedAttachment[] = []
   for (const { ref, isSource } of params.refs) {
     try {
       const url = await client.getAttachmentDownloadUrl(ref.attachmentId)
       const ciphertext = await fetchAttachmentBytes(url)
       const plaintext = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
-      const localPath = join(dir, safeFilename(ref.filename))
+      const localPath = attachmentLocalPath(dir, ref.attachmentId, ref.filename)
+      mkdirSync(dirname(localPath), { recursive: true })
       writeFileSync(localPath, plaintext)
       downloaded.push({
         attachment: { id: ref.attachmentId, filename: ref.filename, mimeType: ref.mimeType, sizeBytes: ref.sizeBytes },
