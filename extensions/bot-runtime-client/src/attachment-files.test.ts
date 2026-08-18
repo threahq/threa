@@ -9,6 +9,23 @@ describe("safeAttachmentFilename", () => {
   test("falls back when the name reduces to empty", () => {
     expect(safeAttachmentFilename("")).toBe("attachment")
   })
+
+  test("truncates an over-long name to 180 bytes but keeps its extension", () => {
+    const name = safeAttachmentFilename(`${"a".repeat(400)}.png`)
+    expect(name.endsWith(".png")).toBe(true)
+    expect(new TextEncoder().encode(name).length).toBe(180)
+  })
+
+  test("counts bytes, not code units, so a multibyte name fits a path component", () => {
+    const name = safeAttachmentFilename(`${"\u6f22".repeat(120)}.jpg`)
+    expect(new TextEncoder().encode(name).length).toBeLessThanOrEqual(180)
+    expect(name.endsWith("\u6f22.jpg")).toBe(true)
+  })
+
+  test("truncates whole when the suffix is too long to be an extension", () => {
+    const name = safeAttachmentFilename(`report.${"z".repeat(300)}`)
+    expect(new TextEncoder().encode(name).length).toBe(180)
+  })
 })
 
 describe("attachmentLocalPath", () => {
