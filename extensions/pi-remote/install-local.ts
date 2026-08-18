@@ -35,6 +35,7 @@ const VENDOR_FILES = [
   "tmux-window.ts",
   "archive-grace.ts",
   "harness-links.ts",
+  "attachment-files.ts",
 ]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.

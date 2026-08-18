@@ -40,6 +40,7 @@ const VENDORED = [
       "tmux-window.ts",
       "archive-grace.ts",
       "harness-links.ts",
+      "attachment-files.ts",
     ],
     dir: "bot-runtime-client",
   },
