@@ -14,6 +14,7 @@ import {
 import { homedir, hostname, platform, tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import {
+  attachmentLocalPath,
   BikKeystore,
   BotRuntimeTransport,
   THREA_CALLBACK_TOKEN_HEADER,
@@ -2317,10 +2318,6 @@ function formatSteerAttachmentContext(
     : ""
 }
 
-function safeFilename(filename: string): string {
-  return filename.replace(/[\\/:*?"<>|]/g, "_").slice(0, 180) || "attachment"
-}
-
 async function downloadAttachment(
   attachment: AttachmentSummary,
   invocation: ClaimedInvocation,
@@ -2335,9 +2332,8 @@ async function downloadAttachment(
   const response = await fetch(body.data.url, { signal: AbortSignal.timeout(ATTACHMENT_DOWNLOAD_TIMEOUT_MS) })
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
   const bytes = new Uint8Array(await response.arrayBuffer())
-  const dir = join(cwd, ".threa-attachments", invocation.id)
-  mkdirSync(dir, { recursive: true })
-  const path = join(dir, safeFilename(attachment.filename))
+  const path = attachmentLocalPath(join(cwd, ".threa-attachments", invocation.id), attachment.id, attachment.filename)
+  mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, bytes)
   return path
 }
@@ -2361,9 +2357,8 @@ async function downloadSealedAttachment(
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
   const ciphertext = new Uint8Array(await response.arrayBuffer())
   const bytes = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
-  const dir = join(cwd, ".threa-attachments", invocation.id)
-  mkdirSync(dir, { recursive: true })
-  const path = join(dir, safeFilename(ref.filename))
+  const path = attachmentLocalPath(join(cwd, ".threa-attachments", invocation.id), ref.attachmentId, ref.filename)
+  mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, bytes)
   return path
 }

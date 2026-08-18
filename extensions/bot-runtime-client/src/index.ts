@@ -25,6 +25,7 @@ export {
   recordHarnessLink,
   type HarnessLink,
 } from "./harness-links"
+export { attachmentLocalPath, safeAttachmentFilename } from "./attachment-files"
 export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
 export {
   harnessReconnectAvailable,

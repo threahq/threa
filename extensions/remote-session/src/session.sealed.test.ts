@@ -301,7 +301,7 @@ describe("sealed claim hydration + delivery", () => {
     }
 
     expect(delivered).toHaveLength(1)
-    const localPath = join(cwd, ".threa-attachments", "binv_sealed", "spec.md")
+    const localPath = join(cwd, ".threa-attachments", "binv_sealed", "att_in_1", "spec.md")
     expect(delivered[0]).toContain("spec.md (text/markdown, 15 bytes)")
     expect(delivered[0]).toContain("[attached to the message you just received]")
     expect(new TextDecoder().decode(readFileSync(localPath))).toBe("the secret spec")

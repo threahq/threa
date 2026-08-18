@@ -144,7 +144,7 @@ Only do that in a directory you trust. Also consider pre-allowing the `mcp__thre
 
 Attachments cross in both directions, mirroring `pi-remote`.
 
-**Inbound.** When a message you send carries attachments, the channel downloads them into `.threa-attachments/<invocation_id>/` under the working directory and lists each local path in the channel event, so Claude can read the files straight from disk. Discovery is best-effort: if the bot key lacks `attachments:read` (or the fetch fails), the prompt still reaches Claude without the files.
+**Inbound.** When a message you send carries attachments, the channel downloads them into `.threa-attachments/<invocation_id>/<attachment_id>/` under the working directory and lists each local path in the channel event, so Claude can read the files straight from disk. Discovery is best-effort: if the bot key lacks `attachments:read` (or the fetch fails), the prompt still reaches Claude without the files.
 
 **Outbound.** To send a local file back, Claude adds a line to its reply:
 
