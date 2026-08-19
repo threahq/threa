@@ -50,22 +50,33 @@ Principles, each a product decision from the session:
 New stream type `aside` in `STREAM_TYPES` (`packages/types/src/constants.ts`). Self-rooted
 with contextual parent pointers:
 
-- `root_stream_id` = its own id. Access resolution (INV-62,
-  `apps/backend/src/features/streams/access.ts`) is untouched: the aside grants access through
-  its own creator-only membership, exactly like a scratchpad. This is what lets a private
-  aside sit "inside" a public channel.
+- Root stream, like a scratchpad: `root_stream_id` stays `NULL` (the repo convention for
+  roots; access code resolves `rootStreamId ?? id`). Creation is a single insert with a
+  preallocated prefixed id (INV-2), `TEXT` type value (INV-3), no foreign keys (INV-1),
+  membership row in the same transaction, exactly the existing scratchpad create path.
+  Access resolution (INV-62, `apps/backend/src/features/streams/access.ts`) is untouched:
+  the aside grants access through its own creator-only membership. This is what lets a
+  private aside sit "inside" a public channel.
 - `parent_stream_id` + `parent_anchor_id` are set but contextual, not access-bearing. Threads
   resolve access through the parent chain; asides never do. Consequences:
   - Moving an aside is a metadata repoint. Nothing about access or content migrates.
   - Losing access to the parent (kicked from the channel) does not kill the aside. The user
     keeps their private notes; context-bag re-resolution fails per ref and the agent loses
-    read access to the parent. This mimics personal notes and is correct.
+    read access to the parent. This mimics personal notes and is correct. Resume in this
+    state opens the aside standalone (chat + drafts, no host pane): the dock has no stream
+    to push and fullscreen's host pane shows an unavailable state instead of loading the
+    parent. The anchor row is unreachable anyway (it lives in the stream the user can no
+    longer open), so the aside is found through its own sidebar/list presence.
 - Archival follows the parent. `write-authority.ts` today blocks writes when the target or
-  its root is archived; threads inherit through root. Asides are self-rooted, so the write
-  authority check gains one explicit parent lookup: an aside is read-only while its parent
-  is archived.
+  its root is archived; threads inherit through root. Asides are roots themselves, so the
+  write authority check gains one explicit parent lookup, evaluating the parent's effective
+  archive state through the same root-aware logic (parent archived, or the parent's root
+  archived when the parent is a thread): an aside is read-only while its parent is
+  effectively archived. Tests cover both the direct-parent and archived-root cases.
 - Scratchpad semantics inherited: companion on, GAM memory off (no memo extraction from
-  asides), same tool policy, context bag support.
+  asides), same tool policy, context bag support. The create-contract refinements that are
+  scratchpad-only today (`contextBag`, `allowedToolCategories` in
+  `packages/types/src/api.ts`) widen to scratchpad-or-aside, still Zod-validated (INV-55).
 - Thread semantics borrowed: anchored to a parent message, panel-adjacent rendering, listed
   under the parent. Unlike threads, not idempotent per anchor: multiple asides may share an
   anchor, and an aside may exist without one (anchored to the stream itself).
@@ -83,7 +94,11 @@ This row is the discovery, resume, and state surface.
 - **Event mechanics:** an author-scoped command-style event, following the existing pattern:
   a real `stream_events` row filtered to the actor in repo SQL plus `isOwnCommandEvent` on
   the client. It takes no `broadcastSequence` slot, so timeline contiguity (INV-61) is
-  untouched; to every other viewer the row does not exist.
+  untouched; to every other viewer the row does not exist. Payload: aside id, title, state.
+  Persistence, delivery, and reconnect are the command-event pattern as-is: event + outbox
+  in the aside-creation transaction (INV-4), author-only socket delivery, bootstrap fetch
+  pairing (INV-53). Multiple asides order by their own rows' timeline positions; an
+  unanchored aside has no timeline row and is reachable only through discovery surfaces.
 - **Rendering (decided):** a hairline gold rule across the timeline with plain text riding
   on it, no pill, no tab, no card. Text carries title and state, e.g.
   `churn number sanity-check · draft unsent · 9m`. Hover reveals the resume affordance.
@@ -109,6 +124,10 @@ Two surfaces plus a minimized state, calls-inspired but stream-bound:
   received the aside, and the next stream is completely clean. Re-opening the host stream
   restores nothing automatically; the anchor row shows state.
 - **Resume:** clicking the anchor row reopens the aside in its last surface.
+- **State ownership:** surface state (which aside is open, dock/fullscreen/minimized) lives
+  in a store like the call dock, the documented INV-59 exemption, not in `?panel=`; it is
+  scoped to the host stream so navigation drops it by construction. UI builds on the
+  existing Shadcn primitives (INV-14).
 
 Mobile is deliberately unexplored; it gets its own design pass after desktop ships or is
 validated. The dock likely becomes a bottom drawer, but nothing is decided.
@@ -119,6 +138,10 @@ validated. The dock likely becomes a bottom drawer, but nothing is decided.
   `apps/backend/src/features/commands/catalog.ts`).
 - Command palette action.
 - Message action ("Open an aside here") setting `parent_anchor_id` to that message.
+
+All three go through the existing Zod-validated stream-creation contract (INV-55), reusing
+its `parentStreamId`/`parentAnchorId` fields; the server validates that the anchor belongs
+to the parent stream and that the caller can read the parent at creation time.
 
 ## What the agent sees
 
@@ -132,6 +155,8 @@ validated. The dock likely becomes a bottom drawer, but nothing is decided.
   against the creator's access.
 - The agent pulls further context itself with its normal tools, on the creator's access,
   naming access boundaries per principle 3.
+- The agent is the standard companion runtime: `createAI` with telemetry (INV-28, INV-19),
+  minutes-bounded sessions (INV-65), tool access authorized as the creator.
 - Later (v1.x): explicit pull-in gestures, e.g. drag a message onto the dock.
 
 ## Drafts
@@ -141,7 +166,9 @@ validated. The dock likely becomes a bottom drawer, but nothing is decided.
   A draft dock in the aside lists them.
 - **Send to composer** is the only exit: the draft lands in the host stream's real composer,
   agent blocks intact, and the user sends from there. The forced final read in real context
-  is a deliberate anti-slop mechanism. There is no direct send from the aside.
+  is a deliberate anti-slop mechanism. There is no direct send from the aside. The hand-off
+  passes `contentJson` end to end (INV-58), never a markdown round-trip, so the agent block
+  survives losslessly; sending then satisfies the normal message-create contract.
 - Draft rows are shaped to grow into stream-owned editable documents (the v2 document-editor
   ambition) without re-architecture; retargeting a draft to a different stream is a
   follow-up.
@@ -157,9 +184,12 @@ A new ProseMirror node marking agent-generated content inside a user draft/messa
   `packages/types/src/prosemirror.ts`, render component.
 - Attribution survives edits: the block boundary and its agent attribution persist through
   user modifications inside it (decided; no detach-on-edit).
-- Recipients see the attribution on the sent message. Structured provenance can ride
-  `messages.metadata` under the reserved `threa.` namespace
-  (`apps/backend/src/features/messaging/metadata-schema.ts`).
+- Recipients see the attribution on the sent message; the node in `contentJson` is the
+  canonical carrier. If a queryable marker is also wanted, it rides `messages.metadata`
+  under the reserved `threa.` namespace
+  (`apps/backend/src/features/messaging/metadata-schema.ts`): metadata is a flat
+  string-to-string map whose `threa.*` keys are rejected from callers, so the marker is
+  derived server-side at message creation from the content, as a flat string value.
 - Insertion is the only path agent content takes into a draft: an "Insert into draft" action
   on agent chat messages in the aside.
 
@@ -188,6 +218,13 @@ Kill, do not deprecate (INV-38, INV-49):
 **v1:** stream type + anchor event + dock/fullscreen surfaces + viewport-snapshot context
 intent + chat with Ariadne + one-or-more drafts with send-to-composer + agent-attributed
 block + Discuss with Ariadne removal.
+
+v1 test gates, beyond the standing testing invariants: real-schema integration tests
+(INV-68) for creator-only access including the non-member-thread case (INV-62), archive
+inheritance (direct parent and archived root), and anchor-event author scoping (another
+member of the host stream never receives the row in fetch or catch-up); frontend
+integration tests (INV-39) for the stream-bound fold (navigate away leaves no aside chrome)
+and silent re-entry (no toast, no badge; INV-63).
 
 **v1.x:** opt-in reference sweep (ask for a pass that proposes sources backing the draft's
 claims; no per-claim superscripts yet), move an aside to a new anchor, drag-in context,
