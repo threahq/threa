@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useCallLaunch } from "./call-launch-context"
 import { CALL_SURFACE_PROTECTED_ATTR } from "./call-surface-geometry"
-import type { MediaPermissionErrorKind } from "./media-permissions"
+import type { MediaPermissionErrorKind } from "@/calls/media-permissions"
 
 // Distinct copy per permission-taxonomy class (plan §Permission UX). Each states
 // what happened and the concrete next step, so the retry affordance is honest.

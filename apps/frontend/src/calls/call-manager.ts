@@ -25,6 +25,7 @@ import {
   type DisplacedCallReason,
 } from "@/stores/call-store"
 import { recordCallLifecycleEvent, type CallLifecycleKind } from "./lifecycle-log"
+import { classifyMediaError } from "./media-permissions"
 import { createCallMediaSession, type CallMediaSession } from "./media-session"
 import {
   CloudflareSfuTransport,
@@ -1057,7 +1058,11 @@ export class CallManager implements CallController {
       stream = await this.deps.acquireUserMedia(constraints)
     } catch (acquireErr) {
       // Old capture untouched — outbound audio survives; just report the failure.
-      setCallCaptureError({ code: "capture_failed", message: describeError(acquireErr) })
+      setCallCaptureError({
+        code: "capture_failed",
+        kind: classifyMediaError(acquireErr).kind,
+        message: describeError(acquireErr),
+      })
       throw new CallCaptureError("capture_failed", acquireErr)
     }
     if (this.sessionForGen(session.gen) !== session) {
@@ -1110,7 +1115,11 @@ export class CallManager implements CallController {
         session.cameraTrack = null
         this.clearVideoStream(session, session.endpointId)
         await session.transport.unpublish("camera").catch(() => {})
-        setCallCaptureError({ code: "capture_failed", message: describeError(publishErr) })
+        setCallCaptureError({
+          code: "capture_failed",
+          kind: classifyMediaError(publishErr).kind,
+          message: describeError(publishErr),
+        })
         throw new CallCaptureError("capture_failed", publishErr)
       }
     } else {
@@ -1142,11 +1151,19 @@ export class CallManager implements CallController {
           restored.getTracks().forEach((t) => t.stop())
         }
       } catch (rollbackErr) {
-        setCallCaptureError({ code: "capture_rollback_failed", message: describeError(rollbackErr) })
+        setCallCaptureError({
+          code: "capture_rollback_failed",
+          kind: classifyMediaError(rollbackErr).kind,
+          message: describeError(rollbackErr),
+        })
         throw new CallCaptureError("capture_rollback_failed", rollbackErr)
       }
     }
-    setCallCaptureError({ code: "capture_failed", message: describeError(acquireErr) })
+    setCallCaptureError({
+      code: "capture_failed",
+      kind: classifyMediaError(acquireErr).kind,
+      message: describeError(acquireErr),
+    })
     throw new CallCaptureError("capture_failed", acquireErr)
   }
 

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react"
 import type { CallMode, PublishedTrackKind } from "@/calls/config"
+import type { MediaPermissionErrorKind } from "@/calls/media-permissions"
 import type { DesktopSurface } from "./call-prefs-store"
 
 // Module store (useSyncExternalStore) for the single active call. The CallManager
@@ -80,6 +81,8 @@ export interface CallDiagnostics {
  */
 export interface CallCaptureErrorInfo {
   code: "capture_failed" | "capture_rollback_failed"
+  /** The permission-taxonomy class of the underlying failure — drives the banner copy. */
+  kind: MediaPermissionErrorKind
   message: string
 }
 

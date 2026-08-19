@@ -6,7 +6,7 @@ import { CallCaptureError, CallStartCancelledError } from "@/calls/call-manager"
 import { getCallState } from "@/stores/call-store"
 import { useCallManager } from "./call-manager-context"
 import { useCallPhase } from "./call-store-hooks"
-import { classifyMediaError, type MediaPermissionError } from "./media-permissions"
+import { classifyMediaError, type MediaPermissionError } from "@/calls/media-permissions"
 
 export interface CallLaunchRequest {
   workspaceId: string
