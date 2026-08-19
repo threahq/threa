@@ -443,6 +443,24 @@ describe("CallDock — pre-join permission taxonomy", () => {
     })
   })
 
+  it("should ignore a second launch while the first is still awaiting the server", async () => {
+    // phase stays "idle" until the REST start resolves, so only the provider's
+    // synchronous in-flight guard separates this from startCall's "already
+    // active" throw — which would paint a false join_error over a live join
+    // (StrictMode double effect on the ?call= path, or a double-tap).
+    const { toast } = await import("sonner")
+    const error = vi.spyOn(toast, "error").mockReturnValue("t" as never)
+    const startCall = vi.fn(() => new Promise<void>(() => {}))
+    renderDock(makeManager({ startCall }))
+
+    await userEvent.click(screen.getByText("launch"))
+    await userEvent.click(screen.getByText("launch"))
+
+    expect(startCall).toHaveBeenCalledTimes(1)
+    expect(error).not.toHaveBeenCalled()
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull()
+  })
+
   it("should toast 'This call has ended' with no retry surface when the bound call is gone", async () => {
     const { toast } = await import("sonner")
     const info = vi.spyOn(toast, "info").mockReturnValue("t" as never)
