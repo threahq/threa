@@ -101,6 +101,14 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
           setState({ status: "takeover_prompt", request })
           return
         }
+        // The bound call is gone (expectedCallId guard). A retry would join
+        // whatever call now lives in the stream — not what the user accepted, so
+        // no join_error retry surface; just say what happened.
+        if (ApiError.isApiError(err) && err.code === "CALL_ENDED") {
+          setState({ status: "idle" })
+          toast.info("This call has ended")
+          return
+        }
         const message = err instanceof Error ? err.message : String(err)
         setState({ status: "join_error", request, message })
         toast.error("Couldn't start the call")

@@ -443,6 +443,24 @@ describe("CallDock — pre-join permission taxonomy", () => {
     })
   })
 
+  it("should toast 'This call has ended' with no retry surface when the bound call is gone", async () => {
+    const { toast } = await import("sonner")
+    const info = vi.spyOn(toast, "info").mockReturnValue("t" as never)
+    const error = vi.spyOn(toast, "error").mockReturnValue("t" as never)
+    // The server's expectedCallId guard: the accepted call no longer exists.
+    const startCall = vi.fn(async () => {
+      throw new ApiError(409, "CALL_ENDED", "Call has ended")
+    })
+    renderDock(makeManager({ startCall }))
+
+    await userEvent.click(screen.getByText("launch"))
+
+    expect(info).toHaveBeenCalledWith("This call has ended")
+    // Not a join_error: retrying would join a different call than accepted.
+    expect(error).not.toHaveBeenCalled()
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull()
+  })
+
   it("never takes over on a first attempt", async () => {
     const manager = makeManager()
     renderDock(manager)

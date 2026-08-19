@@ -188,7 +188,46 @@ describe("IncomingCallOverlay", () => {
     expect(ringTone.startRing).toHaveBeenCalled()
   })
 
-  it("tells the user when a ?call deep-link has no matching live ring", () => {
+  it("should join through the server when a ?call deep-link finds no ring in-store", () => {
+    // Cold PWA open from a notification tap: the socket hasn't delivered the
+    // ring yet, so an empty store is not evidence the call ended — the server's
+    // expectedCallId guard decides.
+    const info = vi.spyOn(toast, "info").mockReturnValue("t" as never)
+
+    render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_dm?call=call_cold"]}>
+        <IncomingCallOverlay workspaceId="ws_1" />
+      </MemoryRouter>
+    )
+
+    expect(launch).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      streamId: "stream_dm",
+      mode: "audio_only",
+      expectedCallId: "call_cold",
+    })
+    expect(info).not.toHaveBeenCalled()
+  })
+
+  it("should accept the in-store ring on a ?call deep-link without a server round-trip", () => {
+    act(() => addIncomingCall(makeCall()))
+
+    render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/stream_dm?call=call_1"]}>
+        <IncomingCallOverlay workspaceId="ws_1" />
+      </MemoryRouter>
+    )
+
+    expect(launch).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      streamId: "stream_dm",
+      mode: "video",
+      expectedCallId: "call_1",
+    })
+    expect(getIncomingCalls()).toEqual([])
+  })
+
+  it("should fall back to a toast when a ?call deep-link lands outside a stream", () => {
     const info = vi.spyOn(toast, "info").mockReturnValue("t" as never)
 
     render(
@@ -197,7 +236,8 @@ describe("IncomingCallOverlay", () => {
       </MemoryRouter>
     )
 
-    expect(info).toHaveBeenCalledWith("This call has ended")
+    expect(launch).not.toHaveBeenCalled()
+    expect(info).toHaveBeenCalledWith("Couldn't open this call")
   })
 
   it("ignores stale mobile fullscreen state when clearing a desktop sidebar", () => {

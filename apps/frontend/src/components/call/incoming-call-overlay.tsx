@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useMatch, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Phone, PhoneOff, BellOff, Video } from "lucide-react"
 import { PrefNotificationLevels, resolveNotificationPause } from "@threa/types"
@@ -213,19 +213,29 @@ export function IncomingCallOverlay({ workspaceId }: { workspaceId: string }) {
     })
   }, [])
 
-  // Accept-intent from a ring notification click (`?call=<callId>`). Accept when
-  // the ring is still live in-store; otherwise (cold open, push-only, or the call
-  // already ended) tell the user rather than silently stripping the param.
+  // Accept-intent from a ring notification click (`?call=<callId>`). A cold PWA
+  // open runs this before the socket delivers the ring (rings are socket-only,
+  // no bootstrap fetch), so an empty store is NOT evidence the call ended —
+  // join through the server instead: the start guard 409s CALL_ENDED (handled
+  // by CallLaunchProvider as "This call has ended") rather than starting a new
+  // call, and a live one is simply joined. The in-store ring still short-circuits
+  // to accept() so the local overlay settles immediately.
   const callParam = searchParams.get("call")
+  const streamMatch = useMatch("/w/:workspaceId/s/:streamId")
+  const streamIdFromUrl = streamMatch?.params.streamId ?? null
   useEffect(() => {
     if (!callParam) return
     const ring = calls.find((c) => c.callId === callParam)
     if (ring) accept(ring)
-    else toast.info("This call has ended")
+    else if (streamIdFromUrl) {
+      // The notification URL always targets the call's host stream. Mode is
+      // server-owned on join; audio_only just means no camera auto-on.
+      launch({ workspaceId, streamId: streamIdFromUrl, mode: "audio_only", expectedCallId: callParam })
+    } else toast.info("Couldn't open this call")
     const next = new URLSearchParams(searchParams)
     next.delete("call")
     setSearchParams(next, { replace: true })
-  }, [callParam, calls, accept, searchParams, setSearchParams])
+  }, [callParam, calls, accept, launch, workspaceId, streamIdFromUrl, searchParams, setSearchParams])
 
   if (calls.length === 0) return null
 
