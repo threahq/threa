@@ -13,7 +13,9 @@ export function captureErrorText(error: Pick<CallCaptureErrorInfo, "code" | "kin
   }
   switch (error.kind) {
     case "denied":
-      return "Camera or microphone access is blocked. Allow it in your browser's site settings, then try again."
+      // "browser or system settings", not "site settings": installed PWAs run
+      // standalone with no browser chrome, and iOS keeps the toggle in Settings.
+      return "Camera or microphone access is blocked. Allow it for Threa in your browser or system settings, then try again."
     case "os_denied":
       return "Your operating system is blocking camera or microphone access for this browser."
     case "blocked_by_policy":

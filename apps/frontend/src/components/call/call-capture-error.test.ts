@@ -3,7 +3,7 @@ import { captureErrorText } from "./call-capture-error"
 
 describe("captureErrorText", () => {
   it("should name where the block lives for a no-prompt denial", () => {
-    expect(captureErrorText({ code: "capture_failed", kind: "denied" })).toMatch(/site settings/)
+    expect(captureErrorText({ code: "capture_failed", kind: "denied" })).toMatch(/browser or system settings/)
     expect(captureErrorText({ code: "capture_failed", kind: "os_denied" })).toMatch(/operating system/)
     expect(captureErrorText({ code: "capture_failed", kind: "blocked_by_policy" })).toMatch(/policy/)
   })
