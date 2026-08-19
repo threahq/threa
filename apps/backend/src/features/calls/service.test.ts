@@ -1699,6 +1699,126 @@ describe("CallService.publishTracks", () => {
     expect(result.snapshot.rosterVersion).toBe(4)
   })
 
+  it("should keep the mic entry when a camera publish declares only the camera", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(
+      fakeEndpoint({
+        id: "callep_1",
+        cfSessionId: "sess_1",
+        mediaIncarnation: "inc_1",
+        publishedTracks: [{ kind: "mic", trackName: "mic0" }],
+      })
+    )
+    const setTracks = spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(5)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+
+    await makeServiceWithCf(fakeCloudflare()).publishTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ kind: "camera", mid: "1", trackName: "cam1" }],
+    })
+
+    expect(setTracks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        publishedTracks: [
+          { kind: "mic", trackName: "mic0" },
+          { kind: "camera", trackName: "cam1" },
+        ],
+      })
+    )
+  })
+
+  it("should replace the entry when the same kind republishes", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(
+      fakeEndpoint({
+        id: "callep_1",
+        cfSessionId: "sess_1",
+        mediaIncarnation: "inc_1",
+        publishedTracks: [
+          { kind: "mic", trackName: "mic-old" },
+          { kind: "camera", trackName: "cam1" },
+        ],
+      })
+    )
+    const setTracks = spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(6)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+
+    await makeServiceWithCf(fakeCloudflare()).publishTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ kind: "mic", mid: "0", trackName: "mic-new" }],
+    })
+
+    expect(setTracks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        publishedTracks: [
+          { kind: "camera", trackName: "cam1" },
+          { kind: "mic", trackName: "mic-new" },
+        ],
+      })
+    )
+  })
+
+  it("should not carry another incarnation's entries into the write", async () => {
+    stubWithClient()
+    stubTransaction()
+    spyOn(CallRepository, "findById").mockResolvedValue(fakeCall())
+    spyOn(CallParticipantRepository, "findByUser").mockResolvedValue(fakeParticipant({ id: "callp_1" }))
+    // The endpoint rebinds between the fence read and the in-tx re-read: the
+    // fence sees inc_1, the transaction sees a row re-leased under inc_0 whose
+    // registry must not leak into this writer's merge.
+    spyOn(CallEndpointRepository, "findById")
+      .mockResolvedValueOnce(
+        fakeEndpoint({
+          id: "callep_1",
+          cfSessionId: "sess_1",
+          mediaIncarnation: "inc_1",
+          publishedTracks: [{ kind: "mic", trackName: "mic0" }],
+        })
+      )
+      .mockResolvedValueOnce(
+        fakeEndpoint({
+          id: "callep_1",
+          cfSessionId: "sess_1",
+          mediaIncarnation: "inc_0",
+          publishedTracks: [{ kind: "mic", trackName: "stale-mic" }],
+        })
+      )
+    const setTracks = spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(7)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+
+    await makeServiceWithCf(fakeCloudflare()).publishTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      sdp: { type: "offer", sdp: "o" },
+      tracks: [{ kind: "camera", mid: "1", trackName: "cam1" }],
+    })
+
+    expect(setTracks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ publishedTracks: [{ kind: "camera", trackName: "cam1" }] })
+    )
+  })
+
   it("throws 502 and writes no registry when CF reports a per-track error (S7)", async () => {
     stubWithClient()
     stubTransaction()
@@ -1787,6 +1907,44 @@ describe("CallService.publishTracks", () => {
 
     expect(cf.addLocalTracks).toHaveBeenCalledTimes(1)
     expect(result.snapshot.rosterVersion).toBe(5)
+  })
+})
+
+describe("CallService.closeTracks", () => {
+  afterEach(() => mock.restore())
+
+  it("should prune only the unpublished kinds from the registry", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(
+      fakeEndpoint({
+        id: "callep_1",
+        cfSessionId: "sess_1",
+        mediaIncarnation: "inc_1",
+        publishedTracks: [
+          { kind: "mic", trackName: "mic0" },
+          { kind: "camera", trackName: "cam1" },
+        ],
+      })
+    )
+    const setTracks = spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(8)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+
+    await makeServiceWithCf(fakeCloudflare()).closeTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      mids: ["1"],
+      unpublishKinds: ["camera"],
+    })
+
+    expect(setTracks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ publishedTracks: [{ kind: "mic", trackName: "mic0" }] })
+    )
   })
 })
 
