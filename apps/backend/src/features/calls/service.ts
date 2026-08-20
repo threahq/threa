@@ -3,6 +3,7 @@ import {
   StreamTypes,
   ActivityTypes,
   AuthorTypes,
+  summarizeSdpMSections,
   type CallStartedEventPayload,
   type CallEndedEventPayload,
   type Visibility,
@@ -985,6 +986,17 @@ export class CallService {
       })
     }
 
+    logger.info(
+      {
+        callId: params.callId,
+        endpointId: params.endpointId,
+        kinds: params.tracks.map((t) => t.kind),
+        offer: summarizeSdpMSections(params.sdp.sdp),
+        answer: summarizeSdpMSections(cfResult.sessionDescription?.sdp),
+      },
+      "CF publish negotiated"
+    )
+
     const declared: PublishedTrack[] = params.tracks.map((t) => ({ kind: t.kind, trackName: t.trackName }))
     const declaredKinds = new Set(declared.map((t) => t.kind))
     const snapshot = await this.mutateRegistry(params, (current) => [
@@ -1043,6 +1055,15 @@ export class CallService {
     const cfSessionId = this.requireCfSession(endpoint)
     await this.assertPullableRefs(params.workspaceId, params.callId, endpoint, params.tracks)
     const cfResult = await this.cfCall(() => cf.pullRemoteTracks(cfSessionId, { tracks: params.tracks }), "pull_tracks")
+    logger.info(
+      {
+        callId: params.callId,
+        endpointId: params.endpointId,
+        trackNames: params.tracks.map((t) => t.trackName),
+        offer: summarizeSdpMSections(cfResult.sessionDescription?.sdp),
+      },
+      "CF pull negotiated"
+    )
     return { cf: cfResult }
   }
 
@@ -1094,6 +1115,14 @@ export class CallService {
    * Close published tracks: CF `tracks/close` (outside any tx). When the caller
    * names the kinds it is unpublishing, prune them from the registry, bump the
    * roster, and return the fresh snapshot so peers stop pulling dead tracks.
+   *
+   * The registry prune comes FIRST and survives a CF failure: the registry is
+   * what peers pull from, and an entry for a track whose media is gone makes
+   * every peer's pull hang at CF until timeout. CF-side close is best-effort by
+   * nature (CF reaps inactive tracks; teardown already treats it that way), so a
+   * provider error on an unpublish is logged + counted, never allowed to keep
+   * the phantom alive. Mid-less calls (cleanup after a client-side publish
+   * failure — no acknowledged m-line to close) skip CF entirely.
    */
   async closeTracks(params: {
     workspaceId: string
@@ -1104,20 +1133,32 @@ export class CallService {
     mids: string[]
     unpublishKinds?: Array<PublishedTrack["kind"]>
     sdp?: SessionDescription
-  }): Promise<{ cf: CloseTracksResult; snapshot?: CallRosterSnapshot }> {
+  }): Promise<{ cf: CloseTracksResult | null; snapshot?: CallRosterSnapshot }> {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
-    const cfResult = await this.cfCall(
-      () => cf.closeTracks(cfSessionId, { mids: params.mids, force: false, sdp: params.sdp }),
-      "close_tracks"
-    )
 
-    if (!params.unpublishKinds || params.unpublishKinds.length === 0) {
-      return { cf: cfResult }
+    let snapshot: CallRosterSnapshot | undefined
+    if (params.unpublishKinds && params.unpublishKinds.length > 0) {
+      const remove = new Set(params.unpublishKinds)
+      snapshot = await this.mutateRegistry(params, (current) => current.filter((t) => !remove.has(t.kind)))
     }
-    const remove = new Set(params.unpublishKinds)
-    const snapshot = await this.mutateRegistry(params, (current) => current.filter((t) => !remove.has(t.kind)))
+
+    if (params.mids.length === 0) return { cf: null, snapshot }
+    let cfResult: CloseTracksResult | null = null
+    try {
+      cfResult = await this.cfCall(
+        () => cf.closeTracks(cfSessionId, { mids: params.mids, force: false, sdp: params.sdp }),
+        "close_tracks"
+      )
+    } catch (err) {
+      const unpublishing = (params.unpublishKinds?.length ?? 0) > 0
+      if (!unpublishing || !(err instanceof HttpError) || err.code !== "CALL_MEDIA_PROVIDER_ERROR") throw err
+      logger.warn(
+        { err, callId: params.callId, endpointId: params.endpointId, mids: params.mids },
+        "CF close failed on unpublish; registry already pruned"
+      )
+    }
     return { cf: cfResult, snapshot }
   }
 

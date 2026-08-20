@@ -61,12 +61,18 @@ const pullSchema = z.object({
     .max(64),
 })
 
-const closeTracksSchema = z.object({
-  mediaIncarnation: mediaIncarnationSchema,
-  mids: z.array(z.string().min(1).max(64)).min(1).max(16),
-  unpublishKinds: z.array(z.enum(PUBLISHED_TRACK_KINDS)).max(4).optional(),
-  sdp: sessionDescriptionSchema.optional(),
-})
+const closeTracksSchema = z
+  .object({
+    mediaIncarnation: mediaIncarnationSchema,
+    // Empty mids = registry-only cleanup of a publish that failed client-side
+    // before CF acknowledged an m-line; it must still name unpublishKinds.
+    mids: z.array(z.string().min(1).max(64)).max(16),
+    unpublishKinds: z.array(z.enum(PUBLISHED_TRACK_KINDS)).max(4).optional(),
+    sdp: sessionDescriptionSchema.optional(),
+  })
+  .refine((body) => body.mids.length > 0 || (body.unpublishKinds?.length ?? 0) > 0, {
+    message: "mids or unpublishKinds required",
+  })
 
 interface Dependencies {
   pool: Pool
@@ -306,7 +312,7 @@ export function createCallHandlers({ pool, io, callService, featureFlagService, 
         sdp: body.sdp,
       })
       if (result.snapshot) broadcastRoster(io, callId, result.snapshot)
-      res.json(result.cf)
+      res.json(result.cf ?? { tracks: [] })
     },
   }
 }

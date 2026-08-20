@@ -7,7 +7,12 @@ import {
   type CallSocket,
 } from "./call-manager"
 import type { MediaTransport } from "./media-transport"
-import { AUDIO_CAPTURE_CONSTRAINTS, VIDEO_CAPTURE_CONSTRAINTS } from "./config"
+import {
+  AUDIO_CAPTURE_CONSTRAINTS,
+  VIDEO_CAPTURE_CONSTRAINTS,
+  PULL_RETRY_DELAY_MS,
+  PULL_RETRY_MAX_ATTEMPTS,
+} from "./config"
 import { ApiError } from "@/api/client"
 import { getCallState, clearCallState, resetCallStoreCache, type CallRosterParticipant } from "@/stores/call-store"
 import { isDictationExternalHeld, setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
@@ -352,6 +357,135 @@ describe("CallManager", () => {
     // Peer leaves the roster → stopPull.
     socket.fire("call:roster", { callId: "call_1", rosterVersion: 3, roster: [] })
     expect(transport.stopPull).toHaveBeenCalledWith({ sessionId: "cf-peer", trackName: "peer:mic" })
+  })
+
+  it("should retry a failed pull against the live roster instead of losing the track for the call", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const transport = makeTransport()
+    ;(transport.pull as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("pull timed out"))
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 2,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(transport.pull).toHaveBeenCalledTimes(1)
+
+    // No further roster event arrives — the track didn't change. The retry
+    // timer re-diffs against the store's roster and pulls again.
+    await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
+    expect(transport.pull).toHaveBeenCalledTimes(2)
+    expect(transport.pull).toHaveBeenLastCalledWith({ sessionId: "cf-peer", trackName: "peer:camera" })
+  })
+
+  it("should stop retrying a pull at the attempt cap", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const transport = makeTransport()
+    ;(transport.pull as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("pull timed out"))
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 2,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    for (let i = 0; i < PULL_RETRY_MAX_ATTEMPTS + 2; i++) {
+      await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
+    }
+    expect(transport.pull).toHaveBeenCalledTimes(PULL_RETRY_MAX_ATTEMPTS)
+
+    // The cap also binds roster-driven re-diffs: any peer's mute toggle bumps
+    // the roster, and a capped dead track must not re-hold the negotiation
+    // queue on every such broadcast.
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 3,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
+    expect(transport.pull).toHaveBeenCalledTimes(PULL_RETRY_MAX_ATTEMPTS)
+
+    // But a track that leaves the roster and comes back (peer republished the
+    // same trackName) gets fresh attempts.
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 4, roster: [] })
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 5,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(transport.pull).toHaveBeenCalledTimes(PULL_RETRY_MAX_ATTEMPTS + 1)
+  })
+
+  it("should ignore a stale pull rejection after the track was removed and re-added mid-flight", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    let rejectFirst!: (err: Error) => void
+    ;(transport.pull as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(() => new Promise((_, reject) => (rejectFirst = reject)))
+      .mockResolvedValue(undefined)
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    const peerRoster = (version: number) => ({
+      callId: "call_1",
+      rosterVersion: version,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    const peerCameraRef = { sessionId: "cf-peer", trackName: "peer:camera" }
+    socket.fire("call:roster", peerRoster(2))
+    // Track removed and re-added while the first pull is still in flight.
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 3, roster: [] })
+    socket.fire("call:roster", peerRoster(4))
+    expect((transport.pull as ReturnType<typeof vi.fn>).mock.calls).toEqual([[peerCameraRef], [peerCameraRef]])
+
+    // The STALE pull's rejection must not evict the replacement pull's entry —
+    // otherwise the next roster broadcast starts a duplicate pull.
+    rejectFirst(new Error("stale pull timed out"))
+    await vi.waitFor(() => expect(getCallState().rosterVersion).toBe(4))
+    socket.fire("call:roster", { ...peerRoster(5) })
+    expect((transport.pull as ReturnType<typeof vi.fn>).mock.calls).toEqual([[peerCameraRef], [peerCameraRef]])
   })
 
   it("skips peers with no cfSessionId (0.2 roster gap) rather than pulling an unaddressable ref", async () => {

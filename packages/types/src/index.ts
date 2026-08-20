@@ -377,6 +377,7 @@ export {
 
 // Board lens predicate (shared FE filter / BE seed, board-view-design.md § "Lenses")
 export { matchesBoardLens, degradeBoardLens } from "./board-lens"
+export { summarizeSdpMSections } from "./sdp"
 
 // Domain entities (wire format)
 export { getAvatarUrl, getBotAvatarUrl, getPersonaAvatarUrl } from "./domain"
