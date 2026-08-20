@@ -4,6 +4,7 @@ import {
   type ContentRange,
   type JSONContent,
   type SharedMessageRef,
+  type SharedSourceStreamKind,
   type StreamType,
   type Visibility,
   StreamTypes,
@@ -76,7 +77,7 @@ export type HydratedSharedMessage =
       type: "sharedMessage"
       state: "private"
       messageId: string
-      sourceStreamKind: StreamType
+      sourceStreamKind: SharedSourceStreamKind
       sourceVisibility: Visibility
     }
   | { type: "sharedMessage"; state: "truncated"; messageId: string; streamId: string }
@@ -144,8 +145,19 @@ export function collectSharedMessageRefs(node: JSONContent | undefined, into: Ma
 }
 
 /**
+ * An aside presents as a scratchpad to non-viewers: neither a direct aside
+ * source nor a thread whose root is an aside may leak the kind. Both branches
+ * of {@link resolveSourceForPrivatePlaceholder} route through this map, which
+ * is also why the placeholder vocabulary is `SharedSourceStreamKind`, not
+ * `StreamType`.
+ */
+function presentedSourceStreamKind(type: StreamType): SharedSourceStreamKind {
+  return type === StreamTypes.ASIDE ? StreamTypes.SCRATCHPAD : type
+}
+
+/**
  * Resolve the (kind, visibility) the `private` placeholder should report.
- * For thread sources we surface the parent's kind/visibility so the
+ * For thread sources we surface the root's kind/visibility so the
  * placeholder vocabulary stays in {channel, dm, scratchpad} —
  * "thread" by itself wouldn't tell the viewer what kind of stream sits
  * behind the wall.
@@ -153,17 +165,12 @@ export function collectSharedMessageRefs(node: JSONContent | undefined, into: Ma
 function resolveSourceForPrivatePlaceholder(
   source: Stream,
   byStreamId: ReadonlyMap<string, Stream>
-): { kind: StreamType; visibility: Visibility } {
+): { kind: SharedSourceStreamKind; visibility: Visibility } {
   if (source.type === StreamTypes.THREAD && source.rootStreamId) {
     const root = byStreamId.get(source.rootStreamId)
-    if (root) return { kind: root.type, visibility: root.visibility }
+    if (root) return { kind: presentedSourceStreamKind(root.type), visibility: root.visibility }
   }
-  // An aside presents as a scratchpad to non-viewers: even the placeholder must
-  // not disclose that an aside exists.
-  if (source.type === StreamTypes.ASIDE) {
-    return { kind: StreamTypes.SCRATCHPAD, visibility: source.visibility }
-  }
-  return { kind: source.type, visibility: source.visibility }
+  return { kind: presentedSourceStreamKind(source.type), visibility: source.visibility }
 }
 
 /** An accessible, live source resolved down to the body its reference pins. */

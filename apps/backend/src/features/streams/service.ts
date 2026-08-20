@@ -89,6 +89,14 @@ import { normalizeStreamDescription } from "./description"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
+/** Streams an aside may anchor to: no aside-on-aside, no system hosts. */
+const ASIDE_HOST_TYPES: readonly StreamType[] = [
+  StreamTypes.CHANNEL,
+  StreamTypes.DM,
+  StreamTypes.SCRATCHPAD,
+  StreamTypes.THREAD,
+]
+
 const createScratchpadParamsSchema = z.object({
   workspaceId: z.string(),
   displayName: z.string().optional(),
@@ -638,6 +646,13 @@ export class StreamService {
       const parent = await checkStreamAccess(client, params.parentStreamId, params.workspaceId, params.createdBy)
       if (!parent) throw new StreamNotFoundError()
 
+      if (!ASIDE_HOST_TYPES.includes(parent.type)) {
+        throw new HttpError("An aside cannot be opened on this stream type", {
+          status: 400,
+          code: "ASIDE_HOST_TYPE_INVALID",
+        })
+      }
+
       // An aside's viewport snapshot and context bag are plaintext; an E2E host
       // has no server-readable content to snapshot, so refuse loudly (INV-11)
       // rather than create a snapshot-less aside silently.
@@ -896,10 +911,10 @@ export class StreamService {
     const rootStream =
       rootStreamId === parentStream.id ? parentStream : await StreamRepository.findById(client, rootStreamId)
     const inheritedVisibility = rootStream?.visibility ?? Visibilities.PRIVATE
-    const inheritedCompanionMode =
-      rootStream?.type === StreamTypes.SCRATCHPAD ? rootStream.companionMode : CompanionModes.OFF
-    const inheritedCompanionPersonaId =
-      rootStream?.type === StreamTypes.SCRATCHPAD ? (rootStream.companionPersonaId ?? undefined) : undefined
+    const companionRoot =
+      rootStream?.type === StreamTypes.SCRATCHPAD || rootStream?.type === StreamTypes.ASIDE ? rootStream : null
+    const inheritedCompanionMode = companionRoot?.companionMode ?? CompanionModes.OFF
+    const inheritedCompanionPersonaId = companionRoot?.companionPersonaId ?? undefined
     // Threads carry no memory setting of their own — the memo gate resolves to
     // the root (INV-62) — but copy the root's value onto the thread row at
     // creation so the persisted row matches its effective behavior.

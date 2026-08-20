@@ -19,6 +19,20 @@ export const StreamTypes = {
   ASIDE: "aside",
 } as const satisfies Record<string, StreamType>
 
+/**
+ * Stream kinds a shared-message `private` placeholder may report. Derived from
+ * `STREAM_TYPES` minus `aside`: an aside presents as a scratchpad to
+ * non-viewers, so the placeholder vocabulary never discloses one exists.
+ */
+export const SHARED_SOURCE_STREAM_KINDS = [
+  "scratchpad",
+  "channel",
+  "dm",
+  "thread",
+  "system",
+] as const satisfies readonly Exclude<StreamType, "aside">[]
+export type SharedSourceStreamKind = (typeof SHARED_SOURCE_STREAM_KINDS)[number]
+
 export const DM_PARTICIPANT_COUNT = 2
 
 export const STREAM_READ_ONLY_REASONS = ["archived", "system_stream", "not_a_member"] as const

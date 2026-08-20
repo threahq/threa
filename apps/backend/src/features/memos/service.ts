@@ -1010,8 +1010,14 @@ export class MemoService implements MemoServiceLike {
       let resolvedScope = natural.scope
       let resolvedScopeUserId = natural.scopeUserId
       if (scopeOverride === MemoScopes.WORKSPACE) {
-        resolvedScope = MemoScopes.WORKSPACE
-        resolvedScopeUserId = null
+        // Aside content never lands workspace-scoped: the tool's LLM-supplied
+        // override silently downgrades to the aside's natural user tier, and the
+        // returned memo carries its actual scope.
+        const root = await StreamRepository.findById(client, natural.rootStreamId)
+        if (root?.type !== StreamTypes.ASIDE) {
+          resolvedScope = MemoScopes.WORKSPACE
+          resolvedScopeUserId = null
+        }
       } else if (scopeOverride === MemoScopes.USER && invokingUserId) {
         resolvedScope = MemoScopes.USER
         resolvedScopeUserId = invokingUserId

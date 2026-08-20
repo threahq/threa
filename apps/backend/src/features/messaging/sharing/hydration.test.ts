@@ -319,6 +319,65 @@ describe("hydrateSharedMessageRefs", () => {
     expect(findStreams).toHaveBeenCalledTimes(2)
   })
 
+  it("presents an aside source as scratchpad in the private placeholder", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
+    )
+    stubAuthorLookups()
+    stubNoAccess()
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([
+      {
+        id: "stream_source",
+        type: "aside",
+        visibility: "private",
+        rootStreamId: null,
+      } as any,
+    ])
+
+    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
+    expect(result.msg_a).toEqual({
+      type: "sharedMessage",
+      state: "private",
+      messageId: "msg_a",
+      sourceStreamKind: "scratchpad",
+      sourceVisibility: "private",
+    })
+  })
+
+  it("presents a thread inside an aside as scratchpad in the private placeholder", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
+    )
+    stubAuthorLookups()
+    stubNoAccess()
+    spyOn(StreamRepository, "findByIds")
+      .mockResolvedValueOnce([
+        {
+          id: "stream_source",
+          type: "thread",
+          visibility: "private",
+          rootStreamId: "stream_aside",
+        } as any,
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "stream_aside",
+          type: "aside",
+          visibility: "private",
+          rootStreamId: null,
+        } as any,
+      ])
+
+    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
+    expect(result.msg_a).toEqual({
+      type: "sharedMessage",
+      state: "private",
+      messageId: "msg_a",
+      sourceStreamKind: "scratchpad",
+      sourceVisibility: "private",
+    })
+  })
+
   it("treats source-via-share-grant as accessible even when not a stream member", async () => {
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
       new Map([["msg_a", makeMessage({ id: "msg_a" })]])

@@ -5,34 +5,57 @@
  * An aside is a private, creator-only, companion-backed root stream whose
  * `parent_stream_id`/`parent_anchor_id` are contextual pointers only — never
  * access-bearing (INV-62). These tests pin the seams a default branch would
- * silently break: access, anchor uniqueness, the descendant membership sweep,
- * memo scope, archive inheritance, outbox routing, and the "In this stream"
- * projection.
+ * silently break: access, the descendant membership sweep, memo scope, archive
+ * inheritance, outbox routing, and the "In this stream" projection.
+ *
+ * Cross-type anchor sharing (aside + thread on ONE anchor, multiple asides per
+ * anchor) is deliberately absent: it needs the untyped anchor index dropped,
+ * which happens in the stack's final layer. Those tests are parked in the
+ * aside-build scratchpad (`pr8-parked-tests/`) until then; everything here
+ * passes with BOTH indexes present.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamService, StreamRepository, StreamMemberRepository } from "../../src/features/streams"
+import { StreamService, StreamMemberRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { resolveMemoScopeForStreamId } from "../../src/features/memos"
+import { MemoService, resolveMemoScopeForStreamId } from "../../src/features/memos"
+import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { resolveDeliveryGroups, userGroup, type OutboxEvent } from "../../src/lib/outbox"
-import { HttpError } from "../../src/lib/errors"
 import { userId, workspaceId, messageId } from "../../src/lib/id"
 import { MemoScopes, StreamTypes, StreamErrorCodes, type Stream } from "@threa/types"
+
+const EMBEDDING_DIMENSIONS = 1536
 
 describe("Aside foundations", () => {
   let pool: Pool
   let streamService: StreamService
+  let memoService: MemoService
   let wsId: string
   let creator: string
   let member: string
   let sequence = 1n
+  let embeddingsIssued = 0
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
     streamService = new StreamService(pool)
+    memoService = new MemoService({
+      pool,
+      classifier: {} as never,
+      memorizer: {} as never,
+      messageFormatter: {} as never,
+      embeddingService: {
+        embedBatch: async (texts: string[]) =>
+          texts.map(() => {
+            const vector = new Array(EMBEDDING_DIMENSIONS).fill(0)
+            vector[embeddingsIssued++ % EMBEDDING_DIMENSIONS] = 1
+            return vector
+          }),
+      } as unknown as EmbeddingServiceLike,
+    })
     wsId = workspaceId()
     await withTransaction(pool, async (client) => {
       creator = (await addTestMember(client, wsId, userId())).id
@@ -118,57 +141,27 @@ describe("Aside foundations", () => {
       principal: { kind: "user", userId: creator },
     })
     expect(thread.rootStreamId).toBe(aside.id)
+    // The persisted thread row copies the aside's companion setting (C2).
+    expect(thread.companionMode).toBe("on")
     expect(await streamService.tryAccess(thread.id, wsId, creator)).not.toBeNull()
     expect(await streamService.tryAccess(thread.id, wsId, member)).toBeNull()
   })
 
-  test("multiple asides share an anchor; a thread on the same anchor is a real thread", async () => {
-    const channel = await createChannel("aside-anchor")
-    const anchorId = await insertMessage(channel.id, creator)
-
-    const first = await streamService.createAside({
-      workspaceId: wsId,
-      parentStreamId: channel.id,
-      parentAnchorId: anchorId,
-      createdBy: creator,
-    })
-    const second = await streamService.createAside({
-      workspaceId: wsId,
-      parentStreamId: channel.id,
-      parentAnchorId: anchorId,
-      createdBy: creator,
-    })
-    expect(second.id).not.toBe(first.id)
-    expect(second.type).toBe(StreamTypes.ASIDE)
-
-    const thread = await streamService.createThread({
-      workspaceId: wsId,
-      parentStreamId: channel.id,
-      parentAnchorId: anchorId,
-      createdBy: creator,
-      principal: { kind: "user", userId: creator },
-    })
-    expect(thread.type).toBe(StreamTypes.THREAD)
-    expect([first.id, second.id]).not.toContain(thread.id)
-
-    const threadsByAnchor = await StreamRepository.findThreadsForMessages(pool, channel.id)
-    expect(threadsByAnchor.get(anchorId)).toBe(thread.id)
-  })
-
   test("channel kick sweeps thread membership but preserves the member's aside", async () => {
     const channel = await createChannel("aside-kick", [member])
-    const anchorId = await insertMessage(channel.id, creator)
+    const asideAnchor = await insertMessage(channel.id, creator)
+    const threadAnchor = await insertMessage(channel.id, creator)
 
     const aside = await streamService.createAside({
       workspaceId: wsId,
       parentStreamId: channel.id,
-      parentAnchorId: anchorId,
+      parentAnchorId: asideAnchor,
       createdBy: member,
     })
     const thread = await streamService.createThread({
       workspaceId: wsId,
       parentStreamId: channel.id,
-      parentAnchorId: anchorId,
+      parentAnchorId: threadAnchor,
       createdBy: member,
       principal: { kind: "user", userId: member },
     })
@@ -193,6 +186,38 @@ describe("Aside foundations", () => {
     expect(scope).toEqual({ scope: MemoScopes.USER, scopeUserId: creator, rootStreamId: aside.id })
   })
 
+  test("save_memo with a workspace override from an aside lands user-scoped", async () => {
+    const channel = await createChannel("aside-memo-clamp")
+    const aside = await streamService.createAside({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      createdBy: creator,
+    })
+    const sourceId = await insertMessage(aside.id, creator)
+
+    const saved = await memoService.saveMemo({
+      workspaceId: wsId,
+      streamId: aside.id,
+      sessionId: null,
+      sourceStreamIds: [aside.id],
+      title: "Churn numbers are quarterly",
+      abstract: "The churn figures in the deck are quarterly, not monthly.",
+      keyPoints: ["quarterly"],
+      tags: ["metrics"],
+      knowledgeType: "context",
+      sourceMessageIds: [sourceId],
+      invokingUserId: creator,
+      scope: MemoScopes.WORKSPACE,
+    })
+    expect(saved).toMatchObject({ ok: true })
+
+    const memo = await pool.query<{ scope: string; scope_user_id: string | null }>(
+      `SELECT scope, scope_user_id FROM memos WHERE id = $1`,
+      [(saved as { memoId: string }).memoId]
+    )
+    expect(memo.rows[0]).toEqual({ scope: MemoScopes.USER, scope_user_id: creator })
+  })
+
   test("aside is read-only while its direct parent is archived", async () => {
     const channel = await createChannel("aside-archive-direct")
     const anchorId = await insertMessage(channel.id, creator)
@@ -206,10 +231,12 @@ describe("Aside foundations", () => {
     await streamService.assertWritable(aside.id, wsId, { kind: "user", userId: creator })
 
     await streamService.archiveStream(channel.id, wsId, creator)
-    expect(streamService.assertWritable(aside.id, wsId, { kind: "user", userId: creator })).rejects.toMatchObject({
-      code: StreamErrorCodes.READ_ONLY,
-      details: { reason: "archived" },
-    })
+    await expect(streamService.assertWritable(aside.id, wsId, { kind: "user", userId: creator })).rejects.toMatchObject(
+      {
+        code: StreamErrorCodes.READ_ONLY,
+        details: { reason: "archived" },
+      }
+    )
 
     await streamService.unarchiveStream(channel.id, wsId, creator)
     await streamService.assertWritable(aside.id, wsId, { kind: "user", userId: creator })
@@ -234,10 +261,12 @@ describe("Aside foundations", () => {
     })
 
     await streamService.archiveStream(channel.id, wsId, creator)
-    expect(streamService.assertWritable(aside.id, wsId, { kind: "user", userId: creator })).rejects.toMatchObject({
-      code: StreamErrorCodes.READ_ONLY,
-      details: { reason: "archived" },
-    })
+    await expect(streamService.assertWritable(aside.id, wsId, { kind: "user", userId: creator })).rejects.toMatchObject(
+      {
+        code: StreamErrorCodes.READ_ONLY,
+        details: { reason: "archived" },
+      }
+    )
   })
 
   test("aside stream:created routes to the creator group only", async () => {
@@ -259,30 +288,48 @@ describe("Aside foundations", () => {
     const otherChannel = await createChannel("aside-anchor-elsewhere")
     const foreignAnchor = await insertMessage(otherChannel.id, creator)
 
-    expect(
+    await expect(
       streamService.createAside({
         workspaceId: wsId,
         parentStreamId: channel.id,
         parentAnchorId: foreignAnchor,
         createdBy: creator,
       })
-    ).rejects.toBeInstanceOf(HttpError)
+    ).rejects.toMatchObject({ code: "MESSAGE_NOT_FOUND" })
+  })
+
+  test("an aside cannot host another aside", async () => {
+    const channel = await createChannel("aside-no-nesting")
+    const aside = await streamService.createAside({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      createdBy: creator,
+    })
+
+    await expect(
+      streamService.createAside({
+        workspaceId: wsId,
+        parentStreamId: aside.id,
+        createdBy: creator,
+      })
+    ).rejects.toMatchObject({ code: "ASIDE_HOST_TYPE_INVALID" })
   })
 
   test("threads project into stream_context_items; asides never do", async () => {
     const channel = await createChannel("aside-context")
-    const anchorId = await insertMessage(channel.id, creator)
+    const asideAnchor = await insertMessage(channel.id, creator)
+    const threadAnchor = await insertMessage(channel.id, creator)
 
     const aside = await streamService.createAside({
       workspaceId: wsId,
       parentStreamId: channel.id,
-      parentAnchorId: anchorId,
+      parentAnchorId: asideAnchor,
       createdBy: creator,
     })
     const thread = await streamService.createThread({
       workspaceId: wsId,
       parentStreamId: channel.id,
-      parentAnchorId: anchorId,
+      parentAnchorId: threadAnchor,
       createdBy: creator,
       principal: { kind: "user", userId: creator },
     })
