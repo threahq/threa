@@ -962,23 +962,31 @@ export class CallManager implements CallController {
       }
     }
     for (const [key, entry] of desired) {
-      if (!session.pulled.has(key)) {
-        session.pulled.set(key, entry)
-        void session.transport.pull(entry.ref).then(
-          () => session.pullAttempts.delete(key),
-          (err: unknown) => this.handlePullFailure(session, key, err)
-        )
-      }
+      if (session.pulled.has(key)) continue
+      // The cap binds every automatic path — the retry timer AND ordinary roster
+      // broadcasts (any peer's mute toggle bumps the roster): without this gate a
+      // permanently-dead track re-pulls on every unrelated roster change, holding
+      // the serial negotiation queue for the CF timeout each time.
+      if ((session.pullAttempts.get(key) ?? 0) >= PULL_RETRY_MAX_ATTEMPTS) continue
+      session.pulled.set(key, entry)
+      void session.transport.pull(entry.ref).then(
+        () => session.pullAttempts.delete(key),
+        (err: unknown) => this.handlePullFailure(session, key, err)
+      )
     }
     for (const [key, entry] of session.pulled) {
       if (!desired.has(key)) {
         session.pulled.delete(key)
-        session.pullAttempts.delete(key)
         void session.transport.stopPull(entry.ref).catch(() => {})
         this.detachRemoteAudio(session, key)
         this.detachRemoteVideo(session, key)
         session.remoteTrackOwner.delete(key)
       }
+    }
+    // A track the roster stopped advertising forgets its failure history: a peer
+    // that unpublishes and republishes (same trackName) deserves fresh attempts.
+    for (const key of session.pullAttempts.keys()) {
+      if (!desired.has(key)) session.pullAttempts.delete(key)
     }
   }
 

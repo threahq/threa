@@ -408,11 +408,19 @@ export class CloudflareSfuTransport implements MediaTransport {
           // A wedged PC must not block the server-side close; send it SDP-less.
         }
       }
-      const result = await this.proxy!.closeTracks({
-        mids: mid ? [mid] : [],
-        unpublishKinds: [kind],
-        sdp,
-      })
+      let result: CfCloseTracksResult
+      try {
+        result = await this.proxy!.closeTracks({
+          mids: mid ? [mid] : [],
+          unpublishKinds: [kind],
+          sdp,
+        })
+      } catch (err) {
+        // The REST leg itself failed (network, stale-incarnation fence) after we
+        // went have-local-offer — unwind before rethrowing or the PC is wedged.
+        if (sdp) await this.rollbackToStable(pc)
+        throw err
+      }
       // The close carried an offer (removing our m-line), so CF answers it. Apply
       // it — leaving the PC in `have-local-offer` corrupts the next negotiation and
       // the following publish (re-enabling the camera) fails. No answer back

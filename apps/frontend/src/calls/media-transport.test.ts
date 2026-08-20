@@ -295,6 +295,29 @@ describe("CloudflareSfuTransport", () => {
     expect(close?.body.sdp).toBeUndefined()
   })
 
+  it("should roll back the close offer when the REST close itself fails", async () => {
+    const pc = makeFakePc()
+    const withState = pc as unknown as { signalingState: string }
+    withState.signalingState = "stable"
+    pc.setLocalDescription = vi.fn(async (desc: { type?: string } | undefined) => {
+      withState.signalingState = desc?.type === "rollback" ? "stable" : "have-local-offer"
+    }) as typeof pc.setLocalDescription
+    const { transport } = makeTransport({
+      pc,
+      post: async (path: string) => {
+        if (path.endsWith("/session")) return { cfSessionId: "cf", idempotent: false }
+        if (path.endsWith("/tracks/publish")) return { requiresImmediateRenegotiation: false, tracks: [] }
+        if (path.endsWith("/tracks/close")) throw new Error("network down")
+        return {}
+      },
+    })
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await transport.publish("camera", makeTrack("video"))
+    await expect(transport.unpublish("camera")).rejects.toThrow("network down")
+    // The PC must not stay in have-local-offer — that wedges every later negotiation.
+    expect(withState.signalingState).toBe("stable")
+  })
+
   it("should unwind a failed pull so a retry re-registers its mids cleanly", async () => {
     const pc = makeFakePc()
     const withState = pc as unknown as { signalingState: string }

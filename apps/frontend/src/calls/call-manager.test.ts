@@ -413,6 +413,42 @@ describe("CallManager", () => {
       await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
     }
     expect(transport.pull).toHaveBeenCalledTimes(PULL_RETRY_MAX_ATTEMPTS)
+
+    // The cap also binds roster-driven re-diffs: any peer's mute toggle bumps
+    // the roster, and a capped dead track must not re-hold the negotiation
+    // queue on every such broadcast.
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 3,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
+    expect(transport.pull).toHaveBeenCalledTimes(PULL_RETRY_MAX_ATTEMPTS)
+
+    // But a track that leaves the roster and comes back (peer republished the
+    // same trackName) gets fresh attempts.
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 4, roster: [] })
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 5,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(transport.pull).toHaveBeenCalledTimes(PULL_RETRY_MAX_ATTEMPTS + 1)
   })
 
   it("skips peers with no cfSessionId (0.2 roster gap) rather than pulling an unaddressable ref", async () => {
