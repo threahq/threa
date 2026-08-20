@@ -22,4 +22,25 @@ describe("planRingCancel", () => {
     const plan = planRingCancel(0, { attemptId: "callinv_1" })
     expect(plan).toMatchObject({ show: true, title: "Call ended" })
   })
+
+  it("should say the call was answered when the settle outcome is accepted", () => {
+    // Tapping the ring notification closes it, so the accept's own settle push
+    // finds nothing to close — "call ended" here read as the caller hanging up.
+    const plan = planRingCancel(0, { attemptId: "callinv_1", inviterName: "Ada", outcome: "accepted" })
+    expect(plan).toMatchObject({ show: true, title: "Call answered", options: { silent: true } })
+  })
+
+  it("should say the call was declined when the settle outcome is declined", () => {
+    const plan = planRingCancel(0, { attemptId: "callinv_1", inviterName: "Ada", outcome: "declined" })
+    expect(plan).toMatchObject({ show: true, title: "Call declined" })
+  })
+
+  it("should keep the ended copy for caller-side outcomes", () => {
+    expect(planRingCancel(0, { inviterName: "Ada", outcome: "cancelled" })).toMatchObject({
+      title: "Ada's call ended",
+    })
+    expect(planRingCancel(0, { inviterName: "Ada", outcome: "expired" })).toMatchObject({
+      title: "Ada's call ended",
+    })
+  })
 })

@@ -638,7 +638,15 @@ export class PushService {
     if (subscriptions.length === 0) return
 
     const pushPayload = JSON.stringify({
-      data: { kind: "call_ring_cancel", workspaceId, attemptId, inviterName: inviterName ?? undefined },
+      data: {
+        kind: "call_ring_cancel",
+        workspaceId,
+        attemptId,
+        inviterName: inviterName ?? undefined,
+        // The SW's no-ring-shown fallback branches on this: the user's own act
+        // (accepted/declined) must not render as "call ended".
+        outcome: payload.outcome,
+      },
     })
 
     await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {

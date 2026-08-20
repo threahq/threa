@@ -189,11 +189,13 @@ describe("PushService delivery options", () => {
     })
 
     const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
-    // Inviter name rides the cancel so the SW's offline "Call ended" fallback can name the caller.
+    // Inviter name and outcome ride the cancel: the name lets the SW's fallback
+    // title the caller, the outcome keeps an answered ring from reading "ended".
     expect(JSON.parse(payload).data).toMatchObject({
       kind: "call_ring_cancel",
       attemptId: "callinv_01ABCDEF",
       inviterName: "Ada",
+      outcome: "cancelled",
     })
     expect(options).toEqual({ timeout: 10_000, TTL: 45, urgency: "high", topic: "01ABCDEFc" })
   })

@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching"
 import { resolveTag } from "./lib/sw-notification-format"
-import { planRingCancel } from "./calls/call-ring-cancel"
+import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
 import { isDevicePresent, PRESENCE_CACHE } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
 import {
@@ -364,6 +364,8 @@ interface PushData {
   callId?: string
   /** Inviter display name for the ring notification title. */
   inviterName?: string
+  /** Why a ring settled ("accepted" | "declined" | …) — drives the cancel fallback copy. */
+  outcome?: RingCancelData["outcome"]
   /** Ring media mode ("video" | "audio_only"). */
   mode?: string
   /** ISO deadline the ring lapses at. */
