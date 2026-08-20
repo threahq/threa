@@ -175,6 +175,12 @@ export interface CallManagerDeps {
   singleActiveCapture: boolean
 }
 
+/** One desired peer track: the CF pull ref plus its registry kind. */
+interface PullEntry {
+  ref: PeerTrackRef
+  kind: string
+}
+
 interface CallSession {
   /** Monotonic generation claimed synchronously at `startCall`; identifies this incarnation. */
   gen: number
@@ -195,7 +201,7 @@ interface CallSession {
   captureConstraints: { constraints: MediaStreamConstraints; camera: boolean } | null
   audioContext: AudioContext | null
   analyser: AnalyserNode | null
-  pulled: Map<string, { ref: PeerTrackRef; kind: string }>
+  pulled: Map<string, PullEntry>
   /** refKey → failed-pull count; capped retries re-diff against the live roster. */
   pullAttempts: Map<string, number>
   pullRetryTimer: ReturnType<typeof setTimeout> | null
@@ -945,7 +951,7 @@ export class CallManager implements CallController {
 
   /** Diff the roster's track registry against what we pull; pull new, stop gone. */
   private diffPulls(session: CallSession, roster: CallRosterParticipant[]): void {
-    const desired = new Map<string, { ref: PeerTrackRef; kind: string }>()
+    const desired = new Map<string, PullEntry>()
     for (const p of roster) {
       if (!p.endpointId || p.endpointId === session.endpointId) continue
       if (p.connectionStatus !== "connected" && p.connectionStatus !== "reconnecting") continue
@@ -1003,12 +1009,7 @@ export class CallManager implements CallController {
    * delay, up to the cap; a track the roster no longer advertises (e.g. the
    * publisher cleaned up a failed publish) just falls out of `desired`.
    */
-  private handlePullFailure(
-    session: CallSession,
-    key: string,
-    entry: { ref: PeerTrackRef; kind: string },
-    err: unknown
-  ): void {
+  private handlePullFailure(session: CallSession, key: string, entry: PullEntry, err: unknown): void {
     if (this.sessionForGen(session.gen) !== session) return
     if (session.pulled.get(key) !== entry) return
     session.pulled.delete(key)

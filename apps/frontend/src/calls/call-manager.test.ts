@@ -473,18 +473,19 @@ describe("CallManager", () => {
         }),
       ],
     })
+    const peerCameraRef = { sessionId: "cf-peer", trackName: "peer:camera" }
     socket.fire("call:roster", peerRoster(2))
     // Track removed and re-added while the first pull is still in flight.
     socket.fire("call:roster", { callId: "call_1", rosterVersion: 3, roster: [] })
     socket.fire("call:roster", peerRoster(4))
-    expect(transport.pull).toHaveBeenCalledTimes(2)
+    expect((transport.pull as ReturnType<typeof vi.fn>).mock.calls).toEqual([[peerCameraRef], [peerCameraRef]])
 
     // The STALE pull's rejection must not evict the replacement pull's entry —
     // otherwise the next roster broadcast starts a duplicate pull.
     rejectFirst(new Error("stale pull timed out"))
     await vi.waitFor(() => expect(getCallState().rosterVersion).toBe(4))
     socket.fire("call:roster", { ...peerRoster(5) })
-    expect(transport.pull).toHaveBeenCalledTimes(2)
+    expect((transport.pull as ReturnType<typeof vi.fn>).mock.calls).toEqual([[peerCameraRef], [peerCameraRef]])
   })
 
   it("skips peers with no cfSessionId (0.2 roster gap) rather than pulling an unaddressable ref", async () => {
