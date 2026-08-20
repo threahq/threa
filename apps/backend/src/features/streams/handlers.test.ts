@@ -455,6 +455,52 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
     expect(resolveSpy).not.toHaveBeenCalled()
     expect(create.mock.calls[0]![0].companionPersonaId).toBeUndefined()
   })
+
+  it("forces Ariadne companion on an aside create, ignoring a client-sent persona", async () => {
+    const create = mock(
+      async (_params: { companionMode?: string; companionPersonaId?: string; parentAnchorId?: string }) => ({
+        id: "stream_aside",
+      })
+    )
+    const findBySlug = spyOn(agentsBarrel.PersonaRepository, "findBySlug").mockResolvedValue({
+      id: "persona_system_ariadne",
+    } as never)
+    try {
+      const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+      const { res, captured } = makeRes()
+
+      await handlers.create(
+        makeCreateReq({
+          type: "aside",
+          parentStreamId: "stream_channel",
+          parentAnchorId: "msg_1",
+          companionPersonaId: "persona_foreign",
+        }),
+        res
+      )
+
+      expect(captured.status).toBe(201)
+      expect(assertSpy).not.toHaveBeenCalled()
+      expect(create.mock.calls[0]![0]).toMatchObject({
+        type: "aside",
+        parentStreamId: "stream_channel",
+        parentAnchorId: "msg_1",
+        companionMode: "on",
+        companionPersonaId: "persona_system_ariadne",
+      })
+    } finally {
+      findBySlug.mockRestore()
+    }
+  })
+
+  it("rejects an aside without parentStreamId and never creates", async () => {
+    const create = mock(async () => ({ id: "stream_aside" }))
+    const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+    const { res } = makeRes()
+
+    await expect(handlers.create(makeCreateReq({ type: "aside" }), res)).rejects.toMatchObject({ status: 400 })
+    expect(create).not.toHaveBeenCalled()
+  })
 })
 
 describe("createStreamHandlers.markAsRead — access without membership", () => {
