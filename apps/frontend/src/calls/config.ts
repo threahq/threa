@@ -61,6 +61,16 @@ export const SHARE_PUBLISH_LAYERS: Record<"detail" | "motion", PublishLayer> = {
 export const WATCHDOG_SAMPLE_MS = 3_000
 export const WATCHDOG_HEALTHY_SAMPLES_TO_UPGRADE = 4
 
+/**
+ * Failed peer-track pulls re-diff against the live roster after this delay, up
+ * to the attempt cap per track. Without it a single failed pull loses that
+ * peer's track for the rest of the call — no later roster event re-offers a
+ * track that didn't change. Capped because a pull against a dead track holds
+ * the transport's serial negotiation queue for the backend's full CF timeout.
+ */
+export const PULL_RETRY_DELAY_MS = 2_000
+export const PULL_RETRY_MAX_ATTEMPTS = 3
+
 /** Mic audio constraints: browser AEC/NS/AGC applied once at capture. (The combined mic+camera acquisition rule lives on captureAndPublish.) */
 export const AUDIO_CAPTURE_CONSTRAINTS: MediaTrackConstraints = {
   channelCount: 1,

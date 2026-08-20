@@ -18,6 +18,7 @@ import * as dbModule from "../../db"
 import * as observabilityModule from "../../lib/observability"
 import { OutboxRepository } from "../../lib/outbox"
 import { CALL_PRODUCT_CAP } from "./config"
+import { CloudflareRealtimeError, summarizeSdpMSections } from "./cloudflare"
 
 const NOW = new Date("2026-07-19T12:00:00.000Z")
 
@@ -1945,6 +1946,122 @@ describe("CallService.closeTracks", () => {
       expect.anything(),
       expect.objectContaining({ publishedTracks: [{ kind: "mic", trackName: "mic0" }] })
     )
+  })
+
+  it("should prune the registry and return the snapshot even when CF's close fails", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(
+      fakeEndpoint({
+        id: "callep_1",
+        cfSessionId: "sess_1",
+        mediaIncarnation: "inc_1",
+        publishedTracks: [
+          { kind: "mic", trackName: "mic0" },
+          { kind: "camera", trackName: "cam1" },
+        ],
+      })
+    )
+    const setTracks = spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(8)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+    const cf = fakeCloudflare({
+      closeTracks: mock(async () => {
+        throw new CloudflareRealtimeError("session gone", { status: 502, code: "CF_HTTP_502" })
+      }),
+    })
+
+    // Peers pull from the registry; a phantom entry for a dead camera makes every
+    // peer's pull hang at CF until timeout — the prune must not ride on CF's health.
+    const result = await makeServiceWithCf(cf).closeTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      mids: ["1"],
+      unpublishKinds: ["camera"],
+    })
+
+    expect(setTracks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ publishedTracks: [{ kind: "mic", trackName: "mic0" }] })
+    )
+    expect(result).toMatchObject({ cf: null, snapshot: { rosterVersion: 8, roster: [] } })
+  })
+
+  it("should skip CF entirely on a mid-less unpublish (client-side publish failure cleanup)", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(
+      fakeEndpoint({
+        id: "callep_1",
+        cfSessionId: "sess_1",
+        mediaIncarnation: "inc_1",
+        publishedTracks: [
+          { kind: "mic", trackName: "mic0" },
+          { kind: "camera", trackName: "cam1" },
+        ],
+      })
+    )
+    const setTracks = spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(9)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+    const cf = fakeCloudflare()
+
+    const result = await makeServiceWithCf(cf).closeTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      mids: [],
+      unpublishKinds: ["camera"],
+    })
+
+    expect(cf.closeTracks).not.toHaveBeenCalled()
+    expect(setTracks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ publishedTracks: [{ kind: "mic", trackName: "mic0" }] })
+    )
+    expect(result.snapshot).toEqual({ rosterVersion: 9, roster: [] })
+  })
+
+  it("should still fail loudly when a pull-side close (no unpublishKinds) hits a CF error", async () => {
+    stubWithClient()
+    stubFence(fakeEndpoint({ id: "callep_1", cfSessionId: "sess_1", mediaIncarnation: "inc_1" }))
+    const cf = fakeCloudflare({
+      closeTracks: mock(async () => {
+        throw new CloudflareRealtimeError("session gone", { status: 502, code: "CF_HTTP_502" })
+      }),
+    })
+
+    await expect(
+      makeServiceWithCf(cf).closeTracks({
+        workspaceId: "ws_1",
+        callId: "call_1",
+        userId: "usr_1",
+        endpointId: "callep_1",
+        mediaIncarnation: "inc_1",
+        mids: ["remote-0"],
+      })
+    ).rejects.toMatchObject({ code: "CALL_MEDIA_PROVIDER_ERROR" })
+  })
+})
+
+describe("summarizeSdpMSections", () => {
+  it("should list mid, kind, and direction per m-section in SDP order", () => {
+    const sdp = [
+      "v=0",
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+      "a=mid:0",
+      "a=sendonly",
+      "m=video 9 UDP/TLS/RTP/SAVPF 96",
+      "a=mid:2",
+      "a=recvonly",
+    ].join("\r\n")
+    expect(summarizeSdpMSections(sdp)).toBe("0:audio:sendonly 2:video:recvonly")
+    expect(summarizeSdpMSections(undefined)).toBe("none")
   })
 })
 

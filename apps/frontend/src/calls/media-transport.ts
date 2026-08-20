@@ -151,6 +151,50 @@ interface CloudflareSfuTransportDeps {
   createPeerConnection?: () => RTCPeerConnection
 }
 
+/**
+ * One line per m-section — `mid:kind:direction` in SDP order. Small enough for a
+ * log/error message yet enough to spot the answer bugs that break renegotiation
+ * (dropped or reordered m-lines, a wrong direction on a pulled track).
+ */
+export function summarizeSdpMSections(sdp: string | undefined): string {
+  if (!sdp) return "none"
+  const sections: Array<{ kind: string; mid: string; direction: string }> = []
+  let current: { kind: string; mid: string; direction: string } | null = null
+  for (const line of sdp.split(/\r?\n/)) {
+    if (line.startsWith("m=")) {
+      current = { kind: line.slice(2).split(" ")[0] ?? "?", mid: "?", direction: "?" }
+      sections.push(current)
+    } else if (current && line.startsWith("a=mid:")) {
+      current.mid = line.slice("a=mid:".length).trim()
+    } else if (current && /^a=(sendrecv|sendonly|recvonly|inactive)\s*$/.test(line)) {
+      current.direction = line.slice(2).trim()
+    }
+  }
+  if (sections.length === 0) return "none"
+  return sections.map((s) => `${s.mid}:${s.kind}:${s.direction}`).join(" ")
+}
+
+/**
+ * Wrap a negotiation failure with the offer/answer m-section topology. The
+ * message flows into the capture-error surface and the lifecycle log — the only
+ * places a cross-device SDP failure is visible at all, since the REST leg
+ * already succeeded by the time the browser rejects the answer.
+ */
+function describeNegotiationFailure(
+  operation: string,
+  err: unknown,
+  offerSdp: string | undefined,
+  answerSdp: string | undefined
+): Error {
+  const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+  const wrapped = new Error(
+    `${operation} failed — ${detail} (offer: ${summarizeSdpMSections(offerSdp)}; answer: ${summarizeSdpMSections(answerSdp)})`,
+    { cause: err }
+  )
+  wrapped.name = "TransportNegotiationError"
+  return wrapped
+}
+
 function pickWorst(reasons: Array<string | undefined>): TransportStats["qualityLimitation"] {
   if (reasons.includes("bandwidth")) return "bandwidth"
   if (reasons.includes("cpu")) return "cpu"
@@ -287,13 +331,32 @@ export class CloudflareSfuTransport implements MediaTransport {
       }
       transceiver = pc.addTransceiver(track, { direction: "sendonly" })
       this.publishTransceivers.set(kind, transceiver)
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
-      const result = await this.proxy!.publishTracks({
-        sdp: { type: "offer", sdp: offer.sdp ?? "" },
-        tracks: [{ kind, mid: transceiver.mid ?? "", trackName }],
-      })
-      await this.applyAnswerAndMaybeRenegotiate(result)
+      let offerSdp = ""
+      let answerSdp: string | undefined
+      try {
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+        offerSdp = offer.sdp ?? ""
+        const result = await this.proxy!.publishTracks({
+          sdp: { type: "offer", sdp: offerSdp },
+          tracks: [{ kind, mid: transceiver.mid ?? "", trackName }],
+        })
+        answerSdp = result.sessionDescription?.sdp
+        await this.applyAnswerAndMaybeRenegotiate(result)
+      } catch (err) {
+        // Unwind so the PC returns to stable and a RETRY renegotiates from
+        // scratch: the failed transceiver must leave the map, or the next
+        // publish takes the replaceTrack path into a transceiver CF never
+        // acknowledged — the camera button then "works" while no media flows.
+        this.publishTransceivers.delete(kind)
+        await this.rollbackToStable(pc)
+        try {
+          transceiver.stop()
+        } catch {
+          // Already stopping; ignore.
+        }
+        throw describeNegotiationFailure(`publish ${kind}`, err, offerSdp, answerSdp)
+      }
     })
   }
 
@@ -315,30 +378,49 @@ export class CloudflareSfuTransport implements MediaTransport {
 
   async unpublish(kind: PublishedTrackKind): Promise<void> {
     await this.enqueue(async () => {
+      // "Ensure kind is not published" — the registry close goes out even with no
+      // live transceiver: a publish that failed client-side after its REST call
+      // succeeded leaves a registry entry peers pull forever (they hang on a track
+      // whose media never flows), so the close is the phantom's only cleanup.
       const transceiver = this.publishTransceivers.get(kind)
-      if (!transceiver) return
       this.publishTransceivers.delete(kind)
-      const mid = transceiver.mid
-      await transceiver.sender.replaceTrack(null)
-      try {
-        transceiver.stop()
-      } catch {
-        // Some engines throw if the transceiver is already stopping; ignore.
+      const mid = transceiver?.mid ?? null
+      if (transceiver) {
+        try {
+          await transceiver.sender.replaceTrack(null)
+        } catch {
+          // Sender already gone; the close below still retires the track.
+        }
+        try {
+          transceiver.stop()
+        } catch {
+          // Some engines throw if the transceiver is already stopping; ignore.
+        }
       }
-      if (!mid) return
       const pc = this.requirePc()
-      const offer = await pc.createOffer()
-      await pc.setLocalDescription(offer)
+      let sdp: CfSessionDescription | undefined
+      if (mid) {
+        try {
+          const offer = await pc.createOffer()
+          await pc.setLocalDescription(offer)
+          sdp = { type: "offer", sdp: offer.sdp ?? "" }
+        } catch {
+          // A wedged PC must not block the server-side close; send it SDP-less.
+        }
+      }
       const result = await this.proxy!.closeTracks({
-        mids: [mid],
+        mids: mid ? [mid] : [],
         unpublishKinds: [kind],
-        sdp: { type: "offer", sdp: offer.sdp ?? "" },
+        sdp,
       })
       // The close carried an offer (removing our m-line), so CF answers it. Apply
       // it — leaving the PC in `have-local-offer` corrupts the next negotiation and
-      // the following publish (re-enabling the camera) fails.
-      if (result.sessionDescription?.type === "answer") {
+      // the following publish (re-enabling the camera) fails. No answer back
+      // (best-effort CF close failed) → roll back for the same reason.
+      if (sdp && result.sessionDescription?.type === "answer") {
         await pc.setRemoteDescription(result.sessionDescription)
+      } else if (sdp) {
+        await this.rollbackToStable(pc)
       }
     })
   }
@@ -346,19 +428,34 @@ export class CloudflareSfuTransport implements MediaTransport {
   async pull(ref: PeerTrackRef): Promise<void> {
     await this.enqueue(async () => {
       const pc = this.requirePc()
-      const result = await this.proxy!.pullTracks([ref])
-      for (const t of result.tracks) {
-        if (t.mid) this.pullByMid.set(t.mid, ref)
-      }
-      this.pulledRefs.set(this.refKey(ref), ref)
-      // A pull answers with an OFFER (CF adds the remote m-line); we answer it.
-      if (result.sessionDescription?.type === "offer") {
-        await pc.setRemoteDescription(result.sessionDescription)
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        await this.proxy!.renegotiate({ type: "answer", sdp: answer.sdp ?? "" })
-      } else if (result.requiresImmediateRenegotiation) {
-        await this.renegotiateFromRemote()
+      let cfOfferSdp: string | undefined
+      try {
+        const result = await this.proxy!.pullTracks([ref])
+        cfOfferSdp = result.sessionDescription?.sdp
+        for (const t of result.tracks) {
+          if (t.mid) this.pullByMid.set(t.mid, ref)
+        }
+        this.pulledRefs.set(this.refKey(ref), ref)
+        // A pull answers with an OFFER (CF adds the remote m-line); we answer it.
+        if (result.sessionDescription?.type === "offer") {
+          await pc.setRemoteDescription(result.sessionDescription)
+          const answer = await pc.createAnswer()
+          await pc.setLocalDescription(answer)
+          await this.proxy!.renegotiate({ type: "answer", sdp: answer.sdp ?? "" })
+        } else if (result.requiresImmediateRenegotiation) {
+          await this.renegotiateFromRemote()
+        }
+      } catch (err) {
+        // Unwind fully so the caller's retry starts clean: stale mid→ref entries
+        // would attribute a future negotiation's ontrack to this dead pull, and a
+        // half-applied offer leaves the PC unable to negotiate anything else.
+        const key = this.refKey(ref)
+        this.pulledRefs.delete(key)
+        for (const [mid, r] of this.pullByMid) {
+          if (this.refKey(r) === key) this.pullByMid.delete(mid)
+        }
+        await this.rollbackToStable(pc)
+        throw describeNegotiationFailure(`pull ${ref.trackName}`, err, cfOfferSdp, undefined)
       }
     })
   }
@@ -455,6 +552,25 @@ export class CloudflareSfuTransport implements MediaTransport {
     const result = await this.proxy!.renegotiate({ type: "offer", sdp: offer.sdp ?? "" })
     if (result.sessionDescription?.type === "answer") {
       await pc.setRemoteDescription(result.sessionDescription)
+    }
+  }
+
+  /**
+   * Return a PC stuck mid-negotiation to `stable` so the next offer/answer
+   * exchange starts from known state. Rollback direction follows the wedge:
+   * our own unanswered offer rolls back locally, a half-applied remote offer
+   * rolls back remotely. Best-effort — a PC that rejects rollback is closed
+   * soon anyway (watchdog/teardown).
+   */
+  private async rollbackToStable(pc: RTCPeerConnection): Promise<void> {
+    try {
+      if (pc.signalingState === "have-local-offer") {
+        await pc.setLocalDescription({ type: "rollback" })
+      } else if (pc.signalingState === "have-remote-offer") {
+        await pc.setRemoteDescription({ type: "rollback" })
+      }
+    } catch {
+      // Best-effort; see doc.
     }
   }
 

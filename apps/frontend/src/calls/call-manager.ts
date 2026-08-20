@@ -38,6 +38,8 @@ import {
   leaseRenewIntervalMs,
   WATCHDOG_SAMPLE_MS,
   WATCHDOG_HEALTHY_SAMPLES_TO_UPGRADE,
+  PULL_RETRY_DELAY_MS,
+  PULL_RETRY_MAX_ATTEMPTS,
   CAMERA_PUBLISH_LADDER,
   AUDIO_CAPTURE_CONSTRAINTS,
   VIDEO_CAPTURE_CONSTRAINTS,
@@ -194,6 +196,9 @@ interface CallSession {
   audioContext: AudioContext | null
   analyser: AnalyserNode | null
   pulled: Map<string, { ref: PeerTrackRef; kind: string }>
+  /** refKey → failed-pull count; capped retries re-diff against the live roster. */
+  pullAttempts: Map<string, number>
+  pullRetryTimer: ReturnType<typeof setTimeout> | null
   remoteAudioEls: Map<string, HTMLAudioElement>
   /**
    * refKey → owning endpoint id, recorded from the roster in `diffPulls` so an
@@ -426,6 +431,8 @@ export class CallManager implements CallController {
         audioContext,
         analyser: null,
         pulled: new Map(),
+        pullAttempts: new Map(),
+        pullRetryTimer: null,
         remoteAudioEls: new Map(),
         remoteTrackOwner: new Map(),
         videoStreams: new Map(),
@@ -957,18 +964,45 @@ export class CallManager implements CallController {
     for (const [key, entry] of desired) {
       if (!session.pulled.has(key)) {
         session.pulled.set(key, entry)
-        void session.transport.pull(entry.ref).catch(() => session.pulled.delete(key))
+        void session.transport.pull(entry.ref).then(
+          () => session.pullAttempts.delete(key),
+          (err: unknown) => this.handlePullFailure(session, key, err)
+        )
       }
     }
     for (const [key, entry] of session.pulled) {
       if (!desired.has(key)) {
         session.pulled.delete(key)
+        session.pullAttempts.delete(key)
         void session.transport.stopPull(entry.ref).catch(() => {})
         this.detachRemoteAudio(session, key)
         this.detachRemoteVideo(session, key)
         session.remoteTrackOwner.delete(key)
       }
     }
+  }
+
+  /**
+   * A failed pull only retries here: the roster diff keys on `pulled`, and no
+   * future roster event re-announces a track that didn't change — dropping the
+   * key alone loses the peer's audio/video for the rest of the call. Re-diff
+   * against the store's live roster (not the failing event's snapshot) after a
+   * delay, up to the cap; a track the roster no longer advertises (e.g. the
+   * publisher cleaned up a failed publish) just falls out of `desired`.
+   */
+  private handlePullFailure(session: CallSession, key: string, err: unknown): void {
+    if (this.sessionForGen(session.gen) !== session) return
+    session.pulled.delete(key)
+    const attempts = (session.pullAttempts.get(key) ?? 0) + 1
+    session.pullAttempts.set(key, attempts)
+    recordCallLifecycleEvent({ kind: "pull_failed", detail: `attempt ${attempts}: ${describeError(err)}` })
+    if (attempts >= PULL_RETRY_MAX_ATTEMPTS || session.pullRetryTimer) return
+    session.pullRetryTimer = setTimeout(() => {
+      session.pullRetryTimer = null
+      const live = this.sessionForGen(session.gen)
+      if (!live) return
+      this.diffPulls(live, getCallState().roster)
+    }, PULL_RETRY_DELAY_MS)
   }
 
   // ── media ──────────────────────────────────────────────────────────────────
@@ -1094,6 +1128,7 @@ export class CallManager implements CallController {
         session.micTrack = null
         session.cameraTrack = null
         session.micStream = null
+        recordCallLifecycleEvent({ kind: "publish_failed", detail: `mic: ${describeError(publishErr)}` })
         throw publishErr
       }
     }
@@ -1114,6 +1149,7 @@ export class CallManager implements CallController {
         cameraTrack.stop()
         session.cameraTrack = null
         this.clearVideoStream(session, session.endpointId)
+        recordCallLifecycleEvent({ kind: "publish_failed", detail: `camera: ${describeError(publishErr)}` })
         await session.transport.unpublish("camera").catch(() => {})
         setCallCaptureError({
           code: "capture_failed",
@@ -1635,9 +1671,11 @@ export class CallManager implements CallController {
   private clearTimers(session: CallSession): void {
     if (session.leaseTimer) clearInterval(session.leaseTimer)
     if (session.watchdogTimer) clearInterval(session.watchdogTimer)
+    if (session.pullRetryTimer) clearTimeout(session.pullRetryTimer)
     if (session.meterRaf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(session.meterRaf)
     session.leaseTimer = null
     session.watchdogTimer = null
+    session.pullRetryTimer = null
     session.meterRaf = null
   }
 }

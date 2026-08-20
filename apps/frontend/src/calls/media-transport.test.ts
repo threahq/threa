@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { CloudflareSfuTransport, createCallProxyClient, type PeerTrackRef } from "./media-transport"
+import {
+  CloudflareSfuTransport,
+  createCallProxyClient,
+  summarizeSdpMSections,
+  type PeerTrackRef,
+} from "./media-transport"
 
 interface PostCall {
   path: string
@@ -74,6 +79,26 @@ function makeTransport(overrides?: {
   })
   return { transport, calls, pc, post }
 }
+
+describe("summarizeSdpMSections", () => {
+  it("should list mid, kind, and direction per m-section in SDP order", () => {
+    const sdp = [
+      "v=0",
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+      "a=mid:0",
+      "a=sendonly",
+      "m=video 9 UDP/TLS/RTP/SAVPF 96",
+      "a=mid:2",
+      "a=recvonly",
+      "m=video 9 UDP/TLS/RTP/SAVPF 96",
+      "a=mid:3",
+      "a=sendonly",
+    ].join("\r\n")
+    expect(summarizeSdpMSections(sdp)).toBe("0:audio:sendonly 2:video:recvonly 3:video:sendonly")
+    expect(summarizeSdpMSections(undefined)).toBe("none")
+    expect(summarizeSdpMSections("v=0")).toBe("none")
+  })
+})
 
 describe("createCallProxyClient", () => {
   it("carries mediaIncarnation in every proxy body", async () => {
@@ -191,6 +216,116 @@ describe("CloudflareSfuTransport", () => {
 
     await expect(transport.publish("camera", makeTrack("video"))).resolves.toBeUndefined()
     expect(pc.addTransceiver).toHaveBeenCalledTimes(2)
+  })
+
+  it("should retry a failed publish with a fresh transceiver, never replaceTrack into an unacknowledged one", async () => {
+    let publishCalls = 0
+    const { transport, pc } = makeTransport({
+      post: async (path: string, body: unknown) => {
+        if (path.endsWith("/session")) return { cfSessionId: "cf", idempotent: false }
+        if (path.endsWith("/tracks/publish")) {
+          publishCalls++
+          if (publishCalls === 1) throw new Error("CF publish failed")
+          return { requiresImmediateRenegotiation: false, tracks: [] }
+        }
+        void body
+        return {}
+      },
+    })
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await expect(transport.publish("camera", makeTrack("video"))).rejects.toThrow("CF publish failed")
+    // The failed transceiver was stopped and evicted — otherwise this retry takes
+    // the replaceTrack fast path into a transceiver CF never acknowledged, and
+    // the camera button "works" while no media ever reaches the SFU.
+    expect(pc.transceivers[0].stop).toHaveBeenCalled()
+    await expect(transport.publish("camera", makeTrack("video"))).resolves.toBeUndefined()
+    expect(pc.addTransceiver).toHaveBeenCalledTimes(2)
+    expect(publishCalls).toBe(2)
+  })
+
+  it("should roll back the local offer when CF's publish answer cannot be applied", async () => {
+    const pc = makeFakePc()
+    const withState = pc as unknown as { signalingState: string }
+    withState.signalingState = "stable"
+    pc.setLocalDescription = vi.fn(async (desc: { type?: string } | undefined) => {
+      withState.signalingState = desc?.type === "rollback" ? "stable" : "have-local-offer"
+    }) as typeof pc.setLocalDescription
+    pc.setRemoteDescription = vi.fn(async (desc: { type?: string }) => {
+      if (desc.type === "answer") throw new DOMException("bad answer", "InvalidAccessError")
+    }) as typeof pc.setRemoteDescription
+    const { transport } = makeTransport({
+      pc,
+      post: async (path: string) => {
+        if (path.endsWith("/session")) return { cfSessionId: "cf", idempotent: false }
+        if (path.endsWith("/tracks/publish"))
+          return {
+            requiresImmediateRenegotiation: false,
+            tracks: [],
+            sessionDescription: { type: "answer", sdp: "m=video 9 X\r\na=mid:1\r\na=recvonly" },
+          }
+        return {}
+      },
+    })
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await expect(transport.publish("camera", makeTrack("video"))).rejects.toThrow(/InvalidAccessError: bad answer/)
+    expect(pc.setLocalDescription).toHaveBeenCalledWith({ type: "rollback" })
+    expect(withState.signalingState).toBe("stable")
+  })
+
+  it("should close the registry entry even when no transceiver exists (phantom cleanup)", async () => {
+    const { transport, calls } = makeTransport()
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await transport.unpublish("camera")
+    const close = calls.find((c) => c.path.endsWith("/tracks/close"))
+    expect(close?.body).toMatchObject({ mids: [], unpublishKinds: ["camera"] })
+    expect(close?.body.sdp).toBeUndefined()
+  })
+
+  it("should send the close SDP-less when the wedged PC cannot offer, instead of skipping it", async () => {
+    const pc = makeFakePc()
+    const { transport, calls } = makeTransport({ pc })
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await transport.publish("camera", makeTrack("video"))
+    pc.createOffer = vi.fn(async () => {
+      throw new DOMException("wedged", "InvalidStateError")
+    })
+    await transport.unpublish("camera")
+    const close = calls.find((c) => c.path.endsWith("/tracks/close"))
+    expect(close?.body).toMatchObject({ mids: ["local-0"], unpublishKinds: ["camera"] })
+    expect(close?.body.sdp).toBeUndefined()
+  })
+
+  it("should unwind a failed pull so a retry re-registers its mids cleanly", async () => {
+    const pc = makeFakePc()
+    const withState = pc as unknown as { signalingState: string }
+    withState.signalingState = "stable"
+    let srdCalls = 0
+    pc.setRemoteDescription = vi.fn(async (desc: { type?: string }) => {
+      if (desc.type === "rollback") {
+        withState.signalingState = "stable"
+        return
+      }
+      srdCalls++
+      if (srdCalls === 1) {
+        withState.signalingState = "have-remote-offer"
+        throw new DOMException("bad offer", "OperationError")
+      }
+    }) as typeof pc.setRemoteDescription
+    const { transport } = makeTransport({ pc })
+    const seen: PeerTrackRef[] = []
+    transport.onRemoteTrack = (e) => seen.push(e.ref)
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+
+    const ref: PeerTrackRef = { sessionId: "cf-peer", trackName: "peer:camera" }
+    await expect(transport.pull(ref)).rejects.toThrow(/OperationError: bad offer/)
+    expect(pc.setRemoteDescription).toHaveBeenCalledWith({ type: "rollback" })
+    // The dead pull's mid attribution is gone: a track landing on it is ignored.
+    pc.ontrack?.({ transceiver: { mid: "remote-0" }, track: makeTrack("video") })
+    expect(seen).toEqual([])
+
+    await expect(transport.pull(ref)).resolves.toBeUndefined()
+    pc.ontrack?.({ transceiver: { mid: "remote-0" }, track: makeTrack("video") })
+    expect(seen).toEqual([ref])
   })
 
   it("keeps the queue alive after a failed job", async () => {

@@ -20,6 +20,8 @@ export const CALL_LIFECYCLE_KINDS = [
   "rejoin_same_endpoint",
   "rejoin_new_endpoint",
   "rejoin_failed",
+  "publish_failed",
+  "pull_failed",
   "teardown",
 ] as const
 
