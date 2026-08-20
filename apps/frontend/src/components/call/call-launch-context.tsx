@@ -62,6 +62,12 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<CallLaunchState>({ status: "idle" })
   // Guards against a stale async settling over a newer launch/cancel.
   const runIdRef = useRef(0)
+  // Synchronous re-entrancy guard. `phase` alone is not enough: it flips off
+  // "idle" only after the REST start resolves, so a second launch inside that
+  // window (a StrictMode double effect on the `?call=` path, a double-tap racing
+  // the re-render) would pass the phase check and hit startCall's synchronous
+  // "already active" throw — surfacing a false join_error over a live join.
+  const inFlightRef = useRef(false)
 
   const run = useCallback(
     async (request: CallLaunchRequest) => {
@@ -69,8 +75,9 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
       // a plain Error, which the catch below would surface as a stale join_error
       // carrying the wrong request (and a "Try again" that starts an unintended
       // call). Ignore the launch — entry points also gate their affordance.
-      if (getCallState().phase !== "idle") return
+      if (inFlightRef.current || getCallState().phase !== "idle") return
       const runId = ++runIdRef.current
+      inFlightRef.current = true
       setState({ status: "requesting", request })
       // startCall is the single media acquisition and must run synchronously in the
       // click's transient activation — it creates+resumes the AudioContext before
@@ -101,9 +108,19 @@ export function CallLaunchProvider({ children }: { children: ReactNode }) {
           setState({ status: "takeover_prompt", request })
           return
         }
+        // The bound call is gone (expectedCallId guard). A retry would join
+        // whatever call now lives in the stream — not what the user accepted, so
+        // no join_error retry surface; just say what happened.
+        if (ApiError.isApiError(err) && err.code === "CALL_ENDED") {
+          setState({ status: "idle" })
+          toast.info("This call has ended")
+          return
+        }
         const message = err instanceof Error ? err.message : String(err)
         setState({ status: "join_error", request, message })
         toast.error("Couldn't start the call")
+      } finally {
+        inFlightRef.current = false
       }
     },
     [manager]
