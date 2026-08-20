@@ -1,10 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import {
-  CloudflareSfuTransport,
-  createCallProxyClient,
-  summarizeSdpMSections,
-  type PeerTrackRef,
-} from "./media-transport"
+import { CloudflareSfuTransport, createCallProxyClient, type PeerTrackRef } from "./media-transport"
 
 interface PostCall {
   path: string
@@ -79,26 +74,6 @@ function makeTransport(overrides?: {
   })
   return { transport, calls, pc, post }
 }
-
-describe("summarizeSdpMSections", () => {
-  it("should list mid, kind, and direction per m-section in SDP order", () => {
-    const sdp = [
-      "v=0",
-      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
-      "a=mid:0",
-      "a=sendonly",
-      "m=video 9 UDP/TLS/RTP/SAVPF 96",
-      "a=mid:2",
-      "a=recvonly",
-      "m=video 9 UDP/TLS/RTP/SAVPF 96",
-      "a=mid:3",
-      "a=sendonly",
-    ].join("\r\n")
-    expect(summarizeSdpMSections(sdp)).toBe("0:audio:sendonly 2:video:recvonly 3:video:sendonly")
-    expect(summarizeSdpMSections(undefined)).toBe("none")
-    expect(summarizeSdpMSections("v=0")).toBe("none")
-  })
-})
 
 describe("createCallProxyClient", () => {
   it("carries mediaIncarnation in every proxy body", async () => {
@@ -315,6 +290,33 @@ describe("CloudflareSfuTransport", () => {
     await transport.publish("camera", makeTrack("video"))
     await expect(transport.unpublish("camera")).rejects.toThrow("network down")
     // The PC must not stay in have-local-offer — that wedges every later negotiation.
+    expect(withState.signalingState).toBe("stable")
+  })
+
+  it("should roll back when applying the close answer fails", async () => {
+    const pc = makeFakePc()
+    const withState = pc as unknown as { signalingState: string }
+    withState.signalingState = "stable"
+    pc.setLocalDescription = vi.fn(async (desc: { type?: string } | undefined) => {
+      withState.signalingState = desc?.type === "rollback" ? "stable" : "have-local-offer"
+    }) as typeof pc.setLocalDescription
+    pc.setRemoteDescription = vi.fn(async (desc: { type?: string; sdp?: string }) => {
+      if (desc.sdp === "close-answer") throw new DOMException("bad close answer", "InvalidAccessError")
+      withState.signalingState = "stable"
+    }) as typeof pc.setRemoteDescription
+    const { transport } = makeTransport({
+      pc,
+      post: async (path: string) => {
+        if (path.endsWith("/session")) return { cfSessionId: "cf", idempotent: false }
+        if (path.endsWith("/tracks/publish")) return { requiresImmediateRenegotiation: false, tracks: [] }
+        if (path.endsWith("/tracks/close"))
+          return { tracks: [], sessionDescription: { type: "answer", sdp: "close-answer" } }
+        return {}
+      },
+    })
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await transport.publish("camera", makeTrack("video"))
+    await expect(transport.unpublish("camera")).rejects.toThrow("bad close answer")
     expect(withState.signalingState).toBe("stable")
   })
 

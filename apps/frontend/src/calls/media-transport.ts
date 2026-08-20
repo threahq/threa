@@ -1,3 +1,4 @@
+import { summarizeSdpMSections } from "@threa/types"
 import { api } from "@/api/client"
 import type { PublishedTrackKind } from "./config"
 
@@ -149,29 +150,6 @@ interface CloudflareSfuTransportDeps {
   post?: PostJson
   /** Injectable for tests; production uses the browser `RTCPeerConnection`. */
   createPeerConnection?: () => RTCPeerConnection
-}
-
-/**
- * One line per m-section — `mid:kind:direction` in SDP order. Small enough for a
- * log/error message yet enough to spot the answer bugs that break renegotiation
- * (dropped or reordered m-lines, a wrong direction on a pulled track).
- */
-export function summarizeSdpMSections(sdp: string | undefined): string {
-  if (!sdp) return "none"
-  const sections: Array<{ kind: string; mid: string; direction: string }> = []
-  let current: { kind: string; mid: string; direction: string } | null = null
-  for (const line of sdp.split(/\r?\n/)) {
-    if (line.startsWith("m=")) {
-      current = { kind: line.slice(2).split(" ")[0] ?? "?", mid: "?", direction: "?" }
-      sections.push(current)
-    } else if (current && line.startsWith("a=mid:")) {
-      current.mid = line.slice("a=mid:".length).trim()
-    } else if (current && /^a=(sendrecv|sendonly|recvonly|inactive)\s*$/.test(line)) {
-      current.direction = line.slice(2).trim()
-    }
-  }
-  if (sections.length === 0) return "none"
-  return sections.map((s) => `${s.mid}:${s.kind}:${s.direction}`).join(" ")
 }
 
 /**
@@ -424,9 +402,14 @@ export class CloudflareSfuTransport implements MediaTransport {
       // The close carried an offer (removing our m-line), so CF answers it. Apply
       // it — leaving the PC in `have-local-offer` corrupts the next negotiation and
       // the following publish (re-enabling the camera) fails. No answer back
-      // (best-effort CF close failed) → roll back for the same reason.
+      // (best-effort CF close failed) or a rejected answer → roll back, same reason.
       if (sdp && result.sessionDescription?.type === "answer") {
-        await pc.setRemoteDescription(result.sessionDescription)
+        try {
+          await pc.setRemoteDescription(result.sessionDescription)
+        } catch (err) {
+          await this.rollbackToStable(pc)
+          throw err
+        }
       } else if (sdp) {
         await this.rollbackToStable(pc)
       }

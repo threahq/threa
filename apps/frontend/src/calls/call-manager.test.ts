@@ -451,6 +451,42 @@ describe("CallManager", () => {
     expect(transport.pull).toHaveBeenCalledTimes(PULL_RETRY_MAX_ATTEMPTS + 1)
   })
 
+  it("should ignore a stale pull rejection after the track was removed and re-added mid-flight", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    let rejectFirst!: (err: Error) => void
+    ;(transport.pull as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(() => new Promise((_, reject) => (rejectFirst = reject)))
+      .mockResolvedValue(undefined)
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+
+    const peerRoster = (version: number) => ({
+      callId: "call_1",
+      rosterVersion: version,
+      roster: [
+        participant({
+          userId: "usr_1",
+          endpointId: "ep_peer",
+          cfSessionId: "cf-peer",
+          publishedTracks: [{ kind: "camera", trackName: "peer:camera" }],
+        }),
+      ],
+    })
+    socket.fire("call:roster", peerRoster(2))
+    // Track removed and re-added while the first pull is still in flight.
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 3, roster: [] })
+    socket.fire("call:roster", peerRoster(4))
+    expect(transport.pull).toHaveBeenCalledTimes(2)
+
+    // The STALE pull's rejection must not evict the replacement pull's entry —
+    // otherwise the next roster broadcast starts a duplicate pull.
+    rejectFirst(new Error("stale pull timed out"))
+    await vi.waitFor(() => expect(getCallState().rosterVersion).toBe(4))
+    socket.fire("call:roster", { ...peerRoster(5) })
+    expect(transport.pull).toHaveBeenCalledTimes(2)
+  })
+
   it("skips peers with no cfSessionId (0.2 roster gap) rather than pulling an unaddressable ref", async () => {
     const socket = makeSocket()
     const transport = makeTransport()

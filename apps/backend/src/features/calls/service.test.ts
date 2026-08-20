@@ -18,7 +18,7 @@ import * as dbModule from "../../db"
 import * as observabilityModule from "../../lib/observability"
 import { OutboxRepository } from "../../lib/outbox"
 import { CALL_PRODUCT_CAP } from "./config"
-import { CloudflareRealtimeError, summarizeSdpMSections } from "./cloudflare"
+import { CloudflareRealtimeError } from "./cloudflare"
 
 const NOW = new Date("2026-07-19T12:00:00.000Z")
 
@@ -2046,22 +2046,6 @@ describe("CallService.closeTracks", () => {
         mids: ["remote-0"],
       })
     ).rejects.toMatchObject({ code: "CALL_MEDIA_PROVIDER_ERROR" })
-  })
-})
-
-describe("summarizeSdpMSections", () => {
-  it("should list mid, kind, and direction per m-section in SDP order", () => {
-    const sdp = [
-      "v=0",
-      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
-      "a=mid:0",
-      "a=sendonly",
-      "m=video 9 UDP/TLS/RTP/SAVPF 96",
-      "a=mid:2",
-      "a=recvonly",
-    ].join("\r\n")
-    expect(summarizeSdpMSections(sdp)).toBe("0:audio:sendonly 2:video:recvonly")
-    expect(summarizeSdpMSections(undefined)).toBe("none")
   })
 })
 

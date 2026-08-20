@@ -969,9 +969,14 @@ export class CallManager implements CallController {
       // the serial negotiation queue for the CF timeout each time.
       if ((session.pullAttempts.get(key) ?? 0) >= PULL_RETRY_MAX_ATTEMPTS) continue
       session.pulled.set(key, entry)
+      // Settlements check entry identity: a remove-and-readd during the flight
+      // replaces the map entry, and the STALE pull's rejection must not evict
+      // (or count against) the replacement pull now in progress.
       void session.transport.pull(entry.ref).then(
-        () => session.pullAttempts.delete(key),
-        (err: unknown) => this.handlePullFailure(session, key, err)
+        () => {
+          if (session.pulled.get(key) === entry) session.pullAttempts.delete(key)
+        },
+        (err: unknown) => this.handlePullFailure(session, key, entry, err)
       )
     }
     for (const [key, entry] of session.pulled) {
@@ -998,8 +1003,14 @@ export class CallManager implements CallController {
    * delay, up to the cap; a track the roster no longer advertises (e.g. the
    * publisher cleaned up a failed publish) just falls out of `desired`.
    */
-  private handlePullFailure(session: CallSession, key: string, err: unknown): void {
+  private handlePullFailure(
+    session: CallSession,
+    key: string,
+    entry: { ref: PeerTrackRef; kind: string },
+    err: unknown
+  ): void {
     if (this.sessionForGen(session.gen) !== session) return
+    if (session.pulled.get(key) !== entry) return
     session.pulled.delete(key)
     const attempts = (session.pullAttempts.get(key) ?? 0) + 1
     session.pullAttempts.set(key, attempts)

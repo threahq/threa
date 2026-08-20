@@ -3,6 +3,7 @@ import {
   StreamTypes,
   ActivityTypes,
   AuthorTypes,
+  summarizeSdpMSections,
   type CallStartedEventPayload,
   type CallEndedEventPayload,
   type Visibility,
@@ -54,7 +55,6 @@ import {
 } from "./config"
 import {
   CloudflareRealtimeError,
-  summarizeSdpMSections,
   type RealtimeMediaApi,
   type SessionDescription,
   type LocalTrackRequest,
