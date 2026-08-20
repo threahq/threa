@@ -189,7 +189,12 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
 
     const stream = await StreamRepository.findById(this.db, payload.streamId)
     if (!stream || stream.workspaceId !== payload.workspaceId || stream.archivedAt) return
-    if (stream.type !== StreamTypes.SCRATCHPAD && stream.type !== StreamTypes.THREAD) return
+    if (
+      stream.type !== StreamTypes.SCRATCHPAD &&
+      stream.type !== StreamTypes.THREAD &&
+      stream.type !== StreamTypes.ASIDE
+    )
+      return
     if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) return
     const source = stream.displayNameSource ?? (stream.displayName ? TitleSources.LEGACY : null)
     if (source !== null && source !== TitleSources.GENERATED) return
@@ -217,7 +222,8 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     const conversation = await ConversationRepository.findById(this.db, conversationId)
     if (!conversation || conversation.workspaceId !== workspaceId) return false
     const stream = await StreamRepository.findById(this.db, conversation.streamId)
-    if (!stream || stream.workspaceId !== workspaceId || stream.type === StreamTypes.SCRATCHPAD) return false
+    if (!stream || stream.workspaceId !== workspaceId) return false
+    if (stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return false
     if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, conversation.streamId)) return false
     const source = conversation.topicSummarySource ?? (conversation.topicSummary ? TitleSources.LEGACY : null)
     if (source !== null && source !== TitleSources.GENERATED) return false

@@ -87,7 +87,11 @@ export class CompanionHandler extends DebouncedOutboxHandler {
     let companionSource = stream
     if (stream.companionMode !== CompanionModes.ON && stream.rootStreamId) {
       const rootStream = await StreamRepository.findById(this.db, stream.rootStreamId)
-      if (rootStream && rootStream.type === StreamTypes.SCRATCHPAD && rootStream.companionMode === CompanionModes.ON) {
+      if (
+        rootStream &&
+        (rootStream.type === StreamTypes.SCRATCHPAD || rootStream.type === StreamTypes.ASIDE) &&
+        rootStream.companionMode === CompanionModes.ON
+      ) {
         companionSource = rootStream
       }
     }

@@ -308,9 +308,9 @@ export const StreamMemberRepository = {
   async deleteByMemberInDescendants(db: Querier, memberId: string, ancestorStreamId: string): Promise<string[]> {
     const result = await db.query<{ stream_id: string }>(
       `WITH RECURSIVE descendants AS (
-        SELECT id FROM streams WHERE parent_stream_id = $2
+        SELECT id FROM streams WHERE parent_stream_id = $2 AND type = 'thread'
         UNION ALL
-        SELECT s.id FROM streams s JOIN descendants d ON s.parent_stream_id = d.id
+        SELECT s.id FROM streams s JOIN descendants d ON s.parent_stream_id = d.id AND s.type = 'thread'
       )
       DELETE FROM stream_members
       WHERE member_id = $1 AND stream_id IN (SELECT id FROM descendants)

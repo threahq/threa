@@ -147,6 +147,7 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
     WHERE workspace_id = ${workspaceId}
       AND parent_stream_id = ANY(${streamIds})
       AND parent_anchor_id IS NOT NULL
+      AND type = 'thread'
   `)
 
   const chunks: StreamContextChunk[] = []
@@ -523,6 +524,7 @@ async function processThreadsChunk(
     WHERE workspace_id = ${workspaceId}
       AND parent_stream_id = ${chunk.streamId}
       AND parent_anchor_id IS NOT NULL
+      AND type = 'thread'
     ORDER BY id
   `)
   if (threads.rows.length === 0) return []

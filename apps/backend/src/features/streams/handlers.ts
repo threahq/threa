@@ -56,7 +56,7 @@ import {
 
 const createStreamSchema = z
   .object({
-    type: streamTypeSchema.extract(["scratchpad", "channel", "thread"]),
+    type: streamTypeSchema.extract(["scratchpad", "channel", "thread", "aside"]),
     slug: z
       .string()
       .regex(SLUG_PATTERN, {
@@ -113,8 +113,12 @@ const createStreamSchema = z
     message: "parentAnchorId is required for threads",
     path: ["parentAnchorId"],
   })
-  .refine((data) => !data.contextBag || data.type === "scratchpad", {
-    message: "contextBag is only supported on scratchpad creation",
+  .refine((data) => data.type !== "aside" || !!data.parentStreamId, {
+    message: "parentStreamId is required for asides",
+    path: ["parentStreamId"],
+  })
+  .refine((data) => !data.contextBag || data.type === "scratchpad" || data.type === "aside", {
+    message: "contextBag is only supported on scratchpad or aside creation",
     path: ["contextBag"],
   })
   .refine((data) => !data.e2eEnabled || data.type === "scratchpad", {
@@ -129,8 +133,8 @@ const createStreamSchema = z
     message: "contextBag and E2E are mutually exclusive in Phase 1",
     path: ["e2eEnabled"],
   })
-  .refine((data) => data.allowedToolCategories === undefined || data.type === "scratchpad", {
-    message: "allowedToolCategories is only supported on scratchpad creation",
+  .refine((data) => data.allowedToolCategories === undefined || data.type === "scratchpad" || data.type === "aside", {
+    message: "allowedToolCategories is only supported on scratchpad or aside creation",
     path: ["allowedToolCategories"],
   })
 
@@ -365,6 +369,7 @@ const addMemberAllowed: Record<StreamType, boolean> = {
   [StreamTypes.SCRATCHPAD]: false,
   [StreamTypes.DM]: false,
   [StreamTypes.SYSTEM]: false,
+  [StreamTypes.ASIDE]: false,
 }
 
 const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> = {
@@ -381,6 +386,11 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
     visibility: "Direct messages are always private",
   },
   [StreamTypes.SYSTEM]: null,
+  [StreamTypes.ASIDE]: {
+    slug: "Asides do not have slugs",
+    visibility: "Asides are always private",
+    memoryMode: "Asides never extract memory",
+  },
 }
 
 function updateSchemaForType(streamType: StreamType) {
@@ -650,7 +660,9 @@ export function createStreamHandlers({
         for (const ref of contextBag.refs) {
           await assertRefAccess(pool, ref, userId, workspaceId)
         }
-
+      }
+      // An aside is always a companion chat with Ariadne, bag or no bag.
+      if (contextBag || type === StreamTypes.ASIDE) {
         const ariadne = await PersonaRepository.findBySlug(pool, ARIADNE_PERSONA_SLUG, workspaceId)
         if (!ariadne) {
           // Workspace-config state, not an internal error: 503 + a domain
@@ -674,7 +686,7 @@ export function createStreamHandlers({
       // degrading at dispatch. The e2e/contextBag branches force/omit the id
       // server-side (validated or Ariadne), and the default-resolution branch
       // below only runs when no explicit id was given, so those stay untouched.
-      if (companionPersonaId != null && !e2eEnabled && !contextBag) {
+      if (companionPersonaId != null && !e2eEnabled && !contextBag && type !== StreamTypes.ASIDE) {
         await assertAssignablePersona(pool, companionPersonaId, workspaceId, { callerUserId: userId })
       }
       if (type === StreamTypes.SCRATCHPAD && !e2eEnabled && !resolvedPersonaId) {

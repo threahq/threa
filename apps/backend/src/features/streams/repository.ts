@@ -1003,7 +1003,7 @@ export const StreamRepository = {
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
-      ON CONFLICT (parent_stream_id, parent_anchor_id) WHERE parent_anchor_id IS NOT NULL DO NOTHING
+      ON CONFLICT (parent_stream_id, parent_anchor_id) WHERE parent_anchor_id IS NOT NULL AND type = 'thread' DO NOTHING
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
 
@@ -1168,6 +1168,7 @@ export const StreamRepository = {
       SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
       WHERE parent_stream_id = ${parentStreamId}
         AND parent_anchor_id = ${parentAnchorId}
+        AND type = 'thread'
     `)
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
@@ -1181,6 +1182,7 @@ export const StreamRepository = {
       SELECT parent_anchor_id AS anchor_id, id FROM streams
       WHERE parent_stream_id = ${parentStreamId}
         AND parent_anchor_id IS NOT NULL
+        AND type = 'thread'
     `)
     const map = new Map<string, string>()
     for (const row of result.rows) {
@@ -1203,6 +1205,7 @@ export const StreamRepository = {
       SELECT parent_anchor_id AS anchor_id, id FROM streams
       WHERE parent_stream_id = ${parentStreamId}
         AND parent_anchor_id = ANY(${messageIds})
+        AND type = 'thread'
     `)
     const map = new Map<string, string>()
     for (const row of result.rows) {

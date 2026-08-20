@@ -158,6 +158,11 @@ function resolveSourceForPrivatePlaceholder(
     const root = byStreamId.get(source.rootStreamId)
     if (root) return { kind: root.type, visibility: root.visibility }
   }
+  // An aside presents as a scratchpad to non-viewers: even the placeholder must
+  // not disclose that an aside exists.
+  if (source.type === StreamTypes.ASIDE) {
+    return { kind: StreamTypes.SCRATCHPAD, visibility: source.visibility }
+  }
   return { kind: source.type, visibility: source.visibility }
 }
 

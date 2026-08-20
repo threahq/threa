@@ -40,7 +40,7 @@
                   "from": { "type": "string" },
                   "type": {
                     "type": "array",
-                    "items": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] }
+                    "items": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"] }
                   },
                   "before": { "type": "string", "format": "date-time" },
                   "after": { "type": "string", "format": "date-time" },
@@ -202,7 +202,7 @@
                               "messageId": { "type": "string" },
                               "sourceStreamKind": {
                                 "type": "string",
-                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
                               },
                               "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
@@ -3107,7 +3107,7 @@
                               "messageId": { "type": "string" },
                               "sourceStreamKind": {
                                 "type": "string",
-                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
                               },
                               "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
@@ -4271,7 +4271,10 @@
                         "type": "object",
                         "properties": {
                           "id": { "type": "string" },
-                          "type": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] },
+                          "type": {
+                            "type": "string",
+                            "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                          },
                           "displayName": { "type": "string" },
                           "slug": { "type": "string" },
                           "description": { "type": "string" },
@@ -4369,7 +4372,10 @@
                       "type": "object",
                       "properties": {
                         "id": { "type": "string" },
-                        "type": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] },
+                        "type": {
+                          "type": "string",
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                        },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
                         "description": { "type": "string" },
@@ -4478,7 +4484,10 @@
                       "type": "object",
                       "properties": {
                         "id": { "type": "string" },
-                        "type": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] },
+                        "type": {
+                          "type": "string",
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                        },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
                         "description": { "type": "string" },
@@ -4857,7 +4866,7 @@
                               "messageId": { "type": "string" },
                               "sourceStreamKind": {
                                 "type": "string",
-                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
                               },
                               "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
@@ -5166,7 +5175,7 @@
                               "messageId": { "type": "string" },
                               "sourceStreamKind": {
                                 "type": "string",
-                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
                               },
                               "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
@@ -5694,7 +5703,7 @@
                               "messageId": { "type": "string" },
                               "sourceStreamKind": {
                                 "type": "string",
-                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
                               },
                               "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
@@ -5991,7 +6000,7 @@
                               "messageId": { "type": "string" },
                               "sourceStreamKind": {
                                 "type": "string",
-                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
                               },
                               "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },
@@ -6266,7 +6275,7 @@
                               "messageId": { "type": "string" },
                               "sourceStreamKind": {
                                 "type": "string",
-                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
                               },
                               "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
                             },

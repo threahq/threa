@@ -87,7 +87,11 @@ function localeToLanguageName(locale: string): string {
  * (INV-62); `save_memo` can still opt an individual memo into `user` scope.
  */
 function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; scopeUserId: string | null } {
-  if (stream && stream.type === StreamTypes.SCRATCHPAD && stream.visibility === Visibilities.PRIVATE) {
+  if (
+    stream &&
+    (stream.type === StreamTypes.ASIDE ||
+      (stream.type === StreamTypes.SCRATCHPAD && stream.visibility === Visibilities.PRIVATE))
+  ) {
     return { scope: MemoScopes.USER, scopeUserId: stream.createdBy }
   }
   return { scope: MemoScopes.WORKSPACE, scopeUserId: null }

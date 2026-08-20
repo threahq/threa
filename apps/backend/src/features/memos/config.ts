@@ -138,6 +138,7 @@ export const MEMO_STREAM_TYPE_BOOST: Record<StreamType, number> = {
   dm: 1.0,
   thread: 1.0,
   system: 0.9,
+  aside: 1.05,
 }
 
 /**
