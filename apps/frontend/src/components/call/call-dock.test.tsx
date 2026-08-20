@@ -316,7 +316,7 @@ describe("CallDock — connected roster", () => {
   it("surfaces a mid-call capture error as an in-dock banner", () => {
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
-    act(() => setCallCaptureError({ code: "capture_rollback_failed", message: "boom" }))
+    act(() => setCallCaptureError({ code: "capture_rollback_failed", kind: "unknown", message: "boom" }))
     expect(screen.getByTestId("call-capture-error")).toHaveTextContent(/couldn't be restored/i)
   })
 
@@ -560,7 +560,7 @@ describe("CallDock — mobile drawer vs desktop dock", () => {
     forceMobile(true)
     renderDock(makeManager())
     enterConnectedCall([participant({ userId: "usr_self", endpointId: "callep_self" })])
-    act(() => setCallCaptureError({ code: "capture_rollback_failed", message: "boom" }))
+    act(() => setCallCaptureError({ code: "capture_rollback_failed", kind: "unknown", message: "boom" }))
     expect(screen.getByTestId("call-capture-error")).toBeInTheDocument()
   })
 

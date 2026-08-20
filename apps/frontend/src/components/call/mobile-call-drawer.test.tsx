@@ -285,7 +285,7 @@ describe("MobileCallDrawer — capture error visible in every mode", () => {
     it(`surfaces the capture error in ${m} mode`, () => {
       renderDrawer()
       enterConnected([participant({ userId: "usr_self" })])
-      act(() => setCallCaptureError({ code: "capture_rollback_failed", message: "boom" }))
+      act(() => setCallCaptureError({ code: "capture_rollback_failed", kind: "unknown", message: "boom" }))
       setMode(m)
       expect(screen.getByTestId("call-capture-error")).toBeInTheDocument()
     })

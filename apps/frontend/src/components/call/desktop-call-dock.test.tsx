@@ -242,7 +242,7 @@ describe("DesktopCallDock — capture error", () => {
     renderDock()
     enterConnected([participant({ userId: "usr_self" })])
     setMode("compact")
-    act(() => setCallCaptureError({ code: "capture_rollback_failed", message: "boom" }))
+    act(() => setCallCaptureError({ code: "capture_rollback_failed", kind: "unknown", message: "boom" }))
     expect(screen.getByTestId("call-capture-error")).toHaveTextContent(/couldn't be restored/i)
   })
 })

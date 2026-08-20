@@ -1,10 +1,32 @@
 import { cn } from "@/lib/utils"
 import type { CallCaptureErrorInfo } from "@/stores/call-store"
 
-export function captureErrorText(code: CallCaptureErrorInfo["code"]): string {
-  return code === "capture_rollback_failed"
-    ? "Your microphone stopped working and couldn't be restored. Try leaving and rejoining."
-    : "Couldn't switch your microphone or camera. Your previous device is still active."
+/**
+ * A failed rollback trumps the taxonomy: whatever caused it, outbound audio is
+ * dead and rejoining is the only recovery. Everything else keys on the
+ * permission-taxonomy class so a no-prompt denial ("nothing happened") tells
+ * the user where the block actually lives.
+ */
+export function captureErrorText(error: Pick<CallCaptureErrorInfo, "code" | "kind">): string {
+  if (error.code === "capture_rollback_failed") {
+    return "Your microphone stopped working and couldn't be restored. Try leaving and rejoining."
+  }
+  switch (error.kind) {
+    case "denied":
+      // "browser or system settings", not "site settings": installed PWAs run
+      // standalone with no browser chrome, and iOS keeps the toggle in Settings.
+      return "Camera or microphone access is blocked. Allow it for Threa in your browser or system settings, then try again."
+    case "os_denied":
+      return "Your operating system is blocking camera or microphone access for this browser."
+    case "blocked_by_policy":
+      return "Camera and microphone access is blocked here by policy."
+    case "device_busy":
+      return "Another app or tab is using the camera or microphone. Close it, then try again."
+    case "no_device":
+      return "No matching camera or microphone was found."
+    default:
+      return "Couldn't switch your microphone or camera. Your previous device is still active."
+  }
 }
 
 /**
@@ -19,7 +41,7 @@ export function CaptureErrorBanner({ error, className }: { error: CallCaptureErr
       role="alert"
       data-testid="call-capture-error"
     >
-      {captureErrorText(error.code)}
+      {captureErrorText(error)}
     </p>
   )
 }

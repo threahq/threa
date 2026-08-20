@@ -706,8 +706,8 @@ describe("CallManager", () => {
     let calls = 0
     ;(deps.acquireUserMedia as ReturnType<typeof vi.fn>).mockImplementation(async (c: MediaStreamConstraints) => {
       calls++
-      // The device-switch acquire fails (e.g. NotReadableError); the rollback re-acquire succeeds.
-      if (calls === 2) throw new Error("device busy")
+      // The device-switch acquire fails (NotReadableError); the rollback re-acquire succeeds.
+      if (calls === 2) throw Object.assign(new Error("device busy"), { name: "NotReadableError" })
       const kinds: Array<"audio" | "video"> = ["audio"]
       if (c.video) kinds.push("video")
       return makeStream(kinds)
@@ -722,8 +722,8 @@ describe("CallManager", () => {
     // Startup + failed switch + rollback re-acquire = 3 getUserMedia calls; audio restored.
     expect(deps.acquireUserMedia).toHaveBeenCalledTimes(3)
     expect(manager.isActive()).toBe(true)
-    // The store surfaces the typed failure for the UI.
-    expect(getCallState().captureError).toMatchObject({ code: "capture_failed" })
+    // The store surfaces the typed failure with its taxonomy class for the UI.
+    expect(getCallState().captureError).toMatchObject({ code: "capture_failed", kind: "device_busy" })
   })
 
   it("a roster event dispatched before hangupSync no-ops after the flush", async () => {
