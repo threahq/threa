@@ -926,10 +926,13 @@ export class CallService {
   }
 
   /**
-   * Publish local tracks: CF `addLocalTracks` (outside any tx), then overwrite the
-   * endpoint's published-track registry to the declared set, bump the roster
+   * Publish local tracks: CF `addLocalTracks` (outside any tx), then merge the
+   * declared tracks into the endpoint's registry by kind, bump the roster
    * version, and return the CF answer plus the fresh snapshot. Peers pull these
-   * tracks on the roster change (CF pushes no notification).
+   * tracks on the roster change (CF pushes no notification). Merge, never
+   * overwrite: the client declares one track per publish (mic, then camera), so
+   * writing the declared set verbatim dropped the mic entry on every camera
+   * publish — peers pull from this registry, so video calls went silent.
    */
   async publishTracks(params: {
     workspaceId: string
@@ -982,15 +985,38 @@ export class CallService {
       })
     }
 
-    const registry: PublishedTrack[] = params.tracks.map((t) => ({ kind: t.kind, trackName: t.trackName }))
-    const snapshot = await withTransaction(this.pool, async (client) => {
+    const declared: PublishedTrack[] = params.tracks.map((t) => ({ kind: t.kind, trackName: t.trackName }))
+    const declaredKinds = new Set(declared.map((t) => t.kind))
+    const snapshot = await this.mutateRegistry(params, (current) => [
+      ...current.filter((t) => !declaredKinds.has(t.kind)),
+      ...declared,
+    ])
+    return { cf: cfResult, snapshot }
+  }
+
+  /**
+   * Rewrite an endpoint's published-track registry under the call lock. The
+   * base registry is re-read INSIDE the transaction: publish and unpublish each
+   * declare only their own kinds, and computing the write from a read taken
+   * before the CF round-trip loses whichever concurrent declaration commits
+   * first. Entries from another incarnation never carry over — a rebind resets
+   * the registry at cf/session create, and the fenced write rejects stale
+   * writers.
+   */
+  private async mutateRegistry(
+    params: { workspaceId: string; callId: string; endpointId: string; mediaIncarnation: string },
+    mutate: (current: PublishedTrack[]) => PublishedTrack[]
+  ): Promise<CallRosterSnapshot> {
+    return withTransaction(this.pool, async (client) => {
       // Lock the call row before the endpoint write (call→endpoint lock order).
       await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      const current = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+      const base = current?.mediaIncarnation === params.mediaIncarnation ? current.publishedTracks : []
       const updated = await CallEndpointRepository.setPublishedTracks(client, {
         workspaceId: params.workspaceId,
         id: params.endpointId,
         mediaIncarnation: params.mediaIncarnation,
-        publishedTracks: registry,
+        publishedTracks: mutate(base),
       })
       if (!updated) {
         // The endpoint was closed (concurrent takeover/reap) between the fence read
@@ -1001,7 +1027,6 @@ export class CallService {
       const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId)
       return { rosterVersion: rosterVersion ?? 0, roster }
     })
-    return { cf: cfResult, snapshot }
   }
 
   /** Pull peer tracks: a thin CF `tracks/new` (remote) pass-through, incarnation-fenced. No DB write. */
@@ -1092,24 +1117,7 @@ export class CallService {
       return { cf: cfResult }
     }
     const remove = new Set(params.unpublishKinds)
-    const registry = endpoint.publishedTracks.filter((t) => !remove.has(t.kind))
-    const snapshot = await withTransaction(this.pool, async (client) => {
-      // Lock the call row before the endpoint write (call→endpoint lock order).
-      await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
-      const updated = await CallEndpointRepository.setPublishedTracks(client, {
-        workspaceId: params.workspaceId,
-        id: params.endpointId,
-        mediaIncarnation: params.mediaIncarnation,
-        publishedTracks: registry,
-      })
-      if (!updated) {
-        // The endpoint was closed concurrently — skip the bump for an unpersisted registry.
-        throw new HttpError("Endpoint is no longer live", { status: 409, code: "CALL_ENDPOINT_NOT_LIVE" })
-      }
-      const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
-      const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId)
-      return { rosterVersion: rosterVersion ?? 0, roster }
-    })
+    const snapshot = await this.mutateRegistry(params, (current) => current.filter((t) => !remove.has(t.kind)))
     return { cf: cfResult, snapshot }
   }
 
