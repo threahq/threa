@@ -42,5 +42,8 @@ describe("planRingCancel", () => {
     expect(planRingCancel(0, { inviterName: "Ada", outcome: "expired" })).toMatchObject({
       title: "Ada's call ended",
     })
+    expect(planRingCancel(0, { inviterName: "Ada", outcome: "superseded" })).toMatchObject({
+      title: "Ada's call ended",
+    })
   })
 })
