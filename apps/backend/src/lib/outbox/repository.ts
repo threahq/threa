@@ -651,9 +651,9 @@ export interface CommandFailedOutboxPayload extends StreamScopedPayload {
 }
 
 /**
- * The `aside:anchored` row of a freshly created aside, delivered to its creator
- * alone (`AUTHOR_SCOPED_EVENTS`). Unlike command events it is NOT stream-scoped:
- * a private aside's trace must never reach the host stream's room.
+ * The `aside:anchored` row of a freshly created aside. Carries the host
+ * `streamId` but routes via `AUTHOR_SCOPED_EVENTS` to the creator's user group
+ * only — never the host stream's room.
  */
 export interface StreamAsideAnchoredOutboxPayload extends StreamScopedPayload {
   authorId: string

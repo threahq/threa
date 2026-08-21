@@ -43,7 +43,6 @@ import {
   resolveDefaultPersona,
 } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
-import { ConversationRepository } from "../conversations"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { sendBootstrapJson } from "../../lib/observability"
@@ -625,18 +624,6 @@ export function createStreamHandlers({
         e2eOwnerKeyId,
         allowedToolCategories,
       } = data
-
-      if (conversationId !== undefined) {
-        // Workspace-scoped load so a cross-tenant id can't confirm existence;
-        // the conversation's own stream is the authoritative host (INV-62).
-        const [conversation] = await ConversationRepository.findByIds(pool, workspaceId, [conversationId])
-        if (!conversation || conversation.streamId !== parentStreamId) {
-          throw new HttpError("Aside conversation not found in the host stream", {
-            status: 400,
-            code: "ASIDE_CONVERSATION_INVALID",
-          })
-        }
-      }
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
       // the service. Phase 1 invariant: the stream's `owner_user_key_id`

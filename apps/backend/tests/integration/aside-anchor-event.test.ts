@@ -11,6 +11,7 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamEventRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
+import { ConversationRepository } from "../../src/features/conversations"
 import { SyncLogRepository } from "../../src/features/sync"
 import { resolveDeliveryGroups, userGroup, type OutboxEvent } from "../../src/lib/outbox"
 import { userId, workspaceId, messageId, conversationId } from "../../src/lib/id"
@@ -65,6 +66,14 @@ describe("Aside anchor event", () => {
         authorType: "user",
         ...testMessageContent("host message"),
       })
+    })
+    return id
+  }
+
+  async function insertConversation(streamId: string): Promise<string> {
+    const id = conversationId()
+    await withTransaction(pool, async (client) => {
+      await ConversationRepository.insert(client, { id, streamId, workspaceId: wsId })
     })
     return id
   }
@@ -151,7 +160,7 @@ describe("Aside anchor event", () => {
   test("a conversation-anchored aside stamps the conversation on its row", async () => {
     const channel = await createChannel("aside-anchor-conversation")
     const anchorId = await insertMessage(channel.id, member)
-    const convId = conversationId()
+    const convId = await insertConversation(channel.id)
     const aside = await streamService.createAside({
       workspaceId: wsId,
       parentStreamId: channel.id,
@@ -162,6 +171,37 @@ describe("Aside anchor event", () => {
 
     const rows = await anchorRowsFor(channel.id, creator)
     expect(rows.map((row) => row.payload)).toEqual([{ asideId: aside.id, anchorId, conversationId: convId }])
+  })
+
+  test("a conversation outside the host is rejected; a non-member sees only the host 404", async () => {
+    const channel = await createChannel("aside-anchor-conv-host")
+    const elsewhere = await streamService.createChannel({
+      workspaceId: wsId,
+      slug: "aside-anchor-conv-elsewhere",
+      visibility: "private",
+      createdBy: creator,
+    })
+    const foreignConversation = await insertConversation(elsewhere.id)
+    await expect(
+      streamService.createAside({
+        workspaceId: wsId,
+        parentStreamId: channel.id,
+        conversationId: foreignConversation,
+        createdBy: creator,
+      })
+    ).rejects.toMatchObject({ status: 400, code: "ASIDE_CONVERSATION_INVALID" })
+
+    // The host access check runs first: a non-member gets the same 404 whether
+    // or not the conversation id is real, so the check is no existence oracle.
+    const hostConversation = await insertConversation(elsewhere.id)
+    await expect(
+      streamService.createAside({
+        workspaceId: wsId,
+        parentStreamId: elsewhere.id,
+        conversationId: hostConversation,
+        createdBy: member,
+      })
+    ).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
   })
 
   test("outbox delivery targets the creator alone, in live routing and in catch-up", async () => {

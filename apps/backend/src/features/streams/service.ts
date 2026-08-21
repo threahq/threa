@@ -15,6 +15,7 @@ import { getEffectiveReadState, type EffectiveReadState } from "./effective-read
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { MessageRepository, type Message } from "../messaging"
+import { ConversationRepository } from "../conversations"
 import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { OutboxRepository } from "../../lib/outbox"
 import { streamId, eventId, streamContextItemId } from "../../lib/id"
@@ -693,6 +694,21 @@ export class StreamService {
           }
         } else {
           throw new HttpError("Unrecognized aside anchor id", { status: 400, code: "ANCHOR_INVALID" })
+        }
+      }
+
+      if (params.conversationId !== undefined) {
+        // After the host access check (a non-member learns nothing about the
+        // conversation), workspace-scoped: the conversation's own stream is the
+        // authoritative host (INV-62).
+        const [conversation] = await ConversationRepository.findByIds(client, params.workspaceId, [
+          params.conversationId,
+        ])
+        if (!conversation || conversation.streamId !== params.parentStreamId) {
+          throw new HttpError("Aside conversation not found in the host stream", {
+            status: 400,
+            code: "ASIDE_CONVERSATION_INVALID",
+          })
         }
       }
 
