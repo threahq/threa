@@ -8,6 +8,7 @@ import { MarkdownBlockProvider, hashMarkdownBlock, composeBlockCollapseKey } fro
 import { hydrateCollapseCache } from "./collapse-cache"
 import * as preferencesModule from "@/contexts/preferences-context"
 import * as lineMeasureModule from "./use-measured-line-count"
+import * as highlighterModule from "./highlighter"
 
 // Stubbable preferences mock: each test can override via `currentPrefs`.
 let currentPrefs: {
@@ -286,12 +287,25 @@ describe("CodeBlock line wrapping", () => {
   })
 
   it("should apply the wrap classes to both the highlighted block and the measuring placeholder", async () => {
+    // Force the cold path: the highlighter singleton is warm by now, so the
+    // placeholder would otherwise never render.
+    vi.spyOn(highlighterModule, "tryHighlightSync").mockReturnValue(null)
     currentPrefs = { codeBlockWrap: "wrap" }
     renderCodeBlock("const a = 1")
     const placeholder = document.querySelector("pre.invisible")
-    if (placeholder) expect(placeholder.className).toContain("whitespace-pre-wrap")
+    expect(placeholder).not.toBeNull()
+    expect(placeholder?.className).toContain("whitespace-pre-wrap")
     await waitFor(() => expect(document.querySelector("pre:not(.invisible)")).toBeInTheDocument())
     const wrapper = document.querySelector("pre:not(.invisible)")?.parentElement
     expect(wrapper?.className).toContain("[&>pre]:whitespace-pre-wrap")
+  })
+
+  it("should keep the scroll classes on both the placeholder and the highlighted block", async () => {
+    vi.spyOn(highlighterModule, "tryHighlightSync").mockReturnValue(null)
+    currentPrefs = { codeBlockWrap: "scroll" }
+    renderCodeBlock("const a = 1")
+    expect(document.querySelector("pre.invisible")?.className).toContain("whitespace-pre")
+    await waitFor(() => expect(document.querySelector("pre:not(.invisible)")).toBeInTheDocument())
+    expect(document.querySelector("pre:not(.invisible)")?.parentElement?.className).toContain("[&>pre]:whitespace-pre ")
   })
 })
