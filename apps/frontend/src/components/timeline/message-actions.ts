@@ -21,6 +21,7 @@ import {
   GitBranch,
   FolderInput,
   Check,
+  MessageSquareDashed,
 } from "lucide-react"
 import { toast } from "sonner"
 import type { QuoteSelection } from "@/lib/quote-selection"
@@ -183,6 +184,8 @@ export interface MessageActionContext {
   onLabelMessage?: () => void
   /** Callback to start a private "Discuss with Ariadne" scratchpad seeded with this thread */
   onDiscussWithAriadne?: () => void | Promise<void>
+  /** Open a private aside anchored to this message. Set only on surfaces whose host can carry one. */
+  onOpenAside?: () => void
   /**
    * Callback to enter batch-select mode with this message preselected, so
    * the user can extend the selection or drop straight onto a target. The
@@ -435,6 +438,13 @@ export const messageActions: MessageAction[] = [
     icon: Sparkles,
     when: (ctx) => !!ctx.onDiscussWithAriadne && !!ctx.streamId,
     action: (ctx) => ctx.onDiscussWithAriadne?.(),
+  },
+  {
+    id: "open-aside",
+    label: "Open an aside here",
+    icon: MessageSquareDashed,
+    when: (ctx) => !!ctx.onOpenAside,
+    action: (ctx) => ctx.onOpenAside?.(),
   },
   {
     // Per-message entry into the move-to-thread flow. Mirrors the stream

@@ -84,6 +84,8 @@ export interface CommandContext {
    * Saved tab and the offline cache immediately.
    */
   createSavedTodo: (title: string) => Promise<void>
+  /** Open a private aside on the stream in view. Absent when that stream can't host one. */
+  openAside?: (streamId: string) => Promise<void>
 }
 
 export interface Command {

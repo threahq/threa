@@ -35,6 +35,23 @@ export type SharedSourceStreamKind = (typeof SHARED_SOURCE_STREAM_KINDS)[number]
 
 export const DM_PARTICIPANT_COUNT = 2
 
+/**
+ * Stream types an aside may anchor to: no aside-on-aside, no system hosts.
+ * The create path, slash-command availability and the client entry points
+ * all read this one list.
+ */
+export const ASIDE_HOST_STREAM_TYPES = [
+  "channel",
+  "dm",
+  "scratchpad",
+  "thread",
+] as const satisfies readonly StreamType[]
+export type AsideHostStreamType = (typeof ASIDE_HOST_STREAM_TYPES)[number]
+
+export function isAsideHostType(type: string): type is AsideHostStreamType {
+  return (ASIDE_HOST_STREAM_TYPES as readonly string[]).includes(type)
+}
+
 export const STREAM_READ_ONLY_REASONS = ["archived", "system_stream", "not_a_member"] as const
 export type StreamReadOnlyReason = (typeof STREAM_READ_ONLY_REASONS)[number]
 

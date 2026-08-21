@@ -57,6 +57,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
+import { AsideDockSlot, AsideMinimizedStrip, useAsideHost } from "@/components/aside"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
@@ -94,6 +95,7 @@ export function StreamPage() {
     handleResizeKeyDown,
     handleTransitionEnd,
   } = usePanelLayout(isPanelOpen)
+  const asideHostKey = useAsideHost()
 
   useTypeToFocus()
 
@@ -855,6 +857,7 @@ export function StreamPage() {
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <TimelineView isDraft={isDraft} autoFocus={!isMobile} />
           </StreamEncryptionGate>
+          <AsideMinimizedStrip workspaceId={workspaceId} hostKey={asideHostKey} />
         </main>
         {stream && !isDraft && (
           <LabelPicker
@@ -966,6 +969,7 @@ export function StreamPage() {
             <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>
         )}
+        <AsideDockSlot workspaceId={workspaceId} hostKey={asideHostKey} />
       </div>
       {/* Both are `fixed` overlays that would paint over a fullscreen panel, so a
           takeover keeps them out of the tree entirely rather than merely closed —

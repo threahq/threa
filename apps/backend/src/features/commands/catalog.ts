@@ -1,4 +1,10 @@
-import { CommandKinds, CommandScopes, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
+import {
+  ASIDE_COMMAND,
+  CommandKinds,
+  CommandScopes,
+  DISCUSS_WITH_ARIADNE_COMMAND,
+  type CommandInfo,
+} from "@threa/types"
 import type { CommandRegistry } from "./registry"
 
 // Canonical session-control command names, shared across runtimes that drive a
@@ -45,6 +51,13 @@ export function listClientActionCommandInfos(): CommandInfo[] {
       kind: CommandKinds.CLIENT_ACTION,
       scope: CommandScopes.STREAM,
       clientActionId: DISCUSS_WITH_ARIADNE_COMMAND,
+    },
+    {
+      name: ASIDE_COMMAND,
+      description: "Open a private aside with Ariadne beside what you are reading",
+      kind: CommandKinds.CLIENT_ACTION,
+      scope: CommandScopes.STREAM,
+      clientActionId: ASIDE_COMMAND,
     },
   ]
 }

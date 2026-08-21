@@ -66,6 +66,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
+import { useOpenAside } from "@/hooks/use-open-aside"
 import { draftsApi, messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
 import { ComposeOverlayMount } from "@/components/board/compose-overlay-mount"
@@ -450,6 +451,11 @@ export function WorkspaceLayout() {
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [switcherMode, setSwitcherMode] = useState<QuickSwitcherMode>("stream")
   const { user, loading: authLoading } = useAuth()
+  const openAside = useOpenAside(workspaceId ?? "")
+  const openAsideOnStream = useCallback(
+    (streamId: string) => openAside({ kind: "stream", hostStreamId: streamId }),
+    [openAside]
+  )
 
   // Extract streamId from nested route (if on /s/:streamId)
   const streamMatch = useMatch("/w/:workspaceId/s/:streamId")
@@ -549,6 +555,7 @@ export function WorkspaceLayout() {
                                                   onOpenChange={setSwitcherOpen}
                                                   initialMode={switcherMode}
                                                   currentStreamId={streamId}
+                                                  openAside={openAsideOnStream}
                                                 />
                                                 <ComposeOverlayMount workspaceId={workspaceId} />
                                               </SearchPanelProvider>

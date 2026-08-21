@@ -67,6 +67,11 @@ interface CreateStreamInputBase {
    * or `event_…` (card). The one anchor track. Required for `type: "thread"`.
    */
   parentAnchorId?: string
+  /**
+   * Aside only: the conversation it was opened from (board card / conversation
+   * panel). Must belong to `parentStreamId`.
+   */
+  conversationId?: string
   memberIds?: string[]
   /** Context bag attached to a new scratchpad (triggers summary pre-compute). */
   contextBag?: ContextBag

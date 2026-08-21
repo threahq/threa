@@ -40,6 +40,7 @@ import { UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
   StreamTypes,
+  isAsideHostType,
   Visibilities,
   CompanionModes,
   MemoryModes,
@@ -90,14 +91,6 @@ import { StreamPoliciesRepository } from "./policy-repository"
 import { normalizeStreamDescription } from "./description"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
-
-/** Streams an aside may anchor to: no aside-on-aside, no system hosts. */
-const ASIDE_HOST_TYPES: readonly StreamType[] = [
-  StreamTypes.CHANNEL,
-  StreamTypes.DM,
-  StreamTypes.SCRATCHPAD,
-  StreamTypes.THREAD,
-]
 
 const createScratchpadParamsSchema = z.object({
   workspaceId: z.string(),
@@ -653,7 +646,7 @@ export class StreamService {
       const parent = await checkStreamAccess(client, params.parentStreamId, params.workspaceId, params.createdBy)
       if (!parent) throw new StreamNotFoundError()
 
-      if (!ASIDE_HOST_TYPES.includes(parent.type)) {
+      if (!isAsideHostType(parent.type)) {
         throw new HttpError("An aside cannot be opened on this stream type", {
           status: 400,
           code: "ASIDE_HOST_TYPE_INVALID",

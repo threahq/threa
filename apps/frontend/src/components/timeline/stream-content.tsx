@@ -3698,6 +3698,7 @@ function TimelineMessageList({
         className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", batch?.enabled && "select-none")}
         style={{ overflowAnchor: "none" }}
         data-suppress-pull-refresh="true"
+        data-stream-scroller={streamId}
         onScroll={handleScroll}
         {...batchPointerHandlers}
       >

@@ -1,9 +1,10 @@
 import { useCallback, useMemo } from "react"
-import { DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
+import { ASIDE_COMMAND, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "@/lib/commands"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
+import { useOpenAside } from "@/hooks/use-open-aside"
 import { useStreamCommands } from "@/hooks/use-stream-commands"
 
 /** A send that resolved to a slash command rather than a message. */
@@ -41,6 +42,7 @@ export function useComposerCommandSend(
 ) {
   const availableCommands = useStreamCommands(workspaceId, streamId)
   const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
+  const openAside = useOpenAside(workspaceId)
   const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId ?? "")
 
   const availableCommandByName = useMemo(() => {
@@ -84,9 +86,10 @@ export function useComposerCommandSend(
 
   /**
    * Run a planned command. Client-action commands route locally
-   * (`/discuss-with-ariadne` creates a scratchpad + navigates) and swallow their
-   * failure — the hook already toasts, so a second inline error would render the
-   * same failure twice. A runtime dispatch throws, leaving the surface to report.
+   * (`/discuss-with-ariadne` creates a scratchpad + navigates; `/aside` opens an
+   * aside beside this surface) and swallow their failure — the hook already
+   * toasts, so a second inline error would render the same failure twice. A
+   * runtime dispatch throws, leaving the surface to report.
    */
   const dispatchCommand = useCallback(
     async (plan: ComposerCommandPlan) => {
@@ -99,13 +102,26 @@ export function useComposerCommandSend(
         }
         return
       }
+      if (plan.clientActionId === ASIDE_COMMAND) {
+        if (!streamId) return
+        try {
+          await openAside(
+            conversationId
+              ? { kind: "conversation", hostStreamId: streamId, conversationId }
+              : { kind: "stream", hostStreamId: streamId }
+          )
+        } catch {
+          /* hook already toasted; composer stays clean */
+        }
+        return
+      }
       await queueCommand({
         commandMarkdown: plan.commandMarkdown,
         commandName: plan.commandName,
         ...(conversationId && { conversationId }),
       })
     },
-    [conversationId, queueCommand, startDiscussWithAriadne, streamId]
+    [conversationId, queueCommand, startDiscussWithAriadne, openAside, streamId]
   )
 
   return { availableCommands, planSend, dispatchCommand }

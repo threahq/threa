@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from "react"
 import { useParams } from "react-router-dom"
 import type { Editor } from "@tiptap/react"
-import { DISCUSS_WITH_ARIADNE_COMMAND } from "@threa/types"
+import { ASIDE_COMMAND, DISCUSS_WITH_ARIADNE_COMMAND } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
 import {
@@ -148,8 +148,10 @@ export function useCommandSuggestion({
   const commands = useMemo<CommandItem[]>(() => {
     const serverCommands = effectiveCommands
       .filter((cmd) => {
-        // Gate discuss-with-ariadne on there being a source stream to reference.
-        if (cmd.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) return !!streamId
+        // Gate the client actions that reference this stream on there being one.
+        if (cmd.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND || cmd.clientActionId === ASIDE_COMMAND) {
+          return !!streamId
+        }
         return true
       })
       .map((cmd) => ({

@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState } from "react"
-import { CircleCheck, Eye, EyeOff, EllipsisVertical, Pencil, RotateCcw, Sparkles } from "lucide-react"
+import {
+  CircleCheck,
+  Eye,
+  EyeOff,
+  EllipsisVertical,
+  MessageSquareDashed,
+  Pencil,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react"
 import {
   ConversationStatuses,
   MAX_CONVERSATION_TOPIC_LENGTH,
   StreamTypes,
+  isAsideHostType,
   type Stream,
   type TitleSource,
 } from "@threa/types"
@@ -31,6 +41,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { useRenameStream } from "@/hooks/use-rename-stream"
 import { isProtectedRegenerableTitle, useRegenerateTitle } from "@/hooks/use-regenerate-title"
+import { useOpenAside } from "@/hooks/use-open-aside"
 
 interface ConversationActionsMenuProps {
   workspaceId: string
@@ -74,6 +85,8 @@ export function ConversationActionsMenu({
   const streams = useWorkspaceStreams(workspaceId)
   const stream = streams.find((item) => item.id === streamId)
   const isScratchpad = stream?.type === StreamTypes.SCRATCHPAD
+  const openAside = useOpenAside(workspaceId)
+  const canOpenAside = !!streamId && isAsideHostType(stream?.type ?? "") && stream?.e2eEnabled !== true
   const effectiveTitle = effectiveConversationTitle({ streamId: streamId ?? "", topicSummary }, stream)
   const hide = useHideConversation(workspaceId)
   const unhide = useUnhideConversation(workspaceId)
@@ -153,6 +166,18 @@ export function ConversationActionsMenu({
             >
               <Sparkles className="h-4 w-4" />
               Split with AI…
+            </DropdownMenuItem>
+          )}
+          {canOpenAside && (
+            <DropdownMenuItem
+              onSelect={() => {
+                void openAside({ kind: "conversation", hostStreamId: streamId!, conversationId }).catch(() => {
+                  /* toast already surfaced inside the hook */
+                })
+              }}
+            >
+              <MessageSquareDashed className="h-4 w-4" />
+              Open an aside
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
