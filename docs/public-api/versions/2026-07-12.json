@@ -6573,7 +6573,7 @@
   },
   "tags": [
     { "name": "Identity", "description": "Confirm who a key belongs to and list the bots you own." },
-    { "name": "Streams", "description": "List and inspect streams (channels, scratchpads, threads)" },
+    { "name": "Streams", "description": "List and inspect accessible streams" },
     { "name": "Messages", "description": "Read, send, update, and delete messages" },
     {
       "name": "Conversations",

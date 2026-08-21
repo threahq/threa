@@ -21,6 +21,8 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamMemberRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
+import { DynamicNamingStreamTarget } from "../../src/features/dynamic-naming"
+import { MessageFormatter } from "../../src/lib/ai/message-formatter"
 import { MemoService, resolveMemoScopeForStreamId } from "../../src/features/memos"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { resolveDeliveryGroups, userGroup, type OutboxEvent } from "../../src/lib/outbox"
@@ -313,6 +315,52 @@ describe("Aside foundations", () => {
         createdBy: creator,
       })
     ).rejects.toMatchObject({ code: "ASIDE_HOST_TYPE_INVALID" })
+  })
+
+  test("an aside cannot be opened on an archived host", async () => {
+    const channel = await createChannel("aside-archived-host")
+    const anchorId = await insertMessage(channel.id, creator)
+    await streamService.archiveStream(channel.id, wsId, creator)
+
+    await expect(
+      streamService.createAside({
+        workspaceId: wsId,
+        parentStreamId: channel.id,
+        parentAnchorId: anchorId,
+        createdBy: creator,
+      })
+    ).rejects.toMatchObject({ code: StreamErrorCodes.READ_ONLY, details: { reason: "archived" } })
+  })
+
+  test("naming context for an aside lists only the creator's own aside titles", async () => {
+    const channel = await createChannel("aside-naming-titles", [member])
+    const asideOf = (userId: string, displayName?: string) =>
+      insertMessage(channel.id, creator).then((anchorId) =>
+        streamService.createAside({
+          workspaceId: wsId,
+          parentStreamId: channel.id,
+          parentAnchorId: anchorId,
+          createdBy: userId,
+          displayName,
+        })
+      )
+    await asideOf(creator, "Creator's other aside")
+    await asideOf(member, "Member's private aside")
+    const target = await asideOf(creator)
+    await insertMessage(target.id, creator)
+
+    const context = await new DynamicNamingStreamTarget(pool, new MessageFormatter()).loadContext({
+      workspaceId: wsId,
+      targetKind: "stream",
+      targetId: target.id,
+      messageCount: 1,
+      latestMessageAt: new Date(),
+      title: null,
+      titleSource: null,
+      titleRevision: 0,
+    })
+
+    expect(context?.existingTitles).toEqual(["Creator's other aside"])
   })
 
   test("threads project into stream_context_items; asides never do", async () => {

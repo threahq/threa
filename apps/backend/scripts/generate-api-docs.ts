@@ -72,7 +72,7 @@ function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
 // (INV-11) instead of shipping a group with no heading.
 const TAG_DEFS: { name: string; description: string }[] = [
   { name: "Identity", description: "Confirm who a key belongs to and list the bots you own." },
-  { name: "Streams", description: "List and inspect streams (channels, scratchpads, threads)" },
+  { name: "Streams", description: "List and inspect accessible streams" },
   { name: "Messages", description: "Read, send, update, and delete messages" },
   {
     name: "Conversations",

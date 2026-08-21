@@ -638,8 +638,9 @@ export class StreamService {
    * a spot in a host stream. `parentStreamId`/`parentAnchorId` are contextual
    * pointers only — never access-bearing (INV-62): access resolves through the
    * aside's own creator membership, which is what lets a private aside sit
-   * inside a public channel. Not idempotent per anchor — multiple asides may
-   * share one.
+   * inside a public channel. Not idempotent per anchor by design; until the
+   * untyped anchor index is dropped in the stack's final layer, the database
+   * still rejects a second stream (of any type) on the same anchor.
    */
   async createAside(params: CreateAsideParams): Promise<Stream> {
     return withTransaction(this.pool, async (client) => {
@@ -662,6 +663,14 @@ export class StreamService {
           code: "ASIDE_E2E_HOST_NOT_ALLOWED",
         })
       }
+
+      // An aside inherits its host's archive state (lockEffectiveStreams), so an
+      // aside opened on an archived host would be born read-only.
+      await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.parentStreamId,
+        principal: { kind: "user", userId: params.createdBy },
+      })
 
       const anchorId = params.parentAnchorId
       if (anchorId !== undefined) {
