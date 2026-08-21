@@ -51,6 +51,11 @@ export function formatContextRefLabel(input: ContextRefLabelInput): string {
   }
 
   const handle = streamHandle(input)
+  // A viewport is what the user had on screen when the aside opened — the
+  // server expands it to a window, so a count would describe the expansion,
+  // not the capture.
+  if (input.kind === "viewport") return `What you saw in ${handle}`
+
   const isAnchored = Boolean(input.fromMessageId || input.toMessageId)
 
   // Anchored slices use a "Messages X–Y in #foo" framing. Without resolving

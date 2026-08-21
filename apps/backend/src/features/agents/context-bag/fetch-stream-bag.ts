@@ -9,6 +9,7 @@ import { ContextBagRepository } from "./repository"
 import { assertRefAccess } from "./registry"
 import { DISCUSS_WINDOW_TOTAL } from "./resolvers/thread-resolver"
 import { CONVERSATION_WINDOW_TOTAL } from "./resolvers/conversation-resolver"
+import { VIEWPORT_WINDOW_TOTAL } from "./config"
 
 export interface ContextRefSource {
   streamId: string
@@ -155,7 +156,7 @@ export async function fetchStreamBag(
   // in the context pill ("487 messages in #intro") is misleading because the AI
   // never sees more than the window — clamp the displayed count to what's
   // actually shared so the chip matches reality.
-  const isWindowedIntent = bag.intent === ContextIntents.DISCUSS_THREAD
+  const isWindowedIntent = bag.intent === ContextIntents.DISCUSS_THREAD || bag.intent === ContextIntents.ASIDE
 
   const enriched: EnrichedContextRef[] = []
   for (const ref of visibleRefs) {
@@ -170,6 +171,8 @@ export async function fetchStreamBag(
       conversationId = ref.conversationId
       const memberCount = conversationById.get(ref.conversationId)?.messageIds.length ?? 0
       itemCount = isWindowedIntent ? Math.min(memberCount, CONVERSATION_WINDOW_TOTAL) : memberCount
+    } else if (ref.kind === ContextRefKinds.VIEWPORT) {
+      itemCount = Math.min(itemCounts.get(srcId) ?? 0, VIEWPORT_WINDOW_TOTAL)
     } else {
       const totalCount = itemCounts.get(srcId) ?? 0
       itemCount = isWindowedIntent ? Math.min(totalCount, DISCUSS_WINDOW_TOTAL) : totalCount
@@ -182,7 +185,7 @@ export async function fetchStreamBag(
       conversationId,
       fromMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.fromMessageId ?? null) : null,
       toMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.toMessageId ?? null) : null,
-      originMessageId: ref.originMessageId ?? null,
+      originMessageId: ref.kind === ContextRefKinds.VIEWPORT ? null : (ref.originMessageId ?? null),
       source: {
         streamId: sourceStream.id,
         displayName: sourceStream.displayName ?? null,

@@ -3,12 +3,13 @@ import type { Pool } from "pg"
 import { withClient } from "../../../db"
 import type { AI, CostContext } from "@threa/agent-runtime"
 import { logger } from "../../../lib/logger"
-import { ContextIntents, ContextRefKinds, type ContextRefKind } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextRef, type ContextRefKind } from "@threa/types"
+import { HttpError } from "../../../lib/errors"
 import { MessageRepository } from "../../messaging"
 import { StreamRepository } from "../../streams"
 import { ContextBagRepository } from "./repository"
 import { SummaryRepository } from "./summary-repository"
-import { canonicalRefKey, fetchRef, getIntentConfig } from "./registry"
+import { assertRefAccess, canonicalRefKey, fetchRef, getIntentConfig } from "./registry"
 import { diffInputs } from "./diff"
 import { buildSnapshot, renderDelta, renderStable } from "./render"
 import { summarizeThread } from "./summarizer"
@@ -121,6 +122,18 @@ export async function resolveBagForStream(
         logger.warn({ intent: bag.intent, kind: ref.kind }, "context-bag: unsupported ref kind for intent, skipping")
         continue
       }
+      // The agent sees exactly what the bag's creator can see, re-checked every
+      // turn: a source the creator has lost access to since the bag was
+      // attached drops out (the other refs survive), mirroring what the
+      // context chip shows them (`fetchStreamBag`). Anything other than a clean
+      // FORBIDDEN is a real failure and still surfaces.
+      if (!(await canCreatorRead(db, bag.createdBy, bag.workspaceId, ref))) {
+        logger.info(
+          { workspaceId: bag.workspaceId, streamId, refKind: ref.kind, refStreamId: ref.streamId },
+          "context-bag: dropping ref the creator can no longer read"
+        )
+        continue
+      }
       const part = await fetchRef(db, ref, { intent: bag.intent })
       resolveds.push({ ref, ...part })
     }
@@ -158,13 +171,13 @@ export async function resolveBagForStream(
   const nextItems: SummaryInput[] = []
   let nextTail: string | null = null
 
-  // For windowed bags (DISCUSS_THREAD), the trace pill should report the
+  // For windowed bags (DISCUSS_THREAD, ASIDE), the trace pill should report the
   // actual resolved item count, not the global cap. `ThreadResolver` prepends
   // the thread root on top of the discuss window, so the resolved length can
   // exceed `DISCUSS_WINDOW_TOTAL` by one — the trace exists to show what the
   // AI actually saw, so the chip and the disclosure must agree on the same
   // number. Non-windowed intents fall back to the raw source-stream count.
-  const isWindowedIntent = bag.intent === ContextIntents.DISCUSS_THREAD
+  const isWindowedIntent = bag.intent === ContextIntents.DISCUSS_THREAD || bag.intent === ContextIntents.ASIDE
 
   for (const resolved of resolveds) {
     const inlineSize = resolved.items.reduce((acc, m) => acc + m.contentMarkdown.length, 0)
@@ -191,6 +204,7 @@ export async function resolveBagForStream(
       summaryText,
       refLabel: refKey,
       focalMessageId: resolved.focalMessageId,
+      visibleMessageIds: resolved.visibleMessageIds,
     })
     stableParts.push(stable)
 
@@ -212,7 +226,7 @@ export async function resolveBagForStream(
       conversationId: ref.kind === ContextRefKinds.CONVERSATION ? ref.conversationId : null,
       fromMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.fromMessageId ?? null) : null,
       toMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.toMessageId ?? null) : null,
-      originMessageId: ref.originMessageId ?? null,
+      originMessageId: ref.kind === ContextRefKinds.VIEWPORT ? null : (ref.originMessageId ?? null),
       source: {
         displayName: sourceStream?.displayName ?? null,
         slug: sourceStream?.slug ?? null,
@@ -231,6 +245,16 @@ export async function resolveBagForStream(
     items: allItems,
     refs: groupedRefs,
     nextSnapshot: buildSnapshot(nextItems, nextTail),
+  }
+}
+
+async function canCreatorRead(db: Querier, userId: string, workspaceId: string, ref: ContextRef): Promise<boolean> {
+  try {
+    await assertRefAccess(db, ref, userId, workspaceId)
+    return true
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 403) return false
+    throw err
   }
 }
 

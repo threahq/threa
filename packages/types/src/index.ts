@@ -1160,6 +1160,8 @@ export {
   type ContextRef,
   type ThreadContextRef,
   type ConversationContextRef,
+  type ViewportContextRef,
+  VIEWPORT_MAX_VISIBLE_IDS,
   type ContextBag,
 } from "./context-bag"
 

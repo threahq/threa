@@ -1,5 +1,11 @@
 import { z } from "zod"
-import { ContextIntents, ContextRefKinds, type ContextIntent, type ContextRefKind } from "@threa/types"
+import {
+  ContextIntents,
+  ContextRefKinds,
+  VIEWPORT_MAX_VISIBLE_IDS,
+  type ContextIntent,
+  type ContextRefKind,
+} from "@threa/types"
 
 /**
  * Shared Zod schemas for the ContextBag wire format.
@@ -36,11 +42,22 @@ const conversationRefSchema = z.object({
   originMessageId: z.string().min(1).optional(),
 })
 
+const viewportRefSchema = z.object({
+  kind: z.literal(ContextRefKinds.VIEWPORT),
+  streamId: z.string().min(1),
+  visibleMessageIds: z.array(z.string().min(1)).min(1).max(VIEWPORT_MAX_VISIBLE_IDS),
+  capturedAt: z.string().datetime(),
+})
+
 /**
  * Discriminated on `kind` so that future ref kinds (memo, search, etc.) get
  * their own field shape without contaminating another kind's fields.
  */
-export const contextRefSchema = z.discriminatedUnion("kind", [threadRefSchema, conversationRefSchema])
+export const contextRefSchema = z.discriminatedUnion("kind", [
+  threadRefSchema,
+  conversationRefSchema,
+  viewportRefSchema,
+])
 
 export const contextBagSchema = z.object({
   intent: contextIntentSchema,

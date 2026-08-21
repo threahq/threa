@@ -1,21 +1,12 @@
 import type { Querier } from "../../../../db"
-import {
-  ContextIntents,
-  ContextRefKinds,
-  LinkPreviewStatuses,
-  type AttachmentSummary,
-  type ContextRef,
-} from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextRef } from "@threa/types"
 import { HttpError } from "../../../../lib/errors"
-import { AttachmentRepository } from "../../../attachments"
-import { LinkPreviewRepository, renderLinkPreviewContext } from "../../../link-previews"
 import type { Message } from "../../../messaging"
 import { MessageRepository } from "../../../messaging"
 import { StreamRepository, checkStreamAccess } from "../../../streams"
-import { resolveActorNames } from "../../actor-names"
 import { findThreadAnchorContext } from "../../thread-anchor-context"
-import { fingerprintContent, fingerprintManifest as fingerprintInputs } from "../fingerprint"
-import type { RenderableMessage, Resolver, SummaryInput } from "../types"
+import { hydrateRenderableItems } from "../renderable-items"
+import type { Resolver } from "../types"
 
 type ThreadRef = Extract<ContextRef, { kind: typeof ContextRefKinds.THREAD }>
 
@@ -100,67 +91,8 @@ export const ThreadResolver: Resolver<ThreadRef> = {
     const root = await findThreadAnchorContext(db, stream)
     const withRoot = root && !anchored.some((m) => m.id === root.id) ? [root, ...anchored] : anchored
 
-    const authorIds = new Set(withRoot.map((m) => m.authorId))
-    const messageIds = withRoot.map((m) => m.id)
-    const [authorNames, attachmentsByMessage, linkPreviewsByMessage] = await Promise.all([
-      resolveActorNames(db, stream.workspaceId, authorIds),
-      // Without this the focal message in a "Discuss with Ariadne" window
-      // loses its attachments — the trace shows only the text and the model
-      // has no idea anything was attached. The renderer formats the metadata
-      // inline below; full extraction content stays behind the existing
-      // attachment tools so we don't duplicate the heavy enrichment path.
-      AttachmentRepository.findByMessageIds(db, messageIds),
-      LinkPreviewRepository.findByMessageIds(db, stream.workspaceId, messageIds),
-    ])
-
-    const items: RenderableMessage[] = withRoot.map((m) => {
-      const messageAttachments = attachmentsByMessage.get(m.id)
-      // Sort by id (ULID, time-ordered) so the rendered attachments line is
-      // byte-identical across resolves — `findByMessageIds` doesn't ORDER BY,
-      // so PG row order would otherwise drift and break prompt-cache reuse
-      // on the stable region.
-      const attachments: AttachmentSummary[] | undefined =
-        messageAttachments && messageAttachments.length > 0
-          ? [...messageAttachments]
-              .sort((a, b) => a.id.localeCompare(b.id))
-              .map((a) => ({
-                id: a.id,
-                filename: a.filename,
-                mimeType: a.mimeType,
-                sizeBytes: a.sizeBytes,
-              }))
-          : undefined
-      const linkPreviews = (linkPreviewsByMessage.get(m.id) ?? []).filter(
-        (preview) => preview.status === LinkPreviewStatuses.COMPLETED
-      )
-      return {
-        messageId: m.id,
-        authorId: m.authorId,
-        authorName: authorNames.get(m.authorId) ?? "Unknown",
-        contentMarkdown: m.contentMarkdown,
-        createdAt: m.createdAt.toISOString(),
-        editedAt: m.editedAt?.toISOString() ?? null,
-        sequence: m.sequence,
-        ...(attachments && { attachments }),
-        ...(linkPreviews.length > 0 && { linkPreviews }),
-      }
-    })
-
-    // Attachments are intentionally NOT folded into the fingerprint: they're
-    // immutable after message creation (the link is set at insert time and
-    // never mutated), so adding them would expand the manifest without ever
-    // changing the value. If that invariant ever breaks (e.g. retroactive
-    // attach/detach), the rendered stable region would drift while the
-    // fingerprint stays put — the cache would silently serve a stale summary.
-    const inputs: SummaryInput[] = items.map((item) => ({
-      messageId: item.messageId,
-      contentFingerprint: fingerprintContent(item.contentMarkdown + renderLinkPreviewContext(item.linkPreviews ?? [])),
-      editedAt: item.editedAt,
-      deleted: false,
-    }))
-
-    const fingerprint = fingerprintInputs(inputs)
-    const tail = items[items.length - 1]
+    const hydrated = await hydrateRenderableItems(db, stream.workspaceId, withRoot)
+    const tail = hydrated.items[hydrated.items.length - 1]
 
     // The focal message is only meaningful when it actually shows up inside
     // the windowed slice. We check `messages` (the discuss window) rather
@@ -175,11 +107,10 @@ export const ThreadResolver: Resolver<ThreadRef> = {
         : null
 
     return {
-      items,
-      inputs,
-      fingerprint,
+      ...hydrated,
       tailMessageId: tail?.messageId ?? null,
       focalMessageId,
+      visibleMessageIds: null,
       // The source stream is access-checked (assertAccess) and confirmed to
       // exist above, so it's the trusted id to enrich the chip from.
       sourceStreamId: ref.streamId,

@@ -90,6 +90,14 @@ export interface ResolvedRef {
    * whole stream — or when the focal id falls outside the windowed slice.
    */
   focalMessageId: string | null
+  /**
+   * For a viewport ref: the ids of the messages that were actually on screen
+   * when the aside was opened, restricted to those present in `items`. The
+   * renderer splits the window around this span and marks each member, so the
+   * model can tell "what the user saw" from the surrounding context. Null for
+   * refs without a viewport.
+   */
+  visibleMessageIds: string[] | null
 }
 
 /**

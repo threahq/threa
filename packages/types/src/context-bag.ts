@@ -8,6 +8,7 @@
 
 export const ContextIntents = {
   DISCUSS_THREAD: "discuss-thread",
+  ASIDE: "aside",
 } as const
 export type ContextIntent = (typeof ContextIntents)[keyof typeof ContextIntents]
 export const CONTEXT_INTENTS = Object.values(ContextIntents) as ContextIntent[]
@@ -15,6 +16,7 @@ export const CONTEXT_INTENTS = Object.values(ContextIntents) as ContextIntent[]
 export const ContextRefKinds = {
   THREAD: "thread",
   CONVERSATION: "conversation",
+  VIEWPORT: "viewport",
 } as const
 export type ContextRefKind = (typeof ContextRefKinds)[keyof typeof ContextRefKinds]
 export const CONTEXT_REF_KINDS = Object.values(ContextRefKinds) as ContextRefKind[]
@@ -71,7 +73,30 @@ export type ConversationContextRef = {
   originMessageId?: string
 }
 
-export type ContextRef = ThreadContextRef | ConversationContextRef
+/**
+ * Upper bound on `visibleMessageIds` in a viewport ref. The wire schema rejects
+ * longer lists and the client capture caps at the same number, so the two never
+ * disagree about what "what you saw" means.
+ */
+export const VIEWPORT_MAX_VISIBLE_IDS = 40
+
+/**
+ * A snapshot of what the user had on screen when an aside was opened: the
+ * message ids visible in the host stream's timeline, in viewport order. The
+ * resolver expands each id to its surrounding sibling window server-side, so
+ * the client never computes a message range — it only reports what it showed.
+ */
+export type ViewportContextRef = {
+  kind: typeof ContextRefKinds.VIEWPORT
+  /** The host stream whose timeline was on screen. */
+  streamId: string
+  /** Message ids intersecting the viewport, top to bottom. */
+  visibleMessageIds: string[]
+  /** ISO timestamp of the capture. */
+  capturedAt: string
+}
+
+export type ContextRef = ThreadContextRef | ConversationContextRef | ViewportContextRef
 
 export interface ContextBag {
   intent: ContextIntent

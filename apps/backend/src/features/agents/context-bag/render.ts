@@ -16,6 +16,14 @@ export interface StableRenderInput {
    * message" / "Messages after" sections and marks the focal with `►`.
    */
   focalMessageId?: string | null
+  /**
+   * The ids of the messages that were on screen when an aside was opened (a
+   * viewport ref). When present and found in `inlineItems`, the renderer splits
+   * the inline list into "before" / "on screen" / "after" sections around the
+   * span from the first to the last visible message and marks each visible
+   * message with `►`. Takes precedence over `focalMessageId`.
+   */
+  visibleMessageIds?: string[] | null
 }
 
 /**
@@ -30,10 +38,32 @@ export function renderStable(input: StableRenderInput): string {
   if (input.summaryText) {
     parts.push("", "Summary (cached):", input.summaryText.trim())
   } else if (input.inlineItems && input.inlineItems.length > 0) {
+    const visible = new Set(input.visibleMessageIds ?? [])
+    const visibleIdxs = input.inlineItems.flatMap((item, idx) => (visible.has(item.messageId) ? [idx] : []))
     const focalIdx =
       input.focalMessageId != null ? input.inlineItems.findIndex((i) => i.messageId === input.focalMessageId) : -1
 
-    if (focalIdx < 0) {
+    if (visibleIdxs.length > 0) {
+      const spanStart = visibleIdxs[0]
+      const spanEnd = visibleIdxs[visibleIdxs.length - 1]
+      const before = input.inlineItems.slice(0, spanStart)
+      const span = input.inlineItems.slice(spanStart, spanEnd + 1)
+      const after = input.inlineItems.slice(spanEnd + 1)
+
+      if (before.length > 0) {
+        parts.push("", `Messages before what was on screen (${before.length}, chronological):`)
+        for (const item of before) parts.push(formatInlineMessage(item))
+      }
+      parts.push(
+        "",
+        `On screen when the aside was opened (${visibleIdxs.length} visible, chronological; \`►\` marks a visible message):`
+      )
+      for (const item of span) parts.push(formatInlineMessage(item, { focal: visible.has(item.messageId) }))
+      if (after.length > 0) {
+        parts.push("", `Messages after what was on screen (${after.length}, chronological):`)
+        for (const item of after) parts.push(formatInlineMessage(item))
+      }
+    } else if (focalIdx < 0) {
       parts.push("", "Messages (chronological):")
       for (const item of input.inlineItems) {
         parts.push(formatInlineMessage(item))
