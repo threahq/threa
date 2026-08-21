@@ -47,9 +47,9 @@ function buildCanonicalMarkdown(refs: { streamId: string; messageId: string; aut
     "",
     "> reply snippet",
     ">",
-    `> — [Alice](quote:${refs.streamId}/${refs.messageId}/${refs.authorId}/user)`,
+    `> — [Alice](quote:${refs.streamId}/${refs.messageId}/${refs.authorId}/user?v=1)`,
     "",
-    `Shared a message from [Alice](shared-message:${refs.streamId}/${refs.messageId})`,
+    `Shared a message from [Alice](shared-message:${refs.streamId}/${refs.messageId}?v=1)`,
     "",
     "tail paragraph",
   ].join("\n")
@@ -189,12 +189,19 @@ test.describe("Composer copy/paste roundtrip", () => {
 
     // The quote-reply and shared-message pointers must reference a message
     // that actually exists — the backend's share-recording step 400s
-    // (SHARE_SOURCE_MESSAGE_NOT_FOUND) on a fabricated id.
+    // (SHARE_SOURCE_MESSAGE_NOT_FOUND) on a fabricated id. The body has to be
+    // the quoted text too: the server derives a quote from the span it names in
+    // the source, so a snippet that appears nowhere in it is refused. The seed
+    // is never edited, so both pointers pin revision 1 and the canonical
+    // markdown below is already the fixed point the roundtrip compares against.
     const seedResponse = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
       data: {
         streamId,
-        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "seed" }] }] },
-        contentMarkdown: "seed",
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "reply snippet" }] }],
+        },
+        contentMarkdown: "reply snippet",
       },
     })
     await expectApiOk(seedResponse, "Send seed message")

@@ -439,14 +439,28 @@ describe("pinned quote precursors", () => {
       new Map([
         [
           messageVersionKey("msg_B", 1),
-          { contentJson: doc(paragraph("body when quoted")), contentMarkdown: "body when quoted" } as any,
+          {
+            id: "msgver_1",
+            messageId: "msg_B",
+            versionNumber: 1,
+            contentJson: doc(paragraph("body when quoted")),
+            contentMarkdown: "body when quoted",
+            editedBy: "usr_bob",
+            createdAt: new Date("2024-01-01T10:00:00.000Z"),
+          },
         ],
       ])
     )
 
-    expect(rendered).toContain('createdAt="2024-01-01T09:00:00.000Z" version="1"')
-    expect(rendered).toContain("body when quoted")
-    expect(rendered).not.toContain("body as it reads now")
+    expect(rendered).toBe(
+      [
+        seed.contentMarkdown,
+        "",
+        '<quoted-source id="msg_B" author="Bob" streamId="stream_src" createdAt="2024-01-01T09:00:00.000Z" version="1">',
+        "body when quoted",
+        "</quoted-source>",
+      ].join("\n")
+    )
   })
 
   test("a pin at the source's current revision renders the live body, still tagged", () => {

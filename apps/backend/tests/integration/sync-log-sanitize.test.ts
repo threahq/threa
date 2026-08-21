@@ -13,7 +13,7 @@ import { StreamTypes, Visibilities, sharedMessageSlotKey } from "@threa/types"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
-import { MessageRepository } from "../../src/features/messaging"
+import { MessageRepository, MessageVersionRepository } from "../../src/features/messaging"
 import { MemoRepository } from "../../src/features/memos"
 import { sanitizeSyncEntries, type SyncLogEntry } from "../../src/features/sync"
 import { userId, workspaceId, streamId, messageId, memoId, messageVersionId } from "../../src/lib/id"
@@ -230,11 +230,14 @@ describe("sanitizeSyncEntries", () => {
         ...testMessageContent("body as it reads now"),
       })
     })
-    await pool.query(
-      `INSERT INTO message_versions (id, message_id, version_number, content_json, content_markdown, edited_by)
-       VALUES ($1, $2, 1, $3, $4, $5)`,
-      [messageVersionId(), pinnedSource, JSON.stringify(pinned.contentJson), pinned.contentMarkdown, viewer]
-    )
+    await MessageVersionRepository.insert(pool, {
+      id: messageVersionId(),
+      messageId: pinnedSource,
+      versionNumber: 1,
+      contentJson: pinned.contentJson,
+      contentMarkdown: pinned.contentMarkdown,
+      editedBy: viewer,
+    })
     await pool.query(`UPDATE messages SET revision = 2 WHERE id = $1`, [pinnedSource])
 
     const pinnedKey = sharedMessageSlotKey(pinnedSource, 1)
