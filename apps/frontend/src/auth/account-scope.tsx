@@ -19,6 +19,7 @@ import { resetComposeOverlayStoreCache } from "@/stores/compose-overlay-store"
 import { resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
 import { resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
+import { resetReferenceSourceStoreCache } from "@/stores/reference-source-store"
 import { resetSnippetRequestStoreCache } from "@/stores/snippet-request-store"
 import { resetConversationReplyOpenStoreCache } from "@/stores/conversation-reply-open-store"
 import { resetE2eSessionStoreCache } from "@/stores/e2e-session-store"
@@ -92,6 +93,7 @@ function flushModuleStoreCaches(): void {
   resetDraftContextCache()
   resetShareHandoffStoreCache()
   resetSnippetRequestStoreCache()
+  resetReferenceSourceStoreCache()
   resetConversationReplyOpenStoreCache()
   resetE2eSessionStoreCache()
   resetComposeOverlayStoreCache()

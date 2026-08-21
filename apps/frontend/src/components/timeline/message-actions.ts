@@ -23,6 +23,7 @@ import {
   Check,
 } from "lucide-react"
 import { toast } from "sonner"
+import type { QuoteSelection } from "@/lib/quote-selection"
 import { buildStreamLink, buildConversationLink } from "@/lib/stream-links"
 import {
   type ActionDefinition,
@@ -98,8 +99,8 @@ export interface MessageActionContext {
   reactions?: Record<string, string[]>
   /** Callback to insert a quote reply into the composer */
   onQuoteReply?: () => void
-  /** Callback to insert a partial quote reply with a user-selected snippet */
-  onQuoteReplyWithSnippet?: (snippet: string) => void
+  /** Callback to insert a partial quote reply from a user's text selection */
+  onQuoteReplyWithSelection?: (selection: QuoteSelection) => void
   /**
    * Arm the stream composer to file its next send into this message's
    * conversation (an `existing` directive — Mechanism C). Set on in-stream

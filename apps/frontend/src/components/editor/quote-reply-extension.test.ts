@@ -24,6 +24,8 @@ function createQuoteReplyNode(): JSONContent {
       authorId: "user_123",
       actorType: "user",
       snippet: "The vibes are immaculate",
+      version: null,
+      range: null,
     },
   }
 }
@@ -274,5 +276,21 @@ describe("quote reply gap cursor", () => {
     expect(editor.view.dom.classList.contains("has-after-quote-gapcursor")).toBe(true)
 
     editor.destroy()
+  })
+
+  it("round-trips the pin through the HTML clipboard so a copied quote stays pinned", () => {
+    const pinned: JSONContent = {
+      type: "quoteReply",
+      attrs: { ...createQuoteReplyNode().attrs, version: 7, range: { from: 4, to: 19 } },
+    }
+    const source = createQuoteReplyEditor({ type: "doc", content: [pinned] })
+    const html = source.getHTML()
+    source.destroy()
+
+    const pasted = createQuoteReplyEditor(html as unknown as JSONContent)
+    const [node] = pasted.getJSON().content ?? []
+
+    expect(node?.attrs).toMatchObject({ version: 7, range: { from: 4, to: 19 } })
+    pasted.destroy()
   })
 })

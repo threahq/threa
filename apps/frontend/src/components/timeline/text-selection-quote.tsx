@@ -3,10 +3,13 @@ import { createPortal } from "react-dom"
 import { Quote } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { resolveQuoteSelection } from "@/lib/quote-selection"
+import { getReferenceSource } from "@/stores/reference-source-store"
 import { useQuoteReply } from "./quote-reply-context"
 
 interface SelectionInfo {
   text: string
+  prefixText: string
   messageId: string
   streamId: string
   authorName: string
@@ -26,6 +29,17 @@ function getMessageContext(node: Node): { messageId: string; element: HTMLElemen
   const messageId = messageEl.getAttribute("data-message-id")
   if (!messageId) return null
   return { messageId, element: messageEl }
+}
+
+/**
+ * The rendered text between the body's start and the selection's start. Feeds
+ * the range resolver's tie-break when the selected words repeat in the message.
+ */
+function textBeforeSelection(contentEl: Element, range: Range): string {
+  const prefix = contentEl.ownerDocument.createRange()
+  prefix.selectNodeContents(contentEl)
+  prefix.setEnd(range.startContainer, range.startOffset)
+  return prefix.toString()
 }
 
 /**
@@ -111,6 +125,7 @@ export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuot
 
     setSelection({
       text,
+      prefixText: textBeforeSelection(contentEl, range),
       messageId: startCtx.messageId,
       streamId: messageStreamId,
       authorName,
@@ -134,13 +149,17 @@ export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuot
 
   const handleQuote = useCallback(() => {
     if (!selection || !quoteReplyCtx) return
+    const pin = resolveQuoteSelection(getReferenceSource(selection.messageId), {
+      text: selection.text,
+      prefixText: selection.prefixText,
+    })
     quoteReplyCtx.triggerQuoteReply({
       messageId: selection.messageId,
       streamId: selection.streamId,
       authorName: selection.authorName,
       authorId: selection.authorId,
       actorType: selection.actorType,
-      snippet: selection.text,
+      ...pin,
     })
     window.getSelection()?.removeAllRanges()
     setSelection(null)

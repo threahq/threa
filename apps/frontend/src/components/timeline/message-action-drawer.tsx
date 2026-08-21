@@ -9,6 +9,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { useActors } from "@/hooks"
 import { getInitials } from "@/lib/initials"
+import type { QuoteSelection } from "@/lib/quote-selection"
 import { cn } from "@/lib/utils"
 import { buildQuickEmojis } from "@/lib/emoji-picker"
 import { ActionDrawerList } from "@/components/actions/action-drawer-list"
@@ -40,7 +41,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
     ? getActorAvatar(context.authorId, (context.actorType ?? "user") as AuthorType).status
     : undefined
   const [expanded, setExpanded] = useState(false)
-  const [selectedText, setSelectedText] = useState("")
+  const [selection, setSelection] = useState<QuoteSelection | null>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
   const handleOpenChange = useCallback(
@@ -53,28 +54,32 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
 
   useEffect(() => {
     if (!expanded) {
-      setSelectedText("")
+      setSelection(null)
       return
     }
 
     const handleSelectionChange = () => {
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || !sel.rangeCount) {
-        setSelectedText("")
+        setSelection(null)
         return
       }
 
       const text = sel.toString().trim()
-      if (!text) {
-        setSelectedText("")
+      const contentEl = contentRef.current
+      if (!text || !contentEl) {
+        setSelection(null)
         return
       }
 
       const range = sel.getRangeAt(0)
-      if (contentRef.current?.contains(range.startContainer) && contentRef.current?.contains(range.endContainer)) {
-        setSelectedText(text)
+      if (contentEl.contains(range.startContainer) && contentEl.contains(range.endContainer)) {
+        const prefix = contentEl.ownerDocument.createRange()
+        prefix.selectNodeContents(contentEl)
+        prefix.setEnd(range.startContainer, range.startOffset)
+        setSelection({ text, prefixText: prefix.toString() })
       } else {
-        setSelectedText("")
+        setSelection(null)
       }
     }
 
@@ -83,11 +88,11 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
   }, [expanded])
 
   const handleQuoteSelected = useCallback(() => {
-    if (!selectedText || !context.onQuoteReplyWithSnippet) return
-    context.onQuoteReplyWithSnippet(selectedText)
+    if (!selection || !context.onQuoteReplyWithSelection) return
+    context.onQuoteReplyWithSelection(selection)
     window.getSelection()?.removeAllRanges()
     handleOpenChange(false)
-  }, [selectedText, context, handleOpenChange])
+  }, [selection, context, handleOpenChange])
 
   const handleBack = useCallback(() => {
     window.getSelection()?.removeAllRanges()
@@ -152,7 +157,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
             actorType={context.actorType}
             statusEmoji={authorStatus?.emoji ?? null}
             statusText={authorStatus?.text ?? null}
-            selectedText={selectedText}
+            selectedText={selection?.text ?? ""}
             contentRef={contentRef}
             onBack={handleBack}
             onQuote={handleQuoteSelected}
@@ -164,10 +169,10 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
                 type="button"
                 className={cn(
                   "group/preview relative w-full text-left rounded-xl bg-muted/60 px-3.5 py-2.5 disabled:opacity-100 disabled:cursor-default",
-                  context.onQuoteReplyWithSnippet && "active:bg-muted/80 transition-colors cursor-pointer"
+                  context.onQuoteReplyWithSelection && "active:bg-muted/80 transition-colors cursor-pointer"
                 )}
-                onClick={context.onQuoteReplyWithSnippet ? () => setExpanded(true) : undefined}
-                disabled={!context.onQuoteReplyWithSnippet}
+                onClick={context.onQuoteReplyWithSelection ? () => setExpanded(true) : undefined}
+                disabled={!context.onQuoteReplyWithSelection}
               >
                 <div className="mb-0.5 flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
                   <span className="truncate">{authorName}</span>
@@ -183,14 +188,14 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
                 <div className="text-sm text-foreground/80 line-clamp-2 leading-snug pr-6 max-h-[2.75rem] overflow-hidden">
                   <MarkdownContent content={context.contentMarkdown} />
                 </div>
-                {context.onQuoteReplyWithSnippet && (
+                {context.onQuoteReplyWithSelection && (
                   <Quote
                     aria-hidden="true"
                     className="absolute top-2.5 right-2.5 h-3.5 w-3.5 text-muted-foreground/40 group-active/preview:text-primary transition-colors"
                   />
                 )}
               </button>
-              {context.onQuoteReplyWithSnippet && (
+              {context.onQuoteReplyWithSelection && (
                 <p className="text-[11px] text-muted-foreground/60 mt-1.5 px-1 flex items-center gap-1">
                   <span className="inline-block h-1 w-1 rounded-full bg-primary/60" />
                   Tap to highlight a passage

@@ -1,6 +1,7 @@
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { X, Quote } from "lucide-react"
 import { useParams } from "react-router-dom"
+import { stripMarkdownToInline, truncateInline } from "@/lib/markdown/strip"
 import { cn } from "@/lib/utils"
 import { useActors } from "@/hooks"
 import { useUserProfile } from "@/components/user-profile"
@@ -11,9 +12,9 @@ import type { AuthorType } from "@threa/types"
 
 export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
   const attrs = node.attrs as QuoteReplyAttrs
-  const snippetLines = attrs.snippet.split("\n")
-  const isLong = snippetLines.length > 3 || attrs.snippet.length > 200
-  const displaySnippet = isLong ? snippetLines.slice(0, 3).join("\n").slice(0, 200) + "..." : attrs.snippet
+  // The snippet is the formatted slice the server will store, so the chip strips
+  // it to inline text rather than showing raw markdown (INV-60).
+  const displaySnippet = truncateInline(stripMarkdownToInline(attrs.snippet), 200)
 
   const { workspaceId } = useParams<{ workspaceId: string }>()
 
@@ -38,7 +39,7 @@ export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
         ) : (
           <span className="text-xs font-medium text-muted-foreground">{attrs.authorName}</span>
         )}
-        <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{displaySnippet}</p>
+        <p className="mt-0.5 text-muted-foreground">{displaySnippet}</p>
       </div>
       <button
         type="button"

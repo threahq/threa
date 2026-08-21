@@ -11,7 +11,8 @@ import * as draftStoreModule from "@/stores/draft-store"
 import * as boardStoreModule from "@/stores/board-store"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MessageErrorCodes } from "@threa/types"
+import { MessageErrorCodes, MessageReferenceErrorCodes } from "@threa/types"
+import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { createElement, type ReactNode } from "react"
 
@@ -321,6 +322,37 @@ describe("useMessageQueue", () => {
     })
     expect(mockEventsUpdate).toHaveBeenCalledWith("temp_steer_gone", { _status: "failed" })
     expect(mockMarkFailed).toHaveBeenCalledWith("temp_steer_gone")
+  })
+
+  it("parks a quote whose reference the server cannot resolve, and says so once", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("t1")
+    mockCreate.mockRejectedValue(
+      new ApiError(400, MessageReferenceErrorCodes.RANGE_NOT_FOUND, "Quoted text no longer exists in the source")
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_quote_gone",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "> stale quote",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(errorToast).toHaveBeenCalledTimes(1)
+    expect(mockUpdate).toHaveBeenCalledWith("temp_quote_gone", {
+      terminalFailure: true,
+      retryAfter: undefined,
+    })
+    expect(mockEventsUpdate).toHaveBeenCalledWith("temp_quote_gone", { _status: "failed" })
+    expect(mockMarkFailed).toHaveBeenCalledWith("temp_quote_gone")
   })
 
   it("does not auto-retry a permanently failed send", async () => {

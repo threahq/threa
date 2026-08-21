@@ -9,6 +9,8 @@ const DATA: QuoteReplyData = {
   authorId: "usr_1",
   actorType: "user",
   snippet: "the quoted body",
+  version: 3,
+  range: { from: 4, to: 19 },
 }
 
 function quoteNode(): JSONContent {
@@ -21,6 +23,8 @@ function quoteNode(): JSONContent {
       authorId: DATA.authorId,
       actorType: DATA.actorType,
       snippet: DATA.snippet,
+      version: DATA.version,
+      range: DATA.range,
     },
   }
 }

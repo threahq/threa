@@ -390,6 +390,8 @@ export function MessageItem({
       authorId: message.authorId,
       actorType: message.authorType,
       snippet,
+      version: null,
+      range: null,
     })
   }, [quoteReplyCtx, message.contentMarkdown, message.id, message.authorId, message.authorType, streamId, authorName])
 
