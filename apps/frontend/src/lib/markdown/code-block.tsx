@@ -48,7 +48,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
   // and code together with no animation.
   const renderedColdRef = useRef(syncHtml === null)
 
-  const measured = useMeasuredLineCount(bodyRef, [trimmedCode, html])
+  const measured = useMeasuredLineCount(bodyRef, [trimmedCode, html, wrapMode])
   const lineCount = measured.lineCount
   // "More than threshold" measured by rendered line-height (not "\n" count).
   // The extra half line keeps a barely-over block from sprouting a toggle that
