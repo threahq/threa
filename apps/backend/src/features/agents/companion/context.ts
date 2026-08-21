@@ -313,7 +313,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // the snippet. Bot turns fall back to "current stream only" to avoid leaking
   // cross-stream content when there is no invoking user to gate access.
   const quoteAccessibleStreamIds = accessibleStreamIds ?? new Set([stream.id])
-  const { resolved: resolvedQuotes, authorNames: quotedAuthorNames } = await resolveQuoteReplies(db, workspaceId, {
+  const {
+    resolved: resolvedQuotes,
+    authorNames: quotedAuthorNames,
+    pinnedVersions: pinnedQuoteVersions,
+  } = await resolveQuoteReplies(db, workspaceId, {
     seedMessages: streamContext.conversationHistory,
     accessibleStreamIds: quoteAccessibleStreamIds,
   })
@@ -322,7 +326,14 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   }
   if (resolvedQuotes.size > 0) {
     streamContext.conversationHistory = streamContext.conversationHistory.map((m) => {
-      const expanded = renderMessageWithQuoteContext(m, resolvedQuotes, authorNames, 0, DEFAULT_MAX_QUOTE_DEPTH)
+      const expanded = renderMessageWithQuoteContext(
+        m,
+        resolvedQuotes,
+        authorNames,
+        0,
+        DEFAULT_MAX_QUOTE_DEPTH,
+        pinnedQuoteVersions
+      )
       if (expanded === m.contentMarkdown) return m
       return { ...m, contentMarkdown: expanded }
     })

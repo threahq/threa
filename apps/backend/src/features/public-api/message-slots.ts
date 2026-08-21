@@ -1,8 +1,8 @@
 import type { Pool } from "pg"
-import { sharedMessageSlotKey, type JSONContent } from "@threa/types"
+import type { JSONContent, SharedMessageRef } from "@threa/types"
 import {
-  collectSharedMessageIds,
-  hydrateSharedMessageIdsForAccessibleSet,
+  collectSharedMessageRefs,
+  hydrateSharedMessageRefsForAccessibleSet,
   type HydratedSharedMessage,
 } from "../messaging"
 import type { WireSharedMessageSlot, WireSlotMap } from "./routes"
@@ -71,17 +71,22 @@ export async function resolvePublicMessageSlots(
   resolveAccessibleStreamIds: () => Promise<readonly string[]>,
   contentJsons: Iterable<JSONContent | null | undefined>
 ): Promise<WireSlotMap> {
-  const ids = new Set<string>()
+  const refs = new Map<string, SharedMessageRef>()
   for (const contentJson of contentJsons) {
-    if (contentJson) collectSharedMessageIds(contentJson, ids)
+    if (contentJson) collectSharedMessageRefs(contentJson, refs)
   }
-  if (ids.size === 0) return {}
+  if (refs.size === 0) return {}
 
   const accessibleStreamIds = await resolveAccessibleStreamIds()
-  const hydrated = await hydrateSharedMessageIdsForAccessibleSet(pool, workspaceId, new Set(accessibleStreamIds), ids)
+  const hydrated = await hydrateSharedMessageRefsForAccessibleSet(
+    pool,
+    workspaceId,
+    new Set(accessibleStreamIds),
+    refs.values()
+  )
   const slots: WireSlotMap = {}
-  for (const [messageId, slot] of Object.entries(hydrated)) {
-    slots[sharedMessageSlotKey(messageId)] = serializePublicSlot(slot)
+  for (const [slotKey, slot] of Object.entries(hydrated)) {
+    slots[slotKey] = serializePublicSlot(slot)
   }
   return slots
 }

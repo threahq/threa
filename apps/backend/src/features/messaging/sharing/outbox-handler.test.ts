@@ -3,13 +3,17 @@ import { invalidatePointersForEvent, POINTER_INVALIDATED_EVENT } from "./outbox-
 import { SharedMessageRepository } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 import * as hydration from "./hydration"
+import { sharedMessageSlotKey } from "@threa/types"
 
 beforeEach(() => {
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-  spyOn(hydration, "hydrateSharedMessagesForRoom").mockImplementation(
-    async (_db, _ws, _target, ids) =>
+  spyOn(hydration, "hydrateSharedMessageRefsForRoom").mockImplementation(
+    async (_db, _ws, _target, refs) =>
       Object.fromEntries(
-        [...ids].map((id) => [id, { type: "sharedMessage", state: "ok", messageId: id, streamId: "stream_src" }])
+        [...refs].map(({ messageId }) => [
+          sharedMessageSlotKey(messageId),
+          { type: "sharedMessage", state: "ok", messageId, streamId: "stream_src" },
+        ])
       ) as any
   )
 })
@@ -96,9 +100,9 @@ describe("invalidatePointersForEvent", () => {
     // The one hydration call resolves the seed AND the nested pointer an edit
     // just added — the emit must carry every entry, not just the top-level
     // source, or the inner card skeletons until a REST replace.
-    spyOn(hydration, "hydrateSharedMessagesForRoom").mockResolvedValue({
-      msg_a: { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
-      msg_nested: { type: "sharedMessage", state: "ok", messageId: "msg_nested", streamId: "stream_inner" },
+    spyOn(hydration, "hydrateSharedMessageRefsForRoom").mockResolvedValue({
+      "shared:msg_a": { type: "sharedMessage", state: "ok", messageId: "msg_a", streamId: "stream_src" },
+      "shared:msg_nested": { type: "sharedMessage", state: "ok", messageId: "msg_nested", streamId: "stream_inner" },
     } as any)
     const { io, emits } = fakeIo()
     await invalidatePointersForEvent(

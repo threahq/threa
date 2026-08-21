@@ -11,6 +11,7 @@
  */
 import type { StreamType, Visibility } from "./constants"
 import type { AttachmentSummary } from "./domain"
+import type { ContentRange } from "./prosemirror"
 
 /**
  * Wire-format variants for a shared-message pointer's hydrated content.
@@ -39,6 +40,12 @@ export type SharedMessageSlot =
       editedAt: string | null
       createdAt: string
       attachments: AttachmentSummary[]
+      /** Source revision this content was pinned to. */
+      version?: number
+      /** The source's revision right now; greater than `version` = edited since. */
+      currentRevision?: number
+      /** Span of the pinned version rendered here; `null` = the whole message. */
+      range?: ContentRange | null
     }
   | { type: "sharedMessage"; state: "deleted"; messageId: string; deletedAt: string }
   | { type: "sharedMessage"; state: "missing"; messageId: string }
@@ -61,9 +68,45 @@ export type Slot = SharedMessageSlot
 export type SlotMap = Record<string, Slot>
 
 /**
- * Canonical key for a shared-message slot. Namespaced so a future slot type
- * cannot collide with a source message id.
+ * A shared-message pointer reduced to what hydration resolves it against:
+ * which message, which revision of it, which span of that revision.
  */
-export function sharedMessageSlotKey(messageId: string): string {
-  return `shared:${messageId}`
+export interface SharedMessageRef {
+  messageId: string
+  /** `null` = unpinned legacy node; hydrate at the source's current revision. */
+  version: number | null
+  /** `null` = the whole message. */
+  range: ContentRange | null
+}
+
+/**
+ * Canonical key for a shared-message slot. Namespaced so a future slot type
+ * cannot collide with a source message id, and carrying the pin so two
+ * pointers at the same message but different revisions or spans get their own
+ * hydrated content instead of sharing one.
+ *
+ * `shared:<id>` · `shared:<id>@<version>` · `shared:<id>@<version>:<from>-<to>`
+ */
+export function sharedMessageSlotKey(messageId: string, version?: number | null, range?: ContentRange | null): string {
+  if (version == null) return `shared:${messageId}`
+  if (!range) return `shared:${messageId}@${version}`
+  return `shared:${messageId}@${version}:${range.from}-${range.to}`
+}
+
+const SHARED_MESSAGE_SLOT_KEY_PATTERN = /^shared:([^@]+)(?:@(\d+)(?::(\d+)-(\d+))?)?$/
+
+/**
+ * Inverse of {@link sharedMessageSlotKey}. Returns `null` for anything that
+ * isn't a shared-message slot key, so a caller holding a mixed key space can
+ * route on the result.
+ */
+export function parseSharedMessageSlotKey(key: string): SharedMessageRef | null {
+  const match = SHARED_MESSAGE_SLOT_KEY_PATTERN.exec(key)
+  if (!match) return null
+  const [, messageId, version, from, to] = match
+  return {
+    messageId,
+    version: version === undefined ? null : Number(version),
+    range: from === undefined || to === undefined ? null : { from: Number(from), to: Number(to) },
+  }
 }

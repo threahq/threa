@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { StreamService } from "./service"
 import type { StreamReadService } from "./read-service"
 import type { EventService } from "../messaging"
-import { collectSharedMessageIds, hydrateSharedMessageIds, toDualSlotMaps, type DualSlotMaps } from "../messaging"
+import { collectSharedMessageRefs, hydrateSharedMessageRefs, toDualSlotMaps, type DualSlotMaps } from "../messaging"
 import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
 import type { BotRuntimeService } from "../bot-runtimes"
@@ -31,6 +31,7 @@ import {
   TOOL_PRIVACY_CATEGORIES,
   threaDocumentSchema,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
+  type SharedMessageRef,
 } from "@threa/types"
 import type { Pool } from "pg"
 import {
@@ -429,15 +430,15 @@ async function hydrateSlotsForEvents(
   viewerId: string,
   events: StreamEvent[]
 ): Promise<DualSlotMaps> {
-  const ids = new Set<string>()
+  const refs = new Map<string, SharedMessageRef>()
   for (const event of events) {
     if (event.eventType === "message_created" || event.eventType === "message_edited") {
       const payload = event.payload as { contentJson?: JSONContent }
-      if (payload.contentJson) collectSharedMessageIds(payload.contentJson, ids)
+      if (payload.contentJson) collectSharedMessageRefs(payload.contentJson, refs)
     }
   }
-  if (ids.size === 0) return { slots: {}, sharedMessages: {} }
-  return toDualSlotMaps(await hydrateSharedMessageIds(pool, workspaceId, viewerId, ids))
+  if (refs.size === 0) return { slots: {}, sharedMessages: {} }
+  return toDualSlotMaps(await hydrateSharedMessageRefs(pool, workspaceId, viewerId, refs.values()))
 }
 
 function areLinkPreviewArraysEqual(current: LinkPreviewSummary[] | undefined, next: LinkPreviewSummary[]): boolean {
