@@ -38,6 +38,15 @@ export interface ResolveMessageReferencesParams {
    * — see {@link resolveMessageReferences}. Omit on create.
    */
   previousContentJson?: JSONContent
+  /** The stream the referencing message is being written to. */
+  targetStreamId?: string
+  /**
+   * Read gate for a source living in another stream. Supplied by the write
+   * paths with the same access split `ShareService` uses. Without it no gate
+   * runs, so callers that already hold the source (the pin backfill) are
+   * unaffected.
+   */
+  canReadSourceStream?: (streamId: string) => Promise<boolean>
 }
 
 export interface ResolveMessageReferencesResult {
@@ -192,6 +201,25 @@ export async function resolveMessageReferences(
   const sourcesById = await MessageRepository.findByIdsInWorkspace(db, params.workspaceId, [
     ...new Set(references.map((ref) => ref.messageId)),
   ])
+
+  // Read access decides before any version or range work: those steps report
+  // whether a revision exists, how long the body is, and whether a guessed
+  // string appears in it, which would answer questions about a message the
+  // author cannot open. An unreadable source is indistinguishable from a
+  // missing one. `ShareService` still owns recording the share itself.
+  if (params.canReadSourceStream) {
+    const readable = new Map<string, boolean>()
+    for (const ref of references) {
+      const source = sourcesById.get(ref.messageId)
+      if (!source || source.streamId === params.targetStreamId) continue
+      let allowed = readable.get(source.streamId)
+      if (allowed === undefined) {
+        allowed = await params.canReadSourceStream(source.streamId)
+        readable.set(source.streamId, allowed)
+      }
+      if (!allowed) throw referenceError(MessageReferenceErrorCodes.SOURCE_NOT_FOUND, "Referenced message not found")
+    }
+  }
 
   const versions = new Map<ReferenceNode, { source: Message; version: number }>()
   const versionKeys: MessageVersionKey[] = []

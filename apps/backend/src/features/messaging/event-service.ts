@@ -733,6 +733,13 @@ export class EventService {
       const resolvedReferences = await resolveMessageReferences(client, {
         workspaceId: params.workspaceId,
         contentJson: params.contentJson,
+        targetStreamId: params.streamId,
+        canReadSourceStream: this.sourceStreamReader(
+          client,
+          params.workspaceId,
+          params.authorId,
+          params.accessibleStreamIds
+        ),
       })
       if (resolvedReferences.changed) {
         params.contentJson = resolvedReferences.contentJson
@@ -1298,6 +1305,13 @@ export class EventService {
           workspaceId: params.workspaceId,
           contentJson: params.contentJson,
           previousContentJson: existing.contentJson,
+          targetStreamId: params.streamId,
+          canReadSourceStream: this.sourceStreamReader(
+            client,
+            params.workspaceId,
+            params.actorId,
+            params.accessibleStreamIds
+          ),
         })
         if (resolvedEditReferences.changed) {
           params.contentJson = resolvedEditReferences.contentJson
@@ -1467,6 +1481,32 @@ export class EventService {
    * - Otherwise (user path) → `checkStreamAccess(... actorId)` plus
    *   `isAttachmentReadableViaShareOrReference` for share-grant fallback.
    */
+  /**
+   * Read gate for a reference's source stream, mirroring the split
+   * `ShareService` uses: an agent's precomputed reach when the caller passed
+   * one (personas hold no `stream_members` rows), the actor's own access
+   * otherwise. Thread sources resolve through their root inside
+   * `checkStreamAccess` (INV-62).
+   */
+  private sourceStreamReader(
+    client: PoolClient,
+    workspaceId: string,
+    actorId: string,
+    accessibleStreamIds?: string[]
+  ): (streamId: string) => Promise<boolean> {
+    if (accessibleStreamIds) {
+      const reach = new Set(accessibleStreamIds)
+      return async (streamId) => {
+        if (reach.has(streamId)) return true
+        const source = await StreamRepository.findById(client, streamId)
+        if (!source) return false
+        const effective = await resolveEffectiveStreamAdapter(client, source)
+        return reach.has(effective.id)
+      }
+    }
+    return async (streamId) => (await checkStreamAccess(client, streamId, workspaceId, actorId)) !== null
+  }
+
   private async _validateEditAttachmentReferences(client: PoolClient, params: EditMessageParams): Promise<string[]> {
     if (!params.attachmentIds || params.attachmentIds.length === 0) return []
 

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
+import { isRangeValid, serializeToMarkdown, sliceContent } from "@threa/prosemirror"
 import { db } from "@/db"
 import { useSharedMessageSlot } from "@/components/slots/context"
-import type { AttachmentSummary, StreamType, Visibility } from "@threa/types"
+import type { AttachmentSummary, ContentRange, JSONContent, StreamType, Visibility } from "@threa/types"
 
 /**
  * Resolved preview for a shared-message pointer. `authorName` is optional at
@@ -26,6 +27,12 @@ export interface SharedMessageResolved {
    * parent message lives in another stream's bootstrap).
    */
   attachments?: AttachmentSummary[]
+  /** The source revision this content came from; null on an unpinned pointer. */
+  version?: number | null
+  /** The source's revision right now; greater than `version` = edited since. */
+  currentRevision?: number | null
+  /** The span of `version` rendered here; `null` = the whole message. */
+  range?: ContentRange | null
 }
 
 export interface SharedMessageDeleted {
@@ -79,6 +86,18 @@ export type SharedMessageSource =
 const SKELETON_DELAY_MS = 300
 
 /**
+ * A pointer reduced to what resolves it: which message, which revision of it,
+ * which span of that revision. `version: null` is a legacy unpinned pointer and
+ * hydrates at whatever the source reads now.
+ */
+export interface SharedMessageReference {
+  messageId: string
+  streamId: string
+  version: number | null
+  range: ContentRange | null
+}
+
+/**
  * Resolve a shared-message pointer's preview content in priority order:
  *
  *   1. Server-side slot map (populated on stream bootstrap / events responses
@@ -96,8 +115,17 @@ const SKELETON_DELAY_MS = 300
  * backend endpoint for a data shape the server already provides via the
  * hydration map.
  */
-export function useSharedMessageSource(messageId: string, sourceStreamId: string): SharedMessageSource {
-  const hydrated = useSharedMessageSlot(messageId)
+export function useSharedMessageSource(reference: SharedMessageReference): SharedMessageSource {
+  const { messageId, streamId: sourceStreamId, version } = reference
+  // The range arrives as a fresh object on every render (node attrs, parsed
+  // href), so memo deps ride on its numbers, not its identity.
+  const rangeFrom = reference.range?.from ?? null
+  const rangeTo = reference.range?.to ?? null
+  const range = useMemo<ContentRange | null>(
+    () => (rangeFrom === null || rangeTo === null ? null : { from: rangeFrom, to: rangeTo }),
+    [rangeFrom, rangeTo]
+  )
+  const hydrated = useSharedMessageSlot(messageId, version, range)
 
   const cachedEvent = useLiveQuery(
     async () => {
@@ -139,19 +167,51 @@ export function useSharedMessageSource(messageId: string, sourceStreamId: string
           actorType: hydrated.authorType,
           authorName: hydrated.authorName ?? undefined,
           editedAt: hydrated.editedAt,
-          attachments: hydrated.attachments,
+          attachments: hydrated.range ? [] : hydrated.attachments,
+          version: hydrated.version ?? null,
+          currentRevision: hydrated.currentRevision ?? null,
+          range: hydrated.range ?? null,
         }
       }
     }
 
     if (cachedEvent) {
-      const payload = cachedEvent.payload as { contentMarkdown?: string; attachments?: AttachmentSummary[] } | null
+      const payload = cachedEvent.payload as {
+        contentMarkdown?: string
+        contentJson?: JSONContent
+        attachments?: AttachmentSummary[]
+        revision?: number
+      } | null
+      // The cache answers only for the revision the pointer pins. Rendering a
+      // newer cached body under an older pin is precisely the silent rewrite
+      // pinning exists to prevent, so a mismatch stays pending and waits for
+      // the server's slot.
+      if (version !== null && payload?.revision !== version) return null
       // Only surface a resolved record when the cached event actually has the
       // fields we need. Fabricating `authorId = ""` / `actorType = "user"` when
       // the schema guarantees them would silently misattribute any event that
       // somehow lacked an actor (corrupt cache, future payload shape); prefer
       // `missing` so the UI falls through to the server-provided attr fallback.
       if (payload?.contentMarkdown && cachedEvent.actorId && cachedEvent.actorType) {
+        const currentRevision = payload.revision ?? null
+        if (range) {
+          // A ranged pointer has no cached body of its own — the slice is cut
+          // from the pinned document the cache already holds, which is exactly
+          // what the server slices. An out-of-bounds range means the cached doc
+          // isn't the pinned one after all: wait for the slot.
+          if (!payload.contentJson || !isRangeValid(payload.contentJson, range)) return null
+          return {
+            status: "resolved",
+            contentMarkdown: serializeToMarkdown(sliceContent(payload.contentJson, range.from, range.to)),
+            authorId: cachedEvent.actorId,
+            actorType: cachedEvent.actorType,
+            editedAt: null,
+            attachments: [],
+            version,
+            currentRevision,
+            range,
+          }
+        }
         return {
           status: "resolved",
           contentMarkdown: payload.contentMarkdown,
@@ -159,13 +219,16 @@ export function useSharedMessageSource(messageId: string, sourceStreamId: string
           actorType: cachedEvent.actorType,
           editedAt: null,
           attachments: payload.attachments,
+          version,
+          currentRevision,
+          range: null,
         }
       }
       return { status: "missing" }
     }
 
     return null
-  }, [hydrated, cachedEvent])
+  }, [hydrated, cachedEvent, version, range])
 
   const [showSkeleton, setShowSkeleton] = useState(false)
 
@@ -175,7 +238,7 @@ export function useSharedMessageSource(messageId: string, sourceStreamId: string
   // flash a loading state that the rest of the app smooths over.
   useEffect(() => {
     setShowSkeleton(false)
-  }, [messageId, sourceStreamId])
+  }, [messageId, sourceStreamId, version, range])
 
   useEffect(() => {
     if (resolved) {

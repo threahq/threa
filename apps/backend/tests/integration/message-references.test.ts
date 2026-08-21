@@ -269,6 +269,52 @@ describe("message reference resolution", () => {
     )
   })
 
+  test("(k) a source the author cannot read is missing, not measurable", async () => {
+    const walled = streamId()
+    let stranger = userId()
+    await withTransaction(pool, async (client) => {
+      stranger = (await addTestMember(client, testWorkspaceId, stranger)).id
+      await StreamRepository.insert(client, {
+        id: walled,
+        workspaceId: testWorkspaceId,
+        type: "channel",
+        visibility: "private",
+        slug: `walled-${walled.slice(-8)}`,
+        createdBy: stranger,
+      })
+      await StreamMemberRepository.insert(client, walled, stranger)
+    })
+    const secret = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: walled,
+      authorId: stranger,
+      authorType: "user",
+      contentJson: docOf("the secret body"),
+      contentMarkdown: "the secret body",
+    })
+
+    // Every probe answers the same way, so an out-of-bounds range or a revision
+    // that never existed tells the prober nothing about the walled message.
+    for (const attrs of [
+      { messageId: secret.id, streamId: walled },
+      { messageId: secret.id, streamId: walled, version: 99 },
+      { messageId: secret.id, streamId: walled, version: 1, range: { from: 0, to: 9999 } },
+      { messageId: secret.id, streamId: walled, version: 1, snippet: "> secret" },
+    ]) {
+      await expectReferenceError(
+        eventService.createMessage({
+          workspaceId: testWorkspaceId,
+          streamId: source,
+          authorId: author,
+          authorType: "user",
+          contentJson: { type: "doc", content: [quoteNode(attrs)] },
+          contentMarkdown: "> probe",
+        }),
+        MessageReferenceErrorCodes.SOURCE_NOT_FOUND
+      )
+    }
+  })
+
   describe("(g) share hydration serves the pin", () => {
     async function hydrateFor(message: { contentJson: JSONContent }) {
       const refs = new Map<string, SharedMessageRef>()

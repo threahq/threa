@@ -21,7 +21,14 @@ import type { SharedMessageAttrs } from "./shared-message-extension"
 export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps) {
   const attrs = node.attrs as SharedMessageAttrs
   const { workspaceId: _workspaceId } = useParams<{ workspaceId: string }>()
-  const source = useSharedMessageSource(attrs.messageId, attrs.streamId)
+  // A composer node is never pinned: the server assigns the revision on send,
+  // so this preview reads the unpinned key and falls back to the local cache.
+  const source = useSharedMessageSource({
+    messageId: attrs.messageId,
+    streamId: attrs.streamId,
+    version: null,
+    range: null,
+  })
 
   return (
     <NodeViewWrapper
