@@ -996,6 +996,21 @@ export class CallService {
       },
       "CF publish negotiated"
     )
+    if (params.tracks.some((t) => t.kind === "camera")) {
+      // Full SDP, camera publishes only (rare): the topology summary above has
+      // proven structurally correct on a publish the browser still rejected, so
+      // the defect hides in attribute-level detail (codecs, ICE creds, DTLS
+      // setup) that only the complete offer/answer text can show.
+      logger.info(
+        {
+          callId: params.callId,
+          endpointId: params.endpointId,
+          offerSdp: params.sdp.sdp,
+          answerSdp: cfResult.sessionDescription?.sdp,
+        },
+        "CF camera publish SDP"
+      )
+    }
 
     const declared: PublishedTrack[] = params.tracks.map((t) => ({ kind: t.kind, trackName: t.trackName }))
     const declaredKinds = new Set(declared.map((t) => t.kind))
@@ -1133,10 +1148,19 @@ export class CallService {
     mids: string[]
     unpublishKinds?: Array<PublishedTrack["kind"]>
     sdp?: SessionDescription
+    reason?: string
   }): Promise<{ cf: CloseTracksResult | null; snapshot?: CallRosterSnapshot }> {
     const cf = this.requireCloudflare()
     const { endpoint } = await this.fenceEndpoint(params)
     const cfSessionId = this.requireCfSession(endpoint)
+    if (params.reason) {
+      // The only server-side record of a client-side publish failure (the
+      // publish leg returned 200; the browser rejected the answer afterwards).
+      logger.warn(
+        { callId: params.callId, endpointId: params.endpointId, kinds: params.unpublishKinds, reason: params.reason },
+        "Client reported a local failure on unpublish"
+      )
+    }
 
     let snapshot: CallRosterSnapshot | undefined
     if (params.unpublishKinds && params.unpublishKinds.length > 0) {

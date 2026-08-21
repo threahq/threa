@@ -1170,7 +1170,9 @@ export class CallManager implements CallController {
         session.cameraTrack = null
         this.clearVideoStream(session, session.endpointId)
         recordCallLifecycleEvent({ kind: "publish_failed", detail: `camera: ${describeError(publishErr)}` })
-        await session.transport.unpublish("camera").catch(() => {})
+        // The cleanup close carries the browser's error so it lands in the proxy
+        // logs — the only server-visible record of a client-side SDP rejection.
+        await session.transport.unpublish("camera", { reason: describeError(publishErr) }).catch(() => {})
         setCallCaptureError({
           code: "capture_failed",
           kind: classifyMediaError(publishErr).kind,
