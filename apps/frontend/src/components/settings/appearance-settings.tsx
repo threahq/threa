@@ -191,8 +191,8 @@ export function AppearanceSettings() {
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
   const codeBlockWrap = preferences?.codeBlockWrap ?? DEFAULT_CODE_BLOCK_WRAP
   const codeBlockWrapOverrides = preferences?.codeBlockWrapOverrides ?? {}
-  const codeBlockWrapOverrideRows = Object.entries(codeBlockWrapOverrides).sort(([a], [b]) =>
-    formatCodeLanguage(a).localeCompare(formatCodeLanguage(b))
+  const codeBlockWrapOverrideRows = Object.entries(codeBlockWrapOverrides).sort(([leftId], [rightId]) =>
+    formatCodeLanguage(leftId).localeCompare(formatCodeLanguage(rightId))
   )
   const codeBlockWrapUnusedLanguages = CODE_LANGUAGE_OPTIONS.filter(
     (language) => !(language.id in codeBlockWrapOverrides)
