@@ -297,6 +297,14 @@ describe("TextSelectionQuote — sharing a selection", () => {
 
     fireEvent.click(document.querySelector<HTMLElement>('[cmdk-item][data-value="ch_target"]')!)
 
-    expect(queue).toHaveBeenCalledWith("ch_target", expect.objectContaining({ version: 4, range: null }))
+    expect(queue).toHaveBeenCalledWith("ch_target", {
+      messageId: "msg_1",
+      streamId: "stream_thread",
+      authorName: "Alice",
+      authorId: "usr_alice",
+      actorType: "user",
+      version: 4,
+      range: null,
+    })
   })
 })

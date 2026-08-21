@@ -362,7 +362,7 @@ export function useMessageQueue(): void {
         if (referenceFailed || (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE)) {
           if (referenceFailed) {
             toast.error(
-              hasNodeOfType(next.contentJson, "sharedMessage")
+              hasNodeOfType(next.contentJson ?? parseMarkdown(next.content), "sharedMessage")
                 ? "Couldn't share that message — it may have changed or been removed."
                 : "Couldn't quote that message — it may have changed or been removed.",
               { id: `message-reference-${next.clientId}` }

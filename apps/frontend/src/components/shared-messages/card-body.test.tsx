@@ -98,9 +98,9 @@ describe("SharedMessageCardBody — pinned references", () => {
   })
 
   it("drops the attachments row on a ranged share", () => {
-    const attachments = [
+    const attachments: AttachmentSummary[] = [
       { id: "att_1", filename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 10 },
-    ] as unknown as AttachmentSummary[]
+    ]
 
     const whole = renderUnderRoute(<SharedMessageCardBody source={{ ...RESOLVED, attachments }} fallbackAuthor="" />)
     expect(whole.container.textContent).toContain("plan.pdf")

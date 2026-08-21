@@ -28,20 +28,20 @@ const mockStreamCreate = vi.fn()
 const mockSubscribeStream = vi.fn()
 const mockKickOperationQueue = vi.fn()
 
+interface MockNode {
+  type: string
+  text?: string
+  attrs?: Record<string, unknown>
+  content?: MockNode[]
+}
+
 interface MockPendingMessage {
   clientId: string
   workspaceId: string
   streamId: string
   content: string
   contentFormat: string
-  contentJson?: {
-    type: string
-    content: Array<{
-      type: string
-      attrs?: Record<string, unknown>
-      content?: Array<{ type: string; text: string }>
-    }>
-  }
+  contentJson?: MockNode
   attachmentIds?: string[]
   steer?: true
   status?: "editing" | "blocked-privacy"
@@ -381,7 +381,13 @@ describe("useMessageQueue", () => {
         contentFormat: "markdown",
         contentJson: {
           type: "doc",
-          content: [{ type: "sharedMessage", attrs: { messageId: "msg_src", streamId: "stream_src" } }],
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "look at this" }] },
+            {
+              type: "blockquote",
+              content: [{ type: "sharedMessage", attrs: { messageId: "msg_src", streamId: "stream_src" } }],
+            },
+          ],
         },
         createdAt: 1000,
         retryCount: 0,

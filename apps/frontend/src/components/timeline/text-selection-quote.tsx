@@ -93,6 +93,10 @@ export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuot
   // confirmed path — a span of one has nothing to pin, so the toolbar offers
   // Quote only there.
   const selectionStream = useStreamFromStore(selection?.streamId ?? streamId)
+  // A row whose stream is not in the store (a thread on a board card) still
+  // offers Share: the sealed case it guards is refused server-side with
+  // SHARE_E2E_NOT_ALLOWED, so guessing wrong here costs a rejected send, while
+  // requiring the stream would drop the control on ordinary plaintext rows.
   const canShare = workspaceId !== undefined && selectionStream?.e2eEnabled !== true
 
   const handleSelectionChange = useCallback(() => {
