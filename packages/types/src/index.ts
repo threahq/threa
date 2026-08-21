@@ -778,6 +778,7 @@ export type {
   ThreaHeading,
   ThreaCodeBlock,
   ThreaBlockquote,
+  ContentRange,
   ThreaQuoteReply,
   ThreaSharedMessage,
   ThreaBulletList,

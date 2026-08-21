@@ -3,11 +3,12 @@
  *
  * Three custom protocols ride on top of regular markdown link syntax:
  *
- *   - `quote:streamId/messageId/authorId/actorType` — the attribution
- *     link inside a `quoteReply` block. `authorId`/`actorType` are
+ *   - `quote:streamId/messageId/authorId/actorType[?v=n&r=from-to]` — the
+ *     attribution link inside a `quoteReply` block. `authorId`/`actorType` are
  *     optional for backward compat with messages serialized before
- *     denormalised author metadata was added.
- *   - `shared-message:streamId/messageId[/conversationId]` — the inline
+ *     denormalised author metadata was added; the `?v=`/`&r=` suffix pins the
+ *     source revision and the quoted span (see `ReferencePin`).
+ *   - `shared-message:streamId/messageId[/conversationId][?v=n&r=from-to]` — the inline
  *     pointer link a `sharedMessage` block serialises to. The optional third
  *     segment is the conversation the message was shared from; when present the
  *     card's back-link reopens the source in that conversation's side panel
@@ -28,12 +29,26 @@
 
 import {
   actorTypeFromMentionId,
+  type ContentRange,
   isResolvedChannelLinkId,
   MENTION_BROADCAST_CHANNEL,
   MENTION_BROADCAST_HERE,
 } from "@threa/types"
 
-export interface QuoteHref {
+/**
+ * The pin a `quote:`/`shared-message:` href can carry as a `?v=<n>[&r=<from>-<to>]`
+ * suffix: which revision of the source the reference points at, and which span of
+ * that revision's content. Absent on legacy hrefs, which mean "current revision,
+ * whole message".
+ */
+export interface ReferencePin {
+  /** Source message revision; `null`/absent = unpinned. */
+  version?: number | null
+  /** Position span inside the pinned revision; `null`/absent = the whole message. */
+  range?: ContentRange | null
+}
+
+export interface QuoteHref extends ReferencePin {
   streamId: string
   messageId: string
   /** Empty string when the message was serialized pre-denormalisation. */
@@ -43,28 +58,33 @@ export interface QuoteHref {
 }
 
 export function buildQuoteHref(params: QuoteHref): string {
+  const query = buildReferenceQuery(params)
   // Emit the legacy two-segment form when authorId is empty, otherwise the
   // four-segment string with `//user` in the middle wouldn't match the
   // parser's `[\w-]+` segment regex on roundtrip.
   if (!params.authorId) {
-    return `quote:${params.streamId}/${params.messageId}`
+    return `quote:${params.streamId}/${params.messageId}${query}`
   }
-  return `quote:${params.streamId}/${params.messageId}/${params.authorId}/${params.actorType}`
+  return `quote:${params.streamId}/${params.messageId}/${params.authorId}/${params.actorType}${query}`
 }
 
 export function parseQuoteHref(href: string): QuoteHref | null {
   if (!href.startsWith("quote:")) return null
-  const parts = href.slice("quote:".length).split("/")
+  const split = splitReferenceQuery(href.slice("quote:".length))
+  if (!split) return null
+  const parts = split.path.split("/")
   if (parts.length < 2) return null
   return {
     streamId: parts[0],
     messageId: parts[1],
     authorId: parts[2] ?? "",
     actorType: parts[3] ?? "user",
+    version: split.pin.version,
+    range: split.pin.range,
   }
 }
 
-export interface SharedMessageHref {
+export interface SharedMessageHref extends ReferencePin {
   streamId: string
   messageId: string
   /**
@@ -77,24 +97,78 @@ export interface SharedMessageHref {
 }
 
 export function buildSharedMessageHref(params: SharedMessageHref): string {
+  const query = buildReferenceQuery(params)
   // Emit the legacy two-segment form when there's no conversation origin so
   // older readers keep parsing it and the wire form stays stable for the common
   // in-stream case; append the third segment only when it carries information.
   if (!params.conversationId) {
-    return `shared-message:${params.streamId}/${params.messageId}`
+    return `shared-message:${params.streamId}/${params.messageId}${query}`
   }
-  return `shared-message:${params.streamId}/${params.messageId}/${params.conversationId}`
+  return `shared-message:${params.streamId}/${params.messageId}/${params.conversationId}${query}`
 }
 
 export function parseSharedMessageHref(href: string): SharedMessageHref | null {
   if (!href.startsWith("shared-message:")) return null
-  const parts = href.slice("shared-message:".length).split("/")
+  const split = splitReferenceQuery(href.slice("shared-message:".length))
+  if (!split) return null
+  const parts = split.path.split("/")
   // Exactly the 2-segment (legacy / in-stream) or 3-segment (conversation
   // origin) shapes `buildSharedMessageHref` emits — reject anything longer so a
   // malformed href can't silently drop trailing data, matching the strictness
   // of the regex-anchored `parseSharedMessageLine` in markdown.ts.
   if (parts.length < 2 || parts.length > 3) return null
-  return { streamId: parts[0], messageId: parts[1], conversationId: parts[2] || undefined }
+  return {
+    streamId: parts[0],
+    messageId: parts[1],
+    conversationId: parts[2] || undefined,
+    version: split.pin.version,
+    range: split.pin.range,
+  }
+}
+
+/**
+ * `?v=<n>` when pinned, plus `&r=<from>-<to>` when the reference covers a span
+ * of that revision. A range without a version has no meaning — positions only
+ * exist inside a known revision — so it's a programming error, not a value to
+ * drop silently (INV-11).
+ */
+function buildReferenceQuery(pin: ReferencePin): string {
+  const version = pin.version ?? null
+  const range = pin.range ?? null
+  if (version === null) {
+    if (range !== null) throw new Error("A reference range requires a pinned version")
+    return ""
+  }
+  if (range === null) return `?v=${version}`
+  return `?v=${version}&r=${range.from}-${range.to}`
+}
+
+/**
+ * Split a pointer body into its path and its pin. Returns `null` when the query
+ * is malformed — the caller then treats the whole href as unparseable rather
+ * than silently reading a reference as unpinned. Unrecognised parameters are
+ * ignored so a future one doesn't invalidate today's links.
+ */
+function splitReferenceQuery(body: string): { path: string; pin: Required<ReferencePin> } | null {
+  const queryAt = body.indexOf("?")
+  if (queryAt < 0) return { path: body, pin: { version: null, range: null } }
+  const path = body.slice(0, queryAt)
+  const params = new URLSearchParams(body.slice(queryAt + 1))
+  const rawVersion = params.get("v")
+  const rawRange = params.get("r")
+  if (rawVersion === null) {
+    return rawRange === null ? { path, pin: { version: null, range: null } } : null
+  }
+  if (!/^\d+$/.test(rawVersion)) return null
+  const version = Number(rawVersion)
+  if (version < 1) return null
+  if (rawRange === null) return { path, pin: { version, range: null } }
+  const match = rawRange.match(/^(\d+)-(\d+)$/)
+  if (!match) return null
+  const from = Number(match[1])
+  const to = Number(match[2])
+  if (from >= to) return null
+  return { path, pin: { version, range: { from, to } } }
 }
 
 export interface MemoHref {

@@ -6,7 +6,7 @@
  * backend (AI agents, external integrators).
  */
 
-import type { JSONContent, JSONContentMark } from "@threa/types"
+import type { ContentRange, JSONContent, JSONContentMark } from "@threa/types"
 import { actorTypeFromMentionId, isResolvedChannelLinkId } from "@threa/types"
 import {
   escapeMarkdownLinkText,
@@ -21,6 +21,9 @@ import {
   buildSharedMessageHref,
   parseGiphyHref,
   parseMentionPointerHref,
+  parseQuoteHref,
+  parseSharedMessageHref,
+  type ReferencePin,
 } from "./pointer-urls"
 
 /**
@@ -107,13 +110,15 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
     }
 
     case "quoteReply": {
-      const { messageId, streamId, authorName, authorId, actorType, snippet } = node.attrs as {
+      const { messageId, streamId, authorName, authorId, actorType, snippet, version, range } = node.attrs as {
         messageId: string
         streamId: string
         authorName: string
         authorId: string
         actorType: string
         snippet: string
+        version?: number | null
+        range?: ContentRange | null
       }
       const quotedLines = snippet
         .split("\n")
@@ -123,16 +128,18 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       const escapedAuthor = authorName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
       // Blank `>` line forces a paragraph break so react-markdown creates separate
       // <p> elements for the snippet and attribution (needed for display extraction).
-      const href = buildQuoteHref({ streamId, messageId, authorId, actorType })
+      const href = buildQuoteHref({ streamId, messageId, authorId, actorType, version, range })
       return `${quotedLines}\n>\n> — [${escapedAuthor}](${href})`
     }
 
     case "sharedMessage": {
-      const { messageId, streamId, authorName, conversationId } = node.attrs as {
+      const { messageId, streamId, authorName, conversationId, version, range } = node.attrs as {
         messageId: string
         streamId: string
         authorName?: string
         conversationId?: string
+        version?: number | null
+        range?: ContentRange | null
       }
       // Wire-format serialization only — the frontend hydrates live content
       // on render, so this fallback is what external API consumers see and
@@ -141,7 +148,7 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       // the line to a clean sentence: "Shared a message from Alice".
       const rawName = authorName && authorName.length > 0 ? authorName : "another stream"
       const escapedName = rawName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
-      return `Shared a message from [${escapedName}](${buildSharedMessageHref({ streamId, messageId, conversationId })})`
+      return `Shared a message from [${escapedName}](${buildSharedMessageHref({ streamId, messageId, conversationId, version, range })})`
     }
 
     case "bulletList":
@@ -622,21 +629,18 @@ export function parseMarkdown(
         i++
       }
 
-      // Check if last line is a quote-reply attribution: — [Author](quote:streamId/messageId/authorId/actorType)
+      // Check if last line is a quote-reply attribution: — [Author](quote:streamId/messageId/authorId/actorType[?v=n&r=from-to])
       // Author name may contain escaped brackets: \] and \\
-      // authorId and actorType are optional for backward compat with old messages.
+      // The href itself is decoded by `parseQuoteHref`, which owns the optional
+      // segments and the pin suffix; an href it rejects falls back to a plain
+      // blockquote.
       const lastLine = quoteLines[quoteLines.length - 1]
-      const quoteReplyMatch = lastLine?.match(
-        /^—\s*\[((?:\\.|[^\]])+)\]\(quote:([\w-]+)\/([\w-]+)(?:\/([\w-]+)\/([\w-]+))?\)$/
-      )
+      const quoteReplyMatch = lastLine?.match(/^—\s*\[((?:\\.|[^\]])+)\]\((quote:[\w\-/]+(?:\?[\w=&-]+)?)\)$/)
+      const quoteHref = quoteReplyMatch ? parseQuoteHref(quoteReplyMatch[2]) : null
 
-      if (quoteReplyMatch) {
+      if (quoteReplyMatch && quoteHref) {
         // Unescape \] and \\ in author name
         const authorName = quoteReplyMatch[1].replace(/\\([\]\\])/g, "$1")
-        const streamId = quoteReplyMatch[2]
-        const messageId = quoteReplyMatch[3]
-        const authorId = quoteReplyMatch[4] ?? ""
-        const actorType = quoteReplyMatch[5] ?? "user"
         // Strip the attribution line and any blank separator line before it
         const snippetLines = quoteLines.slice(0, -1)
         while (snippetLines.length > 0 && snippetLines[snippetLines.length - 1] === "") {
@@ -645,7 +649,15 @@ export function parseMarkdown(
         const snippet = snippetLines.join("\n")
         content.push({
           type: "quoteReply",
-          attrs: { messageId, streamId, authorName, authorId, actorType, snippet },
+          attrs: {
+            messageId: quoteHref.messageId,
+            streamId: quoteHref.streamId,
+            authorName,
+            authorId: quoteHref.authorId,
+            actorType: quoteHref.actorType,
+            snippet,
+            ...referencePinAttrs(quoteHref),
+          },
         })
       } else {
         // One paragraph per quoted line — the inverse of the serializer, which
@@ -729,6 +741,7 @@ export function parseMarkdown(
           ...(sharedMessageMatch.conversationId && { conversationId: sharedMessageMatch.conversationId }),
           authorId: "",
           actorType: "user",
+          ...referencePinAttrs(sharedMessageMatch),
         },
       })
       i++
@@ -757,13 +770,26 @@ export function parseMarkdown(
  */
 function parseSharedMessageLine(
   line: string
-): { authorName: string; streamId: string; messageId: string; conversationId?: string } | null {
+): ({ authorName: string; streamId: string; messageId: string; conversationId?: string } & ReferencePin) | null {
   const match = line.match(
-    /^Shared a message from \[((?:\\.|[^\]])+)\]\(shared-message:([\w-]+)\/([\w-]+)(?:\/([\w-]+))?\)\s*$/
+    /^Shared a message from \[((?:\\.|[^\]])+)\]\((shared-message:[\w\-/]+(?:\?[\w=&-]+)?)\)\s*$/
   )
   if (!match) return null
+  const href = parseSharedMessageHref(match[2])
+  if (!href) return null
   const authorName = match[1].replace(/\\([\]\\])/g, "$1")
-  return { authorName, streamId: match[2], messageId: match[3], conversationId: match[4] || undefined }
+  return { authorName, ...href }
+}
+
+/**
+ * Spread the pin onto node attrs only when the href carried one: an unpinned
+ * legacy link must round-trip to exactly the attrs it parsed from before.
+ */
+function referencePinAttrs(pin: ReferencePin): ReferencePin {
+  return {
+    ...(pin.version != null && { version: pin.version }),
+    ...(pin.range != null && { range: pin.range }),
+  }
 }
 
 /**

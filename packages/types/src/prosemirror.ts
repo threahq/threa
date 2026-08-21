@@ -93,6 +93,17 @@ export interface ThreaBlockquote {
 }
 
 /**
+ * A half-open span of ProseMirror document positions inside a message's
+ * `contentJson` — `from` inclusive, `to` exclusive, both counted with
+ * ProseMirror's own sizing rules (text node = text length, leaf/atom = 1,
+ * other node = 2 + children). `null` on a reference means the whole message.
+ */
+export interface ContentRange {
+  from: number
+  to: number
+}
+
+/**
  * Quote reply - quotes a specific message (or part of it) with attribution.
  * Serializes to markdown as a blockquote with a `quote:` attribution link.
  */
@@ -111,6 +122,10 @@ export interface ThreaQuoteReply {
     actorType: string
     /** The quoted text snippet */
     snippet: string
+    /** Source message revision the quote is pinned to; null/absent = unpinned legacy node */
+    version?: number | null
+    /** Span inside the pinned version's content; null/absent = the whole message */
+    range?: ContentRange | null
   }
 }
 
@@ -133,6 +148,10 @@ export interface ThreaSharedMessage {
     authorId?: string
     /** The actor type of the source author, cached for the same reason */
     actorType?: string
+    /** Source message revision the pointer is pinned to; null/absent = unpinned legacy node */
+    version?: number | null
+    /** Span inside the pinned version's content; null/absent = the whole message */
+    range?: ContentRange | null
   }
 }
 
@@ -515,6 +534,11 @@ const blockquoteNodeSchema = z.object({
   content: z.array(blockNodeSchema),
 })
 
+const contentRangeSchema = z.object({
+  from: z.number().int().nonnegative(),
+  to: z.number().int().positive(),
+})
+
 const quoteReplyNodeSchema = z.object({
   type: z.literal("quoteReply"),
   attrs: z.object({
@@ -524,6 +548,8 @@ const quoteReplyNodeSchema = z.object({
     authorId: z.string(),
     actorType: z.string(),
     snippet: z.string(),
+    version: z.number().int().positive().nullish(),
+    range: contentRangeSchema.nullish(),
   }),
 })
 
@@ -535,6 +561,8 @@ const sharedMessageNodeSchema = z.object({
     authorName: z.string().optional(),
     authorId: z.string().optional(),
     actorType: z.string().optional(),
+    version: z.number().int().positive().nullish(),
+    range: contentRangeSchema.nullish(),
   }),
 })
 
