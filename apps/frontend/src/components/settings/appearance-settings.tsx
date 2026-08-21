@@ -479,9 +479,7 @@ export function AppearanceSettings() {
       <section className="space-y-3">
         <div>
           <h3 className="text-sm font-medium">Code Blocks</h3>
-          <p className="text-sm text-muted-foreground">
-            Collapse long code blocks by default to keep messages scannable
-          </p>
+          <p className="text-sm text-muted-foreground">Collapsing and line wrapping</p>
         </div>
         <div className="flex items-start gap-4">
           <div className="grid gap-1 flex-1">
