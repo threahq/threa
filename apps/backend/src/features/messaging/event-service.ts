@@ -105,6 +105,12 @@ export interface MessageCreatedPayload {
   messageId: string
   contentJson: JSONContent
   contentMarkdown: string
+  /**
+   * The revision `contentJson` is. `1` on emission; bootstrap enrichment
+   * overlays the projection's current value alongside the edited body, so a
+   * reference pinned from a rendered row pins what the viewer actually saw.
+   */
+  revision: number
   attachments?: AttachmentSummary[]
   sources?: SourceItem[]
   sessionId?: string
@@ -158,6 +164,8 @@ export interface MessageEditedPayload {
   messageId: string
   contentJson: JSONContent
   contentMarkdown: string
+  /** The revision this edit produced (the pre-edit revision + 1). */
+  revision: number
   /**
    * Always present, empty array included — unlike the create payload. The client
    * applies an edit by spreading it over the stored payload, so an omitted key
@@ -872,6 +880,7 @@ export class EventService {
         messageId: msgId,
         contentJson: params.contentJson,
         contentMarkdown: params.contentMarkdown,
+        revision: 1,
         ...(attachmentSummaries && { attachments: attachmentSummaries }),
         ...(params.sources && params.sources.length > 0 && { sources: params.sources }),
         ...(params.sessionId && { sessionId: params.sessionId }),
@@ -1260,6 +1269,7 @@ export class EventService {
         await MessageVersionRepository.insert(client, {
           id: messageVersionId(),
           messageId: params.messageId,
+          versionNumber: existing.revision,
           contentJson: existing.contentJson,
           contentMarkdown: existing.contentMarkdown,
           editedBy: params.actorId,
@@ -1281,6 +1291,7 @@ export class EventService {
             messageId: params.messageId,
             contentJson: params.contentJson,
             contentMarkdown: params.contentMarkdown,
+            revision: existing.revision + 1,
             memoEmbeds,
           } satisfies MessageEditedPayload,
           actorId: params.actorId,
@@ -2617,6 +2628,9 @@ export class EventService {
         const message = messagesMap.get(payload.messageId)
 
         const enrichments: Record<string, unknown> = {}
+        if (message) {
+          enrichments.revision = message.revision
+        }
         if (threadData) {
           enrichments.threadId = threadData.threadId
           enrichments.replyCount = threadData.replyCount

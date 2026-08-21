@@ -2978,6 +2978,12 @@
                                     "additionalProperties": false
                                   }
                                 },
+                                "revision": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991,
+                                  "description": "1 for the original body, +1 per edit"
+                                },
                                 "editedAt": { "type": "string", "format": "date-time" },
                                 "createdAt": { "type": "string", "format": "date-time" }
                               },
@@ -2990,6 +2996,7 @@
                                 "content",
                                 "replyCount",
                                 "metadata",
+                                "revision",
                                 "createdAt"
                               ],
                               "additionalProperties": false
@@ -4726,6 +4733,12 @@
                               "additionalProperties": false
                             }
                           },
+                          "revision": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991,
+                            "description": "1 for the original body, +1 per edit"
+                          },
                           "editedAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" }
                         },
@@ -4738,6 +4751,7 @@
                           "content",
                           "replyCount",
                           "metadata",
+                          "revision",
                           "createdAt"
                         ],
                         "additionalProperties": false
@@ -5026,6 +5040,12 @@
                             "additionalProperties": false
                           }
                         },
+                        "revision": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "1 for the original body, +1 per edit"
+                        },
                         "editedAt": { "type": "string", "format": "date-time" },
                         "createdAt": { "type": "string", "format": "date-time" }
                       },
@@ -5038,6 +5058,7 @@
                         "content",
                         "replyCount",
                         "metadata",
+                        "revision",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -5548,6 +5569,12 @@
                               "additionalProperties": false
                             }
                           },
+                          "revision": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991,
+                            "description": "1 for the original body, +1 per edit"
+                          },
                           "editedAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" }
                         },
@@ -5560,6 +5587,7 @@
                           "content",
                           "replyCount",
                           "metadata",
+                          "revision",
                           "createdAt"
                         ],
                         "additionalProperties": false
@@ -5840,6 +5868,12 @@
                               "additionalProperties": false
                             }
                           },
+                          "revision": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991,
+                            "description": "1 for the original body, +1 per edit"
+                          },
                           "editedAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" }
                         },
@@ -5852,6 +5886,7 @@
                           "content",
                           "replyCount",
                           "metadata",
+                          "revision",
                           "createdAt"
                         ],
                         "additionalProperties": false
@@ -6109,6 +6144,12 @@
                             "additionalProperties": false
                           }
                         },
+                        "revision": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "1 for the original body, +1 per edit"
+                        },
                         "editedAt": { "type": "string", "format": "date-time" },
                         "createdAt": { "type": "string", "format": "date-time" }
                       },
@@ -6121,6 +6162,7 @@
                         "content",
                         "replyCount",
                         "metadata",
+                        "revision",
                         "createdAt"
                       ],
                       "additionalProperties": false

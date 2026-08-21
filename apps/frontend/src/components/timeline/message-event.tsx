@@ -103,6 +103,8 @@ interface MessagePayload {
   messageId: string
   contentMarkdown: string
   contentJson?: JSONContent
+  /** Optional: events cached in IDB before the field shipped carry no revision. */
+  revision?: number
   attachments?: AttachmentSummary[]
   linkPreviews?: LinkPreviewSummary[]
   memoEmbeds?: MemoEmbedSummary[]

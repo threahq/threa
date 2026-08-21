@@ -43,6 +43,7 @@ function createMessage(overrides: Partial<Message> & { id: string }): Message {
     reactions: {},
     metadata: {},
     conversationIntent: null,
+    revision: 1,
     clientMessageId: null,
     sentVia: null,
     editedAt: null,

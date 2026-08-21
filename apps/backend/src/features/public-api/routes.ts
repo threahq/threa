@@ -121,6 +121,7 @@ const messageSchema = z.object({
     .record(z.string(), z.string())
     .describe("External references attached by the sender. Always present; empty when unset."),
   attachments: z.array(attachmentSummarySchema).optional(),
+  revision: z.number().int().positive().describe("1 for the original body, +1 per edit"),
   editedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(),
 })

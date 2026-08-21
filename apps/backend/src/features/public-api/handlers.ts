@@ -201,6 +201,7 @@ function serializeMessage(
     clientMessageId?: string | null
     sentVia?: string | null
     metadata?: Record<string, string>
+    revision: number
     editedAt: Date | null
     createdAt: Date
   },
@@ -222,6 +223,7 @@ function serializeMessage(
     metadata: message.metadata ?? {},
     ...(opts?.attachments &&
       opts.attachments.length > 0 && { attachments: opts.attachments.map((a) => toAttachmentSummary(a)) }),
+    revision: message.revision,
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
     createdAt: message.createdAt.toISOString(),
   }

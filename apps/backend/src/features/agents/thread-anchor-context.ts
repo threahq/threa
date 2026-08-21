@@ -57,6 +57,7 @@ export async function findThreadAnchorContext(db: Querier, stream: Stream): Prom
     reactions: {},
     metadata: {},
     conversationIntent: null,
+    revision: 1,
     editedAt: null,
     deletedAt: null,
     createdAt: event.createdAt,

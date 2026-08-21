@@ -58,6 +58,7 @@ function toMessages(input: MemorizerInput, now: Date): { messages: Message[]; fo
         reactions: {},
         metadata: {},
         conversationIntent: null,
+        revision: 1,
         clientMessageId: null,
         sentVia: null,
         editedAt: null,

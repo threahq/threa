@@ -587,6 +587,7 @@ describe("EventService.editMessage version capture", () => {
     contentMarkdown: "original",
     authorId: "usr_1",
     authorType: "user",
+    revision: 2,
   }
   let findByIdForUpdateSpy: ReturnType<typeof spyOn>
   let isMemberSpy: ReturnType<typeof spyOn>
@@ -695,6 +696,7 @@ describe("EventService.editMessage version capture", () => {
       expect.anything(),
       expect.objectContaining({
         messageId: "msg_1",
+        versionNumber: 2,
         contentJson: existingMessage.contentJson,
         contentMarkdown: "original",
         editedBy: "usr_1",
