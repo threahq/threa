@@ -35,6 +35,11 @@ export interface PartialQuoteInput {
  * derives the one it stores, so the composer chip shows what will be sent.
  */
 export function buildPartialQuote(input: PartialQuoteInput): QuotePin | null {
+  // Positions only mean something inside a known revision, and the wire form
+  // refuses a range without one — a row cached before revisions shipped has the
+  // body but not the number, so it takes the lenient path instead.
+  if (input.revision === null) return null
+
   const located = resolveSelectionRange(input.contentJson, {
     text: input.selectionText,
     prefixText: input.prefixText,
