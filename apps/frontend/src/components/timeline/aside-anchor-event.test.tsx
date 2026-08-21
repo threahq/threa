@@ -62,15 +62,15 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe("AsideAnchorEvent", () => {
-  it("renders the creator's row: title joined from the aside stream, age, and a Resume affordance", () => {
+  it("renders the creator's row: title joined from the aside stream and age, no controls", () => {
     renderTimeline([anchorEvent()], CREATOR)
 
     const row = document.querySelector('[data-event-id="evt_aside"]')
     expect(row).not.toBeNull()
     expect(row).toHaveTextContent("churn number sanity-check")
     expect(row).toHaveTextContent("9m ago")
-    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument()
     expect(row?.querySelector("[data-aside-id]")).toHaveAttribute("data-aside-id", ASIDE)
+    expect(screen.queryByRole("button")).toBeNull()
   })
 
   it("renders nothing for another viewer of the same host stream", () => {
@@ -78,7 +78,6 @@ describe("AsideAnchorEvent", () => {
 
     expect(document.querySelector('[data-event-id="evt_aside"]')).toBeNull()
     expect(screen.queryByText("churn number sanity-check")).toBeNull()
-    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull()
   })
 
   it("leaves no row once the aside is archived (joined state, no new event)", () => {

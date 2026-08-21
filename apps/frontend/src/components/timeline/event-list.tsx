@@ -163,9 +163,7 @@ function isGroupableMessage(event: StreamEvent): boolean {
 export function annotateAuthorGroups(items: TimelineItem[]): TimelineItem[] {
   let previousMessage: { event: StreamEvent; timeMs: number } | null = null
   return items.map((item) => {
-    // The creator-only anchor row rides between messages without breaking a
-    // same-author run: it is a hairline, not a turn, and the creator's layout
-    // should match what every other member sees.
+    // An aside anchor row never breaks a same-author run.
     if (item.type === "event" && item.event.eventType === "aside:anchored") return item
     if (item.type !== "event" || !isGroupableMessage(item.event)) {
       previousMessage = null
@@ -607,6 +605,8 @@ export function injectGapItems(
 export function itemDayStartMs(item: TimelineItem): number | null {
   switch (item.type) {
     case "event":
+      // A relocated aside row rides its anchor's day, never opening one of its own.
+      if (item.event.eventType === "aside:anchored") return null
       return localStartOfDayMs(new Date(item.event.createdAt))
     case "command_group":
     case "session_group": {

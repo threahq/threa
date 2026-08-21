@@ -15,7 +15,7 @@ import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
-import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { getStreamName, isHiddenStreamType, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { draftInlineText, draftMarkdown, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { conversationOriginLabel, subtopicOriginLabel, threadOriginLabel } from "@/lib/drafts/origin-label"
@@ -209,6 +209,21 @@ export function isStreamArchived(
   if (!stream) return false
   if (stream.archivedAt) return true
   return stream.rootStreamId != null && archivedStreamIds.has(stream.rootStreamId)
+}
+
+/**
+ * Whether a draft's host keeps it off the explorer and the badge alike: an
+ * archived host (directly or through its root), or a host type that never
+ * lists (an aside — its drafts belong to its own surface, not /drafts).
+ */
+export function isDraftHostHidden(
+  streamId: string | null,
+  streamMap: Map<string, CachedStream>,
+  archivedStreamIds: ReadonlySet<string>
+): boolean {
+  if (isStreamArchived(streamId, streamMap, archivedStreamIds)) return true
+  const stream = streamId ? streamMap.get(streamId) : undefined
+  return stream !== undefined && isHiddenStreamType(stream)
 }
 
 /**
@@ -592,7 +607,7 @@ export function useAllDrafts(workspaceId: string) {
       // Hide drafts whose host stream is archived — a channel/DM directly, a
       // thread or board reply via its resolved parent/anchor stream, and any
       // nested thread through the root check inside `isStreamArchived`.
-      if (isStreamArchived(resolved.streamId, streamMap, archivedStreamIds)) continue
+      if (isDraftHostHidden(resolved.streamId, streamMap, archivedStreamIds)) continue
 
       const isStashed = !loadedDraftIds.has(draft.id)
 
@@ -801,7 +816,7 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
         // stream's own.
         const board = parseBoardDraftKey(draft.scope)
         if (!board || !draftHasPayload(draft)) continue
-        if (isStreamArchived(boardDraftHostStreamId(board, boardPostMap), streamMap, archivedStreamIds)) continue
+        if (isDraftHostHidden(boardDraftHostStreamId(board, boardPostMap), streamMap, archivedStreamIds)) continue
         draftCount++
         continue
       }
@@ -812,7 +827,7 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
       // a thread reply via its parent message's host stream (nested threads
       // caught by the root check inside `isStreamArchived`).
       const hostStreamId = parsed.type === "thread" ? (messageToStreamMap.get(parsed.id)?.streamId ?? null) : parsed.id
-      if (isStreamArchived(hostStreamId, streamMap, archivedStreamIds)) continue
+      if (isDraftHostHidden(hostStreamId, streamMap, archivedStreamIds)) continue
       draftCount++
       // A non-thread stream draft that is the loaded (not stashed) one for its
       // scope surfaces as the per-row "unsent draft" hint — mirrors

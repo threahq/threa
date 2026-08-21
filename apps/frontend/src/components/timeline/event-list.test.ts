@@ -1294,6 +1294,27 @@ describe("aside anchor rows", () => {
     expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1", "evt_a1", "evt_a2", "evt_m2"])
   })
 
+  it("opens no day divider of its own — the row rides its anchor's day", () => {
+    const day = (date: string, id: string, sequence: string, messageId: string): StreamEvent => ({
+      ...message(id, sequence, messageId),
+      createdAt: date,
+    })
+    const events = [
+      day("2026-08-10T10:00:00.000Z", "evt_m1", "1", "msg_1"),
+      day("2026-08-10T10:01:00.000Z", "evt_m2", "2", "msg_2"),
+      day("2026-08-11T10:00:00.000Z", "evt_m3", "3", "msg_3"),
+      { ...asideRow("evt_aside", "4", "msg_1"), createdAt: "2026-08-21T10:00:00.000Z" },
+    ]
+    const items = injectDayDividers(groupTimelineItems(events, "user_me"))
+    expect(items.map((item) => (item.type === "event" ? item.event.id : item.type))).toEqual([
+      "evt_m1",
+      "evt_aside",
+      "evt_m2",
+      "day_divider",
+      "evt_m3",
+    ])
+  })
+
   it("does not break a same-author run (the creator's layout matches everyone else's)", () => {
     const events = [
       message("evt_m1", "1", "msg_1"),

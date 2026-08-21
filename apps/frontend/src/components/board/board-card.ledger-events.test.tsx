@@ -454,7 +454,6 @@ describe("BoardCard aside anchor rows", () => {
 
     const title = await screen.findByText("churn number sanity-check")
     expect(title.closest("[data-aside-id]")).toHaveAttribute("data-aside-id", MINE)
-    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument()
     expect(screen.queryByText("Member's private aside")).toBeNull()
     expect(document.querySelector(`[data-aside-id="${THEIRS}"]`)).toBeNull()
   })
