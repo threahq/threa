@@ -317,6 +317,8 @@ describe("the timeline composer's durable target", () => {
       authorName: "Ada",
       authorId: "usr_ada",
       actorType: "user",
+      version: 1,
+      range: null,
     })
 
     await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent('"type":"sharedMessage"'), {
@@ -377,6 +379,8 @@ describe("the timeline composer's durable target", () => {
       authorName: "Ada",
       authorId: "usr_ada",
       actorType: "user",
+      version: 1,
+      range: null,
     })
 
     await waitFor(() =>
@@ -403,6 +407,8 @@ describe("the timeline composer's durable target", () => {
       authorName: "Ada",
       authorId: "usr_ada",
       actorType: "user",
+      version: 1,
+      range: null,
     })
 
     await waitFor(() =>
@@ -424,6 +430,8 @@ describe("the timeline composer's durable target", () => {
       authorName: "Ada",
       authorId: "usr_ada",
       actorType: "user",
+      version: 1,
+      range: null,
     })
 
     mount(["/"], streamId, true)
@@ -460,6 +468,8 @@ describe("the timeline composer's durable target", () => {
       authorName: "Ada",
       authorId: "usr_ada",
       actorType: "user",
+      version: 1,
+      range: null,
     })
     rerenderAtStream(view, targetStreamId)
 

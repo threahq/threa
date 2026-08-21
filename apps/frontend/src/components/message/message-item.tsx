@@ -625,6 +625,7 @@ export function MessageItem({
           open={shareModalOpen}
           onOpenChange={setShareModalOpen}
           workspaceId={workspaceId}
+          previewMarkdown={message.contentMarkdown}
           attrs={{
             messageId: message.id,
             streamId,
@@ -635,6 +636,11 @@ export function MessageItem({
             // so the resulting pointer's back-link is conversation-aware exactly
             // where the message was shared from a conversation.
             conversationId,
+            // A board/conversation row carries no revision (RenderableMessage
+            // has none), so the share goes unpinned and the server pins it to
+            // whatever the source reads at send time.
+            version: null,
+            range: null,
           }}
         />
       )}

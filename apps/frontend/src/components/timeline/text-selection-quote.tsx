@@ -1,10 +1,14 @@
 import { useEffect, useState, useCallback, type RefObject } from "react"
 import { createPortal } from "react-dom"
-import { Quote } from "lucide-react"
+import { useParams } from "react-router-dom"
+import { Quote, Share2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { ShareMessageModal } from "@/components/share/share-message-modal"
+import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
 import { useInputMode } from "@/hooks/use-input-mode"
-import { resolveQuoteSelection } from "@/lib/quote-selection"
+import { resolveQuoteSelection, resolveShareSelection } from "@/lib/quote-selection"
 import { getReferenceSource } from "@/stores/reference-source-store"
+import { useStreamFromStore } from "@/stores/stream-store"
 import { useQuoteReply } from "./quote-reply-context"
 
 interface SelectionInfo {
@@ -69,13 +73,27 @@ interface TextSelectionQuoteProps {
 }
 
 /**
- * Shows a floating "Quote" button when the user selects text within a message.
- * Active mouse only — touch input uses select-none on messages.
+ * Floating Quote / Share controls for a text selection inside a message. Both
+ * pin the reference to the revision on screen and the span the reader
+ * highlighted. Active mouse only — touch input uses select-none on messages and
+ * reaches the same two actions through the action drawer.
  */
 export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuoteProps) {
   const inputMode = useInputMode()
   const quoteReplyCtx = useQuoteReply()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
+  // Survives the selection being cleared: the picker stays open after the
+  // highlight is gone, and the preview is what the share will actually render.
+  const [shareRequest, setShareRequest] = useState<{
+    attrs: SharedMessageAttrs
+    previewMarkdown: string | null
+  } | null>(null)
+  // Sharing a sealed message decrypts it whole, which is the row menu's
+  // confirmed path — a span of one has nothing to pin, so the toolbar offers
+  // Quote only there.
+  const selectionStream = useStreamFromStore(selection?.streamId ?? streamId)
+  const canShare = workspaceId !== undefined && selectionStream?.e2eEnabled !== true
 
   const handleSelectionChange = useCallback(() => {
     const sel = window.getSelection()
@@ -165,23 +183,74 @@ export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuot
     setSelection(null)
   }, [selection, quoteReplyCtx])
 
-  if (inputMode !== "mouse" || !selection || !quoteReplyCtx) return null
+  const handleShare = useCallback(() => {
+    if (!selection) return
+    const pin = resolveShareSelection(getReferenceSource(selection.messageId), {
+      text: selection.text,
+      prefixText: selection.prefixText,
+    })
+    setShareRequest({
+      attrs: {
+        messageId: selection.messageId,
+        streamId: selection.streamId,
+        authorName: selection.authorName,
+        authorId: selection.authorId,
+        actorType: selection.actorType,
+        version: pin.version,
+        range: pin.range,
+      },
+      previewMarkdown: pin.previewMarkdown,
+    })
+    window.getSelection()?.removeAllRanges()
+    setSelection(null)
+  }, [selection])
 
-  return createPortal(
-    <div
-      className="fixed z-50 -translate-x-1/2 animate-in fade-in-0 zoom-in-95"
-      style={{ top: selection.rect.top - 36, left: selection.rect.left + selection.rect.width / 2 }}
-    >
-      <Button
-        variant="secondary"
-        size="sm"
-        className="h-7 gap-1.5 rounded-full shadow-md px-3 text-xs"
-        onClick={handleQuote}
-      >
-        <Quote className="h-3 w-3" />
-        Quote
-      </Button>
-    </div>,
-    document.body
+  const toolbar =
+    inputMode === "mouse" && selection && quoteReplyCtx
+      ? createPortal(
+          <div
+            className="fixed z-50 flex -translate-x-1/2 items-center gap-1 animate-in fade-in-0 zoom-in-95"
+            style={{ top: selection.rect.top - 36, left: selection.rect.left + selection.rect.width / 2 }}
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-7 gap-1.5 rounded-full shadow-md px-3 text-xs"
+              onClick={handleQuote}
+            >
+              <Quote className="h-3 w-3" />
+              Quote
+            </Button>
+            {canShare && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-7 gap-1.5 rounded-full shadow-md px-3 text-xs"
+                onClick={handleShare}
+              >
+                <Share2 className="h-3 w-3" />
+                Share
+              </Button>
+            )}
+          </div>,
+          document.body
+        )
+      : null
+
+  return (
+    <>
+      {toolbar}
+      {shareRequest && workspaceId && (
+        <ShareMessageModal
+          open
+          onOpenChange={(next) => {
+            if (!next) setShareRequest(null)
+          }}
+          workspaceId={workspaceId}
+          attrs={shareRequest.attrs}
+          previewMarkdown={shareRequest.previewMarkdown}
+        />
+      )}
+    </>
   )
 }

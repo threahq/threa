@@ -5,14 +5,7 @@ import { NodeSelection, Plugin, PluginKey, Selection } from "@tiptap/pm/state"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 import type { ContentRange } from "@threa/types"
 import { QuoteReplyView } from "./quote-reply-view"
-
-function parseRangeAttribute(raw: string | null): ContentRange | null {
-  const match = raw?.match(/^(\d+)-(\d+)$/)
-  if (!match) return null
-  const from = Number(match[1])
-  const to = Number(match[2])
-  return to > from ? { from, to } : null
-}
+import { referencePinAttributes } from "./reference-attributes"
 
 function isValidGapCursorPosition($pos: ResolvedPos): boolean {
   const gapCursor = GapCursor as typeof GapCursor & {
@@ -239,22 +232,7 @@ export const QuoteReplyExtension = Node.create({
         parseHTML: (element) => element.getAttribute("data-snippet"),
         renderHTML: (attrs) => ({ "data-snippet": attrs.snippet }),
       },
-      version: {
-        default: null,
-        parseHTML: (element) => {
-          const parsed = Number(element.getAttribute("data-version"))
-          return Number.isInteger(parsed) && parsed > 0 ? parsed : null
-        },
-        renderHTML: (attrs) => (attrs.version == null ? {} : { "data-version": String(attrs.version) }),
-      },
-      range: {
-        default: null,
-        parseHTML: (element) => parseRangeAttribute(element.getAttribute("data-range")),
-        renderHTML: (attrs) => {
-          const range = attrs.range as ContentRange | null
-          return range ? { "data-range": `${range.from}-${range.to}` } : {}
-        },
-      },
+      ...referencePinAttributes,
     }
   },
 

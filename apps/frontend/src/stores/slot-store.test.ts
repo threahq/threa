@@ -251,6 +251,48 @@ describe("writeSlotCarrier — merge vs replace", () => {
     // msg_elsewhere belongs to an out-of-window page and survives.
     expect(await readMap("stream_a")).toEqual({ [sharedMessageSlotKey("msg_elsewhere")]: slot("msg_elsewhere") })
   })
+
+  it("scopes a replace to the pinned key a pointer actually reads", async () => {
+    const pinned = sharedMessageSlotKey("msg_pinned", 2, { from: 4, to: 9 })
+    await db.slots.bulkPut([
+      { workspaceId: "ws_1", streamId: "stream_a", slotKey: pinned, value: slot("msg_pinned"), _cachedAt: 1 },
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_a",
+        slotKey: sharedMessageSlotKey("msg_pinned"),
+        value: slot("msg_pinned"),
+        _cachedAt: 1,
+      },
+    ])
+
+    await writeSlotCarrier({
+      database: db,
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      carrier: { slots: {} },
+      mode: "replace",
+      windowEvents: [
+        {
+          payload: {
+            contentJson: {
+              type: "doc",
+              content: [
+                {
+                  type: "sharedMessage",
+                  attrs: { messageId: "msg_pinned", streamId: "stream_src", version: 2, range: { from: 4, to: 9 } },
+                },
+              ],
+            },
+          },
+        },
+      ],
+      cachedAt: 2,
+    })
+
+    // Only the ranged key the window's pointer reads is in scope; the legacy
+    // whole-message row belongs to some other pointer and survives.
+    expect(await readMap("stream_a")).toEqual({ [sharedMessageSlotKey("msg_pinned")]: slot("msg_pinned") })
+  })
 })
 
 describe("writeSlotCarrier — merge richness guard (B1)", () => {

@@ -4,6 +4,7 @@ import {
   LabelableResourceTypes,
   type StreamEvent,
   type AttachmentSummary,
+  type ContentRange,
   type JSONContent,
   type LinkPreviewSummary,
   type MemoEmbedSummary,
@@ -80,7 +81,7 @@ import { LabelPicker } from "@/components/labels/label-picker"
 import { MessageHistoryDialog } from "./message-history-dialog"
 import { MessageReactions } from "./message-reactions"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
-import { resolveQuoteSelection, type QuoteSelection } from "@/lib/quote-selection"
+import { resolveQuoteSelection, resolveShareSelection, type QuoteSelection } from "@/lib/quote-selection"
 import { registerReferenceSource } from "@/stores/reference-source-store"
 import { useQuoteReply } from "./quote-reply-context"
 import { useConversationReply } from "./conversation-reply-context"
@@ -926,7 +927,14 @@ function SentMessageEvent({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [shareModalOpen, setShareModalOpen] = useState(false)
+  // What the share picker is about to hand off: the pin, plus the body the
+  // picker previews so a selection that couldn't be mapped shows the whole
+  // message it actually falls back to.
+  const [shareRequest, setShareRequest] = useState<{
+    version: number | null
+    range: ContentRange | null
+    previewMarkdown: string
+  } | null>(null)
   const [moveDetailsOpen, setMoveDetailsOpen] = useState(false)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   // Hydrate the destination tombstone on demand for the per-message
@@ -1238,6 +1246,8 @@ function SentMessageEvent({
               authorName: actorName,
               authorId: event.actorId ?? "",
               actorType: event.actorType ?? "user",
+              version: payload.revision ?? null,
+              range: null,
             })
             navigateAfterShareHandoff({ workspaceId, targetStreamId: rootStream.id, location, navigate, isMobile })
           }
@@ -1252,6 +1262,8 @@ function SentMessageEvent({
                 authorName: actorName,
                 authorId: event.actorId ?? "",
                 actorType: event.actorType ?? "user",
+                version: payload.revision ?? null,
+                range: null,
               })
               navigateAfterShareHandoff({
                 workspaceId,
@@ -1263,7 +1275,32 @@ function SentMessageEvent({
             }
           : undefined,
       shareToParentLabel: showParentEntry && parentStream ? buildShareToStreamLabel(parentStream) : undefined,
-      onShare: () => setShareModalOpen(true),
+      onShare: () =>
+        setShareRequest({
+          version: payload.revision ?? null,
+          range: null,
+          previewMarkdown: payload.contentMarkdown,
+        }),
+      // Sharing a sealed message decrypts the WHOLE body into the target as
+      // plaintext, so a span of it has nothing to pin — the E2E row keeps the
+      // full-message share and its confirmation.
+      onShareWithSelection: e2eEnabled
+        ? undefined
+        : (selection: QuoteSelection) => {
+            const pin = resolveShareSelection(
+              {
+                contentJson: payload.contentJson,
+                revision: payload.revision,
+                contentMarkdown: payload.contentMarkdown,
+              },
+              selection
+            )
+            setShareRequest({
+              version: pin.version,
+              range: pin.range,
+              previewMarkdown: pin.previewMarkdown ?? payload.contentMarkdown,
+            })
+          },
       // Per-message entry into the batch-move flow. Hidden during batch
       // mode itself (the row's own checkbox handles that), on the thread
       // parent (moving the parent into its own thread is nonsensical),
@@ -1297,6 +1334,8 @@ function SentMessageEvent({
     }),
     [
       payload.contentMarkdown,
+      payload.contentJson,
+      payload.revision,
       payload.sessionId,
       payload.messageId,
       payload.editedAt,
@@ -1554,10 +1593,12 @@ function SentMessageEvent({
           }}
         />
       )}
-      {shareModalOpen && (
+      {shareRequest && (
         <ShareMessageModal
-          open={shareModalOpen}
-          onOpenChange={setShareModalOpen}
+          open
+          onOpenChange={(next) => {
+            if (!next) setShareRequest(null)
+          }}
           workspaceId={workspaceId}
           attrs={{
             messageId: payload.messageId,
@@ -1565,7 +1606,10 @@ function SentMessageEvent({
             authorName: actorName,
             authorId: event.actorId ?? "",
             actorType: event.actorType ?? "user",
+            version: shareRequest.version,
+            range: shareRequest.range,
           }}
+          previewMarkdown={shareRequest.previewMarkdown}
           sourcePlaintext={e2eDecryptedMarkdown}
         />
       )}

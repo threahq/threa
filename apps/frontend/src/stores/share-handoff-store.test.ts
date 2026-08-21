@@ -18,6 +18,8 @@ const sampleAttrs = {
   authorName: "Alice",
   authorId: "usr_1",
   actorType: "user",
+  version: 3,
+  range: null,
 }
 
 afterEach(() => {

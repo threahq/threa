@@ -20,14 +20,12 @@ import type { SharedMessageAttrs } from "./shared-message-extension"
  */
 export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps) {
   const attrs = node.attrs as SharedMessageAttrs
-  const { workspaceId: _workspaceId } = useParams<{ workspaceId: string }>()
-  // A composer node is never pinned: the server assigns the revision on send,
-  // so this preview reads the unpinned key and falls back to the local cache.
+  const { workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource({
     messageId: attrs.messageId,
     streamId: attrs.streamId,
-    version: null,
-    range: null,
+    version: attrs.version ?? null,
+    range: attrs.range ?? null,
   })
 
   return (
@@ -41,7 +39,11 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
     >
       <Share2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <SharedMessageCardBody source={source} fallbackAuthor={attrs.authorName ?? ""} />
+        <SharedMessageCardBody
+          source={source}
+          fallbackAuthor={attrs.authorName ?? ""}
+          sourceHref={workspaceId ? `/w/${workspaceId}/s/${attrs.streamId}?m=${attrs.messageId}` : undefined}
+        />
       </div>
       <button
         type="button"

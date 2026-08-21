@@ -12,6 +12,8 @@ const SAMPLE_ATTRS = {
   authorName: "Ada",
   authorId: "usr_a",
   actorType: "user",
+  version: 2,
+  range: null,
 }
 
 function mountModal({ initialPath = "/w/ws_1/s/current" }: { initialPath?: string } = {}) {

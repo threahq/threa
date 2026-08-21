@@ -2,14 +2,18 @@ import { describe, expect, it } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { ReactNode } from "react"
+import { MediaGalleryProvider } from "@/contexts"
 import { SharedMessageCardBody } from "./card-body"
+import type { AttachmentSummary } from "@threa/types"
 import type { SharedMessageSource } from "@/hooks/use-shared-message-source"
 
 function renderUnderRoute(node: ReactNode, initialPath = "/w/ws_1/s/current") {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
-        <Route path="/w/:workspaceId/s/:streamId" element={node} />
+        {/* The attachment row resolves presigned URLs through the gallery
+            context, exactly as both card surfaces mount it in the app. */}
+        <Route path="/w/:workspaceId/s/:streamId" element={<MediaGalleryProvider>{node}</MediaGalleryProvider>} />
       </Routes>
     </MemoryRouter>
   )
@@ -50,5 +54,61 @@ describe("SharedMessageCardBody — Slice 2 placeholders", () => {
 
     const link = screen.getByRole("link", { name: /open in source stream/i })
     expect(link.getAttribute("href")).toBe("/w/ws_1/s/stream_deep?m=msg_deep")
+  })
+})
+
+const RESOLVED: SharedMessageSource = {
+  status: "resolved",
+  contentMarkdown: "the pinned body",
+  authorId: "usr_1",
+  actorType: "user",
+  authorName: "Ada",
+  editedAt: null,
+  attachments: [],
+  version: 2,
+  currentRevision: 2,
+  range: null,
+}
+
+describe("SharedMessageCardBody — pinned references", () => {
+  it("links to the source when it was edited after the share was pinned", () => {
+    renderUnderRoute(
+      <SharedMessageCardBody
+        source={{ ...RESOLVED, currentRevision: 3 }}
+        fallbackAuthor=""
+        sourceHref="/w/ws_1/s/stream_src?m=msg_1"
+      />
+    )
+
+    const link = screen.getByRole("link", { name: /edited since/i })
+    expect(link.getAttribute("href")).toBe("/w/ws_1/s/stream_src?m=msg_1")
+    // The card still shows what was pinned, not what the source reads now.
+    expect(screen.getByText("the pinned body")).toBeInTheDocument()
+  })
+
+  it("says nothing when the source still reads as it was pinned", () => {
+    renderUnderRoute(<SharedMessageCardBody source={RESOLVED} fallbackAuthor="" sourceHref="/w/ws_1/s/s?m=m" />)
+    expect(screen.queryByText(/edited since/i)).not.toBeInTheDocument()
+  })
+
+  it("marks the edit as text where the card itself is already the link", () => {
+    renderUnderRoute(<SharedMessageCardBody source={{ ...RESOLVED, currentRevision: 3 }} fallbackAuthor="" />)
+    expect(screen.getByText(/edited since/i)).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /edited since/i })).not.toBeInTheDocument()
+  })
+
+  it("drops the attachments row on a ranged share", () => {
+    const attachments = [
+      { id: "att_1", filename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 10 },
+    ] as unknown as AttachmentSummary[]
+
+    const whole = renderUnderRoute(<SharedMessageCardBody source={{ ...RESOLVED, attachments }} fallbackAuthor="" />)
+    expect(whole.container.textContent).toContain("plan.pdf")
+    whole.unmount()
+
+    const ranged = renderUnderRoute(
+      <SharedMessageCardBody source={{ ...RESOLVED, attachments, range: { from: 1, to: 4 } }} fallbackAuthor="" />
+    )
+    expect(ranged.container.textContent).not.toContain("plan.pdf")
   })
 })

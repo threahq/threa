@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { AuthorType } from "@threa/types"
-import { ChevronLeft, Quote } from "lucide-react"
+import { ChevronLeft, Quote, Share2 } from "lucide-react"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -94,6 +94,13 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
     handleOpenChange(false)
   }, [selection, context, handleOpenChange])
 
+  const handleShareSelected = useCallback(() => {
+    if (!selection || !context.onShareWithSelection) return
+    context.onShareWithSelection(selection)
+    window.getSelection()?.removeAllRanges()
+    handleOpenChange(false)
+  }, [selection, context, handleOpenChange])
+
   const handleBack = useCallback(() => {
     window.getSelection()?.removeAllRanges()
     setExpanded(false)
@@ -148,7 +155,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
       <DrawerContent className={cn(expanded ? "h-[95dvh]" : "max-h-[85dvh]")}>
-        <DrawerTitle className="sr-only">{expanded ? "Select text to quote" : "Message actions"}</DrawerTitle>
+        <DrawerTitle className="sr-only">{expanded ? "Select text to quote or share" : "Message actions"}</DrawerTitle>
 
         {expanded ? (
           <ExpandedQuoteView
@@ -161,6 +168,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
             contentRef={contentRef}
             onBack={handleBack}
             onQuote={handleQuoteSelected}
+            onShare={context.onShareWithSelection ? handleShareSelected : undefined}
           />
         ) : (
           <>
@@ -247,6 +255,7 @@ interface ExpandedQuoteViewProps {
   contentRef: React.RefObject<HTMLDivElement | null>
   onBack: () => void
   onQuote: () => void
+  onShare?: () => void
 }
 
 function ExpandedQuoteView({
@@ -259,6 +268,7 @@ function ExpandedQuoteView({
   contentRef,
   onBack,
   onQuote,
+  onShare,
 }: ExpandedQuoteViewProps) {
   const initials = getInitials(authorName)
   const charCount = selectedText.length
@@ -362,10 +372,18 @@ function ExpandedQuoteView({
               <span className="font-semibold text-foreground/85">{charCount}</span>{" "}
               {charCount === 1 ? "character" : "characters"} selected
             </p>
-            <Button size="sm" className="h-9 gap-1.5 px-3.5 font-medium" onClick={onQuote}>
-              <Quote className="h-3.5 w-3.5" />
-              Quote
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              {onShare && (
+                <Button size="sm" variant="secondary" className="h-9 gap-1.5 px-3.5 font-medium" onClick={onShare}>
+                  <Share2 className="h-3.5 w-3.5" />
+                  Share
+                </Button>
+              )}
+              <Button size="sm" className="h-9 gap-1.5 px-3.5 font-medium" onClick={onQuote}>
+                <Quote className="h-3.5 w-3.5" />
+                Quote
+              </Button>
+            </div>
           </div>
         ) : (
           <p className="text-[12px] text-muted-foreground/70 text-center py-1">
