@@ -214,3 +214,18 @@ describe("takeSnapshot", () => {
     ])
   })
 })
+
+test("a failed Railway call leaves the Railway planes pending with the error, never a fabricated fail", async () => {
+  const { deps } = fakeDeps()
+  const failing = deps.fetchImpl
+  deps.fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).startsWith("https://backboard.railway.com")) return new Response("upstream down", { status: 502 })
+    return failing(input, init)
+  }) as typeof fetch
+  const snapshot = await takeSnapshot(deps, { sha: SHA, sections: sections("revision") })
+  expect(snapshot.revision?.planes.slice(1).map((plane) => [plane.level, plane.detail])).toEqual(
+    Array(4).fill(["pending", "Railway query failed, will retry: railway 502: upstream down"])
+  )
+  expect(snapshot.findings.map((finding) => finding.id)).toContain("error.railway")
+  expect(snapshot.level).toBe("warn")
+})

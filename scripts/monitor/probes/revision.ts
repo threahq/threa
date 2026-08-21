@@ -134,8 +134,9 @@ export function evaluateFrontendPlane(
 
 export function buildRevisionReport(params: {
   expected: string
-  /** null when Railway could not be queried at all (no token): planes are skipped, not failed. */
+  /** null when Railway could not be queried; `railwayIssue` says whether that is a missing token (skipped) or a failed call (pending, retryable). */
   deployments: RailwayDeployment[] | null
+  railwayIssue?: { level: "skipped" | "pending"; detail: string }
   frontendVersion: { version: string; builtAt?: string } | null
   runs: WorkflowRun[]
 }): RevisionReport {
@@ -149,8 +150,8 @@ export function buildRevisionReport(params: {
             plane: s,
             expected: params.expected,
             live: null,
-            level: "skipped" as const,
-            detail: "Railway not queried (RAILWAY_READONLY_TOKEN missing)",
+            level: params.railwayIssue?.level ?? ("skipped" as const),
+            detail: params.railwayIssue?.detail ?? "Railway not queried (RAILWAY_READONLY_TOKEN missing)",
           }
     ),
   ]

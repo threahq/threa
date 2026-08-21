@@ -79,19 +79,29 @@ export async function resolveExpectedSha(deps: Deps, sha?: string): Promise<stri
   return remoteMainSha(deps.exec)
 }
 
+type RailwayIssue = { level: "skipped" | "pending"; detail: string }
+
+/** null deployments + an issue: missing token is skipped; a failed call is pending so `verify` retries instead of failing. */
 async function listDeployments(
   railway: RailwayClient | null,
   errors: SectionError[]
-): Promise<RailwayDeployment[] | null> {
+): Promise<{ deployments: RailwayDeployment[] | null; railwayIssue?: RailwayIssue }> {
   if (!railway) {
     errors.push({ section: "railway", error: "RAILWAY_READONLY_TOKEN missing; Railway planes skipped" })
-    return null
+    return {
+      deployments: null,
+      railwayIssue: { level: "skipped", detail: "Railway not queried (RAILWAY_READONLY_TOKEN missing)" },
+    }
   }
   try {
-    return await railway.listDeployments()
+    return { deployments: await railway.listDeployments() }
   } catch (error) {
-    errors.push({ section: "railway", error: error instanceof Error ? error.message : String(error) })
-    return []
+    const message = error instanceof Error ? error.message : String(error)
+    errors.push({ section: "railway", error: message })
+    return {
+      deployments: null,
+      railwayIssue: { level: "pending", detail: `Railway query failed, will retry: ${message.slice(0, 120)}` },
+    }
   }
 }
 
@@ -103,7 +113,7 @@ export async function takeRevision(
   const { railway } = clients(deps)
   const errors: SectionError[] = []
   const cacheBuster = String(deps.now().getTime())
-  const [deployments, frontendVersion, runs] = await Promise.all([
+  const [railwayResult, frontendVersion, runs] = await Promise.all([
     listDeployments(railway, errors),
     fetchFrontendVersion(deps.fetchImpl, cacheBuster),
     runsForCommit(deps.exec, PROD.githubRepo, expectedSha).catch((error: Error) => {
@@ -111,7 +121,8 @@ export async function takeRevision(
       return []
     }),
   ])
-  const revision = buildRevisionReport({ expected: expectedSha, deployments, frontendVersion, runs })
+  const { deployments, railwayIssue } = railwayResult
+  const revision = buildRevisionReport({ expected: expectedSha, deployments, railwayIssue, frontendVersion, runs })
   return { revision, deployments, errors }
 }
 
@@ -131,7 +142,7 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     errors.push(...taken.errors)
   } else if (opts.sections.has("liveness") || !opts.since) {
     // Liveness needs the Railway hosts and the default baseline needs the backend deploy time.
-    deployments = await listDeployments(railway, errors)
+    deployments = (await listDeployments(railway, errors)).deployments
   }
 
   const backendDeployedAt =

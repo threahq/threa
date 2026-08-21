@@ -99,11 +99,16 @@ export function renderSnapshot(snapshot: Snapshot, opts: { top?: number } = {}):
   return out.join("\n")
 }
 
-export function diffFindings(prev: Finding[], next: Finding[]): { added: Finding[]; resolved: Finding[] } {
+/** Keyed by finding id: messages carry live numbers (latency, lag, counts) and would otherwise re-print every poll. */
+export function diffFindings(
+  prev: Finding[],
+  next: Finding[]
+): { added: Finding[]; changed: Finding[]; resolved: Finding[] } {
   const prevById = new Map(prev.map((finding) => [finding.id, finding]))
   const nextById = new Map(next.map((finding) => [finding.id, finding]))
   return {
-    added: next.filter((finding) => !prevById.has(finding.id) || prevById.get(finding.id)!.message !== finding.message),
+    added: next.filter((finding) => !prevById.has(finding.id)),
+    changed: next.filter((finding) => prevById.has(finding.id) && prevById.get(finding.id)!.level !== finding.level),
     resolved: prev.filter((finding) => !nextById.has(finding.id)),
   }
 }

@@ -142,23 +142,24 @@ async function cmdWatch(deps: Deps, flags: Flags): Promise<number> {
     const snapshot = await takeSnapshot(deps, opts)
     worstSeen = worst([worstSeen, snapshot.level])
     const stamp = snapshot.at.slice(11, 19) + "Z"
-    const { added, resolved } = prev
+    const { added, changed, resolved } = prev
       ? diffFindings(prev.findings, snapshot.findings)
-      : { added: snapshot.findings, resolved: [] }
+      : { added: snapshot.findings, changed: [], resolved: [] }
     if (flags.json) {
       // One JSON line per poll: the first carries the full snapshot, later ones only the deltas.
       console.log(
         JSON.stringify(
           prev
-            ? { at: snapshot.at, level: snapshot.level, added, resolved }
+            ? { at: snapshot.at, level: snapshot.level, added, changed, resolved }
             : { at: snapshot.at, level: snapshot.level, snapshot }
         )
       )
     } else if (!prev) {
       console.log(renderSnapshot(snapshot, { top: Number(flags.top ?? 5) }))
     } else {
-      if (!added.length && !resolved.length) console.log(`${stamp} ${snapshot.level} no change`)
+      if (!added.length && !changed.length && !resolved.length) console.log(`${stamp} ${snapshot.level} no change`)
       for (const finding of added) console.log(`${stamp} + ${finding.level} ${finding.message}`)
+      for (const finding of changed) console.log(`${stamp} ~ ${finding.level} ${finding.message}`)
       for (const finding of resolved) console.log(`${stamp} − resolved: ${finding.message}`)
     }
     prev = snapshot
