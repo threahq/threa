@@ -120,7 +120,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -156,8 +156,7 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                },
-                                "description": "Source attachments; empty when the slot renders a span."
+                                }
                               }
                             },
                             "required": [
@@ -3026,7 +3025,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -3062,8 +3061,7 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                },
-                                "description": "Source attachments; empty when the slot renders a span."
+                                }
                               }
                             },
                             "required": [
@@ -4777,7 +4775,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -4813,8 +4811,7 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                },
-                                "description": "Source attachments; empty when the slot renders a span."
+                                }
                               }
                             },
                             "required": [
@@ -5087,7 +5084,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -5123,8 +5120,7 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                },
-                                "description": "Source attachments; empty when the slot renders a span."
+                                }
                               }
                             },
                             "required": [
@@ -5616,7 +5612,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -5652,8 +5648,7 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                },
-                                "description": "Source attachments; empty when the slot renders a span."
+                                }
                               }
                             },
                             "required": [
@@ -5914,7 +5909,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -5950,8 +5945,7 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                },
-                                "description": "Source attachments; empty when the slot renders a span."
+                                }
                               }
                             },
                             "required": [
@@ -6190,7 +6184,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -6226,8 +6220,7 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                },
-                                "description": "Source attachments; empty when the slot renders a span."
+                                }
                               }
                             },
                             "required": [

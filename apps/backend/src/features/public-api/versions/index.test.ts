@@ -435,7 +435,13 @@ describe("VERSION_CHANGES: the 2026-08-21 pinned-reference change", () => {
         schemas: {
           Slot: {
             type: "object",
-            properties: { content: { type: "string" }, version: {}, currentRevision: {}, range: {} },
+            properties: {
+              content: { type: "string", description: "The referenced revision of the source as markdown." },
+              attachments: { type: "array", description: "Source attachments; empty when the slot renders a span." },
+              version: {},
+              currentRevision: {},
+              range: {},
+            },
             required: ["content", "version", "currentRevision", "range"],
           },
           SlotMap: {
@@ -449,7 +455,17 @@ describe("VERSION_CHANGES: the 2026-08-21 pinned-reference change", () => {
     expect(pinChange.downgradeSpec!(spec)).toEqual({
       components: {
         schemas: {
-          Slot: { type: "object", properties: { content: { type: "string" } }, required: ["content"] },
+          Slot: {
+            type: "object",
+            properties: {
+              content: {
+                type: "string",
+                description: "Source message content as markdown. The canonical rich-text JSON stays internal.",
+              },
+              attachments: { type: "array" },
+            },
+            required: ["content"],
+          },
           SlotMap: {
             type: "object",
             description:

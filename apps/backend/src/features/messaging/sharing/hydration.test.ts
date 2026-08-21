@@ -832,7 +832,10 @@ describe("toDualSlotMaps", () => {
     const ranged = { ...ok, contentMarkdown: "part", range: { from: 1, to: 4 } }
 
     const dual = toDualSlotMaps({ [key("msg_a", 2, { from: 1, to: 4 })]: ranged, [key("msg_a", 2)]: ok })
-    expect(Object.keys(dual.slots).sort()).toEqual(["shared:msg_a@2", "shared:msg_a@2:1-4"])
+    // The bare key rides along for tabs still on a pre-pin bundle, and it gets
+    // the whole-message slot rather than the span.
+    expect(Object.keys(dual.slots).sort()).toEqual(["shared:msg_a", "shared:msg_a@2", "shared:msg_a@2:1-4"])
+    expect(dual.slots["shared:msg_a"]).toBe(ok)
     expect(dual.sharedMessages.msg_a).toBe(ok)
   })
 })

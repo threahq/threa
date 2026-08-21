@@ -465,7 +465,21 @@ export function toDualSlotMaps(hydrated: Record<string, HydratedSharedMessage>):
       sharedMessages[slot.messageId] = slot
     }
   }
-  return { slots: { ...hydrated }, sharedMessages }
+  // A tab still holding a pre-pin bundle derives the bare key and reads
+  // `slots` in preference to the legacy map, so every pointer it renders would
+  // come up empty until the tab reloads — including historic ones, once the pin
+  // backfill has run. Carrying the bare key here costs one duplicate entry per
+  // source and keeps those tabs rendering. Remove it with the legacy
+  // `sharedMessages` map, on the same criterion.
+  const slots: Record<string, HydratedSharedMessage> = { ...hydrated }
+  for (const [messageId, slot] of Object.entries(sharedMessages)) {
+    // Only a whole-message slot stands in: such a tab predates ranged
+    // pointers, so it has no node that means a span.
+    if (slot.state === "ok" && slot.range !== null) continue
+    const legacyKey = sharedMessageSlotKey(messageId)
+    if (!slots[legacyKey]) slots[legacyKey] = slot
+  }
+  return { slots, sharedMessages }
 }
 
 /**

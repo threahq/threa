@@ -102,6 +102,8 @@ const LEGACY_SLOT_KEY_PREFIX = "shared:"
 const LEGACY_SLOTS_DESCRIPTION =
   "Hydration for cross-stream shared-message pointers in the returned messages, keyed by `shared:<messageId>`. Always present; empty when no message references a shared source."
 const PINNED_SLOT_FIELDS = ["version", "currentRevision", "range"]
+const LEGACY_SLOT_CONTENT_DESCRIPTION =
+  "Source message content as markdown. The canonical rich-text JSON stays internal."
 
 type LegacySlot = Record<string, unknown> & { messageId?: unknown; state?: unknown; version?: unknown; range?: unknown }
 
@@ -142,8 +144,23 @@ function stripPinFieldsFromSpec(node: unknown): unknown {
     for (const [key, value] of Object.entries(obj)) out[key] = stripPinFieldsFromSpec(value)
     const props = out.properties as Record<string, unknown> | undefined
     if (props && "currentRevision" in props && "content" in props) {
+      // The pin also rewrote prose this version never carried. An older pin has
+      // to read exactly as it did before pins existed, description included, or
+      // its frozen spec drifts every time the docs are regenerated.
       out.properties = Object.fromEntries(
-        Object.entries(props).filter(([field]) => !PINNED_SLOT_FIELDS.includes(field))
+        Object.entries(props)
+          .filter(([field]) => !PINNED_SLOT_FIELDS.includes(field))
+          .map(([field, value]) => {
+            if (!value || typeof value !== "object") return [field, value]
+            if (field === "content") {
+              return [field, { ...(value as Record<string, unknown>), description: LEGACY_SLOT_CONTENT_DESCRIPTION }]
+            }
+            if (field === "attachments") {
+              const { description: _pinned, ...rest } = value as Record<string, unknown>
+              return [field, rest]
+            }
+            return [field, value]
+          })
       )
       if (Array.isArray(out.required)) {
         out.required = out.required.filter((entry: unknown) => !PINNED_SLOT_FIELDS.includes(entry as string))
