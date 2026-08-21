@@ -112,7 +112,9 @@ test.describe("Share by range", () => {
     await sameChannel.click()
 
     const composer = page.locator("[contenteditable='true']").first()
-    await expect(composer.locator("[data-type='shared-message']")).toHaveCount(1, { timeout: 10000 })
+    // Strict mode fails this on a second match, so it carries the uniqueness a
+    // count would and proves the chip actually rendered.
+    await expect(composer.locator("[data-type='shared-message']")).toBeVisible({ timeout: 10000 })
     await composer.focus()
     await page.keyboard.press("Enter")
 
