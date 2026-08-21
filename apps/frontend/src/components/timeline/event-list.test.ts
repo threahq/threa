@@ -23,6 +23,7 @@ import {
   OLDER_SKELETON_ITEMS,
   type TimelineItem,
   type TimelineItemRenderContext,
+  placeAsideAnchors,
 } from "./event-list"
 import { localStartOfDayMs } from "@/lib/dates"
 
@@ -1268,6 +1269,17 @@ describe("aside anchor rows", () => {
     })
     const events = [card, message("evt_m2", "2", "msg_2"), asideRow("evt_aside", "3", "evt_call")]
     expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_call", "evt_aside", "evt_m2"])
+  })
+
+  it("places a row anchored to an event folded into a command group after that group", () => {
+    const cmd = createEvent({ id: "evt_cmd", sequence: "2", eventType: "command_dispatched", payload: {} })
+    const items: TimelineItem[] = [
+      { type: "event", event: message("evt_m1", "1", "msg_1") },
+      { type: "command_group", commandId: "cmd_1", events: [cmd] },
+      { type: "event", event: message("evt_m2", "3", "msg_2") },
+      { type: "event", event: asideRow("evt_aside", "4", "evt_cmd") },
+    ]
+    expect(ids(placeAsideAnchors(items))).toEqual(["evt_m1", "command_group", "evt_aside", "evt_m2"])
   })
 
   it("keeps creation position when the anchor is outside the window, or when there is no anchor", () => {

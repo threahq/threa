@@ -93,6 +93,10 @@ describe("Aside anchor event", () => {
     )
     expect(result.rows).toHaveLength(1)
     const row = result.rows[0]
+    expect(row).toMatchObject({
+      event_type: "stream:aside_anchored",
+      payload: { event: { eventType: "aside:anchored", payload: { asideId } } },
+    })
     return { id: BigInt(row.id), eventType: row.event_type, payload: row.payload, createdAt: new Date() } as OutboxEvent
   }
 

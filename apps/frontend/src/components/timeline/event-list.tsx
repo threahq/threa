@@ -761,12 +761,7 @@ export function groupTimelineItems(events: StreamEvent[], currentUserId: string 
  */
 export function placeAsideAnchors(items: TimelineItem[]): TimelineItem[] {
   const anchorIds = new Set<string>()
-  for (const item of items) {
-    if (item.type !== "event") continue
-    anchorIds.add(item.event.id)
-    const messageId = (item.event.payload as { messageId?: string })?.messageId
-    if (messageId) anchorIds.add(messageId)
-  }
+  for (const item of items) for (const id of itemAnchorIds(item)) anchorIds.add(id)
   const byAnchor = new Map<string, TimelineItem[]>()
   const moved = new Set<TimelineItem>()
   for (const item of items) {
@@ -783,12 +778,24 @@ export function placeAsideAnchors(items: TimelineItem[]): TimelineItem[] {
   for (const item of items) {
     if (moved.has(item)) continue
     placed.push(item)
-    if (item.type !== "event") continue
-    const messageId = (item.event.payload as { messageId?: string })?.messageId
-    const rows = (messageId ? byAnchor.get(messageId) : undefined) ?? byAnchor.get(item.event.id)
-    if (rows) placed.push(...rows)
+    for (const id of itemAnchorIds(item)) {
+      const rows = byAnchor.get(id)
+      if (rows) placed.push(...rows)
+    }
   }
   return placed
+}
+
+/** Ids an aside may be anchored to within one timeline item: the event ids it
+ *  renders (a card, or every event folded into a command/session group) plus
+ *  the message id of a message event. */
+function itemAnchorIds(item: TimelineItem): string[] {
+  if (item.type === "event") {
+    const messageId = (item.event.payload as { messageId?: string })?.messageId
+    return messageId ? [item.event.id, messageId] : [item.event.id]
+  }
+  if (item.type === "command_group" || item.type === "session_group") return item.events.map((event) => event.id)
+  return []
 }
 
 /** Shared context for rendering a timeline item (used by both Virtuoso and non-virtualized paths) */

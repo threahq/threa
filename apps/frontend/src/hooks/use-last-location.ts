@@ -59,13 +59,13 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
   return useMemo(() => {
     // An aside opens beside its host stream, never as a page of its own, so it
     // is neither a restore target nor a most-recent fallback.
-    const allStreams = cachedStreams.filter((s) => !isHiddenStreamType(s))
+    const visibleStreams = cachedStreams.filter((stream) => !isHiddenStreamType(stream))
     // The stream cache durably holds archived rows (archived-stream index).
     // They must not count as landing targets: archiving bumps updated_at, so an
     // unfiltered most-recent fallback would redirect a fresh device INTO the
     // most-recently-archived stream, and a workspace whose only streams are
     // archived must still land on the fresh-start state.
-    const streams = allStreams.filter((s) => !s.archivedAt)
+    const streams = visibleStreams.filter((stream) => !stream.archivedAt)
     const record = user ? getLastLocation(user.id, workspaceId) : null
 
     const exactPath = coldLaunch ? freshExactPath(record, workspaceId, Date.now()) : null
@@ -91,7 +91,7 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
       // Deliberately checked against ALL rows: a stored pointer to a stream
       // archived since the last visit is still viewable, so honor it rather
       // than falling back. Only the fallbacks below exclude archived.
-      const stillExists = allStreams.some((s) => s.id === storedId)
+      const stillExists = visibleStreams.some((stream) => stream.id === storedId)
       if (stillExists) {
         return {
           exactPath: null,
