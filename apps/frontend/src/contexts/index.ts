@@ -71,6 +71,7 @@ export {
 } from "./sidebar-context"
 export { TraceProvider, useTrace } from "./trace-context"
 export { MediaGalleryProvider, useMediaGallery } from "./media-gallery-context"
+export { CodeViewerProvider, useCodeViewerOptional } from "./code-viewer-context"
 export {
   DictationCoordinatorProvider,
   useDictationCoordinator,

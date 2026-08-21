@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Copy, Check, ChevronDown, ChevronRight } from "lucide-react"
+import { Copy, Check, ChevronDown, ChevronRight, Maximize2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
@@ -8,6 +8,7 @@ import {
   resolveCodeBlockWrap,
 } from "@threa/types"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
+import { useCodeViewerOptional } from "@/contexts/code-viewer-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
 import { ensureHighlight, tryHighlightSync } from "./highlighter"
@@ -27,6 +28,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
 
   // Preferences context may not exist in all rendering contexts (e.g. tests).
   const preferencesContext = usePreferencesOptional()
+  const codeViewer = useCodeViewerOptional()
   const threshold = preferencesContext?.preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
 
   const trimmedCode = useMemo(() => children.trim(), [children])
@@ -142,6 +144,20 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
           </span>
         )}
       </button>
+      {codeViewer && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            codeViewer.open({ code: trimmedCode, languageId })
+          }}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-all duration-150 hover:bg-primary/15 hover:text-primary"
+          title="Open full screen"
+          aria-label="Open full screen"
+        >
+          <Maximize2 className="h-3 w-3" />
+        </button>
+      )}
       <button
         type="button"
         onClick={handleCopy}

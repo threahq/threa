@@ -40,6 +40,7 @@ import {
   TraceProvider,
   useTrace,
   MediaGalleryProvider,
+  CodeViewerProvider,
   usePanel,
   isDraftPanel,
   isConversationPanel,
@@ -529,39 +530,41 @@ export function WorkspaceLayout() {
                                       <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
                                       <EnclaveRewrapNudgeListener workspaceId={workspaceId} />
                                       <MediaGalleryProvider>
-                                        <TraceProvider>
-                                          <SidebarProvider>
-                                            <SearchPanelProvider workspaceId={workspaceId}>
-                                              <SidebarKeyboardHandler />
-                                              <SearchKeyboardHandler />
-                                              <CoordinatedLoadingGate>
-                                                <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
-                                                  <MainContentGate>
-                                                    <Outlet />
-                                                  </MainContentGate>
-                                                </AppShell>
-                                              </CoordinatedLoadingGate>
-                                              <QuickSwitcher
-                                                workspaceId={workspaceId}
-                                                open={switcherOpen}
-                                                onOpenChange={setSwitcherOpen}
-                                                initialMode={switcherMode}
-                                                currentStreamId={streamId}
-                                              />
-                                              <ComposeOverlayMount workspaceId={workspaceId} />
-                                            </SearchPanelProvider>
-                                          </SidebarProvider>
-                                          <SettingsDialog />
-                                          <WorkspaceSettingsDialog workspaceId={workspaceId} />
-                                          <AccountSwitcherDialog />
-                                          <LogoutScopeDialog />
-                                          <StreamSettingsDialog workspaceId={workspaceId} />
-                                          <CreateChannelDialog workspaceId={workspaceId} />
-                                          <AttachmentExplorer workspaceId={workspaceId} />
-                                          <AgentOutcomesExplorer workspaceId={workspaceId} />
-                                          <TraceDialogContainer />
-                                          <Toaster />
-                                        </TraceProvider>
+                                        <CodeViewerProvider>
+                                          <TraceProvider>
+                                            <SidebarProvider>
+                                              <SearchPanelProvider workspaceId={workspaceId}>
+                                                <SidebarKeyboardHandler />
+                                                <SearchKeyboardHandler />
+                                                <CoordinatedLoadingGate>
+                                                  <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
+                                                    <MainContentGate>
+                                                      <Outlet />
+                                                    </MainContentGate>
+                                                  </AppShell>
+                                                </CoordinatedLoadingGate>
+                                                <QuickSwitcher
+                                                  workspaceId={workspaceId}
+                                                  open={switcherOpen}
+                                                  onOpenChange={setSwitcherOpen}
+                                                  initialMode={switcherMode}
+                                                  currentStreamId={streamId}
+                                                />
+                                                <ComposeOverlayMount workspaceId={workspaceId} />
+                                              </SearchPanelProvider>
+                                            </SidebarProvider>
+                                            <SettingsDialog />
+                                            <WorkspaceSettingsDialog workspaceId={workspaceId} />
+                                            <AccountSwitcherDialog />
+                                            <LogoutScopeDialog />
+                                            <StreamSettingsDialog workspaceId={workspaceId} />
+                                            <CreateChannelDialog workspaceId={workspaceId} />
+                                            <AttachmentExplorer workspaceId={workspaceId} />
+                                            <AgentOutcomesExplorer workspaceId={workspaceId} />
+                                            <TraceDialogContainer />
+                                            <Toaster />
+                                          </TraceProvider>
+                                        </CodeViewerProvider>
                                       </MediaGalleryProvider>
                                     </PanelProvider>
                                   </QuickSwitcherProvider>

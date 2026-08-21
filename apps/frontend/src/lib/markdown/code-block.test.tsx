@@ -9,6 +9,7 @@ import { hydrateCollapseCache } from "./collapse-cache"
 import * as preferencesModule from "@/contexts/preferences-context"
 import * as lineMeasureModule from "./use-measured-line-count"
 import * as highlighterModule from "./highlighter"
+import * as codeViewerModule from "@/contexts/code-viewer-context"
 
 // Stubbable preferences mock: each test can override via `currentPrefs`.
 let currentPrefs: {
@@ -307,5 +308,27 @@ describe("CodeBlock line wrapping", () => {
     expect(document.querySelector("pre.invisible")?.className).toContain("whitespace-pre")
     await waitFor(() => expect(document.querySelector("pre:not(.invisible)")).toBeInTheDocument())
     expect(document.querySelector("pre:not(.invisible)")?.parentElement?.className).toContain("[&>pre]:whitespace-pre ")
+  })
+})
+
+describe("CodeBlock full-screen trigger", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
+  })
+
+  it("should not offer full screen without a viewer provider", () => {
+    vi.spyOn(codeViewerModule, "useCodeViewerOptional").mockReturnValue(null)
+    renderCodeBlock("const a = 1")
+    expect(screen.queryByRole("button", { name: "Open full screen" })).not.toBeInTheDocument()
+  })
+
+  it("should open the viewer with the trimmed code and normalized language", async () => {
+    const open = vi.fn()
+    vi.spyOn(codeViewerModule, "useCodeViewerOptional").mockReturnValue({ open, close: vi.fn() })
+    renderCodeBlock("\nconst a = 1\n", "msg_test", "js")
+    await userEvent.click(screen.getByRole("button", { name: "Open full screen" }))
+    expect(open).toHaveBeenCalledWith({ code: "const a = 1", languageId: "javascript" })
   })
 })
