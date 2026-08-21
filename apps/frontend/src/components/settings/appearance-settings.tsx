@@ -536,12 +536,12 @@ export function AppearanceSettings() {
           <Label id="code-block-wrap-overrides-label">Per language</Label>
           {codeBlockWrapOverrideRows.map(([languageId, mode]) => (
             <div key={languageId} className="flex items-center gap-2">
-              <span className="w-40 truncate text-sm">{formatCodeLanguage(languageId)}</span>
+              <span className="min-w-0 flex-1 truncate text-sm">{formatCodeLanguage(languageId)}</span>
               <Select
                 value={mode}
                 onValueChange={(value) => setCodeBlockWrapOverride(languageId, value as CodeBlockWrap)}
               >
-                <SelectTrigger className="w-44" aria-label={`Long lines in ${formatCodeLanguage(languageId)}`}>
+                <SelectTrigger className="w-40 shrink-0" aria-label={`Long lines in ${formatCodeLanguage(languageId)}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -556,7 +556,7 @@ export function AppearanceSettings() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-8 w-8 shrink-0"
                 onClick={() => setCodeBlockWrapOverride(languageId, null)}
                 aria-label={`Remove ${formatCodeLanguage(languageId)} override`}
               >

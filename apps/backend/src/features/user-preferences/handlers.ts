@@ -47,6 +47,8 @@ import {
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
 
+const CODE_LANGUAGE_ID_SET = new Set<string>(CODE_LANGUAGE_IDS)
+
 const updatePreferencesSchema = z.object({
   theme: z.enum(THEME_OPTIONS).optional(),
   messageDisplay: z.enum(MESSAGE_DISPLAY_OPTIONS).optional(),
@@ -75,7 +77,15 @@ const updatePreferencesSchema = z.object({
     .max(BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX)
     .optional(),
   codeBlockWrap: z.enum(CODE_BLOCK_WRAP_OPTIONS).optional(),
-  codeBlockWrapOverrides: z.partialRecord(z.enum(CODE_LANGUAGE_IDS), z.enum(CODE_BLOCK_WRAP_OPTIONS)).optional(),
+  // Keys outside the registry are dropped, not rejected: the client always
+  // re-sends the whole map, so a language retired from the registry must not
+  // make every later preferences write fail (same posture as boardDefaultLens).
+  codeBlockWrapOverrides: z
+    .record(z.string().min(1).max(64), z.enum(CODE_BLOCK_WRAP_OPTIONS))
+    .transform((overrides) =>
+      Object.fromEntries(Object.entries(overrides).filter(([languageId]) => CODE_LANGUAGE_ID_SET.has(languageId)))
+    )
+    .optional(),
   messageCollapseEnabled: z.boolean().optional(),
   messageCollapseAtHeight: z
     .number()

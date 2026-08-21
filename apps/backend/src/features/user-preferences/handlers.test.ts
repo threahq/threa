@@ -286,9 +286,11 @@ describe("updatePreferencesSchema code block wrapping", () => {
     expect(updatePreferencesSchema.safeParse({ codeBlockWrapOverrides: { sql: "auto" } }).success).toBe(false)
   })
 
-  it("rejects an override keyed by a language outside the registry", () => {
-    expect(updatePreferencesSchema.safeParse({ codeBlockWrapOverrides: { js: "wrap" } }).success).toBe(false)
-    expect(updatePreferencesSchema.safeParse({ codeBlockWrapOverrides: { elixir: "wrap" } }).success).toBe(false)
+  it("drops overrides keyed by a language outside the registry instead of rejecting the PATCH", () => {
+    expect(
+      updatePreferencesSchema.parse({ codeBlockWrapOverrides: { js: "wrap", elixir: "wrap", sql: "scroll" } })
+        .codeBlockWrapOverrides
+    ).toEqual({ sql: "scroll" })
   })
 
   it("defaults to scrolling with no overrides", () => {
