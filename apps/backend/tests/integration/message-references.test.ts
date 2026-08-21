@@ -22,7 +22,7 @@ import {
   hydrateSharedMessageRefs,
   sliceReferenceContent,
 } from "../../src/features/messaging"
-import { userId, workspaceId, streamId } from "../../src/lib/id"
+import { userId, workspaceId, streamId, messageId } from "../../src/lib/id"
 
 function docOf(text: string): JSONContent {
   return { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }
@@ -346,6 +346,100 @@ describe("message reference resolution", () => {
         version: 2,
         currentRevision: 2,
       })
+    })
+  })
+
+  describe("(i)/(j) a legacy quote must not lock its author out of editing", () => {
+    let legacySequence = 990000n
+
+    /** Written straight to the repo so the node is genuinely unpinned. */
+    async function insertLegacyQuoting(src: { id: string }, snippet: string) {
+      const id = messageId()
+      const contentJson: JSONContent = {
+        type: "doc",
+        content: [quoteNode({ messageId: src.id, streamId: source, snippet }), ...docOf("my take").content!],
+      }
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id,
+          streamId: source,
+          sequence: legacySequence++,
+          authorId: author,
+          authorType: "user",
+          contentJson,
+          contentMarkdown: `> ${snippet}\n\nmy take`,
+        })
+      })
+      return { id, contentJson }
+    }
+
+    test("(i) a pre-existing unpinned quote whose snippet no longer matches survives an edit", async () => {
+      const src = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: source,
+        authorId: author,
+        authorType: "user",
+        contentJson: docOf("alpha beta gamma"),
+        contentMarkdown: "alpha beta gamma",
+      })
+      const legacy = await insertLegacyQuoting(src, "beta")
+      const before = quoteAttrs(legacy)
+
+      await eventService.editMessageInternal({
+        workspaceId: testWorkspaceId,
+        messageId: src.id,
+        streamId: source,
+        actorId: author,
+        contentJson: docOf("completely other words"),
+        contentMarkdown: "completely other words",
+      })
+
+      const edited = await eventService.editMessageInternal({
+        workspaceId: testWorkspaceId,
+        messageId: legacy.id,
+        streamId: source,
+        actorId: author,
+        contentJson: {
+          type: "doc",
+          content: [...legacy.contentJson.content!, ...docOf("and one more thing").content!],
+        },
+        contentMarkdown: "> beta\n\nmy take\n\nand one more thing",
+      })
+
+      expect(edited).not.toBeNull()
+      const stored = (await MessageRepository.findById(pool, legacy.id))!
+      expect(quoteAttrs(stored)).toEqual(before)
+      expect(stored.contentMarkdown).toContain("and one more thing")
+    })
+
+    test("(j) an unpinned quote added by the edit itself is still rejected", async () => {
+      const src = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: source,
+        authorId: author,
+        authorType: "user",
+        contentJson: docOf("alpha beta gamma"),
+        contentMarkdown: "alpha beta gamma",
+      })
+      const legacy = await insertLegacyQuoting(src, "beta")
+
+      await expectReferenceError(
+        eventService.editMessageInternal({
+          workspaceId: testWorkspaceId,
+          messageId: legacy.id,
+          streamId: source,
+          actorId: author,
+          contentJson: {
+            type: "doc",
+            content: [
+              ...legacy.contentJson.content!,
+              quoteNode({ messageId: src.id, streamId: source, snippet: "never written anywhere" }),
+            ],
+          },
+          contentMarkdown: "> beta\n\nmy take\n\n> never written anywhere",
+        }),
+        MessageReferenceErrorCodes.RANGE_NOT_FOUND
+      )
     })
   })
 

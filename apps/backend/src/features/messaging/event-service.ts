@@ -1291,9 +1291,13 @@ export class EventService {
 
         // Same pinning pass as the create path, before the version snapshot so
         // the snapshot and the event agree. E2E streams reject edits above.
+        // `previousContentJson` marks which unpinned quotes were already there:
+        // one whose snippet no longer matches the (since-edited) source must not
+        // block the author from editing their own message.
         const resolvedEditReferences = await resolveMessageReferences(client, {
           workspaceId: params.workspaceId,
           contentJson: params.contentJson,
+          previousContentJson: existing.contentJson,
         })
         if (resolvedEditReferences.changed) {
           params.contentJson = resolvedEditReferences.contentJson

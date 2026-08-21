@@ -1,18 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { invalidatePointersForEvent, POINTER_INVALIDATED_EVENT } from "./outbox-handler"
 import { SharedMessageRepository } from "./repository"
+import { MessageRepository } from "../repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 import * as hydration from "./hydration"
 import { sharedMessageSlotKey } from "@threa/types"
 
 beforeEach(() => {
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  // Echo each requested reference back as an ok slot under its own key, so the
+  // assertions below read the keys the room would actually look up.
   spyOn(hydration, "hydrateSharedMessageRefsForRoom").mockImplementation(
     async (_db, _ws, _target, refs) =>
       Object.fromEntries(
-        [...refs].map(({ messageId }) => [
-          sharedMessageSlotKey(messageId),
-          { type: "sharedMessage", state: "ok", messageId, streamId: "stream_src" },
+        [...refs].map((ref) => [
+          sharedMessageSlotKey(ref.messageId, ref.version, ref.range),
+          {
+            type: "sharedMessage",
+            state: "ok",
+            messageId: ref.messageId,
+            streamId: "stream_src",
+            version: ref.version ?? 1,
+            currentRevision: 2,
+            range: ref.range,
+          },
         ])
       ) as any
   )
@@ -21,6 +32,45 @@ beforeEach(() => {
 afterEach(() => {
   mock.restore()
 })
+
+interface ShareFixture {
+  sourceMessageId: string
+  targetStreamId: string
+  /** Node attrs beyond `messageId`/`streamId` — the pin the room's message carries. */
+  pin?: { version?: number; range?: { from: number; to: number } }
+}
+
+/**
+ * Stub the share rows AND the share-carrying messages they name: the handler
+ * hydrates the references those message bodies hold, not the bare source ids.
+ */
+function stubShares(fixtures: ShareFixture[]) {
+  const rows = fixtures.map((f) => ({
+    sourceMessageId: f.sourceMessageId,
+    targetStreamId: f.targetStreamId,
+    shareMessageId: `msg_share_${f.targetStreamId}`,
+  }))
+  spyOn(SharedMessageRepository, "listBySourceMessageIds").mockResolvedValue(rows as any)
+
+  const bodies = new Map<string, unknown[]>()
+  fixtures.forEach((f, index) => {
+    const shareMessageId = rows[index].shareMessageId
+    const nodes = bodies.get(shareMessageId) ?? []
+    nodes.push({
+      type: "sharedMessage",
+      attrs: { messageId: f.sourceMessageId, streamId: "stream_src", ...(f.pin ?? {}) },
+    })
+    bodies.set(shareMessageId, nodes)
+  })
+  spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(
+    async (_db: unknown, _ws: string, ids: string[]) =>
+      new Map(
+        ids
+          .filter((id) => bodies.has(id))
+          .map((id) => [id, { id, contentJson: { type: "doc", content: bodies.get(id) } }])
+      ) as any
+  )
+}
 
 function fakeIo() {
   const emits: Array<{ room: string; event: string; payload: unknown }> = []
@@ -63,11 +113,11 @@ describe("invalidatePointersForEvent", () => {
   })
 
   it("emits pointer:invalidated once per distinct target stream when pointers exist", async () => {
-    spyOn(SharedMessageRepository, "listBySourceMessageIds").mockResolvedValue([
+    stubShares([
       { sourceMessageId: "msg_a", targetStreamId: "stream_t1" },
       { sourceMessageId: "msg_a", targetStreamId: "stream_t2" },
       { sourceMessageId: "msg_a", targetStreamId: "stream_t1" }, // duplicate → deduped
-    ] as any)
+    ])
     const { io, emits } = fakeIo()
     await invalidatePointersForEvent(
       {
@@ -93,10 +143,72 @@ describe("invalidatePointersForEvent", () => {
     })
   })
 
-  it("emits the full per-target hydration map, including nested entries (B4)", async () => {
+  it("emits the pinned slot key a pinned node in the room actually looks up", async () => {
+    stubShares([
+      { sourceMessageId: "msg_a", targetStreamId: "stream_t1", pin: { version: 1, range: { from: 1, to: 6 } } },
+    ])
+    const { io, emits } = fakeIo()
+    await invalidatePointersForEvent(
+      {
+        eventType: "message:edited",
+        payload: { workspaceId: "ws_1", streamId: "stream_src", event: { payload: { messageId: "msg_a" } } },
+      } as any,
+      {} as any,
+      io
+    )
+
+    const slots = (emits[0].payload as { slots: Record<string, unknown> }).slots
+    // The edit that triggered this bumped the source to revision 2; the pinned
+    // card keeps its own body and learns the source moved on.
+    expect(slots).toEqual({
+      [sharedMessageSlotKey("msg_a", 1, { from: 1, to: 6 })]: {
+        type: "sharedMessage",
+        state: "ok",
+        messageId: "msg_a",
+        streamId: "stream_src",
+        version: 1,
+        currentRevision: 2,
+        range: { from: 1, to: 6 },
+      },
+    })
+    expect(slots["shared:msg_a"]).toBeUndefined()
+  })
+
+  it("keeps the bare key for a legacy unpinned node in the room", async () => {
+    stubShares([{ sourceMessageId: "msg_a", targetStreamId: "stream_t1" }])
+    const { io, emits } = fakeIo()
+    await invalidatePointersForEvent(
+      {
+        eventType: "message:edited",
+        payload: { workspaceId: "ws_1", streamId: "stream_src", event: { payload: { messageId: "msg_a" } } },
+      } as any,
+      {} as any,
+      io
+    )
+    expect(Object.keys((emits[0].payload as { slots: Record<string, unknown> }).slots)).toEqual(["shared:msg_a"])
+  })
+
+  it("hydrates nothing for a target whose share-carrying message is gone", async () => {
     spyOn(SharedMessageRepository, "listBySourceMessageIds").mockResolvedValue([
-      { sourceMessageId: "msg_a", targetStreamId: "stream_t1" },
+      { sourceMessageId: "msg_a", targetStreamId: "stream_t1", shareMessageId: "msg_gone" },
     ] as any)
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    const { io, emits } = fakeIo()
+    await invalidatePointersForEvent(
+      {
+        eventType: "message:deleted",
+        payload: { workspaceId: "ws_1", streamId: "stream_src", messageId: "msg_a" },
+      } as any,
+      {} as any,
+      io
+    )
+    // The room still gets told to refetch; there is simply nothing to inline.
+    expect(emits).toHaveLength(1)
+    expect((emits[0].payload as { slots: Record<string, unknown> }).slots).toEqual({})
+  })
+
+  it("emits the full per-target hydration map, including nested entries (B4)", async () => {
+    stubShares([{ sourceMessageId: "msg_a", targetStreamId: "stream_t1" }])
     // The one hydration call resolves the seed AND the nested pointer an edit
     // just added — the emit must carry every entry, not just the top-level
     // source, or the inner card skeletons until a REST replace.
@@ -152,11 +264,11 @@ describe("invalidatePointersForEvent", () => {
   })
 
   it("fans out a per-source pointer:invalidated for each share when a messages:moved event lands", async () => {
-    spyOn(SharedMessageRepository, "listBySourceMessageIds").mockResolvedValue([
+    stubShares([
       { sourceMessageId: "msg_a", targetStreamId: "stream_t1" },
       { sourceMessageId: "msg_b", targetStreamId: "stream_t1" },
       { sourceMessageId: "msg_a", targetStreamId: "stream_t2" },
-    ] as any)
+    ])
     const { io, emits } = fakeIo()
     await invalidatePointersForEvent(
       {

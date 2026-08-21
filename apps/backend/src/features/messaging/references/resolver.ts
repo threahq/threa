@@ -32,6 +32,12 @@ interface ReferenceNode {
 export interface ResolveMessageReferencesParams {
   workspaceId: string
   contentJson: JSONContent
+  /**
+   * The body being replaced, on the edit path. A legacy unpinned quote that
+   * was already in it is left alone when its snippet can no longer be located
+   * — see {@link resolveMessageReferences}. Omit on create.
+   */
+  previousContentJson?: JSONContent
 }
 
 export interface ResolveMessageReferencesResult {
@@ -100,6 +106,22 @@ function readRange(raw: unknown): ContentRange | null {
   return { from: candidate.from, to: candidate.to }
 }
 
+/** Identity of an unpinned quote, stable across an edit that doesn't touch it. */
+function legacyQuoteKey(messageId: string, snippet: unknown): string {
+  return `${messageId}\u0000${typeof snippet === "string" ? snippet : ""}`
+}
+
+function collectLegacyQuoteKeys(root: JSONContent | undefined): Set<string> {
+  const keys = new Set<string>()
+  if (!root) return keys
+  for (const ref of collectReferenceNodes(root)) {
+    if (ref.isQuote && (ref.attrs.version ?? null) === null) {
+      keys.add(legacyQuoteKey(ref.messageId, ref.attrs.snippet))
+    }
+  }
+  return keys
+}
+
 function sameRange(a: ContentRange | null, b: ContentRange | null): boolean {
   if (a === null || b === null) return a === b
   return a.from === b.from && a.to === b.to
@@ -148,6 +170,13 @@ function validateRange(pinnedDoc: JSONContent, raw: ContentRange): ContentRange 
  * resolving after the source is deleted, and the hydration layer decides what a
  * viewer sees. Cross-stream ACCESS is not decided here: `ShareService` still
  * owns it and still runs after this.
+ *
+ * One node is exempt from rejection: a legacy unpinned quote that was ALREADY
+ * in `previousContentJson`. Its snippet may no longer appear anywhere in the
+ * source (the source was edited after the quote was written), and refusing the
+ * edit would strand the author — they would be unable to fix a typo in their
+ * own message forever. Such a node is left exactly as it was; a NEWLY added
+ * unlocatable quote is still rejected.
  */
 export async function resolveMessageReferences(
   db: Querier,
@@ -158,6 +187,7 @@ export async function resolveMessageReferences(
 
   const contentJson = structuredClone(params.contentJson)
   const references = collectReferenceNodes(contentJson)
+  const legacyKeys = collectLegacyQuoteKeys(params.previousContentJson)
 
   const sourcesById = await MessageRepository.findByIdsInWorkspace(db, params.workspaceId, [
     ...new Set(references.map((ref) => ref.messageId)),
@@ -200,8 +230,19 @@ export async function resolveMessageReferences(
 
     const requestedRange = readRange(ref.attrs.range)
     let range: ContentRange | null = null
-    if (requestedRange) range = validateRange(pinnedDoc, requestedRange)
-    else if (ref.isQuote) range = locateSnippetRange(pinnedDoc, ref.attrs.snippet)
+    if (requestedRange) {
+      range = validateRange(pinnedDoc, requestedRange)
+    } else if (ref.isQuote) {
+      try {
+        range = locateSnippetRange(pinnedDoc, ref.attrs.snippet)
+      } catch (error) {
+        const unlocatable = error instanceof HttpError && error.code === MessageReferenceErrorCodes.RANGE_NOT_FOUND
+        const preExisting =
+          readVersion(ref.attrs.version) === null && legacyKeys.has(legacyQuoteKey(ref.messageId, ref.attrs.snippet))
+        if (!unlocatable || !preExisting) throw error
+        continue
+      }
+    }
 
     if (ref.isQuote) {
       // A bot-authored source has no name in `resolveActorNames` (users and

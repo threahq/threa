@@ -1,8 +1,10 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
+import type { SharedMessageRef } from "@threa/types"
 import { isOutboxEventType, type OutboxEvent } from "../../../lib/outbox"
-import { hydrateSharedMessageRefsForRoom, toDualSlotMaps } from "./hydration"
+import { collectSharedMessageRefs, hydrateSharedMessageRefsForRoom, toDualSlotMaps } from "./hydration"
 import { SharedMessageRepository } from "./repository"
+import { MessageRepository } from "../repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 
 /**
@@ -47,6 +49,12 @@ function extractMessageIdsForInvalidation(event: OutboxEvent): string[] {
   return []
 }
 
+function addTo(index: Map<string, Set<string>>, key: string, value: string): void {
+  const existing = index.get(key)
+  if (existing) existing.add(value)
+  else index.set(key, new Set([value]))
+}
+
 /**
  * If the given outbox event signals a source message change, look up every
  * target stream that hosts a pointer to it and emit `pointer:invalidated`
@@ -76,14 +84,35 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
   // by stream, not by source, so collapsing across sources here would force
   // every pointer in the room to refetch on every per-source change.
   const sourcesByTarget = new Map<string, Set<string>>()
+  const shareMessagesByTarget = new Map<string, Set<string>>()
   for (const share of shares) {
-    let sources = sourcesByTarget.get(share.targetStreamId)
-    if (!sources) {
-      sources = new Set()
-      sourcesByTarget.set(share.targetStreamId, sources)
-    }
-    sources.add(share.sourceMessageId)
+    addTo(sourcesByTarget, share.targetStreamId, share.sourceMessageId)
+    addTo(shareMessagesByTarget, share.targetStreamId, share.shareMessageId)
   }
+
+  // The room renders the references its OWN messages carry, so the slot keys
+  // it looks up carry those messages' pins. Hydrating the bare source id
+  // instead would emit `shared:<id>` entries no pinned node ever reads. One
+  // batched read for every share-carrying message across all targets (INV-56);
+  // a share row whose message is gone contributes no references.
+  const shareMessages = await MessageRepository.findByIdsInWorkspace(db, workspaceId, [
+    ...new Set(shares.map((share) => share.shareMessageId)),
+  ])
+
+  const refsByTarget = new Map<string, Map<string, SharedMessageRef>>()
+  for (const [targetStreamId, shareMessageIds] of shareMessagesByTarget) {
+    const invalidatedSources = sourcesByTarget.get(targetStreamId) ?? new Set<string>()
+    const carried = new Map<string, SharedMessageRef>()
+    for (const shareMessageId of shareMessageIds) {
+      collectSharedMessageRefs(shareMessages.get(shareMessageId)?.contentJson, carried)
+    }
+    const refs = new Map<string, SharedMessageRef>()
+    for (const [key, ref] of carried) {
+      if (invalidatedSources.has(ref.messageId)) refs.set(key, ref)
+    }
+    refsByTarget.set(targetStreamId, refs)
+  }
+
   // Per-target hydration is independent; run them concurrently so a source
   // shared into many streams doesn't serialize a DB round per target.
   // B4: emit the FULL per-target hydration map — the one hydration call also
@@ -98,7 +127,7 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
           db,
           workspaceId,
           targetStreamId,
-          [...sources].map((messageId) => ({ messageId, version: null, range: null }))
+          (refsByTarget.get(targetStreamId) ?? new Map()).values()
         )
       ),
     }))
