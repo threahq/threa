@@ -200,11 +200,16 @@ jobs:
               - 'extensions/**'
               - '.github/workflows/ci.yml'
 
+      # Pinned, not latest: bun 1.4.0 refuses the extensions' transitive
+      # relative file: deps ("unsafe folder path" — claude-code-remote →
+      # remote-session → ../bot-runtime-client), and resolves a file: package's
+      # devDependencies too, so the peer/devDep restructure doesn't work either.
+      # Unpin once the extension packages no longer chain relative file: deps.
       - name: Setup Bun
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       # Extensions live outside the root Bun workspaces (apps/*, packages/*):
       # each is a standalone package with its own bun.lock, linked by file:
