@@ -1222,6 +1222,5 @@ export {
   type CodeLanguage,
   type CodeLanguageId,
   formatCodeLanguage,
-  isCodeLanguageId,
   normalizeCodeLanguage,
 } from "./code-languages"

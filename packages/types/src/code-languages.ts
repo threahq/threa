@@ -69,10 +69,6 @@ export function normalizeCodeLanguage(info: string | null | undefined): string {
   return idByAlias.get(trimmed) ?? trimmed
 }
 
-export function isCodeLanguageId(value: string): value is CodeLanguageId {
-  return languageById.has(value)
-}
-
 export function formatCodeLanguage(id: string): string {
   return languageById.get(id)?.label ?? id
 }
