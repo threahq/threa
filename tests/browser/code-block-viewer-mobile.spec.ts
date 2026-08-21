@@ -56,3 +56,41 @@ test("a code block opens full screen, wraps on demand, and closes on back", asyn
   await expect(dialog).toBeHidden()
   expect(page.url()).toBe(streamUrl)
 })
+
+test("the wrap preference and a language override reach the inline block", async ({ page }) => {
+  await loginAndCreateWorkspace(page, "code-wrap")
+  await createChannel(page, `wrap-${Date.now().toString(36)}`)
+
+  const url = page.url()
+  const workspaceId = url.match(/\/w\/([^/]+)/)?.[1]
+  const streamId = url.match(/\/s\/([^/?]+)/)?.[1]
+  expect(workspaceId && streamId, `ids in URL: ${url}`).toBeTruthy()
+  await seedCodeBlock(page, workspaceId!, streamId!)
+  await page.setViewportSize(PHONE)
+
+  const pre = page.locator("[data-wrap] pre").first()
+  const overflows = () => pre.evaluate((el) => el.scrollWidth > el.clientWidth)
+
+  await page.reload()
+  await expect(page.locator("[data-wrap='scroll']").first()).toBeVisible({ timeout: 30_000 })
+  await expect.poll(overflows).toBe(true)
+
+  await expectApiOk(
+    await page.request.patch(`/api/workspaces/${workspaceId}/preferences`, { data: { codeBlockWrap: "wrap" } }),
+    "Set wrap preference"
+  )
+  await page.reload()
+  await expect(page.locator("[data-wrap='wrap']").first()).toBeVisible({ timeout: 30_000 })
+  await expect.poll(overflows).toBe(false)
+
+  // The fence says `ts`; the override is keyed by the registry id.
+  await expectApiOk(
+    await page.request.patch(`/api/workspaces/${workspaceId}/preferences`, {
+      data: { codeBlockWrapOverrides: { typescript: "scroll" } },
+    }),
+    "Set language override"
+  )
+  await page.reload()
+  await expect(page.locator("[data-wrap='scroll']").first()).toBeVisible({ timeout: 30_000 })
+  await expect.poll(overflows).toBe(true)
+})

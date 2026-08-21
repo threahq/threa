@@ -95,7 +95,12 @@ export function CodeViewer({ item, onClose }: CodeViewerProps) {
             size="icon"
             className={cn("h-10 w-10", copied && "text-green-600 dark:text-green-400")}
             onClick={() => {
-              void navigator.clipboard.writeText(code).then(() => setCopied(true))
+              // A denied clipboard write has nothing actionable for the user;
+              // same posture as the inline block and the gallery.
+              navigator.clipboard.writeText(code).then(
+                () => setCopied(true),
+                () => {}
+              )
             }}
           >
             {copied ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
