@@ -17,13 +17,14 @@ export interface StableRenderInput {
    */
   focalMessageId?: string | null
   /**
-   * The ids of the messages that were on screen when an aside was opened (a
-   * viewport ref). When present and found in `inlineItems`, the renderer splits
-   * the inline list into "before" / "on screen" / "after" sections around the
-   * span from the first to the last visible message and marks each visible
-   * message with `►`. Takes precedence over `focalMessageId`.
+   * The messages that were on screen when an aside was opened (a viewport
+   * ref) and when the capture happened. When present and found in
+   * `inlineItems`, the renderer splits the inline list into "before" / "on
+   * screen" / "after" sections around the span from the first to the last
+   * visible message and marks each visible message with `►`. Takes precedence
+   * over `focalMessageId`.
    */
-  visibleMessageIds?: string[] | null
+  viewport?: { visibleMessageIds: string[]; capturedAt: string } | null
 }
 
 /**
@@ -38,12 +39,12 @@ export function renderStable(input: StableRenderInput): string {
   if (input.summaryText) {
     parts.push("", "Summary (cached):", input.summaryText.trim())
   } else if (input.inlineItems && input.inlineItems.length > 0) {
-    const visible = new Set(input.visibleMessageIds ?? [])
+    const visible = new Set(input.viewport?.visibleMessageIds ?? [])
     const visibleIdxs = input.inlineItems.flatMap((item, idx) => (visible.has(item.messageId) ? [idx] : []))
     const focalIdx =
       input.focalMessageId != null ? input.inlineItems.findIndex((i) => i.messageId === input.focalMessageId) : -1
 
-    if (visibleIdxs.length > 0) {
+    if (input.viewport && visibleIdxs.length > 0) {
       const spanStart = visibleIdxs[0]
       const spanEnd = visibleIdxs[visibleIdxs.length - 1]
       const before = input.inlineItems.slice(0, spanStart)
@@ -56,7 +57,7 @@ export function renderStable(input: StableRenderInput): string {
       }
       parts.push(
         "",
-        `On screen when the aside was opened (${visibleIdxs.length} visible, chronological; \`►\` marks a visible message):`
+        `On screen when the aside was opened (captured ${input.viewport.capturedAt}; ${visibleIdxs.length} visible, chronological; \`►\` marks a visible message):`
       )
       for (const item of span) parts.push(formatInlineMessage(item, { focal: visible.has(item.messageId) }))
       if (after.length > 0) {

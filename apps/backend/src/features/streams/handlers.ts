@@ -22,6 +22,8 @@ import type {
 } from "@threa/types"
 import {
   ARIADNE_PERSONA_SLUG,
+  ContextIntents,
+  ContextRefKinds,
   StreamTypes,
   SLUG_PATTERN,
   CompanionModes,
@@ -131,6 +133,21 @@ const createStreamSchema = z
     message: "contextBag is only supported on scratchpad or aside creation",
     path: ["contextBag"],
   })
+  .refine((data) => !data.contextBag || (data.type === "aside") === (data.contextBag.intent === ContextIntents.ASIDE), {
+    message: "the aside intent is required on aside creation and only there",
+    path: ["contextBag", "intent"],
+  })
+  .refine(
+    (data) =>
+      !data.contextBag ||
+      data.contextBag.refs.every(
+        (ref) => ref.kind !== ContextRefKinds.VIEWPORT || ref.streamId === data.parentStreamId
+      ),
+    {
+      message: "a viewport ref must snapshot the aside's host stream",
+      path: ["contextBag", "refs"],
+    }
+  )
   .refine((data) => !data.e2eEnabled || data.type === "scratchpad", {
     message: "E2E encryption is only supported on scratchpad creation",
     path: ["e2eEnabled"],

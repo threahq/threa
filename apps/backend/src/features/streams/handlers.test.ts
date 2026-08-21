@@ -501,6 +501,65 @@ describe("createStreamHandlers.create — allowedToolCategories", () => {
     await expect(handlers.create(makeCreateReq({ type: "aside" }), res)).rejects.toMatchObject({ status: 400 })
     expect(create).not.toHaveBeenCalled()
   })
+
+  describe("binds the context bag to the aside", () => {
+    const viewport = (streamId: string) => ({
+      kind: "viewport",
+      streamId,
+      visibleMessageIds: ["msg_1"],
+      capturedAt: "2026-08-21T10:00:00.000Z",
+    })
+
+    it("rejects an aside whose bag carries a non-aside intent and never creates", async () => {
+      const create = mock(async () => ({ id: "stream_aside" }))
+      const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+      const { res } = makeRes()
+
+      await expect(
+        handlers.create(
+          makeCreateReq({
+            type: "aside",
+            parentStreamId: "stream_host",
+            contextBag: { intent: "discuss-thread", refs: [{ kind: "thread", streamId: "stream_host" }] },
+          }),
+          res
+        )
+      ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+      expect(create).not.toHaveBeenCalled()
+    })
+
+    it("rejects the aside intent on a scratchpad and never creates", async () => {
+      const create = mock(async () => ({ id: "stream_sp" }))
+      const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+      const { res } = makeRes()
+
+      await expect(
+        handlers.create(
+          makeCreateReq({ type: "scratchpad", contextBag: { intent: "aside", refs: [viewport("stream_host")] } }),
+          res
+        )
+      ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+      expect(create).not.toHaveBeenCalled()
+    })
+
+    it("rejects a viewport ref that snapshots a stream other than the host and never creates", async () => {
+      const create = mock(async () => ({ id: "stream_aside" }))
+      const handlers = makeHandlers({ create: create as unknown as StreamService["create"] })
+      const { res } = makeRes()
+
+      await expect(
+        handlers.create(
+          makeCreateReq({
+            type: "aside",
+            parentStreamId: "stream_host",
+            contextBag: { intent: "aside", refs: [viewport("stream_elsewhere")] },
+          }),
+          res
+        )
+      ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+      expect(create).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe("createStreamHandlers.markAsRead — access without membership", () => {

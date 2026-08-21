@@ -22,9 +22,11 @@ export function readViewportBounds(el: HTMLElement): ViewportBounds {
 
 /**
  * Rects of the rendered rows in `el` keyed by `data-event-id` or
- * `data-message-id`, in DOM (chronological) order. `accept` drops rows whose id
- * the caller can't place — e.g. the thread view's parent-message row, which
- * carries the PARENT stream's event id.
+ * `data-message-id`, in DOM (chronological) order, one row per id. A message
+ * renders the same `data-message-id` on its event wrapper and on the message
+ * element inside it; the outermost (first) occurrence wins. `accept` drops rows
+ * whose id the caller can't place — e.g. the thread view's parent-message row,
+ * which carries the PARENT stream's event id.
  */
 export function collectRowRects(
   el: HTMLElement,
@@ -33,9 +35,11 @@ export function collectRowRects(
 ): VisibleRow[] {
   const rowEls = el.querySelectorAll<HTMLElement>(key === "eventId" ? "[data-event-id]" : "[data-message-id]")
   const rows: VisibleRow[] = []
+  const seen = new Set<string>()
   for (let i = 0; i < rowEls.length; i++) {
     const id = rowEls[i].dataset[key]
-    if (!id || (accept && !accept(id))) continue
+    if (!id || seen.has(id) || (accept && !accept(id))) continue
+    seen.add(id)
     const r = rowEls[i].getBoundingClientRect()
     rows.push({ id, top: r.top, bottom: r.bottom })
   }

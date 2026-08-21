@@ -9,7 +9,7 @@ import { ContextBagRepository } from "./repository"
 import { assertRefAccess } from "./registry"
 import { DISCUSS_WINDOW_TOTAL } from "./resolvers/thread-resolver"
 import { CONVERSATION_WINDOW_TOTAL } from "./resolvers/conversation-resolver"
-import { VIEWPORT_WINDOW_TOTAL } from "./config"
+import { resolveViewportWindow } from "./resolvers/viewport-resolver"
 
 export interface ContextRefSource {
   streamId: string
@@ -172,7 +172,18 @@ export async function fetchStreamBag(
       const memberCount = conversationById.get(ref.conversationId)?.messageIds.length ?? 0
       itemCount = isWindowedIntent ? Math.min(memberCount, CONVERSATION_WINDOW_TOTAL) : memberCount
     } else if (ref.kind === ContextRefKinds.VIEWPORT) {
-      itemCount = Math.min(itemCounts.get(srcId) ?? 0, VIEWPORT_WINDOW_TOTAL)
+      // The chip must agree with what the agent is sent: expand the window
+      // the same way the resolver does. A viewport whose messages are all
+      // gone is no snapshot — the resolver omits it, so the chip does too.
+      const expanded = await resolveViewportWindow(db, sourceStream, ref)
+      if (!expanded) {
+        logger.info(
+          { workspaceId, streamId, refStreamId: ref.streamId },
+          "context-bag: viewport snapshot no longer resolves, dropping ref"
+        )
+        continue
+      }
+      itemCount = expanded.window.length + (expanded.root ? 1 : 0)
     } else {
       const totalCount = itemCounts.get(srcId) ?? 0
       itemCount = isWindowedIntent ? Math.min(totalCount, DISCUSS_WINDOW_TOTAL) : totalCount

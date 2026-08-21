@@ -18,11 +18,17 @@ function mountScroller(
   scroller.getBoundingClientRect = () => ({ top: 0, bottom: opts.viewportHeight }) as DOMRect
   if (opts.composerHeight) scroller.style.setProperty("--composer-height", `${opts.composerHeight}px`)
   messageIds.forEach((id, i) => {
+    // Same nesting as the real timeline: the event wrapper (event-item.tsx) and
+    // the message element inside it (message-event.tsx) both carry the id.
     const el = document.createElement("div")
     el.dataset.eventId = `event_${id}`
     el.dataset.messageId = id
     const top = i * opts.rowHeight
     el.getBoundingClientRect = () => ({ top, bottom: top + opts.rowHeight }) as DOMRect
+    const inner = document.createElement("div")
+    inner.dataset.messageId = id
+    inner.getBoundingClientRect = () => ({ top, bottom: top + opts.rowHeight }) as DOMRect
+    el.appendChild(inner)
     scroller.appendChild(el)
   })
   document.body.appendChild(scroller)
@@ -53,6 +59,13 @@ describe("pickVisibleMessageIds", () => {
 })
 
 describe("captureViewportMessageIds", () => {
+  it("yields each message once although wrapper and message element both carry its id", () => {
+    const scroller = mountScroller(["msg_1", "msg_2", "msg_3"], { rowHeight: 30, viewportHeight: 100 })
+    expect(scroller.querySelectorAll("[data-message-id]")).toHaveLength(6)
+    expect(captureViewportMessageIds(scroller)).toEqual(["msg_1", "msg_2", "msg_3"])
+    scroller.remove()
+  })
+
   it("reads message rows from the scroller and excludes the band behind the composer", () => {
     const scroller = mountScroller(["msg_1", "msg_2", "msg_3", "msg_4"], {
       rowHeight: 30,

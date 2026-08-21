@@ -15,6 +15,7 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
+import { ConversationRepository } from "../../src/features/conversations"
 import {
   assertRefAccess,
   resolveBagForStream,
@@ -22,7 +23,7 @@ import {
   VIEWPORT_WINDOW_PAD,
   VIEWPORT_WINDOW_TOTAL,
 } from "../../src/features/agents"
-import { userId, workspaceId, messageId } from "../../src/lib/id"
+import { userId, workspaceId, messageId, conversationId } from "../../src/lib/id"
 import { ContextIntents, ContextRefKinds, type ContextRef, type Stream, type ViewportContextRef } from "@threa/types"
 
 describe("Aside viewport snapshot", () => {
@@ -126,7 +127,8 @@ describe("Aside viewport snapshot", () => {
 
     expect(resolved.stable).toContain("## Context source: viewport:" + channel.id)
     expect(resolved.stable).toContain(`Messages before what was on screen (${VIEWPORT_WINDOW_PAD}, chronological):`)
-    expect(resolved.stable).toContain("On screen when the aside was opened (4 visible, chronological;")
+    expect(resolved.stable).toContain("On screen when the aside was opened (captured ")
+    expect(resolved.stable).toContain("; 4 visible, chronological;")
     for (const id of visible) expect(resolved.stable).toContain(`► [${id}]`)
     expect(resolved.stable).toContain(`Messages after what was on screen (${VIEWPORT_WINDOW_PAD}, chronological):`)
     expect(resolved.stable).toContain(`- [${ids[14]}]`)
@@ -151,21 +153,25 @@ describe("Aside viewport snapshot", () => {
     expect(resolved.stable).toContain(`► [${ids[5]}]`)
   })
 
-  test("a deleted visible id drops out; with none left the snapshot falls back to the recent tail", async () => {
+  test("a deleted visible id drops out; with none left the ref is omitted for agent and chip alike", async () => {
     const channel = await createChannel("viewport-deleted", "public")
     const ids = await insertMessages(channel.id, other, 20)
     await withTransaction(pool, (client) => MessageRepository.softDelete(client, ids[10]))
 
     const aside = await createAsideWithBag(channel.id, [viewportRef(channel.id, [ids[10], ids[11]])])
     const resolved = await resolve(aside.id)
-    expect(resolved.stable).toContain("(1 visible")
+    expect(resolved.stable).toContain("; 1 visible,")
     expect(resolved.stable).toContain(`► [${ids[11]}]`)
     expect(resolved.stable).not.toContain(`[${ids[10]}]`)
+    const chip = await fetchStreamBag(pool, { workspaceId: wsId, streamId: aside.id, userId: creator })
+    expect(chip.refs.map((r) => r.source.itemCount)).toEqual([resolved.refs[0].items.length])
 
     const orphaned = await createAsideWithBag(channel.id, [viewportRef(channel.id, [ids[10]])])
-    const fallback = await resolve(orphaned.id)
-    expect(fallback.stable).toContain("Messages (chronological):")
-    expect(fallback.refs[0].items).toHaveLength(19)
+    const gone = await resolve(orphaned.id)
+    expect(gone.refs).toEqual([])
+    expect(gone.stable).toBe("")
+    const goneChip = await fetchStreamBag(pool, { workspaceId: wsId, streamId: orphaned.id, userId: creator })
+    expect(goneChip).toMatchObject({ bag: { intent: ContextIntents.ASIDE }, refs: [] })
   })
 
   test("a viewport of a thread inside a member channel resolves through the root for a non-member of the thread (INV-62)", async () => {
@@ -179,7 +185,9 @@ describe("Aside viewport snapshot", () => {
     })
     const replies = await insertMessages(thread.id, other, 5)
 
-    const aside = await createAsideWithBag(channel.id, [viewportRef(thread.id, replies.slice(2, 4))])
+    // The thread is the host (a first-class aside host); the creator is a channel
+    // member but never joined the thread.
+    const aside = await createAsideWithBag(thread.id, [viewportRef(thread.id, replies.slice(2, 4))])
     const resolved = await resolve(aside.id)
 
     expect(resolved.refs).toHaveLength(1)
@@ -189,14 +197,21 @@ describe("Aside viewport snapshot", () => {
   })
 
   test("a ref to a stream the creator lost access to drops out; the others survive", async () => {
+    // Host = private channel (viewport ref); the bag also carries a conversation
+    // ref from a public channel, the shape a board-opened aside produces.
     const privateChannel = await createChannel("viewport-private", "private", [other])
     const publicChannel = await createChannel("viewport-public", "public")
     const privateIds = await insertMessages(privateChannel.id, other, 3)
     const publicIds = await insertMessages(publicChannel.id, other, 3)
+    const convId = conversationId()
+    await withTransaction(pool, async (client) => {
+      await ConversationRepository.insert(client, { id: convId, streamId: publicChannel.id, workspaceId: wsId })
+      await ConversationRepository.addPrimaryMessages(client, wsId, convId, publicIds, [other])
+    })
 
-    const aside = await createAsideWithBag(publicChannel.id, [
+    const aside = await createAsideWithBag(privateChannel.id, [
       viewportRef(privateChannel.id, privateIds),
-      viewportRef(publicChannel.id, publicIds),
+      { kind: ContextRefKinds.CONVERSATION, conversationId: convId, streamId: publicChannel.id },
     ])
     const before = await resolve(aside.id)
     expect(before.refs.map((r) => r.streamId)).toEqual([privateChannel.id, publicChannel.id])
@@ -206,13 +221,13 @@ describe("Aside viewport snapshot", () => {
     const after = await resolve(aside.id)
     expect(after.refs.map((r) => r.streamId)).toEqual([publicChannel.id])
     expect(after.stable).not.toContain(privateIds[0])
-    expect(after.stable).toContain(`► [${publicIds[0]}]`)
+    expect(after.stable).toContain(`[${publicIds[0]}]`)
 
     const chip = await fetchStreamBag(pool, { workspaceId: wsId, streamId: aside.id, userId: creator })
     expect(chip.refs.map((r) => r.streamId)).toEqual([publicChannel.id])
   })
 
-  test("a viewport ref to a stream the creator never had access to is rejected at create time", async () => {
+  test("an aside on a host the creator cannot read is rejected at create time; the resolver refuses its viewport too", async () => {
     const privateChannel = await streamService.createChannel({
       workspaceId: wsId,
       slug: "viewport-foreign",
@@ -221,14 +236,14 @@ describe("Aside viewport snapshot", () => {
       memberIds: [],
     })
     const foreignIds = await insertMessages(privateChannel.id, other, 2)
-    const host = await createChannel("viewport-host", "public")
 
+    // The viewport ref is bound to the host (create-contract refinement), so
+    // host access is the ref's access: the create transaction rejects it.
+    await expect(
+      createAsideWithBag(privateChannel.id, [viewportRef(privateChannel.id, foreignIds)])
+    ).rejects.toMatchObject({ code: "STREAM_NOT_FOUND" })
     await expect(
       assertRefAccess(pool, viewportRef(privateChannel.id, foreignIds), creator, wsId)
-    ).rejects.toMatchObject({
-      status: 403,
-      code: "CONTEXT_SOURCE_FORBIDDEN",
-    })
-    await expect(assertRefAccess(pool, viewportRef(host.id, foreignIds), creator, wsId)).resolves.toBeUndefined()
+    ).rejects.toMatchObject({ status: 403, code: "CONTEXT_SOURCE_FORBIDDEN" })
   })
 })

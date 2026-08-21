@@ -110,7 +110,7 @@ export const ThreadResolver: Resolver<ThreadRef> = {
       ...hydrated,
       tailMessageId: tail?.messageId ?? null,
       focalMessageId,
-      visibleMessageIds: null,
+      viewport: null,
       // The source stream is access-checked (assertAccess) and confirmed to
       // exist above, so it's the trusted id to enrich the chip from.
       sourceStreamId: ref.streamId,

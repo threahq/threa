@@ -10,6 +10,7 @@ import { StreamRepository } from "../../streams"
 import { ContextBagRepository } from "./repository"
 import { SummaryRepository } from "./summary-repository"
 import { assertRefAccess, canonicalRefKey, fetchRef, getIntentConfig } from "./registry"
+import { CONTEXT_VIEWPORT_GONE } from "./resolvers/viewport-resolver"
 import { diffInputs } from "./diff"
 import { buildSnapshot, renderDelta, renderStable } from "./render"
 import { summarizeThread } from "./summarizer"
@@ -134,8 +135,19 @@ export async function resolveBagForStream(
         )
         continue
       }
-      const part = await fetchRef(db, ref, { intent: bag.intent })
-      resolveds.push({ ref, ...part })
+      try {
+        const part = await fetchRef(db, ref, { intent: bag.intent })
+        resolveds.push({ ref, ...part })
+      } catch (err) {
+        // A viewport whose on-screen messages are all gone has no snapshot to
+        // show: omit it loudly rather than render something else as "what you
+        // saw" (INV-11).
+        if (!(err instanceof HttpError && err.code === CONTEXT_VIEWPORT_GONE)) throw err
+        logger.warn(
+          { workspaceId: bag.workspaceId, streamId, refStreamId: ref.streamId },
+          "context-bag: viewport snapshot no longer resolves, dropping ref"
+        )
+      }
     }
 
     // Source-stream enrichment for the trace UI's "X messages in #foo" pill.
@@ -204,7 +216,7 @@ export async function resolveBagForStream(
       summaryText,
       refLabel: refKey,
       focalMessageId: resolved.focalMessageId,
-      visibleMessageIds: resolved.visibleMessageIds,
+      viewport: resolved.viewport,
     })
     stableParts.push(stable)
 

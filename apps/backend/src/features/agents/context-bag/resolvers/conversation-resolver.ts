@@ -100,7 +100,7 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
       ...hydrated,
       tailMessageId: tail?.messageId ?? null,
       focalMessageId,
-      visibleMessageIds: null,
+      viewport: null,
       // Enrich the chip from the conversation's OWN root, never the client-
       // supplied `ref.streamId` (which access-checks nothing) — otherwise an
       // arbitrary/cross-workspace stream's metadata would leak (INV-8).

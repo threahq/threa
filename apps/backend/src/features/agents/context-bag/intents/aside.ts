@@ -2,17 +2,10 @@ import { ContextIntents, ContextRefKinds } from "@threa/types"
 import type { IntentConfig } from "../types"
 
 /**
- * Aside: a private thinking surface opened beside a host stream. The bag
- * carries what the user had on screen when they opened it — a `viewport` ref
- * for timeline surfaces, a `conversation` ref for board / conversation-panel
- * surfaces — and the resolver expands it on the creator's access.
- *
- * Summarisation stays off (`inlineCharThreshold: Infinity`): the viewport
+ * Aside: a private thinking surface beside a host stream, grounded in what the
+ * user had on screen when they opened it (`viewport` ref on timeline surfaces,
+ * `conversation` ref on board surfaces). Summarisation stays off: the viewport
  * resolver bounds the window before render, so the slice is inlined verbatim.
- *
- * The preamble names the access boundary the product promises: the agent runs
- * on the creator's access, so anything it pulls from outside the host stream
- * may be invisible to the people the user is writing to, and it says so.
  */
 export const AsideIntent: IntentConfig = {
   intent: ContextIntents.ASIDE,
@@ -28,12 +21,12 @@ export const AsideIntent: IntentConfig = {
     "messages of a single conversation — an AI-clustered topic that may span a channel",
     "and its threads. Either way it is a focused slice, not the whole stream.",
     "",
-    "When an `On screen when the aside was opened` section appears, those messages —",
-    "each marked inline with a `►` chevron — are exactly what the user was looking at;",
-    "treat them as the most likely subject of their first message. Messages above are",
-    "the lead-up; messages below are what followed. The snapshot does not refresh as the",
-    "host stream moves on, though edits and deletions to snapshot messages surface in",
-    "`## Since last turn`.",
+    "When an `On screen when the aside was opened` section appears, the messages marked",
+    "inline with a `►` chevron are the captured set — exactly what the client reported as",
+    "visible, up to its cap; treat them as the most likely subject of the user's first",
+    "message. Messages above are the lead-up; messages below are what followed. The",
+    "snapshot does not refresh as the host stream moves on, though edits and deletions to",
+    "snapshot messages surface in `## Since last turn`.",
     "",
     "You run on the user's access, which reaches the whole workspace. When an answer",
     "draws on a stream or message that other participants of the host stream may not be",

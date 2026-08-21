@@ -78,7 +78,7 @@ export type ConversationContextRef = {
  * longer lists and the client capture caps at the same number, so the two never
  * disagree about what "what you saw" means.
  */
-export const VIEWPORT_MAX_VISIBLE_IDS = 40
+export const VIEWPORT_MAX_VISIBLE_IDS = 60
 
 /**
  * A snapshot of what the user had on screen when an aside was opened: the

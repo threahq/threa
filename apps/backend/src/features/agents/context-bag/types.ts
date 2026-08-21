@@ -91,13 +91,13 @@ export interface ResolvedRef {
    */
   focalMessageId: string | null
   /**
-   * For a viewport ref: the ids of the messages that were actually on screen
-   * when the aside was opened, restricted to those present in `items`. The
-   * renderer splits the window around this span and marks each member, so the
-   * model can tell "what the user saw" from the surrounding context. Null for
-   * refs without a viewport.
+   * For a viewport ref: the messages that were actually on screen when the
+   * aside was opened (restricted to those present in `items`) and when the
+   * capture happened. The renderer splits the window around this span and
+   * marks each member, so the model can tell "what the user saw" from the
+   * surrounding context. Null for refs without a viewport.
    */
-  visibleMessageIds: string[] | null
+  viewport: { visibleMessageIds: string[]; capturedAt: string } | null
 }
 
 /**
