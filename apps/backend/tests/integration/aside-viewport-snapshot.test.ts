@@ -1,13 +1,3 @@
-/**
- * Aside viewport snapshot (PR3): does the agent see what you see, on your
- * access? The `viewport` ref expands server-side to the window around what was
- * on screen, renders with the visible span marked, and resolves on the
- * creator's access — a source the creator can't read drops out while the rest
- * of the bag survives (INV-62), all through the production
- * `resolveBagForStream` entry that every companion turn and the precompute
- * worker use.
- */
-
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import type { AI } from "@threa/agent-runtime"

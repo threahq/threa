@@ -267,11 +267,17 @@ async function setupTestData(
   if (input.asideHost && hostStreamId) {
     await seedConversationHistory(hostStreamId, input.asideHost.conversationHistory, input.currentTime)
     const hostMessages = await MessageRepository.list(pool, hostStreamId, { limit: 100 })
-    const visibleMessageIds = (input.asideHost.visibleIndices ?? hostMessages.map((_, i) => i)).map((i) => {
-      const message = hostMessages[i]
-      if (!message) throw new Error(`asideHost.visibleIndices[${i}] is outside the seeded host history`)
-      return message.id
-    })
+    const visibleMessageIds = (input.asideHost.visibleIndices ?? hostMessages.map((_, i) => i)).map(
+      (index, position) => {
+        const message = hostMessages[index]
+        if (!message) {
+          throw new Error(
+            `asideHost.visibleIndices[${position}] = ${index} is outside the seeded host history (${hostMessages.length} messages)`
+          )
+        }
+        return message.id
+      }
+    )
     await ContextBagRepository.insert(pool, {
       workspaceId: ctx.workspaceId,
       streamId: testStreamId,

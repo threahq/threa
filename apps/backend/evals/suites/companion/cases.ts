@@ -768,6 +768,37 @@ const asideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
         "The viewport snapshot grounds the aside in what the user was reading; the agent answers from it without asking for a paste or leaking tool names",
     }
   ),
+  createCase(
+    "viewport-002",
+    "Aside: the on-screen span, not the whole host, is what the user was reading",
+    {
+      message: "Which figure was I just looking at for churn?",
+      streamType: "aside",
+      trigger: "companion",
+      asideHost: {
+        name: "pipeline-review",
+        conversationHistory: [
+          { role: "user", content: "Draft deck says Q3 churn is 3.8%." },
+          { role: "user", content: "Also: the retention slide still has last quarter's logo wall." },
+          {
+            role: "user",
+            content: "Correction from Dana: Q3 churn is 4.2%, the 3.8% figure double-counted the reactivations.",
+          },
+          { role: "user", content: "Can someone sanity-check the slide before the 3pm call?" },
+        ],
+        visibleIndices: [2, 3],
+      },
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldContain: ["4.2"],
+        shouldNotContain: ["get_stream_messages"],
+      },
+      reason:
+        "Only the correction and the follow-up were on screen (visibleIndices narrows the snapshot); the earlier 3.8% message sits outside the marked span, so the answer must come from the ► messages",
+    }
+  ),
 ]
 
 export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [

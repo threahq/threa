@@ -205,6 +205,21 @@ describe("renderStable with a viewport span", () => {
     expect(out).not.toContain("On screen when the aside was opened")
   })
 
+  test("takes precedence over focalMessageId when both are given", () => {
+    const out = renderStable({
+      preamble: "",
+      inlineItems: items,
+      refLabel: "viewport:stream_x",
+      focalMessageId: "msg_a",
+      viewport: { visibleMessageIds: ["msg_c"], capturedAt: CAPTURED },
+    })
+    expect(out).toContain("On screen when the aside was opened")
+    expect(out).toContain("► [msg_c]")
+    expect(out).toContain("- [msg_a]")
+    expect(out).not.toContain("► [msg_a]")
+    expect(out).not.toContain("Focal message")
+  })
+
   test("is byte-identical across renders of the same span (cache-prefix stability)", () => {
     const render = () =>
       renderStable({
