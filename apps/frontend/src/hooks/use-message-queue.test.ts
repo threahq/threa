@@ -34,7 +34,14 @@ interface MockPendingMessage {
   streamId: string
   content: string
   contentFormat: string
-  contentJson?: { type: string; content: Array<{ type: string; content?: Array<{ type: string; text: string }> }> }
+  contentJson?: {
+    type: string
+    content: Array<{
+      type: string
+      attrs?: Record<string, unknown>
+      content?: Array<{ type: string; text: string }>
+    }>
+  }
   attachmentIds?: string[]
   steer?: true
   status?: "editing" | "blocked-privacy"
@@ -358,6 +365,40 @@ describe("useMessageQueue", () => {
     })
     expect(mockEventsUpdate).toHaveBeenCalledWith("temp_quote_gone", { _status: "failed" })
     expect(mockMarkFailed).toHaveBeenCalledWith("temp_quote_gone")
+  })
+
+  it("names a failed share a share, not a quote", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("t2")
+    mockCreate.mockRejectedValue(
+      new ApiError(400, MessageReferenceErrorCodes.SOURCE_NOT_FOUND, "Referenced message not found")
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_share_gone",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Shared a message",
+        contentFormat: "markdown",
+        contentJson: {
+          type: "doc",
+          content: [{ type: "sharedMessage", attrs: { messageId: "msg_src", streamId: "stream_src" } }],
+        },
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(errorToast.mock.calls).toEqual([
+      [
+        "Couldn't share that message — it may have changed or been removed.",
+        { id: "message-reference-temp_share_gone" },
+      ],
+    ])
   })
 
   it("does not auto-retry a permanently failed send", async () => {

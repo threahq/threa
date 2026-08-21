@@ -32,6 +32,14 @@ import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
 
 const REFERENCE_FAILURE_CODES: ReadonlySet<string> = new Set(Object.values(MessageReferenceErrorCodes))
 
+/** Whether a body carries a node of the given type, at any depth. */
+function hasNodeOfType(node: unknown, type: string): boolean {
+  if (!node || typeof node !== "object") return false
+  const typed = node as { type?: unknown; content?: unknown }
+  if (typed.type === type) return true
+  return Array.isArray(typed.content) && typed.content.some((child) => hasNodeOfType(child, type))
+}
+
 /**
  * Exponential backoff delay based on retry count.
  * First 3 retries are immediate (within the same drain cycle, skipped to next cycle).
@@ -353,9 +361,12 @@ export function useMessageQueue(): void {
 
         if (referenceFailed || (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE)) {
           if (referenceFailed) {
-            toast.error("Couldn't quote that message — it may have changed or been removed.", {
-              id: `message-reference-${next.clientId}`,
-            })
+            toast.error(
+              hasNodeOfType(next.contentJson, "sharedMessage")
+                ? "Couldn't share that message — it may have changed or been removed."
+                : "Couldn't quote that message — it may have changed or been removed.",
+              { id: `message-reference-${next.clientId}` }
+            )
           }
           type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
           await Promise.all([
