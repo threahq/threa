@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { Bot, Clock, Sparkles, SquareSlash, TerminalSquare } from "lucide-react"
+import { Bot, Clock, MessageSquareDashed, Sparkles, SquareSlash, TerminalSquare } from "lucide-react"
 import type { StreamEvent } from "@threa/types"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { isContinuation } from "@/lib/message-grouping"
@@ -10,9 +10,12 @@ import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
 import { DelegationEvent } from "@/components/timeline/delegation-event"
 import { CommandEvent } from "@/components/timeline/command-event"
+import { AsideAnchorEvent } from "@/components/timeline/aside-anchor-event"
 import { getSessionId } from "@/components/timeline/session-grouping"
 import { useSocket, useTrace } from "@/contexts"
 import { useAgentSessionActivity } from "@/stores/agent-activity-store"
+import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { streamLabel } from "@/lib/streams"
 import { LedgerEventGroup, LedgerEventRow, type LedgerEventDescriptor } from "@/components/board/ledger-row"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import { coalesceLedgerItems, ledgerEventContent, type LedgerItemKind } from "@/lib/board/ledger"
@@ -506,6 +509,8 @@ export function BoardEventRowItem({
       )
     case "memo":
       return <MemoCapturedEvent event={row.event as StreamEvent} workspaceId={workspaceId} />
+    case "aside":
+      return <AsideAnchorEvent event={row.event as StreamEvent} workspaceId={workspaceId} />
     case "followUp":
       return (
         <FollowUpScheduledEvent
@@ -536,6 +541,7 @@ const LEDGER_EVENT_ICONS: Record<BoardEventRow["kind"], ReactNode> = {
   memo: <Sparkles className="size-3 text-amber-500" />,
   followUp: <Clock className="size-3" />,
   delegation: <TerminalSquare className="size-3" />,
+  aside: <MessageSquareDashed className="size-3 text-primary" />,
 }
 
 type OpenMemo = { memoId: string; title: string }
@@ -543,9 +549,10 @@ type OpenMemo = { memoId: string; title: string }
 function ledgerDescriptor(
   row: BoardEventRow,
   traceUrl: (sessionId: string) => string,
+  asideTitle: (asideId: string) => string | null,
   onOpenMemo: (memo: OpenMemo) => void
 ) {
-  const content = ledgerEventContent(row, { traceUrl })
+  const content = ledgerEventContent(row, { traceUrl, asideTitle })
   return {
     key: content.key,
     icon: LEDGER_EVENT_ICONS[content.kind],
@@ -566,8 +573,9 @@ function ledgerDescriptor(
  */
 export function LedgerBoardEventRow({ row, workspaceId }: { row: BoardEventRow; workspaceId: string }) {
   const { getTraceUrl } = useTrace()
+  const asideTitle = useAsideTitle(workspaceId)
   const [openMemo, setOpenMemo] = useState<OpenMemo | null>(null)
-  const descriptor = ledgerDescriptor(row, getTraceUrl, setOpenMemo)
+  const descriptor = ledgerDescriptor(row, getTraceUrl, asideTitle, setOpenMemo)
   return (
     <>
       <LedgerEventRow
@@ -595,17 +603,27 @@ export function LedgerBoardEventGroup({
   onToggle: () => void
 }) {
   const { getTraceUrl } = useTrace()
+  const asideTitle = useAsideTitle(workspaceId)
   const [openMemo, setOpenMemo] = useState<OpenMemo | null>(null)
   return (
     <>
       <LedgerEventGroup
-        events={rows.map((row) => ledgerDescriptor(row, getTraceUrl, setOpenMemo))}
+        events={rows.map((row) => ledgerDescriptor(row, getTraceUrl, asideTitle, setOpenMemo))}
         expanded={expanded}
         onToggle={onToggle}
       />
       <LedgerMemoPreview workspaceId={workspaceId} memo={openMemo} onClose={() => setOpenMemo(null)} />
     </>
   )
+}
+
+/** The ledger line's title join against the creator's cached aside stream row. */
+function useAsideTitle(workspaceId: string): (asideId: string) => string | null {
+  const streams = useWorkspaceStreams(workspaceId)
+  return (asideId: string) => {
+    const aside = streams.find((stream) => stream.id === asideId)
+    return aside ? streamLabel(aside) : null
+  }
 }
 
 function LedgerMemoPreview({

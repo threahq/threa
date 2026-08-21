@@ -1,4 +1,9 @@
-import { STREAM_ROW_SPEC, type DelegationStatusChangedEventPayload, type MemosCapturedEventPayload } from "@threa/types"
+import {
+  STREAM_ROW_SPEC,
+  type AsideAnchoredEventPayload,
+  type DelegationStatusChangedEventPayload,
+  type MemosCapturedEventPayload,
+} from "@threa/types"
 import type { CachedEvent } from "@/db"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/components/timeline/session-grouping"
 import { getCommandId, isOwnCommandEvent } from "@/components/timeline/command-grouping"
@@ -16,6 +21,7 @@ export type BoardEventRow =
   | { kind: "memo"; key: string; sortMs: number; streamId: string; event: CachedEvent }
   | { kind: "followUp"; key: string; sortMs: number; streamId: string; event: CachedEvent; cancelled: boolean }
   | { kind: "command"; key: string; sortMs: number; streamId: string; events: CachedEvent[] }
+  | { kind: "aside"; key: string; sortMs: number; streamId: string; event: CachedEvent }
   | {
       kind: "delegation"
       key: string
@@ -59,6 +65,8 @@ function timeMs(event: CachedEvent): number {
  * - command events are grouped by `commandId` into one chip row, author-scoped,
  *   placed on the conversation the dispatch names (a stream-level dispatch names
  *   none and draws nowhere).
+ * - `aside:anchored` is a single author-scoped row placed on the conversation
+ *   its payload names (a message-anchored aside names none and draws nowhere).
  * - `agent:follow_up_cancelled` is a patch, not a row: it flips the matching
  *   scheduled card's `cancelled` flag (mirrors the timeline's cancel handling).
  * - `delegation:status_changed` is likewise a patch: the latest one per
@@ -104,6 +112,13 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
         command.dispatched = event
         command.conversation = (event.payload as { conversationId?: string })?.conversationId ?? null
       }
+      continue
+    }
+    if (event.eventType === "aside:anchored") {
+      const payload = event.payload as AsideAnchoredEventPayload | undefined
+      if (payload?.conversationId !== ctx.conversationId) continue
+      if (!isOwnCommandEvent(event, ctx.currentUserId)) continue
+      rows.push({ kind: "aside", key: event.id, sortMs: timeMs(event), streamId: event.streamId, event })
       continue
     }
     const ref = STREAM_ROW_SPEC[event.eventType].conversationRef

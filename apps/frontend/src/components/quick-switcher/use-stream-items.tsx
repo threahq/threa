@@ -54,6 +54,8 @@ function getStreamTypeLabel(type: StreamType): string {
       return "System"
     case StreamTypes.THREAD:
       return "Thread"
+    case StreamTypes.ASIDE:
+      return "Aside"
     default:
       return type
   }
@@ -149,12 +151,15 @@ export function useStreamItems(context: ModeContext): ModeResult {
       ...(showArchived && archivedStreams ? archivedStreams : []),
     ]
 
+    // Own asides are palette-reachable — the one list surface they appear on
+    // besides their anchor row (the sidebar and pickers hide them).
     let filteredStreams = allStreams.filter(
       (s) =>
         s.type === StreamTypes.SCRATCHPAD ||
         s.type === StreamTypes.CHANNEL ||
         s.type === StreamTypes.DM ||
-        s.type === StreamTypes.SYSTEM
+        s.type === StreamTypes.SYSTEM ||
+        (s.type === StreamTypes.ASIDE && s.createdBy === currentUserId)
     )
 
     if (typeFilters.length > 0) {

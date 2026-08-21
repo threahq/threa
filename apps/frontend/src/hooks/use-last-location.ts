@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react"
 import { useLocation, useMatch } from "react-router-dom"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { isHiddenStreamType } from "@/lib/streams"
 import {
   buildBoardHref,
   freshExactPath,
@@ -53,9 +54,12 @@ interface UseLastLocationResult {
  */
 export function useLastLocation(workspaceId: string): UseLastLocationResult {
   const { user } = useAuth()
-  const allStreams = useWorkspaceStreams(workspaceId)
+  const cachedStreams = useWorkspaceStreams(workspaceId)
 
   return useMemo(() => {
+    // An aside opens beside its host stream, never as a page of its own, so it
+    // is neither a restore target nor a most-recent fallback.
+    const allStreams = cachedStreams.filter((s) => !isHiddenStreamType(s))
     // The stream cache durably holds archived rows (archived-stream index).
     // They must not count as landing targets: archiving bumps updated_at, so an
     // unfiltered most-recent fallback would redirect a fresh device INTO the
@@ -119,7 +123,7 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
       boardHref: null,
       shouldOpenSidebar: true,
     }
-  }, [user, workspaceId, allStreams])
+  }, [user, workspaceId, cachedStreams])
 }
 
 /**

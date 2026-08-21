@@ -17,6 +17,7 @@ import { BotAccessEvent } from "./bot-access-event"
 import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { CallCard } from "./call-card"
+import { AsideAnchorEvent } from "./aside-anchor-event"
 import { SystemEvent } from "./system-event"
 import { DeletedMessageEvent } from "./deleted-message-event"
 
@@ -255,6 +256,13 @@ export function EventItem({
       // Patch, not a row: it carries the end summary onto the matching call card
       // via callEndedPatches (collected in event-list) — renders nothing itself.
       return null
+
+    case "aside:anchored":
+      return (
+        <div data-event-id={event.id}>
+          <AsideAnchorEvent event={event} workspaceId={workspaceId} />
+        </div>
+      )
 
     case "agent:follow_up_cancelled":
       // Patch, not a row: it flips the matching scheduled card to "Cancelled"

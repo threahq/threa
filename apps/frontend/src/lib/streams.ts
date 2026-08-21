@@ -29,6 +29,18 @@ export function isUtilityStream(stream: { purpose?: string | null }): boolean {
   return stream.purpose != null
 }
 
+/**
+ * A stream type that never lists by itself: an aside is reachable only through
+ * its anchor row in the host stream (and the command palette, own asides only).
+ * The sidebar, the unread badge, the last-location landing and the stream
+ * pickers all apply this one predicate instead of each knowing the type — an
+ * unhandled aside would otherwise inherit scratchpad listing and light the
+ * badge on every agent reply, against its decided silent attention.
+ */
+export function isHiddenStreamType(stream: { type: string }): boolean {
+  return stream.type === StreamTypes.ASIDE
+}
+
 /** Human-readable label for a stream type ("Scratchpad", "Channel", …). */
 export function getStreamTypeLabel(type: StreamType): string {
   switch (type) {

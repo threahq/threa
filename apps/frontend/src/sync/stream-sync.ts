@@ -873,6 +873,13 @@ interface CommandEventPayload {
   authorId: string
 }
 
+interface AsideAnchoredPayload {
+  workspaceId: string
+  streamId: string
+  event: StreamEvent
+  authorId: string
+}
+
 interface AgentSessionEventPayload {
   workspaceId: string
   streamId: string
@@ -1650,6 +1657,12 @@ function bindStreamSocketHandlers(
   const handleStreamCreated = async (payload: StreamCreatedPayload) => {
     if (payload.streamId !== streamId) return
     const stream = payload.stream
+    // An aside is anchored like a thread but is never the anchor's thread:
+    // writing `threadId` would hijack the thread affordance, and its stream row
+    // reaches the creator's cache through the workspace layer (read-side
+    // listing filters keep it out of the sidebar). Its only timeline trace is
+    // the `aside:anchored` row.
+    if (stream.type === StreamTypes.ASIDE) return
     const anchorId = stream.parentAnchorId
     if (!anchorId) return
 
@@ -1704,6 +1717,7 @@ function bindStreamSocketHandlers(
     payload:
       | AgentSessionEventPayload
       | CommandEventPayload
+      | AsideAnchoredPayload
       | MemberRemovedPayload
       | MemosCapturedPayload
       | StreamLifecycleEventPayload
@@ -1934,6 +1948,7 @@ function bindStreamSocketHandlers(
   socket.on("command:dispatched", handleAppendEvent)
   socket.on("command:completed", handleAppendEvent)
   socket.on("command:failed", handleAppendEvent)
+  socket.on("stream:aside_anchored", handleAppendEvent)
   socket.on("agent_session:started", handleAppendEvent)
   socket.on("agent_session:completed", handleAppendEvent)
   socket.on("agent_session:failed", handleAppendEvent)
@@ -1977,6 +1992,7 @@ function bindStreamSocketHandlers(
     socket.off("command:dispatched", handleAppendEvent)
     socket.off("command:completed", handleAppendEvent)
     socket.off("command:failed", handleAppendEvent)
+    socket.off("stream:aside_anchored", handleAppendEvent)
     socket.off("agent_session:started", handleAppendEvent)
     socket.off("agent_session:completed", handleAppendEvent)
     socket.off("agent_session:failed", handleAppendEvent)

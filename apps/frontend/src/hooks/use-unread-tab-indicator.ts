@@ -1,5 +1,6 @@
 import { useEffect } from "react"
-import { useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { isHiddenStreamType } from "@/lib/streams"
 import { buildPageTitle, usePageStreamName } from "@/lib/page-title"
 
 const DARK_FAVICON_SVG = `<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -42,15 +43,19 @@ function setFavicon(href: string) {
  */
 export function useUnreadTabIndicator(workspaceId: string) {
   const unreadState = useWorkspaceUnreadState(workspaceId)
+  const streams = useWorkspaceStreams(workspaceId)
   const streamName = usePageStreamName()
 
   const unreadCounts = unreadState?.unreadCounts ?? {}
   const mutedStreamIds = unreadState?.mutedStreamIds ?? []
 
   const muted = new Set(mutedStreamIds)
+  // A hidden stream type (an aside) is a pull surface: its unread never lights
+  // the badge — the anchor row's state text is its whole signal.
+  const hidden = new Set(streams.filter(isHiddenStreamType).map((stream) => stream.id))
   let totalUnread = 0
   for (const [streamId, count] of Object.entries(unreadCounts)) {
-    if (!muted.has(streamId)) totalUnread += count
+    if (!muted.has(streamId) && !hidden.has(streamId)) totalUnread += count
   }
 
   useEffect(() => {

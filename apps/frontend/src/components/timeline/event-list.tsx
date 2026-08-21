@@ -2,6 +2,7 @@ import { memo, useMemo } from "react"
 import {
   ConversationStatuses,
   type StreamEvent,
+  type AsideAnchoredEventPayload,
   type DelegationStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
@@ -162,6 +163,10 @@ function isGroupableMessage(event: StreamEvent): boolean {
 export function annotateAuthorGroups(items: TimelineItem[]): TimelineItem[] {
   let previousMessage: { event: StreamEvent; timeMs: number } | null = null
   return items.map((item) => {
+    // The creator-only anchor row rides between messages without breaking a
+    // same-author run: it is a hairline, not a turn, and the creator's layout
+    // should match what every other member sees.
+    if (item.type === "event" && item.event.eventType === "aside:anchored") return item
     if (item.type !== "event" || !isGroupableMessage(item.event)) {
       previousMessage = null
       return item
@@ -716,6 +721,10 @@ export function groupTimelineItems(events: StreamEvent[], currentUserId: string 
       }
 
       slot.events.push(event)
+    } else if (event.eventType === "aside:anchored") {
+      // Author-scoped like command events: the REST filter hides other actors'
+      // rows, the socket path re-applies the rule here.
+      if (isOwnCommandEvent(event, currentUserId)) result.push({ type: "event", event })
     } else {
       result.push({ type: "event", event })
     }
@@ -738,7 +747,48 @@ export function groupTimelineItems(events: StreamEvent[], currentUserId: string 
     }
   }
 
-  return result
+  return placeAsideAnchors(result)
+}
+
+/**
+ * Move each aside anchor row (`aside:anchored`) to directly after the item it
+ * was opened from — the anchor message or card — when that item is in the
+ * window. The row's sequence is allocated at aside creation, so by sequence
+ * alone it would sit at the tail of a stream whose anchor is far above. A row
+ * whose anchor is not in the window, or that has none (composer/palette aside),
+ * keeps its creation position so it is never silently missing. Rows on one
+ * anchor keep their relative (creation) order.
+ */
+export function placeAsideAnchors(items: TimelineItem[]): TimelineItem[] {
+  const anchorIds = new Set<string>()
+  for (const item of items) {
+    if (item.type !== "event") continue
+    anchorIds.add(item.event.id)
+    const messageId = (item.event.payload as { messageId?: string })?.messageId
+    if (messageId) anchorIds.add(messageId)
+  }
+  const byAnchor = new Map<string, TimelineItem[]>()
+  const moved = new Set<TimelineItem>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "aside:anchored") continue
+    const anchorId = (item.event.payload as AsideAnchoredEventPayload | undefined)?.anchorId
+    if (!anchorId || !anchorIds.has(anchorId)) continue
+    const rows = byAnchor.get(anchorId) ?? []
+    rows.push(item)
+    byAnchor.set(anchorId, rows)
+    moved.add(item)
+  }
+  if (moved.size === 0) return items
+  const placed: TimelineItem[] = []
+  for (const item of items) {
+    if (moved.has(item)) continue
+    placed.push(item)
+    if (item.type !== "event") continue
+    const messageId = (item.event.payload as { messageId?: string })?.messageId
+    const rows = (messageId ? byAnchor.get(messageId) : undefined) ?? byAnchor.get(item.event.id)
+    if (rows) placed.push(...rows)
+  }
+  return placed
 }
 
 /** Shared context for rendering a timeline item (used by both Virtuoso and non-virtualized paths) */
