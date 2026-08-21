@@ -21,7 +21,8 @@ import {
   sliceReferenceContent,
 } from "../../src/features/messaging"
 import { getBackfill } from "../../src/lib/backfill"
-import { messageId, userId, workspaceId, streamId } from "../../src/lib/id"
+import { DraftsRepository } from "../../src/features/drafts"
+import { messageId, userId, workspaceId, streamId, draftId as draftIdFor } from "../../src/lib/id"
 
 function docOf(text: string): JSONContent {
   return { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }
@@ -56,6 +57,7 @@ describe("message-reference-pins backfill", () => {
   let locatableQuoteId: string
   let unlocatableQuoteId: string
   let shareId: string
+  let draftId: string
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
@@ -151,6 +153,31 @@ describe("message-reference-pins backfill", () => {
       }
     })
 
+    draftId = draftIdFor()
+    await withTransaction(pool, async (client) => {
+      await DraftsRepository.insertIfAbsent(client, {
+        id: draftId,
+        workspaceId: testWorkspaceId,
+        userId: author,
+        scope: `stream:${target}`,
+        rootStreamId: target,
+        contentJson: {
+          type: "doc",
+          content: [legacyQuote(sourceMessageId, source, "first", author), ...docOf("later").content!],
+        },
+        contentMarkdown: "later",
+        attachmentIds: [],
+        command: null,
+        contextRefs: null,
+        ciphertext: null,
+        envelope: null,
+        e2eVersion: null,
+        lastClientWriteId: null,
+        clientUpdatedAt: new Date(),
+        stashedAt: null,
+      })
+    })
+
     registerMessageReferencePinsBackfill()
     await runBackfill()
   })
@@ -202,6 +229,15 @@ describe("message-reference-pins backfill", () => {
       version: 2,
       range: null,
     })
+  })
+
+  test("an unsent draft is pinned by the same pass", async () => {
+    const row = await pool.query<{ content_json: JSONContent }>("SELECT content_json FROM drafts WHERE id = $1", [
+      draftId,
+    ])
+    const quote = row.rows[0].content_json.content?.[0]
+    expect(quote?.attrs).toMatchObject({ messageId: sourceMessageId, version: 1 })
+    expect(quote?.attrs?.range).not.toBeNull()
   })
 
   test("re-running the backfill changes nothing", async () => {

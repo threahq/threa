@@ -232,23 +232,35 @@ async function processChunk(
   if (sourceIds.size === 0) return { processed: 0 }
 
   const sourcesById = await MessageRepository.findByIdsInWorkspace(ctx.pool, workspaceId, [...sourceIds])
-  const versionsByMessageId = await MessageVersionRepository.findByMessageIds(ctx.pool, [...quotedSourceIds])
+  // Ids come out of stored content, so they are whatever an author once wrote.
+  // `sourcesById` is already workspace-resolved; anything it does not name is
+  // not this workspace's to read (INV-8).
+  const versionsByMessageId = await MessageVersionRepository.findByMessageIds(
+    ctx.pool,
+    [...quotedSourceIds].filter((id) => sourcesById.has(id))
+  )
 
+  const observedById = new Map(rows.map((row) => [row.id, JSON.stringify(row.content_json)]))
   const updates = pinReferenceRows(rows, sourcesById, versionsByMessageId)
-  if (updates.length > 0) {
-    const updateIds = updates.map((u) => u.id)
-    const updateJson = updates.map((u) => JSON.stringify(u.contentJson))
-    const updateMarkdown = updates.map((u) => u.contentMarkdown)
-    await ctx.pool.query(sql`
-      UPDATE ${sql.raw(table)} AS t
-      SET content_json = data.content_json::jsonb, content_markdown = data.content_markdown
-      FROM unnest(${updateIds}::text[], ${updateJson}::text[], ${updateMarkdown}::text[])
-        AS data(id, content_json, content_markdown)
-      WHERE t.id = data.id
-    `)
-  }
+  if (updates.length === 0) return { processed: 0 }
 
-  return { processed: updates.length }
+  const updateIds = updates.map((u) => u.id)
+  const updateJson = updates.map((u) => JSON.stringify(u.contentJson))
+  const updateMarkdown = updates.map((u) => u.contentMarkdown)
+  const observedJson = updates.map((u) => observedById.get(u.id) ?? "")
+  // The body was read in a separate statement, so the write has to prove it is
+  // replacing what it read (INV-20) — an author editing in between would
+  // otherwise have their new text overwritten with the old. A row that moved
+  // stays unpinned and the next run pins it, since pinning is idempotent.
+  const written = await ctx.pool.query(sql`
+    UPDATE ${sql.raw(table)} AS t
+    SET content_json = data.content_json::jsonb, content_markdown = data.content_markdown
+    FROM unnest(${updateIds}::text[], ${updateJson}::text[], ${updateMarkdown}::text[], ${observedJson}::text[])
+      AS data(id, content_json, content_markdown, observed_content_json)
+    WHERE t.id = data.id AND t.content_json = data.observed_content_json::jsonb
+  `)
+
+  return { processed: written.rowCount ?? 0 }
 }
 
 export function registerMessageReferencePinsBackfill(): void {

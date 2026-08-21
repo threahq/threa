@@ -98,6 +98,12 @@ snippet's plain text is matched against the pinned document
 (`references/locate.ts`); whole-document equality means `range: null`, a partial
 match yields the range, and no match is an error.
 
+One node is exempt from that error: an unpinned quote that was already in the
+body being replaced. Its source may have been edited past the quote long ago,
+and refusing the write would leave the author unable to edit their own message
+ever again. Such a node is carried through untouched; a quote the edit itself
+adds is still rejected.
+
 Failures are `HttpError` 400s with stable codes (INV-32), from
 `MessageReferenceErrorCodes`:
 
