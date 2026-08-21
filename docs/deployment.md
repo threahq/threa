@@ -78,6 +78,8 @@ Railway polls these endpoints to determine when a deployment is ready:
 
 The `/readyz` endpoint provides more detail (pool stats) but isn't used for Railway health checks.
 
+Post-merge verification and rollout watching: `bun run monitor status|verify|watch` (`scripts/monitor/`, read-only; see `.agents/skills/monitor-prod/SKILL.md`).
+
 ### What Triggers a Deploy
 
 Any push to `main` triggers a rebuild of **both** backend and control-plane. Railway doesn't have per-service watch paths for repo-linked services — both rebuild even if only one changed.
