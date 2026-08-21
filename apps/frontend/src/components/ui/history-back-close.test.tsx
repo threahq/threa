@@ -7,6 +7,8 @@ import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter, OverlayHisto
 import { Drawer, DrawerContent, DrawerTitle } from "./drawer"
 import { Dialog, DialogContent, DialogTitle } from "./dialog"
 import { MediaGalleryProvider, useMediaGallery } from "@/contexts/media-gallery-context"
+import { CodeViewerProvider, useCodeViewerOptional } from "@/contexts/code-viewer-context"
+import * as highlighterModule from "@/lib/markdown/highlighter"
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -359,6 +361,84 @@ describe("HistoryBackClose with the URL-driven media gallery (mobile)", () => {
     await waitFor(() => expect(screen.getByText("gallery-closed")).toBeInTheDocument())
     await waitFor(() => expect(router.state.location.key).toBe(initialKey))
     expect(router.state.location.pathname).toBe(STREAM_PATH)
+    expect(router.state.location.search).toBe("")
+
+    // History is balanced: the next back leaves the page
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+  })
+})
+
+/**
+ * The real two-overlay stack this feature introduces: a markdown attachment
+ * open in the gallery (`?media=`, which deepens history itself) with a code
+ * block inside it opened full screen on top. One back press must peel exactly
+ * one overlay.
+ */
+function GalleryWithCodeViewerHarness() {
+  const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
+  const codeViewer = useCodeViewerOptional()
+  const open = mediaAttachmentId !== null
+  return (
+    <div>
+      <span>{open ? "gallery-open" : "gallery-closed"}</span>
+      <button onClick={() => openMedia("attach_1")}>open-gallery</button>
+      <Dialog open={open} onOpenChange={(next) => !next && closeMedia()}>
+        <DialogContent>
+          <DialogTitle>Media</DialogTitle>
+          <button onClick={() => codeViewer?.open({ code: "const a = 1", languageId: "typescript" })}>
+            open-code-viewer
+          </button>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+describe("HistoryBackClose with the code viewer stacked over the gallery (mobile)", () => {
+  beforeEach(() => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+    // Deterministic first paint: the shiki singleton is unwarmed in jsdom, so
+    // the viewer would otherwise swap in highlighted HTML mid-assertion.
+    vi.spyOn(highlighterModule, "tryHighlightSync").mockReturnValue("<pre><code>const a = 1</code></pre>")
+  })
+
+  it("peels one overlay per back press: viewer first, then the gallery", async () => {
+    const router = makeRouter(
+      <MediaGalleryProvider>
+        <CodeViewerProvider>
+          <GalleryWithCodeViewerHarness />
+        </CodeViewerProvider>
+      </MediaGalleryProvider>
+    )
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    fireEvent.click(screen.getByText("open-gallery"))
+    await waitFor(() => expect(screen.getByText("gallery-open")).toBeInTheDocument())
+    await waitFor(() => expect(router.state.location.search).toBe("?media=attach_1"))
+    await act(async () => {})
+
+    fireEvent.click(screen.getByText("open-code-viewer"))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Wrap lines" })).toBeInTheDocument())
+    await act(async () => {})
+
+    // First back: the viewer goes, the gallery stays open on ?media=
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Wrap lines" })).not.toBeInTheDocument())
+    expect(screen.getByText("gallery-open")).toBeInTheDocument()
+    expect(router.state.location.search).toBe("?media=attach_1")
+
+    // Second back: the gallery goes, and we are back where we started
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("gallery-closed")).toBeInTheDocument())
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
     expect(router.state.location.search).toBe("")
 
     // History is balanced: the next back leaves the page
