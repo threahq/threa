@@ -1301,6 +1301,8 @@ function SentMessageEvent({
       payload.messageId,
       payload.editedAt,
       payload.reactions,
+      payload.contentJson,
+      payload.revision,
       e2eEnabled,
       event.id,
       event.actorType,

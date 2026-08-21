@@ -16,22 +16,32 @@ export interface ReferenceSource {
   contentMarkdown: string
 }
 
-const sources = new Map<string, ReferenceSource>()
+const sources = new Map<string, ReferenceSource[]>()
 
 /**
- * Publish a row's content while it is mounted. Returns the unregister. The same
- * message can be mounted on two surfaces at once (timeline + open thread), so
- * unregistering only drops the entry it installed.
+ * Publish a row's content while it is mounted. Returns the unregister.
+ *
+ * The same message can be mounted on two surfaces at once (timeline and an
+ * open thread), and they unmount in either order, so each registration is kept
+ * rather than overwritten — dropping the newest on its own unmount would take
+ * the still-mounted row's content with it and silently unpin its quotes. The
+ * most recent registration answers reads.
  */
 export function registerReferenceSource(messageId: string, source: ReferenceSource): () => void {
-  sources.set(messageId, source)
+  const registered = sources.get(messageId)
+  if (registered) registered.push(source)
+  else sources.set(messageId, [source])
   return () => {
-    if (sources.get(messageId) === source) sources.delete(messageId)
+    const remaining = sources.get(messageId)
+    if (!remaining) return
+    const at = remaining.lastIndexOf(source)
+    if (at >= 0) remaining.splice(at, 1)
+    if (remaining.length === 0) sources.delete(messageId)
   }
 }
 
 export function getReferenceSource(messageId: string): ReferenceSource | null {
-  return sources.get(messageId) ?? null
+  return sources.get(messageId)?.at(-1) ?? null
 }
 
 /** Module-level map survives an account-switch remount; AccountScope clears it. */
