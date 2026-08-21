@@ -1,5 +1,5 @@
 import { createHighlighter, type HighlighterGeneric } from "shiki"
-import { CODE_LANGUAGE_PRELOAD_IDS, normalizeCodeLanguage } from "@threa/types"
+import { CODE_LANGUAGE_PRELOAD_IDS, PLAINTEXT_LANGUAGE_ID, normalizeCodeLanguage } from "@threa/types"
 
 // Warmed at boot so common code blocks paint highlighted on first render.
 // Unknown langs fall through to `loadLanguage()` and then to plaintext.
@@ -76,7 +76,7 @@ export async function ensureHighlight(code: string, lang: string): Promise<strin
     // Unknown or failed to fetch — render as plaintext so the block still
     // renders inside its panel rather than getting stuck on the placeholder.
     try {
-      return hl.codeToHtml(code, { lang: "plaintext", ...CODE_TO_HTML_OPTIONS })
+      return hl.codeToHtml(code, { lang: PLAINTEXT_LANGUAGE_ID, ...CODE_TO_HTML_OPTIONS })
     } catch {
       return null
     }

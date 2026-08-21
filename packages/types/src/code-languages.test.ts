@@ -44,6 +44,7 @@ describe("normalizeCodeLanguage", () => {
   it("should pass an unknown language through lowercased", () => {
     expect(normalizeCodeLanguage("Elixir")).toBe("elixir")
     expect(isCodeLanguageId("elixir")).toBe(false)
+    expect(isCodeLanguageId("typescript")).toBe(true)
   })
 })
 
