@@ -1,4 +1,4 @@
-import { THRESHOLDS } from "../config"
+import { DECOMMISSIONED_LISTENERS, THRESHOLDS } from "../config"
 import type { ReadProxyClient } from "../db"
 import type { Finding, Window } from "../types"
 
@@ -137,6 +137,7 @@ export async function probePipelines(db: ReadProxyClient, window: Window): Promi
 export function evaluatePipelines(report: Omit<PipelineReport, "findings">, now: Date): Finding[] {
   const findings: Finding[] = []
   for (const l of report.outbox.listeners) {
+    if (DECOMMISSIONED_LISTENERS.some((entry) => entry.id === l.listener_id)) continue
     const lastAt = l.last_processed_at ? new Date(l.last_processed_at).getTime() : 0
     const stale = now.getTime() - lastAt > THRESHOLDS.listenerStaleMs
     if (stale && l.lag > 0) {

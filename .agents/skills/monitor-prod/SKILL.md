@@ -43,8 +43,9 @@ missing credentials. `--help` has the flags.
   public API with the read-only key; a failure here is user impact, say so first.
 - **pipelines**: outbox head and per-listener lag, dead letters, queue ready/running/DLQ
   per queue, agent/bot/scheduled failure counts, all as `since baseline (prior window)`.
-  A listener flagged **stale** has not advanced for hours; that is a dead worker or a
-  decommissioned listener, not backlog. **Ready with an old oldest-age** means workers
+  A listener flagged **stale** has not advanced for hours: a dead worker, or a row left
+  behind by a removed listener (those are listed in `config.ts` as `DECOMMISSIONED_LISTENERS`,
+  shown in the pipelines line and excluded from findings). **Ready with an old oldest-age** means workers
   are not claiming.
 - **logs**: error/warn events per service versus the equal-length prior window, stack
   frames folded into their parent event, known boot noise counted apart, and **new log

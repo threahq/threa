@@ -57,6 +57,14 @@ export const KNOWN_LOG_NOISE: ReadonlyArray<{ pattern: RegExp; why: string }> = 
   { pattern: /Use `bun --trace-warnings/, why: "second line of the same node warning" },
 ]
 
+/**
+ * Outbox listener rows left behind by removed listeners. They never advance, so they are
+ * reported as decommissioned rather than as a stale worker. Drop an entry when its row goes.
+ */
+export const DECOMMISSIONED_LISTENERS: ReadonlyArray<{ id: string; why: string }> = [
+  { id: "naming", why: "superseded by dynamic-naming; listener removed in 191c49cc (#1807)" },
+]
+
 export const CREDENTIAL_KEYS = [
   "RAILWAY_READONLY_TOKEN",
   "DB_READ_PROXY_URL",

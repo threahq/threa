@@ -74,3 +74,14 @@ describe("evaluatePipelines", () => {
     ])
   })
 })
+
+test("a listener row left behind by a removed listener is reported as decommissioned, not as a stale worker", () => {
+  const report = {
+    ...base(),
+    outbox: {
+      head: 60000,
+      listeners: [listener({ listener_id: "naming", lag: 54628, last_processed_at: "2026-08-08T06:48:00Z" })],
+    },
+  }
+  expect(evaluatePipelines(report, now)).toEqual([])
+})

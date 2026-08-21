@@ -1,3 +1,4 @@
+import { DECOMMISSIONED_LISTENERS } from "./config"
 import type { Finding, Level } from "./types"
 import type { Snapshot } from "./snapshot"
 import type { RevisionReport } from "./probes/revision"
@@ -63,7 +64,16 @@ export function renderSnapshot(snapshot: Snapshot, opts: { top?: number } = {}):
     const pipelines = snapshot.pipelines
     const behind = pipelines.outbox.listeners.filter((listener) => listener.lag > 0)
     out.push(
-      `pipelines outbox head ${pipelines.outbox.head}, ${pipelines.outbox.listeners.length} listeners, ${behind.length ? behind.map((listener) => `${listener.listener_id} lag ${listener.lag}`).join(", ") : "all caught up"}; dead letters ${pipelines.deadLetters.since} (prior ${pipelines.deadLetters.prior})`
+      `pipelines outbox head ${pipelines.outbox.head}, ${pipelines.outbox.listeners.length} listeners, ${
+        behind.length
+          ? behind
+              .map((listener) => {
+                const retired = DECOMMISSIONED_LISTENERS.find((entry) => entry.id === listener.listener_id)
+                return `${listener.listener_id} lag ${listener.lag}${retired ? ` (decommissioned: ${retired.why})` : ""}`
+              })
+              .join(", ")
+          : "all caught up"
+      }; dead letters ${pipelines.deadLetters.since} (prior ${pipelines.deadLetters.prior})`
     )
     const busy = pipelines.queues.filter((queue) => queue.running || queue.ready || queue.dlq_since || queue.done_since)
     for (const queue of busy) {
