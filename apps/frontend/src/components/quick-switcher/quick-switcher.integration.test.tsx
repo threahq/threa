@@ -1004,6 +1004,48 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(mockOpenStreamSettings).toHaveBeenCalledWith("stream_channel1")
     })
 
+    it("should offer 'Open an aside here' on a host stream and hand the stream to the layout's opener", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      const openAside = vi.fn(async () => {})
+      renderWithProviders(
+        <QuickSwitcher
+          {...defaultProps}
+          initialMode="command"
+          currentStreamId="stream_channel1"
+          openAside={openAside}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText("Open an aside here")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("Open an aside here"))
+
+      expect(openAside).toHaveBeenCalledWith("stream_channel1")
+      expect(defaultProps.onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    it("should hide 'Open an aside here' on an E2E host and without an opener", async () => {
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({ id: "stream_sealed", type: "scratchpad", displayName: "Sealed", e2eEnabled: true }),
+      ]
+      const { unmount } = renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_sealed" openAside={vi.fn()} />
+      )
+      await waitFor(() => {
+        expect(screen.getByText("Open stream settings")).toBeInTheDocument()
+      })
+      expect(screen.queryByText("Open an aside here")).toBeNull()
+      unmount()
+
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
+      await waitFor(() => {
+        expect(screen.getByText("Open stream settings")).toBeInTheDocument()
+      })
+      expect(screen.queryByText("Open an aside here")).toBeNull()
+    })
+
     it("should confirm before archiving, and only archive after confirmation", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
       renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
