@@ -701,10 +701,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   useEffect(() => {
     if (!isOpen) return
     function onKeyDown(e: KeyboardEvent) {
-      // A dialog stacked over the gallery (the code viewer opened from a
-      // markdown slide) owns its own keys; arrows there must not flip slides.
-      const dialog = e.target instanceof Element ? e.target.closest('[role="dialog"]') : null
-      if (dialog && !dialog.hasAttribute("data-media-gallery")) return
+      // A dialog or menu stacked over the gallery (the code viewer opened from
+      // a markdown slide, the download menu) owns its own keys; arrows there
+      // must not flip slides.
+      const owner = e.target instanceof Element ? e.target.closest('[role="dialog"],[role="menu"]') : null
+      if (owner && !owner.hasAttribute("data-media-gallery")) return
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault()
         goTo(currentIndex - 1)

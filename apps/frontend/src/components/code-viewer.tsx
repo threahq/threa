@@ -82,7 +82,7 @@ export function CodeViewer({ item, onClose }: CodeViewerProps) {
             type="button"
             variant="ghost"
             size="icon"
-            className="h-10 w-10"
+            className={cn("h-10 w-10", wrap === "wrap" && "bg-accent text-accent-foreground")}
             aria-pressed={wrap === "wrap"}
             onClick={() => setWrap((mode) => (mode === "wrap" ? "scroll" : "wrap"))}
           >
@@ -94,13 +94,14 @@ export function CodeViewer({ item, onClose }: CodeViewerProps) {
             variant="ghost"
             size="icon"
             className={cn("h-10 w-10", copied && "text-green-600 dark:text-green-400")}
-            onClick={() => {
-              // A denied clipboard write has nothing actionable for the user;
-              // same posture as the inline block and the gallery.
-              navigator.clipboard.writeText(code).then(
-                () => setCopied(true),
-                () => {}
-              )
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(code)
+                setCopied(true)
+              } catch {
+                // A denied or unavailable clipboard has nothing actionable for
+                // the user; same posture as the inline block and the gallery.
+              }
             }}
           >
             {copied ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
@@ -115,6 +116,9 @@ export function CodeViewer({ item, onClose }: CodeViewerProps) {
         <div
           data-native-context="true"
           data-wrap={wrap}
+          tabIndex={0}
+          role="region"
+          aria-label={`${label} code`}
           className={cn(
             "min-h-0 flex-1 overflow-auto overscroll-contain select-text [-webkit-touch-callout:default]",
             "[&>pre]:m-0 [&>pre]:p-4 [&>pre]:font-mono [&>pre]:text-sm [&>pre]:leading-relaxed [&>pre]:bg-transparent",
