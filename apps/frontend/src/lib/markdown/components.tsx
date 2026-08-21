@@ -388,7 +388,9 @@ export const markdownComponents: Components = {
       | { props?: { className?: string; children?: ReactNode } }
       | undefined
     const className = inner?.props?.className ?? ""
-    const language = /language-([\w-]+)/.exec(className)?.[1] ?? "text"
+    // \S+ so info words with symbols (c#, c++) reach the registry intact;
+    // className is space-joined, so the capture stops at the next class.
+    const language = /language-(\S+)/.exec(className)?.[1] ?? "text"
     return <CodeBlock language={language}>{codeText(inner?.props?.children)}</CodeBlock>
   },
 
