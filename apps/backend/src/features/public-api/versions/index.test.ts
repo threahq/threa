@@ -268,8 +268,7 @@ describe("VERSION_CHANGES: the 2026-07-24 slots change", () => {
     "updateMessage",
   ]
 
-  test("is the current version, ascending, and scopes exactly the seven message-rendering operations", () => {
-    expect(CURRENT_API_VERSION).toBe("2026-07-24")
+  test("is ascending and scopes exactly the seven message-rendering operations", () => {
     expect(() => assertChangesAscending(VERSION_CHANGES)).not.toThrow()
     expect([...slotsChange.operations].sort()).toEqual(SEVEN)
   })
@@ -372,5 +371,92 @@ describe("VERSION_CHANGES: the 2026-07-24 slots change", () => {
         .anchorId
     ).toBeUndefined()
     expect(out.info.version).toBe("2026-07-12")
+  })
+})
+
+describe("VERSION_CHANGES: the 2026-08-21 pinned-reference change", () => {
+  const pinChange = VERSION_CHANGES.find((c) => c.version === "2026-08-21")!
+  const ok = (messageId: string, version: number, range: { from: number; to: number } | null) => ({
+    type: "sharedMessage",
+    state: "ok",
+    messageId,
+    content: range ? "span" : `whole v${version}`,
+    version,
+    currentRevision: 3,
+    range,
+  })
+
+  test("is the current version and scopes the same seven operations as the slots change", () => {
+    expect(CURRENT_API_VERSION).toBe("2026-08-21")
+    expect([...pinChange.operations].sort()).toEqual(
+      [...VERSION_CHANGES.find((c) => c.version === "2026-07-24")!.operations].sort()
+    )
+  })
+
+  test("downgradeResponse collapses reference keys onto one legacy key per source without the pin fields", () => {
+    const payload = {
+      data: [],
+      slots: {
+        "shared:msg_a@2:1-4": ok("msg_a", 2, { from: 1, to: 4 }),
+        "shared:msg_a@1": ok("msg_a", 1, null),
+        "shared:msg_a@3": ok("msg_a", 3, null),
+        "shared:msg_b": {
+          type: "sharedMessage",
+          state: "deleted",
+          messageId: "msg_b",
+          deletedAt: "2026-08-21T00:00:00.000Z",
+        },
+      },
+    }
+    expect(pinChange.downgradeResponse!(payload, { operationId: "listMessages" })).toEqual({
+      data: [],
+      slots: {
+        "shared:msg_a": { type: "sharedMessage", state: "ok", messageId: "msg_a", content: "whole v3" },
+        "shared:msg_b": {
+          type: "sharedMessage",
+          state: "deleted",
+          messageId: "msg_b",
+          deletedAt: "2026-08-21T00:00:00.000Z",
+        },
+      },
+    })
+  })
+
+  test("downgradeResponse leaves other operations and slot-less payloads alone", () => {
+    const stream = { data: { id: "stream_1" }, slots: { "shared:x@1": {} } }
+    expect(pinChange.downgradeResponse!(stream, { operationId: "getStream" })).toBe(stream)
+    const noSlots = { data: [] }
+    expect(pinChange.downgradeResponse!(noSlots, { operationId: "listMessages" })).toBe(noSlots)
+  })
+
+  test("downgradeSpec drops the pin fields from the ok slot schema and restores the legacy map description", () => {
+    const spec = {
+      components: {
+        schemas: {
+          Slot: {
+            type: "object",
+            properties: { content: { type: "string" }, version: {}, currentRevision: {}, range: {} },
+            required: ["content", "version", "currentRevision", "range"],
+          },
+          SlotMap: {
+            type: "object",
+            description:
+              "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: …",
+          },
+        },
+      },
+    }
+    expect(pinChange.downgradeSpec!(spec)).toEqual({
+      components: {
+        schemas: {
+          Slot: { type: "object", properties: { content: { type: "string" } }, required: ["content"] },
+          SlotMap: {
+            type: "object",
+            description:
+              "Hydration for cross-stream shared-message pointers in the returned messages, keyed by `shared:<messageId>`. Always present; empty when no message references a shared source.",
+          },
+        },
+      },
+    })
   })
 })

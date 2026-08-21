@@ -98,6 +98,65 @@ function stripSlotsFromSpec(node: unknown): unknown {
 }
 
 /** Ascending by version. Startup assertion enforces ordering + known dates. */
+const LEGACY_SLOT_KEY_PREFIX = "shared:"
+const LEGACY_SLOTS_DESCRIPTION =
+  "Hydration for cross-stream shared-message pointers in the returned messages, keyed by `shared:<messageId>`. Always present; empty when no message references a shared source."
+const PINNED_SLOT_FIELDS = ["version", "currentRevision", "range"]
+
+type LegacySlot = Record<string, unknown> & { messageId?: unknown; state?: unknown; version?: unknown; range?: unknown }
+
+function legacySlotPreference(slot: LegacySlot): number {
+  if (slot.state !== "ok") return -1
+  const version = typeof slot.version === "number" ? slot.version : 0
+  return (slot.range == null ? 1_000_000 : 0) + version
+}
+
+/**
+ * Pins before 2026-08-21 know one key per source (`shared:<messageId>`) and
+ * no pin fields. Collapse the reference-keyed map onto that key — the
+ * unranged slot at the highest version wins — and drop the pin fields.
+ */
+function downgradeSlotsToLegacyKeys(slots: Record<string, unknown>): Record<string, unknown> {
+  const legacy: Record<string, LegacySlot> = {}
+  for (const value of Object.values(slots)) {
+    if (!value || typeof value !== "object") continue
+    const slot = value as LegacySlot
+    if (typeof slot.messageId !== "string") continue
+    const key = `${LEGACY_SLOT_KEY_PREFIX}${slot.messageId}`
+    const existing = legacy[key]
+    if (!existing || legacySlotPreference(slot) > legacySlotPreference(existing)) legacy[key] = slot
+  }
+  return Object.fromEntries(
+    Object.entries(legacy).map(([key, slot]) => [
+      key,
+      Object.fromEntries(Object.entries(slot).filter(([field]) => !PINNED_SLOT_FIELDS.includes(field))),
+    ])
+  )
+}
+
+function stripPinFieldsFromSpec(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripPinFieldsFromSpec)
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(obj)) out[key] = stripPinFieldsFromSpec(value)
+    const props = out.properties as Record<string, unknown> | undefined
+    if (props && "currentRevision" in props && "content" in props) {
+      out.properties = Object.fromEntries(
+        Object.entries(props).filter(([field]) => !PINNED_SLOT_FIELDS.includes(field))
+      )
+      if (Array.isArray(out.required)) {
+        out.required = out.required.filter((entry: unknown) => !PINNED_SLOT_FIELDS.includes(entry as string))
+      }
+    }
+    if (typeof out.description === "string" && out.description.startsWith("Hydration for shared-message pointers")) {
+      out.description = LEGACY_SLOTS_DESCRIPTION
+    }
+    return out
+  }
+  return node
+}
+
 export const VERSION_CHANGES: VersionChange[] = [
   {
     version: "2026-07-22",
@@ -133,6 +192,20 @@ export const VERSION_CHANGES: VersionChange[] = [
       return rest
     },
     downgradeSpec: (spec) => stripSlotsFromSpec(spec) as OpenApiSpec,
+  },
+  {
+    version: "2026-08-21",
+    description:
+      "Shared-message and quote references pin a source revision and optional span. `slots` keys carry the reference (`shared:<messageId>[@<version>[:<from>-<to>]]`), `ok` slots gain `version`, `currentRevision` and `range`, and `content` is the pinned revision or span. Pins before this version get one `shared:<messageId>` key per source (the unranged slot at the highest version) without the pin fields.",
+    operations: SLOT_MAP_OPERATIONS,
+    downgradeResponse: (payload, context) => {
+      if (!SLOT_MAP_OPERATIONS.has(context.operationId)) return payload
+      if (payload === null || typeof payload !== "object") return payload
+      const envelope = payload as Record<string, unknown>
+      if (!envelope.slots || typeof envelope.slots !== "object") return payload
+      return { ...envelope, slots: downgradeSlotsToLegacyKeys(envelope.slots as Record<string, unknown>) }
+    },
+    downgradeSpec: (spec) => stripPinFieldsFromSpec(spec) as OpenApiSpec,
   },
 ]
 

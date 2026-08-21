@@ -120,7 +120,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
+                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -156,7 +156,8 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                }
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
                               }
                             },
                             "required": [
@@ -3025,7 +3026,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
+                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -3061,7 +3062,8 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                }
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
                               }
                             },
                             "required": [
@@ -4775,7 +4777,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
+                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -4811,7 +4813,8 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                }
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
                               }
                             },
                             "required": [
@@ -5084,7 +5087,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
+                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -5120,7 +5123,8 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                }
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
                               }
                             },
                             "required": [
@@ -5612,7 +5616,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
+                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -5648,7 +5652,8 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                }
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
                               }
                             },
                             "required": [
@@ -5909,7 +5914,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
+                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -5945,7 +5950,8 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                }
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
                               }
                             },
                             "required": [
@@ -6184,7 +6190,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "Source message content as markdown. The canonical rich-text JSON stays internal."
+                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
                               },
                               "editedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
@@ -6220,7 +6226,8 @@
                                   },
                                   "required": ["id", "filename", "mimeType", "sizeBytes"],
                                   "additionalProperties": false
-                                }
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
                               }
                             },
                             "required": [
@@ -7406,7 +7413,7 @@
         "name": "Threa-Version",
         "in": "header",
         "required": false,
-        "schema": { "type": "string", "enum": ["2026-07-12", "2026-07-22", "2026-07-24"] },
+        "schema": { "type": "string", "enum": ["2026-07-12", "2026-07-22", "2026-07-24", "2026-08-21"] },
         "description": "Selects the dated API version for this request. Each API key is pinned to a version when it is minted, and that pin applies when the header is absent. Send this header to override the pin per request (a valid header always wins). The value must be an exact member of the enum; an unknown or malformed value returns 400 with code INVALID_API_VERSION and the known versions in the error. Every response that resolved a version echoes it in a Threa-Version response header."
       }
     },
