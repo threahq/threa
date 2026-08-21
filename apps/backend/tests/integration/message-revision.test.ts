@@ -15,7 +15,7 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { EventService, MessageRepository, MessageVersionRepository } from "../../src/features/messaging"
 import type { MessageCreatedPayload, MessageEditedPayload } from "../../src/features/messaging"
-import { userId, workspaceId, streamId } from "../../src/lib/id"
+import { userId, workspaceId, streamId, messageVersionId } from "../../src/lib/id"
 
 const MIGRATION_PATH = resolve(import.meta.dir, "../../src/db/migrations/20260821120000_messages_revision.sql")
 
@@ -121,6 +121,46 @@ describe("message revision", () => {
     )?.payload as MessageCreatedPayload
     expect(created.revision).toBe(3)
     expect(created.contentMarkdown).toBe("v3 body")
+  })
+
+  test("heals after a pre-column writer snapshotted a version without bumping revision", async () => {
+    const message = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: channel,
+      authorId: testUserId,
+      authorType: "user",
+      ...testMessageContent("v1 body"),
+    })
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: message.id,
+      streamId: channel,
+      actorId: testUserId,
+      ...testMessageContent("v2 body"),
+    })
+
+    // An old-code replica during the rollout: it inserts MAX+1 and rewrites the
+    // body without touching `revision`.
+    await pool.query(
+      `INSERT INTO message_versions (id, message_id, version_number, content_json, content_markdown, edited_by)
+       SELECT $1, $2, COALESCE(MAX(version_number), 0) + 1, '{"type":"doc"}', 'v2 body', $3
+       FROM message_versions WHERE message_id = $2`,
+      [messageVersionId(), message.id, testUserId]
+    )
+    await pool.query(`UPDATE messages SET content_markdown = 'v3 body (old writer)' WHERE id = $1`, [message.id])
+    expect((await MessageRepository.findById(pool, message.id))?.revision).toBe(2)
+
+    await eventService.editMessageInternal({
+      workspaceId: testWorkspaceId,
+      messageId: message.id,
+      streamId: channel,
+      actorId: testUserId,
+      ...testMessageContent("v4 body"),
+    })
+
+    const versions = await MessageVersionRepository.listByMessageId(pool, message.id)
+    expect(versions.map((v) => v.versionNumber)).toEqual([1, 2, 3])
+    expect((await MessageRepository.findById(pool, message.id))?.revision).toBe(4)
   })
 
   test("getCurrentRevision is null for a message that does not exist", async () => {

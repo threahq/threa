@@ -51,7 +51,10 @@ export const MessageVersionRepository = {
       VALUES (
         ${params.id},
         ${params.messageId},
-        ${params.versionNumber},
+        GREATEST(
+          ${params.versionNumber},
+          COALESCE((SELECT MAX(version_number) FROM message_versions WHERE message_id = ${params.messageId}), 0) + 1
+        ),
         ${JSON.stringify(params.contentJson)},
         ${params.contentMarkdown},
         ${params.editedBy}

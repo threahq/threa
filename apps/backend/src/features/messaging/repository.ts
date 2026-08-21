@@ -681,7 +681,10 @@ export const MessageRepository = {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
       SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown}, edited_at = NOW(),
-          revision = revision + 1
+          revision = GREATEST(
+            revision + 1,
+            (SELECT COALESCE(MAX(version_number), 0) + 1 FROM message_versions WHERE message_id = messages.id)
+          )
       WHERE id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
