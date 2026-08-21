@@ -7,7 +7,9 @@ import * as path from "path"
 const POSTGRES_HOST = "localhost"
 const POSTGRES_PORT = 5454
 const MINIO_HOST = "localhost"
-const MINIO_PORT = 9000
+// Host-side port; docker-compose maps it to MinIO's own 9000 inside the container,
+// which is what the `docker exec mc` calls below address.
+const MINIO_PORT = 9099
 const MINIO_BUCKET = "threa-uploads"
 
 function loadEnvFile(filePath: string): Record<string, string> {
@@ -428,7 +430,10 @@ async function main() {
 
   if (remoteMode) {
     console.log("Building frontend for reliable Tailscale delivery...")
-    const build = await $`bun run --cwd apps/frontend build`.nothrow()
+    // Force a production build: Bun auto-loads .env, and a dev NODE_ENV there
+    // leaves the bundle unminified, which pushes the entry chunk past
+    // vite-plugin-pwa's 2 MiB precache cap and fails the build.
+    const build = await $`bun run --cwd apps/frontend build`.env({ ...process.env, NODE_ENV: "production" }).nothrow()
     if (build.exitCode !== 0) {
       console.error("Frontend build failed")
       process.exit(build.exitCode)
