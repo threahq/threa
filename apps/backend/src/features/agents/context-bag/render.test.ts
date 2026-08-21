@@ -138,6 +138,79 @@ describe("renderDelta", () => {
   })
 })
 
+describe("renderStable with a viewport span", () => {
+  const items = [
+    item({ messageId: "msg_a" }),
+    item({ messageId: "msg_b" }),
+    item({ messageId: "msg_c", contentMarkdown: "seen one" }),
+    item({ messageId: "msg_d", contentMarkdown: "seen two" }),
+    item({ messageId: "msg_e" }),
+  ]
+
+  test("splits the window around the visible span and marks each visible message", () => {
+    const out = renderStable({
+      preamble: "",
+      inlineItems: items,
+      refLabel: "viewport:stream_x",
+      visibleMessageIds: ["msg_c", "msg_d"],
+    })
+    const [before, span, after] = out.split(/\n\n(?=Messages before|On screen|Messages after)/).slice(1)
+    expect(before).toContain("Messages before what was on screen (2, chronological):")
+    expect(before).toContain("- [msg_a]")
+    expect(before).toContain("- [msg_b]")
+    expect(span).toContain(
+      "On screen when the aside was opened (2 visible, chronological; `►` marks a visible message):"
+    )
+    expect(span).toContain("► [msg_c]")
+    expect(span).toContain("► [msg_d]")
+    expect(after).toContain("Messages after what was on screen (1, chronological):")
+    expect(after).toContain("- [msg_e]")
+    expect(out).not.toContain("Messages (chronological)")
+  })
+
+  test("a non-visible message inside the span stays unmarked", () => {
+    const out = renderStable({
+      preamble: "",
+      inlineItems: items,
+      refLabel: "viewport:stream_x",
+      visibleMessageIds: ["msg_b", "msg_d"],
+    })
+    expect(out).toContain("(2 visible")
+    expect(out).toContain("► [msg_b]")
+    expect(out).toContain("- [msg_c]")
+    expect(out).toContain("► [msg_d]")
+  })
+
+  test("omits the before/after sections when the span reaches the window edges", () => {
+    const out = renderStable({
+      preamble: "",
+      inlineItems: items,
+      refLabel: "viewport:stream_x",
+      visibleMessageIds: items.map((i) => i.messageId),
+    })
+    expect(out).not.toContain("Messages before what was on screen")
+    expect(out).not.toContain("Messages after what was on screen")
+    expect(out).toContain("(5 visible")
+  })
+
+  test("falls back to the plain list when none of the visible ids are in the window", () => {
+    const out = renderStable({
+      preamble: "",
+      inlineItems: items,
+      refLabel: "viewport:stream_x",
+      visibleMessageIds: ["msg_phantom"],
+    })
+    expect(out).toContain("Messages (chronological)")
+    expect(out).not.toContain("On screen when the aside was opened")
+  })
+
+  test("is byte-identical across renders of the same span (cache-prefix stability)", () => {
+    const render = () =>
+      renderStable({ preamble: "p", inlineItems: items, refLabel: "viewport:stream_x", visibleMessageIds: ["msg_c"] })
+    expect(render()).toBe(render())
+  })
+})
+
 describe("buildSnapshot", () => {
   test("captures inputs verbatim and derives tail from the trailing item", () => {
     const inputs = [input({ messageId: "msg_a" }), input({ messageId: "msg_b" })]

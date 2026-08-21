@@ -23,6 +23,10 @@ describe("formatContextRefLabel", () => {
     expect(formatContextRefLabel({ itemCount: 5 })).toBe("5 messages in this thread")
   })
 
+  it("labels a viewport ref by what was on screen, never by the expanded count", () => {
+    expect(formatContextRefLabel({ kind: "viewport", slug: "intro", itemCount: 80 })).toBe("What you saw in #intro")
+  })
+
   it("renders anchored slices with a 'Slice of …' framing", () => {
     expect(formatContextRefLabel({ slug: "intro", itemCount: 12, fromMessageId: "msg_1" })).toBe("Slice of #intro")
     expect(formatContextRefLabel({ slug: "intro", toMessageId: "msg_5" })).toBe("Slice of #intro")

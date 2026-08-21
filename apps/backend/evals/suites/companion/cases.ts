@@ -39,6 +39,17 @@ export interface CompanionInput {
   }
   /** Name of the user sending the message */
   userName?: string
+  /**
+   * For `streamType: "aside"`: the host stream the aside is anchored to, seeded
+   * as its own stream with this history, plus a viewport context bag on the
+   * aside covering `visibleIndices` of that history (every row when omitted) —
+   * the snapshot an aside is created with in production.
+   */
+  asideHost?: {
+    name?: string
+    conversationHistory: Array<{ role: "user" | "assistant"; content: string; createdAt?: string }>
+    visibleIndices?: number[]
+  }
 }
 
 /**
@@ -723,6 +734,42 @@ const consistencyCases: EvalCase<CompanionInput, CompanionExpected>[] = [
 // Export all cases
 // =============================================================================
 
+// =============================================================================
+// Aside Cases (viewport snapshot grounding)
+// =============================================================================
+
+const asideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
+  createCase(
+    "viewport-001",
+    "Aside: answers from the host messages that were on screen",
+    {
+      message: "What was the corrected churn figure they mentioned?",
+      streamType: "aside",
+      trigger: "companion",
+      asideHost: {
+        name: "pipeline-review",
+        conversationHistory: [
+          {
+            role: "user",
+            content:
+              "Heads up: the Q3 churn number in the board deck is 4.2%, not 3.8%. Dana recomputed it this morning.",
+          },
+          { role: "user", content: "Can someone sanity-check the slide before the 3pm call?" },
+        ],
+      },
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldContain: ["4.2"],
+        shouldNotContain: ["get_stream_messages"],
+      },
+      reason:
+        "The viewport snapshot grounds the aside in what the user was reading; the agent answers from it without asking for a paste or leaking tool names",
+    }
+  ),
+]
+
 export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...scratchpadCases,
   ...temporalGroundingCases,
@@ -732,6 +779,7 @@ export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...workspaceMemoryCases,
   ...edgeCases,
   ...consistencyCases,
+  ...asideCases,
 ]
 
 // Export case subsets for targeted testing
