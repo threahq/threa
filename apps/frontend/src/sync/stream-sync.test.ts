@@ -5067,3 +5067,76 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
     cleanup()
   })
 })
+
+describe("registerStreamSocketHandlers — stream:created never treats an aside as the anchor's thread", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+  })
+
+  it("writes no threadId for an aside anchored on a message, while a thread still claims it", async () => {
+    const hostId = "stream_host_aside_gate"
+    await db.events.put({
+      ...makeEvent({ id: "evt_anchor", streamId: hostId, sequence: "1", payload: { messageId: "msg_anchor" } }),
+      workspaceId: "ws_1",
+      _sequenceNum: 1,
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", hostId, queryClient)
+    const anchored = (id: string, type: "aside" | "thread"): Stream => ({
+      id,
+      workspaceId: "ws_1",
+      type,
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: hostId,
+      parentAnchorId: "msg_anchor",
+      rootStreamId: type === "thread" ? hostId : null,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "user_1",
+      createdAt: "2026-08-20T10:00:00.000Z",
+      updatedAt: "2026-08-20T10:00:00.000Z",
+      archivedAt: null,
+    })
+
+    await emit("stream:created", { workspaceId: "ws_1", streamId: hostId, stream: anchored("stream_aside_1", "aside") })
+    expect((await db.events.get("evt_anchor"))?.payload).not.toHaveProperty("threadId")
+    expect(await db.streams.get("stream_aside_1")).toBeUndefined()
+
+    await emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: hostId,
+      stream: anchored("stream_thread_1", "thread"),
+    })
+    expect((await db.events.get("evt_anchor"))?.payload).toMatchObject({ threadId: "stream_thread_1" })
+
+    cleanup()
+  })
+})

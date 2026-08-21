@@ -1226,3 +1226,87 @@ describe("injectDayDividers", () => {
     expect(timelineItemEqual(dividerA, dividerB)).toBe(true)
   })
 })
+
+describe("aside anchor rows", () => {
+  function message(id: string, sequence: string, messageId: string): StreamEvent {
+    return {
+      ...createEvent({ id, sequence, eventType: "message_created", payload: { messageId, contentMarkdown: "x" } }),
+      actorId: "user_me",
+      actorType: "user",
+    }
+  }
+  function asideRow(id: string, sequence: string, anchorId: string | null, actorId = "user_me"): StreamEvent {
+    return {
+      ...createEvent({ id, sequence, eventType: "aside:anchored", payload: { asideId: `stream_${id}`, anchorId } }),
+      actorId,
+      actorType: "user",
+    }
+  }
+  const ids = (items: TimelineItem[]) => items.map((item) => (item.type === "event" ? item.event.id : item.type))
+
+  it("keeps the creator's anchor row and drops another actor's (author-scoped like commands)", () => {
+    const events = [message("evt_m1", "1", "msg_1"), asideRow("evt_aside", "2", "msg_1")]
+    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1", "evt_aside"])
+    expect(ids(groupTimelineItems(events, "user_other"))).toEqual(["evt_m1"])
+  })
+
+  it("places the row directly after its anchor message when the anchor is in the window", () => {
+    const events = [
+      message("evt_m1", "1", "msg_1"),
+      message("evt_m2", "2", "msg_2"),
+      asideRow("evt_aside", "3", "msg_1"),
+    ]
+    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1", "evt_aside", "evt_m2"])
+  })
+
+  it("places a card-anchored row after the card (anchor by event id)", () => {
+    const card = createEvent({
+      id: "evt_call",
+      sequence: "1",
+      eventType: "call_started",
+      payload: { callId: "call_1", mode: "audio_only", startedBy: "user_me", startedAt: "2026-02-19T00:00:00.000Z" },
+    })
+    const events = [card, message("evt_m2", "2", "msg_2"), asideRow("evt_aside", "3", "evt_call")]
+    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_call", "evt_aside", "evt_m2"])
+  })
+
+  it("keeps creation position when the anchor is outside the window, or when there is no anchor", () => {
+    const base = [message("evt_m1", "1", "msg_1"), message("evt_m2", "2", "msg_2")]
+    expect(ids(groupTimelineItems([...base, asideRow("evt_aside", "3", "msg_older")], "user_me"))).toEqual([
+      "evt_m1",
+      "evt_m2",
+      "evt_aside",
+    ])
+    expect(ids(groupTimelineItems([...base, asideRow("evt_aside", "3", null)], "user_me"))).toEqual([
+      "evt_m1",
+      "evt_m2",
+      "evt_aside",
+    ])
+  })
+
+  it("keeps creation order for several asides on one anchor", () => {
+    const events = [
+      message("evt_m1", "1", "msg_1"),
+      message("evt_m2", "2", "msg_2"),
+      asideRow("evt_a1", "3", "msg_1"),
+      asideRow("evt_a2", "4", "msg_1"),
+    ]
+    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1", "evt_a1", "evt_a2", "evt_m2"])
+  })
+
+  it("does not break a same-author run (the creator's layout matches everyone else's)", () => {
+    const events = [
+      message("evt_m1", "1", "msg_1"),
+      message("evt_m2", "2", "msg_2"),
+      asideRow("evt_aside", "3", "msg_1"),
+    ]
+    const items = annotateAuthorGroups(groupTimelineItems(events, "user_me"))
+    expect(
+      items.map((item) => (item.type === "event" ? [item.event.id, item.groupContinuation ?? false] : []))
+    ).toEqual([
+      ["evt_m1", false],
+      ["evt_aside", false],
+      ["evt_m2", true],
+    ])
+  })
+})

@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
+import { StreamTypes } from "@threa/types"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { useLastLocation, usePersistLastLocation, resetColdLaunchForTests } from "./use-last-location"
@@ -71,6 +72,14 @@ describe("useLastLocation — stream arm", () => {
     setup({ streams: [archived] })
     const { result } = renderHook(() => useLastLocation(WS))
     expect(result.current).toMatchObject({ redirectStreamId: null, shouldOpenSidebar: true })
+  })
+
+  it("never lands in an aside, even when it is the most recent stream or the stored pointer", () => {
+    const aside = { ...stream("stream_aside", "2026-04-01T00:00:00.000Z"), type: StreamTypes.ASIDE } as CachedStream
+    setup({ streams: [aside, stream("stream_active", "2026-01-01T00:00:00.000Z")] })
+    expect(renderHook(() => useLastLocation(WS)).result.current.redirectStreamId).toBe("stream_active")
+    setLastLocation(USER, WS, { surface: "stream", streamId: "stream_aside", board: null })
+    expect(renderHook(() => useLastLocation(WS)).result.current.redirectStreamId).toBe("stream_active")
   })
 
   it("still honors a stored pointer to a stream archived since the last visit", () => {

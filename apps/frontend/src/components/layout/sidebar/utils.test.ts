@@ -229,6 +229,11 @@ describe("isSidebarStreamVisible", () => {
     expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds)).toBe(true)
   })
 
+  it("hides an aside even though the viewer is its only member (anchor rows are its listing)", () => {
+    const aside = makeStream({ id: "stream_aside", type: StreamTypes.ASIDE, visibility: Visibilities.PRIVATE })
+    expect(isSidebarStreamVisible(aside, memberStreamIds, archivedStreamIds)).toBe(false)
+  })
+
   it("shows a public stream the viewer is a member of", () => {
     const stream = makeStream({ id: "stream_member", visibility: Visibilities.PUBLIC })
     expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(true)
