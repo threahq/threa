@@ -47,9 +47,9 @@ function buildCanonicalMarkdown(refs: { streamId: string; messageId: string; aut
     "",
     "> reply snippet",
     ">",
-    `> — [Alice](quote:${refs.streamId}/${refs.messageId}/${refs.authorId}/user?v=1)`,
+    `> — [Alice](quote:${refs.streamId}/${refs.messageId}/${refs.authorId}/user)`,
     "",
-    `Shared a message from [Alice](shared-message:${refs.streamId}/${refs.messageId}?v=1)`,
+    `Shared a message from [Alice](shared-message:${refs.streamId}/${refs.messageId})`,
     "",
     "tail paragraph",
   ].join("\n")
@@ -175,9 +175,11 @@ test.use({ permissions: ["clipboard-read", "clipboard-write"] })
 
 test.describe("Composer copy/paste roundtrip", () => {
   let canonicalMarkdown: string
+  let authorName: string
 
   test.beforeEach(async ({ page }) => {
-    await loginAndCreateWorkspace(page, "copy-roundtrip")
+    const { name } = await loginAndCreateWorkspace(page, "copy-roundtrip")
+    authorName = name
     const workspaceId = page.url().match(/\/w\/([^/]+)/)?.[1] ?? ""
     expect(workspaceId).not.toBe("")
     const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
@@ -221,11 +223,17 @@ test.describe("Composer copy/paste roundtrip", () => {
     await expectEditorHasAllStyles(page)
     await sendComposerContent(page)
 
-    // The send pipeline converts the pasted 🎉 into an emoji atom, whose wire
-    // form is the shortcode — the one legitimate normalization in the cycle.
-    // Everything else must come back byte-identical, and the shortcode form
-    // is itself a fixed point (the second cycle returns it unchanged).
-    const expectedSentMarkdown = canonicalMarkdown.replace("🎉", ":tada:")
+    // Three normalizations the send pipeline is allowed to make, and nothing
+    // else: the pasted 🎉 becomes an emoji atom whose wire form is the
+    // shortcode; both pointers come back pinned to the source's revision; and
+    // the quote's attribution is re-derived from the author id, so a pasted
+    // name is replaced by the real one. All three are fixed points — the
+    // second cycle returns this string unchanged.
+    const expectedSentMarkdown = canonicalMarkdown
+      .replace("🎉", ":tada:")
+      .replace(/\(quote:([^)]*)\)/, "(quote:$1?v=1)")
+      .replace(/\(shared-message:([^)]*)\)/, "(shared-message:$1?v=1)")
+      .replace("> — [Alice](quote:", `> — [${authorName}](quote:`)
 
     const firstRow = sentMessageRows(page).first()
     await expect(firstRow).toBeVisible({ timeout: 10000 })
