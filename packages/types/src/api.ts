@@ -2030,6 +2030,23 @@ export interface CommandFailedPayload {
   error: string
 }
 
+/**
+ * Payload for `aside:anchored` timeline events: the creator-only row an aside
+ * leaves in its host stream, appended in the aside-creation transaction
+ * (INV-4). Author-scoped like command events — no broadcast slot (INV-61),
+ * never delivered to other members. Immutable by design: it names the aside
+ * and its anchor only; title and state are a client join against the aside
+ * stream row. `anchorId` is the host message/card it was opened from, or null
+ * for a composer/palette aside (the row then sits at creation position).
+ * `conversationId` is set when opened from a conversation surface so the
+ * board/panel projection places the row on that card.
+ */
+export interface AsideAnchoredEventPayload {
+  asideId: string
+  anchorId: string | null
+  conversationId?: string
+}
+
 export interface AIUsageSummary {
   totalCostUsd: number
   promptTokens: number

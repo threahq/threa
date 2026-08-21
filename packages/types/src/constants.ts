@@ -179,12 +179,23 @@ export const EVENT_TYPES = [
   "bot_access:status_changed",
   "call_started",
   "call_ended",
+  "aside:anchored",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
 // Command event types (subset of EVENT_TYPES for command lifecycle)
 export const COMMAND_EVENT_TYPES = ["command_dispatched", "command_completed", "command_failed"] as const
 export type CommandEventType = (typeof COMMAND_EVENT_TYPES)[number]
+
+/**
+ * Author-scoped event types (subset of EVENT_TYPES): persisted rows only their
+ * actor may ever read. The repo's viewer filter hides other actors' rows from
+ * fetch and catch-up, and every client surface re-applies the actor rule
+ * (`isOwnCommandEvent`). Command lifecycle plus the aside anchor row — a
+ * private aside's one visible trace in its host stream.
+ */
+export const AUTHOR_SCOPED_EVENT_TYPES = [...COMMAND_EVENT_TYPES, "aside:anchored"] as const
+export type AuthorScopedEventType = (typeof AUTHOR_SCOPED_EVENT_TYPES)[number]
 
 /**
  * Timeline broadcast event types (subset of EVENT_TYPES): events that every

@@ -2,7 +2,7 @@ import type { Querier } from "../../db"
 import { sql } from "../../db"
 import {
   AGENT_SESSION_EVENT_TYPES,
-  COMMAND_EVENT_TYPES,
+  AUTHOR_SCOPED_EVENT_TYPES,
   isTimelineBroadcastEventType,
   type AgentSessionRerunContext,
   type AuthorType,
@@ -240,8 +240,9 @@ export const StreamEventRepository = {
     const afterSequence = filters?.afterSequence
     const beforeSequence = filters?.beforeSequence
 
-    // Command events are author-only: when viewerId is set, hide other users'
-    // command events. Without viewerId, all events return (internal callers).
+    // Author-scoped events (command lifecycle, aside anchors) are actor-only:
+    // when viewerId is set, hide other actors' rows. Without viewerId, all
+    // events return (internal callers).
     const conditions: string[] = ["stream_id = $1"]
     const params: unknown[] = [streamId]
     let paramIndex = 2
@@ -266,7 +267,7 @@ export const StreamEventRepository = {
 
     if (viewerId) {
       conditions.push(`(event_type != ALL($${paramIndex}) OR actor_id = $${paramIndex + 1})`)
-      params.push(COMMAND_EVENT_TYPES)
+      params.push(AUTHOR_SCOPED_EVENT_TYPES)
       params.push(viewerId)
       paramIndex += 2
     }

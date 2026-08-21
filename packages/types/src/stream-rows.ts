@@ -306,6 +306,23 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   // A patch carrying the end summary onto the matching `call_started` card — not
   // its own row (the delegation:status_changed analog).
   call_ended: PATCH,
+
+  // The creator-only trace of an aside in its host stream: its own row, no
+  // broadcast slot (author-scoped, so other viewers never have a hole to fill —
+  // INV-61), placed on a board card via the `conversationId` the payload
+  // carries when opened from a conversation surface. Render-only and never
+  // read-blocking: nothing in it was written to be read.
+  "aside:anchored": {
+    rendersAsOwnRow: true,
+    grouping: null,
+    authorGroupable: false,
+    patchesRow: false,
+    broadcastSlot: false,
+    conversationRef: "source-conversation",
+    bumps: false,
+    threadable: false,
+    readBlocking: false,
+  },
 }
 
 /**

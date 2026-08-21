@@ -43,6 +43,7 @@ import {
   resolveDefaultPersona,
 } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
+import { ConversationRepository } from "../conversations"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { sendBootstrapJson } from "../../lib/observability"
@@ -71,6 +72,12 @@ const createStreamSchema = z
     parentStreamId: z.string().optional(),
     /** Canonical thread anchor (`msg_…` message / `event_…` card). */
     parentAnchorId: z.string().optional(),
+    /**
+     * Aside only: the conversation it was opened from (board card / conversation
+     * panel). Must belong to `parentStreamId`; stamped on the anchor row so the
+     * board projection places it on that card.
+     */
+    conversationId: z.string().optional(),
     memberIds: z.array(z.string().min(1)).max(50).optional(),
     /**
      * Optional context-bag attached at creation time. Powers "Discuss with
@@ -116,6 +123,10 @@ const createStreamSchema = z
   .refine((data) => data.type !== "aside" || !!data.parentStreamId, {
     message: "parentStreamId is required for asides",
     path: ["parentStreamId"],
+  })
+  .refine((data) => data.conversationId === undefined || data.type === "aside", {
+    message: "conversationId is only supported on aside creation",
+    path: ["conversationId"],
   })
   .refine((data) => !data.contextBag || data.type === "scratchpad" || data.type === "aside", {
     message: "contextBag is only supported on scratchpad or aside creation",
@@ -607,12 +618,25 @@ export function createStreamHandlers({
         companionPersonaId,
         parentStreamId,
         parentAnchorId,
+        conversationId,
         memberIds,
         contextBag,
         e2eEnabled,
         e2eOwnerKeyId,
         allowedToolCategories,
       } = data
+
+      if (conversationId !== undefined) {
+        // Workspace-scoped load so a cross-tenant id can't confirm existence;
+        // the conversation's own stream is the authoritative host (INV-62).
+        const [conversation] = await ConversationRepository.findByIds(pool, workspaceId, [conversationId])
+        if (!conversation || conversation.streamId !== parentStreamId) {
+          throw new HttpError("Aside conversation not found in the host stream", {
+            status: 400,
+            code: "ASIDE_CONVERSATION_INVALID",
+          })
+        }
+      }
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
       // the service. Phase 1 invariant: the stream's `owner_user_key_id`
@@ -710,6 +734,7 @@ export function createStreamHandlers({
         companionPersonaId: resolvedPersonaId,
         parentStreamId,
         parentAnchorId,
+        conversationId,
         memberIds,
         createdBy: userId,
         contextBag,

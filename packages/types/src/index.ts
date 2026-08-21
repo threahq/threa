@@ -78,6 +78,8 @@ export {
   type EventType,
   COMMAND_EVENT_TYPES,
   type CommandEventType,
+  AUTHOR_SCOPED_EVENT_TYPES,
+  type AuthorScopedEventType,
   TIMELINE_BROADCAST_EVENT_TYPES,
   type TimelineBroadcastEventType,
   isTimelineBroadcastEventType,
@@ -717,6 +719,7 @@ export type {
   CommandDispatchedPayload,
   CommandCompletedPayload,
   CommandFailedPayload,
+  AsideAnchoredEventPayload,
   // AI Usage
   AIUsageSummary,
   AIUsageOrigin,
