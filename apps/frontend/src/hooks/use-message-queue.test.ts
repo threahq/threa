@@ -346,7 +346,12 @@ describe("useMessageQueue", () => {
       await new Promise((r) => setTimeout(r, 10))
     })
 
-    expect(errorToast).toHaveBeenCalledTimes(1)
+    expect(errorToast.mock.calls).toEqual([
+      [
+        "Couldn't quote that message — it may have changed or been removed.",
+        { id: "message-reference-temp_quote_gone" },
+      ],
+    ])
     expect(mockUpdate).toHaveBeenCalledWith("temp_quote_gone", {
       terminalFailure: true,
       retryAfter: undefined,

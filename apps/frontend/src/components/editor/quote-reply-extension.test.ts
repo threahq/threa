@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { Editor } from "@tiptap/core"
+import { Editor, type Content } from "@tiptap/core"
 import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
 import type { JSONContent } from "@tiptap/react"
@@ -30,7 +30,7 @@ function createQuoteReplyNode(): JSONContent {
   }
 }
 
-function createQuoteReplyEditor(content: JSONContent = { type: "doc", content: [createQuoteReplyNode()] }) {
+function createQuoteReplyEditor(content: Content = { type: "doc", content: [createQuoteReplyNode()] }) {
   const element = document.createElement("div")
   document.body.append(element)
 
@@ -287,7 +287,7 @@ describe("quote reply gap cursor", () => {
     const html = source.getHTML()
     source.destroy()
 
-    const pasted = createQuoteReplyEditor(html as unknown as JSONContent)
+    const pasted = createQuoteReplyEditor(html)
     const [node] = pasted.getJSON().content ?? []
 
     expect(node?.attrs).toMatchObject({ version: 7, range: { from: 4, to: 19 } })
