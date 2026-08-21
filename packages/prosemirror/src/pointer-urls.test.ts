@@ -156,9 +156,7 @@ describe("reference pins", () => {
   })
 
   it("refuses to serialize a range without the version it indexes into", () => {
-    expect(() => buildQuoteHref({ ...quote, range: { from: 1, to: 2 } })).toThrow(
-      "A reference range requires a pinned version"
-    )
+    expect(() => buildQuoteHref({ ...quote, range: { from: 1, to: 2 } })).toThrow("Invalid reference pin")
   })
 
   it("parses a pinned href back to the same values", () => {
@@ -187,6 +185,26 @@ describe("reference pins", () => {
     expect(parseQuoteHref("quote:stream_1/msg_1?v=2&r=9-4")).toBeNull()
     expect(parseQuoteHref("quote:stream_1/msg_1?v=2&r=four")).toBeNull()
     expect(parseSharedMessageHref("shared-message:stream_1/msg_1?v=-1")).toBeNull()
+  })
+
+  it("rejects quote paths that are not the 2- or 4-segment shapes the builder emits", () => {
+    expect(parseQuoteHref("quote:stream_1/msg_1/usr_1")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1/usr_1/user/extra")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1//usr_1/user")).toBeNull()
+  })
+
+  it("builds and parses by the same pin rule", () => {
+    expect(() =>
+      buildQuoteHref({ streamId: "s", messageId: "m", authorId: "", actorType: "user", version: 0 })
+    ).toThrow()
+    expect(() =>
+      buildQuoteHref({ streamId: "s", messageId: "m", authorId: "", actorType: "user", version: 1.5 })
+    ).toThrow()
+    expect(() =>
+      buildSharedMessageHref({ streamId: "s", messageId: "m", version: 2, range: { from: 9, to: 4 } })
+    ).toThrow()
+    expect(parseQuoteHref(`quote:stream_1/msg_1?v=${"9".repeat(400)}`)).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1?v=2&r=99999999999999999999-999999999999999999999")).toBeNull()
   })
 
   it("ignores query parameters it does not know", () => {

@@ -73,7 +73,8 @@ export function parseQuoteHref(href: string): QuoteHref | null {
   const split = splitReferenceQuery(href.slice("quote:".length))
   if (!split) return null
   const parts = split.path.split("/")
-  if (parts.length < 2) return null
+  // Exactly the 2-segment (legacy) or 4-segment shapes `buildQuoteHref` emits.
+  if ((parts.length !== 2 && parts.length !== 4) || parts.some((part) => part.length === 0)) return null
   return {
     streamId: parts[0],
     messageId: parts[1],
@@ -135,12 +136,22 @@ export function parseSharedMessageHref(href: string): SharedMessageHref | null {
 function buildReferenceQuery(pin: ReferencePin): string {
   const version = pin.version ?? null
   const range = pin.range ?? null
-  if (version === null) {
-    if (range !== null) throw new Error("A reference range requires a pinned version")
-    return ""
-  }
+  if (!isValidPin(version, range)) throw new Error(`Invalid reference pin: ${JSON.stringify({ version, range })}`)
+  if (version === null) return ""
   if (range === null) return `?v=${version}`
   return `?v=${version}&r=${range.from}-${range.to}`
+}
+
+/**
+ * One validity rule for both directions: a version is a positive safe integer,
+ * a range is `0 <= from < to` in safe integers, and a range needs a version
+ * (positions only exist inside a known revision).
+ */
+export function isValidPin(version: number | null, range: ContentRange | null): boolean {
+  if (version !== null && (!Number.isSafeInteger(version) || version < 1)) return false
+  if (range === null) return true
+  if (version === null) return false
+  return Number.isSafeInteger(range.from) && Number.isSafeInteger(range.to) && range.from >= 0 && range.from < range.to
 }
 
 /**
@@ -161,14 +172,11 @@ function splitReferenceQuery(body: string): { path: string; pin: Required<Refere
   }
   if (!/^\d+$/.test(rawVersion)) return null
   const version = Number(rawVersion)
-  if (version < 1) return null
-  if (rawRange === null) return { path, pin: { version, range: null } }
+  if (rawRange === null) return isValidPin(version, null) ? { path, pin: { version, range: null } } : null
   const match = rawRange.match(/^(\d+)-(\d+)$/)
   if (!match) return null
-  const from = Number(match[1])
-  const to = Number(match[2])
-  if (from >= to) return null
-  return { path, pin: { version, range: { from, to } } }
+  const range = { from: Number(match[1]), to: Number(match[2]) }
+  return isValidPin(version, range) ? { path, pin: { version, range } } : null
 }
 
 export interface MemoHref {

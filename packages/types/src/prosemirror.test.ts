@@ -44,6 +44,12 @@ describe("reference pins survive validation", () => {
     expect(isThreaDocument(pinnedQuote({}))).toBe(true)
   })
 
+  it("rejects a reversed range and a range without a version", () => {
+    expect(isThreaDocument(pinnedQuote({ version: 1, range: { from: 3, to: 2 } }))).toBe(false)
+    expect(isThreaDocument(pinnedQuote({ range: { from: 0, to: 3 } }))).toBe(false)
+    expect(isThreaDocument(pinnedQuote({ version: null, range: { from: 0, to: 3 } }))).toBe(false)
+  })
+
   it("rejects a non-positive version and a fractional or negative range", () => {
     expect(isThreaDocument(pinnedQuote({ version: 0 }))).toBe(false)
     expect(isThreaDocument(pinnedQuote({ version: 1.5 }))).toBe(false)

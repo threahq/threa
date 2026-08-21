@@ -26,6 +26,7 @@ export {
 } from "./attachment-markdown"
 export {
   buildQuoteHref,
+  isValidPin,
   parseQuoteHref,
   buildSharedMessageHref,
   parseSharedMessageHref,

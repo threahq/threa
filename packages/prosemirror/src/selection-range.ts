@@ -106,7 +106,8 @@ export function resolveSelectionRange(doc: JSONContent, input: SelectionRangeInp
         bestDistance = distance
       }
     }
-    if (tokens[i].kind === "word") wordsBefore++
+    // An atom renders as one label the prefix text counts as a word too.
+    wordsBefore++
   }
   return best
 }

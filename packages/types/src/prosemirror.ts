@@ -534,36 +534,46 @@ const blockquoteNodeSchema = z.object({
   content: z.array(blockNodeSchema),
 })
 
-const contentRangeSchema = z.object({
-  from: z.number().int().nonnegative(),
-  to: z.number().int().positive(),
-})
+const contentRangeSchema = z
+  .object({
+    from: z.number().int().nonnegative(),
+    to: z.number().int().positive(),
+  })
+  .refine((range) => range.from < range.to, { message: "range.from must be less than range.to" })
+
+const pinnedAttrs = { version: z.number().int().positive().nullish(), range: contentRangeSchema.nullish() }
+const rangeRequiresVersion = {
+  check: (attrs: { version?: number | null; range?: unknown }) => attrs.range == null || attrs.version != null,
+  message: "A reference range requires a pinned version",
+}
 
 const quoteReplyNodeSchema = z.object({
   type: z.literal("quoteReply"),
-  attrs: z.object({
-    messageId: z.string(),
-    streamId: z.string(),
-    authorName: z.string(),
-    authorId: z.string(),
-    actorType: z.string(),
-    snippet: z.string(),
-    version: z.number().int().positive().nullish(),
-    range: contentRangeSchema.nullish(),
-  }),
+  attrs: z
+    .object({
+      messageId: z.string(),
+      streamId: z.string(),
+      authorName: z.string(),
+      authorId: z.string(),
+      actorType: z.string(),
+      snippet: z.string(),
+      ...pinnedAttrs,
+    })
+    .refine(rangeRequiresVersion.check, { message: rangeRequiresVersion.message }),
 })
 
 const sharedMessageNodeSchema = z.object({
   type: z.literal("sharedMessage"),
-  attrs: z.object({
-    messageId: z.string(),
-    streamId: z.string(),
-    authorName: z.string().optional(),
-    authorId: z.string().optional(),
-    actorType: z.string().optional(),
-    version: z.number().int().positive().nullish(),
-    range: contentRangeSchema.nullish(),
-  }),
+  attrs: z
+    .object({
+      messageId: z.string(),
+      streamId: z.string(),
+      authorName: z.string().optional(),
+      authorId: z.string().optional(),
+      actorType: z.string().optional(),
+      ...pinnedAttrs,
+    })
+    .refine(rangeRequiresVersion.check, { message: rangeRequiresVersion.message }),
 })
 
 const bulletListNodeSchema = z.object({

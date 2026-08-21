@@ -71,6 +71,12 @@ describe("resolveSelectionRange", () => {
     expect(resolveSelectionRange(doc, { text: "foo bar", prefixText: "foo bar baz " })).toEqual({ from: 13, to: 20 })
   })
 
+  it("counts an atom as one word when scoring the prefix text", () => {
+    const doc = paragraph(text("foo "), mention, text(" foo foo foo"))
+    expect(resolveSelectionRange(doc, { text: "foo", prefixText: "foo @alice " })).toEqual({ from: 7, to: 10 })
+    expect(resolveSelectionRange(doc, { text: "foo", prefixText: "foo @alice foo foo " })).toEqual({ from: 15, to: 18 })
+  })
+
   it("normalises non-breaking and zero-width whitespace", () => {
     const doc = paragraph(text("alpha\u00A0beta\u200Bgamma"))
     expect(resolveSelectionRange(doc, { text: "beta gamma" })).toEqual({ from: 7, to: 17 })
