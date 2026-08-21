@@ -89,30 +89,45 @@ async function selectAcross(page: Page, messageId: string, from: string, to: str
   )
 }
 
-/** The quote node stored on the message whose body contains `marker`. */
+/**
+ * The quote node stored on the message whose body contains `marker`.
+ *
+ * Polled: the row is on screen as soon as it renders optimistically, which is
+ * before the server has the event, so a single read races the send.
+ */
 async function storedQuoteAttrs(page: Page, marker: string): Promise<QuoteAttrs> {
   const { workspaceId, streamId } = workspaceAndStream(page)
-  const response = await page.request.get(`/api/workspaces/${workspaceId}/streams/${streamId}/events?limit=100`)
-  await expectApiOk(response, "List stream events")
-  const body = (await response.json()) as {
-    events: Array<{ eventType: string; payload?: { contentMarkdown?: string; contentJson?: unknown } }>
+
+  const readQuotes = async (): Promise<QuoteAttrs[] | null> => {
+    const response = await page.request.get(`/api/workspaces/${workspaceId}/streams/${streamId}/events?limit=100`)
+    if (!response.ok()) return null
+    const body = (await response.json()) as {
+      events: Array<{ eventType: string; payload?: { contentMarkdown?: string; contentJson?: unknown } }>
+    }
+    const event = body.events.find(
+      (candidate) => candidate.eventType === "message_created" && candidate.payload?.contentMarkdown?.includes(marker)
+    )
+    if (!event) return null
+
+    const found: QuoteAttrs[] = []
+    const walk = (node: unknown): void => {
+      if (!node || typeof node !== "object") return
+      const typed = node as { type?: string; attrs?: QuoteAttrs; content?: unknown[] }
+      if (typed.type === "quoteReply" && typed.attrs) found.push(typed.attrs)
+      for (const child of typed.content ?? []) walk(child)
+    }
+    walk(event.payload?.contentJson)
+    return found
   }
 
-  const event = body.events.find(
-    (candidate) => candidate.eventType === "message_created" && candidate.payload?.contentMarkdown?.includes(marker)
-  )
-  if (!event) throw new Error(`No stored message carrying "${marker}"`)
+  await expect
+    .poll(async () => (await readQuotes())?.length ?? 0, {
+      timeout: 10000,
+      message: `stored message carrying "${marker}" with exactly one quote node`,
+    })
+    .toBe(1)
 
-  const found: QuoteAttrs[] = []
-  const walk = (node: unknown): void => {
-    if (!node || typeof node !== "object") return
-    const typed = node as { type?: string; attrs?: QuoteAttrs; content?: unknown[] }
-    if (typed.type === "quoteReply" && typed.attrs) found.push(typed.attrs)
-    for (const child of typed.content ?? []) walk(child)
-  }
-  walk(event.payload?.contentJson)
-  if (found.length !== 1) throw new Error(`Expected exactly one quote node, found ${found.length}`)
-  return found[0]
+  return (await readQuotes())![0]
 }
 
 test.describe("Quote by range", () => {
