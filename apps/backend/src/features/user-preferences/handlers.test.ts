@@ -271,3 +271,28 @@ describe("updatePreferencesSchema accessibility.composerActionSide", () => {
     })
   })
 })
+
+describe("updatePreferencesSchema code block wrapping", () => {
+  it("accepts a wrap mode and per-language overrides keyed by registry id", () => {
+    const parsed = updatePreferencesSchema.parse({
+      codeBlockWrap: "wrap",
+      codeBlockWrapOverrides: { sql: "scroll", python: "wrap" },
+    })
+    expect(parsed).toEqual({ codeBlockWrap: "wrap", codeBlockWrapOverrides: { sql: "scroll", python: "wrap" } })
+  })
+
+  it("rejects an unknown mode", () => {
+    expect(updatePreferencesSchema.safeParse({ codeBlockWrap: "auto" }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ codeBlockWrapOverrides: { sql: "auto" } }).success).toBe(false)
+  })
+
+  it("rejects an override keyed by a language outside the registry", () => {
+    expect(updatePreferencesSchema.safeParse({ codeBlockWrapOverrides: { js: "wrap" } }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ codeBlockWrapOverrides: { elixir: "wrap" } }).success).toBe(false)
+  })
+
+  it("defaults to scrolling with no overrides", () => {
+    expect(DEFAULT_USER_PREFERENCES.codeBlockWrap).toBe("scroll")
+    expect(DEFAULT_USER_PREFERENCES.codeBlockWrapOverrides).toEqual({})
+  })
+})

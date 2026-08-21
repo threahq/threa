@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Copy, Check, ChevronDown, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD, formatCodeLanguage, normalizeCodeLanguage } from "@threa/types"
+import {
+  DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
+  formatCodeLanguage,
+  normalizeCodeLanguage,
+  resolveCodeBlockWrap,
+} from "@threa/types"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
 import { ensureHighlight, tryHighlightSync } from "./highlighter"
+
+// Applied to Shiki's <pre>; the invisible placeholder mirrors them so the
+// measured line count matches what the highlighted block will render.
+const SCROLL_PRE_CLASSES = "[&>pre]:overflow-x-auto [&>pre]:whitespace-pre"
+const WRAP_PRE_CLASSES = "[&>pre]:whitespace-pre-wrap [&>pre]:[overflow-wrap:anywhere]"
 
 interface CodeBlockProps {
   language: string
@@ -21,6 +31,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
 
   const trimmedCode = useMemo(() => children.trim(), [children])
   const languageId = normalizeCodeLanguage(language)
+  const wrapMode = resolveCodeBlockWrap(preferencesContext?.preferences ?? {}, languageId)
 
   // Always render the full code (highlighted) and clamp it with CSS when
   // collapsed — that lets us measure the real rendered height and keeps
@@ -159,6 +170,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
     <div
       className="my-2 rounded-md overflow-hidden border border-border bg-muted/50 select-text [-webkit-touch-callout:default]"
       data-native-context="true"
+      data-wrap={wrapMode}
     >
       {header}
       {/* py-2 lives on this non-measured wrapper so bodyRef.scrollHeight is
@@ -173,7 +185,8 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
           {html ? (
             <div
               className={cn(
-                "[&>pre]:m-0 [&>pre]:px-2.5 [&>pre]:py-0 [&>pre]:text-xs [&>pre]:leading-snug [&>pre]:overflow-x-auto [&>pre]:bg-transparent",
+                "[&>pre]:m-0 [&>pre]:px-2.5 [&>pre]:py-0 [&>pre]:text-xs [&>pre]:leading-snug [&>pre]:bg-transparent",
+                wrapMode === "wrap" ? WRAP_PRE_CLASSES : SCROLL_PRE_CLASSES,
                 // Fade in only when we previously rendered the invisible
                 // placeholder (cold path). Hot-path first render skips
                 // animation so chrome and code appear together.
@@ -187,7 +200,10 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
              * right height (and measures correctly) while highlight loads.
              * `invisible` keeps it in layout without flashing raw code. */
             <pre
-              className="m-0 px-2.5 py-0 overflow-x-auto text-xs font-mono leading-snug invisible"
+              className={cn(
+                "m-0 px-2.5 py-0 text-xs font-mono leading-snug invisible",
+                wrapMode === "wrap" ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "overflow-x-auto whitespace-pre"
+              )}
               aria-hidden="true"
             >
               <code>{trimmedCode}</code>

@@ -21,6 +21,8 @@ import {
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
+  CODE_BLOCK_WRAP_OPTIONS,
+  CODE_LANGUAGE_IDS,
   MESSAGE_COLLAPSE_AT_HEIGHT_MIN,
   MESSAGE_COLLAPSE_AT_HEIGHT_MAX,
   MESSAGE_COLLAPSE_TO_HEIGHT_MIN,
@@ -72,6 +74,8 @@ const updatePreferencesSchema = z.object({
     .min(BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN)
     .max(BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX)
     .optional(),
+  codeBlockWrap: z.enum(CODE_BLOCK_WRAP_OPTIONS).optional(),
+  codeBlockWrapOverrides: z.partialRecord(z.enum(CODE_LANGUAGE_IDS), z.enum(CODE_BLOCK_WRAP_OPTIONS)).optional(),
   messageCollapseEnabled: z.boolean().optional(),
   messageCollapseAtHeight: z
     .number()

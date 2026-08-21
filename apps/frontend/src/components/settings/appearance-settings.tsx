@@ -5,6 +5,9 @@ import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
+import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { X } from "lucide-react"
 import { usePreferences } from "@/contexts"
 import { useBoardHome, useBoardViews } from "@/hooks/use-board-views"
 import { summarizeBoardView } from "@/components/board/board-saved-views"
@@ -21,6 +24,11 @@ import {
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  CODE_BLOCK_WRAP_OPTIONS,
+  DEFAULT_CODE_BLOCK_WRAP,
+  CODE_LANGUAGES,
+  formatCodeLanguage,
+  type CodeBlockWrap,
   MESSAGE_COLLAPSE_AT_HEIGHT_MIN,
   MESSAGE_COLLAPSE_AT_HEIGHT_MAX,
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
@@ -52,6 +60,13 @@ import {
   type LabelRemoveOnMove,
   type BoardLens,
 } from "@threa/types"
+
+const CODE_BLOCK_WRAP_LABELS: Record<CodeBlockWrap, string> = {
+  scroll: "Scroll horizontally",
+  wrap: "Wrap lines",
+}
+
+const CODE_LANGUAGE_OPTIONS = [...CODE_LANGUAGES].sort((a, b) => a.label.localeCompare(b.label))
 
 const THEME_LABELS: Record<Theme, string> = {
   light: "Light",
@@ -174,6 +189,14 @@ export function AppearanceSettings() {
   const unreadOpenPosition = preferences?.unreadOpenPosition ?? "latest"
   const codeBlockThreshold = preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
+  const codeBlockWrap = preferences?.codeBlockWrap ?? DEFAULT_CODE_BLOCK_WRAP
+  const codeBlockWrapOverrides = preferences?.codeBlockWrapOverrides ?? {}
+  const codeBlockWrapOverrideRows = Object.entries(codeBlockWrapOverrides).sort(([a], [b]) =>
+    formatCodeLanguage(a).localeCompare(formatCodeLanguage(b))
+  )
+  const codeBlockWrapUnusedLanguages = CODE_LANGUAGE_OPTIONS.filter(
+    (language) => !(language.id in codeBlockWrapOverrides)
+  )
   const messageCollapseEnabled = preferences?.messageCollapseEnabled ?? false
   const messageCollapseAtHeight = preferences?.messageCollapseAtHeight ?? DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT
   const messageCollapseToHeight = preferences?.messageCollapseToHeight ?? DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT
@@ -280,6 +303,13 @@ export function AppearanceSettings() {
       return
     }
     void updatePreference("codeBlockCollapseThreshold", clamped)
+  }
+
+  const setCodeBlockWrapOverride = (languageId: string, mode: CodeBlockWrap | null) => {
+    const next = { ...codeBlockWrapOverrides }
+    if (mode === null) delete next[languageId]
+    else next[languageId] = mode
+    void updatePreference("codeBlockWrapOverrides", next)
   }
 
   const commitBlockquoteThreshold = () => {
@@ -480,6 +510,77 @@ export function AppearanceSettings() {
             }}
             className="w-24"
           />
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label id="code-block-wrap-label">Long lines</Label>
+            <p className="text-sm text-muted-foreground">How lines wider than the message are shown</p>
+          </div>
+          <RadioGroup
+            aria-labelledby="code-block-wrap-label"
+            value={codeBlockWrap}
+            onValueChange={(value) => updatePreference("codeBlockWrap", value as CodeBlockWrap)}
+            className="space-y-2"
+          >
+            {CODE_BLOCK_WRAP_OPTIONS.map((option) => (
+              <div key={option} className="flex items-center gap-2">
+                <RadioGroupItem value={option} id={`code-block-wrap-${option}`} />
+                <Label htmlFor={`code-block-wrap-${option}`} className="cursor-pointer font-normal">
+                  {CODE_BLOCK_WRAP_LABELS[option]}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+        </div>
+        <div className="grid gap-2">
+          <Label id="code-block-wrap-overrides-label">Per language</Label>
+          {codeBlockWrapOverrideRows.map(([languageId, mode]) => (
+            <div key={languageId} className="flex items-center gap-2">
+              <span className="w-40 truncate text-sm">{formatCodeLanguage(languageId)}</span>
+              <Select
+                value={mode}
+                onValueChange={(value) => setCodeBlockWrapOverride(languageId, value as CodeBlockWrap)}
+              >
+                <SelectTrigger className="w-44" aria-label={`Long lines in ${formatCodeLanguage(languageId)}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CODE_BLOCK_WRAP_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {CODE_BLOCK_WRAP_LABELS[option]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setCodeBlockWrapOverride(languageId, null)}
+                aria-label={`Remove ${formatCodeLanguage(languageId)} override`}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+          <Select
+            value=""
+            onValueChange={(languageId) =>
+              setCodeBlockWrapOverride(languageId, codeBlockWrap === "wrap" ? "scroll" : "wrap")
+            }
+          >
+            <SelectTrigger className="w-40" aria-labelledby="code-block-wrap-overrides-label">
+              <SelectValue placeholder="Add language" />
+            </SelectTrigger>
+            <SelectContent>
+              {codeBlockWrapUnusedLanguages.map((language) => (
+                <SelectItem key={language.id} value={language.id}>
+                  {language.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </section>
 

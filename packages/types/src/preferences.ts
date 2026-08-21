@@ -135,6 +135,13 @@ export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN = 0
 export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX = 500
 export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 
+// Code block line wrapping: scroll long lines horizontally (the historical
+// behavior) or wrap them. Per-language overrides are keyed by registry id
+// (`CODE_LANGUAGES`) and win over the global choice.
+export const CODE_BLOCK_WRAP_OPTIONS = ["scroll", "wrap"] as const
+export type CodeBlockWrap = (typeof CODE_BLOCK_WRAP_OPTIONS)[number]
+export const DEFAULT_CODE_BLOCK_WRAP: CodeBlockWrap = "scroll"
+
 // Stream-description collapse threshold - rendered line count above which a
 // "set the description" timeline event starts collapsed behind a Show more/less
 // toggle. Same line-count semantics as the code/quote thresholds; not yet a
@@ -336,6 +343,8 @@ export interface UserPreferences {
   scratchpadCustomPrompt: string | null
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
+  codeBlockWrap: CodeBlockWrap
+  codeBlockWrapOverrides: Record<string, CodeBlockWrap>
   /** Whether long message bodies start collapsed automatically. */
   messageCollapseEnabled: boolean
   /** Rendered message-body height (px) above which the fold control appears. */
@@ -453,6 +462,8 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  codeBlockWrap: DEFAULT_CODE_BLOCK_WRAP,
+  codeBlockWrapOverrides: {},
   messageCollapseEnabled: false,
   messageCollapseAtHeight: DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
   messageCollapseToHeight: DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
@@ -499,6 +510,8 @@ export interface UpdateUserPreferencesInput {
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number
+  codeBlockWrap?: CodeBlockWrap
+  codeBlockWrapOverrides?: Record<string, CodeBlockWrap>
   messageCollapseEnabled?: boolean
   messageCollapseAtHeight?: number
   messageCollapseToHeight?: number
@@ -587,3 +600,11 @@ export const AGENT_SETTABLE_PREFERENCE_KEYS = [
 export type AgentSettablePreferenceKey = (typeof AGENT_SETTABLE_PREFERENCE_KEYS)[number]
 
 export type AgentSettablePreferences = Pick<UpdateUserPreferencesInput, AgentSettablePreferenceKey>
+
+/** Resolved wrap mode for one block: the language override, else the global choice. */
+export function resolveCodeBlockWrap(
+  prefs: Partial<Pick<UserPreferences, "codeBlockWrap" | "codeBlockWrapOverrides">>,
+  languageId: string
+): CodeBlockWrap {
+  return prefs.codeBlockWrapOverrides?.[languageId] ?? prefs.codeBlockWrap ?? DEFAULT_CODE_BLOCK_WRAP
+}
