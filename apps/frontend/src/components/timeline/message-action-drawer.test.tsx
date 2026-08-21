@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { act, render, screen } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import { SyncEngineContext } from "@/sync/sync-engine"
@@ -60,23 +59,23 @@ afterEach(() => {
 
 describe("MessageActionDrawer — sharing a selection", () => {
   it("hands the highlighted span to the share trigger", async () => {
-    const user = userEvent.setup()
     const onShareWithSelection = vi.fn()
     mountDrawer({ onQuoteReplyWithSelection: vi.fn(), onShareWithSelection })
 
-    await user.click(screen.getByText(BODY))
+    fireEvent.click(screen.getByText(BODY))
     selectInBody(13, 20)
 
-    await user.click(await screen.findByRole("button", { name: /^share$/i }))
+    // fireEvent, not userEvent: a real pointer sequence reaches vaul's drag
+    // handling, which reads a computed transform jsdom does not produce.
+    fireEvent.click(await screen.findByRole("button", { name: /^share$/i }))
 
     expect(onShareWithSelection).toHaveBeenCalledWith({ text: "this is", prefixText: "Hello there, " })
   })
 
   it("offers Quote alone when the row can't share a span", async () => {
-    const user = userEvent.setup()
     mountDrawer({ onQuoteReplyWithSelection: vi.fn() })
 
-    await user.click(screen.getByText(BODY))
+    fireEvent.click(screen.getByText(BODY))
     selectInBody(13, 20)
 
     expect(await screen.findByRole("button", { name: /^quote$/i })).toBeInTheDocument()
