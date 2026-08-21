@@ -2,13 +2,14 @@ import { describe, expect, test } from "bun:test"
 import { parseDuration, parseSince, pickSections } from "./cli"
 
 describe("flag parsing", () => {
-  test("durations", () => {
+  test("parseDuration reads ms/s/m/h, falls back when absent, rejects anything else", () => {
     expect([
+      parseDuration("5ms", 0),
       parseDuration("30s", 0),
       parseDuration("5m", 0),
       parseDuration("2h", 0),
       parseDuration(undefined, 7),
-    ]).toEqual([30_000, 300_000, 7_200_000, 7])
+    ]).toEqual([5, 30_000, 300_000, 7_200_000, 7])
     expect(() => parseDuration("soon", 0)).toThrow()
   })
   test("--since accepts relative durations and ISO timestamps", () => {

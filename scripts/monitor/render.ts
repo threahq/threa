@@ -5,87 +5,94 @@ import type { LogReport } from "./probes/logs"
 
 const MARK: Record<Level, string> = { ok: "✓", warn: "!", fail: "✗", pending: "…", skipped: "-" }
 
-function pad(s: string, n: number): string {
-  return s.length >= n ? s : s + " ".repeat(n - s.length)
+function pad(text: string, width: number): string {
+  return text.length >= width ? text : text + " ".repeat(width - text.length)
 }
 
 function fmtAge(iso: string, now: Date): string {
-  const ms = now.getTime() - new Date(iso).getTime()
-  const m = Math.round(ms / 60000)
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  return h < 48 ? `${h}h${m % 60}m ago` : `${Math.floor(h / 24)}d ago`
+  const minutes = Math.round((now.getTime() - new Date(iso).getTime()) / 60000)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  return hours < 48 ? `${hours}h${minutes % 60}m ago` : `${Math.floor(hours / 24)}d ago`
 }
 
-export function renderRevision(r: RevisionReport, now: Date): string[] {
-  const w = Math.max(...r.planes.map((p) => p.plane.length))
-  const lines = [`revision  expected ${r.expected.slice(0, 8)}`]
-  for (const p of r.planes) {
-    const age = p.deployedAt ? ` (${fmtAge(p.deployedAt, now)})` : ""
-    lines.push(`  ${MARK[p.level]} ${pad(p.plane, w)}  ${pad(p.live?.slice(0, 8) ?? "?", 8)}  ${p.detail}${age}`)
+export function renderRevision(revision: RevisionReport, now: Date): string[] {
+  const width = Math.max(...revision.planes.map((plane) => plane.plane.length))
+  const lines = [`revision  expected ${revision.expected.slice(0, 8)}`]
+  for (const plane of revision.planes) {
+    const age = plane.deployedAt ? ` (${fmtAge(plane.deployedAt, now)})` : ""
+    lines.push(
+      `  ${MARK[plane.level]} ${pad(plane.plane, width)}  ${pad(plane.live?.slice(0, 8) ?? "?", 8)}  ${plane.detail}${age}`
+    )
   }
   return lines
 }
 
-export function renderLogs(l: LogReport, top: number): string[] {
-  const lines = [`logs      ${l.window.label}; prior window equal length`]
-  for (const s of l.services) {
+export function renderLogs(logs: LogReport, top: number): string[] {
+  const lines = [`logs      ${logs.window.label}; prior window equal length`]
+  for (const service of logs.services) {
     lines.push(
-      `  ${pad(s.service, 14)} error ${s.errorSince} (prior ${s.errorPrior})  warn ${s.warnSince} (prior ${s.warnPrior})${s.noiseSince ? `  noise ${s.noiseSince}` : ""}`
+      `  ${pad(service.service, 14)} error ${service.errorSince} (prior ${service.errorPrior})  warn ${service.warnSince} (prior ${service.warnPrior})${service.noiseSince ? `  noise ${service.noiseSince}` : ""}`
     )
   }
-  const shown = l.templates.filter((t) => !t.noise).slice(0, top)
+  const shown = logs.templates.filter((template) => !template.noise).slice(0, top)
   if (shown.length) lines.push("  top templates:")
-  for (const t of shown)
+  for (const template of shown) {
     lines.push(
-      `    ×${pad(String(t.count), 4)} [${t.services.join(",")}] ${t.sample.slice(0, 150).replace(/\n/g, " ")}`
+      `    ×${pad(String(template.count), 4)} [${template.services.join(",")}] ${template.sample.slice(0, 150).replace(/\n/g, " ")}`
     )
-  if (l.truncated) lines.push("  (fetch capped; counts are lower bounds)")
+  }
+  if (logs.truncated) lines.push("  (fetch capped; counts are lower bounds)")
   return lines
 }
 
-export function renderSnapshot(s: Snapshot, opts: { top?: number } = {}): string {
-  const now = new Date(s.at)
+export function renderSnapshot(snapshot: Snapshot, opts: { top?: number } = {}): string {
+  const now = new Date(snapshot.at)
   const out: string[] = []
-  out.push(`${MARK[s.level]} ${s.level.toUpperCase()}  ${s.at.slice(0, 19)}Z  ${s.window.label}`)
-  if (s.revision) out.push(...renderRevision(s.revision, now))
-  if (s.liveness) {
+  out.push(
+    `${MARK[snapshot.level]} ${snapshot.level.toUpperCase()}  ${snapshot.at.slice(0, 19)}Z  ${snapshot.window.label}`
+  )
+  if (snapshot.revision) out.push(...renderRevision(snapshot.revision, now))
+  if (snapshot.liveness) {
     out.push("liveness")
-    const w = Math.max(...s.liveness.checks.map((c) => c.name.length))
-    for (const c of s.liveness.checks) out.push(`  ${MARK[c.level]} ${pad(c.name, w)}  ${c.detail}`)
+    const width = Math.max(...snapshot.liveness.checks.map((check) => check.name.length))
+    for (const check of snapshot.liveness.checks)
+      out.push(`  ${MARK[check.level]} ${pad(check.name, width)}  ${check.detail}`)
   }
-  if (s.pipelines) {
-    const p = s.pipelines
-    const active = p.outbox.listeners.filter((l) => l.lag > 0)
+  if (snapshot.pipelines) {
+    const pipelines = snapshot.pipelines
+    const behind = pipelines.outbox.listeners.filter((listener) => listener.lag > 0)
     out.push(
-      `pipelines outbox head ${p.outbox.head}, ${p.outbox.listeners.length} listeners, ${active.length ? active.map((l) => `${l.listener_id} lag ${l.lag}`).join(", ") : "all caught up"}; dead letters ${p.deadLetters.since} (prior ${p.deadLetters.prior})`
+      `pipelines outbox head ${pipelines.outbox.head}, ${pipelines.outbox.listeners.length} listeners, ${behind.length ? behind.map((listener) => `${listener.listener_id} lag ${listener.lag}`).join(", ") : "all caught up"}; dead letters ${pipelines.deadLetters.since} (prior ${pipelines.deadLetters.prior})`
     )
-    const busy = p.queues.filter((q) => q.running || q.ready || q.dlq_since || q.done_since)
-    for (const q of busy) {
+    const busy = pipelines.queues.filter((queue) => queue.running || queue.ready || queue.dlq_since || queue.done_since)
+    for (const queue of busy) {
       out.push(
-        `  ${pad(q.queue_name, 30)} running ${q.running}  ready ${q.ready}${q.oldest_ready_sec ? ` (oldest ${q.oldest_ready_sec}s)` : ""}  done ${q.done_since} (prior ${q.done_prior})${q.dlq_since || q.dlq_prior ? `  dlq ${q.dlq_since} (prior ${q.dlq_prior})` : ""}`
+        `  ${pad(queue.queue_name, 30)} running ${queue.running}  ready ${queue.ready}${queue.oldest_ready_sec ? ` (oldest ${queue.oldest_ready_sec}s)` : ""}  done ${queue.done_since} (prior ${queue.done_prior})${queue.dlq_since || queue.dlq_prior ? `  dlq ${queue.dlq_since} (prior ${queue.dlq_prior})` : ""}`
       )
     }
-    const idle = p.queues.length - busy.length
+    const idle = pipelines.queues.length - busy.length
     if (idle) out.push(`  ${idle} idle queues`)
-    for (const c of p.counters) if (c.since || c.prior) out.push(`  ${pad(c.metric, 30)} ${c.since} (prior ${c.prior})`)
+    for (const counter of pipelines.counters)
+      if (counter.since || counter.prior)
+        out.push(`  ${pad(counter.metric, 30)} ${counter.since} (prior ${counter.prior})`)
   }
-  if (s.logs) out.push(...renderLogs(s.logs, opts.top ?? 5))
-  if (s.resources) {
+  if (snapshot.logs) out.push(...renderLogs(snapshot.logs, opts.top ?? 5))
+  if (snapshot.resources) {
     out.push("resources")
-    for (const r of s.resources.rows) {
-      const cpu = r.cpuNow === null ? "?" : `${(r.cpuNow * 1000).toFixed(0)}m`
-      const mem = r.memNowGb === null ? "?" : `${(r.memNowGb * 1024).toFixed(0)}MB`
+    for (const row of snapshot.resources.rows) {
+      const cpu = row.cpuNow === null ? "?" : `${(row.cpuNow * 1000).toFixed(0)}m`
+      const mem = row.memNowGb === null ? "?" : `${(row.memNowGb * 1024).toFixed(0)}MB`
       const memPeak =
-        r.memMaxSinceGb !== null && r.memMaxPriorGb !== null
-          ? ` (peak ${(r.memMaxSinceGb * 1024).toFixed(0)}MB vs prior ${(r.memMaxPriorGb * 1024).toFixed(0)}MB)`
+        row.memMaxSinceGb !== null && row.memMaxPriorGb !== null
+          ? ` (peak ${(row.memMaxSinceGb * 1024).toFixed(0)}MB vs prior ${(row.memMaxPriorGb * 1024).toFixed(0)}MB)`
           : ""
-      out.push(`  ${pad(r.service, 14)} cpu ${cpu}  mem ${mem}${memPeak}`)
+      out.push(`  ${pad(row.service, 14)} cpu ${cpu}  mem ${mem}${memPeak}`)
     }
   }
-  if (s.findings.length) {
+  if (snapshot.findings.length) {
     out.push("findings")
-    for (const f of s.findings) out.push(`  ${MARK[f.level]} ${f.message}`)
+    for (const finding of snapshot.findings) out.push(`  ${MARK[finding.level]} ${finding.message}`)
   } else {
     out.push("findings  none")
   }
@@ -93,10 +100,10 @@ export function renderSnapshot(s: Snapshot, opts: { top?: number } = {}): string
 }
 
 export function diffFindings(prev: Finding[], next: Finding[]): { added: Finding[]; resolved: Finding[] } {
-  const prevIds = new Map(prev.map((f) => [f.id, f]))
-  const nextIds = new Map(next.map((f) => [f.id, f]))
+  const prevById = new Map(prev.map((finding) => [finding.id, finding]))
+  const nextById = new Map(next.map((finding) => [finding.id, finding]))
   return {
-    added: next.filter((f) => !prevIds.has(f.id) || prevIds.get(f.id)!.message !== f.message),
-    resolved: prev.filter((f) => !nextIds.has(f.id)),
+    added: next.filter((finding) => !prevById.has(finding.id) || prevById.get(finding.id)!.message !== finding.message),
+    resolved: prev.filter((finding) => !nextById.has(finding.id)),
   }
 }

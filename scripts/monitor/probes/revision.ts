@@ -27,8 +27,8 @@ function shaMatches(expected: string, live: string | null): boolean {
   return n >= 7 && expected.slice(0, n) === live.slice(0, n)
 }
 
-export function short(sha: string | null | undefined): string | null {
-  return sha ? sha.slice(0, 8) : null
+export function short(sha: string | null | undefined): string {
+  return sha ? sha.slice(0, 8) : "unknown"
 }
 
 /** Newest deployment per service, plus the newest SUCCESS per service (what is actually serving). */
@@ -110,7 +110,7 @@ export function evaluateFrontendPlane(
   const byName = latestRunPerWorkflow(runs)
   const ci = byName.get(PROD.frontendWorkflows.ci)
   const deploy = byName.get(PROD.frontendWorkflows.deploy)
-  const serving = `serving ${short(live) ?? "unknown"}`
+  const serving = `serving ${short(live)}`
   if (!ci) return { ...base, level: "pending", detail: `${serving}; no CI run for ${short(expected)} yet` }
   if (ci.status !== "completed") return { ...base, level: "pending", detail: `${serving}; CI ${ci.status}` }
   if (ci.conclusion !== "success") {

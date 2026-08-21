@@ -11,8 +11,11 @@ describe("diffFindings", () => {
       { level: "warn" as const, id: "a", message: "a v2" },
       { level: "fail" as const, id: "c", message: "c" },
     ]
-    const d = diffFindings(prev, next)
-    expect(d.added.map((f) => f.id)).toEqual(["a", "c"])
-    expect(d.resolved.map((f) => f.id)).toEqual(["b"])
+    const diff = diffFindings(prev, next)
+    expect(diff.added).toEqual([
+      { level: "warn", id: "a", message: "a v2" },
+      { level: "fail", id: "c", message: "c" },
+    ])
+    expect(diff.resolved).toEqual([{ level: "warn", id: "b", message: "b" }])
   })
 })

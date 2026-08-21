@@ -43,7 +43,14 @@ export class RailwayClient {
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(30_000),
     })
-    const json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> }
+    const text = await res.text()
+    if (!res.ok) throw new Error(`railway ${res.status}: ${text.slice(0, 300)}`)
+    let json: { data?: T; errors?: Array<{ message: string }> }
+    try {
+      json = JSON.parse(text) as { data?: T; errors?: Array<{ message: string }> }
+    } catch {
+      throw new Error(`railway ${res.status}: non-JSON body ${text.slice(0, 200)}`)
+    }
     if (json.errors?.length) throw new Error(`railway: ${json.errors.map((e) => e.message).join("; ")}`)
     if (!json.data) throw new Error(`railway: empty response (${res.status})`)
     return json.data

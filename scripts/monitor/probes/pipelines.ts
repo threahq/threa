@@ -36,12 +36,15 @@ export interface PipelineReport {
   findings: Finding[]
 }
 
+/** Postgres returns bigint aggregates as strings through the proxy; rows are read raw and normalized once. */
+type Raw<T> = { [K in keyof T]: T[K] extends number ? string : T[K] extends number | null ? string | null : T[K] }
+
 const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v))
 
 export async function probePipelines(db: ReadProxyClient, window: Window): Promise<PipelineReport> {
   const [head, listeners, dead, queues, counters] = await Promise.all([
     db.rows<{ head: string }>("SELECT COALESCE(max(id), 0) AS head FROM outbox"),
-    db.rows<ListenerRow>(
+    db.rows<Raw<ListenerRow>>(
       `SELECT l.listener_id,
               (SELECT COALESCE(max(id), 0) FROM outbox) - l.last_processed_id AS lag,
               l.last_processed_at, l.retry_count, left(l.last_error, 200) AS last_error
@@ -54,7 +57,7 @@ export async function probePipelines(db: ReadProxyClient, window: Window): Promi
          FROM outbox_dead_letters WHERE failed_at >= $2`,
       [window.since, window.priorStart]
     ),
-    db.rows<QueueRow>(
+    db.rows<Raw<QueueRow>>(
       `SELECT queue_name,
               count(*) FILTER (WHERE completed_at IS NULL AND cancelled_at IS NULL AND dlq_at IS NULL AND claimed_until > NOW()) AS running,
               count(*) FILTER (WHERE completed_at IS NULL AND cancelled_at IS NULL AND dlq_at IS NULL AND (claimed_until IS NULL OR claimed_until <= NOW()) AND process_after <= NOW()) AS ready,
@@ -69,7 +72,7 @@ export async function probePipelines(db: ReadProxyClient, window: Window): Promi
         GROUP BY queue_name ORDER BY queue_name`,
       [window.since, window.priorStart]
     ),
-    db.rows<CounterRow>(
+    db.rows<Raw<CounterRow>>(
       `SELECT 'agent_sessions failed' AS metric,
               count(*) FILTER (WHERE created_at >= $1) AS since,
               count(*) FILTER (WHERE created_at >= $2 AND created_at < $1) AS prior

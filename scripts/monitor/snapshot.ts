@@ -3,12 +3,12 @@ import { ReadProxyClient } from "./db"
 import type { Credentials } from "./env"
 import { remoteMainSha, runsForCommit, type ExecLike } from "./github"
 import { timedFetch, type FetchLike } from "./http"
-import { RailwayClient } from "./railway"
+import { RailwayClient, type RailwayDeployment } from "./railway"
 import { probeLiveness, type LivenessReport } from "./probes/liveness"
 import { probeLogs, type LogReport } from "./probes/logs"
 import { probePipelines, type PipelineReport } from "./probes/pipelines"
 import { probeResources, type ResourceReport } from "./probes/resources"
-import { buildRevisionReport, type RevisionReport } from "./probes/revision"
+import { buildRevisionReport, summarizeRailway, type RevisionReport } from "./probes/revision"
 import { makeWindow, worst, type Finding, type Level, type Window } from "./types"
 
 export interface Deps {
@@ -23,9 +23,12 @@ export interface SectionError {
   error: string
 }
 
+export type Section = "revision" | "liveness" | "pipelines" | "logs" | "resources"
+
 export interface Snapshot {
   at: string
-  expectedSha: string
+  /** null when the revision section was excluded (no git/GitHub lookups were made). */
+  expectedSha: string | null
   window: Window
   revision: RevisionReport | null
   liveness: LivenessReport | null
@@ -39,9 +42,9 @@ export interface Snapshot {
 
 export interface SnapshotOptions {
   sha?: string
-  /** ISO timestamp or undefined (= backend deploy time). */
+  /** ISO timestamp; undefined means "the newest SUCCESS backend deployment". */
   since?: string
-  sections: Set<"revision" | "liveness" | "pipelines" | "logs" | "resources">
+  sections: Set<Section>
 }
 
 export function clients(deps: Deps): { railway: RailwayClient | null; db: ReadProxyClient | null } {
@@ -76,65 +79,79 @@ export async function resolveExpectedSha(deps: Deps, sha?: string): Promise<stri
   return remoteMainSha(deps.exec)
 }
 
+async function listDeployments(
+  railway: RailwayClient | null,
+  errors: SectionError[]
+): Promise<RailwayDeployment[] | null> {
+  if (!railway) {
+    errors.push({ section: "railway", error: "RAILWAY_READONLY_TOKEN missing; Railway planes skipped" })
+    return null
+  }
+  try {
+    return await railway.listDeployments()
+  } catch (error) {
+    errors.push({ section: "railway", error: error instanceof Error ? error.message : String(error) })
+    return []
+  }
+}
+
 /** Revision only: what `verify` polls. */
 export async function takeRevision(
   deps: Deps,
   expectedSha: string
-): Promise<{
-  revision: RevisionReport
-  deployments: Awaited<ReturnType<RailwayClient["listDeployments"]>> | null
-  errors: SectionError[]
-}> {
+): Promise<{ revision: RevisionReport; deployments: RailwayDeployment[] | null; errors: SectionError[] }> {
   const { railway } = clients(deps)
   const errors: SectionError[] = []
-  const cb = String(deps.now().getTime())
+  const cacheBuster = String(deps.now().getTime())
   const [deployments, frontendVersion, runs] = await Promise.all([
-    railway
-      ? railway.listDeployments().catch((e: Error) => {
-          errors.push({ section: "railway", error: e.message })
-          return []
-        })
-      : Promise.resolve(null),
-    fetchFrontendVersion(deps.fetchImpl, cb),
-    runsForCommit(deps.exec, PROD.githubRepo, expectedSha).catch((e: Error) => {
-      errors.push({ section: "github", error: e.message })
+    listDeployments(railway, errors),
+    fetchFrontendVersion(deps.fetchImpl, cacheBuster),
+    runsForCommit(deps.exec, PROD.githubRepo, expectedSha).catch((error: Error) => {
+      errors.push({ section: "github", error: error.message })
       return []
     }),
   ])
-  if (!railway) errors.push({ section: "railway", error: "RAILWAY_READONLY_TOKEN missing; Railway planes skipped" })
   const revision = buildRevisionReport({ expected: expectedSha, deployments, frontendVersion, runs })
   return { revision, deployments, errors }
 }
 
 export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<Snapshot> {
   const now = deps.now()
-  const expectedSha = await resolveExpectedSha(deps, opts.sha)
   const { railway, db } = clients(deps)
   const errors: SectionError[] = []
-  const { revision, deployments, errors: revErrors } = await takeRevision(deps, expectedSha)
-  errors.push(...revErrors)
 
-  const sinceIso =
-    opts.since ?? revision.backendDeployedAt ?? new Date(now.getTime() - THRESHOLDS.minWindowMs).toISOString()
-  const label = opts.since
-    ? "since --since"
-    : revision.backendDeployedAt
-      ? "since backend deploy"
-      : "last 30m (no deploy time)"
+  let expectedSha: string | null = null
+  let revision: RevisionReport | null = null
+  let deployments: RailwayDeployment[] | null = null
+  if (opts.sections.has("revision")) {
+    expectedSha = await resolveExpectedSha(deps, opts.sha)
+    const taken = await takeRevision(deps, expectedSha)
+    revision = taken.revision
+    deployments = taken.deployments
+    errors.push(...taken.errors)
+  } else if (opts.sections.has("liveness") || !opts.since) {
+    // Liveness needs the Railway hosts and the default baseline needs the backend deploy time.
+    deployments = await listDeployments(railway, errors)
+  }
+
+  const backendDeployedAt =
+    revision?.backendDeployedAt ?? summarizeRailway(deployments ?? []).get("backend")?.serving?.createdAt ?? null
+  const sinceIso = opts.since ?? backendDeployedAt ?? new Date(now.getTime() - THRESHOLDS.minWindowMs).toISOString()
+  const label = opts.since ? "since --since" : backendDeployedAt ? "since backend deploy" : "last 30m (no deploy time)"
   const window = makeWindow(new Date(sinceIso), now, THRESHOLDS.minWindowMs, label)
 
-  const guard = async <T>(section: string, enabled: boolean, run: () => Promise<T>): Promise<T | null> => {
-    if (!enabled) return null
+  const guard = async <T>(section: Section, run: () => Promise<T>): Promise<T | null> => {
+    if (!opts.sections.has(section)) return null
     try {
       return await run()
-    } catch (e) {
-      errors.push({ section, error: e instanceof Error ? e.message : String(e) })
+    } catch (error) {
+      errors.push({ section, error: error instanceof Error ? error.message : String(error) })
       return null
     }
   }
 
   const [liveness, pipelines, logs, resources] = await Promise.all([
-    guard("liveness", opts.sections.has("liveness"), () =>
+    guard("liveness", () =>
       probeLiveness({
         fetchImpl: deps.fetchImpl,
         creds: deps.creds,
@@ -142,39 +159,43 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
         cacheBuster: String(now.getTime()),
       })
     ),
-    guard("pipelines", opts.sections.has("pipelines"), async () => {
+    guard("pipelines", async () => {
       if (!db) throw new Error("DB_READ_PROXY_URL/SECRET missing; pipelines skipped")
       return probePipelines(db, window)
     }),
-    guard("logs", opts.sections.has("logs"), async () => {
+    guard("logs", async () => {
       if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing; logs skipped")
       return probeLogs(railway, window)
     }),
-    guard("resources", opts.sections.has("resources"), async () => {
+    guard("resources", async () => {
       if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing; resources skipped")
       return probeResources(railway, window)
     }),
   ])
 
   const findings: Finding[] = [
-    ...(opts.sections.has("revision") ? revision.findings : []),
+    ...(revision?.findings ?? []),
     ...(liveness?.findings ?? []),
     ...(pipelines?.findings ?? []),
     ...(logs?.findings ?? []),
     ...(resources?.findings ?? []),
-    ...errors.map((e) => ({ level: "warn" as Level, id: `error.${e.section}`, message: `${e.section}: ${e.error}` })),
+    ...errors.map((sectionError) => ({
+      level: "warn" as Level,
+      id: `error.${sectionError.section}`,
+      message: `${sectionError.section}: ${sectionError.error}`,
+    })),
   ]
   return {
     at: now.toISOString(),
     expectedSha,
     window,
-    revision: opts.sections.has("revision") ? revision : null,
+    revision,
     liveness,
     pipelines,
     logs,
     resources,
     errors,
     findings,
-    level: worst(findings.map((f) => f.level)),
+    level: worst(findings.map((finding) => finding.level)),
   }
 }

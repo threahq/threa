@@ -124,16 +124,23 @@ export function summarizeLogs(
     warnPrior: RailwayLogLine[]
   }
 ): LogReport {
-  const count = (arr: RailwayLogLine[], service: string, noise: boolean) =>
-    collapseContinuations(arr).filter((l) => l.service === service && (noiseReason(l.message) !== null) === noise)
-      .length
+  const prepare = (arr: RailwayLogLine[]) =>
+    collapseContinuations(arr).map((line) => ({ service: line.service, isNoise: noiseReason(line.message) !== null }))
+  const events = {
+    errSince: prepare(lines.errSince),
+    errPrior: prepare(lines.errPrior),
+    warnSince: prepare(lines.warnSince),
+    warnPrior: prepare(lines.warnPrior),
+  }
+  const count = (arr: Array<{ service: string | null; isNoise: boolean }>, service: string, noise: boolean) =>
+    arr.filter((event) => event.service === service && event.isNoise === noise).length
   const services: LogServiceSummary[] = PROD.logServices.map((service) => ({
     service,
-    errorSince: count(lines.errSince, service, false),
-    errorPrior: count(lines.errPrior, service, false),
-    warnSince: count(lines.warnSince, service, false),
-    warnPrior: count(lines.warnPrior, service, false),
-    noiseSince: count(lines.errSince, service, true) + count(lines.warnSince, service, true),
+    errorSince: count(events.errSince, service, false),
+    errorPrior: count(events.errPrior, service, false),
+    warnSince: count(events.warnSince, service, false),
+    warnPrior: count(events.warnPrior, service, false),
+    noiseSince: count(events.errSince, service, true) + count(events.warnSince, service, true),
   }))
   const templates = groupTemplates([...lines.errSince, ...lines.warnSince])
   const truncated = [lines.errSince, lines.errPrior, lines.warnSince, lines.warnPrior].some(

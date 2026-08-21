@@ -24,8 +24,8 @@ export function summarizeResources(
 ): ResourceReport {
   const sinceSec = new Date(window.since).getTime() / 1000
   const byService = new Map<string, ResourceRow>()
-  const row = (id: string | null) => {
-    const name = id ? (names.get(id) ?? id.slice(0, 8)) : "(environment)"
+  const row = (id: string) => {
+    const name = names.get(id) ?? id.slice(0, 8)
     let r = byService.get(name)
     if (!r) {
       r = {

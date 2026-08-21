@@ -12,13 +12,13 @@ import {
   takeSnapshot,
   resolveExpectedSha,
   type Deps,
+  type Section,
   type Snapshot,
   type SnapshotOptions,
 } from "./snapshot"
 import { exitCodeFor, worst, type Level } from "./types"
 
-const SECTIONS = ["revision", "liveness", "pipelines", "logs", "resources"] as const
-type Section = (typeof SECTIONS)[number]
+const SECTIONS: readonly Section[] = ["revision", "liveness", "pipelines", "logs", "resources"]
 
 const HELP = `monitor — post-launch production checks for Threa (read-only).
 
@@ -36,7 +36,7 @@ Flags:
   --since <iso|Nm|Nh> Baseline for "since" comparisons (default: backend deploy time). 45m, 2h, or ISO.
   --only <a,b>       Sections for status/watch: ${SECTIONS.join(",")}.
   --skip <a,b>       Sections to leave out.
-  --json             Machine output (full snapshot).
+  --json             Machine output. status/verify: the snapshot; watch: one JSON line per poll; logs/deploys: the data.
   --top <n>          Log templates to show (default 5; logs command default 15).
   --service <name>   logs: one of ${PROD.logServices.join(",")} (default all).
   --level <l>        logs: error|warn (default error).
@@ -47,109 +47,128 @@ Flags:
 Credentials: RAILWAY_READONLY_TOKEN, DB_READ_PROXY_URL/SECRET, THREA_PROD_BASE_URL, THREA_PROD_READ_ONLY_API_KEY,
 THREA_PROD_DEFAULT_WORKSPACE from env, else ~/.threa.env.agents. Missing ones skip their section loudly.`
 
-export function parseDuration(v: string | undefined, fallbackMs: number): number {
-  if (!v) return fallbackMs
-  const m = /^(\d+)(ms|s|m|h)$/.exec(v.trim())
-  if (!m) throw new Error(`bad duration: ${v} (use 30s, 5m, 2h)`)
-  const n = Number(m[1])
-  return m[2] === "ms" ? n : m[2] === "s" ? n * 1000 : m[2] === "m" ? n * 60_000 : n * 3_600_000
+type Flags = Record<string, string | boolean | undefined>
+
+export function parseDuration(value: string | undefined, fallbackMs: number): number {
+  if (!value) return fallbackMs
+  const match = /^(\d+)(ms|s|m|h)$/.exec(value.trim())
+  if (!match) throw new Error(`bad duration: ${value} (use 30s, 5m, 2h)`)
+  const amount = Number(match[1])
+  const unit = match[2]
+  return unit === "ms" ? amount : unit === "s" ? amount * 1000 : unit === "m" ? amount * 60_000 : amount * 3_600_000
 }
 
-export function parseSince(v: string | undefined, now: Date): string | undefined {
-  if (!v) return undefined
-  if (/^\d+(s|m|h)$/.test(v)) return new Date(now.getTime() - parseDuration(v, 0)).toISOString()
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) throw new Error(`bad --since: ${v}`)
-  return d.toISOString()
+export function parseSince(value: string | undefined, now: Date): string | undefined {
+  if (!value) return undefined
+  if (/^\d+(s|m|h)$/.test(value)) return new Date(now.getTime() - parseDuration(value, 0)).toISOString()
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) throw new Error(`bad --since: ${value}`)
+  return date.toISOString()
 }
 
 export function pickSections(only?: string, skip?: string): Set<Section> {
-  const set = new Set<Section>(only ? [] : SECTIONS)
-  const check = (s: string): Section => {
-    if (!(SECTIONS as readonly string[]).includes(s)) throw new Error(`unknown section: ${s}`)
-    return s as Section
+  const sections = new Set<Section>(only ? [] : SECTIONS)
+  const check = (name: string): Section => {
+    if (!SECTIONS.includes(name as Section)) throw new Error(`unknown section: ${name}`)
+    return name as Section
   }
-  for (const s of only?.split(",").filter(Boolean) ?? []) set.add(check(s))
-  for (const s of skip?.split(",").filter(Boolean) ?? []) set.delete(check(s))
-  return set
+  for (const name of only?.split(",").filter(Boolean) ?? []) sections.add(check(name))
+  for (const name of skip?.split(",").filter(Boolean) ?? []) sections.delete(check(name))
+  return sections
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-async function cmdStatus(deps: Deps, flags: Record<string, string | boolean | undefined>): Promise<number> {
-  const opts: SnapshotOptions = {
+function snapshotOptions(flags: Flags, now: Date): SnapshotOptions {
+  return {
     sha: flags.sha as string | undefined,
-    since: parseSince(flags.since as string | undefined, deps.now()),
+    since: parseSince(flags.since as string | undefined, now),
     sections: pickSections(flags.only as string | undefined, flags.skip as string | undefined),
   }
-  const snap = await takeSnapshot(deps, opts)
-  console.log(flags.json ? JSON.stringify(snap, null, 2) : renderSnapshot(snap, { top: Number(flags.top ?? 5) }))
-  return exitCodeFor(snap.level)
 }
 
-async function cmdVerify(deps: Deps, flags: Record<string, string | boolean | undefined>): Promise<number> {
+async function cmdStatus(deps: Deps, flags: Flags): Promise<number> {
+  const snapshot = await takeSnapshot(deps, snapshotOptions(flags, deps.now()))
+  console.log(
+    flags.json ? JSON.stringify(snapshot, null, 2) : renderSnapshot(snapshot, { top: Number(flags.top ?? 5) })
+  )
+  return exitCodeFor(snapshot.level)
+}
+
+async function cmdVerify(deps: Deps, flags: Flags): Promise<number> {
   const sha = await resolveExpectedSha(deps, flags.sha as string | undefined)
   const timeoutMs = parseDuration(flags.timeout as string | undefined, THRESHOLDS.verifyTimeoutMs)
   const intervalMs = parseDuration(flags.interval as string | undefined, THRESHOLDS.verifyIntervalMs)
   const deadline = deps.now().getTime() + timeoutMs
+  // Progress goes to stderr under --json so stdout stays a single JSON document (the final status).
+  const progress = flags.json ? console.error : console.log
   let lastRender = ""
   let verdict: Level = "pending"
   for (;;) {
     const { revision, errors } = await takeRevision(deps, sha)
-    const levels = revision.planes.map((p) => p.level)
-    verdict = worst(levels)
+    verdict = worst(revision.planes.map((plane) => plane.level))
     const rendered = [
       ...renderRevision(revision, deps.now()),
-      ...errors.map((e) => `  ! ${e.section}: ${e.error}`),
+      ...errors.map((sectionError) => `  ! ${sectionError.section}: ${sectionError.error}`),
     ].join("\n")
     if (rendered !== lastRender) {
-      console.log(`${deps.now().toISOString().slice(11, 19)}Z\n${rendered}`)
+      progress(`${deps.now().toISOString().slice(11, 19)}Z\n${rendered}`)
       lastRender = rendered
     }
     if (verdict === "ok" || verdict === "fail") break
     if (deps.now().getTime() >= deadline) {
-      console.log(`timeout after ${flags.timeout ?? "40m"}; planes not converged`)
+      progress(`timeout after ${flags.timeout ?? "40m"}; planes not converged`)
       verdict = "fail"
       break
     }
     await sleep(intervalMs)
   }
-  if (verdict !== "ok") return 2
-  console.log(`all planes serve ${short(sha)}; running status`)
+  if (verdict !== "ok") {
+    if (flags.json) console.log(JSON.stringify({ verified: false, sha, verdict }))
+    return 2
+  }
+  progress(`all planes serve ${short(sha)}; running status`)
   return cmdStatus(deps, { ...flags, sha })
 }
 
-async function cmdWatch(deps: Deps, flags: Record<string, string | boolean | undefined>): Promise<number> {
+async function cmdWatch(deps: Deps, flags: Flags): Promise<number> {
   const durationMs = parseDuration(flags.for as string | undefined, THRESHOLDS.watchDurationMs)
   const intervalMs = parseDuration(flags.interval as string | undefined, THRESHOLDS.watchIntervalMs)
-  const opts: SnapshotOptions = {
-    sha: flags.sha as string | undefined,
-    since: parseSince(flags.since as string | undefined, deps.now()),
-    sections: pickSections(flags.only as string | undefined, flags.skip as string | undefined),
-  }
+  const opts = snapshotOptions(flags, deps.now())
   const end = deps.now().getTime() + durationMs
   let prev: Snapshot | null = null
   let worstSeen: Level = "ok"
   for (;;) {
-    const snap = await takeSnapshot(deps, opts)
-    worstSeen = worst([worstSeen, snap.level])
-    const stamp = snap.at.slice(11, 19) + "Z"
-    if (!prev) {
-      console.log(renderSnapshot(snap, { top: Number(flags.top ?? 5) }))
+    const snapshot = await takeSnapshot(deps, opts)
+    worstSeen = worst([worstSeen, snapshot.level])
+    const stamp = snapshot.at.slice(11, 19) + "Z"
+    const { added, resolved } = prev
+      ? diffFindings(prev.findings, snapshot.findings)
+      : { added: snapshot.findings, resolved: [] }
+    if (flags.json) {
+      // One JSON line per poll: the first carries the full snapshot, later ones only the deltas.
+      console.log(
+        JSON.stringify(
+          prev
+            ? { at: snapshot.at, level: snapshot.level, added, resolved }
+            : { at: snapshot.at, level: snapshot.level, snapshot }
+        )
+      )
+    } else if (!prev) {
+      console.log(renderSnapshot(snapshot, { top: Number(flags.top ?? 5) }))
     } else {
-      const { added, resolved } = diffFindings(prev.findings, snap.findings)
-      if (!added.length && !resolved.length) console.log(`${stamp} ${snap.level} no change`)
-      for (const f of added) console.log(`${stamp} + ${f.level} ${f.message}`)
-      for (const f of resolved) console.log(`${stamp} − resolved: ${f.message}`)
+      if (!added.length && !resolved.length) console.log(`${stamp} ${snapshot.level} no change`)
+      for (const finding of added) console.log(`${stamp} + ${finding.level} ${finding.message}`)
+      for (const finding of resolved) console.log(`${stamp} − resolved: ${finding.message}`)
     }
-    prev = snap
+    prev = snapshot
     if (deps.now().getTime() + intervalMs > end) break
     await sleep(intervalMs)
   }
   return exitCodeFor(worstSeen)
 }
 
-async function cmdLogs(deps: Deps, flags: Record<string, string | boolean | undefined>): Promise<number> {
+async function cmdLogs(deps: Deps, flags: Flags): Promise<number> {
   const { railway } = clients(deps)
   if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing")
   const now = deps.now()
@@ -158,45 +177,37 @@ async function cmdLogs(deps: Deps, flags: Record<string, string | boolean | unde
   const level = (flags.level as string | undefined) ?? "error"
   const service = flags.service as string | undefined
   const services = service ? [service] : [...PROD.logServices]
-  const parts = [`(@level:${level})`, `(${services.map((s) => `@service:${s}`).join(" OR ")})`]
-  if (flags.grep) parts.push(`(${flags.grep})`)
+  const filterParts = [`(@level:${level})`, `(${services.map((name) => `@service:${name}`).join(" OR ")})`]
+  if (flags.grep) filterParts.push(`(${flags.grep})`)
   const lines = await railway.environmentLogs({
-    filter: parts.join(" AND "),
+    filter: filterParts.join(" AND "),
     after: since,
     limit: THRESHOLDS.logFetchLimit,
   })
   const templates = groupTemplates(lines)
+  const truncated = lines.length >= THRESHOLDS.logFetchLimit
   if (flags.json) {
     console.log(
       JSON.stringify(
-        {
-          since,
-          level,
-          services,
-          count: lines.length,
-          truncated: lines.length >= THRESHOLDS.logFetchLimit,
-          templates,
-          lines: flags.raw ? lines : undefined,
-        },
+        { since, level, services, count: lines.length, truncated, templates, lines: flags.raw ? lines : undefined },
         null,
         2
       )
     )
     return 0
   }
-  console.log(
-    `${lines.length}${lines.length >= THRESHOLDS.logFetchLimit ? "+" : ""} ${level} lines since ${since} across ${services.join(",")}`
-  )
-  for (const t of templates.slice(0, Number(flags.top ?? 15))) {
+  console.log(`${lines.length}${truncated ? "+" : ""} ${level} lines since ${since} across ${services.join(",")}`)
+  for (const template of templates.slice(0, Number(flags.top ?? 15))) {
     console.log(
-      `×${String(t.count).padEnd(4)} ${t.firstAt.slice(11, 19)}→${t.lastAt.slice(11, 19)} [${t.services.join(",")}]${t.noise ? ` (noise: ${t.noise})` : ""}\n      ${t.sample.slice(0, 300).replace(/\n/g, "\n      ")}`
+      `×${String(template.count).padEnd(4)} ${template.firstAt.slice(11, 19)}→${template.lastAt.slice(11, 19)} [${template.services.join(",")}]${template.noise ? ` (noise: ${template.noise})` : ""}\n      ${template.sample.slice(0, 300).replace(/\n/g, "\n      ")}`
     )
   }
-  if (flags.raw) for (const l of lines) console.log(`${l.timestamp.slice(0, 19)} [${l.service}] ${l.message}`)
+  if (flags.raw)
+    for (const line of lines) console.log(`${line.timestamp.slice(0, 19)} [${line.service}] ${line.message}`)
   return 0
 }
 
-async function cmdDeploys(deps: Deps, flags: Record<string, string | boolean | undefined>): Promise<number> {
+async function cmdDeploys(deps: Deps, flags: Flags): Promise<number> {
   const { railway } = clients(deps)
   if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing")
   const deployments = await railway.listDeployments(Number(flags.top ?? 30))
@@ -204,17 +215,17 @@ async function cmdDeploys(deps: Deps, flags: Record<string, string | boolean | u
     console.log(JSON.stringify(deployments, null, 2))
     return 0
   }
-  const summary = summarizeRailway(deployments)
-  for (const [service, { newest, serving }] of summary) {
+  for (const [service, { newest, serving }] of summarizeRailway(deployments)) {
     console.log(
-      `${service.padEnd(14)} serving ${short(serving?.sha) ?? "?"} (${serving?.createdAt.slice(0, 16) ?? "?"})  newest ${newest.status} ${short(newest.sha) ?? "?"} ${newest.createdAt.slice(0, 16)}${newest.skippedReason ? ` (${newest.skippedReason})` : ""}`
+      `${service.padEnd(14)} serving ${short(serving?.sha)} (${serving?.createdAt.slice(0, 16) ?? "?"})  newest ${newest.status} ${short(newest.sha)} ${newest.createdAt.slice(0, 16)}${newest.skippedReason ? ` (${newest.skippedReason})` : ""}`
     )
   }
   console.log("")
-  for (const d of deployments)
+  for (const deployment of deployments) {
     console.log(
-      `${d.createdAt.slice(0, 16)} ${d.service.padEnd(14)} ${d.status.padEnd(9)} ${short(d.sha) ?? "?"}  ${(d.commitMessage ?? "").split("\n")[0].slice(0, 70)}`
+      `${deployment.createdAt.slice(0, 16)} ${deployment.service.padEnd(14)} ${deployment.status.padEnd(9)} ${short(deployment.sha)}  ${(deployment.commitMessage ?? "").split("\n")[0].slice(0, 70)}`
     )
+  }
   return 0
 }
 
@@ -249,7 +260,7 @@ export async function main(argv: string[]): Promise<number> {
   if (env.missing.length)
     console.error(`credentials missing: ${env.missing.join(", ")} (dependent sections are skipped)`)
   const deps: Deps = { fetchImpl: fetch, exec: bunExec, creds: env.creds, now: () => new Date() }
-  const flags = values as Record<string, string | boolean | undefined>
+  const flags = values as Flags
   switch (command) {
     case "status":
       return cmdStatus(deps, flags)
