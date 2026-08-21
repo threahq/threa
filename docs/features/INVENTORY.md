@@ -100,6 +100,7 @@ this tree. See Decisions below.
 | attachment-pipeline                                           | Per-region S3, extraction (PDF/OCR), thumbnails, video transcoding                                                                       | `features/attachments`, `lib/storage/`                                                          |
 | search-architecture                                           | Hybrid full-text and pgvector search, embedding jobs, access control                                                                     | `features/search`                                                                               |
 | memo-pipeline                                                 | The GAM machinery: boundary extraction, classification, memo accumulation                                                                | `features/memos` and its outbox handlers                                                        |
+| [message-references](message-references.md) ✅                | Quote and share pinned to a source revision and span: positions/slicing, wire forms, server resolution, slot hydration, pin backfill     | done                                                                                            |
 
 ## Probably skip, or covered elsewhere
 

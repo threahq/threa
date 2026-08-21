@@ -1,4 +1,4 @@
-import { isEmptySlice, isRangeValid, normalizeRange, parseMarkdown, resolveSelectionRange } from "@threa/prosemirror"
+import { isEmptySlice, isRangeValid, normalizeRange } from "@threa/prosemirror"
 import { MessageReferenceErrorCodes, type ContentRange, type JSONContent } from "@threa/types"
 
 import type { Querier } from "../../../db"
@@ -7,6 +7,7 @@ import { resolveActorNames } from "../../agents"
 import { MessageRepository, type Message } from "../repository"
 import { MessageVersionRepository, messageVersionKey, type MessageVersionKey } from "../version-repository"
 
+import { locateSnippetRange as findSnippetRange } from "./locate"
 import { sliceReferenceContent } from "./slice"
 
 const REFERENCE_NODE_TYPES = new Set(["quoteReply", "sharedMessage"])
@@ -73,31 +74,6 @@ function collectReferenceNodes(root: JSONContent): ReferenceNode[] {
   return found
 }
 
-/** Text a reader would see, with atoms reduced to a separator. */
-function docToPlainText(node: JSONContent): string {
-  const parts: string[] = []
-  const walk = (n: JSONContent): void => {
-    if (n.type === "text") {
-      parts.push(n.text ?? "")
-      return
-    }
-    if (n.content) {
-      for (const child of n.content) walk(child)
-    }
-    parts.push(" ")
-  }
-  walk(node)
-  return parts.join("")
-}
-
-function normalizeText(text: string): string {
-  return text
-    .normalize("NFC")
-    .replace(/[\u00A0\u200B-\u200D\uFEFF]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-}
-
 function readVersion(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
@@ -136,21 +112,12 @@ function sameRange(a: ContentRange | null, b: ContentRange | null): boolean {
   return a.from === b.from && a.to === b.to
 }
 
-/**
- * The span of `pinnedDoc` a legacy (rangeless) quote is talking about, located
- * from the snippet the client stored. `null` means the whole message.
- */
 function locateSnippetRange(pinnedDoc: JSONContent, snippet: unknown): ContentRange | null {
-  if (typeof snippet !== "string") return null
-  const wanted = normalizeText(docToPlainText(parseMarkdown(snippet)))
-  if (wanted.length === 0) return null
-  if (wanted === normalizeText(docToPlainText(pinnedDoc))) return null
-
-  const located = resolveSelectionRange(pinnedDoc, { text: wanted })
+  const located = findSnippetRange(pinnedDoc, snippet)
   if (!located) {
     throw referenceError(MessageReferenceErrorCodes.RANGE_NOT_FOUND, "Quoted text is not in the referenced message")
   }
-  return normalizeRange(pinnedDoc, located)
+  return located.range
 }
 
 function validateRange(pinnedDoc: JSONContent, raw: ContentRange): ContentRange | null {

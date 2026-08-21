@@ -230,6 +230,7 @@ When citing a specific message or file, prefer a structural reference over a par
   \`>\`
   \`> — [Author Name](quote:stream_xxx/msg_yyy/author_id/actor_type)\`
   The trailing \`actor_type\` segment is \`user\` for humans and \`persona\` for AI agents — match it to the original author's type. Author id is \`usr_…\` for users and \`persona_…\` for personas.
+  Quote the source verbatim: the server pins the quote to the revision it can read and re-derives the blockquote from that span, so wording you invented is rejected rather than sent.
 
 - **Resurface an attachment** by id:
   \`[Image #1](attachment:att_xxx)\` for images,

@@ -120,7 +120,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
                               },
                               "version": {
                                 "type": "integer",
@@ -3056,7 +3056,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
                               },
                               "version": {
                                 "type": "integer",
@@ -4837,7 +4837,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
                               },
                               "version": {
                                 "type": "integer",
@@ -5177,7 +5177,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
                               },
                               "version": {
                                 "type": "integer",
@@ -5736,7 +5736,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
                               },
                               "version": {
                                 "type": "integer",
@@ -6064,7 +6064,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
                               },
                               "version": {
                                 "type": "integer",
@@ -6370,7 +6370,7 @@
                               "authorDisplayName": { "type": "string" },
                               "content": {
                                 "type": "string",
-                                "description": "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
                               },
                               "version": {
                                 "type": "integer",
