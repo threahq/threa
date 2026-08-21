@@ -69,6 +69,10 @@ const closeTracksSchema = z
     mids: z.array(z.string().min(1).max(64)).max(16),
     unpublishKinds: z.array(z.enum(PUBLISHED_TRACK_KINDS)).max(4).optional(),
     sdp: sessionDescriptionSchema.optional(),
+    // The client's local failure (e.g. a rejected SDP answer) on a cleanup
+    // close — logged by the service; a client-side throw is otherwise invisible
+    // server-side because the publish leg already returned 200.
+    reason: z.string().max(2048).optional(),
   })
   .refine((body) => body.mids.length > 0 || (body.unpublishKinds?.length ?? 0) > 0, {
     message: "mids or unpublishKinds required",
@@ -310,6 +314,7 @@ export function createCallHandlers({ pool, io, callService, featureFlagService, 
         mids: body.mids,
         unpublishKinds: body.unpublishKinds,
         sdp: body.sdp,
+        reason: body.reason,
       })
       if (result.snapshot) broadcastRoster(io, callId, result.snapshot)
       res.json(result.cf ?? { tracks: [] })

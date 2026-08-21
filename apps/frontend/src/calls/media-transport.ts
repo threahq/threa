@@ -50,7 +50,8 @@ export interface TransportStats {
 export interface MediaTransport {
   connect(descriptor: SessionDescriptor): Promise<void>
   publish(kind: PublishedTrackKind, track: MediaStreamTrack): Promise<void>
-  unpublish(kind: PublishedTrackKind): Promise<void>
+  /** `reason` marks a failure-cleanup close: the client error rides the wire so the proxy can log it. */
+  unpublish(kind: PublishedTrackKind, opts?: { reason?: string }): Promise<void>
   /** Cap a published track's encoder (watchdog ladder `maxBitrate`); no-op if unpublished. */
   setPublishEncoding(kind: PublishedTrackKind, params: { maxBitrate?: number }): Promise<void>
   pull(ref: PeerTrackRef): Promise<void>
@@ -120,6 +121,7 @@ export interface CallProxyClient {
     mids: string[]
     unpublishKinds?: PublishedTrackKind[]
     sdp?: CfSessionDescription
+    reason?: string
   }): Promise<CfCloseTracksResult>
 }
 
@@ -138,8 +140,8 @@ export function createCallProxyClient(args: {
     publishTracks: ({ sdp, tracks }) => post(`${base}/tracks/publish`, { mediaIncarnation, sdp, tracks }),
     pullTracks: (tracks) => post(`${base}/tracks/pull`, { mediaIncarnation, tracks }),
     renegotiate: (sdp) => post(`${base}/renegotiate`, { mediaIncarnation, sdp }),
-    closeTracks: ({ mids, unpublishKinds, sdp }) =>
-      post(`${base}/tracks/close`, { mediaIncarnation, mids, unpublishKinds, sdp }),
+    closeTracks: ({ mids, unpublishKinds, sdp, reason }) =>
+      post(`${base}/tracks/close`, { mediaIncarnation, mids, unpublishKinds, sdp, reason }),
   }
 }
 
@@ -354,7 +356,7 @@ export class CloudflareSfuTransport implements MediaTransport {
     }
   }
 
-  async unpublish(kind: PublishedTrackKind): Promise<void> {
+  async unpublish(kind: PublishedTrackKind, opts?: { reason?: string }): Promise<void> {
     await this.enqueue(async () => {
       // "Ensure kind is not published" — the registry close goes out even with no
       // live transceiver: a publish that failed client-side after its REST call
@@ -392,6 +394,7 @@ export class CloudflareSfuTransport implements MediaTransport {
           mids: mid ? [mid] : [],
           unpublishKinds: [kind],
           sdp,
+          reason: opts?.reason?.slice(0, 2048),
         })
       } catch (err) {
         // The REST leg itself failed (network, stale-incarnation fence) after we

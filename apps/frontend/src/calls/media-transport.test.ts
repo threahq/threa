@@ -250,9 +250,14 @@ describe("CloudflareSfuTransport", () => {
   it("should close the registry entry even when no transceiver exists (phantom cleanup)", async () => {
     const { transport, calls } = makeTransport()
     await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
-    await transport.unpublish("camera")
+    await transport.unpublish("camera", { reason: "InvalidAccessError: bad answer" })
     const close = calls.find((c) => c.path.endsWith("/tracks/close"))
-    expect(close?.body).toMatchObject({ mids: [], unpublishKinds: ["camera"] })
+    expect(close?.body).toMatchObject({
+      mids: [],
+      unpublishKinds: ["camera"],
+      // The client failure rides the close so the proxy can log it.
+      reason: "InvalidAccessError: bad answer",
+    })
     expect(close?.body.sdp).toBeUndefined()
   })
 

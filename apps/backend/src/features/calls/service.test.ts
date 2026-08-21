@@ -19,6 +19,7 @@ import * as observabilityModule from "../../lib/observability"
 import { OutboxRepository } from "../../lib/outbox"
 import { CALL_PRODUCT_CAP } from "./config"
 import { CloudflareRealtimeError } from "./cloudflare"
+import { logger } from "../../lib/logger"
 
 const NOW = new Date("2026-07-19T12:00:00.000Z")
 
@@ -1988,6 +1989,43 @@ describe("CallService.closeTracks", () => {
       expect.objectContaining({ publishedTracks: [{ kind: "mic", trackName: "mic0" }] })
     )
     expect(result).toMatchObject({ cf: null, snapshot: { rosterVersion: 8, roster: [] } })
+  })
+
+  it("should log the client-reported failure reason riding a cleanup close", async () => {
+    stubWithClient()
+    stubTransaction()
+    stubFence(
+      fakeEndpoint({
+        id: "callep_1",
+        cfSessionId: "sess_1",
+        mediaIncarnation: "inc_1",
+        publishedTracks: [{ kind: "camera", trackName: "cam1" }],
+      })
+    )
+    spyOn(CallEndpointRepository, "setPublishedTracks").mockResolvedValue(fakeEndpoint())
+    spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(3)
+    spyOn(CallParticipantRepository, "listRoster").mockResolvedValue([])
+    const warn = spyOn(logger, "warn")
+
+    await makeServiceWithCf(fakeCloudflare()).closeTracks({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      endpointId: "callep_1",
+      mediaIncarnation: "inc_1",
+      mids: [],
+      unpublishKinds: ["camera"],
+      reason: "InvalidAccessError: Failed to set remote answer sdp",
+    })
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: "call_1",
+        endpointId: "callep_1",
+        reason: "InvalidAccessError: Failed to set remote answer sdp",
+      }),
+      "Client reported a local failure on unpublish"
+    )
   })
 
   it("should skip CF entirely on a mid-less unpublish (client-side publish failure cleanup)", async () => {
