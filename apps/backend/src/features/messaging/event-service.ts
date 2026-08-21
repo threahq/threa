@@ -1266,7 +1266,7 @@ export class EventService {
           params.contentMarkdown = deriveContentMarkdown(resolvedEdit.contentJson)
         }
 
-        await MessageVersionRepository.insert(client, {
+        const snapshot = await MessageVersionRepository.insert(client, {
           id: messageVersionId(),
           messageId: params.messageId,
           versionNumber: existing.revision,
@@ -1291,7 +1291,7 @@ export class EventService {
             messageId: params.messageId,
             contentJson: params.contentJson,
             contentMarkdown: params.contentMarkdown,
-            revision: existing.revision + 1,
+            revision: snapshot.versionNumber + 1,
             memoEmbeds,
           } satisfies MessageEditedPayload,
           actorId: params.actorId,

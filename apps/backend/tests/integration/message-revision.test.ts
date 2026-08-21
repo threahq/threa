@@ -161,6 +161,11 @@ describe("message revision", () => {
     const versions = await MessageVersionRepository.listByMessageId(pool, message.id)
     expect(versions.map((v) => v.versionNumber)).toEqual([1, 2, 3])
     expect((await MessageRepository.findById(pool, message.id))?.revision).toBe(4)
+    const lastEdit = (await eventService.listEvents(channel, { limit: 200 }))
+      .filter((e) => e.eventType === "message_edited" && (e.payload as MessageEditedPayload).messageId === message.id)
+      .map((e) => (e.payload as MessageEditedPayload).revision)
+      .at(-1)
+    expect(lastEdit).toBe(4)
   })
 
   test("getCurrentRevision is null for a message that does not exist", async () => {
