@@ -1213,3 +1213,15 @@ export {
   type ListStreamContextResponse,
   type ListStreamContextOccurrencesResponse,
 } from "./stream-context"
+
+export {
+  CODE_LANGUAGES,
+  CODE_LANGUAGE_IDS,
+  CODE_LANGUAGE_PRELOAD_IDS,
+  PLAINTEXT_LANGUAGE_ID,
+  type CodeLanguage,
+  type CodeLanguageId,
+  formatCodeLanguage,
+  isCodeLanguageId,
+  normalizeCodeLanguage,
+} from "./code-languages"
