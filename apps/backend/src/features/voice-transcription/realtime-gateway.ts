@@ -1,7 +1,7 @@
 import type { Server } from "socket.io"
 import { ulid } from "ulid"
 import { z } from "zod"
-import type { AuthService } from "@threa/backend-common"
+import type { AuthService, SessionCookies } from "@threa/backend-common"
 import { parseMarkdown } from "@threa/prosemirror"
 import {
   VOICE_DRAFT_CONTEXT_MAX_CHARS,
@@ -47,6 +47,7 @@ const stopPayloadSchema = z.object({ mode: z.enum(["format", "send_as_is", "abor
 type StopReason = "stopped" | "max_duration"
 interface Dependencies {
   authService: AuthService
+  sessionCookies: SessionCookies
   voiceTranscriptionService: VoiceTranscriptionService
   transcription: Transcription
   userPreferencesService: UserPreferencesService
@@ -101,7 +102,7 @@ const modeRank: Record<VoiceTerminationMode, number> = { format: 0, send_as_is: 
 
 export function registerVoiceGateway(io: Server, deps: Dependencies) {
   const namespace = io.of("/voice")
-  namespace.use(createSocketAuthMiddleware(deps.authService))
+  namespace.use(createSocketAuthMiddleware({ authService: deps.authService, sessionCookies: deps.sessionCookies }))
   namespace.on("connection", (socket) => {
     const workosUserId = socket.data.workosUserId as string
     let state: RelayState | null = null

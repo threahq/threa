@@ -1,12 +1,16 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Socket } from "socket.io"
-import type { AuthService } from "@threa/backend-common"
+import { SessionCookies, type AuthService } from "@threa/backend-common"
 import { createSocketAuthMiddleware } from "./socket-auth"
 
 function fakeSocket(cookie?: string) {
   return { handshake: { headers: cookie ? { cookie } : {} }, data: {} } as unknown as Socket
 }
 
+const sessionCookies = new SessionCookies({
+  name: "wos_session",
+  options: { path: "/", httpOnly: true, secure: false, sameSite: "lax" },
+})
 const COOKIE = "wos_session=tok"
 
 describe("createSocketAuthMiddleware", () => {
@@ -14,7 +18,7 @@ describe("createSocketAuthMiddleware", () => {
     const authService = {
       authenticateSession: mock(async () => ({ success: true, user: { id: "workos_1" } })),
     } as unknown as AuthService
-    const middleware = createSocketAuthMiddleware(authService)
+    const middleware = createSocketAuthMiddleware({ authService, sessionCookies })
     const socket = fakeSocket(COOKIE)
     const next = mock((_err?: unknown) => {})
 
@@ -28,7 +32,7 @@ describe("createSocketAuthMiddleware", () => {
     const authService = { authenticateSession: mock(async () => ({ success: true })) } as unknown as AuthService
     const next = mock((_err?: unknown) => {})
 
-    await createSocketAuthMiddleware(authService)(fakeSocket(), next)
+    await createSocketAuthMiddleware({ authService, sessionCookies })(fakeSocket(), next)
 
     expect(authService.authenticateSession).not.toHaveBeenCalled()
     expect(next.mock.calls[0][0]).toBeInstanceOf(Error)
@@ -42,7 +46,7 @@ describe("createSocketAuthMiddleware", () => {
     } as unknown as AuthService
     const next = mock((_err?: unknown) => {})
 
-    await createSocketAuthMiddleware(authService)(fakeSocket(COOKIE), next)
+    await createSocketAuthMiddleware({ authService, sessionCookies })(fakeSocket(COOKIE), next)
 
     expect(next.mock.calls[0][0]).toBeInstanceOf(Error)
   })

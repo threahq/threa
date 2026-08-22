@@ -1,9 +1,15 @@
 import { describe, expect, mock, test } from "bun:test"
 import type { Request, Response } from "express"
 import { HttpError, type AuthService } from "@threa/backend-common"
+import { SessionCookies } from "@threa/backend-common"
 import { createControlPlaneAuthHandlers } from "../../src/features/auth"
 import type { AccountsService } from "../../src/features/accounts"
 import type { AuthLogService } from "../../src/features/auth-log"
+
+const sessionCookies = new SessionCookies({
+  name: "wos_session_test_auth_log",
+  options: { path: "/", httpOnly: true, secure: false, sameSite: "lax" },
+})
 
 describe("CP auth callback failure → auth_log own-handler row", () => {
   function makeHandlers(recordCallbackFailure: ReturnType<typeof mock>) {
@@ -13,6 +19,7 @@ describe("CP auth callback failure → auth_log own-handler row", () => {
     const authLogService = { recordCallbackFailure } as unknown as AuthLogService
     return createControlPlaneAuthHandlers({
       authService,
+      sessionCookies,
       accountsService: {} as unknown as AccountsService,
       frontendUrl: "https://app.example.com",
       allowedRedirectDomain: "example.com",
@@ -55,6 +62,7 @@ describe("CP auth callback failure → auth_log own-handler row", () => {
     const authLogService = { recordMagicAuthVerifyFailure } as unknown as AuthLogService
     const handlers = createControlPlaneAuthHandlers({
       authService,
+      sessionCookies,
       accountsService: {} as unknown as AccountsService,
       frontendUrl: "https://app.example.com",
       allowedRedirectDomain: "example.com",

@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express"
 import type { AuthService } from "./auth-service"
 import { pickSealed } from "./auth-service"
-import { SESSION_COOKIE_NAME, clearSessionCookie, setSessionCookie } from "../cookies"
+import type { SessionCookies } from "../cookies"
 
 interface AuthenticatedUser {
   id: string
@@ -25,7 +25,7 @@ declare global {
        * Latest valid sealed session for the active account. Equals the rotated
        * sealed when this request triggered a refresh, otherwise the original
        * cookie value. Handlers that re-park or re-set the active cookie MUST
-       * read this — `req.cookies[SESSION_COOKIE_NAME]` is the pre-refresh
+       * read this — `sessionCookies.read(req.cookies)` is the pre-refresh
        * value, which WorkOS has already revoked after refresh-token rotation.
        */
       sealedSession?: string
@@ -35,11 +35,12 @@ declare global {
 
 interface Dependencies {
   authService: AuthService
+  sessionCookies: SessionCookies
 }
 
-export function createAuthMiddleware({ authService }: Dependencies) {
+export function createAuthMiddleware({ authService, sessionCookies }: Dependencies) {
   return async function authMiddleware(req: Request, res: Response, next: NextFunction) {
-    const session = req.cookies[SESSION_COOKIE_NAME]
+    const session = sessionCookies.read(req.cookies)
 
     if (!session) {
       return res.status(401).json({ error: "Not authenticated" })
@@ -54,12 +55,12 @@ export function createAuthMiddleware({ authService }: Dependencies) {
       // here would arrive later and destroy that newer session. On a WorkOS
       // outage (refresh threw) the session may be perfectly valid — clearing
       // turns a provider blip into a mass forced logout.
-      if (result.terminal) clearSessionCookie(res)
+      if (result.terminal) sessionCookies.clear(res)
       return res.status(401).json({ error: "Session expired" })
     }
 
     if (result.refreshed && result.sealedSession) {
-      setSessionCookie(res, result.sealedSession)
+      sessionCookies.set(res, result.sealedSession)
     }
 
     req.workosUserId = result.user.id

@@ -9,7 +9,14 @@ import { errorHandler } from "./middleware/error-handler"
 import { registerSocketHandlers } from "./socket"
 import { createDatabasePools, warmPool, type DatabasePools } from "./db"
 import { runMigrations } from "./db/migrations"
-import { WorkosAuthService, StubAuthService, WorkosApiKeyService, StubApiKeyService } from "@threa/backend-common"
+import {
+  WorkosAuthService,
+  StubAuthService,
+  WorkosApiKeyService,
+  StubApiKeyService,
+  SessionCookies,
+  sessionCookieConfigFromEnv,
+} from "@threa/backend-common"
 import { BotChannelService } from "./features/api-keys"
 import { UserApiKeyService as UserApiKeyServiceImpl } from "./features/user-api-keys"
 import {
@@ -255,6 +262,7 @@ export interface ServerInstance {
 
 export async function startServer(): Promise<ServerInstance> {
   const config = loadConfig()
+  const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
 
   const { collectDefaultMetrics } = await import("./lib/observability")
   collectDefaultMetrics()
@@ -781,6 +789,7 @@ export async function startServer(): Promise<ServerInstance> {
     io,
     poolMonitor,
     authService,
+    sessionCookies,
     workspaceService,
     streamService,
     eventService,
@@ -877,6 +886,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerSocketHandlers(io, {
     pool,
     authService,
+    sessionCookies,
     streamService,
     pushService,
     workspaceService,
@@ -892,6 +902,7 @@ export async function startServer(): Promise<ServerInstance> {
   const decideBoundaryScope = createDecideVoiceBoundaryScope({ ai })
   registerVoiceGateway(io, {
     authService,
+    sessionCookies,
     voiceTranscriptionService,
     transcription,
     userPreferencesService,
@@ -905,6 +916,7 @@ export async function startServer(): Promise<ServerInstance> {
   // small control events (join/leave/state/lease renew) and the roster fan-out.
   registerCallGateway(io, {
     authService,
+    sessionCookies,
     callService,
     featureFlagService,
     pool,

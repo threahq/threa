@@ -4,6 +4,8 @@ import {
   runMigrations,
   WorkosAuthService,
   StubAuthService,
+  SessionCookies,
+  sessionCookieConfigFromEnv,
   WorkosOrgServiceImpl,
   StubWorkosOrgService,
   OutboxDispatcher,
@@ -78,6 +80,7 @@ export interface ControlPlaneInstance {
 export async function startServer(): Promise<ControlPlaneInstance> {
   const config = loadControlPlaneConfig()
 
+  const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
   const pool = createDatabasePool(config.databaseUrl, { max: 10 })
   const listenPool = createDatabasePool(config.databaseUrl, { max: 2, idleTimeoutMillis: 60_000 })
   await runMigrations(pool, MIGRATIONS_GLOB)
@@ -262,6 +265,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     registerRoutes(app, {
       pool,
       authService,
+      sessionCookies,
       workspaceService,
       shadowService,
       waitlistService,

@@ -1,15 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import {
-  HttpError,
-  SESSION_COOKIE_NAME,
-  clearAltSessionCookie,
-  clearSessionCookie,
-  displayNameFromWorkos,
-  readAltSessionCookies,
-  setSessionCookie,
-  type AuthService,
-} from "@threa/backend-common"
+import { HttpError, displayNameFromWorkos, type AuthService, type SessionCookies } from "@threa/backend-common"
 import { MAGIC_CODE_LENGTH, ORIGINAL_HOST_HEADER, SOCIAL_PROVIDERS } from "@threa/types"
 import type { AccountsService } from "../accounts"
 import type { AuthLogRequestContext, AuthLogService } from "../auth-log"
@@ -65,6 +56,7 @@ function isAllowedForwardedHost(host: string, allowedDomain: string): boolean {
 
 interface Dependencies {
   authService: AuthService
+  sessionCookies: SessionCookies
   /** Owns the park/coalesce cookie-mutation sequence for the add-account flow. */
   accountsService: AccountsService
   /** Base URL of the frontend app (e.g. "https://threa-staging.pages.dev"). Empty string for same-origin. */
@@ -108,6 +100,7 @@ function isTrustedHost(host: string, allowedDomain: string, dedicatedHosts: stri
 
 export function createControlPlaneAuthHandlers({
   authService,
+  sessionCookies,
   accountsService,
   frontendUrl,
   allowedRedirectDomain,
@@ -199,7 +192,7 @@ export function createControlPlaneAuthHandlers({
         const parked = await accountsService.addAndParkActive(
           res,
           req.cookies,
-          req.cookies[SESSION_COOKIE_NAME] as string | undefined,
+          sessionCookies.read(req.cookies),
           result.sealedSession,
           result.user.id
         )
@@ -217,13 +210,13 @@ export function createControlPlaneAuthHandlers({
           redirectPath += `${redirectPath.includes("?") ? "&" : "?"}accountError=${encodeURIComponent(parked.code)}`
         }
       } else {
-        setSessionCookie(res, result.sealedSession)
+        sessionCookies.set(res, result.sealedSession)
       }
       res.redirect(`${appOrigin}${redirectPath}`)
     },
 
     async logout(req: Request, res: Response) {
-      const session = req.cookies[SESSION_COOKIE_NAME]
+      const session = sessionCookies.read(req.cookies)
       const forwardedHost = readForwardedHost(req)
       const queryParse = logoutQuerySchema.safeParse(req.query)
       const scope = queryParse.success ? queryParse.data.scope : undefined
@@ -252,13 +245,13 @@ export function createControlPlaneAuthHandlers({
         }
       }
 
-      clearSessionCookie(res)
+      sessionCookies.clear(res)
 
       // Logout ≠ remove: clear every parked alt cookie too, but leave their
       // WorkOS sessions intact (explicit revoke is the /api/accounts/remove
       // path). This just empties the local cookie jar of all accounts.
-      for (const { slot } of readAltSessionCookies(req.cookies)) {
-        clearAltSessionCookie(res, slot)
+      for (const { slot } of sessionCookies.readAlts(req.cookies)) {
+        sessionCookies.clearAlt(res, slot)
       }
 
       if (session) {
@@ -321,7 +314,7 @@ export function createControlPlaneAuthHandlers({
       const parked = await accountsService.addAndParkActive(
         res,
         req.cookies,
-        req.cookies[SESSION_COOKIE_NAME] as string | undefined,
+        sessionCookies.read(req.cookies),
         result.sealedSession,
         result.user.id
       )

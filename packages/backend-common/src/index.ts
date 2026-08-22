@@ -137,19 +137,13 @@ export {
 } from "./id"
 export {
   parseCookies,
-  SESSION_COOKIE_NAME,
-  SESSION_COOKIE_CONFIG,
-  setSessionCookie,
-  clearSessionCookie,
+  SessionCookies,
+  sessionCookieConfigFromEnv,
   MAX_ACCOUNTS,
   MAX_ALT_SLOTS,
   assertSlot,
-  altSessionCookieName,
-  setAltSessionCookie,
-  clearAltSessionCookie,
-  readAltSessionCookies,
 } from "./cookies"
-export type { SessionCookieOptions } from "./cookies"
+export type { SessionCookieConfig, SessionCookieOptions } from "./cookies"
 export { generateSlug, generateUniqueSlug } from "./slug"
 
 export {

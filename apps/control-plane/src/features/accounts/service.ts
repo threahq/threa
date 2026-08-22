@@ -3,14 +3,10 @@ import {
   HttpError,
   MAX_ACCOUNTS,
   MAX_ALT_SLOTS,
-  clearAltSessionCookie,
-  clearSessionCookie,
   displayNameFromWorkos,
   pickSealed,
-  readAltSessionCookies,
-  setAltSessionCookie,
-  setSessionCookie,
   type AuthService,
+  type SessionCookies,
 } from "@threa/backend-common"
 
 /**
@@ -56,6 +52,7 @@ interface MembershipChecker {
 
 interface Dependencies {
   authService: AuthService
+  sessionCookies: SessionCookies
   membership: MembershipChecker
 }
 
@@ -63,10 +60,12 @@ const STALE_ID_RE = /^stale:alt_(\d+)$/
 
 export class AccountsService {
   private authService: AuthService
+  private sessionCookies: SessionCookies
   private membership: MembershipChecker
 
-  constructor({ authService, membership }: Dependencies) {
+  constructor({ authService, sessionCookies, membership }: Dependencies) {
     this.authService = authService
+    this.sessionCookies = sessionCookies
     this.membership = membership
   }
 
@@ -81,7 +80,7 @@ export class AccountsService {
   // the parked session for good. Mirrors what `createAuthMiddleware` already
   // does for the active cookie.
   private async resolveAlts(res: Response, cookies: Record<string, string>): Promise<ResolvedAlt[]> {
-    const alts = readAltSessionCookies(cookies)
+    const alts = this.sessionCookies.readAlts(cookies)
     const auths = await Promise.all(alts.map((a) => this.authService.authenticateSession(a.sealed)))
     return alts.map((a, i) => {
       const r = auths[i]
@@ -90,7 +89,7 @@ export class AccountsService {
       }
       const sealed = pickSealed(r, a.sealed)
       if (sealed !== a.sealed) {
-        setAltSessionCookie(res, a.slot, sealed)
+        this.sessionCookies.setAlt(res, a.slot, sealed)
       }
       return { slot: a.slot, sealed, ok: true, user: r.user }
     })
@@ -114,7 +113,7 @@ export class AccountsService {
   ): Promise<{ ok: true } | { ok: false; code: "MAX_ACCOUNTS_REACHED" }> {
     // No prior session — treat as a normal first login (no slot consumed).
     if (!prevActiveSealed) {
-      setSessionCookie(res, newSealed)
+      this.sessionCookies.set(res, newSealed)
       return { ok: true }
     }
 
@@ -122,7 +121,7 @@ export class AccountsService {
     // Prev cookie no longer valid, or a re-auth of the same account: there is
     // nothing worth parking — just replace the active session in place.
     if (!prevAuth.success || !prevAuth.user || prevAuth.user.id === newUserId) {
-      setSessionCookie(res, newSealed)
+      this.sessionCookies.set(res, newSealed)
       return { ok: true }
     }
 
@@ -138,11 +137,11 @@ export class AccountsService {
     // into the slot it vacated, and clear any duplicate slots of the new user.
     const existing = validAlts.find((a) => a.user?.id === newUserId)
     if (existing) {
-      setSessionCookie(res, newSealed)
-      setAltSessionCookie(res, existing.slot, prevSealedToPark)
+      this.sessionCookies.set(res, newSealed)
+      this.sessionCookies.setAlt(res, existing.slot, prevSealedToPark)
       for (const a of validAlts) {
         if (a.slot !== existing.slot && a.user?.id === newUserId) {
-          clearAltSessionCookie(res, a.slot)
+          this.sessionCookies.clearAlt(res, a.slot)
         }
       }
       return { ok: true }
@@ -164,8 +163,8 @@ export class AccountsService {
       return { ok: false, code: "MAX_ACCOUNTS_REACHED" }
     }
 
-    setAltSessionCookie(res, freeSlot, prevSealedToPark)
-    setSessionCookie(res, newSealed)
+    this.sessionCookies.setAlt(res, freeSlot, prevSealedToPark)
+    this.sessionCookies.set(res, newSealed)
     return { ok: true }
   }
 
@@ -295,12 +294,12 @@ export class AccountsService {
     // the slot the target just vacated (always free), then drop any duplicate
     // slots. `activeSealed` is whatever the auth middleware surfaced — that's
     // the rotated value when this request triggered a refresh.
-    setSessionCookie(res, target.sealed)
-    setAltSessionCookie(res, target.slot, activeSealed)
+    this.sessionCookies.set(res, target.sealed)
+    this.sessionCookies.setAlt(res, target.slot, activeSealed)
     for (const alt of alts) {
       if (alt.slot === target.slot || !alt.ok || !alt.user) continue
       if (alt.user.id === targetUserId || alt.user.id === activeUser.id) {
-        clearAltSessionCookie(res, alt.slot)
+        this.sessionCookies.clearAlt(res, alt.slot)
       }
     }
 
@@ -321,7 +320,7 @@ export class AccountsService {
         throw new HttpError("Account not found", { status: 404, code: "ACCOUNT_NOT_FOUND" })
       }
       // The sealed session already failed validation — nothing to revoke.
-      clearAltSessionCookie(res, slot)
+      this.sessionCookies.clearAlt(res, slot)
       return { removedId: targetUserId }
     }
 
@@ -336,18 +335,18 @@ export class AccountsService {
         this.authService.revokeSession(activeSealed),
         ...dups.map((dup) => this.authService.revokeSession(dup.sealed)),
       ])
-      clearSessionCookie(res)
-      for (const dup of dups) clearAltSessionCookie(res, dup.slot)
+      this.sessionCookies.clear(res)
+      for (const dup of dups) this.sessionCookies.clearAlt(res, dup.slot)
 
       const promote = alts
         .filter((a) => a.ok && a.user && a.user.id !== activeUser.id)
         .sort((a, b) => a.slot - b.slot)[0]
       if (promote) {
-        setSessionCookie(res, promote.sealed)
-        clearAltSessionCookie(res, promote.slot)
+        this.sessionCookies.set(res, promote.sealed)
+        this.sessionCookies.clearAlt(res, promote.slot)
       } else {
         // No survivor — clear every parked alt so nothing is stranded.
-        for (const alt of alts) clearAltSessionCookie(res, alt.slot)
+        for (const alt of alts) this.sessionCookies.clearAlt(res, alt.slot)
       }
 
       return { removedId: activeUser.id }
@@ -358,7 +357,7 @@ export class AccountsService {
       throw new HttpError("Account not found", { status: 404, code: "ACCOUNT_NOT_FOUND" })
     }
     await Promise.all(matches.map((m) => this.authService.revokeSession(m.sealed)))
-    for (const m of matches) clearAltSessionCookie(res, m.slot)
+    for (const m of matches) this.sessionCookies.clearAlt(res, m.slot)
 
     return { removedId: targetUserId }
   }

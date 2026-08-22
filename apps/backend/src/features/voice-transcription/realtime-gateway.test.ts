@@ -117,6 +117,7 @@ function setup(overrides?: {
 
   registerVoiceGateway(io, {
     authService: {} as never,
+    sessionCookies: {} as never,
     voiceTranscriptionService: voiceTranscriptionService as never,
     transcription: transcription as never,
     userPreferencesService: userPreferencesService as never,
