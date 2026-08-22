@@ -334,8 +334,8 @@ describe("hydrateSharedMessageRefs", () => {
       } as any,
     ])
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: "msg_a",
@@ -368,8 +368,8 @@ describe("hydrateSharedMessageRefs", () => {
         } as any,
       ])
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: "msg_a",
