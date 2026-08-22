@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Copy, Check, ChevronDown, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD } from "@threa/types"
+import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD, formatCodeLanguage, normalizeCodeLanguage } from "@threa/types"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
@@ -12,37 +12,6 @@ interface CodeBlockProps {
   children: string
 }
 
-function formatLanguage(lang: string): string {
-  const displayNames: Record<string, string> = {
-    javascript: "JavaScript",
-    typescript: "TypeScript",
-    python: "Python",
-    java: "Java",
-    go: "Go",
-    rust: "Rust",
-    cpp: "C++",
-    csharp: "C#",
-    ruby: "Ruby",
-    php: "PHP",
-    swift: "Swift",
-    kotlin: "Kotlin",
-    html: "HTML",
-    css: "CSS",
-    scss: "SCSS",
-    json: "JSON",
-    yaml: "YAML",
-    xml: "XML",
-    markdown: "Markdown",
-    sql: "SQL",
-    bash: "Bash",
-    shell: "Shell",
-    dockerfile: "Dockerfile",
-    graphql: "GraphQL",
-    plaintext: "Plain text",
-  }
-  return displayNames[lang] || lang
-}
-
 export default function CodeBlock({ language, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
 
@@ -51,6 +20,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
   const threshold = preferencesContext?.preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
 
   const trimmedCode = useMemo(() => children.trim(), [children])
+  const languageId = normalizeCodeLanguage(language)
 
   // Always render the full code (highlighted) and clamp it with CSS when
   // collapsed — that lets us measure the real rendered height and keeps
@@ -154,7 +124,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
           ) : (
             <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
           ))}
-        <span className="truncate">{formatLanguage(language)}</span>
+        <span className="truncate">{formatCodeLanguage(languageId)}</span>
         {collapsed && (
           <span className="text-muted-foreground/80 font-normal shrink-0">
             — {displayLineCount} line{displayLineCount === 1 ? "" : "s"}, click to expand

@@ -26,6 +26,12 @@ describe("fenced code blocks", () => {
     expect(container.querySelector("code")?.className).not.toContain("break-all")
   })
 
+  it("should label a fence whose info word carries symbols, like c#, by the registry", async () => {
+    const container = renderMarkdown("```c#\nvar x = 1;\n```\n")
+    expect(container.textContent).toContain("C#")
+    expect(container.textContent).not.toMatch(/\bC\b(?!#)/)
+  })
+
   it("keeps the language when the fence declares one", () => {
     const container = renderMarkdown("```ts\nconst a = 1\n```\n")
 
