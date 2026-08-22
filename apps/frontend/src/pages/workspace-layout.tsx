@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useSyncExternalStore,
+  type ComponentProps,
   type ReactNode,
 } from "react"
 import { Outlet, useParams, useSearchParams, useMatch, Navigate } from "react-router-dom"
@@ -445,17 +446,26 @@ function MentionableWrapper({ children, mentionables }: Omit<MentionableMarkdown
   )
 }
 
+/**
+ * The palette with the aside opener bound. The opener creates a stream, so it
+ * needs the services and sync providers the layout mounts below — hence a
+ * sibling of the palette inside them, not a hook on the layout itself.
+ */
+function WorkspaceQuickSwitcher(props: Omit<ComponentProps<typeof QuickSwitcher>, "openAside">) {
+  const openAside = useOpenAside(props.workspaceId)
+  const openAsideOnStream = useCallback(
+    (streamId: string) => openAside({ kind: "stream", hostStreamId: streamId }),
+    [openAside]
+  )
+  return <QuickSwitcher {...props} openAside={openAsideOnStream} />
+}
+
 export function WorkspaceLayout() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const [searchParams] = useSearchParams()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [switcherMode, setSwitcherMode] = useState<QuickSwitcherMode>("stream")
   const { user, loading: authLoading } = useAuth()
-  const openAside = useOpenAside(workspaceId ?? "")
-  const openAsideOnStream = useCallback(
-    (streamId: string) => openAside({ kind: "stream", hostStreamId: streamId }),
-    [openAside]
-  )
 
   // Extract streamId from nested route (if on /s/:streamId)
   const streamMatch = useMatch("/w/:workspaceId/s/:streamId")
@@ -549,13 +559,12 @@ export function WorkspaceLayout() {
                                                     </MainContentGate>
                                                   </AppShell>
                                                 </CoordinatedLoadingGate>
-                                                <QuickSwitcher
+                                                <WorkspaceQuickSwitcher
                                                   workspaceId={workspaceId}
                                                   open={switcherOpen}
                                                   onOpenChange={setSwitcherOpen}
                                                   initialMode={switcherMode}
                                                   currentStreamId={streamId}
-                                                  openAside={openAsideOnStream}
                                                 />
                                                 <ComposeOverlayMount workspaceId={workspaceId} />
                                               </SearchPanelProvider>

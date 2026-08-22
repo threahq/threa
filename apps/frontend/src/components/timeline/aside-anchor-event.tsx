@@ -49,7 +49,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
       <button
         type="button"
         onClick={() => resume({ asideId, hostStreamId: event.streamId })}
-        className="shrink-0 rounded px-1 text-primary opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="shrink-0 rounded px-1 text-primary opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [@media(hover:none)]:opacity-100"
       >
         Resume
       </button>
