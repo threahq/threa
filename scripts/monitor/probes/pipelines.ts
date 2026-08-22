@@ -26,6 +26,8 @@ export interface CounterRow {
   metric: string
   since: number
   prior: number
+  /** True when the row is a current-state count with no window, so `prior` carries no meaning. */
+  gauge: boolean
 }
 
 export interface PipelineReport {
@@ -75,36 +77,42 @@ export async function probePipelines(db: ReadProxyClient, window: Window): Promi
     db.rows<Raw<CounterRow>>(
       `SELECT 'agent_sessions failed' AS metric,
               count(*) FILTER (WHERE created_at >= $1) AS since,
-              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1) AS prior
+              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1) AS prior,
+              false AS gauge
          FROM agent_sessions WHERE status = 'failed' AND created_at >= $2
        UNION ALL
        SELECT 'agent_sessions stuck (running, heartbeat > ${THRESHOLDS.agentHeartbeatStaleSec}s)',
-              count(*), 0
+              count(*), 0, true
          FROM agent_sessions WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - interval '${THRESHOLDS.agentHeartbeatStaleSec} seconds')
        UNION ALL
        SELECT 'agent_sessions completed',
               count(*) FILTER (WHERE created_at >= $1),
-              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1)
+              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1),
+              false
          FROM agent_sessions WHERE status = 'completed' AND created_at >= $2
        UNION ALL
        SELECT 'bot_invocations failed',
               count(*) FILTER (WHERE created_at >= $1),
-              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1)
+              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1),
+              false
          FROM bot_invocations WHERE status = 'failed' AND created_at >= $2
        UNION ALL
        SELECT 'bot_invocations completed',
               count(*) FILTER (WHERE created_at >= $1),
-              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1)
+              count(*) FILTER (WHERE created_at >= $2 AND created_at < $1),
+              false
          FROM bot_invocations WHERE status = 'completed' AND created_at >= $2
        UNION ALL
        SELECT 'scheduled_messages failed',
               count(*) FILTER (WHERE status_changed_at >= $1),
-              count(*) FILTER (WHERE status_changed_at >= $2 AND status_changed_at < $1)
+              count(*) FILTER (WHERE status_changed_at >= $2 AND status_changed_at < $1),
+              false
          FROM scheduled_messages WHERE status = 'failed' AND status_changed_at >= $2
        UNION ALL
        SELECT 'backfill_runs failed',
               count(*) FILTER (WHERE updated_at >= $1),
-              count(*) FILTER (WHERE updated_at >= $2 AND updated_at < $1)
+              count(*) FILTER (WHERE updated_at >= $2 AND updated_at < $1),
+              false
          FROM backfill_runs WHERE status = 'failed' AND updated_at >= $2`,
       [window.since, window.priorStart]
     ),
@@ -189,7 +197,9 @@ export function evaluatePipelines(report: Omit<PipelineReport, "findings">, now:
       findings.push({
         level: "warn",
         id: `counter.${c.metric}`,
-        message: `${c.metric}: ${c.since} since baseline (prior ${c.prior})`,
+        message: c.gauge
+          ? `${c.metric}: ${c.since} right now`
+          : `${c.metric}: ${c.since} since baseline (prior ${c.prior})`,
       })
   }
   return findings

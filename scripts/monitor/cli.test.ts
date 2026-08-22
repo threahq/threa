@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseDuration, parseSince, pickSections } from "./cli"
+import { parseDuration, parseSince, pickLogServices, pickSections } from "./cli"
 
 describe("flag parsing", () => {
   test("parseDuration reads ms/s/m/h, falls back when absent, rejects anything else", () => {
@@ -24,5 +24,10 @@ describe("flag parsing", () => {
     expect([...pickSections("revision,logs", undefined)]).toEqual(["revision", "logs"])
     expect([...pickSections(undefined, "resources,logs")]).toEqual(["revision", "liveness", "pipelines"])
     expect(() => pickSections("nope", undefined)).toThrow("unknown section: nope")
+  })
+  test("--service rejects a name that would filter to zero lines and read as no errors", () => {
+    expect(pickLogServices(undefined)).toEqual(["backend", "control-plane", "enclave", "db-read-proxy"])
+    expect(pickLogServices("backend")).toEqual(["backend"])
+    expect(() => pickLogServices("backend-api")).toThrow("unknown --service: backend-api")
   })
 })

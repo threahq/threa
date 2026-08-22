@@ -11,8 +11,6 @@ export const PROD = {
   logServices: ["backend", "control-plane", "enclave", "db-read-proxy"] as const,
   /** GitHub workflows that gate a frontend rollout, in order. */
   frontendWorkflows: { ci: "CI", deploy: "Deploy Cloudflare" },
-  /** Prod workspace used for the authenticated public-API smoke when env gives none. */
-  smokeWorkspaceEnv: "THREA_PROD_DEFAULT_WORKSPACE",
 } as const
 
 export const THRESHOLDS = {
@@ -41,6 +39,8 @@ export const THRESHOLDS = {
   /** `watch` polling. */
   watchIntervalMs: 5 * 60 * 1000,
   watchDurationMs: 60 * 60 * 1000,
+  /** `logs` has no deploy baseline to anchor to, so it defaults to this much history. */
+  logsDefaultSinceMs: 60 * 60 * 1000,
   /** Railway log page sizes (the API caps around 5000). */
   logFetchLimit: 1_000,
 } as const

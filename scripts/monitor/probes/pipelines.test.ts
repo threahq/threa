@@ -61,9 +61,9 @@ describe("evaluatePipelines", () => {
         queue({ queue_name: "memo.batch-check", ready: 1, oldest_ready_sec: 20 }),
       ],
       counters: [
-        { metric: "agent_sessions failed", since: 1, prior: 0 },
-        { metric: "agent_sessions completed", since: 9, prior: 8 },
-        { metric: "agent_sessions stuck (running, heartbeat > 300s)", since: 0, prior: 0 },
+        { metric: "agent_sessions failed", since: 1, prior: 0, gauge: false },
+        { metric: "agent_sessions completed", since: 9, prior: 8, gauge: false },
+        { metric: "agent_sessions stuck (running, heartbeat > 300s)", since: 0, prior: 0, gauge: true },
       ],
     }
     expect(evaluatePipelines(report, now).map((f) => f.id)).toEqual([
@@ -71,6 +71,19 @@ describe("evaluatePipelines", () => {
       "queue.dlq.persona.agent",
       "queue.stuck.embedding.generate",
       "counter.agent_sessions failed",
+    ])
+  })
+  test("a gauge counter says what it is, since it counts current state rather than the window", () => {
+    const report = {
+      ...base(),
+      counters: [
+        { metric: "agent_sessions stuck (running, heartbeat > 300s)", since: 2, prior: 0, gauge: true },
+        { metric: "bot_invocations failed", since: 3, prior: 1, gauge: false },
+      ],
+    }
+    expect(evaluatePipelines(report, now).map((f) => f.message)).toEqual([
+      "agent_sessions stuck (running, heartbeat > 300s): 2 right now",
+      "bot_invocations failed: 3 since baseline (prior 1)",
     ])
   })
 })

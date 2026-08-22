@@ -85,7 +85,9 @@ export function renderSnapshot(snapshot: Snapshot, opts: { top?: number } = {}):
     if (idle) out.push(`  ${idle} idle queues`)
     for (const counter of pipelines.counters)
       if (counter.since || counter.prior)
-        out.push(`  ${pad(counter.metric, 30)} ${counter.since} (prior ${counter.prior})`)
+        out.push(
+          `  ${pad(counter.metric, 30)} ${counter.since}${counter.gauge ? " right now" : ` (prior ${counter.prior})`}`
+        )
   }
   if (snapshot.logs) out.push(...renderLogs(snapshot.logs, opts.top ?? 5))
   if (snapshot.resources) {

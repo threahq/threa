@@ -26,11 +26,14 @@ replaces.
 | What errored since the deploy?                 | `bun run monitor logs --level error --since 2h --service backend [--grep <id>] [--raw]` |
 | Which deployment is each Railway service on?   | `bun run monitor deploys`                                                               |
 
-`--json` keeps stdout machine-readable (status/verify: the snapshot, verify progress on stderr;
-watch: one JSON line per poll, first the snapshot then deltas; logs/deploys: the data); `--only`/`--skip` pick sections
+`--json` keeps stdout machine-readable (status and a passing verify: the snapshot, verify progress on
+stderr; a failing verify: `{verified:false, sha, level, revision, errors}`; watch: one JSON line per
+poll, first the snapshot then deltas; logs/deploys: the data); `--only`/`--skip` pick sections
 (`revision,liveness,pipelines,logs,resources`); `--since 45m|2h|<iso>` moves the baseline
-off the backend deploy time. Exit codes: 0 clean, 1 warn/pending, 2 fail, 3 usage or
-missing credentials. `--help` has the flags.
+off the backend deploy time (`logs` has no deploy baseline and defaults to the last hour).
+Exit codes: 0 clean, 1 warn/pending, 2 fail, 3 bad flags. A missing credential skips its
+section as a `warn` finding (exit 1) for status/verify/watch, and stops `logs`/`deploys`
+outright (exit 3). `--help` has the flags.
 
 ## How to read a snapshot
 

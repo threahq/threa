@@ -33,10 +33,13 @@ Commands:
 
 Flags:
   --sha <sha>        Expected revision (default: origin/main head via git ls-remote).
-  --since <iso|Nm|Nh> Baseline for "since" comparisons (default: backend deploy time). 45m, 2h, or ISO.
+  --since <iso|Nm|Nh> Baseline for "since" comparisons. 45m, 2h, or ISO.
+                     Default: backend deploy time for status/verify/watch, last 1h for logs.
   --only <a,b>       Sections for status/watch: ${SECTIONS.join(",")}.
   --skip <a,b>       Sections to leave out.
-  --json             Machine output. status/verify: the snapshot; watch: one JSON line per poll; logs/deploys: the data.
+  --json             Machine output. status and a passing verify: the snapshot; a failing verify:
+                     {verified:false, sha, level, revision, errors}; watch: one JSON line per poll;
+                     logs/deploys: the data.
   --top <n>          Log templates to show (default 5; logs command default 15).
   --service <name>   logs: one of ${PROD.logServices.join(",")} (default all).
   --level <l>        logs: error|warn (default error).
@@ -77,6 +80,14 @@ export function pickSections(only?: string, skip?: string): Set<Section> {
   return sections
 }
 
+/** An unknown name would filter to zero lines, which reads as "nothing errored". Reject it instead. */
+export function pickLogServices(service: string | undefined): string[] {
+  if (!service) return [...PROD.logServices]
+  if (!(PROD.logServices as readonly string[]).includes(service))
+    throw new Error(`unknown --service: ${service} (one of ${PROD.logServices.join(", ")})`)
+  return [service]
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function snapshotOptions(flags: Flags, now: Date): SnapshotOptions {
@@ -104,8 +115,10 @@ async function cmdVerify(deps: Deps, flags: Flags): Promise<number> {
   const progress = flags.json ? console.error : console.log
   let lastRender = ""
   let verdict: Level = "pending"
+  let last!: Awaited<ReturnType<typeof takeRevision>>
   for (;;) {
-    const { revision, errors } = await takeRevision(deps, sha)
+    last = await takeRevision(deps, sha)
+    const { revision, errors } = last
     verdict = worst(revision.planes.map((plane) => plane.level))
     const rendered = [
       ...renderRevision(revision, deps.now()),
@@ -124,7 +137,11 @@ async function cmdVerify(deps: Deps, flags: Flags): Promise<number> {
     await sleep(intervalMs)
   }
   if (verdict !== "ok") {
-    if (flags.json) console.log(JSON.stringify({ verified: false, sha, verdict }))
+    // Carries the last poll's planes and errors so --json consumers see why, not just that it failed.
+    if (flags.json)
+      console.log(
+        JSON.stringify({ verified: false, sha, level: verdict, revision: last.revision, errors: last.errors }, null, 2)
+      )
     return 2
   }
   progress(`all planes serve ${short(sha)}; running status`)
@@ -174,10 +191,10 @@ async function cmdLogs(deps: Deps, flags: Flags): Promise<number> {
   if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing")
   const now = deps.now()
   const since =
-    parseSince(flags.since as string | undefined, now) ?? new Date(now.getTime() - 60 * 60_000).toISOString()
+    parseSince(flags.since as string | undefined, now) ??
+    new Date(now.getTime() - THRESHOLDS.logsDefaultSinceMs).toISOString()
   const level = (flags.level as string | undefined) ?? "error"
-  const service = flags.service as string | undefined
-  const services = service ? [service] : [...PROD.logServices]
+  const services = pickLogServices(flags.service as string | undefined)
   const filterParts = [`(@level:${level})`, `(${services.map((name) => `@service:${name}`).join(" OR ")})`]
   if (flags.grep) filterParts.push(`(${flags.grep})`)
   const lines = await railway.environmentLogs({
