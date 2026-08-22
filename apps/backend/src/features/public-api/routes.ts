@@ -167,7 +167,7 @@ const sharedMessageSlotSchema = z.discriminatedUnion("state", [
     content: z
       .string()
       .describe(
-        "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+        "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
       ),
     version: z.number().int().positive().describe("The source revision this slot renders."),
     currentRevision: z

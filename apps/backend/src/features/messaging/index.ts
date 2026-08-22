@@ -24,6 +24,7 @@ export { MessageVersionRepository, messageVersionKey } from "./version-repositor
 export type { MessageVersion, MessageVersionKey } from "./version-repository"
 
 export { resolveMessageReferences, sliceReferenceContent } from "./references"
+export { registerMessageReferencePinsBackfill, MESSAGE_REFERENCE_PINS_BACKFILL_NAME } from "./references"
 export type { ResolveMessageReferencesResult, ReferenceContent } from "./references"
 
 export { EventService } from "./event-service"

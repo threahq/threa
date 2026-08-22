@@ -102,6 +102,30 @@ export const MessageVersionRepository = {
     return map
   },
 
+  /**
+   * Every stored snapshot for a set of messages, oldest first per message —
+   * the read behind the pin backfill, which has to try a legacy quote's
+   * snippet against each candidate revision (INV-56: one query per chunk,
+   * never one per source).
+   */
+  async findByMessageIds(db: Querier, messageIds: readonly string[]): Promise<Map<string, MessageVersion[]>> {
+    if (messageIds.length === 0) return new Map()
+
+    const result = await db.query<MessageVersionRow>(sql`
+      SELECT * FROM message_versions
+      WHERE message_id = ANY(${[...messageIds]})
+      ORDER BY message_id, version_number ASC
+    `)
+
+    const map = new Map<string, MessageVersion[]>()
+    for (const row of result.rows) {
+      const existing = map.get(row.message_id)
+      if (existing) existing.push(mapRow(row))
+      else map.set(row.message_id, [mapRow(row)])
+    }
+    return map
+  },
+
   async listByMessageId(db: Querier, messageId: string): Promise<MessageVersion[]> {
     const result = await db.query<MessageVersionRow>(sql`
       SELECT * FROM message_versions

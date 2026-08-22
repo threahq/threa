@@ -62,7 +62,7 @@ import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threa/backend-commo
 import { PartitionMaintenanceWorker } from "@threa/backend-common"
 import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
 import { StreamService, StreamBriefService } from "./features/streams"
-import { EventService } from "./features/messaging"
+import { EventService, registerMessageReferencePinsBackfill } from "./features/messaging"
 import {
   DynamicNamingConversationTarget,
   DynamicNamingEvaluator,
@@ -1446,6 +1446,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Generic backfill framework. Register definitions BEFORE the workers can run
   // so a redelivered plan/chunk job can always resolve its definition by name.
   registerMentionBackfill()
+  registerMessageReferencePinsBackfill()
   registerStreamContextBackfill()
   registerGithubInstallationBackfill({ workspaceIntegrationService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
