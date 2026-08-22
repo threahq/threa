@@ -110,6 +110,11 @@ const fixture: JSONContent = {
       type: "sharedMessage",
       attrs: { messageId: "msg_2", streamId: "stream_2", authorName: "Bob", authorId: "usr_2", actorType: "user" },
     },
+    {
+      type: "agentBlock",
+      attrs: { authorId: "persona_1", authorName: "Ariadne", sourceAsideId: "stream_aside" },
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }],
+    },
     { type: "paragraph" },
   ],
 }
@@ -159,13 +164,13 @@ describe("sliceContent", () => {
     ["across an inline atom", 30, 40],
     ["across two list items", 60, 80],
     ["from a block leaf into the table after it", 143, 150],
-    ["the whole document", 0, 178],
+    ["the whole document", 0, 194],
   ])("matches Node.cut for a range %s", (_name, from, to) => {
     expect(sliceContent(doc, from, to)).toEqual(cut(from, to))
   })
 
-  it("reads the fixture as 178 positions, so the ranges above stay meaningful", () => {
-    expect(node.content.size).toBe(178)
+  it("reads the fixture as 194 positions, so the ranges above stay meaningful", () => {
+    expect(node.content.size).toBe(194)
   })
 
   it("matches Node.cut for every range in the document", () => {
