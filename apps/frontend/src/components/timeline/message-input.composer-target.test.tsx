@@ -10,6 +10,7 @@ import * as hooksModule from "@/hooks"
 import * as useAttachmentsModule from "@/hooks/use-attachments"
 import * as currentUserHook from "@/hooks/use-current-workspace-user-id"
 import * as workspaceStoreModule from "@/stores/workspace-store"
+import * as openAsideModule from "@/hooks/use-open-aside"
 import * as authModule from "@/auth"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
 import * as conversationReplyModule from "./conversation-reply-context"
@@ -124,6 +125,9 @@ beforeEach(async () => {
     data: undefined,
   } as unknown as ReturnType<typeof hooksModule.useStreamBootstrap>)
   spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => []) as never)
+  // `/aside` in the composer creates a stream through the stream service, which
+  // these tests deliberately mount without a ServicesProvider.
+  spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((async () => {}) as never)
   vi.spyOn(hooksModule, "useMentionStreamContext").mockReturnValue(
     undefined as unknown as ReturnType<typeof hooksModule.useMentionStreamContext>
   )
