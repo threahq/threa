@@ -10,7 +10,14 @@ import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
 import { reconcileOptimisticBoardPost } from "@/stores/board-store"
 import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
-import { MessageErrorCodes, ShareErrorCodes, StreamTypes, draftStreamScope, draftThreadScope } from "@threa/types"
+import {
+  MessageErrorCodes,
+  MessageReferenceErrorCodes,
+  ShareErrorCodes,
+  StreamTypes,
+  draftStreamScope,
+  draftThreadScope,
+} from "@threa/types"
 import type { PendingMessage } from "@/db"
 import type {
   AttachmentSummary,
@@ -19,8 +26,11 @@ import type {
   Stream,
   StreamWithPreview,
 } from "@threa/types"
+import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
+
+const REFERENCE_FAILURE_CODES: ReadonlySet<string> = new Set(Object.values(MessageReferenceErrorCodes))
 
 /**
  * Exponential backoff delay based on retry count.
@@ -334,7 +344,19 @@ export function useMessageQueue(): void {
           continue
         }
 
-        if (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE) {
+        // A reference the server can't pin: the source is gone, the pinned
+        // revision doesn't exist, or the span doesn't resolve. A blind retry
+        // re-sends the same unresolvable reference, so the row stops retrying
+        // and waits for the author to edit or drop it — same shape as an
+        // unavailable steer target.
+        const referenceFailed = ApiError.isApiError(err) && REFERENCE_FAILURE_CODES.has(err.code ?? "")
+
+        if (referenceFailed || (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE)) {
+          if (referenceFailed) {
+            toast.error("Couldn't quote that message — it may have changed or been removed.", {
+              id: `message-reference-${next.clientId}`,
+            })
+          }
           type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
           await Promise.all([
             (db.pendingMessages.update as unknown as UpdateFn)(next.clientId, {

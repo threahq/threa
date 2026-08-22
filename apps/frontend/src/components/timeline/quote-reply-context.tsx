@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useMemo, useRef } from "react"
 import type { ReactNode } from "react"
-import type { JSONContent } from "@threa/types"
+import type { ContentRange, JSONContent } from "@threa/types"
 
 export interface QuoteReplyData {
   messageId: string
@@ -10,6 +10,10 @@ export interface QuoteReplyData {
   actorType: string
   /** Markdown content to quote (preserves formatting) */
   snippet: string
+  /** Source revision the quote pins to; null when the trigger can't know it. */
+  version: number | null
+  /** Span inside the pinned version; null quotes the whole message. */
+  range: ContentRange | null
 }
 
 interface QuoteReplyContextValue {
@@ -66,6 +70,8 @@ export function appendQuoteReplyNode(content: JSONContent, data: QuoteReplyData)
       authorId: data.authorId,
       actorType: data.actorType,
       snippet: data.snippet,
+      version: data.version,
+      range: data.range,
     },
   }
 

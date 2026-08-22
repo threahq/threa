@@ -80,6 +80,8 @@ import { LabelPicker } from "@/components/labels/label-picker"
 import { MessageHistoryDialog } from "./message-history-dialog"
 import { MessageReactions } from "./message-reactions"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
+import { resolveQuoteSelection, type QuoteSelection } from "@/lib/quote-selection"
+import { registerReferenceSource } from "@/stores/reference-source-store"
 import { useQuoteReply } from "./quote-reply-context"
 import { useConversationReply } from "./conversation-reply-context"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
@@ -951,6 +953,24 @@ function SentMessageEvent({
     deferToNativeLinks: true,
   })
 
+  // Publish this row's body for the floating selection toolbar, which resolves a
+  // quote's range against it (see `reference-source-store`).
+  const referenceSource = useMemo(
+    () =>
+      payload.contentJson
+        ? {
+            contentJson: payload.contentJson,
+            revision: payload.revision ?? null,
+            contentMarkdown: payload.contentMarkdown,
+          }
+        : null,
+    [payload.contentJson, payload.revision, payload.contentMarkdown]
+  )
+  useEffect(() => {
+    if (!referenceSource) return
+    return registerReferenceSource(payload.messageId, referenceSource)
+  }, [payload.messageId, referenceSource])
+
   // Touch: swipe left to quote reply
   const handleSwipeQuote = useCallback(() => {
     const snippet = payload.contentMarkdown.trim()
@@ -962,8 +982,19 @@ function SentMessageEvent({
       authorId: event.actorId ?? "",
       actorType: event.actorType ?? "user",
       snippet,
+      version: payload.revision ?? null,
+      range: null,
     })
-  }, [quoteReplyCtx, payload.messageId, payload.contentMarkdown, streamId, actorName, event.actorId, event.actorType])
+  }, [
+    quoteReplyCtx,
+    payload.messageId,
+    payload.contentMarkdown,
+    payload.revision,
+    streamId,
+    actorName,
+    event.actorId,
+    event.actorType,
+  ])
   const swipe = useSwipeAction({
     onSwipe: handleSwipeQuote,
     enabled: touchCapable && !isEditing && !!quoteReplyCtx && !batch?.enabled,
@@ -1177,17 +1208,26 @@ function SentMessageEvent({
               authorId: event.actorId ?? "",
               actorType: event.actorType ?? "user",
               snippet: payload.contentMarkdown,
+              version: payload.revision ?? null,
+              range: null,
             })
         : undefined,
-      onQuoteReplyWithSnippet: quoteReplyCtx
-        ? (snippet: string) =>
+      onQuoteReplyWithSelection: quoteReplyCtx
+        ? (selection: QuoteSelection) =>
             quoteReplyCtx.triggerQuoteReply({
               messageId: payload.messageId,
               streamId,
               authorName: actorName,
               authorId: event.actorId ?? "",
               actorType: event.actorType ?? "user",
-              snippet,
+              ...resolveQuoteSelection(
+                {
+                  contentJson: payload.contentJson,
+                  revision: payload.revision,
+                  contentMarkdown: payload.contentMarkdown,
+                },
+                selection
+              ),
             })
         : undefined,
       onShareToRoot: rootStream
@@ -1261,6 +1301,8 @@ function SentMessageEvent({
       payload.messageId,
       payload.editedAt,
       payload.reactions,
+      payload.contentJson,
+      payload.revision,
       e2eEnabled,
       event.id,
       event.actorType,

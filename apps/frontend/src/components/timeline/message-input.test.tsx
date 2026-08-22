@@ -12,6 +12,7 @@ import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as authModule from "@/auth"
 import * as quoteReplyModule from "./quote-reply-context"
+import type { QuoteReplyData } from "./quote-reply-context"
 import * as conversationReplyModule from "./conversation-reply-context"
 import * as useConversationsModule from "@/hooks/use-conversations"
 import {
@@ -81,16 +82,7 @@ const mockHandleFileSelect = vi.fn()
 const mockComposerFocus = vi.fn()
 const mockComposerFocusAfterQuoteReply = vi.fn()
 let mockSubmitContentOverride: JSONContent | undefined
-let registeredQuoteReplyHandler:
-  | ((data: {
-      messageId: string
-      streamId: string
-      authorName: string
-      authorId: string
-      actorType: string
-      snippet: string
-    }) => void)
-  | null = null
+let registeredQuoteReplyHandler: ((data: QuoteReplyData) => void) | null = null
 let registeredConversationReplyHandler: ((data: { conversationId: string }) => void) | null = null
 const mockScheduleMutateAsync = vi.fn()
 // Captured from the mocked ScheduledMessagesPicker so a test can drive the
@@ -176,16 +168,7 @@ beforeEach(async () => {
 
   vi.spyOn(quoteReplyModule, "useQuoteReply").mockReturnValue({
     triggerQuoteReply: vi.fn(),
-    registerHandler: (
-      handler: (data: {
-        messageId: string
-        streamId: string
-        authorName: string
-        authorId: string
-        actorType: string
-        snippet: string
-      }) => void
-    ) => {
+    registerHandler: (handler: (data: QuoteReplyData) => void) => {
       registeredQuoteReplyHandler = handler
       return () => {
         if (registeredQuoteReplyHandler === handler) {
@@ -631,7 +614,9 @@ describe("MessageInput", () => {
         authorName: "Ariadne",
         authorId: "user_123",
         actorType: "user",
-        snippet: "The vibes are immaculate",
+        snippet: "**The vibes** are immaculate",
+        version: 3,
+        range: { from: 5, to: 32 },
       })
 
       expect(mockSetContent).toHaveBeenCalledWith({
@@ -646,7 +631,9 @@ describe("MessageInput", () => {
               authorName: "Ariadne",
               authorId: "user_123",
               actorType: "user",
-              snippet: "The vibes are immaculate",
+              snippet: "**The vibes** are immaculate",
+              version: 3,
+              range: { from: 5, to: 32 },
             },
           },
           { type: "paragraph" },
