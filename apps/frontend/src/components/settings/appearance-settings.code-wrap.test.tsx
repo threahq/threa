@@ -57,7 +57,7 @@ describe("AppearanceSettings — code block wrapping", () => {
   it("should add a language with the mode opposite to the global choice", async () => {
     const user = userEvent.setup()
     const { updatePreference } = mount({ codeBlockWrap: "scroll", codeBlockWrapOverrides: { sql: "wrap" } })
-    await user.click(screen.getByRole("combobox", { name: "Per language" }))
+    await user.click(screen.getByRole("combobox", { name: "Add language" }))
     expect(screen.queryByRole("option", { name: "SQL" })).not.toBeInTheDocument()
     await user.click(await screen.findByRole("option", { name: "Python" }))
     expect(updatePreference).toHaveBeenCalledWith("codeBlockWrapOverrides", { sql: "wrap", python: "wrap" })

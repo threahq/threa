@@ -568,7 +568,7 @@ export function AppearanceSettings() {
               setCodeBlockWrapOverride(languageId, codeBlockWrap === "wrap" ? "scroll" : "wrap")
             }
           >
-            <SelectTrigger className="w-40" aria-labelledby="code-block-wrap-overrides-label">
+            <SelectTrigger className="w-40" aria-label="Add language">
               <SelectValue placeholder="Add language" />
             </SelectTrigger>
             <SelectContent>
