@@ -422,6 +422,14 @@ describe("VERSION_CHANGES: the 2026-08-21 pinned-reference change", () => {
     })
   })
 
+  test("downgradeResponse omits a span rather than passing a fragment off as the message", () => {
+    const payload = {
+      data: [],
+      slots: { "shared:msg_a@2:1-4": ok("msg_a", 2, { from: 1, to: 4 }) },
+    }
+    expect(pinChange.downgradeResponse!(payload, { operationId: "listMessages" })).toEqual({ data: [], slots: {} })
+  })
+
   test("downgradeResponse leaves other operations and slot-less payloads alone", () => {
     const stream = { data: { id: "stream_1" }, slots: { "shared:x@1": {} } }
     expect(pinChange.downgradeResponse!(stream, { operationId: "getStream" })).toBe(stream)

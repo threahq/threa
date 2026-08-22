@@ -124,6 +124,11 @@ function downgradeSlotsToLegacyKeys(slots: Record<string, unknown>): Record<stri
     if (!value || typeof value !== "object") continue
     const slot = value as LegacySlot
     if (typeof slot.messageId !== "string") continue
+    // A span has no honest older form: this version's reader has no `range` to
+    // tell it the content is a fragment, and handing it one under the
+    // whole-message key would have it render part of a message as the message.
+    // The reference is omitted instead, which the map's contract already allows.
+    if (slot.state === "ok" && slot.range != null) continue
     const key = `${LEGACY_SLOT_KEY_PREFIX}${slot.messageId}`
     const existing = legacy[key]
     if (!existing || legacySlotPreference(slot) > legacySlotPreference(existing)) legacy[key] = slot
@@ -213,7 +218,7 @@ export const VERSION_CHANGES: VersionChange[] = [
   {
     version: "2026-08-21",
     description:
-      "Shared-message and quote references pin a source revision and optional span. `slots` keys carry the reference (`shared:<messageId>[@<version>[:<from>-<to>]]`), `ok` slots gain `version`, `currentRevision` and `range`, and `content` is the pinned revision or span. Pins before this version get one `shared:<messageId>` key per source (the unranged slot at the highest version) without the pin fields.",
+      "Shared-message and quote references pin a source revision and optional span. `slots` keys carry the reference (`shared:<messageId>[@<version>[:<from>-<to>]]`), `ok` slots gain `version`, `currentRevision` and `range`, and `content` is the revision the reference names rather than the source as it now reads. Pins before this version still get one `shared:<messageId>` key per source, the whole-message slot at the highest version, without the pin fields; a reference to a span of a message is omitted for those pins, since that shape cannot say it is a fragment.",
     operations: SLOT_MAP_OPERATIONS,
     downgradeResponse: (payload, context) => {
       if (!SLOT_MAP_OPERATIONS.has(context.operationId)) return payload
