@@ -80,9 +80,10 @@ query-less forms unchanged and report `version: null, range: null` for them.
 `resolveMessageReferences` (`features/messaging/references/resolver.ts`) runs on
 every create and every edit, right after mention resolution and before the
 version snapshot, the timeline event, the projections and the outbox — so
-everything downstream reads one already-pinned body. It is the **only** writer
-of a quote's stored body: a client-supplied `snippet` is advisory input, never
-trusted output.
+everything downstream reads one already-pinned body. On that path it is the
+**only** writer of a quote's stored body: a client-supplied `snippet` is
+advisory input, never trusted output. (The pin backfill below writes quote
+bodies too, through the same slicer, for nodes written before any of this.)
 
 Per node it loads the source (one batched `findByIdsInWorkspace`, soft-deleted
 rows included), resolves the pinned document (current revision from the
@@ -114,8 +115,12 @@ Failures are `HttpError` 400s with stable codes (INV-32), from
 | `REFERENCE_RANGE_INVALID`     | Range outside the document, or covering no content                 |
 | `REFERENCE_RANGE_NOT_FOUND`   | Rangeless quote whose snippet is in no part of the pinned revision |
 
-Cross-stream **access** is not decided here: `ShareService` still runs after
-resolution and still owns access, privacy and grants. E2E streams are skipped
+A source in **another stream** is read-gated here before any version or range
+work, using the same access split `ShareService` uses: one the caller cannot
+read is reported as `REFERENCE_SOURCE_NOT_FOUND`, exactly like one that does
+not exist, so an error cannot measure a message the author cannot open.
+Authorizing the share itself — the privacy boundary, the grant rows — still
+belongs to `ShareService`, which runs after resolution. E2E streams are skipped
 entirely — the stored content there is a ciphertext placeholder and carries no
 references.
 
