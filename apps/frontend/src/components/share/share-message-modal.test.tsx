@@ -3,7 +3,7 @@ import { render, fireEvent } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { ShareMessageModal } from "./share-message-modal"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import * as shareHandoffStoreModule from "@/stores/share-handoff-store"
+import * as shareHandoffStoreModule from "@/stores/composer-handoff-store"
 import * as useMobileModule from "@/hooks/use-mobile"
 
 const SAMPLE_ATTRS = {

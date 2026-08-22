@@ -149,7 +149,13 @@ describe("AsideAnchorEvent", () => {
 
   it("resumes the aside on its host page, into the surface it was last read in, and reads as open", () => {
     // A previous session on this aside ended in fullscreen; minimized never counts.
-    openAside({ hostKey: HOST_PATH, hostStreamId: "stream_host", asideId: ASIDE, surface: "fullscreen" })
+    openAside({
+      hostKey: HOST_PATH,
+      hostStreamId: "stream_host",
+      asideId: ASIDE,
+      surface: "fullscreen",
+      originScope: "stream:stream_host",
+    })
     setAsideSurface("minimized")
     closeAside()
     renderTimeline([anchorEvent()], CREATOR)
@@ -161,6 +167,7 @@ describe("AsideAnchorEvent", () => {
       hostStreamId: "stream_host",
       asideId: ASIDE,
       surface: "fullscreen",
+      originScope: "stream:stream_host",
     })
     expect(document.querySelector("[data-aside-id]")).toHaveAttribute("data-state", "open")
     expect(document.querySelector("[data-sonner-toast]")).toBeNull()

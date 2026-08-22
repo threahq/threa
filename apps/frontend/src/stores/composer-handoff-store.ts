@@ -1,8 +1,12 @@
+import type { JSONContent } from "@threa/types"
 import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
 
 /**
- * Ephemeral per-stream "hand-off" of a share node from the Share action to the
- * target stream's composer. Scoped to a single navigation hop with a short TTL
+ * Ephemeral per-stream "hand-off" of content into a target stream's composer:
+ * the Share action's pointer/plaintext nodes, and an aside's send-to-composer.
+ * One queue for all of them, so they share the one stash-then-insert path the
+ * composer runs (INV-43) — a non-empty destination is always preserved as a
+ * stash row, never replaced. Scoped to a single navigation hop with a short TTL
  * so stale entries never resurface if the user bails mid-flow.
  */
 export interface ShareHandoffEntry {
@@ -23,9 +27,19 @@ export interface PlaintextShareHandoffEntry {
   expiresAt: number
 }
 
+/**
+ * Blocks handed straight to the composer — the aside's send-to-composer, which
+ * carries `contentJson` end to end (INV-58) rather than re-parsing markdown.
+ */
+export interface ContentHandoffEntry {
+  content: JSONContent[]
+  expiresAt: number
+}
+
 export type PendingShareHandoff =
   | { kind: "pointer"; attrs: SharedMessageAttrs }
   | { kind: "plaintext"; markdown: string; attrs: SharedMessageAttrs }
+  | { kind: "content"; content: JSONContent[] }
 
 export interface ShareHandoffBatch {
   ids: readonly number[]
@@ -35,6 +49,7 @@ export interface ShareHandoffBatch {
 type QueuedShareHandoff =
   | ({ queueId: number; kind: "pointer" } & ShareHandoffEntry)
   | ({ queueId: number; kind: "plaintext" } & PlaintextShareHandoffEntry)
+  | ({ queueId: number; kind: "content" } & ContentHandoffEntry)
 
 const HANDOFF_TTL_MS = 5 * 60 * 1000
 
@@ -103,6 +118,21 @@ export function queuePlaintextShareHandoff(targetStreamId: string, markdown: str
   }
 }
 
+/**
+ * Queue composer blocks for the target stream. Same hop + TTL + subscriber
+ * notification as a share; the composer inserts it through the same path, so a
+ * draft already in the destination is stashed rather than overwritten.
+ */
+export function queueContentHandoff(targetStreamId: string, content: JSONContent[]): void {
+  const queued = cache.get(targetStreamId) ?? []
+  queued.push({ queueId: ++nextQueueId, kind: "content", content, expiresAt: Date.now() + HANDOFF_TTL_MS })
+  cache.set(targetStreamId, queued)
+  const subs = listeners.get(targetStreamId)
+  if (subs) {
+    for (const listener of subs) listener()
+  }
+}
+
 /** Read + clear the oldest pending plaintext (decrypted E2E) share for the stream. */
 export function consumePlaintextShareHandoff(targetStreamId: string): PlaintextShareHandoffEntry | null {
   const entry = consumeKind(targetStreamId, "plaintext")
@@ -125,6 +155,7 @@ export function peekShareHandoffBatch(targetStreamId: string): ShareHandoffBatch
     ids: queued.map((entry) => entry.queueId),
     handoffs: queued.map((entry) => {
       if (entry.kind === "pointer") return { kind: "pointer", attrs: entry.attrs }
+      if (entry.kind === "content") return { kind: "content", content: entry.content }
       return { kind: "plaintext", markdown: entry.markdown, attrs: entry.attrs }
     }),
   }
@@ -167,7 +198,7 @@ export function subscribeShareHandoff(targetStreamId: string, listener: () => vo
  */
 export function consumeShareHandoff(targetStreamId: string): SharedMessageAttrs | null {
   const entry = consumeKind(targetStreamId, "pointer")
-  return entry?.attrs ?? null
+  return entry?.kind === "pointer" ? entry.attrs : null
 }
 
 /**
@@ -175,7 +206,8 @@ export function consumeShareHandoff(targetStreamId: string): SharedMessageAttrs 
  * stream. Mostly for tests and debug panels.
  */
 export function peekShareHandoff(targetStreamId: string): SharedMessageAttrs | null {
-  return peekKind(targetStreamId, "pointer")?.attrs ?? null
+  const entry = peekKind(targetStreamId, "pointer")
+  return entry?.kind === "pointer" ? entry.attrs : null
 }
 
 /**

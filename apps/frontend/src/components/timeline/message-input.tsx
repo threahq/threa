@@ -51,7 +51,7 @@ import {
   peekShareHandoffBatch,
   subscribeShareHandoff,
   type ShareHandoffBatch,
-} from "@/stores/share-handoff-store"
+} from "@/stores/composer-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
@@ -609,10 +609,12 @@ function MessageInputComponent({
         pendingFrame = { id, resolve }
       })
     const nodesForBatch = (batch: ShareHandoffBatch): JSONContent[] =>
-      batch.handoffs.map((handoff) => {
+      batch.handoffs.flatMap((handoff) => {
         if (handoff.kind === "pointer") {
           return { type: "sharedMessage", attrs: handoff.attrs as unknown as Record<string, unknown> }
         }
+        // Already `contentJson` (an aside hand-off) — inserted as-is (INV-58).
+        if (handoff.kind === "content") return handoff.content
         const parsed = parseMarkdown(handoff.markdown)
         return {
           type: "blockquote",

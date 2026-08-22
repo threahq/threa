@@ -11,6 +11,7 @@ import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
+import { asideDraftScope } from "@/lib/drafts/aside-scope"
 import {
   streamIdsWithLoadedDraft,
   useAllDrafts,
@@ -212,6 +213,20 @@ describe("useAllDrafts board-composer drafts", () => {
       conversation: { id: conversationId, streamId, topicSummary, ...extra },
     } as unknown as Parameters<typeof db.conversations.put>[0])
   }
+
+  it("never lists an aside's drafts — they are private to the aside (INV-62's draft twin)", async () => {
+    await seedConversation("conv_private", "stream_9", "GPU budget")
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_aside", scope: asideDraftScope("stream_aside", "draft_aside") }),
+      syncedDraft({ id: "draft_board", scope: "board:reply:conv_private" }),
+    ])
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts).toHaveLength(1))
+    expect(result.current.drafts.map((draft) => draft.id)).toEqual(["draft_board"])
+  })
 
   it("lists a stashed board reply with a panel deep link that carries the stash restore", async () => {
     await seedConversation("conv_1", "stream_9", "GPU budget")

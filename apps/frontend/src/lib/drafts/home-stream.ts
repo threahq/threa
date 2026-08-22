@@ -1,4 +1,5 @@
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
+import { isAsideDraftScope } from "./aside-scope"
 
 /** The cached board post fields a home stream is derived from. */
 export interface HomeStreamBoardPost {
@@ -42,6 +43,12 @@ export interface DraftPileContext extends DraftHomeContext {
  */
 export function resolveDraftHomeStream(scope: string, context: DraftHomeContext): string | null {
   const root = (streamId: string): string => context.streamById.get(streamId)?.rootStreamId ?? streamId
+
+  // An aside's drafts have no home: the aside is private and its drafts leave
+  // it only through the deliberate hand-off, never by surfacing in a host's
+  // pile. Stated rather than left to fall out of "no branch matched", because
+  // this null is a rule, not an unresolved lookup.
+  if (isAsideDraftScope(scope)) return null
 
   if (scope.startsWith("stream:")) {
     const streamId = scope.slice("stream:".length)

@@ -56,7 +56,14 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
         data-surface="takeover"
         className="absolute inset-0 z-30 flex flex-col bg-background"
       >
-        <AsidePane workspaceId={workspaceId} asideId={rendered.asideId} surface={surface} takeover />
+        <AsidePane
+          workspaceId={workspaceId}
+          asideId={rendered.asideId}
+          hostStreamId={rendered.hostStreamId}
+          originScope={rendered.originScope}
+          surface={surface}
+          takeover
+        />
       </div>
     )
   }
@@ -76,7 +83,13 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
       style={{ width }}
     >
       <div className="h-full" style={{ minWidth: surface === "fullscreen" ? undefined : ASIDE_DOCK_WIDTH }}>
-        <AsidePane workspaceId={workspaceId} asideId={rendered.asideId} surface={surface} />
+        <AsidePane
+          workspaceId={workspaceId}
+          asideId={rendered.asideId}
+          hostStreamId={rendered.hostStreamId}
+          originScope={rendered.originScope}
+          surface={surface}
+        />
       </div>
     </div>
   )

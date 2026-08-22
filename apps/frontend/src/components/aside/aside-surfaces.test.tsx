@@ -48,7 +48,13 @@ function renderPage(path = HOST_PATH) {
 }
 
 function openOnHost(surface: "dock" | "fullscreen" | "minimized" = "dock") {
-  openAside({ hostKey: HOST_PATH, hostStreamId: "stream_host", asideId: ASIDE, surface })
+  openAside({
+    hostKey: HOST_PATH,
+    hostStreamId: "stream_host",
+    asideId: ASIDE,
+    surface,
+    originScope: "stream:stream_host",
+  })
 }
 
 beforeEach(() => {

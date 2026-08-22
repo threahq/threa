@@ -6,6 +6,7 @@ import {
   resolveDraftHomeStream,
   type DraftPileContext,
 } from "./home-stream"
+import { asideDraftScope, newAsideDraftScope, parseAsideDraftScope } from "./aside-scope"
 
 const context: DraftPileContext = {
   streamById: new Map([
@@ -111,5 +112,30 @@ describe("isDraftInHostPile", () => {
   it("never matches two unknowns, and never crosses roots", () => {
     expect(isDraftInHostPile("thread:msg_loose", "thread:msg_missing", context)).toBe(false)
     expect(isDraftInHostPile("stream:stream_other", "stream:stream_s", context)).toBe(false)
+  })
+})
+
+describe("aside draft scopes", () => {
+  const asideScope = asideDraftScope("stream_aside", "draft_1")
+
+  it("round-trips a scope and rejects a malformed one", () => {
+    expect(parseAsideDraftScope(asideScope)).toEqual({ asideId: "stream_aside", draftId: "draft_1" })
+    expect(parseAsideDraftScope("aside:stream_aside")).toBeNull()
+    expect(parseAsideDraftScope("aside:stream_aside:draft_1:extra")).toBeNull()
+    expect(parseAsideDraftScope("stream:stream_aside")).toBeNull()
+    expect(newAsideDraftScope("stream_aside")).toMatch(/^aside:stream_aside:draft_[0-9A-HJKMNP-TV-Z]{26}$/)
+  })
+
+  it("has no home stream, so it never enters a host's pile", () => {
+    expect(resolveDraftHomeStream(asideScope, context)).toBeNull()
+    expect(isTopLevelDraftScope(asideScope, context)).toBe(false)
+    expect(isDraftInHostPile("stream:stream_s", asideScope, context)).toBe(false)
+    expect(isDraftInHostPile("board:reply:conv_c", asideScope, context)).toBe(false)
+    expect(isDraftInHostPile("thread:msg_c", asideScope, context)).toBe(false)
+  })
+
+  it("still hosts its own scope, so the aside's own editor loads it", () => {
+    expect(isDraftInHostPile(asideScope, asideScope, context)).toBe(true)
+    expect(isDraftInHostPile(asideScope, "stream:stream_s", context)).toBe(false)
   })
 })
