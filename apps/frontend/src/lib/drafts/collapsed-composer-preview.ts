@@ -85,6 +85,10 @@ function previewNode(node: JSONContent): string {
     const author = stringAttr(node, "authorName")
     return author ? `Replying to ${author}` : "Quoted reply"
   }
+  if (node.type === "agentBlock") {
+    const author = stringAttr(node, "authorName")
+    return author ? `Text from ${author}` : "Text from an agent"
+  }
   if (node.type === "sharedMessage") {
     const author = stringAttr(node, "authorName")
     return author ? `Sharing message from ${author}` : "Sharing a message"
