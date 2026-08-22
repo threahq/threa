@@ -117,6 +117,8 @@ function makeBootstrap(): WorkspaceBootstrap {
       scratchpadCustomPrompt: null,
       codeBlockCollapseThreshold: 10,
       blockquoteCollapseThreshold: 6,
+      codeBlockWrap: "scroll",
+      codeBlockWrapOverrides: {},
       messageCollapseEnabled: false,
       messageCollapseAtHeight: 420,
       messageCollapseToHeight: 240,

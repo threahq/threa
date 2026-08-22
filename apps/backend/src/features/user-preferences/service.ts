@@ -76,6 +76,8 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "scratchpadCustomPrompt",
     "codeBlockCollapseThreshold",
     "blockquoteCollapseThreshold",
+    "codeBlockWrap",
+    "codeBlockWrapOverrides",
     "messageCollapseEnabled",
     "messageCollapseAtHeight",
     "messageCollapseToHeight",

@@ -1,16 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD } from "@threa/types"
+import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD, type CodeBlockWrap } from "@threa/types"
 import { db } from "@/db"
 import CodeBlock from "./code-block"
 import { MarkdownBlockProvider, hashMarkdownBlock, composeBlockCollapseKey } from "./markdown-block-context"
 import { hydrateCollapseCache } from "./collapse-cache"
 import * as preferencesModule from "@/contexts/preferences-context"
 import * as lineMeasureModule from "./use-measured-line-count"
+import * as highlighterModule from "./highlighter"
 
 // Stubbable preferences mock: each test can override via `currentPrefs`.
-let currentPrefs: { codeBlockCollapseThreshold?: number } | null = {
+let currentPrefs: {
+  codeBlockCollapseThreshold?: number
+  codeBlockWrap?: CodeBlockWrap
+  codeBlockWrapOverrides?: Record<string, CodeBlockWrap>
+} | null = {
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
 }
 
@@ -245,5 +250,62 @@ describe("CodeBlock collapse behavior", () => {
     // Second message with the exact same content should not inherit the expand.
     renderCodeBlock(code, "msg_B")
     expect(screen.getByText(/15 lines, click to expand/i)).toBeInTheDocument()
+  })
+})
+
+describe("CodeBlock line wrapping", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
+  })
+
+  afterEach(() => {
+    currentPrefs = { codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD }
+  })
+
+  function wrapAttr() {
+    return document.querySelector("[data-wrap]")?.getAttribute("data-wrap")
+  }
+
+  it("should scroll long lines when there is no preference context", () => {
+    currentPrefs = null
+    renderCodeBlock("const a = 1")
+    expect(wrapAttr()).toBe("scroll")
+  })
+
+  it("should follow the global wrap preference", () => {
+    currentPrefs = { codeBlockWrap: "wrap" }
+    renderCodeBlock("const a = 1")
+    expect(wrapAttr()).toBe("wrap")
+  })
+
+  it("should let a language override beat the global preference, resolving fence aliases", () => {
+    currentPrefs = { codeBlockWrap: "wrap", codeBlockWrapOverrides: { javascript: "scroll" } }
+    renderCodeBlock("const a = 1", "msg_test", "js")
+    expect(wrapAttr()).toBe("scroll")
+  })
+
+  it("should apply the wrap classes to both the highlighted block and the measuring placeholder", async () => {
+    // Force the cold path: the highlighter singleton is warm by now, so the
+    // placeholder would otherwise never render.
+    vi.spyOn(highlighterModule, "tryHighlightSync").mockReturnValue(null)
+    currentPrefs = { codeBlockWrap: "wrap" }
+    renderCodeBlock("const a = 1")
+    const placeholder = document.querySelector("pre.invisible")
+    expect(placeholder).not.toBeNull()
+    expect(placeholder?.className).toContain("whitespace-pre-wrap")
+    await waitFor(() => expect(document.querySelector("pre:not(.invisible)")).toBeInTheDocument())
+    const wrapper = document.querySelector("pre:not(.invisible)")?.parentElement
+    expect(wrapper?.className).toContain("[&>pre]:whitespace-pre-wrap")
+  })
+
+  it("should keep the scroll classes on both the placeholder and the highlighted block", async () => {
+    vi.spyOn(highlighterModule, "tryHighlightSync").mockReturnValue(null)
+    currentPrefs = { codeBlockWrap: "scroll" }
+    renderCodeBlock("const a = 1")
+    expect(document.querySelector("pre.invisible")?.className).toContain("whitespace-pre")
+    await waitFor(() => expect(document.querySelector("pre:not(.invisible)")).toBeInTheDocument())
+    expect(document.querySelector("pre:not(.invisible)")?.parentElement?.className).toContain("[&>pre]:whitespace-pre ")
   })
 })

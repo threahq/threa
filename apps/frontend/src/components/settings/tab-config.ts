@@ -36,7 +36,7 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   appearance: {
     label: "Appearance",
     description: "Theme and message density",
-    keywords: ["theme", "dark", "light", "density", "compact"],
+    keywords: ["theme", "dark", "light", "density", "compact", "code", "wrap"],
   },
   datetime: {
     label: "Date & Time",

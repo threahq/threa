@@ -157,3 +157,22 @@ describe("UserPreferencesService.updatePreferences board ledger settings", () =>
     expect(prefs.boardLedgerRows).toBe(DEFAULT_BOARD_LEDGER_ROWS)
   })
 })
+
+describe("UserPreferencesService.updatePreferences codeBlockWrapOverrides", () => {
+  afterEach(() => mock.restore())
+
+  it("stores the whole override map and clears it again when it returns to empty", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    await service.updatePreferences(WORKSPACE_ID, USER_ID, { codeBlockWrapOverrides: { sql: "wrap" } })
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "codeBlockWrapOverrides", value: { sql: "wrap" } }])
+
+    await service.updatePreferences(WORKSPACE_ID, USER_ID, { codeBlockWrapOverrides: {} })
+    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["codeBlockWrapOverrides"])
+  })
+})
