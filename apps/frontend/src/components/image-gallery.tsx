@@ -701,6 +701,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   useEffect(() => {
     if (!isOpen) return
     function onKeyDown(e: KeyboardEvent) {
+      // A dialog or menu stacked over the gallery (the code viewer opened from
+      // a markdown slide, the download menu) owns its own keys; arrows there
+      // must not flip slides.
+      const owner = e.target instanceof Element ? e.target.closest('[role="dialog"],[role="menu"]') : null
+      if (owner && !owner.hasAttribute("data-media-gallery")) return
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault()
         goTo(currentIndex - 1)
@@ -1021,6 +1026,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       {!current ? null : (
         <DialogContent
+          data-media-gallery=""
           className={cn(
             // <sm keeps the base DialogContent full-bleed layout (inset-0), which
             // tracks the dynamic viewport — a sized 90vh card measures the LARGE
