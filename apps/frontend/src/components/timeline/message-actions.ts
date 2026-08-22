@@ -163,6 +163,12 @@ export interface MessageActionContext {
    * entries.
    */
   onShare?: () => void
+  /**
+   * Open the same picker for a span of the message the reader highlighted, so
+   * the share pins that span instead of the whole body. Absent when a span
+   * can't be shared (E2E sources decrypt whole).
+   */
+  onShareWithSelection?: (selection: QuoteSelection) => void
   /** Callback to save or unsave the message */
   onToggleSave?: () => void
   /** Callback to open the reminder picker (mobile: bottom sheet) */

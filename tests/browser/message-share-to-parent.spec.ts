@@ -154,15 +154,15 @@ test.describe("Message share-to-parent", () => {
     // visible. Nothing more to check on the happy path.
   })
 
-  test("holds the shared revision when the source is edited", async ({ page }) => {
+  test("holds the shared revision when the source is edited, and says the source moved on", async ({ page }) => {
     const channelName = `share-${testId}`
     const threadText = `thread-reply-${testId}`
     const { workspaceId, threadMessageId } = await setUpSharedPointer(page, { channelName, threadText })
 
     // Edit the source thread message via the messages API. The backend's
     // outbox handler emits `pointer:invalidated` to the channel's room and the
-    // frontend refetches — but the pointer names the revision that was shared,
-    // so what the reader sees must not change underneath them.
+    // frontend refetches — but the pointer is pinned to the revision that was
+    // shared, so what it shows must not change under the reader.
     const editedText = `edited-thread-reply-${testId}`
     const editResponse = await page.request.patch(`/api/workspaces/${workspaceId}/messages/${threadMessageId}`, {
       data: {
@@ -179,7 +179,8 @@ test.describe("Message share-to-parent", () => {
     // refetch usually completes within a couple of seconds, but CI can
     // be slow under load.
     const card = page.locator("[data-type='shared-message']").filter({ hasText: new RegExp(threadText) })
-    await expect(card).toContainText(threadText, { timeout: 10000 })
+    await expect(card.getByText(/edited since/i)).toBeVisible({ timeout: 10000 })
+    await expect(card).toContainText(threadText)
     await expect(page.locator("[data-type='shared-message']").filter({ hasText: new RegExp(editedText) })).toHaveCount(
       0
     )

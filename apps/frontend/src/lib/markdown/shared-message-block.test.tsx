@@ -152,3 +152,55 @@ describe("MarkdownContent — sharedMessage paragraph swap", () => {
     expect(card.textContent).not.toContain("**")
   })
 })
+
+describe("MarkdownContent — pinned sharedMessage pointers", () => {
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  afterEach(async () => {
+    await db.events.clear()
+  })
+
+  it("renders the pinned span from the pointer's own slot and marks the source as edited since", () => {
+    const range = { from: 14, to: 21 }
+    renderMarkdown("Shared a message from [Ariadne](shared-message:stream_src/msg_abc?v=2&r=14-21)", {
+      // The whole-message slot exists too; the pointer must not read it.
+      [sharedMessageSlotKey("msg_abc")]: {
+        type: "sharedMessage",
+        state: "ok",
+        messageId: "msg_abc",
+        streamId: "stream_src",
+        authorId: "usr_1",
+        authorName: "Ariadne",
+        authorType: "user",
+        contentJson: {},
+        contentMarkdown: "the whole message as it reads now",
+        editedAt: null,
+        createdAt: "2026-04-23T10:00:00Z",
+        attachments: [],
+      },
+      [sharedMessageSlotKey("msg_abc", 2, range)]: {
+        type: "sharedMessage",
+        state: "ok",
+        messageId: "msg_abc",
+        streamId: "stream_src",
+        authorId: "usr_1",
+        authorName: "Ariadne",
+        authorType: "user",
+        contentJson: {},
+        contentMarkdown: "**this** is",
+        editedAt: null,
+        createdAt: "2026-04-23T10:00:00Z",
+        attachments: [],
+        version: 2,
+        currentRevision: 3,
+        range,
+      },
+    })
+
+    expect(screen.getByText("this")).toBeInTheDocument()
+    expect(screen.queryByText(/the whole message as it reads now/)).not.toBeInTheDocument()
+    expect(screen.getByText(/edited since/i)).toBeInTheDocument()
+  })
+})

@@ -73,3 +73,35 @@ export function resolveQuoteSelection(source: QuoteSource | null, selection: Quo
 
   return { version: revision, range: null, snippet: source?.contentMarkdown ?? selection.text }
 }
+
+/** What a share trigger needs from a selection: the pin, and what it will show. */
+export interface SharePin {
+  version: number | null
+  range: ContentRange | null
+  /** Markdown of exactly what the share will render, or null when out of reach. */
+  previewMarkdown: string | null
+}
+
+/**
+ * The pin a selection-driven share sends. Same three outcomes as
+ * {@link resolveQuoteSelection}, except a share stores no body: an unlocatable
+ * selection falls back to the whole message rather than to a snippet the server
+ * would have to locate, and the preview markdown is what the picker shows so the
+ * fallback is never silent. A range needs a revision to mean anything, so a row
+ * whose revision is unknown shares whole.
+ */
+export function resolveShareSelection(source: QuoteSource | null, selection: QuoteSelection): SharePin {
+  const contentJson = source?.contentJson
+  const revision = source?.revision ?? null
+  const whole: SharePin = { version: revision, range: null, previewMarkdown: source?.contentMarkdown ?? null }
+  if (!contentJson || revision === null) return whole
+
+  const partial = buildPartialQuote({
+    contentJson,
+    revision,
+    selectionText: selection.text,
+    prefixText: selection.prefixText,
+  })
+  if (!partial || !partial.range) return whole
+  return { version: revision, range: partial.range, previewMarkdown: partial.snippet }
+}

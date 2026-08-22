@@ -9,6 +9,7 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { MarkdownContent } from "@/components/ui/markdown-content"
 import { StreamSortToggle } from "@/components/composer/stream-sort-toggle"
 import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { useStoredStreamSortMode } from "@/lib/stream-sort"
@@ -40,6 +41,13 @@ interface ShareMessageModalProps {
   workspaceId: string
   attrs: SharedMessageAttrs
   /**
+   * What the share will render, as markdown: the pinned span for a share of a
+   * selection, the whole body otherwise. The picker shows it so a selection the
+   * range resolver couldn't map — which shares whole — is visible before the
+   * user picks a target rather than a surprise in the destination composer.
+   */
+  previewMarkdown?: string | null
+  /**
    * Decrypted source content when the message lives in an E2E scratchpad. A
    * sealed message can't be shared as a pointer (recipients hold no key), so
    * sharing it decrypts it and inserts the plaintext as a public quote — gated
@@ -69,7 +77,14 @@ interface ShareMessageModalProps {
  * `SHARE_PRIVACY_CONFIRMATION_REQUIRED` and the queue surfaces a
  * "Share anyway / Cancel" toast (`surfacePrivacyBlockToast`).
  */
-export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs, sourcePlaintext }: ShareMessageModalProps) {
+export function ShareMessageModal({
+  open,
+  onOpenChange,
+  workspaceId,
+  attrs,
+  previewMarkdown,
+  sourcePlaintext,
+}: ShareMessageModalProps) {
   const [search, setSearch] = useState("")
   // When sharing an E2E message, the picked target waits here for confirmation
   // (sharing decrypts it to plaintext) before the hand-off is queued.
@@ -142,6 +157,13 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs, sour
             <StreamSortToggle value={sortMode} onChange={setSortMode} />
           </div>
         </ResponsiveDialogHeader>
+        {previewMarkdown && (
+          <div className="border-b px-4 py-3">
+            <div className="max-h-24 overflow-hidden rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+              <MarkdownContent content={previewMarkdown} className="text-sm leading-relaxed" />
+            </div>
+          </div>
+        )}
         <Command shouldFilter={false} className="rounded-none">
           <CommandInput placeholder="Search streams…" value={search} onValueChange={setSearch} className="border-b" />
           <CommandList className="max-h-[60vh]">

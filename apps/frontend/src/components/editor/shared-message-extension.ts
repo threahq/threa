@@ -1,6 +1,8 @@
 import { Node, mergeAttributes } from "@tiptap/core"
 import { ReactNodeViewRenderer } from "@tiptap/react"
+import type { ContentRange } from "@threa/types"
 import { SharedMessageView } from "./shared-message-view"
+import { referencePinAttributes } from "./reference-attributes"
 
 export interface SharedMessageAttrs {
   /** The ID of the referenced source message */
@@ -21,12 +23,17 @@ export interface SharedMessageAttrs {
    * shares leave it undefined and the card links to the stream permalink.
    */
   conversationId?: string
+  /** Source message revision this share is pinned to; null = unpinned */
+  version: number | null
+  /** Span inside the pinned version; null = the whole message */
+  range: ContentRange | null
 }
 
 /**
  * Atomic block node that references a message in another stream. The body is
  * hydrated at render time from the canonical `slots` map returned alongside the
- * stream's events (this node is slot type #1, keyed `shared:<messageId>`).
+ * stream's events (this node is slot type #1, keyed by its reference pin —
+ * `sharedMessageSlotKey(messageId, version, range)`).
  * Updates to the source message propagate automatically on the next fetch; the
  * `pointer:invalidated` realtime event triggers a refetch so live edits surface
  * without page reload.
@@ -72,6 +79,7 @@ export const SharedMessageExtension = Node.create({
         // in-stream share's HTML/markdown stays the legacy two-segment shape.
         renderHTML: (attrs) => (attrs.conversationId ? { "data-conversation-id": attrs.conversationId } : {}),
       },
+      ...referencePinAttributes,
     }
   },
 
