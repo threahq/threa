@@ -65,6 +65,7 @@ function fakeMessage(overrides: Partial<Message> = {}): Message {
     reactions: {},
     metadata: {},
     conversationIntent: null,
+    revision: 1,
     editedAt: null,
     deletedAt: null,
     createdAt: NOW,

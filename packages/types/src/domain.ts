@@ -554,6 +554,8 @@ export interface Message {
    * Queried with AND-containment semantics via the public API.
    */
   metadata: Record<string, string>
+  /** 1 for the original body, +1 per edit. What a pinned reference resolves against. */
+  revision: number
   editedAt: string | null
   deletedAt: string | null
   createdAt: string

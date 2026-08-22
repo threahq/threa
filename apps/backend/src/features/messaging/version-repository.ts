@@ -25,6 +25,8 @@ export interface MessageVersion {
 interface InsertParams {
   id: string
   messageId: string
+  /** The revision this snapshot IS — the message's pre-edit `revision`. */
+  versionNumber: number
   contentJson: JSONContent
   contentMarkdown: string
   editedBy: string
@@ -49,7 +51,10 @@ export const MessageVersionRepository = {
       VALUES (
         ${params.id},
         ${params.messageId},
-        COALESCE((SELECT MAX(version_number) FROM message_versions WHERE message_id = ${params.messageId}), 0) + 1,
+        GREATEST(
+          ${params.versionNumber},
+          COALESCE((SELECT MAX(version_number) FROM message_versions WHERE message_id = ${params.messageId}), 0) + 1
+        ),
         ${JSON.stringify(params.contentJson)},
         ${params.contentMarkdown},
         ${params.editedBy}
@@ -87,12 +92,8 @@ export const MessageVersionRepository = {
    * - Each edit increments revision by 1
    */
   async getCurrentRevision(db: Querier, messageId: string): Promise<number | null> {
-    const result = await db.query<{ revision: number | null }>(sql`
-      SELECT CASE
-        WHEN EXISTS (SELECT 1 FROM messages WHERE id = ${messageId})
-        THEN COALESCE((SELECT MAX(version_number) FROM message_versions WHERE message_id = ${messageId}), 0) + 1
-        ELSE NULL
-      END AS revision
+    const result = await db.query<{ revision: number }>(sql`
+      SELECT revision FROM messages WHERE id = ${messageId}
     `)
 
     return result.rows[0]?.revision ?? null

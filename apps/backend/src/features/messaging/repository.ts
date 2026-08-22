@@ -16,6 +16,7 @@ interface MessageRow {
   sent_via: string | null
   metadata: Record<string, string>
   conversation_intent: string | null
+  revision: number
   edited_at: Date | null
   deleted_at: Date | null
   created_at: Date
@@ -51,6 +52,8 @@ export interface Message {
    * reassigns it).
    */
   conversationIntent: ConversationIntent | null
+  /** 1 for the original body, +1 per edit. Maintained by `updateContent`. */
+  revision: number
   editedAt: Date | null
   deletedAt: Date | null
   createdAt: Date
@@ -104,6 +107,7 @@ function mapRowToMessage(row: MessageRow, reactions: Record<string, string[]> = 
     // JSONB comes back parsed; the column has NOT NULL DEFAULT '{}' so it's always an object.
     metadata: row.metadata ?? {},
     conversationIntent: row.conversation_intent as ConversationIntent | null,
+    revision: row.revision,
     editedAt: row.edited_at,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
@@ -166,7 +170,7 @@ export const REPLY_COUNT_SUBQUERY = (messageAlias: string) => `
 const SELECT_FIELDS = `
   id, stream_id, sequence, author_id, author_type,
   content_json, content_markdown, ${REPLY_COUNT_SUBQUERY("messages")}, client_message_id, sent_via,
-  metadata, conversation_intent,
+  metadata, conversation_intent, revision,
   edited_at, deleted_at, created_at,
   ciphertext, envelope, e2e_version
 `
@@ -174,7 +178,7 @@ const SELECT_FIELDS = `
 const QUALIFIED_SELECT_FIELDS = `
   m.id, m.stream_id, m.sequence, m.author_id, m.author_type,
   m.content_json, m.content_markdown, ${REPLY_COUNT_SUBQUERY("m")}, m.client_message_id, m.sent_via,
-  m.metadata, m.conversation_intent,
+  m.metadata, m.conversation_intent, m.revision,
   m.edited_at, m.deleted_at, m.created_at,
   m.ciphertext, m.envelope, m.e2e_version
 `
@@ -676,7 +680,11 @@ export const MessageRepository = {
   ): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
-      SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown}, edited_at = NOW()
+      SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown}, edited_at = NOW(),
+          revision = GREATEST(
+            revision + 1,
+            (SELECT COALESCE(MAX(version_number), 0) + 1 FROM message_versions WHERE message_id = messages.id)
+          )
       WHERE id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
