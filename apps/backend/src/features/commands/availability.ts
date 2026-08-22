@@ -6,7 +6,6 @@ import {
   BotTypes,
   ASIDE_COMMAND,
   CommandKinds,
-  DISCUSS_WITH_ARIADNE_COMMAND,
   StreamTypes,
   botHasCapability,
   isAsideHostType,
@@ -189,7 +188,6 @@ export function isClientActionAvailableInStream(
   stream: Stream,
   options?: { writable?: boolean }
 ): boolean {
-  if (info.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) return !!stream.id
   if (info.clientActionId === ASIDE_COMMAND) {
     // An aside inherits its host's archive state, so an archived (read-only)
     // host cannot open one — the create path refuses it.

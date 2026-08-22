@@ -522,7 +522,7 @@ export interface CachedDraft {
   contentJson: JSONContent
   /** Attachments that have been uploaded and are ready to attach to the message */
   attachments: DraftAttachment[]
-  /** Context refs attached to this draft (populated by "Discuss with Ariadne"). */
+  /** Context refs attached to this draft (a context bag riding beside the body). */
   contextRefs?: DraftContextRef[]
   /** Authoring-device clock (ms); drives recency ordering. */
   clientUpdatedAt: number

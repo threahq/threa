@@ -6,9 +6,9 @@ import type { CommandItem } from "./types"
 
 const INVITE: CommandItem = { name: "invite", description: "Invite users to this channel" }
 const DISCUSS: CommandItem = {
-  name: "discuss-with-ariadne",
+  name: "aside",
   description: "Open a side-conversation",
-  clientActionId: "discuss-with-ariadne",
+  clientActionId: "aside",
 }
 const MEMO: CommandItem = {
   name: "memo",
@@ -53,7 +53,7 @@ describe("filterCommands placement gating", () => {
   it("shows whole-message and inline commands when the slash opens the message", () => {
     const editor = makeEditor()
     typeText(editor, "/")
-    expect(names(filterCommands(ALL, "", editor))).toEqual(["discuss-with-ariadne", "giphy", "invite", "memo"])
+    expect(names(filterCommands(ALL, "", editor))).toEqual(["aside", "giphy", "invite", "memo"])
   })
 
   it("hides whole-message commands mid-sentence but keeps inline ones", () => {
@@ -93,6 +93,6 @@ describe("filterCommands placement gating", () => {
   it("returns whole-message commands when no editor context is available", () => {
     // Defensive fallback: without an editor we can't tell where the slash is, so
     // we don't hide message-level commands (the prior behavior).
-    expect(names(filterCommands(ALL, ""))).toEqual(["discuss-with-ariadne", "giphy", "invite", "memo"])
+    expect(names(filterCommands(ALL, ""))).toEqual(["aside", "giphy", "invite", "memo"])
   })
 })

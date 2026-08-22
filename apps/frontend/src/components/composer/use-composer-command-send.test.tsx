@@ -4,7 +4,6 @@ import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
 import { spyOnExport } from "@/test"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as dispatchQueueModule from "@/hooks/use-command-dispatch-queue"
-import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { useComposerCommandSend } from "./use-composer-command-send"
 
@@ -28,7 +27,6 @@ beforeEach(() => {
     queuedFor.push(streamId)
     return { queueCommand }
   }) as never)
-  spyOnExport(discussModule, "useDiscussWithAriadne").mockReturnValue((() => vi.fn()) as never)
   openAside = vi.fn().mockResolvedValue(undefined)
   spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((() => openAside) as never)
 })

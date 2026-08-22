@@ -25,7 +25,7 @@ export interface DraftContextRef {
   /**
    * Lower slice anchor for the resolver. Setting this narrows the AI's
    * view of the thread; UI labels show "Slice of …". Leave null for
-   * whole-thread context (the "Discuss with Ariadne" default).
+   * whole-thread context (the default).
    */
   fromMessageId: string | null
   toMessageId: string | null

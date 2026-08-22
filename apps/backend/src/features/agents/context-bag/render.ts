@@ -10,8 +10,8 @@ export interface StableRenderInput {
   summaryText?: string
   refLabel: string
   /**
-   * The id of the message the discussion is anchored on (the user clicked
-   * "Discuss with Ariadne" on it). When present and found in `inlineItems`,
+   * The id of the message the bag is anchored on. When present and found in
+   * `inlineItems`,
    * the renderer splits the inline list into "Messages before" / "Focused
    * message" / "Messages after" sections and marks the focal with `►`.
    */

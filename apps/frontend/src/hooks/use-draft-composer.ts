@@ -156,7 +156,7 @@ export interface DraftComposerState {
   /** Current count of images (for sequential naming) */
   imageCount: number
 
-  /** Context refs attached to this draft (sidecar — populated by "Discuss with Ariadne"). */
+  /** Context refs attached to this draft (sidecar — a context bag rides beside the body). */
   contextRefs: DraftContextRef[]
 
   // Submission
@@ -690,7 +690,7 @@ export function useDraftComposer({
   // the ref (we'd produce a turn without context). `ready` and `inline`
   // are safe.
   //
-  // A context ref alone is enough to send: "Discuss with Ariadne" can be
+  // A context ref alone is enough to send: a context-seeded draft can be
   // dispatched with just the attached thread chip — no body text, no upload
   // required. Treating refs as a third payload type lets the user fire off
   // "what's going on here?" without typing.
@@ -719,7 +719,7 @@ export function useDraftComposer({
     uploadFile,
     imageCount,
 
-    // Context refs (sidecar — populated by "Discuss with Ariadne")
+    // Context refs (sidecar — a context bag rides beside the body)
     contextRefs: savedContextRefs,
 
     // Submission

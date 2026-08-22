@@ -392,13 +392,11 @@ describe("parseSealedPayload", () => {
   it("round-trips a draft's lossless contentJson and drops a non-doc one (Stage 4e)", () => {
     const contentJson = {
       type: "doc",
-      content: [
-        { type: "slashCommand", attrs: { name: "discuss-with-ariadne", clientActionId: "discuss-with-ariadne" } },
-      ],
+      content: [{ type: "slashCommand", attrs: { name: "aside", clientActionId: "aside" } }],
     }
-    const wrapper = serializeSealedPayload("/discuss-with-ariadne", { draftContentJson: contentJson })
+    const wrapper = serializeSealedPayload("/aside", { draftContentJson: contentJson })
     expect(parseSealedPayload(wrapper)).toEqual({
-      contentMarkdown: "/discuss-with-ariadne",
+      contentMarkdown: "/aside",
       attachmentRefs: [],
       sources: [],
       draftContentJson: contentJson,

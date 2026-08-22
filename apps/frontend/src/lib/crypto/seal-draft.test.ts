@@ -74,12 +74,10 @@ describe("seal-draft", () => {
 
     // A slashCommand node's clientActionId has no markdown representation — the
     // markdown round-trip drops it (only `/name` survives). Sealing contentJson
-    // carries it whole, so a roamed `/discuss-with-ariadne` still routes locally.
+    // carries it whole, so a roamed `/aside` still routes locally.
     const commandDoc: JSONContent = {
       type: "doc",
-      content: [
-        { type: "slashCommand", attrs: { name: "discuss-with-ariadne", clientActionId: "discuss-with-ariadne" } },
-      ],
+      content: [{ type: "slashCommand", attrs: { name: "aside", clientActionId: "aside" } }],
     }
 
     const sealed = await sealDraftContent({ workspaceId, senderId, streamId, draftId, contentJson: commandDoc })

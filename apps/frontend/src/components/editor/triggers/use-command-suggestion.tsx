@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from "react"
 import { useParams } from "react-router-dom"
 import type { Editor } from "@tiptap/react"
-import { ASIDE_COMMAND, DISCUSS_WITH_ARIADNE_COMMAND } from "@threa/types"
+import { ASIDE_COMMAND } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
 import {
@@ -17,7 +17,7 @@ import { useSuggestion } from "./use-suggestion"
 /**
  * True when the `/` that opened the palette is the only content of the message
  * (ignoring surrounding whitespace) — i.e. the user typed `/<query>` and nothing
- * else. Whole-message commands (`/invite`, `/discuss`) are gated on this so they
+ * else. Whole-message commands (`/invite`, `/aside`) are gated on this so they
  * don't surface when the slash is used mid-sentence.
  */
 function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
@@ -92,7 +92,7 @@ const ATTACHMENT_SLASH_ITEM: CommandItem = {
 }
 
 /**
- * Client-action commands (e.g. `/discuss-with-ariadne`) still insert a chip
+ * Client-action commands (e.g. `/aside`) still insert a chip
  * into the composer via the normal suggestion flow; routing to the client
  * handler happens at composer-send time (`message-input.tsx`) so the user
  * gets the familiar "type command, press send" UX rather than an action
@@ -149,9 +149,7 @@ export function useCommandSuggestion({
     const serverCommands = effectiveCommands
       .filter((cmd) => {
         // Gate the client actions that reference this stream on there being one.
-        if (cmd.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND || cmd.clientActionId === ASIDE_COMMAND) {
-          return !!streamId
-        }
+        if (cmd.clientActionId === ASIDE_COMMAND) return !!streamId
         return true
       })
       .map((cmd) => ({

@@ -2,7 +2,10 @@ import { ContextIntents, ContextRefKinds } from "@threa/types"
 import type { IntentConfig } from "../types"
 
 /**
- * "Discuss with Ariadne": start a private scratchpad side-conversation with a
+ * Legacy "Discuss with Ariadne" bags. The entry points are gone (an aside is
+ * the live path), but bags written before that still resolve through here —
+ * unregistering the intent would throw on every turn in those scratchpads.
+ * Start a private scratchpad side-conversation with a
  * thread loaded as context. Intent config drives the system-prompt preamble
  * and the inline-vs-summary threshold.
  *

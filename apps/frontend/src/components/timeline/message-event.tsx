@@ -65,7 +65,6 @@ import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
 import { ReminderPickerSheet } from "./reminder-picker-sheet"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
-import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useOpenAside } from "@/hooks/use-open-aside"
 import { useAgentBlock } from "./agent-block-context"
 import { parseMarkdown } from "@threa/prosemirror"
@@ -1160,29 +1159,10 @@ function SentMessageEvent({
     }
   }, [messageConversationId, conversationReplyCtx])
 
-  const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
-  const handleDiscussWithAriadne = useCallback(
-    // `useDiscussWithAriadne` rethrows after toasting so the surrounding
-    // mutation pipeline can see failures. The action menu invokes us
-    // fire-and-forget without awaiting, so we swallow here to keep the
-    // failure out of the unhandled-rejection log — the user already saw
-    // the toast. INV-11: failing loud means the toast, not the console.
-    () => {
-      void startDiscussWithAriadne({
-        kind: "thread",
-        sourceStreamId: streamId,
-        sourceMessageId: payload.messageId,
-      }).catch(() => {
-        /* toast already surfaced inside the hook */
-      })
-    },
-    [startDiscussWithAriadne, streamId, payload.messageId]
-  )
-
   // An aside anchors to this message in its host stream; the host must be a
   // type an aside can sit in (the server enforces the same list), and never
-  // an E2E stream — there is no plaintext to snapshot. Fire-and-forget like
-  // discuss: the hook toasts on failure.
+  // an E2E stream — there is no plaintext to snapshot. Fire-and-forget: the
+  // hook toasts on failure.
   const openAside = useOpenAside(workspaceId)
   // Archived hosts (directly or through the root) cannot open one — the aside
   // would inherit the archive and the create path refuses it.
@@ -1243,7 +1223,6 @@ function SentMessageEvent({
       onToggleSave: handleToggleSave,
       onLabelMessage: () => setLabelPickerOpen(true),
       onRequestReminder: handleRequestReminder,
-      onDiscussWithAriadne: handleDiscussWithAriadne,
       onOpenAside: canOpenAside ? handleOpenAside : undefined,
       onInsertAgentBlock: canInsertAgentBlock ? handleInsertAgentBlock : undefined,
       onQuoteReply: quoteReplyCtx
@@ -1407,7 +1386,6 @@ function SentMessageEvent({
       navigate,
       location,
       isMobile,
-      handleDiscussWithAriadne,
       canOpenAside,
       handleOpenAside,
       canInsertAgentBlock,

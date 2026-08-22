@@ -44,7 +44,7 @@ export interface LastRenderedSnapshot {
  *
  * Attachments use the same `AttachmentSummary` shape that message_created
  * events carry on the wire — no need for a parallel context-bag-only type.
- * Without `attachments` here the focal message in a "Discuss with Ariadne"
+ * Without `attachments` here the focal message in a windowed
  * window renders as text-only, which makes the trace lie about what the
  * user attached.
  */
@@ -83,11 +83,11 @@ export interface ResolvedRef {
   fingerprint: string
   tailMessageId: string | null
   /**
-   * The id of the message the discussion is anchored on (the user clicked
-   * "Discuss with Ariadne" on it). The renderer marks this message with a
-   * focal-message chevron and splits the inline list around it. Null when
-   * the bag has no focal — e.g. `/discuss-with-ariadne` slash command on a
-   * whole stream — or when the focal id falls outside the windowed slice.
+   * The id of the message the bag is anchored on (the row the user opened it
+   * from). The renderer marks this message with a focal-message chevron and
+   * splits the inline list around it. Null when the bag has no focal — a
+   * whole-stream bag such as `/aside` from a composer — or when the focal id
+   * falls outside the windowed slice.
    */
   focalMessageId: string | null
   /**

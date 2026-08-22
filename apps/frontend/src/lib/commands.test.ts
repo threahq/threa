@@ -12,15 +12,15 @@ describe("extractCommandNode", () => {
           content: [
             {
               type: "slashCommand",
-              attrs: { name: "discuss-with-ariadne", clientActionId: "discuss-with-ariadne" },
+              attrs: { name: "aside", clientActionId: "aside" },
             },
           ],
         },
       ],
     }
     expect(extractCommandNode(doc)).toEqual({
-      name: "discuss-with-ariadne",
-      clientActionId: "discuss-with-ariadne",
+      name: "aside",
+      clientActionId: "aside",
     })
   })
 

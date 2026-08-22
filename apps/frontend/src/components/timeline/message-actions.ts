@@ -183,8 +183,6 @@ export interface MessageActionContext {
    * axis (stow into a named bucket), Save is the single "for later" inbox.
    */
   onLabelMessage?: () => void
-  /** Callback to start a private "Discuss with Ariadne" scratchpad seeded with this thread */
-  onDiscussWithAriadne?: () => void | Promise<void>
   /** Open a private aside anchored to this message. Set only on surfaces whose host can carry one. */
   onOpenAside?: () => void
   /** Carry this agent message into the composer as an attributed block. Set only on agent messages inside an aside. */
@@ -431,16 +429,6 @@ export const messageActions: MessageAction[] = [
     icon: Tag,
     when: (ctx) => !!ctx.onLabelMessage,
     action: (ctx) => ctx.onLabelMessage?.(),
-  },
-  {
-    // Seed a private scratchpad that has this message's thread pre-loaded as
-    // context — lets the user poke at a thread without polluting it with
-    // @mentions.
-    id: "discuss-with-ariadne",
-    label: "Discuss with Ariadne",
-    icon: Sparkles,
-    when: (ctx) => !!ctx.onDiscussWithAriadne && !!ctx.streamId,
-    action: (ctx) => ctx.onDiscussWithAriadne?.(),
   },
   {
     id: "insert-agent-block",
