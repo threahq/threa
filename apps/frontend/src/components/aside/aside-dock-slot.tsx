@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useAsideForHost, type OpenAsideState } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
+import { AsideMobileSheet } from "./aside-mobile-sheet"
 
 export const ASIDE_DOCK_WIDTH = 400
 // Matches the thread panel slot (`duration-200`): the dock folds shut on the
@@ -50,21 +51,17 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
   const surface = rendered.surface === "fullscreen" ? "fullscreen" : "dock"
 
   if (isMobile) {
+    // The sheet owns its own drag-to-resize, so a fold animation here would
+    // fight it; it simply unmounts with the aside.
+    if (!reading) return null
     return (
-      <div
-        data-testid="aside-dock"
-        data-surface="takeover"
-        className="absolute inset-0 z-30 flex flex-col bg-background"
-      >
-        <AsidePane
-          workspaceId={workspaceId}
-          asideId={rendered.asideId}
-          hostStreamId={rendered.hostStreamId}
-          originScope={rendered.originScope}
-          surface={surface}
-          takeover
-        />
-      </div>
+      <AsideMobileSheet
+        workspaceId={workspaceId}
+        asideId={rendered.asideId}
+        hostStreamId={rendered.hostStreamId}
+        originScope={rendered.originScope}
+        surface={surface}
+      />
     )
   }
 

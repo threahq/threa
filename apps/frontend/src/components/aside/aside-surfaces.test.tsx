@@ -5,6 +5,7 @@ import { StreamTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
 import { createMockStream } from "@/test/fixtures"
 import * as workspaceStoreModule from "@/stores/workspace-store"
+import * as useMobileModule from "@/hooks/use-mobile"
 import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
 import { useAgentBlock } from "@/components/timeline/agent-block-context"
@@ -227,6 +228,73 @@ describe("aside surfaces", () => {
 
       expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "dock")
       expect(screen.getByRole("button", { name: "Dock aside" })).toBeEnabled()
+    })
+  })
+
+  describe("on a phone", () => {
+    beforeEach(() => {
+      vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    })
+
+    it("opens as a sheet over the host, with the strip as its handle, and no desktop dock", () => {
+      openOnHost()
+      renderPage()
+
+      const sheet = screen.getByTestId("aside-sheet")
+      expect(sheet).toHaveAttribute("data-surface", "dock")
+      expect(sheet).toHaveAttribute("data-suppress-pull-refresh", "true")
+      expect(screen.getByTestId("aside-sheet-handle")).toBeInTheDocument()
+      expect(screen.queryByTestId("aside-dock")).toBeNull()
+      expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
+    })
+
+    it("parks in the strip when the sheet is dragged to the floor, and nothing else is left behind", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      const sheet = screen.getByTestId("aside-sheet")
+      // jsdom has no layout: the sheet reports its resting peek height.
+      sheet.getBoundingClientRect = () => ({
+        height: 360,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+      handle.setPointerCapture = vi.fn()
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 500 })
+
+      expect(getAsideState()?.surface).toBe("minimized")
+      expect(screen.queryByTestId("aside-sheet")).toBeNull()
+      expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
+    })
+
+    it("leaves the sheet alone while the composer holds focus, so a drag cannot fight the keyboard", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      const editor = document.createElement("div")
+      editor.setAttribute("contenteditable", "true")
+      screen.getByTestId("aside-sheet").appendChild(editor)
+      Object.defineProperty(editor, "isContentEditable", { value: true })
+      editor.focus()
+      handle.setPointerCapture = vi.fn()
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 500 })
+
+      expect(getAsideState()?.surface).toBe("dock")
+      expect(screen.getByTestId("aside-sheet")).toBeInTheDocument()
     })
   })
 })

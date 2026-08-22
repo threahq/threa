@@ -1,0 +1,128 @@
+import { test, expect, type Locator, type Page } from "@playwright/test"
+import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+
+/**
+ * The aside on a phone: a sheet that peeks over the host, pulls up to the whole
+ * viewport, drags down to the strip above the composer, and leaves nothing
+ * behind when the OS back gesture closes it. The drag is a real pointer drag —
+ * the snap detents are unit-tested, what this proves is that the handle is
+ * wired to them and the surfaces actually swap.
+ */
+
+test.describe.configure({ timeout: 150_000 })
+
+const PHONE = { width: 390, height: 780 }
+const MESSAGE_COUNT = 8
+
+async function seedMessages(page: Page, workspaceId: string, streamId: string, prefix: string): Promise<void> {
+  for (let n = 1; n <= MESSAGE_COUNT; n++) {
+    const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+      data: { streamId, content: `${prefix} msg-${String(n).padStart(3, "0")}` },
+    })
+    expectApiOk(response, `Send message ${n}`)
+  }
+}
+
+function extractIds(page: Page): { workspaceId: string; streamId: string } {
+  const url = page.url()
+  const workspaceMatch = url.match(/\/w\/([^/]+)/)
+  const streamMatch = url.match(/\/s\/([^/?]+)/)
+  if (!workspaceMatch || !streamMatch) throw new Error(`Could not extract IDs from URL: ${url}`)
+  return { workspaceId: workspaceMatch[1], streamId: streamMatch[1] }
+}
+
+const sheet = (page: Page) => page.getByTestId("aside-sheet")
+const handle = (page: Page) => page.getByTestId("aside-sheet-handle")
+const strip = (page: Page) => page.getByTestId("aside-strip")
+const pane = (page: Page) => page.getByTestId("aside-pane")
+
+function hostScroller(page: Page, streamId: string): Locator {
+  return page.locator(`[data-stream-scroller="${streamId}"]`)
+}
+
+async function sheetHeight(page: Page): Promise<number> {
+  const box = await sheet(page).boundingBox()
+  if (!box) throw new Error("aside sheet has no box")
+  return Math.round(box.height)
+}
+
+/** Drag the handle by `dy` (negative = up) as a real pointer gesture. */
+async function dragHandle(page: Page, dy: number): Promise<void> {
+  const box = await handle(page).boundingBox()
+  if (!box) throw new Error("aside handle has no box")
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  // Several steps so the drag reads as a drag, ending slowly so the release
+  // settles on distance rather than a flick.
+  for (const step of [0.4, 0.7, 0.9, 1]) await page.mouse.move(x, y + dy * step)
+  await page.waitForTimeout(200)
+  await page.mouse.up()
+}
+
+async function openAsideFromComposer(page: Page): Promise<void> {
+  const editor = page.getByRole("main").locator("[data-editor-zone='main'] [contenteditable='true']").first()
+  await editor.click()
+  await page.keyboard.type("/aside")
+  const popup = page.locator("[aria-label='Slash command suggestions']")
+  await expect(popup).toBeVisible({ timeout: 5000 })
+  await popup
+    .getByRole("option", { name: /^\/?aside\b/ })
+    .first()
+    .click()
+  await page.keyboard.press("Enter")
+}
+
+test.describe("Aside — mobile surface", () => {
+  let testId: string
+
+  test.beforeEach(async ({ page }) => {
+    const result = await loginAndCreateWorkspace(page, "aside-mobile")
+    testId = result.testId
+    await page.setViewportSize(PHONE)
+  })
+
+  test("peeks over the host, pulls up to full, parks in the strip, and closes on back", async ({ page }) => {
+    await createChannel(page, `aside-m-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    const prefix = `[${testId}]`
+    await seedMessages(page, workspaceId, streamId, prefix)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostScroller(page, streamId)).toBeVisible({ timeout: 20000 })
+
+    await openAsideFromComposer(page)
+
+    // Peek: the sheet is well short of the viewport, and the host is still there.
+    await expect(sheet(page)).toHaveAttribute("data-surface", "dock", { timeout: 15000 })
+    await expect(pane(page)).toBeVisible()
+    const peek = await sheetHeight(page)
+    expect(peek).toBeLessThan(PHONE.height * 0.7)
+    expect(peek).toBeGreaterThan(PHONE.height * 0.25)
+    await expect(hostScroller(page, streamId)).toBeVisible()
+
+    // Pull up: the sheet takes the viewport.
+    await dragHandle(page, -PHONE.height * 0.5)
+    await expect(sheet(page)).toHaveAttribute("data-surface", "fullscreen", { timeout: 10000 })
+    expect(await sheetHeight(page)).toBeGreaterThan(PHONE.height * 0.9)
+
+    // Drag to the floor: the aside parks in the strip above the composer.
+    await dragHandle(page, PHONE.height)
+    await expect(strip(page)).toBeVisible({ timeout: 10000 })
+    await expect(sheet(page)).toHaveCount(0)
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0)
+
+    // Back out of the strip and into the sheet again, then close with OS back.
+    await strip(page)
+      .getByRole("button", { name: /^Open aside:/ })
+      .click()
+    await expect(sheet(page)).toBeVisible({ timeout: 10000 })
+    await page.goBack()
+    await expect(sheet(page)).toHaveCount(0)
+    await expect(strip(page)).toHaveCount(0)
+    // Back closed the aside rather than leaving the stream.
+    expect(page.url()).toContain(streamId)
+    // The anchor row is still the way back in.
+    await expect(hostScroller(page, streamId).locator("[data-aside-id]").first()).toBeVisible({ timeout: 10000 })
+  })
+})
