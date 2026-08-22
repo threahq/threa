@@ -13,6 +13,8 @@ export {
   MESSAGE_METADATA_MAX_VALUE_LENGTH,
   MESSAGE_METADATA_MAX_SERIALIZED_BYTES,
   MESSAGE_METADATA_RESERVED_PREFIX,
+  MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY,
+  withDerivedMessageMetadata,
 } from "./metadata-schema"
 
 export { deriveContentMarkdown } from "./content"

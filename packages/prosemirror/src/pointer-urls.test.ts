@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test"
 import {
+  buildAgentBlockHref,
   buildMemoHref,
   buildQuoteHref,
   buildSharedMessageHref,
+  parseAgentBlockHref,
   parseMemoHref,
   parseMentionPointerHref,
   parseQuoteHref,
@@ -210,5 +212,28 @@ describe("reference pins", () => {
   it("ignores query parameters it does not know", () => {
     expect(parseQuoteHref("quote:stream_1/msg_1?v=2&x=1")?.version).toBe(2)
     expect(parseSharedMessageHref("shared-message:stream_1/msg_1?x=1")?.version).toBeNull()
+  })
+})
+
+describe("parseAgentBlockHref", () => {
+  it("round-trips a persona attribution with and without its source aside", () => {
+    expect(buildAgentBlockHref({ authorId: "persona_01ARIADNE" })).toBe("agent:persona_01ARIADNE")
+    expect(parseAgentBlockHref("agent:persona_01ARIADNE")).toEqual({ authorId: "persona_01ARIADNE" })
+
+    const href = buildAgentBlockHref({ authorId: "bot_01X", sourceAsideId: "stream_01ASIDE" })
+    expect(href).toBe("agent:bot_01X/stream_01ASIDE")
+    expect(parseAgentBlockHref(href)).toEqual({ authorId: "bot_01X", sourceAsideId: "stream_01ASIDE" })
+  })
+
+  it("rejects an author that is not an agent, so a human can never be rendered as one", () => {
+    expect(parseAgentBlockHref("agent:usr_01HUMAN")).toBeNull()
+    expect(parseAgentBlockHref("agent:01NOPREFIX")).toBeNull()
+    expect(parseAgentBlockHref("agent:")).toBeNull()
+  })
+
+  it("returns null for another scheme or a malformed shape", () => {
+    expect(parseAgentBlockHref("quote:stream_1/msg_1")).toBeNull()
+    expect(parseAgentBlockHref("agent:persona_1/stream_1/extra")).toBeNull()
+    expect(parseAgentBlockHref("agent:persona_1/stream 1")).toBeNull()
   })
 })

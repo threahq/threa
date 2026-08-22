@@ -29,6 +29,7 @@ import { EmojiExtension, type EmojiExtensionOptions } from "./triggers/emoji-ext
 import { AttachmentReferenceExtension } from "./attachment-reference-extension"
 import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import { QuoteReplyExtension } from "./quote-reply-extension"
+import { AgentBlockExtension } from "./agent-block-extension"
 import { SharedMessageExtension } from "./shared-message-extension"
 import { MemoEmbedExtension } from "./memo-embed-extension"
 import { InAppLinkExtension } from "./in-app-link-extension"
@@ -124,6 +125,7 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     AttachmentReferenceExtension,
 
     QuoteReplyExtension,
+    AgentBlockExtension,
 
     SharedMessageExtension,
 

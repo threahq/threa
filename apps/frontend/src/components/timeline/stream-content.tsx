@@ -125,6 +125,7 @@ import { JoinChannelBar } from "./join-channel-bar"
 import { ThreadParentEvent } from "../thread/thread-parent-event"
 import { EditLastMessageContext } from "./edit-last-message-context"
 import { QuoteReplyProvider } from "./quote-reply-context"
+import { AgentBlockProvider } from "./agent-block-context"
 import { ConversationReplyProvider } from "./conversation-reply-context"
 import { SlotsProvider } from "@/components/slots/context"
 import { useStreamSlots } from "@/hooks/use-stream-slots"
@@ -2906,182 +2907,106 @@ export function StreamContent({
     <ReadFrontierContext.Provider value={readFrontier}>
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
         <QuoteReplyProvider>
-          <ConversationReplyProvider>
-            <SlotsProvider map={mergedSlots}>
-              <MessageConversationProvider conversationIdByMessageId={conversationIdByMessageId}>
-                <TextSelectionQuote streamId={streamId} containerRef={quoteScopeRef} />
-                <div ref={quoteScopeRef} className="relative h-full">
-                  <div className="absolute inset-0 overflow-hidden">
-                    {isSearchOpen && (
-                      <StreamSearchBar
-                        search={streamSearch}
-                        isNavigating={isSearchNavigating}
-                        onClose={handleSearchClose}
-                        onNavigate={handleSearchNavigate}
-                      />
-                    )}
-                    {batchMode &&
-                      (batchIntent === "splitConversation" ? (
-                        <SplitSelectionBar
-                          count={selectedMessageIds.size}
-                          workspaceId={workspaceId}
-                          conversations={conversationOverlay?.model.conversations ?? streamConversations}
-                          colorIndexById={conversationOverlay?.model.colorIndexById}
-                          busy={isSplitting}
-                          onMoveToExisting={runSplit}
-                          onCreateNew={() => runSplit(null)}
-                          onCancel={cancelBatchMode}
+          <AgentBlockProvider>
+            <ConversationReplyProvider>
+              <SlotsProvider map={mergedSlots}>
+                <MessageConversationProvider conversationIdByMessageId={conversationIdByMessageId}>
+                  <TextSelectionQuote streamId={streamId} containerRef={quoteScopeRef} />
+                  <div ref={quoteScopeRef} className="relative h-full">
+                    <div className="absolute inset-0 overflow-hidden">
+                      {isSearchOpen && (
+                        <StreamSearchBar
+                          search={streamSearch}
+                          isNavigating={isSearchNavigating}
+                          onClose={handleSearchClose}
+                          onNavigate={handleSearchNavigate}
                         />
-                      ) : (
-                        <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />
-                      ))}
-                    {activeConversationOverlay && (
-                      <ConversationOverlayPanel
-                        overlay={activeConversationOverlay}
-                        workspaceId={workspaceId}
-                        streamId={streamId}
-                        inViewConversations={inViewConversations}
-                        onClose={closeConversationOverlay}
-                        // Split mode keeps the overlay panel mounted while the
-                        // SplitSelectionBar occupies the flush-top strip; drop the
-                        // panel below it so it doesn't cover the bar's actions.
-                        topBarOpen={isSearchOpen || (batchMode && batchIntent === "splitConversation")}
-                      />
-                    )}
-                    {isDraft && (
-                      <div
-                        ref={draftScrollRef}
-                        className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
-                        style={{ paddingBottom: "var(--composer-height, 0px)" }}
-                      >
-                        {hasDraftPendingEvents ? (
-                          <EventList
-                            timelineItems={draftTimelineItems}
-                            isLoading={false}
+                      )}
+                      {batchMode &&
+                        (batchIntent === "splitConversation" ? (
+                          <SplitSelectionBar
+                            count={selectedMessageIds.size}
                             workspaceId={workspaceId}
-                            streamId={streamId}
-                            viewerIsMember={isMember}
-                            batch={batchState}
+                            conversations={conversationOverlay?.model.conversations ?? streamConversations}
+                            colorIndexById={conversationOverlay?.model.colorIndexById}
+                            busy={isSplitting}
+                            onMoveToExisting={runSplit}
+                            onCreateNew={() => runSplit(null)}
+                            onCancel={cancelBatchMode}
                           />
                         ) : (
-                          <Empty className="h-full border-0">
-                            <EmptyHeader>
-                              <EmptyMedia variant="icon">
-                                <MessageSquare />
-                              </EmptyMedia>
-                              <EmptyTitle>Start a conversation</EmptyTitle>
-                              <EmptyDescription>Type a message below to begin this scratchpad.</EmptyDescription>
-                            </EmptyHeader>
-                          </Empty>
-                        )}
-                      </div>
-                    )}
-                    {!isDraft && useVirtualized && (
-                      <>
-                        <TimelineMessageList
-                          visibleItems={visibleItems}
-                          cancelledFollowUpIds={cancelledFollowUpIds}
-                          delegationStatusPatches={delegationStatusPatches}
-                          botAccessStatusPatches={botAccessStatusPatches}
-                          callEndedPatches={callEndedPatches}
-                          viewerIsMember={isMember}
-                          isLoading={isLoading}
-                          holdForDeepLink={holdForDeepLink}
-                          isConfirmedEmpty={isConfirmedEmpty}
-                          listRef={listRef}
-                          scrollerRef={virtualScrollerRef}
-                          registerScroller={registerVirtualScroller}
-                          contentRef={virtualContentRef}
-                          scrollAbortRef={scrollAbortRef}
-                          isJumpMode={isJumpMode}
-                          userInteractedAtRef={userInteractedAtRef}
-                          shift={shift}
-                          isInitialSettling={virtualIsInitialSettling}
-                          onTimelineScroll={handleVirtualScroll}
-                          isFollowingTailRef={isFollowingTailRef}
-                          hasOlderEvents={hasOlderEvents}
-                          hasNewerEvents={hasNewerEvents}
-                          fetchOlderEvents={fetchOlderEvents}
-                          fetchNewerEvents={fetchNewerEvents}
-                          isFetchingOlder={isFetchingOlder}
-                          isFetchingNewer={isFetchingNewer}
+                          <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />
+                        ))}
+                      {activeConversationOverlay && (
+                        <ConversationOverlayPanel
+                          overlay={activeConversationOverlay}
                           workspaceId={workspaceId}
                           streamId={streamId}
-                          highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
-                          firstUnreadEventId={dividerEventId}
-                          isDividerDimmed={isDividerDimmed}
-                          agentActivity={agentActivity}
-                          hideSessionCards={isChannel}
-                          newMessageIds={newMessageIds}
-                          isSearchOpen={isSearchOpen}
-                          batch={batchState}
-                          batchPointerHandlers={batchPointerHandlers}
-                          conversationOverlay={activeConversationOverlay}
-                          onJumpToDate={handleJumpToDate}
-                          floatingChromeHidden={typingChromeHidden}
+                          inViewConversations={inViewConversations}
+                          onClose={closeConversationOverlay}
+                          // Split mode keeps the overlay panel mounted while the
+                          // SplitSelectionBar occupies the flush-top strip; drop the
+                          // panel below it so it doesn't cover the bar's actions.
+                          topBarOpen={isSearchOpen || (batchMode && batchIntent === "splitConversation")}
                         />
-                        {/* Overlay loading indicators — absolutely positioned so they
-                    don't cause layout shift when prepending older messages. */}
+                      )}
+                      {isDraft && (
                         <div
-                          aria-hidden={!isFetchingOlder}
-                          className={cn(
-                            "pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
-                            isSearchOpen ? "top-14" : "top-2",
-                            isFetchingOlder ? "opacity-100" : "opacity-0"
-                          )}
+                          ref={draftScrollRef}
+                          className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
+                          style={{ paddingBottom: "var(--composer-height, 0px)" }}
                         >
-                          Loading older messages...
-                        </div>
-                        <div
-                          aria-hidden={!isFetchingNewer}
-                          className={cn(
-                            "pointer-events-none absolute left-1/2 -translate-x-1/2 z-20 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
-                            isFetchingNewer ? "opacity-100" : "opacity-0"
-                          )}
-                          style={{
-                            // Sit above the Jump to latest button (when visible) which itself sits
-                            // above the floating composer. chromeCollapsed unmounts that button, so
-                            // the clearance drops with it.
-                            bottom:
-                              (isJumpMode || isScrolledFarFromBottom) && !chromeCollapsed
-                                ? "calc(var(--composer-height, 0px) + 3.5rem)"
-                                : "calc(var(--composer-height, 0px) + 0.5rem)",
-                          }}
-                        >
-                          Loading newer messages...
-                        </div>
-                      </>
-                    )}
-                    {!isDraft && !useVirtualized && (
-                      <div
-                        ref={plainScrollRef}
-                        className={cn(
-                          "h-full overflow-y-auto overflow-x-hidden overscroll-y-contain",
-                          (isSearchOpen || batchMode) && "pt-11",
-                          batchMode && "select-none"
-                        )}
-                        style={{ paddingBottom: "var(--composer-height, 0px)" }}
-                        data-suppress-pull-refresh="true"
-                        onScroll={plainHandleScroll}
-                        {...batchPointerHandlers}
-                      >
-                        <div ref={plainContentRef}>
-                          {isThread && anchorEvent && parentStreamId && (
-                            <ThreadParentEvent
-                              event={anchorEvent}
+                          {hasDraftPendingEvents ? (
+                            <EventList
+                              timelineItems={draftTimelineItems}
+                              isLoading={false}
                               workspaceId={workspaceId}
-                              streamId={parentStreamId}
-                              replyCount={displayEvents.length}
+                              streamId={streamId}
+                              viewerIsMember={isMember}
+                              batch={batchState}
                             />
+                          ) : (
+                            <Empty className="h-full border-0">
+                              <EmptyHeader>
+                                <EmptyMedia variant="icon">
+                                  <MessageSquare />
+                                </EmptyMedia>
+                                <EmptyTitle>Start a conversation</EmptyTitle>
+                                <EmptyDescription>Type a message below to begin this scratchpad.</EmptyDescription>
+                              </EmptyHeader>
+                            </Empty>
                           )}
-                          {isFetchingOlder && (
-                            <div className="flex justify-center py-2">
-                              <p className="text-sm text-muted-foreground">Loading older messages...</p>
-                            </div>
-                          )}
-                          <EventList
-                            timelineItems={timelineItems}
+                        </div>
+                      )}
+                      {!isDraft && useVirtualized && (
+                        <>
+                          <TimelineMessageList
+                            visibleItems={visibleItems}
+                            cancelledFollowUpIds={cancelledFollowUpIds}
+                            delegationStatusPatches={delegationStatusPatches}
+                            botAccessStatusPatches={botAccessStatusPatches}
+                            callEndedPatches={callEndedPatches}
+                            viewerIsMember={isMember}
                             isLoading={isLoading}
+                            holdForDeepLink={holdForDeepLink}
+                            isConfirmedEmpty={isConfirmedEmpty}
+                            listRef={listRef}
+                            scrollerRef={virtualScrollerRef}
+                            registerScroller={registerVirtualScroller}
+                            contentRef={virtualContentRef}
+                            scrollAbortRef={scrollAbortRef}
+                            isJumpMode={isJumpMode}
+                            userInteractedAtRef={userInteractedAtRef}
+                            shift={shift}
+                            isInitialSettling={virtualIsInitialSettling}
+                            onTimelineScroll={handleVirtualScroll}
+                            isFollowingTailRef={isFollowingTailRef}
+                            hasOlderEvents={hasOlderEvents}
+                            hasNewerEvents={hasNewerEvents}
+                            fetchOlderEvents={fetchOlderEvents}
+                            fetchNewerEvents={fetchNewerEvents}
+                            isFetchingOlder={isFetchingOlder}
+                            isFetchingNewer={isFetchingNewer}
                             workspaceId={workspaceId}
                             streamId={streamId}
                             highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
@@ -3090,159 +3015,237 @@ export function StreamContent({
                             agentActivity={agentActivity}
                             hideSessionCards={isChannel}
                             newMessageIds={newMessageIds}
-                            viewerIsMember={isMember}
+                            isSearchOpen={isSearchOpen}
                             batch={batchState}
+                            batchPointerHandlers={batchPointerHandlers}
                             conversationOverlay={activeConversationOverlay}
+                            onJumpToDate={handleJumpToDate}
+                            floatingChromeHidden={typingChromeHidden}
                           />
-                          {isFetchingNewer && (
-                            <div className="flex justify-center py-2">
-                              <p className="text-sm text-muted-foreground">Loading newer messages...</p>
-                            </div>
+                          {/* Overlay loading indicators — absolutely positioned so they
+                    don't cause layout shift when prepending older messages. */}
+                          <div
+                            aria-hidden={!isFetchingOlder}
+                            className={cn(
+                              "pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
+                              isSearchOpen ? "top-14" : "top-2",
+                              isFetchingOlder ? "opacity-100" : "opacity-0"
+                            )}
+                          >
+                            Loading older messages...
+                          </div>
+                          <div
+                            aria-hidden={!isFetchingNewer}
+                            className={cn(
+                              "pointer-events-none absolute left-1/2 -translate-x-1/2 z-20 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
+                              isFetchingNewer ? "opacity-100" : "opacity-0"
+                            )}
+                            style={{
+                              // Sit above the Jump to latest button (when visible) which itself sits
+                              // above the floating composer. chromeCollapsed unmounts that button, so
+                              // the clearance drops with it.
+                              bottom:
+                                (isJumpMode || isScrolledFarFromBottom) && !chromeCollapsed
+                                  ? "calc(var(--composer-height, 0px) + 3.5rem)"
+                                  : "calc(var(--composer-height, 0px) + 0.5rem)",
+                            }}
+                          >
+                            Loading newer messages...
+                          </div>
+                        </>
+                      )}
+                      {!isDraft && !useVirtualized && (
+                        <div
+                          ref={plainScrollRef}
+                          className={cn(
+                            "h-full overflow-y-auto overflow-x-hidden overscroll-y-contain",
+                            (isSearchOpen || batchMode) && "pt-11",
+                            batchMode && "select-none"
                           )}
+                          style={{ paddingBottom: "var(--composer-height, 0px)" }}
+                          data-suppress-pull-refresh="true"
+                          onScroll={plainHandleScroll}
+                          {...batchPointerHandlers}
+                        >
+                          <div ref={plainContentRef}>
+                            {isThread && anchorEvent && parentStreamId && (
+                              <ThreadParentEvent
+                                event={anchorEvent}
+                                workspaceId={workspaceId}
+                                streamId={parentStreamId}
+                                replyCount={displayEvents.length}
+                              />
+                            )}
+                            {isFetchingOlder && (
+                              <div className="flex justify-center py-2">
+                                <p className="text-sm text-muted-foreground">Loading older messages...</p>
+                              </div>
+                            )}
+                            <EventList
+                              timelineItems={timelineItems}
+                              isLoading={isLoading}
+                              workspaceId={workspaceId}
+                              streamId={streamId}
+                              highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
+                              firstUnreadEventId={dividerEventId}
+                              isDividerDimmed={isDividerDimmed}
+                              agentActivity={agentActivity}
+                              hideSessionCards={isChannel}
+                              newMessageIds={newMessageIds}
+                              viewerIsMember={isMember}
+                              batch={batchState}
+                              conversationOverlay={activeConversationOverlay}
+                            />
+                            {isFetchingNewer && (
+                              <div className="flex justify-center py-2">
+                                <p className="text-sm text-muted-foreground">Loading newer messages...</p>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                  {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
+                      )}
+                    </div>
+                    {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
               Positioned above the floating composer pill. Hidden when that
               strip is too short or focused mobile typing needs the space. */}
-                  {(isJumpMode || isScrolledFarFromBottom) && !typingChromeHidden && (
-                    <div
-                      className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
-                      style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
-                    >
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="pointer-events-auto shadow-lg gap-1.5"
-                        onClick={handleJumpToLatest}
+                    {(isJumpMode || isScrolledFarFromBottom) && !typingChromeHidden && (
+                      <div
+                        className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
+                        style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
                       >
-                        <ArrowDown className="h-3.5 w-3.5" />
-                        Jump to latest
-                      </Button>
-                    </div>
-                  )}
-                  {/* "N new messages" jump — shown when unread sits above the viewport.
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="pointer-events-auto shadow-lg gap-1.5"
+                          onClick={handleJumpToLatest}
+                        >
+                          <ArrowDown className="h-3.5 w-3.5" />
+                          Jump to latest
+                        </Button>
+                      </div>
+                    )}
+                    {/* "N new messages" jump — shown when unread sits above the viewport.
               Jumps up to the "New" divider so the viewer can read from there.
               Hidden while search is open: jumping the timeline would yank it out
               from under the active search-result navigation, and the Escape
               mark-read shortcut is gated on `!isSearchOpen` too. */}
-                  {unreadBannerVisible && !chromeCollapsed && (
-                    <div
-                      // Sits clearly below the floating date pill (top-2, ~30px tall)
-                      // so the top-center affordances never overlap.
-                      className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5"
-                      style={{ top: "3.5rem" }}
-                    >
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="pointer-events-auto shadow-lg gap-1.5"
-                        onClick={scrollToFirstUnread}
+                    {unreadBannerVisible && !chromeCollapsed && (
+                      <div
+                        // Sits clearly below the floating date pill (top-2, ~30px tall)
+                        // so the top-center affordances never overlap.
+                        className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5"
+                        style={{ top: "3.5rem" }}
                       >
-                        <ArrowUp className="h-3.5 w-3.5" />
-                        {unreadCount} new message{unreadCount === 1 ? "" : "s"}
-                      </Button>
-                      {/* Dismiss without scrolling up: mark all loaded read and tail
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="pointer-events-auto shadow-lg gap-1.5"
+                          onClick={scrollToFirstUnread}
+                        >
+                          <ArrowUp className="h-3.5 w-3.5" />
+                          {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+                        </Button>
+                        {/* Dismiss without scrolling up: mark all loaded read and tail
                   the live bottom — the touchable equivalent of Escape. */}
-                      <Button
-                        variant="secondary"
-                        size="icon"
-                        className="pointer-events-auto h-9 w-9 shadow-lg"
-                        onClick={escapeUnread}
-                        aria-label="Mark all read"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                  {dragGhost && (
-                    <div
-                      className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
-                      style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
-                    >
-                      <div className="font-medium">{selectedMessageIds.size} selected</div>
-                      <div className="line-clamp-1 text-xs text-muted-foreground">
-                        {Array.from(selectedMessageIds)
-                          .map((messageId) => {
-                            const content = messageEventMeta.get(messageId)?.content
-                            return content ? stripMarkdownToInline(content) : null
-                          })
-                          .filter(Boolean)
-                          .slice(0, 1)
-                          .join("")}
+                        <Button
+                          variant="secondary"
+                          size="icon"
+                          className="pointer-events-auto h-9 w-9 shadow-lg"
+                          onClick={escapeUnread}
+                          aria-label="Mark all read"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                    </div>
-                  )}
-                  <AlertDialog
-                    open={moveDialogOpen}
-                    onOpenChange={(open) => {
-                      if (open) return
-                      // Cancel + Esc are allowed during validating (we just bump the
-                      // cancellation token and the in-flight request becomes a no-op
-                      // on resolve). Only the irreversible commit phase blocks
-                      // dismiss — there is no rollback once moveToThread succeeds.
-                      if (isMoveConfirming) return
-                      closePendingMove()
-                    }}
-                  >
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Move messages?</AlertDialogTitle>
-                        <AlertDialogDescription>{`Move ${moveMessageCountLabel} into this thread?`}</AlertDialogDescription>
-                      </AlertDialogHeader>
-                      {/* Custom footer: status row (left) + actions (right). Replaces
+                    )}
+                    {dragGhost && (
+                      <div
+                        className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
+                        style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
+                      >
+                        <div className="font-medium">{selectedMessageIds.size} selected</div>
+                        <div className="line-clamp-1 text-xs text-muted-foreground">
+                          {Array.from(selectedMessageIds)
+                            .map((messageId) => {
+                              const content = messageEventMeta.get(messageId)?.content
+                              return content ? stripMarkdownToInline(content) : null
+                            })
+                            .filter(Boolean)
+                            .slice(0, 1)
+                            .join("")}
+                        </div>
+                      </div>
+                    )}
+                    <AlertDialog
+                      open={moveDialogOpen}
+                      onOpenChange={(open) => {
+                        if (open) return
+                        // Cancel + Esc are allowed during validating (we just bump the
+                        // cancellation token and the in-flight request becomes a no-op
+                        // on resolve). Only the irreversible commit phase blocks
+                        // dismiss — there is no rollback once moveToThread succeeds.
+                        if (isMoveConfirming) return
+                        closePendingMove()
+                      }}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Move messages?</AlertDialogTitle>
+                          <AlertDialogDescription>{`Move ${moveMessageCountLabel} into this thread?`}</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        {/* Custom footer: status row (left) + actions (right). Replaces
                   shadcn's AlertDialogFooter, which forces flex-col-reverse on
                   mobile and would invert our vertical stacking. */}
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                        <MoveStatusRow phase={movePhase} />
-                        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-2">
-                          <AlertDialogCancel disabled={movePhase === "moving"}>Cancel</AlertDialogCancel>
-                          {/* `preventDefault` keeps the dialog open through the
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                          <MoveStatusRow phase={movePhase} />
+                          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-2">
+                            <AlertDialogCancel disabled={movePhase === "moving"}>Cancel</AlertDialogCancel>
+                            {/* `preventDefault` keeps the dialog open through the
                       moving phase so the inline status row can transition
                       to "Moving…" — Radix's default Action behavior would
                       auto-close on click. confirmPendingMove closes the
                       dialog itself on success via cancelBatchMode. */}
-                          <AlertDialogAction
-                            onClick={(event) => {
-                              event.preventDefault()
-                              void confirmPendingMove()
-                            }}
-                            disabled={movePhase !== "validated"}
-                            aria-busy={movePhase === "moving"}
-                          >
-                            Move
-                          </AlertDialogAction>
+                            <AlertDialogAction
+                              onClick={(event) => {
+                                event.preventDefault()
+                                void confirmPendingMove()
+                              }}
+                              disabled={movePhase !== "validated"}
+                              aria-busy={movePhase === "moving"}
+                            >
+                              Move
+                            </AlertDialogAction>
+                          </div>
                         </div>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                    {membershipResolved && !isMember && isPublicChannel && (
+                      <div className="absolute inset-x-0 bottom-0 z-10">
+                        <JoinChannelBar
+                          workspaceId={workspaceId}
+                          streamId={streamId}
+                          channelName={stream?.slug ?? stream?.displayName ?? ""}
+                          onJoined={handleJoined}
+                          onHeightChange={handleComposerHeightChange}
+                        />
                       </div>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                  {membershipResolved && !isMember && isPublicChannel && (
-                    <div className="absolute inset-x-0 bottom-0 z-10">
-                      <JoinChannelBar
+                    )}
+                    {(isMember || !isPublicChannel || !membershipResolved) && (
+                      <MessageInput
                         workspaceId={workspaceId}
                         streamId={streamId}
-                        channelName={stream?.slug ?? stream?.displayName ?? ""}
-                        onJoined={handleJoined}
-                        onHeightChange={handleComposerHeightChange}
+                        disabled={isArchived || isSystem}
+                        disabledReason={disabledReason}
+                        autoFocus={autoFocus}
+                        onComposerHeightChange={handleComposerHeightChange}
+                        onMobileTypingChange={setMobileComposerTyping}
                       />
-                    </div>
-                  )}
-                  {(isMember || !isPublicChannel || !membershipResolved) && (
-                    <MessageInput
-                      workspaceId={workspaceId}
-                      streamId={streamId}
-                      disabled={isArchived || isSystem}
-                      disabledReason={disabledReason}
-                      autoFocus={autoFocus}
-                      onComposerHeightChange={handleComposerHeightChange}
-                      onMobileTypingChange={setMobileComposerTyping}
-                    />
-                  )}
-                </div>
-              </MessageConversationProvider>
-            </SlotsProvider>
-          </ConversationReplyProvider>
+                    )}
+                  </div>
+                </MessageConversationProvider>
+              </SlotsProvider>
+            </ConversationReplyProvider>
+          </AgentBlockProvider>
         </QuoteReplyProvider>
       </EditLastMessageContext.Provider>
     </ReadFrontierContext.Provider>

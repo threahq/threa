@@ -189,3 +189,28 @@ describe("applyMentionResolution", () => {
     })
   })
 })
+
+describe("applyMentionResolution inside an agent block", () => {
+  it("resolves a mention nested in an agentBlock and leaves the node and its attribution intact", () => {
+    const block = (mentionNode: JSONContent): JSONContent => ({
+      type: "doc",
+      content: [
+        {
+          type: "agentBlock",
+          attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne", sourceAsideId: "stream_01ASIDE" },
+          content: [{ type: "paragraph", content: [mentionNode] }],
+        },
+      ],
+    })
+
+    const result = applyMentionResolution(
+      block(mention("alice", "alice", "user")),
+      maps({ mention: [["alice", { id: "usr_01ALICE", actorType: "user" }]] })
+    )
+
+    expect(result).toEqual({
+      changed: true,
+      contentJson: block({ type: "mention", attrs: { id: "usr_01ALICE", slug: "alice", mentionType: "user" } }),
+    })
+  })
+})

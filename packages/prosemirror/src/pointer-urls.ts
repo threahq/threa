@@ -20,6 +20,10 @@
  *     link title; see `attachment-markdown.ts`).
  *   - `memo:memoId` — the pointer link a `memoEmbed` block serialises
  *     to. Single segment; the memo card body is hydrated at read time.
+ *   - `agent:authorId[/sourceAsideId]` — the attribution link on the first
+ *     line of an `agentBlock`. `authorId` is a `persona_`/`bot_` actor id
+ *     (INV-64); the optional second segment is the aside the text was
+ *     drafted in.
  *
  * Centralising the build/parse helpers here keeps the format in one
  * place: the markdown serializer, the markdown parser, and the
@@ -195,6 +199,37 @@ export function parseMemoHref(href: string): MemoHref | null {
   // `memo:memo_123/extra` don't slip through as a valid pointer.
   if (!/^[\w-]+$/.test(memoId)) return null
   return { memoId }
+}
+
+export interface AgentBlockHref {
+  /** `persona_…` or `bot_…` — the agent credited with the text. */
+  authorId: string
+  /** The aside the text came from, when it was drafted in one. */
+  sourceAsideId?: string
+}
+
+const AGENT_BLOCK_AUTHOR_PREFIXES = ["persona_", "bot_"] as const
+
+export function buildAgentBlockHref(params: AgentBlockHref): string {
+  if (!params.sourceAsideId) return `agent:${params.authorId}`
+  return `agent:${params.authorId}/${params.sourceAsideId}`
+}
+
+/**
+ * Decode an `agent:` attribution href. The author id must carry an agent
+ * prefix: attribution is the whole point of the node, so a human id or a
+ * prefixless value is rejected rather than rendered as an agent (INV-64).
+ */
+export function parseAgentBlockHref(href: string): AgentBlockHref | null {
+  if (!href.startsWith("agent:")) return null
+  const parts = href.slice("agent:".length).split("/")
+  if (parts.length < 1 || parts.length > 2) return null
+  const authorId = parts[0]
+  if (!AGENT_BLOCK_AUTHOR_PREFIXES.some((prefix) => authorId.startsWith(prefix))) return null
+  if (!/^[\w-]+$/.test(authorId)) return null
+  const sourceAsideId = parts[1]
+  if (sourceAsideId !== undefined && !/^[\w-]+$/.test(sourceAsideId)) return null
+  return { authorId, ...(sourceAsideId && { sourceAsideId }) }
 }
 
 export interface GiphyHref {

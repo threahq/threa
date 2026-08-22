@@ -69,3 +69,35 @@ export const messageMetadataFilterSchema = z
   .refine((m) => Object.keys(m).length <= MESSAGE_METADATA_MAX_KEYS, {
     message: `metadata filter may contain at most ${MESSAGE_METADATA_MAX_KEYS} keys`,
   })
+
+/**
+ * Server-derived key naming the agents whose text a message carries (comma
+ * separated `persona_`/`bot_` ids, document order). Written from the message's
+ * own `agentBlock` nodes at create — never by a caller, since `threa.*` is
+ * rejected on input — so attribution stays queryable even after the block is
+ * edited or the node is later removed from the stored content.
+ */
+export const MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY = "threa.agent_block_authors"
+
+/**
+ * Fold the derived agent-block marker into caller metadata. Returns `undefined`
+ * for an empty result so payloads and projections stay clean of `{}`. Authors
+ * that would push the value past the column's value cap are dropped rather than
+ * truncated mid-id — a partial id would read as a real, wrong actor.
+ */
+export function withDerivedMessageMetadata(
+  metadata: Record<string, string> | undefined,
+  agentBlockAuthorIds: string[]
+): Record<string, string> | undefined {
+  const kept: string[] = []
+  for (const authorId of agentBlockAuthorIds) {
+    const next = kept.length === 0 ? authorId : `${kept.join(",")},${authorId}`
+    if (next.length > MESSAGE_METADATA_MAX_VALUE_LENGTH) break
+    kept.push(authorId)
+  }
+  const merged = {
+    ...(metadata ?? {}),
+    ...(kept.length > 0 && { [MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY]: kept.join(",") }),
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined
+}

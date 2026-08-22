@@ -49,6 +49,7 @@ export type ThreaBlockNode =
   | ThreaCodeBlock
   | ThreaBlockquote
   | ThreaQuoteReply
+  | ThreaAgentBlock
   | ThreaSharedMessage
   | ThreaBulletList
   | ThreaOrderedList
@@ -101,6 +102,25 @@ export interface ThreaBlockquote {
 export interface ContentRange {
   from: number
   to: number
+}
+
+/**
+ * Agent block - text an agent wrote, carried into a human's message with
+ * durable attribution. Editable inside; the node and its attrs survive edits.
+ * Serializes to markdown as a blockquote whose FIRST line is an `agent:`
+ * attribution link.
+ */
+export interface ThreaAgentBlock {
+  type: "agentBlock"
+  attrs: {
+    /** `persona_…` or `bot_…` — the agent credited with the text (INV-64). */
+    authorId: string
+    /** Display name at insertion time (denormalized). */
+    authorName: string
+    /** The aside the text was drafted in, when it came from one. */
+    sourceAsideId?: string
+  }
+  content: ThreaBlockNode[]
 }
 
 /**
@@ -517,6 +537,7 @@ const blockNodeSchema = z.lazy(() =>
     codeBlockNodeSchema,
     blockquoteNodeSchema,
     quoteReplyNodeSchema,
+    agentBlockNodeSchema,
     sharedMessageNodeSchema,
     bulletListNodeSchema,
     orderedListNodeSchema,
@@ -560,6 +581,16 @@ const quoteReplyNodeSchema = z.object({
       ...pinnedAttrs,
     })
     .refine(rangeRequiresVersion.check, { message: rangeRequiresVersion.message }),
+})
+
+const agentBlockNodeSchema = z.object({
+  type: z.literal("agentBlock"),
+  attrs: z.object({
+    authorId: z.string(),
+    authorName: z.string(),
+    sourceAsideId: z.string().optional(),
+  }),
+  content: z.array(blockNodeSchema),
 })
 
 const sharedMessageNodeSchema = z.object({

@@ -15,10 +15,12 @@ import {
   unescapeMarkdownLinkText,
 } from "./attachment-markdown"
 import {
+  buildAgentBlockHref,
   buildGiphyHref,
   buildMemoHref,
   buildQuoteHref,
   buildSharedMessageHref,
+  parseAgentBlockHref,
   parseGiphyHref,
   parseMentionPointerHref,
   parseQuoteHref,
@@ -130,6 +132,22 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       // <p> elements for the snippet and attribution (needed for display extraction).
       const href = buildQuoteHref({ streamId, messageId, authorId, actorType, version, range })
       return `${quotedLines}\n>\n> — [${escapedAuthor}](${href})`
+    }
+
+    case "agentBlock": {
+      const { authorId, authorName, sourceAsideId } = node.attrs as {
+        authorId: string
+        authorName: string
+        sourceAsideId?: string | null
+      }
+      const escapedAuthor = authorName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
+      const href = buildAgentBlockHref({ authorId, sourceAsideId: sourceAsideId ?? undefined })
+      // Attribution leads (the quoteReply block puts it last), so the two
+      // blockquote-shaped nodes stay unambiguous on parse and the body below
+      // it is ordinary markdown — lists and code blocks included.
+      const body = serializeToMarkdown({ type: "doc", content: node.content ?? [] })
+      const lines = [`— [${escapedAuthor}](${href})`, "", ...body.split("\n")]
+      return lines.map((line) => (line ? "> " + line : ">")).join("\n")
     }
 
     case "sharedMessage": {
@@ -627,6 +645,25 @@ export function parseMarkdown(
       while (i < lines.length && (lines[i].startsWith("> ") || lines[i] === ">")) {
         quoteLines.push(lines[i] === ">" ? "" : lines[i].slice(2))
         i++
+      }
+
+      // Agent block: attribution on the FIRST line, body below it.
+      const agentMatch = quoteLines[0]?.match(/^—\s*\[((?:\\.|[^\]])+)\]\((agent:[\w\-/]+)\)$/)
+      const agentHref = agentMatch ? parseAgentBlockHref(agentMatch[2]) : null
+      if (agentMatch && agentHref) {
+        const bodyLines = quoteLines.slice(1)
+        while (bodyLines.length > 0 && bodyLines[0] === "") bodyLines.shift()
+        const body = parseMarkdown(bodyLines.join("\n"), options.getMentionType, options.getEmoji, options)
+        content.push({
+          type: "agentBlock",
+          attrs: {
+            authorId: agentHref.authorId,
+            authorName: agentMatch[1].replace(/\\([\]\\])/g, "$1"),
+            ...(agentHref.sourceAsideId && { sourceAsideId: agentHref.sourceAsideId }),
+          },
+          content: body.content ?? [{ type: "paragraph" }],
+        })
+        continue
       }
 
       // Check if last line is a quote-reply attribution: — [Author](quote:streamId/messageId/authorId/actorType[?v=n&r=from-to])

@@ -188,6 +188,33 @@ export function collectQuoteReplyMessageIds(content: JSONContent): string[] {
   return ordered
 }
 
+/**
+ * Agent ids credited by `agentBlock` nodes anywhere in the tree, in document
+ * order, deduped. The id is authoritative (INV-64); `authorName` is display.
+ */
+export function collectAgentBlockAuthorIds(content: JSONContent): string[] {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "agentBlock") {
+      const authorId = node.attrs?.authorId
+      if (typeof authorId === "string" && authorId.length > 0 && !seen.has(authorId)) {
+        seen.add(authorId)
+        ordered.push(authorId)
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return ordered
+}
+
 const BARE_URL_IN_TEXT = /https?:\/\/[^\s<>"[\]]+/g
 
 function trimPlaintextUrl(url: string): string {
