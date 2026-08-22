@@ -39,14 +39,14 @@ describe("evaluatePipelines", () => {
       outbox: {
         head: 60000,
         listeners: [
-          listener({ listener_id: "naming", lag: 52000, last_processed_at: "2026-08-08T06:48:00Z" }),
+          listener({ listener_id: "memo-accumulator", lag: 52000, last_processed_at: "2026-08-08T06:48:00Z" }),
           listener({ listener_id: "embedding", lag: 900 }),
           listener({ listener_id: "push", lag: 3, retry_count: 2, last_error: "timeout" }),
         ],
       },
     }
     expect(evaluatePipelines(report, now).map((f) => f.id)).toEqual([
-      "outbox.stale.naming",
+      "outbox.stale.memo-accumulator",
       "outbox.lag.embedding",
       "outbox.retry.push",
     ])
