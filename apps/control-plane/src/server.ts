@@ -4,6 +4,8 @@ import {
   runMigrations,
   WorkosAuthService,
   StubAuthService,
+  SessionCookies,
+  sessionCookieConfigFromEnv,
   WorkosOrgServiceImpl,
   StubWorkosOrgService,
   OutboxDispatcher,
@@ -84,6 +86,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   logger.info("Control plane database migrations complete")
 
   const authService = config.useStubAuth ? new StubAuthService() : new WorkosAuthService(config.workos)
+  const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
   const workosOrgService = config.useStubAuth ? new StubWorkosOrgService() : new WorkosOrgServiceImpl(config.workos)
 
   const regionalClient = new RegionalClient(config.regions, config.internalApiKey)
@@ -262,6 +265,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     registerRoutes(app, {
       pool,
       authService,
+      sessionCookies,
       workspaceService,
       shadowService,
       waitlistService,

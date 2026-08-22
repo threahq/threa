@@ -1,6 +1,6 @@
 import type { Server } from "socket.io"
 import { z } from "zod"
-import type { AuthService } from "@threa/backend-common"
+import type { AuthService, SessionCookies } from "@threa/backend-common"
 import type { Pool } from "pg"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
@@ -73,6 +73,7 @@ const stateSchema = z.object({
 
 interface Dependencies {
   authService: AuthService
+  sessionCookies: SessionCookies
   callService: CallService
   featureFlagService: FeatureFlagService
   pool: Pool
@@ -123,10 +124,10 @@ function createTokenBucket() {
  * reordered update is dropped by version check, not trusted.
  */
 export function registerCallGateway(io: Server, deps: Dependencies) {
-  const { authService, callService, featureFlagService, pool, cloudflareEnabled } = deps
+  const { authService, sessionCookies, callService, featureFlagService, pool, cloudflareEnabled } = deps
   const namespace = io.of(CALLS_NAMESPACE)
 
-  namespace.use(createSocketAuthMiddleware(authService))
+  namespace.use(createSocketAuthMiddleware({ authService, sessionCookies }))
 
   // The per-workspace kill-switch (404-style CALLS_DISABLED, mirroring the REST
   // `assertAvailable`). Gated on both `call:join` (reject new joins) and

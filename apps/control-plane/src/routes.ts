@@ -6,6 +6,7 @@ import {
   getClientIp,
   errorHandler,
   type AuthService,
+  type SessionCookies,
   StubAuthService,
 } from "@threa/backend-common"
 import { createControlPlaneAuthHandlers, createAuthStubHandlers } from "./features/auth"
@@ -36,6 +37,7 @@ interface RateLimitConfig {
 interface Dependencies {
   pool: Pool
   authService: AuthService
+  sessionCookies: SessionCookies
   workspaceService: ControlPlaneWorkspaceService
   shadowService: InvitationShadowService
   waitlistService: WaitlistService
@@ -57,6 +59,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const {
     pool,
     authService,
+    sessionCookies,
     workspaceService,
     shadowService,
     waitlistService,
@@ -68,7 +71,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     allowDevAuthRoutes,
   } = deps
 
-  const auth = createAuthMiddleware({ authService })
+  const auth = createAuthMiddleware({ authService, sessionCookies })
   const internalAuth = createInternalAuthMiddleware(internalApiKey)
   const requirePlatformAdmin = createPlatformAdminMiddleware({ backofficeService })
 
@@ -110,9 +113,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     key: ipKey,
   })
 
-  const accountsService = new AccountsService({ authService, membership: workspaceService })
+  const accountsService = new AccountsService({ authService, sessionCookies, membership: workspaceService })
   const authHandlers = createControlPlaneAuthHandlers({
     authService,
+    sessionCookies,
     accountsService,
     frontendUrl: deps.frontendUrl,
     allowedRedirectDomain: deps.allowedRedirectDomain,
@@ -154,6 +158,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
     const authStub = createAuthStubHandlers({
       authStubService: authService,
+      sessionCookies,
       accountsService,
     })
     app.get("/test-auth-login", authStub.getLoginPage)

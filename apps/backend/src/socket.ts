@@ -1,6 +1,6 @@
 import type { Server, Socket, DefaultEventsMap } from "socket.io"
 import crypto from "crypto"
-import type { AuthService } from "@threa/backend-common"
+import type { AuthService, SessionCookies } from "@threa/backend-common"
 import { createSocketAuthMiddleware } from "./lib/socket-auth"
 import { socketConnectionId } from "./lib/id"
 import { socketHandshakeIp } from "./lib/socket-ip"
@@ -82,6 +82,7 @@ interface SocketMetricsState {
 interface Dependencies {
   pool: import("pg").Pool
   authService: AuthService
+  sessionCookies: SessionCookies
   streamService: StreamService
   pushService: PushService
   workspaceService: WorkspaceService
@@ -107,6 +108,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
   const {
     pool,
     authService,
+    sessionCookies,
     streamService,
     pushService,
     workspaceService,
@@ -117,7 +119,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
   } = deps
 
   // Auth middleware is shared with the voice namespace — see lib/socket-auth
-  io.use(createSocketAuthMiddleware(authService))
+  io.use(createSocketAuthMiddleware({ authService, sessionCookies }))
 
   io.on("connection", (socket: MainSocket) => {
     const workosUserId = socket.data.workosUserId

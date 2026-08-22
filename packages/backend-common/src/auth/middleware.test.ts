@@ -1,5 +1,7 @@
-import { beforeAll, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import type { Request, Response } from "express"
+import { SessionCookies } from "../cookies"
+import { createAuthMiddleware } from "./middleware"
 import type { AuthResult, AuthService } from "./auth-service"
 
 class FakeAuthService implements AuthService {
@@ -58,20 +60,15 @@ function makeRes(): Response & CapturingRes {
 }
 
 describe("createAuthMiddleware", () => {
-  let createAuthMiddleware: typeof import("./middleware").createAuthMiddleware
-  let sessionCookieName: string
-
-  beforeAll(async () => {
-    // cookies.ts captures SESSION_COOKIE_NAME at module load. Reuse whatever
-    // value the module resolved to so this file works in isolation and when
-    // cookies.test.ts has already locked the name in.
-    process.env.SESSION_COOKIE_NAME ??= "wos_session_test_mw"
-    sessionCookieName = (await import("../cookies")).SESSION_COOKIE_NAME
-    createAuthMiddleware = (await import("./middleware")).createAuthMiddleware
+  const sessionCookieName = "wos_session_test_mw"
+  const sessionCookies = new SessionCookies({
+    name: sessionCookieName,
+    options: { path: "/", httpOnly: true, secure: false, sameSite: "lax" },
   })
 
   test("populates req.authUser.permissions from the JWT permission claim", async () => {
     const middleware = createAuthMiddleware({
+      sessionCookies,
       authService: new FakeAuthService({
         success: true,
         refreshed: false,
@@ -100,6 +97,7 @@ describe("createAuthMiddleware", () => {
     // Bootstrap callers rely on this distinction: `[]` means "WorkOS sent an
     // empty grant" (no fallback), `null` means "no claim — fall back to role".
     const middleware = createAuthMiddleware({
+      sessionCookies,
       authService: new FakeAuthService({
         success: true,
         refreshed: false,
@@ -121,6 +119,7 @@ describe("createAuthMiddleware", () => {
 
   test("absent permission claim surfaces as null so callers can fall back", async () => {
     const middleware = createAuthMiddleware({
+      sessionCookies,
       authService: new FakeAuthService({
         success: true,
         refreshed: false,
@@ -142,6 +141,7 @@ describe("createAuthMiddleware", () => {
 
   test("non-terminal auth failure 401s WITHOUT clearing the session cookie (refresh race / WorkOS outage)", async () => {
     const middleware = createAuthMiddleware({
+      sessionCookies,
       authService: new FakeAuthService({ success: false, refreshed: false, reason: "invalid_grant", terminal: false }),
     })
 
@@ -155,6 +155,7 @@ describe("createAuthMiddleware", () => {
 
   test("terminal auth failure clears the session cookie", async () => {
     const middleware = createAuthMiddleware({
+      sessionCookies,
       authService: new FakeAuthService({
         success: false,
         refreshed: false,

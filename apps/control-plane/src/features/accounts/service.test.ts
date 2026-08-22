@@ -1,19 +1,14 @@
-import { beforeAll, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import type { Response } from "express"
-import type { AuthResult, AuthService } from "@threa/backend-common"
+import { SessionCookies, type AuthResult, type AuthService } from "@threa/backend-common"
 import { AccountsService } from "./service"
 
-// Capture the env-scoped cookie names this test process will use. Mirrors
-// middleware.test.ts so this file works in isolation and alongside others.
-let SESSION_COOKIE_NAME: string
-let altCookieName: (slot: number) => string
-
-beforeAll(async () => {
-  process.env.SESSION_COOKIE_NAME ??= "wos_session_test_accounts"
-  const cookies = await import("@threa/backend-common")
-  SESSION_COOKIE_NAME = cookies.SESSION_COOKIE_NAME
-  altCookieName = cookies.altSessionCookieName
+const SESSION_COOKIE_NAME = "wos_session_test_accounts"
+const sessionCookies = new SessionCookies({
+  name: SESSION_COOKIE_NAME,
+  options: { path: "/", httpOnly: true, secure: false, sameSite: "lax" },
 })
+const altCookieName = (slot: number) => sessionCookies.altName(slot)
 
 // In-memory `Response` stub that records `cookie()` / `clearCookie()` calls.
 // We assert only the resulting cookie state after a method finishes, so the
@@ -107,7 +102,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
     // promoted to the active cookie.
     auth.on("sealed_a_rotated", { success: true, refreshed: false, user: makeUser("user_a") })
 
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
     const cookies = { [altCookieName(0)]: "sealed_a_stale" }
 
@@ -136,7 +131,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
       user: makeUser("user_a"),
     })
 
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
     const cookies = { [altCookieName(0)]: "sealed_a_stale" }
     const activeUser = makeUser("user_b")
@@ -159,7 +154,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
       user: makeUser("user_a"),
     })
 
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
 
     const result = await service.addAndParkActive(res, {}, "sealed_a_stale", "sealed_b_new", "user_b")
@@ -184,7 +179,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
     })
     auth.on("sealed_b_parked", { success: true, refreshed: false, user: makeUser("user_b") })
 
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
     const cookies = { [altCookieName(0)]: "sealed_b_parked" }
 
@@ -207,7 +202,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
     const auth = new ProgrammableAuthService()
     auth.on("sealed_a_active", { success: true, refreshed: false, user: makeUser("user_a") })
 
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
 
     const promoted = await service.removeCurrentAndPromote(res, {}, "sealed_a_active")
@@ -228,7 +223,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
     auth.on("sealed_a_active", { success: true, refreshed: false, user: makeUser("user_a") })
     // "stale_alt" deliberately unset — authenticateSession returns not_found.
 
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
     const cookies = { [altCookieName(0)]: "stale_alt" }
 
@@ -246,7 +241,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
     auth.on("sealed_a_active", { success: true, refreshed: false, user: makeUser("user_a") })
     auth.on("sealed_a_dup", { success: true, refreshed: false, user: makeUser("user_a") })
 
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
     const cookies = { [altCookieName(0)]: "sealed_a_dup" }
 
@@ -259,7 +254,7 @@ describe("AccountsService — refreshed sealed propagation", () => {
 
   test("removeCurrentAndPromote returns false when there is no active sealed", async () => {
     const auth = new ProgrammableAuthService()
-    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const service = new AccountsService({ sessionCookies, authService: auth, membership: NEVER_MEMBER })
     const res = makeRes()
 
     const promoted = await service.removeCurrentAndPromote(res, {}, undefined)

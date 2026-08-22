@@ -83,6 +83,7 @@ import {
   errorHandler,
   StubAuthService,
   type AuthService,
+  type SessionCookies,
   type ApiKeyService,
 } from "@threa/backend-common"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./middleware/public-api-auth"
@@ -139,6 +140,7 @@ interface Dependencies {
   io: Server
   poolMonitor: PoolMonitor
   authService: AuthService
+  sessionCookies: SessionCookies
   workspaceService: WorkspaceService
   streamService: StreamService
   eventService: EventService
@@ -208,6 +210,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     poolMonitor,
     authService,
+    sessionCookies,
     workspaceService,
     streamService,
     eventService,
@@ -270,7 +273,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   } = deps
 
   const audit = createAuditMiddleware(accessLogService)
-  const auth = createAuthMiddleware({ authService })
+  const auth = createAuthMiddleware({ authService, sessionCookies })
   const workspaceUser = createWorkspaceUserMiddleware({ pool, workspaceService, controlPlaneClient })
   const upload = createUploadMiddleware({ s3Config })
   // Express natively chains handlers - spread array at usage sites
@@ -454,6 +457,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
     const authStub = createAuthStubHandlers({
       authStubService: authService,
+      sessionCookies,
       workspaceService,
       streamService,
       invitationService,

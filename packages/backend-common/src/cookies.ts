@@ -1,7 +1,5 @@
 import type { CookieOptions, Response } from "express"
 
-const isProduction = process.env.NODE_ENV === "production"
-
 export const parseCookies = (cookieHeader: string): Record<string, string> => {
   return cookieHeader.split(";").reduce(
     (acc, cookie) => {
@@ -16,47 +14,25 @@ export const parseCookies = (cookieHeader: string): Record<string, string> => {
   )
 }
 
-// Per-environment cookie name so staging and production sessions don't collide
-// in a browser that has both open. Set `SESSION_COOKIE_NAME=wos_session` in
-// production and `wos_session_staging` in staging.
-//
-// INV-11: the fallback default is intentionally loud — when the env var is
-// unset we log a warning at module load so misconfiguration is observable
-// (e.g. staging forgetting to override the value would otherwise silently
-// reuse `wos_session` and clobber the prod cookie at `.threa.io`).
-function resolveSessionCookieName(): string {
-  const configured = process.env.SESSION_COOKIE_NAME
-  if (configured) return configured
-  console.warn(
-    "[backend-common/cookies] SESSION_COOKIE_NAME is unset, falling back to 'wos_session'. " +
-      "Set it explicitly per environment (prod: 'wos_session', staging: 'wos_session_staging')."
-  )
-  return "wos_session"
-}
-
-export const SESSION_COOKIE_NAME = resolveSessionCookieName()
-
-export const SESSION_COOKIE_CONFIG = {
-  path: "/",
-  httpOnly: true,
-  secure: isProduction,
-  sameSite: "lax" as const,
-  maxAge: 60 * 60 * 24 * 30 * 1000, // 30 days
-  // Honor COOKIE_DOMAIN whenever it's set. Staging needs this too so the
-  // session set at staging.threa.io during the WorkOS callback is visible on
-  // sibling PR subdomains like pr-204-staging.threa.io.
-  ...(process.env.COOKIE_DOMAIN ? { domain: process.env.COOKIE_DOMAIN } : {}),
-}
-
 export type SessionCookieOptions = CookieOptions
 
-// Multi-account: one active session cookie (SESSION_COOKIE_NAME) plus up to
-// MAX_ALT_SLOTS "parked" alt cookies. The cap is bounded by the Cloudflare
-// Workers request-header limit (~32 KB total, ~16 KB per header) — the browser
-// concatenates every cookie for the origin into a single `Cookie:` header, so
-// that combined header is the binding constraint. We size conservatively from
-// documented worst-case inputs (an empirical staging measurement is recorded
-// in the PR); PR-5 may only relax MAX_ACCOUNTS upward with a fresh measurement.
+export interface SessionCookieConfig {
+  /**
+   * Per-environment cookie name so staging and production sessions don't
+   * collide in a browser that has both open: `wos_session` in production,
+   * `wos_session_staging` in staging.
+   */
+  name: string
+  options: SessionCookieOptions
+}
+
+// Multi-account: one active session cookie plus up to MAX_ALT_SLOTS "parked"
+// alt cookies. The cap is bounded by the Cloudflare Workers request-header
+// limit (~32 KB total, ~16 KB per header) — the browser concatenates every
+// cookie for the origin into a single `Cookie:` header, so that combined header
+// is the binding constraint. We size conservatively from documented worst-case
+// inputs (an empirical staging measurement is recorded in the PR); PR-5 may
+// only relax MAX_ACCOUNTS upward with a fresh measurement.
 const WORST_CASE_SEALED_BYTES = 3072
 const PER_COOKIE_OVERHEAD_BYTES = 32
 // Conservative reservation for session cookies within the single `Cookie:`
@@ -84,13 +60,6 @@ export function assertSlot(slot: number): void {
   }
 }
 
-// Env-scoped: derived from SESSION_COOKIE_NAME so a staging process
-// (wos_session_staging) never names or reads prod alt cookies and vice versa.
-export function altSessionCookieName(slot: number): string {
-  assertSlot(slot)
-  return `${SESSION_COOKIE_NAME}_alt_${slot}`
-}
-
 function clearOptions(options: SessionCookieOptions): SessionCookieOptions {
   const { maxAge: _, ...rest } = options
   return rest
@@ -101,71 +70,113 @@ function hostOnlyOptions(options: SessionCookieOptions): SessionCookieOptions {
   return rest
 }
 
-function setNamedSessionCookie(
-  res: Response,
-  name: string,
-  value: string,
-  options: SessionCookieOptions = SESSION_COOKIE_CONFIG
-): void {
-  if (options.domain) {
-    res.clearCookie(name, clearOptions(hostOnlyOptions(options)))
+/**
+ * Reads and writes the WorkOS session cookies for one environment. Construct it
+ * once at the composition root of a service that serves sessions (INV-13) and
+ * pass it to collaborators; a process that never touches sessions never builds
+ * one, and so never needs `SESSION_COOKIE_NAME` configured.
+ */
+export class SessionCookies {
+  private readonly config: SessionCookieConfig
+
+  constructor(config: SessionCookieConfig) {
+    this.config = config
   }
-  res.cookie(name, value, options)
-}
 
-function clearNamedSessionCookie(
-  res: Response,
-  name: string,
-  options: SessionCookieOptions = SESSION_COOKIE_CONFIG
-): void {
-  res.clearCookie(name, clearOptions(options))
-  if (options.domain) {
-    res.clearCookie(name, clearOptions(hostOnlyOptions(options)))
+  get name(): string {
+    return this.config.name
+  }
+
+  get defaultOptions(): SessionCookieOptions {
+    return this.config.options
+  }
+
+  /** The active sealed session from an already-parsed cookie jar. */
+  read(cookies: Record<string, string>): string | undefined {
+    return cookies[this.config.name]
+  }
+
+  // Env-scoped: derived from the active cookie name so a staging process
+  // (wos_session_staging) never names or reads prod alt cookies and vice versa.
+  altName(slot: number): string {
+    assertSlot(slot)
+    return `${this.config.name}_alt_${slot}`
+  }
+
+  set(res: Response, session: string, options: SessionCookieOptions = this.config.options): void {
+    this.setNamed(res, this.config.name, session, options)
+  }
+
+  clear(res: Response, options: SessionCookieOptions = this.config.options): void {
+    this.clearNamed(res, this.config.name, options)
+  }
+
+  setAlt(res: Response, slot: number, session: string, options: SessionCookieOptions = this.config.options): void {
+    this.setNamed(res, this.altName(slot), session, options)
+  }
+
+  clearAlt(res: Response, slot: number, options: SessionCookieOptions = this.config.options): void {
+    this.clearNamed(res, this.altName(slot), options)
+  }
+
+  // Extract occupied alt slots from already-parsed cookies. Env-scoped: matches
+  // exactly `${name}_alt_<n>`, so the active cookie and the other environment's
+  // alt cookies are ignored. Returns slots sorted ascending.
+  readAlts(cookies: Record<string, string>): Array<{ slot: number; sealed: string }> {
+    const prefix = `${this.config.name}_alt_`
+    const result: Array<{ slot: number; sealed: string }> = []
+    for (const [name, value] of Object.entries(cookies)) {
+      if (!name.startsWith(prefix) || !value) continue
+      const slotStr = name.slice(prefix.length)
+      if (!/^\d+$/.test(slotStr)) continue
+      const slot = Number(slotStr)
+      if (!Number.isInteger(slot) || slot < 0 || slot >= MAX_ALT_SLOTS) continue
+      result.push({ slot, sealed: value })
+    }
+    return result.sort((a, b) => a.slot - b.slot)
+  }
+
+  private setNamed(res: Response, name: string, value: string, options: SessionCookieOptions): void {
+    if (options.domain) {
+      res.clearCookie(name, clearOptions(hostOnlyOptions(options)))
+    }
+    res.cookie(name, value, options)
+  }
+
+  private clearNamed(res: Response, name: string, options: SessionCookieOptions): void {
+    res.clearCookie(name, clearOptions(options))
+    if (options.domain) {
+      res.clearCookie(name, clearOptions(hostOnlyOptions(options)))
+    }
   }
 }
 
-export function setSessionCookie(
-  res: Response,
-  session: string,
-  options: SessionCookieOptions = SESSION_COOKIE_CONFIG
-): void {
-  setNamedSessionCookie(res, SESSION_COOKIE_NAME, session, options)
-}
-
-export function clearSessionCookie(res: Response, options: SessionCookieOptions = SESSION_COOKIE_CONFIG): void {
-  clearNamedSessionCookie(res, SESSION_COOKIE_NAME, options)
-}
-
-export function setAltSessionCookie(
-  res: Response,
-  slot: number,
-  session: string,
-  options: SessionCookieOptions = SESSION_COOKIE_CONFIG
-): void {
-  setNamedSessionCookie(res, altSessionCookieName(slot), session, options)
-}
-
-export function clearAltSessionCookie(
-  res: Response,
-  slot: number,
-  options: SessionCookieOptions = SESSION_COOKIE_CONFIG
-): void {
-  clearNamedSessionCookie(res, altSessionCookieName(slot), options)
-}
-
-// Extract occupied alt slots from already-parsed cookies. Env-scoped: matches
-// exactly `${SESSION_COOKIE_NAME}_alt_<n>`, so the active cookie and the other
-// environment's alt cookies are ignored. Returns slots sorted ascending.
-export function readAltSessionCookies(cookies: Record<string, string>): Array<{ slot: number; sealed: string }> {
-  const prefix = `${SESSION_COOKIE_NAME}_alt_`
-  const result: Array<{ slot: number; sealed: string }> = []
-  for (const [name, value] of Object.entries(cookies)) {
-    if (!name.startsWith(prefix) || !value) continue
-    const slotStr = name.slice(prefix.length)
-    if (!/^\d+$/.test(slotStr)) continue
-    const slot = Number(slotStr)
-    if (!Number.isInteger(slot) || slot < 0 || slot >= MAX_ALT_SLOTS) continue
-    result.push({ slot, sealed: value })
+/**
+ * INV-11: a service that serves sessions must be told which environment it is.
+ * Staging silently reusing `wos_session` would clobber the production cookie at
+ * the shared `.threa.io` domain, so an unset name is a boot failure rather than
+ * a default.
+ */
+export function sessionCookieConfigFromEnv(env: NodeJS.ProcessEnv = process.env): SessionCookieConfig {
+  const name = env.SESSION_COOKIE_NAME
+  if (!name) {
+    throw new Error(
+      "[backend-common/cookies] SESSION_COOKIE_NAME is required for a service that serves sessions " +
+        "(prod: 'wos_session', staging: 'wos_session_staging')."
+    )
   }
-  return result.sort((a, b) => a.slot - b.slot)
+  return {
+    name,
+    options: {
+      path: "/",
+      httpOnly: true,
+      secure: env.NODE_ENV === "production",
+      sameSite: "lax" as const,
+      maxAge: 60 * 60 * 24 * 30 * 1000, // 30 days
+      // Honor COOKIE_DOMAIN whenever it's set. Staging needs this too so the
+      // session set at staging.threa.io during the WorkOS callback is visible on
+      // sibling PR subdomains like pr-204-staging.threa.io.
+      ...(env.COOKIE_DOMAIN ? { domain: env.COOKIE_DOMAIN } : {}),
+    },
+  }
 }

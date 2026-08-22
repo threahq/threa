@@ -1,12 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import {
-  HttpError,
-  SESSION_COOKIE_NAME,
-  renderLoginPage,
-  setSessionCookie,
-  type StubAuthService,
-} from "@threa/backend-common"
+import { HttpError, renderLoginPage, type SessionCookies, type StubAuthService } from "@threa/backend-common"
 import type { AccountsService } from "../accounts"
 import { parseCallbackState, splitInnerState } from "./callback-state"
 
@@ -23,6 +17,7 @@ const devLoginSchema = z.object({
 
 interface Dependencies {
   authStubService: StubAuthService
+  sessionCookies: SessionCookies
   /**
    * Same collaborator the real OAuth callback uses. The interactive stub
    * login form is the only add-account entry point on stub-auth environments
@@ -33,7 +28,7 @@ interface Dependencies {
   accountsService: AccountsService
 }
 
-export function createAuthStubHandlers({ authStubService, accountsService }: Dependencies) {
+export function createAuthStubHandlers({ authStubService, sessionCookies, accountsService }: Dependencies) {
   return {
     async getLoginPage(req: Request, res: Response) {
       const state = (req.query.state as string) || ""
@@ -58,7 +53,7 @@ export function createAuthStubHandlers({ authStubService, accountsService }: Dep
         const parked = await accountsService.addAndParkActive(
           res,
           req.cookies,
-          req.cookies[SESSION_COOKIE_NAME] as string | undefined,
+          sessionCookies.read(req.cookies),
           result.session,
           result.user.id
         )
@@ -74,7 +69,7 @@ export function createAuthStubHandlers({ authStubService, accountsService }: Dep
           redirectPath += `${redirectPath.includes("?") ? "&" : "?"}accountError=${encodeURIComponent(parked.code)}`
         }
       } else {
-        setSessionCookie(res, result.session)
+        sessionCookies.set(res, result.session)
       }
       res.redirect(redirectPath)
     },
@@ -85,7 +80,7 @@ export function createAuthStubHandlers({ authStubService, accountsService }: Dep
         throw new HttpError("Invalid login parameters", { status: 400, code: "INVALID_LOGIN" })
       }
       const result = await authStubService.devLogin(parsed.data)
-      setSessionCookie(res, result.session)
+      sessionCookies.set(res, result.session)
       res.json({ user: result.user })
     },
   }

@@ -1,7 +1,12 @@
 import type { Socket } from "socket.io"
 import type { ExtendedError } from "socket.io"
-import { parseCookies, SESSION_COOKIE_NAME } from "@threa/backend-common"
-import type { AuthService } from "@threa/backend-common"
+import { parseCookies } from "@threa/backend-common"
+import type { AuthService, SessionCookies } from "@threa/backend-common"
+
+interface Dependencies {
+  authService: AuthService
+  sessionCookies: SessionCookies
+}
 
 /**
  * Shared Socket.io connection auth. Both the main namespace and the dedicated
@@ -11,10 +16,10 @@ import type { AuthService } from "@threa/backend-common"
  * On success it stamps `socket.data.workosUserId`; downstream handlers resolve
  * the workspace-scoped user from there.
  */
-export function createSocketAuthMiddleware(authService: AuthService) {
+export function createSocketAuthMiddleware({ authService, sessionCookies }: Dependencies) {
   return async (socket: Socket, next: (err?: ExtendedError) => void): Promise<void> => {
     const cookies = parseCookies(socket.handshake.headers.cookie || "")
-    const session = cookies[SESSION_COOKIE_NAME]
+    const session = sessionCookies.read(cookies)
     if (!session) return next(new Error("No session cookie"))
 
     // Socket.io won't catch a rejected promise from an async middleware, so a

@@ -82,6 +82,7 @@ function setup(overrides?: {
 
   registerCallGateway(io, {
     authService: {} as never,
+    sessionCookies: {} as never,
     callService: callService as never,
     featureFlagService: featureFlagService as never,
     pool: {} as never,
