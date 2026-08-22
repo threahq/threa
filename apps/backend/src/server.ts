@@ -262,6 +262,7 @@ export interface ServerInstance {
 
 export async function startServer(): Promise<ServerInstance> {
   const config = loadConfig()
+  const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
 
   const { collectDefaultMetrics } = await import("./lib/observability")
   collectDefaultMetrics()
@@ -320,7 +321,6 @@ export async function startServer(): Promise<ServerInstance> {
     featureFlagService.getWorkspaceFlag(workspaceId, "composeTraces")
   )
   const authService = config.useStubAuth ? new StubAuthService() : new WorkosAuthService(config.workos)
-  const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
 
   const malwareScanner = createMalwareScanner(storage, config.attachments)
   const attachmentService = new AttachmentService(pool, storage, malwareScanner)

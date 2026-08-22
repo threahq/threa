@@ -80,6 +80,13 @@ describe("session cookies", () => {
     expect(cookies.read({ wos_session: "other-env" })).toBeUndefined()
   })
 
+  test("a name Express would reject at serialize time is refused at construction instead", () => {
+    for (const name of ["", " ", "wos session", "wos_session;x", "wos=session", "wos\tsession"]) {
+      expect(() => new SessionCookies({ name, options: DOMAIN_OPTIONS })).toThrow("invalid session cookie name")
+    }
+    expect(() => new SessionCookies({ name: "wos_session-staging.1", options: DOMAIN_OPTIONS })).not.toThrow()
+  })
+
   test("two environments in one process never see each other's cookies", () => {
     const staging = new SessionCookies({ name: "wos_session_staging", options: DOMAIN_OPTIONS })
     const jar = { [NAME]: "prod-active", wos_session_staging: "staging-active" }
@@ -156,6 +163,8 @@ describe("alt session cookies", () => {
       [`${NAME}_alt_1`]: "slot1",
       [`${NAME}_alt_0`]: "slot0",
       [`${NAME}_alt_${MAX_ALT_SLOTS}`]: "out-of-range",
+      // Parses to slot 1; taking it would return slot 1 twice.
+      [`${NAME}_alt_01`]: "non-canonical",
       [`${NAME}_alt_2`]: "",
       wos_session_alt_0: "prod-foreign",
       wos_session_staging_alt_0: "staging-foreign",

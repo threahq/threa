@@ -80,13 +80,13 @@ export interface ControlPlaneInstance {
 export async function startServer(): Promise<ControlPlaneInstance> {
   const config = loadControlPlaneConfig()
 
+  const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
   const pool = createDatabasePool(config.databaseUrl, { max: 10 })
   const listenPool = createDatabasePool(config.databaseUrl, { max: 2, idleTimeoutMillis: 60_000 })
   await runMigrations(pool, MIGRATIONS_GLOB)
   logger.info("Control plane database migrations complete")
 
   const authService = config.useStubAuth ? new StubAuthService() : new WorkosAuthService(config.workos)
-  const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
   const workosOrgService = config.useStubAuth ? new StubWorkosOrgService() : new WorkosOrgServiceImpl(config.workos)
 
   const regionalClient = new RegionalClient(config.regions, config.internalApiKey)

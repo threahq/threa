@@ -70,6 +70,11 @@ function hostOnlyOptions(options: SessionCookieOptions): SessionCookieOptions {
   return rest
 }
 
+// RFC 6265 cookie-name token: no whitespace, controls, or separators. Express
+// throws when it serializes a bad name, which would land on a user's first
+// login rather than at boot, so the constructor checks it up front.
+const COOKIE_NAME = /^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$/
+
 /**
  * Reads and writes the WorkOS session cookies for one environment. Construct it
  * once at the composition root of a service that serves sessions (INV-13) and
@@ -80,6 +85,12 @@ export class SessionCookies {
   private readonly config: SessionCookieConfig
 
   constructor(config: SessionCookieConfig) {
+    if (!COOKIE_NAME.test(config.name)) {
+      throw new Error(
+        `[backend-common/cookies] invalid session cookie name ${JSON.stringify(config.name)}; ` +
+          "expected an RFC 6265 token (no whitespace, controls or separators)."
+      )
+    }
     this.config = config
   }
 
@@ -131,6 +142,9 @@ export class SessionCookies {
       if (!/^\d+$/.test(slotStr)) continue
       const slot = Number(slotStr)
       if (!Number.isInteger(slot) || slot < 0 || slot >= MAX_ALT_SLOTS) continue
+      // `_alt_01` parses to slot 1; without this a jar holding both spellings
+      // would yield the same slot twice and park two sessions in one place.
+      if (name !== this.altName(slot)) continue
       result.push({ slot, sealed: value })
     }
     return result.sort((a, b) => a.slot - b.slot)
