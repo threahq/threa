@@ -13,10 +13,10 @@ import { StreamTypes, Visibilities, sharedMessageSlotKey } from "@threa/types"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
-import { MessageRepository } from "../../src/features/messaging"
+import { MessageRepository, MessageVersionRepository } from "../../src/features/messaging"
 import { MemoRepository } from "../../src/features/memos"
 import { sanitizeSyncEntries, type SyncLogEntry } from "../../src/features/sync"
-import { userId, workspaceId, streamId, messageId, memoId } from "../../src/lib/id"
+import { userId, workspaceId, streamId, messageId, memoId, messageVersionId } from "../../src/lib/id"
 
 describe("sanitizeSyncEntries", () => {
   let pool: Pool
@@ -214,6 +214,48 @@ describe("sanitizeSyncEntries", () => {
     expect(slots[sharedMessageSlotKey(readableSharedMsg)]).toMatchObject({
       state: "ok",
       contentMarkdown: "current source content",
+    })
+  })
+
+  test("re-hydrates a pinned slot at its pinned revision, not the source's current body", async () => {
+    const pinnedSource = messageId()
+    const pinned = testMessageContent("body when it was shared")
+    await withTransaction(pool, async (client) => {
+      await MessageRepository.insert(client, {
+        id: pinnedSource,
+        streamId: citingChannel,
+        sequence: sequence++,
+        authorId: viewer,
+        authorType: "user",
+        ...testMessageContent("body as it reads now"),
+      })
+    })
+    await MessageVersionRepository.insert(pool, {
+      id: messageVersionId(),
+      messageId: pinnedSource,
+      versionNumber: 1,
+      contentJson: pinned.contentJson,
+      contentMarkdown: pinned.contentMarkdown,
+      editedBy: viewer,
+    })
+    await pool.query(`UPDATE messages SET revision = 2 WHERE id = $1`, [pinnedSource])
+
+    const pinnedKey = sharedMessageSlotKey(pinnedSource, 1)
+    const e = entry("message:created", {
+      workspaceId: testWorkspaceId,
+      streamId: citingChannel,
+      event: { id: "evt_pinned", eventType: "message_created", payload: { messageId: messageId() } },
+      slots: { [pinnedKey]: staleOkSlot(pinnedSource) },
+    })
+
+    const out = await sanitizeSyncEntries(pool, { workspaceId: testWorkspaceId, userId: viewer, entries: [e] })
+
+    const slots = (out[0].payload as { slots: Record<string, Record<string, unknown>> }).slots
+    expect(slots[pinnedKey]).toMatchObject({
+      state: "ok",
+      contentMarkdown: "body when it was shared",
+      version: 1,
+      currentRevision: 2,
     })
   })
 

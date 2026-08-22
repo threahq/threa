@@ -1,5 +1,6 @@
 import { Share2 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
+import type { ContentRange } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"
@@ -17,6 +18,10 @@ interface SharedMessagePointerBlockProps {
    * permalink as before.
    */
   conversationId?: string
+  /** Source revision the pointer pins, parsed off the href; null = unpinned. */
+  version: number | null
+  /** Span of the pinned revision the pointer renders; null = the whole message. */
+  range: ContentRange | null
 }
 
 /**
@@ -31,9 +36,11 @@ export function SharedMessagePointerBlock({
   messageId,
   authorName,
   conversationId,
+  version,
+  range,
 }: SharedMessagePointerBlockProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const source = useSharedMessageSource(messageId, streamId)
+  const source = useSharedMessageSource({ messageId, streamId, version, range })
 
   const card = (
     <div

@@ -150,6 +150,11 @@ const conversationSchema = z.object({
 // author/source/date/attachment metadata a custom pointer link renders from.
 // The other states are the privacy-safe placeholders: `private` reveals only
 // the source stream's kind + visibility, never content/author/name.
+const contentRangeSchema = z.object({
+  from: z.number().int().nonnegative(),
+  to: z.number().int().positive(),
+})
+
 const sharedMessageSlotSchema = z.discriminatedUnion("state", [
   z.object({
     type: z.literal("sharedMessage"),
@@ -159,10 +164,25 @@ const sharedMessageSlotSchema = z.discriminatedUnion("state", [
     authorId: z.string(),
     authorType: z.enum(AUTHOR_TYPES),
     authorDisplayName: z.string().optional(),
-    content: z.string().describe("Source message content as markdown. The canonical rich-text JSON stays internal."),
+    content: z
+      .string()
+      .describe(
+        "The referenced revision of the source as markdown (the referenced span of it when the key carries a range). The canonical rich-text JSON stays internal."
+      ),
+    version: z.number().int().positive().describe("The source revision this slot renders."),
+    currentRevision: z
+      .number()
+      .int()
+      .positive()
+      .describe(
+        "The source's current revision; greater than `version` once the source was edited after the reference was made."
+      ),
+    range: contentRangeSchema
+      .nullable()
+      .describe("The referenced span of the revision, or null for the whole message."),
     editedAt: z.string().datetime().nullable(),
     createdAt: z.string().datetime(),
-    attachments: z.array(attachmentSummarySchema),
+    attachments: z.array(attachmentSummarySchema).describe("Source attachments; empty when the slot renders a span."),
   }),
   z.object({
     type: z.literal("sharedMessage"),
@@ -193,7 +213,7 @@ const sharedMessageSlotSchema = z.discriminatedUnion("state", [
 const slotMapSchema = z
   .record(z.string(), sharedMessageSlotSchema)
   .describe(
-    "Hydration for cross-stream shared-message pointers in the returned messages, keyed by `shared:<messageId>`. Always present; empty when no message references a shared source."
+    "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
   )
 
 const sendMessageResponseSchema = z.object({

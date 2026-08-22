@@ -287,6 +287,7 @@ export {
   type ShareFlavor,
   ShareFlavors,
   ShareErrorCodes,
+  MessageReferenceErrorCodes,
   MessageErrorCodes,
   // Inter-service authentication
   INTERNAL_API_KEY_HEADER,
@@ -739,8 +740,8 @@ export {
 } from "./enclave-naming"
 
 // Slots — canonical hydration envelope for renderable pointers
-export type { Slot, SharedMessageSlot, SlotMap } from "./slots"
-export { sharedMessageSlotKey } from "./slots"
+export type { Slot, SharedMessageSlot, SlotMap, SharedMessageRef } from "./slots"
+export { sharedMessageSlotKey, parseSharedMessageSlotKey } from "./slots"
 
 // Push Notifications
 export { DEVICE_KEY_LENGTH } from "./api"

@@ -13,12 +13,13 @@ import {
 } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
 import {
-  collectSharedMessageIds,
-  hydrateSharedMessagesForRoom,
+  collectSharedMessageRefs,
+  hydrateSharedMessageRefsForRoom,
   toDualSlotMaps,
   ShareService,
   type ResolveEffectiveStream,
 } from "./sharing"
+import { resolveMessageReferences } from "./references"
 import {
   AttachmentRepository,
   AttachmentReferenceRepository,
@@ -71,6 +72,7 @@ import {
   type FeatureFlagValue,
   type MemoEmbedSummary,
   type EventType,
+  type SharedMessageRef,
   type SourceItem,
   type JSONContent,
   type ThreadSummary,
@@ -722,6 +724,29 @@ export class EventService {
       params.contentMarkdown = deriveContentMarkdown(resolvedCreate.contentJson)
     }
 
+    // Pin every quote/share node to a source revision + span and re-derive the
+    // quote bodies from it (the server is the sole writer of a quote snippet).
+    // Runs before the event, the projections and the outbox so they all read
+    // the pinned body. Skipped in E2E streams: the stored content is a
+    // placeholder there and carries no references.
+    if (stream?.e2eEnabled !== true) {
+      const resolvedReferences = await resolveMessageReferences(client, {
+        workspaceId: params.workspaceId,
+        contentJson: params.contentJson,
+        targetStreamId: params.streamId,
+        canReadSourceStream: this.sourceStreamReader(
+          client,
+          params.workspaceId,
+          params.authorId,
+          params.accessibleStreamIds
+        ),
+      })
+      if (resolvedReferences.changed) {
+        params.contentJson = resolvedReferences.contentJson
+        params.contentMarkdown = deriveContentMarkdown(resolvedReferences.contentJson)
+      }
+    }
+
     // Validate attachments before creating the event. Two flavors:
     // - "new" (`messageId === null`): fresh upload, ownership anchored to this
     //   message via `attachToMessage` below.
@@ -1021,12 +1046,17 @@ export class EventService {
       confirmedPrivacyWarning: params.confirmedPrivacyWarning,
     })
 
-    const sharedMessageIds = new Set<string>()
-    collectSharedMessageIds(params.contentJson, sharedMessageIds)
+    const sharedMessageRefs = new Map<string, SharedMessageRef>()
+    collectSharedMessageRefs(params.contentJson, sharedMessageRefs)
     const slotMaps =
-      sharedMessageIds.size > 0
+      sharedMessageRefs.size > 0
         ? toDualSlotMaps(
-            await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+            await hydrateSharedMessageRefsForRoom(
+              client,
+              params.workspaceId,
+              params.streamId,
+              sharedMessageRefs.values()
+            )
           )
         : undefined
 
@@ -1266,6 +1296,28 @@ export class EventService {
           params.contentMarkdown = deriveContentMarkdown(resolvedEdit.contentJson)
         }
 
+        // Same pinning pass as the create path, before the version snapshot so
+        // the snapshot and the event agree. E2E streams reject edits above.
+        // `previousContentJson` marks which unpinned quotes were already there:
+        // one whose snippet no longer matches the (since-edited) source must not
+        // block the author from editing their own message.
+        const resolvedEditReferences = await resolveMessageReferences(client, {
+          workspaceId: params.workspaceId,
+          contentJson: params.contentJson,
+          previousContentJson: existing.contentJson,
+          targetStreamId: params.streamId,
+          canReadSourceStream: this.sourceStreamReader(
+            client,
+            params.workspaceId,
+            params.actorId,
+            params.accessibleStreamIds
+          ),
+        })
+        if (resolvedEditReferences.changed) {
+          params.contentJson = resolvedEditReferences.contentJson
+          params.contentMarkdown = deriveContentMarkdown(resolvedEditReferences.contentJson)
+        }
+
         const snapshot = await MessageVersionRepository.insert(client, {
           id: messageVersionId(),
           messageId: params.messageId,
@@ -1353,12 +1405,17 @@ export class EventService {
             )
           }
 
-          const sharedMessageIds = new Set<string>()
-          collectSharedMessageIds(params.contentJson, sharedMessageIds)
+          const sharedMessageRefs = new Map<string, SharedMessageRef>()
+          collectSharedMessageRefs(params.contentJson, sharedMessageRefs)
           const slotMaps =
-            sharedMessageIds.size > 0
+            sharedMessageRefs.size > 0
               ? toDualSlotMaps(
-                  await hydrateSharedMessagesForRoom(client, params.workspaceId, params.streamId, sharedMessageIds)
+                  await hydrateSharedMessageRefsForRoom(
+                    client,
+                    params.workspaceId,
+                    params.streamId,
+                    sharedMessageRefs.values()
+                  )
                 )
               : undefined
 
@@ -1424,6 +1481,32 @@ export class EventService {
    * - Otherwise (user path) → `checkStreamAccess(... actorId)` plus
    *   `isAttachmentReadableViaShareOrReference` for share-grant fallback.
    */
+  /**
+   * Read gate for a reference's source stream, mirroring the split
+   * `ShareService` uses: an agent's precomputed reach when the caller passed
+   * one (personas hold no `stream_members` rows), the actor's own access
+   * otherwise. Thread sources resolve through their root inside
+   * `checkStreamAccess` (INV-62).
+   */
+  private sourceStreamReader(
+    client: PoolClient,
+    workspaceId: string,
+    actorId: string,
+    accessibleStreamIds?: string[]
+  ): (streamId: string) => Promise<boolean> {
+    if (accessibleStreamIds) {
+      const reach = new Set(accessibleStreamIds)
+      return async (streamId) => {
+        if (reach.has(streamId)) return true
+        const source = await StreamRepository.findById(client, streamId)
+        if (!source) return false
+        const effective = await resolveEffectiveStreamAdapter(client, source)
+        return reach.has(effective.id)
+      }
+    }
+    return async (streamId) => (await checkStreamAccess(client, streamId, workspaceId, actorId)) !== null
+  }
+
   private async _validateEditAttachmentReferences(client: PoolClient, params: EditMessageParams): Promise<string[]> {
     if (!params.attachmentIds || params.attachmentIds.length === 0) return []
 
@@ -2081,14 +2164,19 @@ export class EventService {
       // in the destination's local event cache and this path has no D-Fallback.
       // Where the grant doesn't reach the destination room, entries resolve
       // `private` (room-uniform is conservative — never a leak).
-      const movedShareIds = new Set<string>()
+      const movedShareRefs = new Map<string, SharedMessageRef>()
       for (const message of selectedMessages) {
-        collectSharedMessageIds(message.contentJson, movedShareIds)
+        collectSharedMessageRefs(message.contentJson, movedShareRefs)
       }
       const movedSlotMaps =
-        movedShareIds.size > 0
+        movedShareRefs.size > 0
           ? toDualSlotMaps(
-              await hydrateSharedMessagesForRoom(client, params.workspaceId, destinationThread.id, movedShareIds)
+              await hydrateSharedMessageRefsForRoom(
+                client,
+                params.workspaceId,
+                destinationThread.id,
+                movedShareRefs.values()
+              )
             )
           : undefined
 

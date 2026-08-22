@@ -1,8 +1,8 @@
 import type { Pool } from "pg"
-import { sharedMessageSlotKey, type JSONContent } from "@threa/types"
+import type { JSONContent, SharedMessageRef } from "@threa/types"
 import {
-  collectSharedMessageIds,
-  hydrateSharedMessageIdsForAccessibleSet,
+  collectSharedMessageRefs,
+  hydrateSharedMessageRefsForAccessibleSet,
   type HydratedSharedMessage,
 } from "../messaging"
 import type { WireSharedMessageSlot, WireSlotMap } from "./routes"
@@ -28,6 +28,9 @@ function serializePublicSlot(slot: HydratedSharedMessage): WireSharedMessageSlot
         authorType: slot.authorType as OkSlot["authorType"],
         ...(slot.authorName != null && { authorDisplayName: slot.authorName }),
         content: slot.contentMarkdown,
+        version: slot.version,
+        currentRevision: slot.currentRevision,
+        range: slot.range,
         editedAt: slot.editedAt ? slot.editedAt.toISOString() : null,
         createdAt: slot.createdAt.toISOString(),
         attachments: slot.attachments,
@@ -71,17 +74,22 @@ export async function resolvePublicMessageSlots(
   resolveAccessibleStreamIds: () => Promise<readonly string[]>,
   contentJsons: Iterable<JSONContent | null | undefined>
 ): Promise<WireSlotMap> {
-  const ids = new Set<string>()
+  const refs = new Map<string, SharedMessageRef>()
   for (const contentJson of contentJsons) {
-    if (contentJson) collectSharedMessageIds(contentJson, ids)
+    if (contentJson) collectSharedMessageRefs(contentJson, refs)
   }
-  if (ids.size === 0) return {}
+  if (refs.size === 0) return {}
 
   const accessibleStreamIds = await resolveAccessibleStreamIds()
-  const hydrated = await hydrateSharedMessageIdsForAccessibleSet(pool, workspaceId, new Set(accessibleStreamIds), ids)
+  const hydrated = await hydrateSharedMessageRefsForAccessibleSet(
+    pool,
+    workspaceId,
+    new Set(accessibleStreamIds),
+    refs.values()
+  )
   const slots: WireSlotMap = {}
-  for (const [messageId, slot] of Object.entries(hydrated)) {
-    slots[sharedMessageSlotKey(messageId)] = serializePublicSlot(slot)
+  for (const [slotKey, slot] of Object.entries(hydrated)) {
+    slots[slotKey] = serializePublicSlot(slot)
   }
   return slots
 }

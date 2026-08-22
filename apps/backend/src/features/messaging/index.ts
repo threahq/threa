@@ -20,8 +20,11 @@ export { deriveContentMarkdown } from "./content"
 export { MessageRepository, REPLY_COUNT_SUBQUERY } from "./repository"
 export type { Message, InsertMessageParams } from "./repository"
 
-export { MessageVersionRepository } from "./version-repository"
-export type { MessageVersion } from "./version-repository"
+export { MessageVersionRepository, messageVersionKey } from "./version-repository"
+export type { MessageVersion, MessageVersionKey } from "./version-repository"
+
+export { resolveMessageReferences, sliceReferenceContent } from "./references"
+export type { ResolveMessageReferencesResult, ReferenceContent } from "./references"
 
 export { EventService } from "./event-service"
 export type { ConversationAssigner, GetComposeTraceMode } from "./event-service"
@@ -60,9 +63,10 @@ export {
   crossesPrivacyBoundary,
   invalidatePointersForEvent,
   hydrateSharedMessages,
-  hydrateSharedMessageIds,
-  hydrateSharedMessageIdsForAccessibleSet,
+  hydrateSharedMessageRefs,
+  hydrateSharedMessageRefsForAccessibleSet,
   collectSharedMessageIds,
+  collectSharedMessageRefs,
   toDualSlotMaps,
   POINTER_INVALIDATED_EVENT,
   type SharedMessage,

@@ -13,10 +13,11 @@ export {
 export { invalidatePointersForEvent, POINTER_INVALIDATED_EVENT } from "./outbox-handler"
 export {
   hydrateSharedMessages,
-  hydrateSharedMessageIds,
-  hydrateSharedMessagesForRoom,
-  hydrateSharedMessageIdsForAccessibleSet,
+  hydrateSharedMessageRefs,
+  hydrateSharedMessageRefsForRoom,
+  hydrateSharedMessageRefsForAccessibleSet,
   collectSharedMessageIds,
+  collectSharedMessageRefs,
   toDualSlotMaps,
   type HydratedSharedMessage,
   type DualSlotMaps,

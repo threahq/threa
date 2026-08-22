@@ -1,6 +1,14 @@
 import type { Querier } from "../../db"
+import type { JSONContent } from "@threa/types"
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
-import { MessageRepository, type Message } from "../messaging"
+import {
+  MessageRepository,
+  MessageVersionRepository,
+  messageVersionKey,
+  type Message,
+  type MessageVersion,
+  type MessageVersionKey,
+} from "../messaging"
 import { UserRepository } from "../workspaces"
 import { PersonaRepository } from "./persona-repository"
 import { logger } from "../../lib/logger"
@@ -39,6 +47,30 @@ export interface ResolveQuoteRepliesInput {
   maxTotalResolved?: number
 }
 
+/** One `quoteReply` node reduced to what the prompt renderer needs. */
+interface QuoteRef {
+  messageId: string
+  /** Source revision the node is pinned to; `null` on legacy unpinned nodes. */
+  version: number | null
+}
+
+function collectQuoteReplyRefs(content: JSONContent | undefined): QuoteRef[] {
+  const refs: QuoteRef[] = []
+  const walk = (node: JSONContent | undefined): void => {
+    if (!node) return
+    if (node.type === "quoteReply") {
+      const attrs = node.attrs as { messageId?: string; version?: number | null } | undefined
+      if (attrs?.messageId) refs.push({ messageId: attrs.messageId, version: attrs.version ?? null })
+    }
+    for (const child of node.content ?? []) walk(child)
+  }
+  walk(content)
+  return refs
+}
+
+/** Pinned precursor bodies, keyed by {@link messageVersionKey}. */
+export type PinnedQuoteVersions = Map<string, MessageVersion>
+
 export interface ResolveQuoteRepliesResult {
   /**
    * Map from quoted (precursor) message ID to the full resolved {@link Message}.
@@ -53,6 +85,12 @@ export interface ResolveQuoteRepliesResult {
    * before rendering.
    */
   authorNames: Map<string, string>
+  /**
+   * Bodies for precursors quoted at a revision older than their current one.
+   * Pass to {@link renderMessageWithQuoteContext} so the model reads what the
+   * quoter actually quoted, not what the source says now.
+   */
+  pinnedVersions: PinnedQuoteVersions
 }
 
 /**
@@ -141,7 +179,24 @@ export async function resolveQuoteReplies(
 
   const authorNames = await resolveAuthorNamesForMessages(db, workspaceId, [...resolved.values()])
 
-  return { resolved, authorNames }
+  // Pins that name a superseded revision need that revision's body; a pin at
+  // the source's current revision has no `message_versions` row and reads off
+  // the row we already have. One batched query for the whole walk (INV-56).
+  const versionKeys: MessageVersionKey[] = []
+  const seenKeys = new Set<string>()
+  for (const message of [...input.seedMessages, ...resolved.values()]) {
+    for (const quote of collectQuoteReplyRefs(message.contentJson)) {
+      const target = resolved.get(quote.messageId)
+      if (!target || quote.version === null || quote.version >= target.revision) continue
+      const cacheKey = messageVersionKey(quote.messageId, quote.version)
+      if (seenKeys.has(cacheKey)) continue
+      seenKeys.add(cacheKey)
+      versionKeys.push({ messageId: quote.messageId, versionNumber: quote.version })
+    }
+  }
+  const pinnedVersions = await MessageVersionRepository.findByMessageVersions(db, versionKeys)
+
+  return { resolved, authorNames, pinnedVersions }
 }
 
 /**
@@ -165,29 +220,46 @@ export function renderMessageWithQuoteContext(
   resolved: Map<string, Message>,
   authorNames: Map<string, string>,
   depth: number = 0,
-  maxDepth: number = DEFAULT_MAX_QUOTE_DEPTH
+  maxDepth: number = DEFAULT_MAX_QUOTE_DEPTH,
+  pinnedVersions: PinnedQuoteVersions = new Map()
 ): string {
   const base = message.contentMarkdown
   if (depth >= maxDepth) return base
 
-  const quotedIds = collectQuoteReplyMessageIds(message.contentJson)
-  if (quotedIds.length === 0) return base
+  const quotes = collectQuoteReplyRefs(message.contentJson)
+  if (quotes.length === 0) return base
 
   const blocks: string[] = [base]
   const seenAtThisLevel = new Set<string>()
-  for (const quotedId of quotedIds) {
-    // Dedupe: if the same message is quoted twice in one parent, only expand once
-    if (seenAtThisLevel.has(quotedId)) continue
-    seenAtThisLevel.add(quotedId)
+  for (const quote of quotes) {
+    // Dedupe per pin: the same source quoted twice at the same revision expands
+    // once, but two different pinned revisions are two different bodies.
+    const pinKey = messageVersionKey(quote.messageId, quote.version ?? 0)
+    if (seenAtThisLevel.has(pinKey)) continue
+    seenAtThisLevel.add(pinKey)
 
-    const quotedMessage = resolved.get(quotedId)
+    const quotedMessage = resolved.get(quote.messageId)
     if (!quotedMessage) continue
 
+    const pinned =
+      quote.version === null ? undefined : pinnedVersions.get(messageVersionKey(quote.messageId, quote.version))
+    const body = pinned
+      ? { ...quotedMessage, contentJson: pinned.contentJson, contentMarkdown: pinned.contentMarkdown }
+      : quotedMessage
+
     const authorName = authorNames.get(quotedMessage.authorId) ?? "Unknown"
-    const nestedContent = renderMessageWithQuoteContext(quotedMessage, resolved, authorNames, depth + 1, maxDepth)
+    const nestedContent = renderMessageWithQuoteContext(
+      body,
+      resolved,
+      authorNames,
+      depth + 1,
+      maxDepth,
+      pinnedVersions
+    )
+    const version = quote.version === null ? "" : ` version="${quote.version}"`
 
     blocks.push(
-      `<quoted-source id="${escapeXmlAttr(quotedMessage.id)}" author="${escapeXmlAttr(authorName)}" streamId="${escapeXmlAttr(quotedMessage.streamId)}" createdAt="${quotedMessage.createdAt.toISOString()}">\n${nestedContent}\n</quoted-source>`
+      `<quoted-source id="${escapeXmlAttr(quotedMessage.id)}" author="${escapeXmlAttr(authorName)}" streamId="${escapeXmlAttr(quotedMessage.streamId)}" createdAt="${quotedMessage.createdAt.toISOString()}"${version}>\n${nestedContent}\n</quoted-source>`
     )
   }
 

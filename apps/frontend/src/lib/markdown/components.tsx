@@ -8,6 +8,7 @@ import {
   parseQuoteHref,
   parseSharedMessageHref,
 } from "@threa/prosemirror"
+import type { ContentRange } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { classifyDraftLink } from "@/lib/in-app-links"
@@ -64,9 +65,14 @@ function matchAnchorParagraph<T>(
  * nothing else). Mixed paragraphs that happen to contain such a link are
  * intentionally not matched — they'd lose their surrounding text.
  */
-function findSharedMessageInChildren(
-  children: ReactNode
-): { streamId: string; messageId: string; authorName: string; conversationId?: string } | null {
+function findSharedMessageInChildren(children: ReactNode): {
+  streamId: string
+  messageId: string
+  authorName: string
+  conversationId?: string
+  version: number | null
+  range: ContentRange | null
+} | null {
   const match = matchAnchorParagraph(children, SHARED_MESSAGE_PREFIX, parseSharedMessageHref)
   if (!match) return null
   return {
@@ -74,6 +80,8 @@ function findSharedMessageInChildren(
     messageId: match.messageId,
     authorName: match.linkText,
     conversationId: match.conversationId,
+    version: match.version ?? null,
+    range: match.range ?? null,
   }
 }
 
@@ -359,6 +367,8 @@ export const markdownComponents: Components = {
           messageId={share.messageId}
           authorName={share.authorName}
           conversationId={share.conversationId}
+          version={share.version}
+          range={share.range}
         />
       )
     }

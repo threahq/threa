@@ -32,6 +32,17 @@ interface InsertParams {
   editedBy: string
 }
 
+/** One `(messageId, versionNumber)` pin to load. */
+export interface MessageVersionKey {
+  messageId: string
+  versionNumber: number
+}
+
+/** Map key for {@link MessageVersionRepository.findByMessageVersions} results. */
+export function messageVersionKey(messageId: string, versionNumber: number): string {
+  return `${messageId}@${versionNumber}`
+}
+
 function mapRow(row: MessageVersionRow): MessageVersion {
   return {
     id: row.id,
@@ -63,6 +74,32 @@ export const MessageVersionRepository = {
     `)
     if (!result.rows[0]) throw new Error(`Failed to insert message version for ${params.messageId}`)
     return mapRow(result.rows[0])
+  },
+
+  /**
+   * Load specific `(messageId, versionNumber)` snapshots in one query — the
+   * read behind pinned references, which resolve a handful of distinct pins
+   * across a page of messages (INV-56).
+   *
+   * Keyed by {@link messageVersionKey}. A pin at the message's CURRENT
+   * revision has no `message_versions` row (the row is written on edit, for
+   * the body being superseded), so callers read that one off `messages`.
+   */
+  async findByMessageVersions(db: Querier, keys: readonly MessageVersionKey[]): Promise<Map<string, MessageVersion>> {
+    if (keys.length === 0) return new Map()
+
+    const result = await db.query<MessageVersionRow>(sql`
+      SELECT v.* FROM message_versions v
+      JOIN unnest(${keys.map((k) => k.messageId)}::text[], ${keys.map((k) => k.versionNumber)}::int[])
+        AS want(message_id, version_number)
+        ON v.message_id = want.message_id AND v.version_number = want.version_number
+    `)
+
+    const map = new Map<string, MessageVersion>()
+    for (const row of result.rows) {
+      map.set(messageVersionKey(row.message_id, row.version_number), mapRow(row))
+    }
+    return map
   },
 
   async listByMessageId(db: Querier, messageId: string): Promise<MessageVersion[]> {

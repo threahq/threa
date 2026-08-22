@@ -4,6 +4,7 @@ import type { Querier } from "../../db"
 import { MessageRepository, type Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { PersonaRepository } from "./persona-repository"
+import { MessageVersionRepository, messageVersionKey } from "../messaging"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, extractAppendedQuoteContext } from "./quote-resolver"
 
 const mockClient = {} as Querier
@@ -24,6 +25,11 @@ function quoteReplyNode(messageId: string, streamId = "stream_src"): JSONContent
       snippet: `snippet for ${messageId}`,
     },
   }
+}
+
+function pinnedQuoteReplyNode(messageId: string, version: number, streamId = "stream_src"): JSONContent {
+  const node = quoteReplyNode(messageId, streamId)
+  return { ...node, attrs: { ...node.attrs, version } }
 }
 
 function doc(...nodes: JSONContent[]): JSONContent {
@@ -396,6 +402,100 @@ describe("renderMessageWithQuoteContext", () => {
 
     const matches = rendered.match(/id="msg_B"/g) ?? []
     expect(matches.length).toBe(1)
+  })
+})
+
+describe("pinned quote precursors", () => {
+  beforeEach(() => {
+    mockFindByIdsInStreams.mockReset()
+    mockFindUsersByIds.mockReset()
+    mockFindPersonasByIds.mockReset()
+    mockFindUsersByIds.mockResolvedValue([])
+    mockFindPersonasByIds.mockResolvedValue([])
+    spyOn(MessageRepository, "findByIdsInStreams").mockImplementation(mockFindByIdsInStreams as never)
+    spyOn(UserRepository, "findByIds").mockImplementation(mockFindUsersByIds as never)
+    spyOn(PersonaRepository, "findByIds").mockImplementation(mockFindPersonasByIds as never)
+  })
+
+  afterEach(() => mock.restore())
+
+  test("renders the pinned revision's body and tags the block with its version", () => {
+    const seed = createMessage({ id: "msg_A", contentJson: doc(pinnedQuoteReplyNode("msg_B", 1)) })
+    const b = createMessage({
+      id: "msg_B",
+      streamId: "stream_src",
+      authorId: "usr_bob",
+      revision: 3,
+      contentMarkdown: "body as it reads now",
+      createdAt: new Date("2024-01-01T09:00:00Z"),
+    })
+
+    const rendered = renderMessageWithQuoteContext(
+      seed,
+      new Map([["msg_B", b]]),
+      new Map([["usr_bob", "Bob"]]),
+      0,
+      5,
+      new Map([
+        [
+          messageVersionKey("msg_B", 1),
+          {
+            id: "msgver_1",
+            messageId: "msg_B",
+            versionNumber: 1,
+            contentJson: doc(paragraph("body when quoted")),
+            contentMarkdown: "body when quoted",
+            editedBy: "usr_bob",
+            createdAt: new Date("2024-01-01T10:00:00.000Z"),
+          },
+        ],
+      ])
+    )
+
+    expect(rendered).toBe(
+      [
+        seed.contentMarkdown,
+        "",
+        '<quoted-source id="msg_B" author="Bob" streamId="stream_src" createdAt="2024-01-01T09:00:00.000Z" version="1">',
+        "body when quoted",
+        "</quoted-source>",
+      ].join("\n")
+    )
+  })
+
+  test("a pin at the source's current revision renders the live body, still tagged", () => {
+    const seed = createMessage({ id: "msg_A", contentJson: doc(pinnedQuoteReplyNode("msg_B", 3)) })
+    const b = createMessage({ id: "msg_B", authorId: "usr_bob", revision: 3, contentMarkdown: "current body" })
+
+    const rendered = renderMessageWithQuoteContext(seed, new Map([["msg_B", b]]), new Map([["usr_bob", "Bob"]]))
+    expect(rendered).toContain('version="3"')
+    expect(rendered).toContain("current body")
+  })
+
+  test("resolveQuoteReplies batches only the pins that name a superseded revision", async () => {
+    const seed = createMessage({
+      id: "msg_A",
+      contentJson: doc(pinnedQuoteReplyNode("msg_B", 1), pinnedQuoteReplyNode("msg_C", 2), quoteReplyNode("msg_D")),
+    })
+    mockFindByIdsInStreams.mockResolvedValue(
+      new Map([
+        ["msg_B", createMessage({ id: "msg_B", revision: 3 })],
+        ["msg_C", createMessage({ id: "msg_C", revision: 2 })],
+        ["msg_D", createMessage({ id: "msg_D", revision: 4 })],
+      ])
+    )
+    const findVersions = spyOn(MessageVersionRepository, "findByMessageVersions").mockResolvedValue(new Map())
+
+    const { pinnedVersions } = await resolveQuoteReplies(mockClient, "ws_test", {
+      seedMessages: [seed],
+      accessibleStreamIds: new Set(["stream_main", "stream_src"]),
+    })
+
+    expect(pinnedVersions).toEqual(new Map())
+    expect(findVersions).toHaveBeenCalledTimes(1)
+    // msg_C is pinned at its current revision and msg_D is unpinned — neither
+    // needs a snapshot row.
+    expect(findVersions.mock.calls[0][1]).toEqual([{ messageId: "msg_B", versionNumber: 1 }])
   })
 })
 

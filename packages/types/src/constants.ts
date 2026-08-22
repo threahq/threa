@@ -1146,6 +1146,19 @@ export const ShareErrorCodes = {
   E2E_SHARING_NOT_ALLOWED: "SHARE_E2E_NOT_ALLOWED",
 } as const
 
+/**
+ * Wire-format error codes for server-side reference resolution — the pass that
+ * pins every `quoteReply` / `sharedMessage` node to a source revision and range
+ * before the message is stored. All are 400s: the client sent a reference the
+ * server cannot honour, and the composer keeps the draft so it can be retried.
+ */
+export const MessageReferenceErrorCodes = {
+  SOURCE_NOT_FOUND: "REFERENCE_SOURCE_NOT_FOUND",
+  VERSION_NOT_FOUND: "REFERENCE_VERSION_NOT_FOUND",
+  RANGE_INVALID: "REFERENCE_RANGE_INVALID",
+  RANGE_NOT_FOUND: "REFERENCE_RANGE_NOT_FOUND",
+} as const
+
 export const MessageErrorCodes = {
   STEER_UNAVAILABLE: "STEER_UNAVAILABLE",
 } as const

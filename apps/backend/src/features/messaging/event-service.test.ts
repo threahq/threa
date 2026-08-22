@@ -1587,13 +1587,27 @@ describe("EventService sharedMessages wire enrichment", () => {
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_source", { id: "msg_source", streamId: "stream_source" }]]) as any
+      new Map([
+        [
+          "msg_source",
+          {
+            id: "msg_source",
+            streamId: "stream_source",
+            authorId: "usr_2",
+            authorType: "user",
+            revision: 1,
+            contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "src" }] }] },
+          },
+        ],
+      ]) as any
     )
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(StreamRepository, "isAncestor").mockResolvedValue(false)
     // Hydration itself is covered in sharing/hydration.test.ts — stub the
     // wire entry and assert what rides the outbox payload.
-    spyOn(sharing, "hydrateSharedMessagesForRoom").mockResolvedValue({ msg_source: hydratedEntry } as any)
+    spyOn(sharing, "hydrateSharedMessageRefsForRoom").mockResolvedValue({
+      [sharedMessageSlotKey("msg_source", 1)]: hydratedEntry,
+    } as any)
     // Edit-path plumbing.
     spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue({
       id: "msg_1",
@@ -1628,7 +1642,7 @@ describe("EventService sharedMessages wire enrichment", () => {
     // Dual-publish: the same hydration value rides both the canonical
     // namespaced map and the temporary legacy bare-key map.
     expect(created?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
-    expect(created?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
+    expect(created?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source", 1)]: hydratedEntry })
   })
 
   it("omits sharedMessages from the message:created payload for pointer-free content", async () => {
@@ -1646,7 +1660,7 @@ describe("EventService sharedMessages wire enrichment", () => {
     expect(created?.[2]).not.toHaveProperty("sharedMessages")
     expect(created?.[2]).not.toHaveProperty("slots")
     // Cost guard: pointer-free content pays only the content pre-scan.
-    expect(sharing.hydrateSharedMessagesForRoom).not.toHaveBeenCalled()
+    expect(sharing.hydrateSharedMessageRefsForRoom).not.toHaveBeenCalled()
   })
 
   it("carries the hydrated sharedMessages map on the message:edited outbox payload when an edit adds a pointer", async () => {
@@ -1662,7 +1676,7 @@ describe("EventService sharedMessages wire enrichment", () => {
 
     const edited = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "message:edited")
     expect(edited?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
-    expect(edited?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
+    expect(edited?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source", 1)]: hydratedEntry })
   })
 })
 
@@ -1792,7 +1806,9 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     // Hydration itself is covered in sharing/hydration.test.ts — stub the wire
     // entry and assert what rides the outbox payload.
-    spyOn(sharing, "hydrateSharedMessagesForRoom").mockResolvedValue({ msg_source: hydratedEntry } as any)
+    spyOn(sharing, "hydrateSharedMessageRefsForRoom").mockResolvedValue({
+      [sharedMessageSlotKey("msg_source", 1)]: hydratedEntry,
+    } as any)
   })
 
   afterEach(() => {
@@ -1812,14 +1828,11 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
 
     // One room-uniform hydration for the DESTINATION thread over the moved
     // messages' share refs.
-    expect(sharing.hydrateSharedMessagesForRoom).toHaveBeenCalledWith(
-      {},
-      "ws_1",
-      "stream_thread",
-      new Set(["msg_source"])
-    )
+    const hydrationCall = (sharing.hydrateSharedMessageRefsForRoom as any).mock.calls[0]
+    expect(hydrationCall.slice(0, 3)).toEqual([{}, "ws_1", "stream_thread"])
+    expect([...hydrationCall[3]]).toEqual([{ messageId: "msg_source", version: null, range: null }])
     const moved = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "messages:moved")
-    expect(moved?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source")]: hydratedEntry })
+    expect(moved?.[2].slots).toEqual({ [sharedMessageSlotKey("msg_source", 1)]: hydratedEntry })
     expect(moved?.[2].sharedMessages).toEqual({ msg_source: hydratedEntry })
 
     // A3: the moved events' source read frontiers are repointed on the same tx
@@ -1909,7 +1922,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
       leaseKey: "lease_1",
     })
 
-    expect(sharing.hydrateSharedMessagesForRoom).not.toHaveBeenCalled()
+    expect(sharing.hydrateSharedMessageRefsForRoom).not.toHaveBeenCalled()
     const moved = (OutboxRepository.insert as any).mock.calls.find((c: unknown[]) => c[1] === "messages:moved")
     expect(moved?.[2]).not.toHaveProperty("slots")
     expect(moved?.[2]).not.toHaveProperty("sharedMessages")

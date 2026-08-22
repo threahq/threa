@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { sharedMessageSlotKey, type SharedMessageRef } from "@threa/types"
 import {
   collectSharedMessageIds,
-  hydrateSharedMessageIds,
-  hydrateSharedMessageIdsForAccessibleSet,
+  collectSharedMessageRefs,
+  hydrateSharedMessageRefs,
+  hydrateSharedMessageRefsForAccessibleSet,
   hydrateSharedMessages,
-  hydrateSharedMessagesForRoom,
+  hydrateSharedMessageRefsForRoom,
   toDualSlotMaps,
   MAX_HYDRATION_DEPTH,
 } from "./hydration"
 import { MessageRepository } from "../repository"
+import { MessageVersionRepository } from "../version-repository"
 import { UserRepository } from "../../workspaces"
 import { PersonaRepository } from "../../agents"
 import * as streamsBarrel from "../../streams"
@@ -29,6 +32,12 @@ beforeEach(() => {
 })
 
 const VIEWER_ID = "usr_viewer"
+
+/** An unpinned (legacy) reference — hydrates at the source's current revision. */
+function ref(messageId: string, version: number | null = null, range: SharedMessageRef["range"] = null) {
+  return { messageId, version, range }
+}
+const key = sharedMessageSlotKey
 
 function stubAuthorLookups() {
   spyOn(UserRepository, "findByIds").mockResolvedValue([])
@@ -53,10 +62,17 @@ function stubNoAccess() {
 }
 
 function makeMessage(
-  overrides: Partial<{ id: string; streamId: string; deletedAt: Date | null; contentJson: unknown }>
+  overrides: Partial<{
+    id: string
+    streamId: string
+    deletedAt: Date | null
+    contentJson: unknown
+    revision: number
+  }>
 ) {
   return {
     id: overrides.id ?? "msg_a",
+    revision: overrides.revision ?? 1,
     streamId: overrides.streamId ?? "stream_source",
     authorId: "usr_author",
     authorType: "user",
@@ -101,9 +117,109 @@ describe("collectSharedMessageIds", () => {
   })
 })
 
-describe("hydrateSharedMessageIds", () => {
+describe("collectSharedMessageRefs", () => {
+  it("keys each node by its pin so one source at two pins stays two entries", () => {
+    const refs = new Map<string, SharedMessageRef>()
+    collectSharedMessageRefs(
+      {
+        type: "doc",
+        content: [
+          { type: "sharedMessage", attrs: { messageId: "msg_a", streamId: "stream_a" } },
+          { type: "sharedMessage", attrs: { messageId: "msg_a", streamId: "stream_a", version: 2 } },
+          {
+            type: "blockquote",
+            content: [
+              {
+                type: "sharedMessage",
+                attrs: { messageId: "msg_a", streamId: "stream_a", version: 2, range: { from: 1, to: 4 } },
+              },
+            ],
+          },
+        ],
+      },
+      refs
+    )
+    expect(Object.fromEntries(refs)).toEqual({
+      "shared:msg_a": ref("msg_a"),
+      "shared:msg_a@2": ref("msg_a", 2),
+      "shared:msg_a@2:1-4": ref("msg_a", 2, { from: 1, to: 4 }),
+    })
+  })
+})
+
+describe("pinned hydration", () => {
+  const currentDoc = {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "second body" }] }],
+  }
+  const v1Doc = {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "first body" }] }],
+  }
+
+  function stubSource() {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["msg_a", makeMessage({ id: "msg_a", revision: 2, contentJson: currentDoc })]])
+    )
+    spyOn(MessageVersionRepository, "findByMessageVersions").mockResolvedValue(
+      new Map([["msg_a@1", { messageId: "msg_a", versionNumber: 1, contentJson: v1Doc } as any]])
+    )
+    stubAuthorLookups()
+    stubFullAccess()
+  }
+
+  it("serves the pinned version's body and reports the source's current revision", async () => {
+    stubSource()
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a", 1)])
+    expect(result[key("msg_a", 1)]).toMatchObject({
+      state: "ok",
+      contentJson: v1Doc,
+      contentMarkdown: "first body",
+      version: 1,
+      currentRevision: 2,
+      range: null,
+    })
+  })
+
+  it("serves only the referenced span, and no attachments, for a ranged reference", async () => {
+    stubSource()
+    const findAttachments = spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
+
+    const range = { from: 1, to: 6 }
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a", 1, range)])
+    expect(result[key("msg_a", 1, range)]).toMatchObject({
+      state: "ok",
+      contentMarkdown: "first",
+      version: 1,
+      range,
+      attachments: [],
+    })
+    // The source's files are never looked up for a span reference.
+    expect(findAttachments).toHaveBeenCalledWith({}, [])
+  })
+
+  it("hydrates the same source at two pins into two independent slots", async () => {
+    stubSource()
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a", 1), ref("msg_a", 2)])
+    expect(result[key("msg_a", 1)]).toMatchObject({ contentMarkdown: "first body", version: 1 })
+    expect(result[key("msg_a", 2)]).toMatchObject({ contentMarkdown: "second body", version: 2 })
+  })
+
+  it("an unpinned legacy reference hydrates at the current revision under the bare key", async () => {
+    stubSource()
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result["shared:msg_a"]).toMatchObject({
+      state: "ok",
+      contentMarkdown: "second body",
+      version: 2,
+      currentRevision: 2,
+    })
+  })
+})
+
+describe("hydrateSharedMessageRefs", () => {
   it("returns an empty map when given no ids", async () => {
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, [])
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [])
     expect(result).toEqual({})
   })
 
@@ -115,8 +231,8 @@ describe("hydrateSharedMessageIds", () => {
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
     stubFullAccess()
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toMatchObject({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toMatchObject({
       state: "ok",
       messageId: "msg_a",
       streamId: "stream_source",
@@ -131,16 +247,16 @@ describe("hydrateSharedMessageIds", () => {
     )
     stubAuthorLookups()
     stubFullAccess()
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toEqual({ type: "sharedMessage", state: "deleted", messageId: "msg_a", deletedAt })
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toEqual({ type: "sharedMessage", state: "deleted", messageId: "msg_a", deletedAt })
   })
 
   it("returns missing payloads for ids that resolve to no row", async () => {
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
     stubAuthorLookups()
     stubFullAccess()
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_missing"])
-    expect(result.msg_missing).toEqual({ type: "sharedMessage", state: "missing", messageId: "msg_missing" })
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_missing")])
+    expect(result[key("msg_missing")]).toEqual({ type: "sharedMessage", state: "missing", messageId: "msg_missing" })
   })
 
   it("returns a private placeholder when viewer can't access the source stream", async () => {
@@ -158,8 +274,8 @@ describe("hydrateSharedMessageIds", () => {
       } as any,
     ])
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: "msg_a",
@@ -192,8 +308,8 @@ describe("hydrateSharedMessageIds", () => {
         } as any,
       ])
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: "msg_a",
@@ -211,8 +327,8 @@ describe("hydrateSharedMessageIds", () => {
     spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set()) // not a member
     spyOn(SharedMessageRepository, "listSourcesGrantedToViewer").mockResolvedValue(new Set(["msg_a"])) // but has share grant
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toMatchObject({ state: "ok", messageId: "msg_a" })
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toMatchObject({ state: "ok", messageId: "msg_a" })
   })
 
   it("recurses into nested pointers up to MAX_HYDRATION_DEPTH and emits truncated past the cap", async () => {
@@ -245,16 +361,16 @@ describe("hydrateSharedMessageIds", () => {
     stubAuthorLookups()
     stubFullAccess()
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_0"])
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_0")])
 
     // 0..(MAX-1) are fetched and hydrated as ok
     for (let i = 0; i < MAX_HYDRATION_DEPTH; i++) {
-      expect(result[`msg_${i}`]).toMatchObject({ state: "ok" })
+      expect(result[key(`msg_${i}`)]).toMatchObject({ state: "ok" })
     }
     // The truncated entry reports the LIVE streamId from the row, not the
     // stale cached attr — the fix for "shared_messages cached streamId goes
     // stale after batch move-to-thread".
-    expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+    expect(result[key(`msg_${MAX_HYDRATION_DEPTH}`)]).toEqual({
       type: "sharedMessage",
       state: "truncated",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
@@ -289,8 +405,8 @@ describe("hydrateSharedMessageIds", () => {
     stubAuthorLookups()
     stubFullAccess()
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_0"])
-    expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_0")])
+    expect(result[key(`msg_${MAX_HYDRATION_DEPTH}`)]).toEqual({
       type: "sharedMessage",
       state: "deleted",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
@@ -321,8 +437,8 @@ describe("hydrateSharedMessageIds", () => {
     stubAuthorLookups()
     stubFullAccess()
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_0"])
-    expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_0")])
+    expect(result[key(`msg_${MAX_HYDRATION_DEPTH}`)]).toEqual({
       type: "sharedMessage",
       state: "missing",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
@@ -366,8 +482,8 @@ describe("hydrateSharedMessageIds", () => {
       { id: "stream_private", type: "channel", visibility: "private", rootStreamId: null } as any,
     ])
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_0"])
-    expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_0")])
+    expect(result[key(`msg_${MAX_HYDRATION_DEPTH}`)]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
@@ -409,9 +525,9 @@ describe("hydrateSharedMessageIds", () => {
       { id: "stream_inner", type: "channel", visibility: "private", rootStreamId: null } as any,
     ])
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_outer"])
-    expect(result.msg_outer).toMatchObject({ state: "ok" })
-    expect(result.msg_inner).toEqual({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_outer")])
+    expect(result[key("msg_outer")]).toMatchObject({ state: "ok" })
+    expect(result[key("msg_inner")]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: "msg_inner",
@@ -444,8 +560,8 @@ describe("hydrateSharedMessageIds", () => {
       ])
     )
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toMatchObject({
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toMatchObject({
       state: "ok",
       attachments: [{ id: "att_pic", filename: "screenshot.png", mimeType: "image/png", sizeBytes: 1234 }],
     })
@@ -453,7 +569,7 @@ describe("hydrateSharedMessageIds", () => {
     // the field is exclusively for video transcoding state, mirroring
     // event-service.ts's emit logic so the wire payload stays consistent.
     expect(
-      (result.msg_a as { attachments: Array<{ processingStatus?: string }> }).attachments[0].processingStatus
+      (result[key("msg_a")] as { attachments: Array<{ processingStatus?: string }> }).attachments[0].processingStatus
     ).toBeUndefined()
   })
 
@@ -466,8 +582,8 @@ describe("hydrateSharedMessageIds", () => {
     // Default beforeEach stub returns an empty map, but be explicit here.
     spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a"])
-    expect(result.msg_a).toMatchObject({ state: "ok", attachments: [] })
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a")])
+    expect(result[key("msg_a")]).toMatchObject({ state: "ok", attachments: [] })
   })
 
   it("batches attachment lookups across every ok-state message in one round-trip (INV-56)", async () => {
@@ -481,7 +597,7 @@ describe("hydrateSharedMessageIds", () => {
     stubFullAccess()
     const findAttachments = spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
 
-    await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a", "msg_b"])
+    await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a"), ref("msg_b")])
     expect(findAttachments).toHaveBeenCalledTimes(1)
     const calledWith = (findAttachments as any).mock.calls[0][1].sort()
     expect(calledWith).toEqual(["msg_a", "msg_b"])
@@ -493,13 +609,13 @@ describe("hydrateSharedMessageIds", () => {
     stubFullAccess()
     const findAttachments = spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
 
-    const result = await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_missing"])
-    expect(result.msg_missing).toEqual({ type: "sharedMessage", state: "missing", messageId: "msg_missing" })
+    const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_missing")])
+    expect(result[key("msg_missing")]).toEqual({ type: "sharedMessage", state: "missing", messageId: "msg_missing" })
     expect(findAttachments).not.toHaveBeenCalled()
   })
 })
 
-describe("hydrateSharedMessagesForRoom", () => {
+describe("hydrateSharedMessageRefsForRoom", () => {
   it("hydrates depth-1 grants uniformly without viewer access", async () => {
     const deletedAt = new Date("2026-02-01")
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
@@ -513,16 +629,22 @@ describe("hydrateSharedMessagesForRoom", () => {
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Ada" } as any])
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
 
-    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", [
-      "msg_ok",
-      "msg_deleted",
-      "msg_missing",
+    const result = await hydrateSharedMessageRefsForRoom({} as any, "ws_1", "stream_target", [
+      ref("msg_ok"),
+      ref("msg_deleted"),
+      ref("msg_missing"),
     ])
 
     expect(result).toMatchObject({
-      msg_ok: { type: "sharedMessage", state: "ok", messageId: "msg_ok", authorName: "Ada", attachments: [] },
-      msg_deleted: { type: "sharedMessage", state: "deleted", messageId: "msg_deleted", deletedAt },
-      msg_missing: { type: "sharedMessage", state: "missing", messageId: "msg_missing" },
+      [key("msg_ok")]: {
+        type: "sharedMessage",
+        state: "ok",
+        messageId: "msg_ok",
+        authorName: "Ada",
+        attachments: [],
+      },
+      [key("msg_deleted")]: { type: "sharedMessage", state: "deleted", messageId: "msg_deleted", deletedAt },
+      [key("msg_missing")]: { type: "sharedMessage", state: "missing", messageId: "msg_missing" },
     })
   })
 
@@ -554,9 +676,9 @@ describe("hydrateSharedMessagesForRoom", () => {
     })
     spyOn(SharedMessageRepository, "listSourcesGrantedToRoom").mockResolvedValue(new Set())
 
-    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", ["msg_outer"])
-    expect(result.msg_outer).toMatchObject({ type: "sharedMessage", state: "ok", messageId: "msg_outer" })
-    expect(result.msg_inner).toMatchObject({
+    const result = await hydrateSharedMessageRefsForRoom({} as any, "ws_1", "stream_target", [ref("msg_outer")])
+    expect(result[key("msg_outer")]).toMatchObject({ type: "sharedMessage", state: "ok", messageId: "msg_outer" })
+    expect(result[key("msg_inner")]).toMatchObject({
       type: "sharedMessage",
       state: "ok",
       messageId: "msg_inner",
@@ -598,9 +720,9 @@ describe("hydrateSharedMessagesForRoom", () => {
       ])
       .mockResolvedValueOnce([{ id: "stream_root", type: "channel", visibility: "private", rootStreamId: null } as any])
 
-    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", ["msg_outer"])
-    expect(result.msg_outer).toMatchObject({ type: "sharedMessage", state: "ok", messageId: "msg_outer" })
-    expect(result.msg_inner).toEqual({
+    const result = await hydrateSharedMessageRefsForRoom({} as any, "ws_1", "stream_target", [ref("msg_outer")])
+    expect(result[key("msg_outer")]).toMatchObject({ type: "sharedMessage", state: "ok", messageId: "msg_outer" })
+    expect(result[key("msg_inner")]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: "msg_inner",
@@ -635,11 +757,11 @@ describe("hydrateSharedMessagesForRoom", () => {
     })
     spyOn(SharedMessageRepository, "listSourcesGrantedToRoom").mockResolvedValue(new Set())
 
-    const result = await hydrateSharedMessagesForRoom({} as any, "ws_1", "stream_target", ["msg_0"])
+    const result = await hydrateSharedMessageRefsForRoom({} as any, "ws_1", "stream_target", [ref("msg_0")])
     for (let i = 0; i < MAX_HYDRATION_DEPTH; i++) {
-      expect(result[`msg_${i}`]).toMatchObject({ state: "ok" })
+      expect(result[key(`msg_${i}`)]).toMatchObject({ state: "ok" })
     }
-    expect(result[`msg_${MAX_HYDRATION_DEPTH}`]).toEqual({
+    expect(result[key(`msg_${MAX_HYDRATION_DEPTH}`)]).toEqual({
       type: "sharedMessage",
       state: "truncated",
       messageId: `msg_${MAX_HYDRATION_DEPTH}`,
@@ -683,7 +805,7 @@ describe("toDualSlotMaps", () => {
   const entry = { type: "sharedMessage", state: "missing", messageId: "msg_a" } as const
 
   it("expresses one hydration result as canonical namespaced + legacy bare-key maps with identical values", () => {
-    const dual = toDualSlotMaps({ msg_a: entry, msg_b: { ...entry, messageId: "msg_b" } })
+    const dual = toDualSlotMaps({ [key("msg_a")]: entry, [key("msg_b")]: { ...entry, messageId: "msg_b" } })
     expect(dual.slots).toEqual({
       "shared:msg_a": entry,
       "shared:msg_b": { ...entry, messageId: "msg_b" },
@@ -696,9 +818,29 @@ describe("toDualSlotMaps", () => {
   it("returns two empty maps for an empty hydration result", () => {
     expect(toDualSlotMaps({})).toEqual({ slots: {}, sharedMessages: {} })
   })
+
+  it("gives the legacy bare key the whole-message slot when a source is also referenced by range", () => {
+    const ok = {
+      type: "sharedMessage",
+      state: "ok",
+      messageId: "msg_a",
+      contentMarkdown: "whole",
+      version: 2,
+      currentRevision: 2,
+      range: null,
+    } as any
+    const ranged = { ...ok, contentMarkdown: "part", range: { from: 1, to: 4 } }
+
+    const dual = toDualSlotMaps({ [key("msg_a", 2, { from: 1, to: 4 })]: ranged, [key("msg_a", 2)]: ok })
+    // The bare key rides along for tabs still on a pre-pin bundle, and it gets
+    // the whole-message slot rather than the span.
+    expect(Object.keys(dual.slots).sort()).toEqual(["shared:msg_a", "shared:msg_a@2", "shared:msg_a@2:1-4"])
+    expect(dual.slots["shared:msg_a"]).toBe(ok)
+    expect(dual.sharedMessages.msg_a).toBe(ok)
+  })
 })
 
-describe("hydrateSharedMessageIdsForAccessibleSet", () => {
+describe("hydrateSharedMessageRefsForAccessibleSet", () => {
   it("hydrates a source directly readable in the accessible set as ok", async () => {
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
       new Map([["msg_a", makeMessage({ id: "msg_a" })]])
@@ -707,10 +849,10 @@ describe("hydrateSharedMessageIdsForAccessibleSet", () => {
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
     const grantSpy = spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set())
 
-    const result = await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_source"]), [
-      "msg_a",
+    const result = await hydrateSharedMessageRefsForAccessibleSet({} as any, "ws_1", new Set(["stream_source"]), [
+      ref("msg_a"),
     ])
-    expect(result.msg_a).toMatchObject({ state: "ok", messageId: "msg_a", streamId: "stream_source" })
+    expect(result[key("msg_a")]).toMatchObject({ state: "ok", messageId: "msg_a", streamId: "stream_source" })
     expect(grantSpy).toHaveBeenCalled()
   })
 
@@ -723,10 +865,10 @@ describe("hydrateSharedMessageIdsForAccessibleSet", () => {
     // stream_other is NOT in the accessible set, but a grant reaches a readable target.
     spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set(["msg_a"]))
 
-    const result = await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_readable"]), [
-      "msg_a",
+    const result = await hydrateSharedMessageRefsForAccessibleSet({} as any, "ws_1", new Set(["stream_readable"]), [
+      ref("msg_a"),
     ])
-    expect(result.msg_a).toMatchObject({ state: "ok", messageId: "msg_a" })
+    expect(result[key("msg_a")]).toMatchObject({ state: "ok", messageId: "msg_a" })
   })
 
   it("renders a private placeholder when the source is neither readable nor granted", async () => {
@@ -739,10 +881,10 @@ describe("hydrateSharedMessageIdsForAccessibleSet", () => {
       { id: "stream_other", type: "channel", visibility: "private", rootStreamId: null } as any,
     ])
 
-    const result = await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_readable"]), [
-      "msg_a",
+    const result = await hydrateSharedMessageRefsForAccessibleSet({} as any, "ws_1", new Set(["stream_readable"]), [
+      ref("msg_a"),
     ])
-    expect(result.msg_a).toEqual({
+    expect(result[key("msg_a")]).toEqual({
       type: "sharedMessage",
       state: "private",
       messageId: "msg_a",
@@ -763,10 +905,10 @@ describe("hydrateSharedMessageIdsForAccessibleSet", () => {
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
     const grantSpy = spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set())
 
-    await hydrateSharedMessageIdsForAccessibleSet({} as any, "ws_1", new Set(["stream_source"]), [
-      "msg_a",
-      "msg_b",
-      "msg_c",
+    await hydrateSharedMessageRefsForAccessibleSet({} as any, "ws_1", new Set(["stream_source"]), [
+      ref("msg_a"),
+      ref("msg_b"),
+      ref("msg_c"),
     ])
     // A single flat chain resolves in one level → exactly one grant query
     // carrying all three ids.

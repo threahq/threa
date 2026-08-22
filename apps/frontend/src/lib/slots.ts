@@ -1,4 +1,10 @@
-import { sharedMessageSlotKey, type SharedMessageSlot, type SlotMap } from "@threa/types"
+import {
+  sharedMessageSlotKey,
+  type ContentRange,
+  type SharedMessageRef,
+  type SharedMessageSlot,
+  type SlotMap,
+} from "@threa/types"
 
 /**
  * A stream-response carrier that may carry the canonical `slots` map and/or the
@@ -42,12 +48,22 @@ export function normalizeSlotCarrier(carrier: SlotCarrier): SlotMap | null {
   return null
 }
 
-function walkSharedMessageNodes(node: unknown, visit: (messageId: string) => void): void {
+function readPin(attrs: { version?: unknown; range?: unknown } | undefined): {
+  version: number | null
+  range: ContentRange | null
+} {
+  const version = typeof attrs?.version === "number" ? attrs.version : null
+  const range = attrs?.range as { from?: unknown; to?: unknown } | null | undefined
+  const hasRange = typeof range?.from === "number" && typeof range?.to === "number"
+  return { version, range: hasRange ? { from: range!.from as number, to: range!.to as number } : null }
+}
+
+function walkSharedMessageNodes(node: unknown, visit: (ref: SharedMessageRef) => void): void {
   if (!node || typeof node !== "object") return
   const doc = node as { type?: unknown; attrs?: unknown; content?: unknown }
   if (doc.type === "sharedMessage") {
-    const messageId = (doc.attrs as { messageId?: unknown } | undefined)?.messageId
-    if (typeof messageId === "string") visit(messageId)
+    const attrs = doc.attrs as { messageId?: unknown; version?: unknown; range?: unknown } | undefined
+    if (typeof attrs?.messageId === "string") visit({ messageId: attrs.messageId, ...readPin(attrs) })
   }
   if (Array.isArray(doc.content)) {
     for (const child of doc.content) walkSharedMessageNodes(child, visit)
@@ -65,7 +81,7 @@ export function collectReferencedSlotKeys(events: Iterable<{ readonly payload?: 
   const keys = new Set<string>()
   for (const event of events) {
     const contentJson = (event.payload as { contentJson?: unknown } | undefined)?.contentJson
-    walkSharedMessageNodes(contentJson, (messageId) => keys.add(sharedMessageSlotKey(messageId)))
+    walkSharedMessageNodes(contentJson, (ref) => keys.add(sharedMessageSlotKey(ref.messageId, ref.version, ref.range)))
   }
   return keys
 }

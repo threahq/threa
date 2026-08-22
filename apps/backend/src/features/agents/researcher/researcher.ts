@@ -1150,7 +1150,7 @@ Each query must have:
             accessibleStreamIds
           )
           if (seedMessageMap.size > 0) {
-            const { resolved, authorNames } = await resolveQuoteReplies(client, workspaceId, {
+            const { resolved, authorNames, pinnedVersions } = await resolveQuoteReplies(client, workspaceId, {
               seedMessages: [...seedMessageMap.values()],
               accessibleStreamIds: new Set(accessibleStreamIds),
             })
@@ -1158,7 +1158,14 @@ Each query must have:
               for (const e of enriched) {
                 const seed = seedMessageMap.get(e.id)
                 if (!seed) continue
-                const rendered = renderMessageWithQuoteContext(seed, resolved, authorNames, 0, DEFAULT_MAX_QUOTE_DEPTH)
+                const rendered = renderMessageWithQuoteContext(
+                  seed,
+                  resolved,
+                  authorNames,
+                  0,
+                  DEFAULT_MAX_QUOTE_DEPTH,
+                  pinnedVersions
+                )
                 const appended = extractAppendedQuoteContext(rendered, seed.contentMarkdown)
                 if (appended.length > 0) {
                   e.quoteContext = appended

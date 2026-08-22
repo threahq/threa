@@ -11,7 +11,7 @@ const shareDoc = {
 
 describe("resolvePublicMessageSlots", () => {
   it("returns an empty map without running access resolution when no row references a share", async () => {
-    const hydrate = spyOn(messaging, "hydrateSharedMessageIdsForAccessibleSet")
+    const hydrate = spyOn(messaging, "hydrateSharedMessageRefsForAccessibleSet")
     const resolveAccessible = mock(async () => ["stream_1"])
 
     const slots = await resolvePublicMessageSlots({} as any, "ws_1", resolveAccessible, [
@@ -26,8 +26,8 @@ describe("resolvePublicMessageSlots", () => {
   })
 
   it("serializes the ok variant to markdown content, dropping contentJson and ISO-encoding dates", async () => {
-    spyOn(messaging, "hydrateSharedMessageIdsForAccessibleSet").mockResolvedValue({
-      msg_src: {
+    spyOn(messaging, "hydrateSharedMessageRefsForAccessibleSet").mockResolvedValue({
+      "shared:msg_src": {
         type: "sharedMessage",
         state: "ok",
         messageId: "msg_src",
@@ -37,6 +37,9 @@ describe("resolvePublicMessageSlots", () => {
         authorName: "Ada",
         contentJson: { type: "doc", content: [{ type: "paragraph" }] },
         contentMarkdown: "**hello**",
+        version: 2,
+        currentRevision: 3,
+        range: null,
         editedAt: new Date("2026-02-01T00:00:00Z"),
         createdAt: new Date("2026-01-01T00:00:00Z"),
         attachments: [{ id: "att_1", filename: "f.png", mimeType: "image/png", sizeBytes: 10 }],
@@ -55,6 +58,9 @@ describe("resolvePublicMessageSlots", () => {
         authorType: "user",
         authorDisplayName: "Ada",
         content: "**hello**",
+        version: 2,
+        currentRevision: 3,
+        range: null,
         editedAt: "2026-02-01T00:00:00.000Z",
         createdAt: "2026-01-01T00:00:00.000Z",
         attachments: [{ id: "att_1", filename: "f.png", mimeType: "image/png", sizeBytes: 10 }],
@@ -65,8 +71,8 @@ describe("resolvePublicMessageSlots", () => {
   })
 
   it("omits authorDisplayName when the hydrated author name is null", async () => {
-    spyOn(messaging, "hydrateSharedMessageIdsForAccessibleSet").mockResolvedValue({
-      msg_src: {
+    spyOn(messaging, "hydrateSharedMessageRefsForAccessibleSet").mockResolvedValue({
+      "shared:msg_src": {
         type: "sharedMessage",
         state: "ok",
         messageId: "msg_src",
@@ -76,6 +82,9 @@ describe("resolvePublicMessageSlots", () => {
         authorName: null,
         contentJson: { type: "doc" },
         contentMarkdown: "x",
+        version: 1,
+        currentRevision: 1,
+        range: null,
         editedAt: null,
         createdAt: new Date("2026-01-01T00:00:00Z"),
         attachments: [],
@@ -88,22 +97,27 @@ describe("resolvePublicMessageSlots", () => {
   })
 
   it("preserves the privacy-safe placeholder variants verbatim", async () => {
-    spyOn(messaging, "hydrateSharedMessageIdsForAccessibleSet").mockResolvedValue({
-      msg_del: {
+    spyOn(messaging, "hydrateSharedMessageRefsForAccessibleSet").mockResolvedValue({
+      "shared:msg_del": {
         type: "sharedMessage",
         state: "deleted",
         messageId: "msg_del",
         deletedAt: new Date("2026-03-01T00:00:00Z"),
       },
-      msg_miss: { type: "sharedMessage", state: "missing", messageId: "msg_miss" },
-      msg_priv: {
+      "shared:msg_miss": { type: "sharedMessage", state: "missing", messageId: "msg_miss" },
+      "shared:msg_priv": {
         type: "sharedMessage",
         state: "private",
         messageId: "msg_priv",
         sourceStreamKind: "channel",
         sourceVisibility: "private",
       },
-      msg_trunc: { type: "sharedMessage", state: "truncated", messageId: "msg_trunc", streamId: "stream_deep" },
+      "shared:msg_trunc": {
+        type: "sharedMessage",
+        state: "truncated",
+        messageId: "msg_trunc",
+        streamId: "stream_deep",
+      },
     } as any)
 
     const doc = {
@@ -140,22 +154,22 @@ describe("resolvePublicMessageSlots", () => {
   })
 
   it("collects pointers across every row and hydrates once against the resolved accessible set", async () => {
-    const hydrate = spyOn(messaging, "hydrateSharedMessageIdsForAccessibleSet").mockResolvedValue({})
+    const hydrate = spyOn(messaging, "hydrateSharedMessageRefsForAccessibleSet").mockResolvedValue({})
     const docA = { type: "doc", content: [{ type: "sharedMessage", attrs: { messageId: "msg_a" } }] }
     const docB = { type: "doc", content: [{ type: "sharedMessage", attrs: { messageId: "msg_b" } }] }
 
     await resolvePublicMessageSlots({} as any, "ws_1", async () => ["stream_x", "stream_y"], [docA, docB, docA])
 
     expect(hydrate).toHaveBeenCalledTimes(1)
-    const [, ws, accessibleSet, ids] = hydrate.mock.calls[0] as unknown as [
+    const [, ws, accessibleSet, refs] = hydrate.mock.calls[0] as unknown as [
       unknown,
       string,
       ReadonlySet<string>,
-      Iterable<string>,
+      Iterable<{ messageId: string }>,
     ]
     expect(ws).toBe("ws_1")
     expect([...accessibleSet].sort()).toEqual(["stream_x", "stream_y"])
     // Deduped across rows.
-    expect([...new Set(ids)].sort()).toEqual(["msg_a", "msg_b"])
+    expect([...refs].map((r) => r.messageId).sort()).toEqual(["msg_a", "msg_b"])
   })
 })

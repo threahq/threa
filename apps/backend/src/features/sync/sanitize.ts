@@ -1,6 +1,11 @@
 import type { Querier } from "../../db"
-import type { MemoEmbedSummary } from "@threa/types"
-import { hydrateSharedMessageIds, type HydratedSharedMessage } from "../messaging"
+import {
+  parseSharedMessageSlotKey,
+  sharedMessageSlotKey,
+  type MemoEmbedSummary,
+  type SharedMessageRef,
+} from "@threa/types"
+import { hydrateSharedMessageRefs, type HydratedSharedMessage } from "../messaging"
 import { resolveMemoSummariesByStream } from "../memos"
 import type { SyncLogEntry } from "./repository"
 
@@ -15,7 +20,7 @@ import type { SyncLogEntry } from "./repository"
  * catch-up path). Entries with none of that content pass through untouched
  * with zero extra queries.
  *
- * Slots re-hydrate per VIEWER (`hydrateSharedMessageIds`) — catch-up is a
+ * Slots re-hydrate per VIEWER (`hydrateSharedMessageRefs`) — catch-up is a
  * per-user read, and the viewer-scoped resolver is the sharing feature's own
  * read-path authority. Memo summaries re-resolve per citing ROOT
  * (`findEmbedSummaries`) — cards are room-gated, not viewer-gated. A
@@ -32,16 +37,25 @@ export async function sanitizeSyncEntries(
   type MemoEmbedHolder = Record<string, unknown> & { memoEmbeds?: MemoEmbedSummary[] }
 
   const slotHolders: SlotMapHolder[] = []
-  const shareIds = new Set<string>()
+  const shareRefs = new Map<string, SharedMessageRef>()
   const memoSites: Array<{ holder: MemoEmbedHolder; streamId: string }> = []
   const memoUpdatedEntries: Array<{ entry: SyncLogEntry; streamId: string; memoId: string }> = []
+
+  // The stored KEY carries the pin (`shared:<id>@<v>:<from>-<to>`); the legacy
+  // bare-id map does not, so those re-resolve unpinned exactly as they were
+  // served. Re-hydrating a pinned slot at the current revision would silently
+  // un-pin it on catch-up.
+  const refForSlot = (slotKey: string, slot: HydratedSharedMessage): SharedMessageRef =>
+    parseSharedMessageSlotKey(slotKey) ?? { messageId: slot.messageId, version: null, range: null }
 
   const collectSlotMaps = (holder: Record<string, unknown>) => {
     for (const key of ["slots", "sharedMessages"] as const) {
       const map = holder[key] as Record<string, HydratedSharedMessage> | undefined
       if (!map) continue
-      for (const slot of Object.values(map)) {
-        if (slot && typeof slot.messageId === "string") shareIds.add(slot.messageId)
+      for (const [slotKey, slot] of Object.entries(map)) {
+        if (!slot || typeof slot.messageId !== "string") continue
+        const ref = refForSlot(slotKey, slot)
+        shareRefs.set(sharedMessageSlotKey(ref.messageId, ref.version, ref.range), ref)
       }
       if (Object.keys(map).length > 0) slotHolders.push(holder as SlotMapHolder)
     }
@@ -80,17 +94,19 @@ export async function sanitizeSyncEntries(
     return entries
   }
 
-  // Slots: one viewer-scoped hydration for the union of source ids; every
+  // Slots: one viewer-scoped hydration for the union of references; every
   // stored map entry is REPLACED — a source the viewer may no longer read
   // comes back as its `private` variant, exactly as a live delivery would.
-  if (shareIds.size > 0) {
-    const rehydrated = await hydrateSharedMessageIds(db, workspaceId, userId, shareIds)
+  if (shareRefs.size > 0) {
+    const rehydrated = await hydrateSharedMessageRefs(db, workspaceId, userId, shareRefs.values())
     for (const holder of slotHolders) {
       for (const key of ["slots", "sharedMessages"] as const) {
         const map = holder[key] as Record<string, HydratedSharedMessage> | undefined
         if (!map) continue
         for (const [slotKey, slot] of Object.entries(map)) {
-          const fresh = slot && typeof slot.messageId === "string" ? rehydrated[slot.messageId] : undefined
+          if (!slot || typeof slot.messageId !== "string") continue
+          const ref = refForSlot(slotKey, slot)
+          const fresh = rehydrated[sharedMessageSlotKey(ref.messageId, ref.version, ref.range)]
           if (fresh) map[slotKey] = fresh
         }
       }
