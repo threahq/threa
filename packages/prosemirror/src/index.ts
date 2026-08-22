@@ -26,6 +26,7 @@ export {
 } from "./attachment-markdown"
 export {
   buildQuoteHref,
+  isValidPin,
   parseQuoteHref,
   buildSharedMessageHref,
   parseSharedMessageHref,
@@ -34,6 +35,7 @@ export {
   buildGiphyHref,
   parseGiphyHref,
   parseMentionPointerHref,
+  type ReferencePin,
   type QuoteHref,
   type SharedMessageHref,
   type MemoHref,
@@ -43,6 +45,9 @@ export {
   type ChannelHrefPointer,
   type ActorHrefPointer,
 } from "./pointer-urls"
+export { LEAF_NODE_TYPES, CONTAINER_NODE_TYPES, UnknownNodeTypeError, nodeSize, docContentSize } from "./positions"
+export { sliceContent, isRangeValid, normalizeRange, isEmptySlice } from "./slice"
+export { resolveSelectionRange, type SelectionRangeInput } from "./selection-range"
 export {
   collectAttachmentReferenceIds,
   collectGiphyEmbeds,
@@ -57,4 +62,4 @@ export {
   type GiphyEmbedRef,
 } from "./extractors"
 
-export type { JSONContent, JSONContentMark, ThreaDocument } from "@threa/types"
+export type { ContentRange, JSONContent, JSONContentMark, ThreaDocument } from "@threa/types"

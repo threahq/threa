@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import {
   buildMemoHref,
+  buildQuoteHref,
   buildSharedMessageHref,
   parseMemoHref,
   parseMentionPointerHref,
+  parseQuoteHref,
   parseSharedMessageHref,
 } from "./pointer-urls"
 
@@ -60,6 +62,8 @@ describe("shared-message href", () => {
       streamId: "stream_01ABC",
       messageId: "msg_01XYZ",
       conversationId: undefined,
+      version: null,
+      range: null,
     })
   })
 
@@ -74,6 +78,8 @@ describe("shared-message href", () => {
       streamId: "stream_01ABC",
       messageId: "msg_01XYZ",
       conversationId: "conv_01DEF",
+      version: null,
+      range: null,
     })
   })
 
@@ -82,6 +88,8 @@ describe("shared-message href", () => {
       streamId: "stream_1",
       messageId: "msg_1",
       conversationId: undefined,
+      version: null,
+      range: null,
     })
   })
 
@@ -115,5 +123,92 @@ describe("parseMemoHref", () => {
     expect(parseMemoHref("memo:memo_123?x=1")).toBeNull()
     expect(parseMemoHref("memo:memo_123#frag")).toBeNull()
     expect(parseMemoHref("memo:memo_123:more")).toBeNull()
+  })
+})
+
+describe("reference pins", () => {
+  const quote = { streamId: "stream_1", messageId: "msg_1", authorId: "usr_1", actorType: "user" }
+
+  it("appends the version, and the range only alongside it", () => {
+    expect(buildQuoteHref({ ...quote, version: 3 })).toBe("quote:stream_1/msg_1/usr_1/user?v=3")
+    expect(buildQuoteHref({ ...quote, version: 3, range: { from: 4, to: 9 } })).toBe(
+      "quote:stream_1/msg_1/usr_1/user?v=3&r=4-9"
+    )
+    expect(buildSharedMessageHref({ streamId: "stream_1", messageId: "msg_1", version: 2 })).toBe(
+      "shared-message:stream_1/msg_1?v=2"
+    )
+    expect(
+      buildSharedMessageHref({
+        streamId: "stream_1",
+        messageId: "msg_1",
+        conversationId: "conv_1",
+        version: 2,
+        range: { from: 0, to: 3 },
+      })
+    ).toBe("shared-message:stream_1/msg_1/conv_1?v=2&r=0-3")
+  })
+
+  it("keeps the legacy suffix-free form when nothing is pinned", () => {
+    expect(buildQuoteHref({ ...quote, version: null, range: null })).toBe("quote:stream_1/msg_1/usr_1/user")
+    expect(
+      buildQuoteHref({ streamId: "stream_1", messageId: "msg_1", authorId: "", actorType: "user", version: 5 })
+    ).toBe("quote:stream_1/msg_1?v=5")
+  })
+
+  it("refuses to serialize a range without the version it indexes into", () => {
+    expect(() => buildQuoteHref({ ...quote, range: { from: 1, to: 2 } })).toThrow("Invalid reference pin")
+  })
+
+  it("parses a pinned href back to the same values", () => {
+    expect(parseQuoteHref("quote:stream_1/msg_1/usr_1/user?v=3&r=4-9")).toEqual({
+      streamId: "stream_1",
+      messageId: "msg_1",
+      authorId: "usr_1",
+      actorType: "user",
+      version: 3,
+      range: { from: 4, to: 9 },
+    })
+    expect(parseQuoteHref("quote:stream_1/msg_1")).toEqual({
+      streamId: "stream_1",
+      messageId: "msg_1",
+      authorId: "",
+      actorType: "user",
+      version: null,
+      range: null,
+    })
+  })
+
+  it("rejects a malformed pin instead of reading the href as unpinned", () => {
+    expect(parseQuoteHref("quote:stream_1/msg_1?v=abc")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1?v=0")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1?r=4-9")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1?v=2&r=9-4")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1?v=2&r=four")).toBeNull()
+    expect(parseSharedMessageHref("shared-message:stream_1/msg_1?v=-1")).toBeNull()
+  })
+
+  it("rejects quote paths that are not the 2- or 4-segment shapes the builder emits", () => {
+    expect(parseQuoteHref("quote:stream_1/msg_1/usr_1")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1/usr_1/user/extra")).toBeNull()
+    expect(parseQuoteHref("quote:stream_1//usr_1/user")).toBeNull()
+  })
+
+  it("builds and parses by the same pin rule", () => {
+    expect(() =>
+      buildQuoteHref({ streamId: "s", messageId: "m", authorId: "", actorType: "user", version: 0 })
+    ).toThrow()
+    expect(() =>
+      buildQuoteHref({ streamId: "s", messageId: "m", authorId: "", actorType: "user", version: 1.5 })
+    ).toThrow()
+    expect(() =>
+      buildSharedMessageHref({ streamId: "s", messageId: "m", version: 2, range: { from: 9, to: 4 } })
+    ).toThrow()
+    expect(parseQuoteHref(`quote:stream_1/msg_1?v=${"9".repeat(400)}`)).toBeNull()
+    expect(parseQuoteHref("quote:stream_1/msg_1?v=2&r=99999999999999999999-999999999999999999999")).toBeNull()
+  })
+
+  it("ignores query parameters it does not know", () => {
+    expect(parseQuoteHref("quote:stream_1/msg_1?v=2&x=1")?.version).toBe(2)
+    expect(parseSharedMessageHref("shared-message:stream_1/msg_1?x=1")?.version).toBeNull()
   })
 })

@@ -1313,3 +1313,93 @@ describe("@threa/prosemirror blockquote empty-paragraph round-trip", () => {
     expect(parseMarkdown(markdown)).toEqual(doc)
   })
 })
+
+describe("@threa/prosemirror reference pins", () => {
+  const pinnedQuote: JSONContent = {
+    type: "quoteReply",
+    attrs: {
+      messageId: "msg_01ABC",
+      streamId: "stream_01XYZ",
+      authorName: "Kristoffer",
+      authorId: "usr_01KR",
+      actorType: "user",
+      snippet: "**world**",
+      version: 3,
+      range: { from: 7, to: 12 },
+    },
+  }
+
+  it("round-trips a quote pinned to a version and a range", () => {
+    const markdown = serializeToMarkdown({ type: "doc", content: [pinnedQuote] })
+    expect(markdown).toBe("> **world**\n>\n> — [Kristoffer](quote:stream_01XYZ/msg_01ABC/usr_01KR/user?v=3&r=7-12)")
+    expect(parseMarkdown(markdown).content?.[0]).toEqual(pinnedQuote)
+  })
+
+  it("round-trips a quote pinned to a whole version", () => {
+    const node: JSONContent = { ...pinnedQuote, attrs: { ...pinnedQuote.attrs, range: undefined, version: 2 } }
+    const markdown = serializeToMarkdown({ type: "doc", content: [node] })
+    expect(markdown).toBe("> **world**\n>\n> — [Kristoffer](quote:stream_01XYZ/msg_01ABC/usr_01KR/user?v=2)")
+    expect(parseMarkdown(markdown).content?.[0]?.attrs).toEqual({
+      messageId: "msg_01ABC",
+      streamId: "stream_01XYZ",
+      authorName: "Kristoffer",
+      authorId: "usr_01KR",
+      actorType: "user",
+      snippet: "**world**",
+      version: 2,
+    })
+  })
+
+  it("parses a legacy unpinned quote without inventing pin attrs", () => {
+    const parsed = parseMarkdown("> Hello\n>\n> — [Kristoffer](quote:stream_01XYZ/msg_01ABC/usr_01KR/user)")
+    expect(parsed.content?.[0]?.attrs).toEqual({
+      messageId: "msg_01ABC",
+      streamId: "stream_01XYZ",
+      authorName: "Kristoffer",
+      authorId: "usr_01KR",
+      actorType: "user",
+      snippet: "Hello",
+    })
+  })
+
+  it("falls back to a plain blockquote when the pin query is malformed", () => {
+    const parsed = parseMarkdown("> Hello\n>\n> — [Kristoffer](quote:stream_01XYZ/msg_01ABC/usr_01KR/user?v=0)")
+    expect(parsed.content?.[0]?.type).toBe("blockquote")
+  })
+
+  it("round-trips a shared message pinned to a version and a range", () => {
+    const node: JSONContent = {
+      type: "sharedMessage",
+      attrs: {
+        messageId: "msg_01XYZ",
+        streamId: "stream_01ABC",
+        authorName: "Alice",
+        authorId: "",
+        actorType: "user",
+        version: 4,
+        range: { from: 1, to: 6 },
+      },
+    }
+    const markdown = serializeToMarkdown({ type: "doc", content: [node] })
+    expect(markdown).toBe("Shared a message from [Alice](shared-message:stream_01ABC/msg_01XYZ?v=4&r=1-6)")
+    expect(parseMarkdown(markdown).content?.[0]).toEqual(node)
+  })
+
+  it("round-trips a pinned shared message with a conversation origin", () => {
+    const node: JSONContent = {
+      type: "sharedMessage",
+      attrs: {
+        messageId: "msg_01XYZ",
+        streamId: "stream_01ABC",
+        conversationId: "conv_01DEF",
+        authorName: "Alice",
+        authorId: "",
+        actorType: "user",
+        version: 4,
+      },
+    }
+    const markdown = serializeToMarkdown({ type: "doc", content: [node] })
+    expect(markdown).toBe("Shared a message from [Alice](shared-message:stream_01ABC/msg_01XYZ/conv_01DEF?v=4)")
+    expect(parseMarkdown(markdown).content?.[0]).toEqual(node)
+  })
+})
