@@ -223,4 +223,22 @@ describe("Aside anchor event", () => {
     expect(groups).toEqual([userGroup(creator)])
     expect(await catchUpReceivers(event, groups!, [creator, member])).toEqual([creator])
   })
+
+  test("the aside's own conversation never lists on the creator's board", async () => {
+    const channel = await createChannel("aside-board-feed")
+    const hostMessage = await insertMessage(channel.id, creator)
+    const hostConversation = await insertConversation(channel.id)
+    const aside = await streamService.createAside({ workspaceId: wsId, parentStreamId: channel.id, createdBy: creator })
+    const asideMessage = await insertMessage(aside.id, creator)
+    const asideConversation = await insertConversation(aside.id)
+    await withTransaction(pool, async (client) => {
+      await ConversationRepository.addPrimaryMessage(client, wsId, hostConversation, hostMessage, creator)
+      await ConversationRepository.addPrimaryMessage(client, wsId, asideConversation, asideMessage, creator)
+    })
+
+    const board = await ConversationRepository.findByWorkspaceForViewer(pool, wsId, creator)
+    const listed = new Set(board.map((conversation) => conversation.id))
+    expect(listed.has(hostConversation)).toBe(true)
+    expect(listed.has(asideConversation)).toBe(false)
+  })
 })
