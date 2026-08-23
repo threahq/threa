@@ -163,6 +163,9 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           role="separator"
           aria-orientation="horizontal"
           aria-label="Resize aside"
+          aria-valuemin={0}
+          aria-valuemax={2}
+          aria-valuenow={surface === "fullscreen" ? 2 : 1}
           aria-valuetext={surface === "fullscreen" ? "Full screen" : "Peek"}
           tabIndex={0}
           data-testid="aside-sheet-handle"
