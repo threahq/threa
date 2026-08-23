@@ -1345,32 +1345,35 @@ export function MessageComposer({
             </div>
 
             {isMobile ? (
-              <div
-                ref={actionBarWrapperRef}
-                className="shrink-0 px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1"
-                onMouseDown={(e) => {
-                  if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
-                  e.preventDefault()
-                }}
-              >
-                <EditorActionBar
-                  editorHandle={richEditorRef.current}
-                  disabled={controlsDisabled}
-                  formatOpen={formatOpen}
-                  onFormatOpenChange={setFormatOpen}
-                  showExpand={false}
-                  showAttach
-                  onAttachClick={handleAttachClick}
-                  side={actionSide}
-                  trailingContent={
-                    <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
-                      {micButton}
-                      {stashedDraftsTrigger}
-                      {scheduledMessagesTrigger}
-                      {sendButton}
-                    </div>
-                  }
-                />
+              <div className="shrink-0 px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1">
+                {/* Focus guard wraps only the action row — the format toolbar below
+                    hosts the link editor's URL input, which needs native focus. */}
+                <div
+                  ref={actionBarWrapperRef}
+                  onMouseDown={(e) => {
+                    if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
+                    e.preventDefault()
+                  }}
+                >
+                  <EditorActionBar
+                    editorHandle={richEditorRef.current}
+                    disabled={controlsDisabled}
+                    formatOpen={formatOpen}
+                    onFormatOpenChange={setFormatOpen}
+                    showExpand={false}
+                    showAttach
+                    onAttachClick={handleAttachClick}
+                    side={actionSide}
+                    trailingContent={
+                      <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
+                        {micButton}
+                        {stashedDraftsTrigger}
+                        {scheduledMessagesTrigger}
+                        {sendButton}
+                      </div>
+                    }
+                  />
+                </div>
                 {formatOpen && (
                   <div data-testid="composer-format-toolbar">
                     <EditorToolbar
