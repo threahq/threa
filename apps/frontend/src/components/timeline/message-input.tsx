@@ -1115,7 +1115,7 @@ function MessageInputComponent({
       >
         {conversationReplyStrip}
         <div className="min-h-0 flex-1">
-          <MessageComposer {...composerProps} expanded hideExpandedClose onCollapse={handleCollapse} autoFocus />
+          <MessageComposer {...composerProps} expanded onCollapse={handleCollapse} autoFocus />
         </div>
       </OverlayComposerShell>
 

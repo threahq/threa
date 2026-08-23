@@ -85,7 +85,6 @@ export function AsideDraftEditor({
             a writing surface, not a one-line chat box. */}
         <MessageComposer
           expanded
-          hideExpandedClose
           composerRef={controlRef}
           content={composer.content}
           onContentChange={composer.handleContentChange}

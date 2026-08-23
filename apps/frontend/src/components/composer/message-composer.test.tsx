@@ -407,6 +407,24 @@ describe("MessageComposer", () => {
       expect(screen.getByText(/Press Escape again to close the fullscreen editor\./)).toBeInTheDocument()
     })
 
+    it("on touch, the expanded shell puts the action bar and an open format toolbar at the foot", async () => {
+      isMobileMockValue = true
+      render(<MessageComposer {...defaultProps} expanded />)
+
+      // No top toolbar: the editor scroller would carry it out of view once the
+      // keyboard shortens the pane. The foot holds the action bar with Send,
+      // and the format toolbar is open from the start (toggled by Aa).
+      const actionBar = screen.getByTestId("editor-action-bar")
+      expect(actionBar).toContainElement(screen.getByRole("button", { name: "Send" }))
+      expect(screen.queryByRole("button", { name: /show actions/i })).not.toBeInTheDocument()
+      expect(screen.getByTestId("composer-format-toolbar")).toContainElement(
+        screen.getByTestId("mobile-editor-toolbar")
+      )
+
+      await userEvent.click(screen.getByRole("button", { name: "Formatting" }))
+      expect(screen.queryByTestId("composer-format-toolbar")).not.toBeInTheDocument()
+    })
+
     it("should only consume shell escape when collapse is available", () => {
       const { rerender } = render(<MessageComposer {...defaultProps} expanded />)
 

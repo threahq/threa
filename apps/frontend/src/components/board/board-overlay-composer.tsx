@@ -195,7 +195,6 @@ function BoardOverlayComposerBody({
   return (
     <MessageComposer
       expanded
-      hideExpandedClose
       onCollapse={() => onOpenChange(false)}
       content={composer.content}
       onContentChange={composer.handleContentChange}

@@ -12,7 +12,7 @@ import {
   useLayoutEffect,
 } from "react"
 import { flushSync } from "react-dom"
-import { ArrowUp, X, Plus, AtSign, Slash, Paperclip } from "lucide-react"
+import { ArrowUp, AtSign, Slash, Paperclip } from "lucide-react"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import {
   isEditableFocused,
@@ -29,13 +29,11 @@ import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
 import type { RichEditorHandle } from "@/components/editor"
 import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { ComposerPillDndHost } from "@/components/editor/composer-pill-dnd"
 import { MicButton, type MicButtonHandle } from "./mic-button"
-import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
 import { ComposerActionBar } from "./composer-action-bar"
 import { ComposerLinkPreviews } from "./composer-link-previews"
@@ -242,11 +240,6 @@ export interface MessageComposerProps {
   expanded?: boolean
   /** Called to collapse the expanded editor back to inline mode */
   onCollapse?: () => void
-  /**
-   * Suppress the expanded editor's own toolbar close (X) — for overlay hosts that
-   * render their own close in a surrounding header, so the affordance isn't doubled.
-   */
-  hideExpandedClose?: boolean
   /** Stream context for filtering which broadcast mentions (@channel, @here) are available */
   streamContext?: MentionStreamContext
   /** Imperative handle ref for programmatic focus from parent */
@@ -314,7 +307,6 @@ export function MessageComposer({
   onExpandClick,
   expanded = false,
   onCollapse,
-  hideExpandedClose = false,
   streamContext,
   composerRef,
   onStashDraft,
@@ -363,7 +355,10 @@ export function MessageComposer({
   const [mobileFormatToolbarHeight, setMobileFormatToolbarHeight] = useState(0)
   const mobileFormatToolbarHeightRef = useRef(mobileFormatToolbarHeight)
   mobileFormatToolbarHeightRef.current = mobileFormatToolbarHeight
-  const [formatOpen, setFormatOpen] = useState(false)
+  // The expanded shell on touch keeps its format toolbar open from the start:
+  // it is a writing surface, and the toolbar is the only formatting affordance
+  // there (no selection bubble on touch).
+  const [formatOpen, setFormatOpen] = useState(expanded)
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
   // User-chosen composer height from the drag handle (mobile, chrome open).
@@ -472,12 +467,6 @@ export function MessageComposer({
     previousMobileSizeScopeRef.current = mobileSizeScope
     resetMobileComposerSize()
   }, [mobileSizeScope, resetMobileComposerSize])
-  // Expanded-mode FAB actions are always visible on desktop. Touch has no hover,
-  // so a tap on the "+" toggles them instead.
-  const [fabActionsOpen, setFabActionsOpen] = useState(false)
-  // Every drawer action collapses the drawer once it's done its job — the "+"
-  // toggle is for browsing, not a mode the user should have to un-toggle.
-  const closeFabDrawer = useCallback(() => setFabActionsOpen(false), [])
   const [mobileFocused, setMobileFocused] = useState(initialMobileChromeOpen)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
   // True while a dictation take is in flight. Keeps the mobile chrome (and the
@@ -791,12 +780,12 @@ export function MessageComposer({
       blurTimeoutRef.current = null
     }
     cancelPendingChromeOpen()
-    setFormatOpen(false)
+    setFormatOpen(expanded)
     setMobileExpanded(false)
     setMobileFocused(false)
     setMobileLinkPopoverOpen(false)
     setVoiceActive(false)
-  }, [scopeId, cancelPendingChromeOpen])
+  }, [scopeId, expanded, cancelPendingChromeOpen])
 
   // Reset mobile-only state when viewport crosses the mobile/desktop threshold
   useEffect(() => {
@@ -1278,30 +1267,6 @@ export function MessageComposer({
     />
   ) : null
 
-  const expandedTrailingContent =
-    expanded && !hideExpandedClose ? (
-      <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-        <Separator orientation="vertical" className="mx-1 h-6" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Close editor"
-              className="h-8 w-8 p-0 hover:bg-muted"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => onCollapse?.()}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            Close (Esc)
-          </TooltipContent>
-        </Tooltip>
-      </div>
-    ) : undefined
-
   if (expanded) {
     return (
       <TooltipProvider delayDuration={300}>
@@ -1325,9 +1290,19 @@ export function MessageComposer({
               disabled={controlsDisabled}
             />
 
-            {/* Editor — fills remaining space, toolbar + actions in one bar via toolbarTrailingContent */}
+            {/* Editor — fills remaining space. Desktop: toolbar + actions in one bar via
+              toolbarTrailingContent. Touch: no toolbar here — Chrome scrolls the focused
+              editor to the top of this scroller once the keyboard shortens it, which would
+              push a top toolbar out of view; the chrome lives at the foot instead. */}
             <div
-              className="flex-1 min-h-0 overflow-y-auto px-4 [&_.tiptap]:max-h-none [&_.tiptap]:min-h-[200px]"
+              className={cn(
+                "flex-1 min-h-0 overflow-y-auto px-4 [&_.tiptap]:max-h-none",
+                // Desktop gives the editor a floor and extra room below so the
+                // writing position can sit mid-screen; on touch the pane is
+                // short and the keyboard eats half of it, so the scroller only
+                // scrolls when the text itself needs it.
+                !isMobile && "[&_.tiptap]:min-h-[200px]"
+              )}
               onClick={(e) => {
                 if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
                   return
@@ -1346,11 +1321,10 @@ export function MessageComposer({
                 messageSendMode="cmdEnter"
                 autoFocus
                 scopeId={scopeId}
-                staticToolbarOpen
+                staticToolbarOpen={!isMobile}
                 disableSelectionToolbar
                 onEditLastMessage={onEditLastMessage}
                 onFocus={onComposerFocus}
-                toolbarTrailingContent={expandedTrailingContent}
                 ariaLabel="Fullscreen message editor"
                 ariaDescribedBy={instructionsId}
                 blurOnEscape
@@ -1367,176 +1341,184 @@ export function MessageComposer({
                   ) : undefined
                 }
               />
-              {/* Extra space so the writing position can be centered on screen */}
-              <div className="h-[50vh]" />
+              {!isMobile && <div className="h-[50vh]" />}
             </div>
 
-            <div
-              className={cn(
-                "absolute bottom-[max(1rem,env(safe-area-inset-bottom))] z-10 flex items-center gap-1.5",
-                mirrored ? "left-4 flex-row-reverse" : "right-4"
-              )}
-            >
-              {/* Action drawer — always visible on desktop; on touch (no hover) it
-                stays behind the + button and opens on tap. `inert` while
-                collapsed on mobile so its buttons drop out of tab order instead
-                of sitting invisibly ahead of the visible "+" button. */}
+            {isMobile ? (
+              <div className="shrink-0 px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1">
+                {/* Focus guard wraps only the action row — the format toolbar below
+                    hosts the link editor's URL input, which needs native focus. */}
+                <div
+                  ref={actionBarWrapperRef}
+                  onMouseDown={(e) => {
+                    if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
+                    e.preventDefault()
+                  }}
+                >
+                  <EditorActionBar
+                    editorHandle={richEditorRef.current}
+                    disabled={controlsDisabled}
+                    formatOpen={formatOpen}
+                    onFormatOpenChange={setFormatOpen}
+                    showExpand={false}
+                    showAttach
+                    onAttachClick={handleAttachClick}
+                    side={actionSide}
+                    trailingContent={
+                      <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
+                        {micButton}
+                        {stashedDraftsTrigger}
+                        {scheduledMessagesTrigger}
+                        {sendButton}
+                      </div>
+                    }
+                  />
+                </div>
+                {formatOpen && (
+                  <div data-testid="composer-format-toolbar">
+                    <EditorToolbar
+                      editor={mobileToolbarEditor}
+                      isVisible
+                      inline
+                      inlinePosition="below"
+                      linkPopoverOpen={mobileLinkPopoverOpen}
+                      onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
+                      showSpecialInputControls
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
               <div
-                inert={isMobile && !fabActionsOpen}
                 className={cn(
-                  "flex items-center gap-1 overflow-hidden transition-all duration-200 ease-out",
-                  mirrored && "flex-row-reverse",
-                  isMobile ? "max-w-0 opacity-0" : "max-w-[240px] opacity-100",
-                  fabActionsOpen && "max-w-[240px] opacity-100"
+                  "absolute bottom-[max(1rem,env(safe-area-inset-bottom))] z-10 flex items-center gap-1.5",
+                  mirrored ? "left-4 flex-row-reverse" : "right-4"
                 )}
               >
-                <FabDrawerCloseContext.Provider value={closeFabDrawer}>
+                <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
                   {stashedDraftsTriggerFab}
                   {scheduledMessagesTriggerFab}
-                </FabDrawerCloseContext.Provider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label="Insert emoji"
-                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                      onPointerDown={(e) => {
-                        e.preventDefault()
-                        closeFabDrawer()
-                        richEditorRef.current?.insertEmoji()
-                      }}
-                      disabled={controlsDisabled}
-                    >
-                      <span className="text-sm leading-none">😊</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="text-xs">
-                    Emoji
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label="Insert mention"
-                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                      onPointerDown={(e) => {
-                        e.preventDefault()
-                        closeFabDrawer()
-                        richEditorRef.current?.insertMention()
-                      }}
-                      disabled={controlsDisabled}
-                    >
-                      <AtSign className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="text-xs">
-                    Mention
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label="Insert command"
-                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                      onPointerDown={(e) => {
-                        e.preventDefault()
-                        closeFabDrawer()
-                        richEditorRef.current?.insertSlash()
-                      }}
-                      disabled={controlsDisabled}
-                    >
-                      <Slash className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="text-xs">
-                    Command
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label="Attach files"
-                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                      onClick={() => {
-                        closeFabDrawer()
-                        handleAttachClick()
-                      }}
-                      disabled={controlsDisabled}
-                    >
-                      <Paperclip className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="text-xs">
-                    Attach files
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              {isMobile ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  aria-label={fabActionsOpen ? "Hide actions" : "Show actions"}
-                  aria-expanded={fabActionsOpen}
-                  onPointerDown={(e) => e.preventDefault()}
-                  onClick={() => setFabActionsOpen((v) => !v)}
-                  className={cn(
-                    "h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md [&_svg]:transition-transform",
-                    fabActionsOpen && "[&_svg]:rotate-45"
-                  )}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              ) : null}
-              {micButtonFab}
-              {hasFailed ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
                       <Button
-                        disabled
-                        className="h-[30px] w-[30px] shrink-0 p-0 pointer-events-none rounded-md shadow-md"
-                        aria-label={submitLabel}
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Insert emoji"
+                        className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                        onPointerDown={(e) => {
+                          e.preventDefault()
+                          richEditorRef.current?.insertEmoji()
+                        }}
+                        disabled={controlsDisabled}
+                      >
+                        <span className="text-sm leading-none">😊</span>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">
+                      Emoji
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Insert mention"
+                        className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                        onPointerDown={(e) => {
+                          e.preventDefault()
+                          richEditorRef.current?.insertMention()
+                        }}
+                        disabled={controlsDisabled}
+                      >
+                        <AtSign className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">
+                      Mention
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Insert command"
+                        className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                        onPointerDown={(e) => {
+                          e.preventDefault()
+                          richEditorRef.current?.insertSlash()
+                        }}
+                        disabled={controlsDisabled}
+                      >
+                        <Slash className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">
+                      Command
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Attach files"
+                        className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                        onClick={handleAttachClick}
+                        disabled={controlsDisabled}
+                      >
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">
+                      Attach files
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                {micButtonFab}
+                {hasFailed ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          disabled
+                          className="h-[30px] w-[30px] shrink-0 p-0 pointer-events-none rounded-md shadow-md"
+                          aria-label={submitLabel}
+                        >
+                          <ArrowUp className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p>Remove failed uploads before sending</p>
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        onPointerDown={(e) => e.preventDefault()}
+                        onClick={handleSubmit}
+                        disabled={!canSubmit}
+                        aria-label={isSubmitting ? submittingLabel : submitLabel}
+                        className="h-[30px] w-[30px] shrink-0 p-0 rounded-md shadow-md"
                       >
                         <ArrowUp className="h-4 w-4" />
                       </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    <p>Remove failed uploads before sending</p>
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      onPointerDown={(e) => e.preventDefault()}
-                      onClick={handleSubmit}
-                      disabled={!canSubmit}
-                      aria-label={isSubmitting ? submittingLabel : submitLabel}
-                      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md shadow-md"
-                    >
-                      <ArrowUp className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side={mirrored ? "right" : "left"} className="text-xs">
-                    {sendHint}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
+                    </TooltipTrigger>
+                    <TooltipContent side={mirrored ? "right" : "left"} className="text-xs">
+                      {sendHint}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            )}
           </div>
         </StashedDraftsComposerBridgeContext.Provider>
       </TooltipProvider>
