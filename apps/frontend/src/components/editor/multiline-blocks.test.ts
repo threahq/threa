@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { Editor } from "@tiptap/core"
 import type { JSONContent } from "@tiptap/react"
 import { createEditorExtensions } from "./editor-extensions"
+import { EditorBehaviors } from "./editor-behaviors"
 import { serializeToMarkdown, parseMarkdown } from "./editor-markdown"
 import { NodeSelection } from "@tiptap/pm/state"
 import {
@@ -34,9 +35,11 @@ function createTestEditor(content: string | JSONContent) {
     toEmoji: (code) => (code === "rocket" ? "🚀" : null),
   })
 
+  // EditorBehaviors owns the Enter keymap that `handleBeforeInputNewline`
+  // re-dispatches into, mirroring how rich-editor registers it.
   return new Editor({
     element: document.createElement("div"),
-    extensions,
+    extensions: [...extensions, EditorBehaviors],
     content:
       typeof content === "string"
         ? parseMarkdown(
@@ -662,6 +665,80 @@ describe("multiline beforeinput enter handling", () => {
     expect(editor.state.doc.firstChild?.childCount).toBe(2)
     expect(editor.state.doc.lastChild?.type.name).toBe("paragraph")
     expect(editor.isActive("blockquote")).toBe(false)
+    editor.destroy()
+  })
+
+  it("flushes the pending autocorrect before splitting, so the corrected word survives Enter", () => {
+    const editor = createTestEditor("- List items steugge")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    const domObserver = (editor.view as unknown as { domObserver: { flush: () => void } }).domObserver
+    const originalFlush = domObserver.flush.bind(domObserver)
+    // Gboard commits "steugge" → "struggle" into the DOM in the same task as the
+    // newline; ProseMirror only reads it on flush.
+    domObserver.flush = () => {
+      const from = findTextPosition(editor, "steugge")
+      editor.view.dispatch(editor.state.tr.insertText("struggle", from, from + "steugge".length))
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    }
+
+    const event = makeBeforeInput("insertParagraph")
+    const handled = handleBeforeInputNewline(editor, event)
+    domObserver.flush = originalFlush
+
+    expect(handled).toBe(true)
+    expect(event.prevented).toBe(true)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("- List items struggle\n- ")
+    editor.destroy()
+  })
+
+  it("leaves the native newline alone while composing", () => {
+    const editor = createTestEditor("- List items")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    ;(editor.view as unknown as { input: { composing: boolean } }).input.composing = true
+
+    const event = makeBeforeInput("insertParagraph")
+    expect(handleBeforeInputNewline(editor, event)).toBe(false)
+    expect(event.prevented).toBe(false)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("- List items")
+    editor.destroy()
+  })
+
+  it("hands Enter to a keydown handler while composing when told to (open popover)", () => {
+    const editor = createTestEditor("plain :ups")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    ;(editor.view as unknown as { input: { composing: boolean } }).input.composing = true
+    const seen: KeyboardEvent[] = []
+    editor.setOptions({
+      editorProps: {
+        handleKeyDown: (_view, keydown) => {
+          seen.push(keydown)
+          return true
+        },
+      },
+    })
+
+    const event = makeBeforeInput("insertParagraph")
+    expect(handleBeforeInputNewline(editor, event, { allowDuringComposition: true })).toBe(true)
+    expect(event.prevented).toBe(true)
+    expect(seen.map((keydown) => [keydown.key, keydown.shiftKey])).toEqual([["Enter", false]])
+    expect(serializeToMarkdown(editor.getJSON())).toBe("plain :ups")
+    editor.destroy()
+  })
+
+  it("dispatches insertLineBreak as Shift+Enter", () => {
+    const editor = createTestEditor("plain")
+    const seen: KeyboardEvent[] = []
+    editor.setOptions({
+      editorProps: {
+        handleKeyDown: (_view, keydown) => {
+          seen.push(keydown)
+          return true
+        },
+      },
+    })
+
+    expect(handleBeforeInputNewline(editor, makeBeforeInput("insertLineBreak"))).toBe(true)
+    expect(seen.map((keydown) => [keydown.key, keydown.shiftKey])).toEqual([["Enter", true]])
     editor.destroy()
   })
 })

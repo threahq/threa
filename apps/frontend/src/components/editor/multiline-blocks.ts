@@ -847,12 +847,43 @@ export function handleEnterTextBehavior(editor: Editor): boolean {
   return editor.chain().focus().splitBlock().run()
 }
 
-export function handleBeforeInputNewline(editor: Editor, event: BeforeInputEventLike): boolean {
+interface HandleBeforeInputNewlineOptions {
+  allowDuringComposition?: boolean
+}
+
+/**
+ * Mobile Enter. Chrome Android drops `keydown` Enter inside ProseMirror, so the
+ * keystroke only surfaces here. Re-dispatch it as a keydown so the popovers,
+ * pickers and the Enter keymap see the same single keystroke desktop does.
+ * Flush the DOM observer first: Gboard commits its autocorrect in the same
+ * task as the newline, so editor state can still trail the DOM by a word —
+ * acting on the stale word is what used to eat it. Mid-composition the native
+ * path is left alone (ProseMirror's own Android handling); only an open
+ * popover overrides that, since it must claim Enter or the newline closes it.
+ */
+export function handleBeforeInputNewline(
+  editor: Editor,
+  event: BeforeInputEventLike,
+  options: HandleBeforeInputNewlineOptions = {}
+): boolean {
   if (event.inputType !== "insertParagraph" && event.inputType !== "insertLineBreak") {
     return false
   }
 
-  const handled = handleEnterTextBehavior(editor)
+  const { view } = editor
+  if (view.composing && !options.allowDuringComposition) return false
+
+  flushPendingDomSelection(editor)
+
+  const keydown = new KeyboardEvent("keydown", {
+    key: "Enter",
+    code: "Enter",
+    keyCode: 13,
+    shiftKey: event.inputType === "insertLineBreak",
+    bubbles: true,
+    cancelable: true,
+  })
+  const handled = !!view.someProp("handleKeyDown", (handleKeyDown) => handleKeyDown(view, keydown))
   if (handled) {
     event.preventDefault()
   }

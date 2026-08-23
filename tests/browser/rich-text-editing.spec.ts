@@ -145,6 +145,37 @@ async function dispatchBeforeInput(
   }, inputType)
 }
 
+// Replays Gboard's enter-and-pick: the autocorrect lands in the DOM and the
+// newline's `beforeinput` fires in the same task, before ProseMirror's
+// DOMObserver has read the corrected word into editor state.
+async function autocorrectThenEnter(page: import("@playwright/test").Page, find: string, replace: string) {
+  await page.evaluate(
+    ([find, replace]) => {
+      const editor = document.querySelector<HTMLElement>("[contenteditable='true']")
+      if (!editor) throw new Error("Editor not found")
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+      let node: Text | null = null
+      while (walker.nextNode()) {
+        const candidate = walker.currentNode as Text
+        if (candidate.data.includes(find)) node = candidate
+      }
+      if (!node) throw new Error(`no text node containing ${JSON.stringify(find)}`)
+      const index = node.data.lastIndexOf(find)
+      node.replaceData(index, find.length, replace)
+      const range = document.createRange()
+      range.setStart(node, index + replace.length)
+      range.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      editor.dispatchEvent(
+        new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertParagraph" })
+      )
+    },
+    [find, replace] as const
+  )
+}
+
 async function pastePlainText(page: import("@playwright/test").Page, text: string) {
   await page.evaluate((value) => {
     const editor = document.querySelector<HTMLElement>("[contenteditable='true']")
@@ -999,6 +1030,47 @@ test.describe("Rich Text Editing", () => {
       await expect(editor.locator("blockquote")).toContainText("quoted line")
       await expect(editor.locator("blockquote")).not.toContainText("outside")
       await expect(editor.locator("p").filter({ hasText: "outside" })).toHaveCount(1)
+    })
+
+    test("beforeinput Enter keeps the word the keyboard autocorrected in the same task", async ({ page }) => {
+      const editor = page.locator("[contenteditable='true']")
+      await focusMobileComposer(page)
+      await page.keyboard.type("- List items steugge")
+      await expect(editor.locator("li")).toHaveCount(1)
+
+      await autocorrectThenEnter(page, "steugge", "struggle")
+
+      await expect(editor.locator("li")).toHaveCount(2)
+      await expect(editor.locator("li").first()).toHaveText("List items struggle")
+      await expect(editor.locator("li").nth(1)).toHaveText("")
+    })
+
+    test("beforeinput Enter picks the highlighted emoji instead of inserting a newline", async ({ page }) => {
+      const editor = page.locator("[contenteditable='true']")
+      await focusMobileComposer(page)
+      await page.keyboard.type(":fir")
+      await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
+
+      await dispatchBeforeInput(page)
+
+      await expect(editor).toContainText(/\p{Extended_Pictographic}/u)
+      await expect(editor).not.toContainText("fir")
+      await expect(editor.locator("p")).toHaveCount(1)
+      await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+    })
+
+    test("beforeinput Enter picks the emoji even when the keyboard autocorrects the query first", async ({ page }) => {
+      const editor = page.locator("[contenteditable='true']")
+      await focusMobileComposer(page)
+      await page.keyboard.type(":upsid")
+      await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
+
+      await autocorrectThenEnter(page, "upsid", "upside")
+
+      await expect(editor).toContainText(/\p{Extended_Pictographic}/u)
+      await expect(editor).not.toContainText("upsid")
+      await expect(editor.locator("p")).toHaveCount(1)
+      await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
     })
   })
 })
