@@ -54,10 +54,13 @@ function hostRow(page: Page, streamId: string, prefix: string, num: number): Loc
     .first()
 }
 
-async function scrollMetrics(page: Page, streamId: string): Promise<{ scrollTop: number; topNum: number | null }> {
+async function scrollMetrics(
+  page: Page,
+  streamId: string
+): Promise<{ scrollTop: number; topNum: number | null; fromBottom: number }> {
   return page.evaluate((id) => {
     const scroller = document.querySelector(`[data-stream-scroller="${id}"]`)
-    if (!(scroller instanceof HTMLElement)) return { scrollTop: -1, topNum: null }
+    if (!(scroller instanceof HTMLElement)) return { scrollTop: -1, topNum: null, fromBottom: -1 }
     const sr = scroller.getBoundingClientRect()
     let best: { num: number; top: number } | null = null
     for (const row of scroller.querySelectorAll<HTMLElement>(".message-item")) {
@@ -67,7 +70,11 @@ async function scrollMetrics(page: Page, streamId: string): Promise<{ scrollTop:
       if (!match) continue
       if (!best || rr.top < best.top) best = { num: Number(match[1]), top: rr.top }
     }
-    return { scrollTop: Math.round(scroller.scrollTop), topNum: best?.num ?? null }
+    return {
+      scrollTop: Math.round(scroller.scrollTop),
+      topNum: best?.num ?? null,
+      fromBottom: Math.round(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop),
+    }
   }, streamId)
 }
 
@@ -79,7 +86,7 @@ async function scrollMetrics(page: Page, streamId: string): Promise<{ scrollTop:
 async function settledScrollMetrics(
   page: Page,
   streamId: string
-): Promise<{ scrollTop: number; topNum: number | null }> {
+): Promise<{ scrollTop: number; topNum: number | null; fromBottom: number }> {
   let previous = await scrollMetrics(page, streamId)
   for (let attempt = 0; attempt < 20; attempt++) {
     await page.waitForTimeout(250)
@@ -134,7 +141,12 @@ test.describe("Aside — desktop surface", () => {
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
 
-    // Detach from the tail so a tail-follow can't mask a scroll on open.
+    // Detach from the tail: at the tail the timeline follows the bottom, so a
+    // row growing in view (the anchor row) legitimately moves the viewport —
+    // that is the ordinary stick-to-bottom, not the aside's doing. The poll
+    // holds until the scroller is really away from the bottom (a wheel tick
+    // can be dropped under load; "top row below the tail" was already true
+    // at the tail with twenty rows on screen).
     const scroller = hostScroller(page, streamId)
     const box = await scroller.boundingBox()
     expect(box).not.toBeNull()
@@ -142,13 +154,13 @@ test.describe("Aside — desktop surface", () => {
     await expect
       .poll(
         async () => {
-          await page.mouse.wheel(0, -400)
+          await page.mouse.wheel(0, -200)
           await page.waitForTimeout(80)
-          return (await scrollMetrics(page, streamId)).topNum
+          return (await scrollMetrics(page, streamId)).fromBottom
         },
         { timeout: 15000 }
       )
-      .toBeLessThan(MESSAGE_COUNT - 8)
+      .toBeGreaterThan(200)
     const anchorNum = (await settledScrollMetrics(page, streamId)).topNum
     expect(anchorNum).not.toBeNull()
 
