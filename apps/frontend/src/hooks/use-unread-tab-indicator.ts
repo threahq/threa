@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { useWorkspaceStreams, useWorkspaceUnreadState } from "@/stores/workspace-store"
-import { isHiddenStreamType } from "@/lib/streams"
+import { hiddenStreamIds } from "@/lib/streams"
 import { buildPageTitle, usePageStreamName } from "@/lib/page-title"
 
 const DARK_FAVICON_SVG = `<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -50,9 +50,10 @@ export function useUnreadTabIndicator(workspaceId: string) {
   const mutedStreamIds = unreadState?.mutedStreamIds ?? []
 
   const muted = new Set(mutedStreamIds)
-  // A hidden stream type (an aside) is a pull surface: its unread never lights
-  // the badge — the anchor row's state text is its whole signal.
-  const hidden = new Set(streams.filter(isHiddenStreamType).map((stream) => stream.id))
+  // A hidden stream (an aside, or a thread inside one) is a pull surface: its
+  // unread never lights the badge — the anchor row's state text is its whole
+  // signal.
+  const hidden = hiddenStreamIds(streams)
   let totalUnread = 0
   for (const [streamId, count] of Object.entries(unreadCounts)) {
     if (!muted.has(streamId) && !hidden.has(streamId)) totalUnread += count

@@ -69,6 +69,7 @@ import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { SidebarToggle } from "@/components/layout"
 import { useActors, useVisibleStreams, useEffectiveArchived } from "@/hooks"
+import { useArchivedAsideIds } from "@/hooks/use-archived-aside-ids"
 import { useStashParamDraftRow } from "@/hooks/use-stash-composer"
 import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-keys"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -654,9 +655,16 @@ function ConversationPanelBody({
     for (const message of all) set.add(message.id)
     return set
   }, [conversation.messageIds, all])
+  const archivedAsideIds = useArchivedAsideIds(workspaceId)
   const eventRows = useMemo(
-    () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds, currentUserId }),
-    [railEvents, conversation.id, memberMessageIds, currentUserId]
+    () =>
+      resolveBoardEventRows(railEvents, {
+        conversationId: conversation.id,
+        memberMessageIds,
+        currentUserId,
+        archivedAsideIds,
+      }),
+    [railEvents, conversation.id, memberMessageIds, currentUserId, archivedAsideIds]
   )
 
   // Per-thread-boundary grouping — same derivation as the board card (the panel

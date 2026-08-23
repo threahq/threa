@@ -549,6 +549,17 @@ describe("resolveBoardEventRows — aside anchor rows", () => {
     expect(rows).toEqual([])
   })
 
+  it("draws nothing for an archived aside, so a folded ledger never keeps a row the full card dropped", () => {
+    const events = [asideRow("live", "usr_me", CONV), asideRow("gone", "usr_me", CONV)]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: "usr_me",
+      archivedAsideIds: new Set(["stream_gone"]),
+    })
+    expect(rows).toEqual([expect.objectContaining({ kind: "aside", key: "live" })])
+  })
+
   it("draws nothing for a message-anchored aside (no conversation named)", () => {
     const events = [asideRow("plain", "usr_me")]
     const rows = resolveBoardEventRows(events, {

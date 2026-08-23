@@ -47,6 +47,12 @@ export interface ResolveBoardEventRowsCtx {
    * invocations — the same author rule the timeline applies.
    */
   currentUserId?: string | null
+  /**
+   * Asides that are archived draw no row, folded or full — the anchor row's
+   * own rule (`AsideAnchorEvent` renders nothing for an archived aside). The
+   * card resolves this from the stream cache; absent, no aside row is dropped.
+   */
+  archivedAsideIds?: ReadonlySet<string>
 }
 
 function timeMs(event: CachedEvent): number {
@@ -118,6 +124,7 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
       const payload = event.payload as AsideAnchoredEventPayload | undefined
       if (payload?.conversationId !== ctx.conversationId) continue
       if (!isOwnCommandEvent(event, ctx.currentUserId)) continue
+      if (payload?.asideId && ctx.archivedAsideIds?.has(payload.asideId)) continue
       rows.push({ kind: "aside", key: event.id, sortMs: timeMs(event), streamId: event.streamId, event })
       continue
     }

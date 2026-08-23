@@ -51,6 +51,7 @@ import { DeletedMessageEvent } from "@/components/timeline/deleted-message-event
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams, useEffectiveArchived } from "@/hooks"
+import { useArchivedAsideIds } from "@/hooks/use-archived-aside-ids"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { conversationArchivedReason } from "@/components/composer/composer-disabled-notice"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -337,9 +338,16 @@ export function BoardCard({
     for (const message of knownMessages) set.add(message.id)
     return set
   }, [conversation.messageIds, knownMessages])
+  const archivedAsideIds = useArchivedAsideIds(workspaceId)
   const eventRows = useMemo(
-    () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds, currentUserId }),
-    [railEvents, conversation.id, memberMessageIds, currentUserId]
+    () =>
+      resolveBoardEventRows(railEvents, {
+        conversationId: conversation.id,
+        memberMessageIds,
+        currentUserId,
+        archivedAsideIds,
+      }),
+    [railEvents, conversation.id, memberMessageIds, currentUserId, archivedAsideIds]
   )
 
   // The card's own running agent sessions: session ids come from the rows the

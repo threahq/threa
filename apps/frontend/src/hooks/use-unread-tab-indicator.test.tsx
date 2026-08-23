@@ -14,6 +14,7 @@ function setup(unreadCounts: Record<string, number>, mutedStreamIds: string[] = 
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
     { id: "stream_channel", type: StreamTypes.CHANNEL },
     { id: "stream_aside", type: StreamTypes.ASIDE },
+    { id: "stream_aside_thread", type: StreamTypes.THREAD, rootStreamId: "stream_aside" },
   ] as never)
 }
 
@@ -30,8 +31,8 @@ describe("useUnreadTabIndicator", () => {
     expect(document.title).toBe("(2) | Threa")
   })
 
-  it("never counts an aside's unread — a pull surface lights no badge", () => {
-    setup({ stream_channel: 2, stream_aside: 5 })
+  it("never counts an aside's unread, nor a thread's inside it — a pull surface lights no badge", () => {
+    setup({ stream_channel: 2, stream_aside: 5, stream_aside_thread: 4 })
     renderHook(() => useUnreadTabIndicator(WS))
     expect(document.title).toBe("(2) | Threa")
   })

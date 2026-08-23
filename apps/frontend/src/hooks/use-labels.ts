@@ -6,7 +6,7 @@ import { db, type CachedLabel, type CachedLabelAssignment, type CachedStream } f
 import { useWorkspaceLabels, useWorkspaceLabelAssignments, useWorkspaceStreams } from "@/stores/workspace-store"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 import { LabelableResourceTypes } from "@threa/types"
-import { isHiddenStreamType } from "@/lib/streams"
+import { hiddenStreamIds } from "@/lib/streams"
 import type {
   CreateLabelInput,
   Label,
@@ -337,8 +337,9 @@ export function selectLabelStreams(
     if (assignment.labelId === labelId) streamIds.add(assignment.resourceId)
   }
   if (streamIds.size === 0) return []
+  const hidden = hiddenStreamIds(streams)
   return streams
-    .filter((stream) => streamIds.has(stream.id) && !stream.archivedAt && !isHiddenStreamType(stream))
+    .filter((stream) => streamIds.has(stream.id) && !stream.archivedAt && !hidden.has(stream.id))
     .sort((a, b) => streamActivityTime(b) - streamActivityTime(a))
 }
 
