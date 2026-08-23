@@ -40,8 +40,6 @@ export interface ControlPlaneConfig {
    * plain text instead of a link.
    */
   workosEnvironmentId: string | null
-  /** Allowed domain for forwarded-host redirects (e.g. "staging.threa.io"). Empty disables the feature. */
-  allowedRedirectDomain: string
   /**
    * Forwarded hosts that should receive a dedicated WorkOS redirect URI
    * (`https://${host}/api/auth/callback`) instead of the default
@@ -166,7 +164,6 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
       .filter((s) => s.length > 0),
     frontendUrl: (process.env.FRONTEND_URL ?? "").replace(/\/+$/, ""),
     workosEnvironmentId: process.env.WORKOS_ENVIRONMENT_ID?.trim() || null,
-    allowedRedirectDomain: process.env.ALLOWED_REDIRECT_DOMAIN ?? "",
     workosDedicatedRedirectHosts: (process.env.WORKOS_DEDICATED_REDIRECT_HOSTS ?? "")
       .split(",")
       .map((s) => s.trim())

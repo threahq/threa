@@ -20,8 +20,8 @@ interface Dependencies {
   sessionCookies: SessionCookies
   /**
    * Same collaborator the real OAuth callback uses. The interactive stub
-   * login form is the only add-account entry point on stub-auth environments
-   * (dev / staging / PR previews), so it must run the identical park/coalesce
+   * login form is the only add-account entry point in local development, so it
+   * must run the identical park/coalesce
    * sequence — otherwise `intent=add` silently overwrites the active session
    * and the user can never hold two accounts.
    */

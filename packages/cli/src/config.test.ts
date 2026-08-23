@@ -54,12 +54,12 @@ test("config file at ~/.threa/config.json supplies values when env is absent", (
   writeConfigFile({
     apiKey: "threa_uk_file",
     workspaceId: "ws_file",
-    baseUrl: "https://staging.threa.io",
+    baseUrl: "https://remote.threa.test",
   })
   expect(loadConfig()).toEqual({
     apiKey: "threa_uk_file",
     workspaceId: "ws_file",
-    baseUrl: "https://staging.threa.io",
+    baseUrl: "https://remote.threa.test",
     output: "text",
   })
 })
@@ -96,13 +96,13 @@ test("env wins over file per key", () => {
   writeConfigFile({
     apiKey: "threa_uk_file",
     workspaceId: "ws_file",
-    baseUrl: "https://staging.threa.io",
+    baseUrl: "https://remote.threa.test",
   })
   process.env.THREA_WORKSPACE_ID = "ws_env"
   const config = loadConfig()
   expect(config.workspaceId).toBe("ws_env")
   expect(config.apiKey).toBe("threa_uk_file")
-  expect(config.baseUrl).toBe("https://staging.threa.io")
+  expect(config.baseUrl).toBe("https://remote.threa.test")
 })
 
 test("THREA_CONFIG points at an explicit file", () => {

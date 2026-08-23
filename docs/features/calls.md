@@ -242,9 +242,9 @@ was satisfied.
 - [x] Observability counters implemented and exported on the metrics registry.
 - [x] **CF Realtime app provisioned + env vars set — DEV** (2026-07-19,
       dashboard-created; the account-token API 403s despite Calls:Edit — see
-      `SPIKE_FINDINGS.md` — so provision per-env apps via the dashboard). Staging
-      and prod apps still needed, per [`docs/deployment.md`](../deployment.md).
-      One app per environment; never share the secret.
+      `SPIKE_FINDINGS.md` — so provision apps via the dashboard). The production
+      app is still needed, per [`docs/deployment.md`](../deployment.md). Never
+      share the development app secret with production.
 - [x] **Half-B live-CF spike executed** (2026-07-19) — Q1-Q3/Q6/Q7 answered
       against the real dev app, **cf-2 confirmed two-way media through the
       production proxy** (159KB up / 197KB down, ICE connected), and three

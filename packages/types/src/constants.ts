@@ -1187,7 +1187,7 @@ export const THREA_CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 // it's a documented public header, named like Stripe-Version.
 export const THREA_VERSION_HEADER = "Threa-Version"
 
-// Original client-facing host (e.g. `admin.threa.io`, `pr-204-staging.threa.io`)
+// Original client-facing host (e.g. `admin.threa.io`)
 // carried from the Cloudflare routers to the control-plane.
 //
 // We can't reuse the standard `X-Forwarded-Host` for this: Railway's edge proxy

@@ -88,12 +88,12 @@ describe("session cookies", () => {
   })
 
   test("two environments in one process never see each other's cookies", () => {
-    const staging = new SessionCookies({ name: "wos_session_staging", options: DOMAIN_OPTIONS })
-    const jar = { [NAME]: "prod-active", wos_session_staging: "staging-active" }
+    const secondary = new SessionCookies({ name: "wos_session_secondary", options: DOMAIN_OPTIONS })
+    const jar = { [NAME]: "prod-active", wos_session_secondary: "secondary-active" }
 
     expect(cookies.read(jar)).toBe("prod-active")
-    expect(staging.read(jar)).toBe("staging-active")
-    expect(staging.altName(0)).toBe("wos_session_staging_alt_0")
+    expect(secondary.read(jar)).toBe("secondary-active")
+    expect(secondary.altName(0)).toBe("wos_session_secondary_alt_0")
   })
 })
 
@@ -167,7 +167,7 @@ describe("alt session cookies", () => {
       [`${NAME}_alt_01`]: "non-canonical",
       [`${NAME}_alt_2`]: "",
       wos_session_alt_0: "prod-foreign",
-      wos_session_staging_alt_0: "staging-foreign",
+      wos_session_secondary_alt_0: "secondary-foreign",
       unrelated: "noise",
     }
 
@@ -186,12 +186,12 @@ describe("sessionCookieConfigFromEnv", () => {
   test("reads the name, the shared domain and the production secure flag from the environment", () => {
     expect(
       sessionCookieConfigFromEnv({
-        SESSION_COOKIE_NAME: "wos_session_staging",
+        SESSION_COOKIE_NAME: "wos_session_secondary",
         COOKIE_DOMAIN: ".threa.io",
         NODE_ENV: "production",
       })
     ).toEqual({
-      name: "wos_session_staging",
+      name: "wos_session_secondary",
       options: {
         path: "/",
         httpOnly: true,

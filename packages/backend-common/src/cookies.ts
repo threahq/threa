@@ -17,11 +17,7 @@ export const parseCookies = (cookieHeader: string): Record<string, string> => {
 export type SessionCookieOptions = CookieOptions
 
 export interface SessionCookieConfig {
-  /**
-   * Per-environment cookie name so staging and production sessions don't
-   * collide in a browser that has both open: `wos_session` in production,
-   * `wos_session_staging` in staging.
-   */
+  /** Deployment-scoped cookie name. Production uses `wos_session`. */
   name: string
   options: SessionCookieOptions
 }
@@ -31,8 +27,7 @@ export interface SessionCookieConfig {
 // limit (~32 KB total, ~16 KB per header) — the browser concatenates every
 // cookie for the origin into a single `Cookie:` header, so that combined header
 // is the binding constraint. We size conservatively from documented worst-case
-// inputs (an empirical staging measurement is recorded in the PR); PR-5 may
-// only relax MAX_ACCOUNTS upward with a fresh measurement.
+// inputs; MAX_ACCOUNTS may only increase with a fresh measurement.
 const WORST_CASE_SEALED_BYTES = 3072
 const PER_COOKIE_OVERHEAD_BYTES = 32
 // Conservative reservation for session cookies within the single `Cookie:`
@@ -107,8 +102,8 @@ export class SessionCookies {
     return cookies[this.config.name]
   }
 
-  // Env-scoped: derived from the active cookie name so a staging process
-  // (wos_session_staging) never names or reads prod alt cookies and vice versa.
+  // Derived from the active cookie name so deployments sharing a parent domain
+  // never name or read each other's alternate cookies.
   altName(slot: number): string {
     assertSlot(slot)
     return `${this.config.name}_alt_${slot}`
@@ -165,18 +160,13 @@ export class SessionCookies {
   }
 }
 
-/**
- * INV-11: a service that serves sessions must be told which environment it is.
- * Staging silently reusing `wos_session` would clobber the production cookie at
- * the shared `.threa.io` domain, so an unset name is a boot failure rather than
- * a default.
- */
+/** INV-11: a service that serves sessions must configure its cookie name. */
 export function sessionCookieConfigFromEnv(env: NodeJS.ProcessEnv = process.env): SessionCookieConfig {
   const name = env.SESSION_COOKIE_NAME
   if (!name) {
     throw new Error(
       "[backend-common/cookies] SESSION_COOKIE_NAME is required for a service that serves sessions " +
-        "(prod: 'wos_session', staging: 'wos_session_staging')."
+        "(production uses 'wos_session')."
     )
   }
   return {
@@ -187,9 +177,8 @@ export function sessionCookieConfigFromEnv(env: NodeJS.ProcessEnv = process.env)
       secure: env.NODE_ENV === "production",
       sameSite: "lax" as const,
       maxAge: 60 * 60 * 24 * 30 * 1000, // 30 days
-      // Honor COOKIE_DOMAIN whenever it's set. Staging needs this too so the
-      // session set at staging.threa.io during the WorkOS callback is visible on
-      // sibling PR subdomains like pr-204-staging.threa.io.
+      // Honor COOKIE_DOMAIN whenever it is set so application subdomains share
+      // the active session.
       ...(env.COOKIE_DOMAIN ? { domain: env.COOKIE_DOMAIN } : {}),
     },
   }

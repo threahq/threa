@@ -4,19 +4,17 @@ How production deploys work for each component of the Threa stack.
 
 ## Overview
 
-| Component                   | Platform           | Trigger                                                           | URL                                            |
-| --------------------------- | ------------------ | ----------------------------------------------------------------- | ---------------------------------------------- |
-| Backend                     | Railway            | Auto-deploy on push to `main`                                     | `backend-production-6634.up.railway.app`       |
-| Control-plane               | Railway            | Auto-deploy on push to `main`                                     | `control-plane-production-7495.up.railway.app` |
-| PostgreSQL (prod)           | Railway            | Manual (watch patterns restrict to `Dockerfile.postgres` changes) | `postgres.railway.internal:5432`               |
-| Workspace-router            | Cloudflare Workers | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `app.threa.io/api/*`                           |
-| Frontend                    | Cloudflare Pages   | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `app.threa.io`                                 |
-| Backoffice-router           | Cloudflare Workers | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `admin.threa.io/*`                             |
-| Backoffice                  | Cloudflare Pages   | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `admin.threa.io`                               |
-| Backoffice-router (staging) | Cloudflare Workers | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `admin-staging.threa.io/*`                     |
-| Backoffice (staging)        | Cloudflare Pages   | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `admin-staging.threa.io`                       |
-| Frontend (staging)          | Cloudflare Pages   | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `staging.threa.io`                             |
-| Workspace-router (staging)  | Cloudflare Workers | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `staging.threa.io/api/*`, `pr-N-staging.*`     |
+| Component         | Platform           | Trigger                                                           | URL                                            |
+| ----------------- | ------------------ | ----------------------------------------------------------------- | ---------------------------------------------- |
+| Backend           | Railway            | Auto-deploy on push to `main`                                     | `backend-production-6634.up.railway.app`       |
+| Control-plane     | Railway            | Auto-deploy on push to `main`                                     | `control-plane-production-7495.up.railway.app` |
+| PostgreSQL (prod) | Railway            | Manual (watch patterns restrict to `Dockerfile.postgres` changes) | `postgres.railway.internal:5432`               |
+| Workspace-router  | Cloudflare Workers | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `app.threa.io/api/*`                           |
+| Frontend          | Cloudflare Pages   | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `app.threa.io`                                 |
+| Backoffice-router | Cloudflare Workers | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `admin.threa.io/*`                             |
+| Backoffice        | Cloudflare Pages   | Auto-deploy on push to `main` (via `deploy-cloudflare.yml`)       | `admin.threa.io`                               |
+
+There is no hosted staging environment. Use `bun run dev:remote` to expose the local development stack over Tailscale.
 
 ## Railway Services (Auto-Deploy)
 
@@ -120,25 +118,14 @@ Both services share the same PostgreSQL instance but use different databases:
 
 ## Cloudflare (Workers + Pages)
 
-All Cloudflare surfaces auto-deploy on push to `main` via `.github/workflows/deploy-cloudflare.yml`. The workflow fires on `workflow_run` after CI passes and runs eight parallel deploy jobs:
+All Cloudflare surfaces auto-deploy on push to `main` via `.github/workflows/deploy-cloudflare.yml`. The workflow fires on `workflow_run` after CI passes.
 
-| Job                                | Resource                                | What it does                                                                   |
-| ---------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------ |
-| `deploy-frontend`                  | `threa-frontend` (CF Pages)             | builds `apps/frontend` and pushes `dist/` to the prod Pages project            |
-| `deploy-workspace-router`          | `workspace-router` (CF Worker)          | `wrangler deploy --config wrangler.production.toml`                            |
-| `deploy-backoffice`                | `threa-backoffice` (CF Pages)           | builds `apps/backoffice` and pushes to the Pages project                       |
-| `deploy-backoffice-router`         | `backoffice-router` (CF Worker)         | `wrangler deploy --config wrangler.production.toml`                            |
-| `deploy-backoffice-staging`        | `threa-backoffice-staging` (CF Pages)   | builds `apps/backoffice` and pushes the same bundle to the staging project     |
-| `deploy-backoffice-router-staging` | `backoffice-router-staging` (CF Worker) | `wrangler deploy --config wrangler.staging.toml`                               |
-| `deploy-frontend-staging`          | `threa-staging` (CF Pages)              | builds `apps/frontend` and pushes to the staging Pages project (`main` branch) |
-| `deploy-workspace-router-staging`  | `workspace-router-staging` (CF Worker)  | `wrangler deploy --config wrangler.staging.toml`                               |
-
-The PR-staging workflow (`staging.yml`) deploys the same `threa-staging` Pages
-project but with `--branch pr-N` to give each PR an isolated preview at
-`pr-N-staging.threa.io`. The new `deploy-frontend-staging` job above keeps the
-`main` branch of `threa-staging` (served at `staging.threa.io`) in sync as PRs
-land — without it, the always-on staging environment fossilizes on whatever
-build was last manually pushed.
+| Job                        | Resource                        | What it does                                                        |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------------- |
+| `deploy-frontend`          | `threa-frontend` (CF Pages)     | builds `apps/frontend` and pushes `dist/` to the prod Pages project |
+| `deploy-workspace-router`  | `workspace-router` (CF Worker)  | `wrangler deploy --config wrangler.production.toml`                 |
+| `deploy-backoffice`        | `threa-backoffice` (CF Pages)   | builds `apps/backoffice` and pushes to the Pages project            |
+| `deploy-backoffice-router` | `backoffice-router` (CF Worker) | `wrangler deploy --config wrangler.production.toml`                 |
 
 ### Workspace-router (`apps/workspace-router/`)
 
@@ -168,9 +155,9 @@ React 19 + Vite SPA deployed to the `threa-frontend` Cloudflare Pages project.
 
 ### Backoffice (`apps/backoffice/`)
 
-Internal admin tool — second React 19 + Vite SPA, separate deployment from the main frontend, served at `admin.threa.io` (prod) and `admin-staging.threa.io` (staging).
+Internal admin tool deployed separately from the main frontend at `admin.threa.io`.
 
-- **CF Pages projects**: `threa-backoffice` (prod) and `threa-backoffice-staging` (staging).
+- **CF Pages project**: `threa-backoffice`.
 - **No `app.threa.io` sharing**: lives on its own dedicated subdomain to keep it auditable and to give it its own router worker (see below).
 - **Same SPA routing trick**: relies on the backoffice-router worker to serve `index.html` for non-API paths.
 
@@ -178,25 +165,24 @@ Internal admin tool — second React 19 + Vite SPA, separate deployment from the
 
 Tiny CF Worker (~100 lines) that fronts the backoffice. Independent of `workspace-router` so the backoffice doesn't inherit workspace-routing concerns.
 
-- **Routes**: declarative in `wrangler.production.toml` and `wrangler.staging.toml` — `admin.threa.io/*` and `admin-staging.threa.io/*` respectively. Every deploy re-provisions the binding (no hidden dashboard state).
+- **Route**: declared in `wrangler.production.toml` for `admin.threa.io/*`. Every deploy re-provisions the binding.
 - **Proxies**:
   - `/api/*` and `/test-auth-login*` → control-plane
   - `/readyz` → returns `200 OK` directly
-  - everything else → `threa-backoffice.pages.dev` (or `threa-backoffice-staging.pages.dev`) via the `PAGES_PROJECT` env var
+  - everything else → `threa-backoffice.pages.dev` via the `PAGES_PROJECT` env var
 - **Security posture** (mirrors workspace-router): trust only `CF-Connecting-IP`, strip client-supplied `X-Forwarded-For` to prevent rate-limit bypass on the control-plane, set `X-Forwarded-Host`/`-Proto` plus the custom `X-Threa-Host` header (the real client host the control-plane actually reads — see `WORKOS_DEDICATED_REDIRECT_HOSTS` below for why `X-Forwarded-Host` can't be used).
 - **Why a router instead of binding the Pages project to `admin.threa.io` directly**: same-origin proxying through the worker means the WorkOS session cookie lands on `admin.threa.io` directly with no `SameSite` cross-origin pain. The control-plane handles the per-host redirect URI override via `WORKOS_DEDICATED_REDIRECT_HOSTS` (see env vars below).
 
 ### DNS
 
-All four subdomains are CNAMEs into the matching CF Pages project, proxied (orange-cloud) on the `threa.io` zone:
+The application subdomains route through Cloudflare:
 
-| Subdomain                | CNAME target                             |
-| ------------------------ | ---------------------------------------- |
-| `app.threa.io`           | bound directly to `threa-frontend` Pages |
-| `admin.threa.io`         | `threa-backoffice.pages.dev`             |
-| `admin-staging.threa.io` | `threa-backoffice-staging.pages.dev`     |
+| Subdomain        | CNAME target                             |
+| ---------------- | ---------------------------------------- |
+| `app.threa.io`   | bound directly to `threa-frontend` Pages |
+| `admin.threa.io` | `threa-backoffice.pages.dev`             |
 
-The CNAME target is largely cosmetic for the admin subdomains because the Workers Route on `admin*.threa.io/*` intercepts traffic at the edge before it reaches the Pages origin.
+The CNAME target is largely cosmetic for `admin.threa.io` because its Workers Route intercepts traffic before it reaches Pages.
 
 ### Manual deploy fallback
 
@@ -206,12 +192,10 @@ If CI is unavailable, every CF surface can be deployed by hand from the relevant
 # Workers
 cd apps/workspace-router && bunx wrangler deploy --config wrangler.production.toml
 cd apps/backoffice-router && bunx wrangler deploy --config wrangler.production.toml
-cd apps/backoffice-router && bunx wrangler deploy --config wrangler.staging.toml
 
 # Pages
 cd apps/frontend && bun run build && bunx wrangler pages deploy dist --project-name threa-frontend --branch main
 cd apps/backoffice && bun run build && bunx wrangler pages deploy dist --project-name threa-backoffice --branch main
-cd apps/backoffice && bun run build && bunx wrangler pages deploy dist --project-name threa-backoffice-staging --branch main
 ```
 
 ## Inter-Service Communication
@@ -265,7 +249,7 @@ GitHub Actions runs on every PR and push to `main`:
 ### Cloudflare deploy (`.github/workflows/deploy-cloudflare.yml`)
 
 - Fires on `workflow_run` after CI completes successfully on `main`
-- Six parallel jobs deploy frontend, workspace-router, backoffice (prod), backoffice-router (prod), backoffice (staging), and backoffice-router (staging) — see the Cloudflare section above
+- Deploy jobs publish the production frontend, public site, workspace router, backoffice, and backoffice router
 
 CI and Browser Tests must pass before merging. The deploy workflow is best-effort post-merge.
 
@@ -275,28 +259,28 @@ See `.env.example` at the repo root for the full list with descriptions. The cri
 
 ### Backend
 
-| Variable                                                             | Description                                                                                                            |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                                                       | PostgreSQL connection string                                                                                           |
-| `NODE_ENV`                                                           | `production`                                                                                                           |
-| `CORS_ALLOWED_ORIGINS`                                               | `https://app.threa.io`                                                                                                 |
-| `COOKIE_DOMAIN`                                                      | `.threa.io` (prod and staging)                                                                                         |
-| `SESSION_COOKIE_NAME`                                                | `wos_session` in prod, `wos_session_staging` in staging. Required: backend and control-plane refuse to boot without it |
-| `WORKOS_API_KEY`                                                     | WorkOS API key                                                                                                         |
-| `WORKOS_CLIENT_ID`                                                   | WorkOS OAuth client ID                                                                                                 |
-| `WORKOS_REDIRECT_URI`                                                | `https://app.threa.io/api/auth/callback`                                                                               |
-| `WORKOS_COOKIE_PASSWORD`                                             | 32+ char secret for sealed sessions                                                                                    |
-| `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | AWS S3 for file uploads                                                                                                |
-| `OPENROUTER_API_KEY`                                                 | AI model access                                                                                                        |
-| `CONTROL_PLANE_URL`                                                  | `http://control-plane.railway.internal:8080`                                                                           |
-| `INTERNAL_API_KEY`                                                   | Shared inter-service secret                                                                                            |
-| `REGION`                                                             | `eu-north-1`                                                                                                           |
-| `CLOUDFLARE_REALTIME_APP_ID`                                         | CF Realtime (SFU) app id for calls — see below                                                                         |
-| `CLOUDFLARE_REALTIME_APP_SECRET`                                     | CF Realtime app secret (media-plane credential)                                                                        |
+| Variable                                                             | Description                                                                  |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                       | PostgreSQL connection string                                                 |
+| `NODE_ENV`                                                           | `production`                                                                 |
+| `CORS_ALLOWED_ORIGINS`                                               | `https://app.threa.io`                                                       |
+| `COOKIE_DOMAIN`                                                      | `.threa.io`                                                                  |
+| `SESSION_COOKIE_NAME`                                                | `wos_session`. Required: backend and control-plane refuse to boot without it |
+| `WORKOS_API_KEY`                                                     | WorkOS API key                                                               |
+| `WORKOS_CLIENT_ID`                                                   | WorkOS OAuth client ID                                                       |
+| `WORKOS_REDIRECT_URI`                                                | `https://app.threa.io/api/auth/callback`                                     |
+| `WORKOS_COOKIE_PASSWORD`                                             | 32+ char secret for sealed sessions                                          |
+| `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | AWS S3 for file uploads                                                      |
+| `OPENROUTER_API_KEY`                                                 | AI model access                                                              |
+| `CONTROL_PLANE_URL`                                                  | `http://control-plane.railway.internal:8080`                                 |
+| `INTERNAL_API_KEY`                                                   | Shared inter-service secret                                                  |
+| `REGION`                                                             | `eu-north-1`                                                                 |
+| `CLOUDFLARE_REALTIME_APP_ID`                                         | CF Realtime (SFU) app id for calls — see below                               |
+| `CLOUDFLARE_REALTIME_APP_SECRET`                                     | CF Realtime app secret (media-plane credential)                              |
 
 #### Cloudflare Realtime app (voice/video calls)
 
-Calls media routes through a **Cloudflare Realtime (SFU) app**, one **per environment** (dev / staging / prod). Never share an app across environments — the app secret is the media-plane credential, and a shared secret couples the environments' media planes.
+Calls media routes through a separate **Cloudflare Realtime (SFU) app** for development and production. Never share an app across environments because the app secret is the media-plane credential.
 
 - **Provisioning** (once per environment). Create the app with an account API token carrying the `Cloudflare Calls: Edit` permission:
 
@@ -324,8 +308,8 @@ Calls media routes through a **Cloudflare Realtime (SFU) app**, one **per enviro
 | `DATABASE_URL`                    | PostgreSQL connection string (uses `control_plane` database)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `NODE_ENV`                        | `production`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `CORS_ALLOWED_ORIGINS`            | Comma-separated. Prod: `https://app.threa.io,https://admin.threa.io`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `COOKIE_DOMAIN`                   | `.threa.io` in prod and staging. In staging this is what lets PR subdomains (`pr-204-staging.threa.io`) see the session set during the callback at `staging.threa.io`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `SESSION_COOKIE_NAME`             | `wos_session` in prod, `wos_session_staging` in staging. Must differ between envs that share `COOKIE_DOMAIN=.threa.io`, otherwise logging into one clobbers the other in the same browser. Required: the process refuses to boot without it. Services that never serve sessions (db-read-proxy, enclave) do not need it.                                                                                                                                                                                                                                                                                                                   |
+| `COOKIE_DOMAIN`                   | `.threa.io`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `SESSION_COOKIE_NAME`             | `wos_session`. Required: the process refuses to boot without it. Services that never serve sessions (db-read-proxy, enclave) do not need it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `WORKOS_*`                        | Same 4 WorkOS values as backend                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `INTERNAL_API_KEY`                | Same shared secret                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `REGIONS`                         | JSON with regional backend internal URLs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -356,10 +340,9 @@ git checkout <previous-commit>
 cd apps/workspace-router
 bunx wrangler deploy --config wrangler.production.toml
 
-# backoffice-router (prod and staging)
+# backoffice-router
 cd ../backoffice-router
 bunx wrangler deploy --config wrangler.production.toml
-bunx wrangler deploy --config wrangler.staging.toml
 ```
 
 ### Cloudflare Pages
@@ -372,11 +355,10 @@ cd apps/frontend
 bun run build
 bunx wrangler pages deploy dist --project-name threa-frontend --branch main
 
-# backoffice (prod and staging)
+# backoffice
 cd ../backoffice
 bun run build
 bunx wrangler pages deploy dist --project-name threa-backoffice --branch main
-bunx wrangler pages deploy dist --project-name threa-backoffice-staging --branch main
 ```
 
 ### Database Migrations

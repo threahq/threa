@@ -970,7 +970,7 @@ describe("buildPersistedConfig", () => {
   test("in-memory defined fields override on-disk values", () => {
     const result = __testing.buildPersistedConfig(
       {
-        baseUrl: "https://staging.threa.io",
+        baseUrl: "https://remote.threa.test",
         workspaceId: "ws_123",
         apiKey: "threa_bk_test",
       } as never,
@@ -978,7 +978,7 @@ describe("buildPersistedConfig", () => {
         baseUrl: "https://app.threa.io",
       } as never
     )
-    expect(result.baseUrl).toBe("https://staging.threa.io")
+    expect(result.baseUrl).toBe("https://remote.threa.test")
   })
 
   test("merges linkedSessions from both sides, in-memory keys win", () => {

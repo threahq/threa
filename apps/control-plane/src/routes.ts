@@ -48,7 +48,6 @@ interface Dependencies {
   internalApiKey: string
   allowDevAuthRoutes: boolean
   frontendUrl: string
-  allowedRedirectDomain: string
   regions: Record<string, RegionConfig>
   workosDedicatedRedirectHosts: string[]
   rateLimits: RateLimitConfig
@@ -119,7 +118,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     sessionCookies,
     accountsService,
     frontendUrl: deps.frontendUrl,
-    allowedRedirectDomain: deps.allowedRedirectDomain,
     dedicatedRedirectHosts: deps.workosDedicatedRedirectHosts,
     authLogService,
   })

@@ -39,7 +39,7 @@ claude mcp add threa --scope local \
   -- bun /abs/path/to/threa/packages/cli/src/cli.ts mcp serve
 ```
 
-Point `--env THREA_BASE_URL` at another host to use staging.
+Set `--env THREA_BASE_URL` only when connecting to an explicitly provided remote development host.
 
 If you run more than one worktree of the repository, prefer a session-scoped registration. Claude Code maps every worktree of a repo to the same project entry, so a persisted local-scope registration from one worktree repoints the others the next time they start. Passing a config file at launch avoids that:
 
