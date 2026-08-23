@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
+import { toast } from "sonner"
 import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
 import { spyOnExport } from "@/test"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
@@ -132,12 +133,16 @@ describe("useComposerCommandSend dispatchCommand", () => {
   })
 
   it("refuses a client action this build no longer has, instead of queueing it to the backend", async () => {
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "")
     await hook("stream_host").current.dispatchCommand({
       kind: "command",
       commandName: "discuss-with-ariadne",
       clientActionId: "discuss-with-ariadne",
       commandMarkdown: "/discuss-with-ariadne",
     })
-    expect(queueCommand).not.toHaveBeenCalled()
+    expect({ queued: queueCommand.mock.calls, toasts: error.mock.calls }).toEqual({
+      queued: [],
+      toasts: [["/discuss-with-ariadne isn't available any more."]],
+    })
   })
 })
