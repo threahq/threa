@@ -7,6 +7,8 @@ import { createMockStream } from "@/test/fixtures"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
+import { useAgentBlock } from "@/components/timeline/agent-block-context"
+import * as draftEditorModule from "./aside-draft-editor"
 import { clearCallState, setCallPhase, setCallSession, setDesktopSurfaceOverride } from "@/stores/call-store"
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
 import { getAsideState, openAside, resetAsideStoreCache } from "@/stores/aside-store"
@@ -77,6 +79,51 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe("aside surfaces", () => {
+  it("should carry an agent reply into an aside draft, never the chat composer", async () => {
+    // The companion timeline's "Insert into draft" action, reduced to the one
+    // call it makes on the provider the pane mounts around it.
+    spyOnExport(timelineModule, "StreamContent").mockReturnValue((() => {
+      const agentBlock = useAgentBlock()
+      return (
+        <button
+          type="button"
+          onClick={() =>
+            agentBlock?.insertAgentBlock({
+              authorId: "persona_01ARIADNE",
+              authorName: "Ariadne",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }],
+            })
+          }
+        >
+          insert into draft
+        </button>
+      )
+    }) as never)
+    // The editor's own append is covered in aside-draft-editor.test.tsx; here
+    // it reports what the pane handed it.
+    spyOnExport(draftEditorModule, "AsideDraftEditor").mockReturnValue(((props: {
+      scope: string
+      pendingAgentBlocks?: { authorId: string }[]
+    }) => (
+      <div
+        data-testid="aside-draft-editor"
+        data-draft-scope={props.scope}
+        data-pending={props.pendingAgentBlocks?.map((block) => block.authorId).join(",")}
+      />
+    )) as never)
+    renderPage()
+    openOnHost("dock")
+
+    fireEvent.click(await screen.findByRole("button", { name: "insert into draft" }))
+
+    const editor = await screen.findByTestId("aside-draft-editor")
+    expect(editor.getAttribute("data-draft-scope")).toMatch(/^aside:stream_aside_1:draft_/)
+    expect(editor).toHaveAttribute("data-pending", "persona_01ARIADNE")
+    // The chat timeline is out of the way while the draft is open, and the
+    // block went nowhere else.
+    expect(screen.queryByRole("button", { name: "insert into draft" })).toBeNull()
+  })
+
   it("should render no aside chrome while nothing is open on this page", () => {
     renderPage()
     expect(screen.queryByTestId("aside-dock")).toBeNull()

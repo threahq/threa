@@ -1,8 +1,14 @@
 import { useCallback } from "react"
+import { useNavigate } from "react-router-dom"
 import { draftStreamScope, type JSONContent } from "@threa/types"
 import { queueContentHandoff } from "@/stores/composer-handoff-store"
 import { setComposerTarget } from "./use-composer-target"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
+
+/** The host stream's timeline is mounted on this page (`StreamContent` stamps its scroller). */
+function hostComposerMounted(hostStreamId: string): boolean {
+  return document.querySelector(`[data-stream-scroller="${hostStreamId}"]`) !== null
+}
 
 /**
  * Send an aside draft to the composer it was opened from. The blocks ride the
@@ -10,8 +16,14 @@ import { parseBoardDraftKey } from "@/lib/board/draft-keys"
  * rather than replaced (INV-43); a conversation origin additionally points the
  * host composer at that conversation's reply scope first, so the send files
  * where the user was writing instead of top level.
+ *
+ * The queue drains through the host stream's mounted `MessageInput`. A surface
+ * without one (the board, a conversation panel on its own) would leave the
+ * hand-off parked invisibly, so the send takes the user to the host stream —
+ * where the composer is — and the queued blocks land as the page mounts.
  */
 export function useAsideHandoff(workspaceId: string) {
+  const navigate = useNavigate()
   return useCallback(
     async (params: { hostStreamId: string; originScope: string; content: JSONContent[] }): Promise<boolean> => {
       if (params.content.length === 0) return false
@@ -25,8 +37,11 @@ export function useAsideHandoff(workspaceId: string) {
         await setComposerTarget(workspaceId, hostScope, params.originScope)
       }
       queueContentHandoff(params.hostStreamId, params.content)
+      if (!hostComposerMounted(params.hostStreamId)) {
+        navigate(`/w/${workspaceId}/s/${params.hostStreamId}`)
+      }
       return true
     },
-    [workspaceId]
+    [workspaceId, navigate]
   )
 }

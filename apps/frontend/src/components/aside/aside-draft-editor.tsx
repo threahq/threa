@@ -1,8 +1,9 @@
-import { useRef } from "react"
+import { useEffect, useRef } from "react"
 import { ArrowLeft, Send, Trash2 } from "lucide-react"
 import type { JSONContent } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { RichEditor, type RichEditorHandle } from "@/components/editor"
+import { appendAgentBlockNode, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { useDraftComposer } from "@/hooks/use-draft-composer"
 import { useAsideDraftActions } from "@/hooks/use-aside-draft-actions"
 
@@ -13,6 +14,9 @@ interface AsideDraftEditorProps {
   onBack: () => void
   /** Hand the body to the host composer. Resolves false when it couldn't be delivered. */
   onSendToComposer: (content: JSONContent[]) => Promise<boolean>
+  /** Agent replies queued by "Insert into draft"; appended as attributed blocks once the draft has loaded. */
+  pendingAgentBlocks?: AgentBlockData[]
+  onPendingAgentBlocksConsumed?: () => void
 }
 
 /**
@@ -21,10 +25,27 @@ interface AsideDraftEditorProps {
  * leaves only through the hand-off, which is the single path content takes out
  * of a private stream.
  */
-export function AsideDraftEditor({ workspaceId, scope, onBack, onSendToComposer }: AsideDraftEditorProps) {
+export function AsideDraftEditor({
+  workspaceId,
+  scope,
+  onBack,
+  onSendToComposer,
+  pendingAgentBlocks,
+  onPendingAgentBlocksConsumed,
+}: AsideDraftEditorProps) {
   const composer = useDraftComposer({ workspaceId, draftKey: scope, scopeId: scope })
   const editorRef = useRef<RichEditorHandle>(null)
   const { send, remove, busy, canSend } = useAsideDraftActions(composer, { onSendToComposer, onDone: onBack })
+
+  const { isLoaded, content, handleContentChange } = composer
+  useEffect(() => {
+    if (!isLoaded || !pendingAgentBlocks || pendingAgentBlocks.length === 0) return
+    let next = content
+    for (const block of pendingAgentBlocks) next = appendAgentBlockNode(next, block)
+    handleContentChange(next)
+    onPendingAgentBlocksConsumed?.()
+    editorRef.current?.focusAfterQuoteReply()
+  }, [isLoaded, content, handleContentChange, pendingAgentBlocks, onPendingAgentBlocksConsumed])
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="aside-draft-editor" data-draft-scope={scope}>

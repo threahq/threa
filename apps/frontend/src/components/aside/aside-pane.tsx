@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react"
 import { Maximize2, Minus, PanelRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StreamContent } from "@/components/timeline"
+import { AgentBlockProvider, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
@@ -11,6 +12,7 @@ import { cn } from "@/lib/utils"
 import { useCallDocked } from "./use-call-docked"
 import { AsideDraftDock } from "./aside-draft-dock"
 import { AsideDraftEditor } from "./aside-draft-editor"
+import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
 import { useAsideHandoff } from "@/hooks/use-aside-handoff"
 
 interface AsidePaneProps {
@@ -39,6 +41,19 @@ export function AsidePane({
   takeover = false,
 }: AsidePaneProps) {
   const [openDraftScope, setOpenDraftScope] = useState<string | null>(null)
+  // "Insert into draft" on one of Ariadne's replies: the block goes into an
+  // aside draft — the open one, else a new one — never into the chat composer
+  // (that would address it back to Ariadne). Queued here because the editor
+  // mounts with the draft; it appends the blocks once the draft has loaded.
+  const [pendingAgentBlocks, setPendingAgentBlocks] = useState<AgentBlockData[]>([])
+  const insertAgentBlock = useCallback(
+    (data: AgentBlockData) => {
+      setPendingAgentBlocks((pending) => [...pending, data])
+      setOpenDraftScope((scope) => scope ?? newAsideDraftScope(asideId))
+    },
+    [asideId]
+  )
+  const consumePendingAgentBlocks = useCallback(() => setPendingAgentBlocks([]), [])
   const handoff = useAsideHandoff(workspaceId)
   const sendToComposer = useCallback(
     async (content: JSONContent[]) => {
@@ -110,6 +125,8 @@ export function AsidePane({
           scope={openDraftScope}
           onBack={() => setOpenDraftScope(null)}
           onSendToComposer={sendToComposer}
+          pendingAgentBlocks={pendingAgentBlocks}
+          onPendingAgentBlocksConsumed={consumePendingAgentBlocks}
         />
       ) : (
         <>
@@ -121,7 +138,9 @@ export function AsidePane({
           />
           <div className="relative min-h-0 flex-1">
             <StreamErrorBoundary streamId={asideId}>
-              <StreamContent workspaceId={workspaceId} streamId={asideId} stream={aside} autoFocus={!takeover} />
+              <AgentBlockProvider onInsert={insertAgentBlock}>
+                <StreamContent workspaceId={workspaceId} streamId={asideId} stream={aside} autoFocus={!takeover} />
+              </AgentBlockProvider>
             </StreamErrorBoundary>
           </div>
         </>
