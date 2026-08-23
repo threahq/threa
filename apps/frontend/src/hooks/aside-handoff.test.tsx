@@ -6,8 +6,10 @@ import type { JSONContent } from "@threa/types"
 import { db } from "@/db"
 import {
   __resetShareHandoffStoreForTesting,
+  acknowledgeShareHandoffBatch,
   peekShareHandoffBatch,
   queueShareHandoff,
+  settleShareHandoffBatch,
 } from "@/stores/composer-handoff-store"
 import { useAsideHandoff } from "./use-aside-handoff"
 
@@ -61,8 +63,10 @@ describe("useAsideHandoff", () => {
         content: CONTENT,
       })
 
-      expect(delivered).toBe(true)
-      expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([{ kind: "content", content: CONTENT }])
+      expect(delivered).not.toBeNull()
+      expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+        { kind: "content", content: CONTENT, attachments: [] },
+      ])
       expect(await db.composerTarget.get("stream:stream_host")).toBeUndefined()
       expect(pathname).toBe("/w/ws_1/board")
     } finally {
@@ -77,8 +81,10 @@ describe("useAsideHandoff", () => {
       content: CONTENT,
     })
 
-    expect(delivered).toBe(true)
-    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([{ kind: "content", content: CONTENT }])
+    expect(delivered).not.toBeNull()
+    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+      { kind: "content", content: CONTENT, attachments: [] },
+    ])
     await waitFor(() => expect(pathname).toBe("/w/ws_1/s/stream_host"))
   })
 
@@ -89,18 +95,20 @@ describe("useAsideHandoff", () => {
       content: CONTENT,
     })
 
-    expect(delivered).toBe(true)
+    expect(delivered).not.toBeNull()
     expect((await db.composerTarget.get("stream:stream_host"))?.scope).toBe("board:reply:conv_1")
-    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([{ kind: "content", content: CONTENT }])
+    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+      { kind: "content", content: CONTENT, attachments: [] },
+    ])
   })
 
   it("refuses an origin the host composer cannot send, rather than stranding the draft", async () => {
     const send = handoff()
-    expect(await send({ hostStreamId: "stream_host", originScope: "thread:msg_1", content: CONTENT })).toBe(false)
-    expect(await send({ hostStreamId: "stream_host", originScope: "board:subtopic:msg_1", content: CONTENT })).toBe(
-      false
-    )
-    expect(await send({ hostStreamId: "stream_host", originScope: "stream:stream_host", content: [] })).toBe(false)
+    expect(await send({ hostStreamId: "stream_host", originScope: "thread:msg_1", content: CONTENT })).toBeNull()
+    expect(
+      await send({ hostStreamId: "stream_host", originScope: "board:subtopic:msg_1", content: CONTENT })
+    ).toBeNull()
+    expect(await send({ hostStreamId: "stream_host", originScope: "stream:stream_host", content: [] })).toBeNull()
     expect(peekShareHandoffBatch("stream_host")).toBeNull()
     expect(await db.composerTarget.get("stream:stream_host")).toBeUndefined()
   })
@@ -120,7 +128,32 @@ describe("useAsideHandoff", () => {
 
     expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
       { kind: "pointer", attrs: pointer },
-      { kind: "content", content: CONTENT },
+      { kind: "content", content: CONTENT, attachments: [] },
     ])
+  })
+
+  it("carries the draft's files with its blocks, and a files-only draft still hands off", async () => {
+    const unmount = mountHostScroller("stream_host")
+    try {
+      const file = { id: "attach_1", filename: "brief.pdf", mimeType: "application/pdf", sizeBytes: 1200 }
+      const send = handoff()
+      const queued = await send({
+        hostStreamId: "stream_host",
+        originScope: "stream:stream_host",
+        content: [],
+        attachments: [file],
+      })
+      expect(queued).not.toBeNull()
+      const batch = peekShareHandoffBatch("stream_host")!
+      expect(batch.handoffs).toEqual([{ kind: "content", content: [], attachments: [file] }])
+      // The source hears the destination's verdict once it has persisted.
+      let verdict: boolean | null = null
+      void queued!.delivered.then((delivered) => (verdict = delivered))
+      acknowledgeShareHandoffBatch("stream_host", batch)
+      settleShareHandoffBatch(batch, true)
+      await waitFor(() => expect(verdict).toBe(true))
+    } finally {
+      unmount()
+    }
   })
 })

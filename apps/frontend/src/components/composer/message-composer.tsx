@@ -172,6 +172,8 @@ export interface MessageComposerProps {
    * must not stand in for it.
    */
   commandStreamId?: string | null
+  /** False keeps workspace/stream/runtime commands out of the `/` menu; the editor's own items stay. */
+  includeStreamCommands?: boolean
   /** Workspace id; required only when `contextRefs` is non-empty so the strip can fetch source metadata. */
   workspaceId?: string
   fileInputRef: RefObject<HTMLInputElement | null>
@@ -285,6 +287,7 @@ export function MessageComposer({
   streamId,
   memoAnchorStreamId = streamId,
   commandStreamId,
+  includeStreamCommands,
   workspaceId,
   fileInputRef,
   onFileSelect,
@@ -1155,6 +1158,7 @@ export function MessageComposer({
       streamContext={streamContext}
       memoAnchorStreamId={memoAnchorStreamId}
       commandStreamId={commandStreamId}
+      includeStreamCommands={includeStreamCommands}
       trayAttachments={pendingAttachments}
       onRequestFileUpload={handleRequestInlineUpload}
     />
@@ -1354,6 +1358,7 @@ export function MessageComposer({
                 streamContext={streamContext}
                 memoAnchorStreamId={memoAnchorStreamId}
                 commandStreamId={commandStreamId}
+                includeStreamCommands={includeStreamCommands}
                 trayAttachments={pendingAttachments}
                 onRequestFileUpload={handleRequestInlineUpload}
                 belowToolbarContent={

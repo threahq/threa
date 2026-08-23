@@ -192,6 +192,8 @@ interface RichEditorProps {
    * unrelated stream can't inherit that stream's runtime commands.
    */
   commandStreamId?: string | null
+  /** False keeps workspace/stream/runtime commands out of the `/` menu (see `useCommandSuggestion`). */
+  includeStreamCommands?: boolean
   /** Whether @mentions should be parsed and autocompleted. */
   enableMentions?: boolean
   /** Whether #channel references should be parsed and autocompleted. */
@@ -294,6 +296,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     streamContext,
     memoAnchorStreamId,
     commandStreamId,
+    includeStreamCommands,
     enableMentions = true,
     enableChannels = true,
     enableCommands = true,
@@ -404,6 +407,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     onOpenAttachment: openAttachmentPicker,
     onCommandPicked: notifyCommandPicked,
     commandStreamId,
+    includeStreamCommands,
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 

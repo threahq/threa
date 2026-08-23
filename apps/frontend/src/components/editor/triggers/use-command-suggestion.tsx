@@ -108,6 +108,7 @@ export function useCommandSuggestion({
   onOpenAttachment,
   onCommandPicked,
   commandStreamId,
+  includeStreamCommands = true,
 }: {
   includeMemoSearch?: boolean
   includeGiphy?: boolean
@@ -130,6 +131,13 @@ export function useCommandSuggestion({
    * over an unrelated stream must never inherit that stream's runtime commands.
    */
   commandStreamId?: string | null
+  /**
+   * False leaves only the editor's own `/` items (memo search, giphy, snippet,
+   * attachment): no workspace, stream or runtime command — for an editor whose
+   * content is never sent from where it is written, so a dispatch would land
+   * elsewhere.
+   */
+  includeStreamCommands?: boolean
 } = {}) {
   const { workspaceId, streamId: routeStreamId } = useParams<{ workspaceId: string; streamId: string }>()
   const streamId = commandStreamId !== undefined ? (commandStreamId ?? undefined) : routeStreamId
@@ -143,7 +151,8 @@ export function useCommandSuggestion({
   onOpenAttachmentRef.current = onOpenAttachment
   const onCommandPickedRef = useRef(onCommandPicked)
   onCommandPickedRef.current = onCommandPicked
-  const effectiveCommands = useStreamCommands(workspaceId, streamId)
+  const streamCommands = useStreamCommands(workspaceId, streamId)
+  const effectiveCommands = includeStreamCommands ? streamCommands : []
 
   const commands = useMemo<CommandItem[]>(() => {
     const serverCommands = effectiveCommands

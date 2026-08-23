@@ -1,6 +1,7 @@
 import { useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { draftStreamScope, type JSONContent } from "@threa/types"
+import type { DraftAttachment } from "@/db"
 import { queueContentHandoff } from "@/stores/composer-handoff-store"
 import { setComposerTarget } from "./use-composer-target"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
@@ -21,26 +22,35 @@ function hostComposerMounted(hostStreamId: string): boolean {
  * without one (the board, a conversation panel on its own) would leave the
  * hand-off parked invisibly, so the send takes the user to the host stream —
  * where the composer is — and the queued blocks land as the page mounts.
+ *
+ * Returns null when refused, else the destination's eventual verdict: true
+ * once it has persisted the blocks and files, false if it could not (or the
+ * hand-off expired) — the caller decides what to let go of on that.
  */
 export function useAsideHandoff(workspaceId: string) {
   const navigate = useNavigate()
   return useCallback(
-    async (params: { hostStreamId: string; originScope: string; content: JSONContent[] }): Promise<boolean> => {
-      if (params.content.length === 0) return false
+    async (params: {
+      hostStreamId: string
+      originScope: string
+      content: JSONContent[]
+      attachments?: DraftAttachment[]
+    }): Promise<{ delivered: Promise<boolean> } | null> => {
+      if (params.content.length === 0 && (params.attachments?.length ?? 0) === 0) return null
       const hostScope = draftStreamScope(params.hostStreamId)
       if (params.originScope !== hostScope) {
         // Only scopes the timeline composer can hold: today the conversation
         // reply scopes it already adopts. Anything else would arm a host that
         // cannot send it, stranding the draft (INV-11) — refuse instead.
         const board = parseBoardDraftKey(params.originScope)
-        if (board?.kind !== "reply") return false
+        if (board?.kind !== "reply") return null
         await setComposerTarget(workspaceId, hostScope, params.originScope)
       }
-      queueContentHandoff(params.hostStreamId, params.content)
+      const queued = queueContentHandoff(params.hostStreamId, params.content, params.attachments ?? [])
       if (!hostComposerMounted(params.hostStreamId)) {
         navigate(`/w/${workspaceId}/s/${params.hostStreamId}`)
       }
-      return true
+      return queued
     },
     [workspaceId, navigate]
   )

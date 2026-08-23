@@ -134,7 +134,7 @@ describe("share handoff store", () => {
     const batch = peekShareHandoffBatch("stream_1")
     expect(batch?.handoffs).toEqual([
       { kind: "pointer", attrs: sampleAttrs },
-      { kind: "content", content },
+      { kind: "content", content, attachments: [] },
       { kind: "plaintext", markdown: "sealed body", attrs: { ...sampleAttrs, messageId: "msg_2" } },
     ])
 
@@ -147,7 +147,7 @@ describe("share handoff store", () => {
     const seen: unknown[] = []
     const unsubscribe = subscribeShareHandoff("stream_1", () => seen.push(peekShareHandoffBatch("stream_1")?.handoffs))
     queueContentHandoff("stream_1", content)
-    expect(seen).toEqual([[{ kind: "content", content }]])
+    expect(seen).toEqual([[{ kind: "content", content, attachments: [] }]])
     unsubscribe()
   })
 })

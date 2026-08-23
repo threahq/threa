@@ -24,7 +24,12 @@ import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-stor
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { resetApplyWindow } from "@/stores/apply-window"
 import { setComposerTarget } from "@/hooks/use-composer-target"
-import { peekShareHandoff, queueShareHandoff, resetShareHandoffStoreCache } from "@/stores/composer-handoff-store"
+import {
+  peekShareHandoff,
+  queueContentHandoff,
+  queueShareHandoff,
+  resetShareHandoffStoreCache,
+} from "@/stores/composer-handoff-store"
 // eslint-disable-next-line no-restricted-imports -- seeds/asserts the real draft + composer-target rows
 import { db } from "@/db"
 import { MessageInput } from "./message-input"
@@ -55,6 +60,7 @@ const LOCKED_SESSION = {
 
 let registeredConversationReplyHandler: ((data: { conversationId: string }) => void) | null = null
 let notFound = false
+let restoreAttachments: ReturnType<typeof vi.fn> = vi.fn()
 let loadFailed = false
 let lastActiveStreamId = streamId
 let e2eEnabled = false
@@ -87,6 +93,7 @@ beforeEach(async () => {
 
   vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
   vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  restoreAttachments = vi.fn()
   vi.spyOn(useAttachmentsModule, "useAttachments").mockReturnValue({
     pendingAttachments: [],
     getPendingAttachmentsSnapshot: () => [],
@@ -100,7 +107,7 @@ beforeEach(async () => {
     isReserving: false,
     hasFailed: false,
     clear: vi.fn(),
-    restore: vi.fn(),
+    restore: restoreAttachments,
     imageCount: 0,
   } as unknown as ReturnType<typeof useAttachmentsModule.useAttachments>)
 
@@ -357,6 +364,31 @@ describe("the timeline composer's durable target", () => {
         ],
       },
     })
+  }, 10_000)
+
+  it("adopts an aside draft's files with its blocks — held by the composer and persisted on the draft", async () => {
+    await upsertLoadedDraft(workspaceId, hostScope, { contentJson: makeDoc(""), attachments: [] })
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+    mount()
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toBeInTheDocument())
+    const file = { id: "attach_brief", filename: "brief.pdf", mimeType: "application/pdf", sizeBytes: 1200 }
+
+    queueContentHandoff(streamId, [{ type: "paragraph", content: [{ type: "text", text: "from the aside" }] }], [file])
+
+    await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent("from the aside"), {
+      timeout: 7000,
+    })
+    await waitFor(() => expect(restoreAttachments).toHaveBeenCalledWith([file]), { timeout: 7000 })
+    await waitFor(
+      async () => {
+        const loadedId = (await db.composerLoaded.get(hostScope))?.draftId
+        expect(loadedId).toBeDefined()
+        expect(await db.drafts.get(loadedId!)).toMatchObject({ attachments: [file] })
+      },
+      { timeout: 7000 }
+    )
   }, 10_000)
 
   it("keeps the draft and handoff when the destination cannot be stashed", async () => {

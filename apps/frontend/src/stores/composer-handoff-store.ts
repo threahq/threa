@@ -1,5 +1,6 @@
 import type { JSONContent } from "@threa/types"
 import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
+import type { DraftAttachment } from "@/db"
 
 /**
  * Ephemeral per-stream "hand-off" of content into a target stream's composer:
@@ -33,13 +34,15 @@ export interface PlaintextShareHandoffEntry {
  */
 export interface ContentHandoffEntry {
   content: JSONContent[]
+  /** Uploaded attachments that move with the blocks; the destination adopts them as its own. */
+  attachments: DraftAttachment[]
   expiresAt: number
 }
 
 export type PendingShareHandoff =
   | { kind: "pointer"; attrs: SharedMessageAttrs }
   | { kind: "plaintext"; markdown: string; attrs: SharedMessageAttrs }
-  | { kind: "content"; content: JSONContent[] }
+  | { kind: "content"; content: JSONContent[]; attachments: DraftAttachment[] }
 
 export interface ShareHandoffBatch {
   ids: readonly number[]
@@ -56,13 +59,27 @@ const HANDOFF_TTL_MS = 5 * 60 * 1000
 let nextQueueId = 0
 const cache = new Map<string, QueuedShareHandoff[]>()
 const listeners = new Map<string, Set<() => void>>()
+// Content hand-offs move files, so their source waits to hear that the
+// destination persisted them before letting go: one resolver per queued entry,
+// settled true by the destination, false on expiry/reset/rejection.
+const deliveryResolvers = new Map<number, (delivered: boolean) => void>()
+
+function settleDelivery(queueId: number, delivered: boolean): void {
+  const resolve = deliveryResolvers.get(queueId)
+  if (!resolve) return
+  deliveryResolvers.delete(queueId)
+  resolve(delivered)
+}
 
 function liveQueue(streamId: string): QueuedShareHandoff[] {
   const queued = cache.get(streamId)
   if (!queued) return []
   const now = Date.now()
   for (let index = queued.length - 1; index >= 0; index--) {
-    if (queued[index].expiresAt < now) queued.splice(index, 1)
+    if (queued[index].expiresAt < now) {
+      settleDelivery(queued[index].queueId, false)
+      queued.splice(index, 1)
+    }
   }
   if (queued.length === 0) cache.delete(streamId)
   return queued
@@ -123,14 +140,31 @@ export function queuePlaintextShareHandoff(targetStreamId: string, markdown: str
  * notification as a share; the composer inserts it through the same path, so a
  * draft already in the destination is stashed rather than overwritten.
  */
-export function queueContentHandoff(targetStreamId: string, content: JSONContent[]): void {
+export function queueContentHandoff(
+  targetStreamId: string,
+  content: JSONContent[],
+  attachments: DraftAttachment[] = []
+): { delivered: Promise<boolean> } {
   const queued = cache.get(targetStreamId) ?? []
-  queued.push({ queueId: ++nextQueueId, kind: "content", content, expiresAt: Date.now() + HANDOFF_TTL_MS })
+  const queueId = ++nextQueueId
+  const delivered = new Promise<boolean>((resolve) => deliveryResolvers.set(queueId, resolve))
+  queued.push({ queueId, kind: "content", content, attachments, expiresAt: Date.now() + HANDOFF_TTL_MS })
   cache.set(targetStreamId, queued)
   const subs = listeners.get(targetStreamId)
   if (subs) {
     for (const listener of subs) listener()
   }
+  return { delivered }
+}
+
+/**
+ * The destination's verdict on a drained batch: true once its blocks and
+ * files are persisted on the destination draft, false when it could not keep
+ * them (the source then keeps its files). Called after
+ * {@link acknowledgeShareHandoffBatch}, which only takes the batch off the queue.
+ */
+export function settleShareHandoffBatch(batch: ShareHandoffBatch, delivered: boolean): void {
+  for (const queueId of batch.ids) settleDelivery(queueId, delivered)
 }
 
 /** Read + clear the oldest pending plaintext (decrypted E2E) share for the stream. */
@@ -155,7 +189,7 @@ export function peekShareHandoffBatch(targetStreamId: string): ShareHandoffBatch
     ids: queued.map((entry) => entry.queueId),
     handoffs: queued.map((entry) => {
       if (entry.kind === "pointer") return { kind: "pointer", attrs: entry.attrs }
-      if (entry.kind === "content") return { kind: "content", content: entry.content }
+      if (entry.kind === "content") return { kind: "content", content: entry.content, attachments: entry.attachments }
       return { kind: "plaintext", markdown: entry.markdown, attrs: entry.attrs }
     }),
   }
@@ -216,6 +250,7 @@ export function peekShareHandoff(targetStreamId: string): SharedMessageAttrs | n
  * so a share queued under one account never surfaces in another.
  */
 export function resetShareHandoffStoreCache(): void {
+  for (const queueId of [...deliveryResolvers.keys()]) settleDelivery(queueId, false)
   cache.clear()
   listeners.clear()
 }

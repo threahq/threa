@@ -7,13 +7,14 @@ import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
-import { StreamTypes, type JSONContent } from "@threa/types"
+import { StreamTypes } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { useCallDocked } from "./use-call-docked"
 import { AsideDraftDock } from "./aside-draft-dock"
 import { AsideDraftEditor } from "./aside-draft-editor"
 import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
 import { useAsideHandoff } from "@/hooks/use-aside-handoff"
+import type { AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
 
 interface AsidePaneProps {
   workspaceId: string
@@ -56,12 +57,12 @@ export function AsidePane({
   const consumePendingAgentBlocks = useCallback(() => setPendingAgentBlocks([]), [])
   const handoff = useAsideHandoff(workspaceId)
   const sendToComposer = useCallback(
-    async (content: JSONContent[]) => {
-      const delivered = await handoff({ hostStreamId, originScope, content })
+    async ({ content, attachments }: AsideDraftHandoff) => {
+      const queued = await handoff({ hostStreamId, originScope, content, attachments })
       // Get out of the composer's way once the blocks are on their way to it;
       // the aside stays one tap away in the strip.
-      if (delivered) setAsideSurface("minimized")
-      return delivered
+      if (queued) setAsideSurface("minimized")
+      return queued
     },
     [handoff, hostStreamId, originScope]
   )
