@@ -145,9 +145,11 @@ async function dispatchBeforeInput(
   }, inputType)
 }
 
-// Replays Gboard's enter-and-pick: the autocorrect lands in the DOM and the
-// newline's `beforeinput` fires in the same task, before ProseMirror's
-// DOMObserver has read the corrected word into editor state.
+// Replays the shape of Gboard's enter-and-pick: the autocorrect lands in the
+// DOM and the newline's `beforeinput` fires in the same task. Desktop Chromium
+// never arms ProseMirror's Android deferred flush, so this proves the keydown
+// re-dispatch path end to end, not the `forceFlush` timing (that is the
+// multiline-blocks unit test).
 async function autocorrectThenEnter(page: import("@playwright/test").Page, find: string, replace: string) {
   await page.evaluate(
     ([find, replace]) => {
@@ -1045,6 +1047,9 @@ test.describe("Rich Text Editing", () => {
       await expect(editor.locator("li").nth(1)).toHaveText("")
     })
 
+    // The synthetic `beforeinput` inserts nothing in a real browser, so these
+    // two specs prove the handler hands Enter to the popover (red before the
+    // fix: nothing happened), not that a native newline is suppressed.
     test("beforeinput Enter picks the highlighted emoji instead of inserting a newline", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await focusMobileComposer(page)

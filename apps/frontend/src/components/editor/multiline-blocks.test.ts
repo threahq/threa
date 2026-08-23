@@ -691,6 +691,17 @@ describe("multiline beforeinput enter handling", () => {
     editor.destroy()
   })
 
+  it("clears ProseMirror's iOS Enter fallback marker once it claims the newline", () => {
+    const editor = createTestEditor("plain")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    const input = (editor.view as unknown as { input: { lastIOSEnter: number } }).input
+    input.lastIOSEnter = 123
+
+    expect(handleBeforeInputNewline(editor, makeBeforeInput("insertParagraph"))).toBe(true)
+    expect(input.lastIOSEnter).toBe(0)
+    editor.destroy()
+  })
+
   it("leaves the native newline alone while composing", () => {
     const editor = createTestEditor("- List items")
     editor.commands.setTextSelection(editor.state.doc.content.size - 1)

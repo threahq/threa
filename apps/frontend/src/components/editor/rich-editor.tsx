@@ -857,11 +857,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           if (!editor) return false
 
           const suggestionActive = isSuggestionActive(editor)
-          // Newline handling only matters in cmdEnter mode (Enter sends in default mode).
-          if (
-            messageSendModeRef.current === "cmdEnter" &&
-            handleBeforeInputNewline(editor, event as InputEvent, { allowDuringComposition: suggestionActive })
-          ) {
+          if (handleBeforeInputNewline(editor, event as InputEvent, { allowDuringComposition: suggestionActive })) {
             return true
           }
           if (suggestionActive) return false

@@ -47,6 +47,13 @@ interface EditorViewWithDomObserver {
     flush?: () => void
     forceFlush?: () => void
   }
+  input?: {
+    lastIOSEnter?: number
+  }
+}
+
+interface FlushPendingDomOptions {
+  cancelDeferred?: boolean
 }
 
 interface IntlSegmenterLike {
@@ -227,13 +234,13 @@ function rangeContainsInlineAtom(state: EditorState, from: number, to: number): 
   return containsAtom
 }
 
-// `forceFlush` first: ProseMirror's own Chrome Android `deleteContentBackward`
+// `cancelDeferred`: ProseMirror's own Chrome Android `deleteContentBackward`
 // handler schedules a 20 ms deferred flush, and while that timer is pending a
 // plain `flush()` is a no-op — exactly the window Gboard's enter-and-pick
 // (delete word → insert correction → Enter, one batch) lands in.
-function flushPendingDomSelection(editor: Editor): void {
+function flushPendingDomSelection(editor: Editor, options: FlushPendingDomOptions = {}): void {
   const domObserver = (editor.view as unknown as EditorViewWithDomObserver).domObserver
-  domObserver?.forceFlush?.()
+  if (options.cancelDeferred) domObserver?.forceFlush?.()
   domObserver?.flush?.()
 }
 
@@ -881,19 +888,18 @@ export function handleBeforeInputNewline(
   const { view } = editor
   if (view.composing && !options.allowDuringComposition) return false
 
-  flushPendingDomSelection(editor)
+  flushPendingDomSelection(editor, { cancelDeferred: true })
 
-  const keydown = new KeyboardEvent("keydown", {
-    key: "Enter",
-    code: "Enter",
-    keyCode: 13,
-    shiftKey: event.inputType === "insertLineBreak",
-    bubbles: true,
-    cancelable: true,
-  })
+  const keydown = new KeyboardEvent("keydown", { key: "Enter", shiftKey: event.inputType === "insertLineBreak" })
   const handled = !!view.someProp("handleKeyDown", (handleKeyDown) => handleKeyDown(view, keydown))
   if (handled) {
     event.preventDefault()
+    // iOS Safari: ProseMirror lets the Return keydown through and arms a 200 ms
+    // fallback that re-dispatches Enter unless a DOM change was read. Claiming
+    // the newline here means no DOM change is read, so clear the marker the
+    // same way ProseMirror does when it handles the Enter itself.
+    const input = (view as unknown as EditorViewWithDomObserver).input
+    if (input?.lastIOSEnter) input.lastIOSEnter = 0
   }
 
   return handled
