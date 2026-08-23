@@ -118,6 +118,7 @@ export async function resolveBagForStream(
 
     const config = getIntentConfig(bag.intent)
     const resolveds: ResolvedRef[] = []
+    const goneRefs: ContextRef[] = []
     for (const ref of bag.refs) {
       if (!config.supportedKinds.includes(ref.kind)) {
         logger.warn({ intent: bag.intent, kind: ref.kind }, "context-bag: unsupported ref kind for intent, skipping")
@@ -140,13 +141,14 @@ export async function resolveBagForStream(
         resolveds.push({ ref, ...part })
       } catch (err) {
         // A viewport whose on-screen messages are all gone has no snapshot to
-        // show: omit it loudly rather than render something else as "what you
-        // saw" (INV-11).
+        // show: the agent is told so in the source's place rather than handed
+        // something else as "what you saw" (INV-11).
         if (!(err instanceof HttpError && err.code === CONTEXT_VIEWPORT_GONE)) throw err
         logger.warn(
           { workspaceId: bag.workspaceId, streamId, refStreamId: ref.streamId },
-          "context-bag: viewport snapshot no longer resolves, dropping ref"
+          "context-bag: viewport snapshot no longer resolves"
         )
+        goneRefs.push(ref)
       }
     }
 
@@ -167,12 +169,12 @@ export async function resolveBagForStream(
       : [[], new Map<string, number>()]
     const streamById = new Map(sourceStreams.map((s) => [s.id, s]))
 
-    return { bag, config, resolveds, streamById, itemCounts }
+    return { bag, config, resolveds, goneRefs, streamById, itemCounts }
   })
 
   if (!phase1 || phase1 === "already-rendered") return null
 
-  const { bag, config, resolveds, streamById, itemCounts } = phase1
+  const { bag, config, resolveds, goneRefs, streamById, itemCounts } = phase1
 
   // Phase 2 (maybe AI): for each ref, decide inline vs summary. Summaries use
   // the shared cache keyed by (workspace, refKind, refKey, fingerprint).
@@ -249,6 +251,16 @@ export async function resolveBagForStream(
     })
   }
 
+  for (const ref of goneRefs) {
+    stableParts.push(
+      renderStable({
+        preamble: config.systemPreamble,
+        refLabel: canonicalRefKey(ref),
+        notice: VIEWPORT_GONE_NOTICE,
+      })
+    )
+  }
+
   return {
     bagId: bag.id,
     intent: bag.intent,
@@ -259,6 +271,11 @@ export async function resolveBagForStream(
     nextSnapshot: buildSnapshot(nextItems, nextTail),
   }
 }
+
+const VIEWPORT_GONE_NOTICE =
+  "The snapshot of what was on screen when this aside was opened is no longer available: every message it " +
+  "captured has since been deleted. Say so if the user refers to what they were looking at; fetch what you " +
+  "need with `get_stream_messages` instead of guessing."
 
 async function canCreatorRead(db: Querier, userId: string, workspaceId: string, ref: ContextRef): Promise<boolean> {
   try {

@@ -25,6 +25,11 @@ export interface StableRenderInput {
    * over `focalMessageId`.
    */
   viewport?: { visibleMessageIds: string[]; capturedAt: string } | null
+  /**
+   * Rendered in place of items when a ref resolved to nothing it can show —
+   * the source is named and the reason stated, never silently dropped (INV-11).
+   */
+  notice?: string
 }
 
 /**
@@ -36,7 +41,9 @@ export interface StableRenderInput {
 export function renderStable(input: StableRenderInput): string {
   const parts: string[] = [input.preamble.trim(), "", `## Context source: ${input.refLabel}`]
 
-  if (input.summaryText) {
+  if (input.notice) {
+    parts.push("", input.notice)
+  } else if (input.summaryText) {
     parts.push("", "Summary (cached):", input.summaryText.trim())
   } else if (input.inlineItems && input.inlineItems.length > 0) {
     const visible = new Set(input.viewport?.visibleMessageIds ?? [])

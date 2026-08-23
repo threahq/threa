@@ -174,16 +174,10 @@ export async function fetchStreamBag(
     } else if (ref.kind === ContextRefKinds.VIEWPORT) {
       // The chip must agree with what the agent is sent: expand the window
       // the same way the resolver does. A viewport whose messages are all
-      // gone is no snapshot — the resolver omits it, so the chip does too.
+      // gone still shows as attached, with nothing left in it — the agent is
+      // told the same (`VIEWPORT_GONE_NOTICE`), so neither side hides it.
       const expanded = await resolveViewportWindow(db, sourceStream, ref)
-      if (!expanded) {
-        logger.info(
-          { workspaceId, streamId, refStreamId: ref.streamId },
-          "context-bag: viewport snapshot no longer resolves, dropping ref"
-        )
-        continue
-      }
-      itemCount = expanded.window.length + (expanded.root ? 1 : 0)
+      itemCount = expanded ? expanded.window.length + (expanded.root ? 1 : 0) : 0
     } else {
       const totalCount = itemCounts.get(srcId) ?? 0
       itemCount = isWindowedIntent ? Math.min(totalCount, DISCUSS_WINDOW_TOTAL) : totalCount

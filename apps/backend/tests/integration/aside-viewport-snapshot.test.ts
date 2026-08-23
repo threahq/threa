@@ -143,7 +143,7 @@ describe("Aside viewport snapshot", () => {
     expect(resolved.stable).toContain(`► [${ids[5]}]`)
   })
 
-  test("a deleted visible id drops out; with none left the ref is omitted for agent and chip alike", async () => {
+  test("a deleted visible id drops out; with none left the agent is told and the chip shows an empty snapshot", async () => {
     const channel = await createChannel("viewport-deleted", "public")
     const ids = await insertMessages(channel.id, other, 20)
     await withTransaction(pool, (client) => MessageRepository.softDelete(client, ids[10]))
@@ -159,9 +159,44 @@ describe("Aside viewport snapshot", () => {
     const orphaned = await createAsideWithBag(channel.id, [viewportRef(channel.id, [ids[10]])])
     const gone = await resolve(orphaned.id)
     expect(gone.refs).toEqual([])
-    expect(gone.stable).toBe("")
+    expect(gone.stable).toContain(`## Context source: viewport:${channel.id}`)
+    expect(gone.stable).toContain("no longer available: every message it captured has since been deleted")
     const goneChip = await fetchStreamBag(pool, { workspaceId: wsId, streamId: orphaned.id, userId: creator })
-    expect(goneChip).toMatchObject({ bag: { intent: ContextIntents.ASIDE }, refs: [] })
+    expect(goneChip.refs.map((r) => ({ kind: r.kind, itemCount: r.source.itemCount }))).toEqual([
+      { kind: ContextRefKinds.VIEWPORT, itemCount: 0 },
+    ])
+  })
+
+  test("messages that arrive after the capture stay out of the trailing pad", async () => {
+    const channel = await createChannel("viewport-captured-at", "public")
+    const ids = await insertMessages(channel.id, other, 5)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const ref = viewportRef(channel.id, [ids[3]])
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const later = await insertMessages(channel.id, other, 3)
+
+    const aside = await createAsideWithBag(channel.id, [ref])
+    const resolved = await resolve(aside.id)
+    expect(resolved.refs[0].items.map((m) => m.messageId)).toEqual(ids)
+    for (const id of later) expect(resolved.stable).not.toContain(`[${id}]`)
+  })
+
+  test("a thread host whose only visible row is its anchor message still snapshots it", async () => {
+    const channel = await createChannel("viewport-thread-anchor-only", "public", [other])
+    const [anchorId] = await insertMessages(channel.id, other, 1)
+    const thread = await streamService.createThreadInternal({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      parentAnchorId: anchorId,
+      createdBy: other,
+    })
+
+    const aside = await createAsideWithBag(thread.id, [viewportRef(thread.id, [anchorId])])
+    const resolved = await resolve(aside.id)
+    expect(resolved.refs[0].items.map((m) => m.messageId)).toEqual([anchorId])
+    expect(resolved.stable).toContain(`► [${anchorId}]`)
+    const chip = await fetchStreamBag(pool, { workspaceId: wsId, streamId: aside.id, userId: creator })
+    expect(chip.refs.map((r) => r.source.itemCount)).toEqual([1])
   })
 
   test("a viewport of a thread inside a member channel resolves through the root for a non-member of the thread (INV-62)", async () => {

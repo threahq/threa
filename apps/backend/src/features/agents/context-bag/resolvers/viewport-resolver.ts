@@ -36,14 +36,18 @@ export async function resolveViewportWindow(
   ref: ViewportContextRef
 ): Promise<ViewportWindow | null> {
   const byId = await MessageRepository.findByIdsInWorkspace(db, stream.workspaceId, ref.visibleMessageIds)
-  const visible = [...byId.values()]
+  const inHost = [...byId.values()]
     .filter((m) => m.streamId === ref.streamId && m.deletedAt === null)
     .sort((a, b) => Number(a.sequence - b.sequence))
-  if (visible.length === 0) return null
-
-  const window = await fetchPaddedWindow(db, ref.streamId, visible)
+  // A thread host renders its anchor message above the replies; it lives in
+  // the parent stream, so it is the one visible id that is never "in host".
   const anchor = await findThreadAnchorContext(db, stream)
+  const anchorVisible = anchor !== null && ref.visibleMessageIds.includes(anchor.id)
+  if (inHost.length === 0 && !anchorVisible) return null
+
+  const window = inHost.length > 0 ? await fetchPaddedWindow(db, ref.streamId, inHost, ref.capturedAt) : []
   const root = anchor && !window.some((m) => m.id === anchor.id) ? anchor : null
+  const visible = anchorVisible && root ? [root, ...inHost] : inHost
   return { stream, visible, window, root }
 }
 
@@ -93,6 +97,7 @@ export const ViewportResolver: Resolver<ViewportContextRef> = {
     const hydrated = await hydrateRenderableItems(db, stream.workspaceId, root ? [root, ...window] : window)
     const tail = hydrated.items[hydrated.items.length - 1]
     const inWindow = new Set(window.map((m) => m.id))
+    if (root) inWindow.add(root.id)
 
     return {
       ...hydrated,
@@ -112,9 +117,17 @@ export const ViewportResolver: Resolver<ViewportContextRef> = {
  * cover the span and its trailing pad, then cut after the last visible message
  * + pad. When the span itself exceeds the cap the trailing pad goes first, then
  * the span's own tail — the top of what the user saw is the lead-in they were
- * reading from.
+ * reading from. The trailing pad stops at the capture: messages that arrived
+ * after the aside was opened are not part of what was seen, and leaving them
+ * out keeps the snapshot stable across turns (the visible span is never cut,
+ * whatever a client clock says).
  */
-async function fetchPaddedWindow(db: Querier, streamId: string, visible: Message[]): Promise<Message[]> {
+async function fetchPaddedWindow(
+  db: Querier,
+  streamId: string,
+  visible: Message[],
+  capturedAt: string
+): Promise<Message[]> {
   const first = visible[0]
   const last = visible[visible.length - 1]
   const surrounding = await MessageRepository.findSurrounding(
@@ -125,6 +138,14 @@ async function fetchPaddedWindow(db: Querier, streamId: string, visible: Message
     VIEWPORT_WINDOW_TOTAL - 1
   )
   const lastIdx = surrounding.findIndex((m) => m.id === last.id)
-  const end = lastIdx >= 0 ? lastIdx + VIEWPORT_WINDOW_PAD + 1 : surrounding.length
-  return surrounding.slice(0, Math.min(end, VIEWPORT_WINDOW_TOTAL))
+  const capturedAtMs = Date.parse(capturedAt)
+  const before = lastIdx >= 0 ? surrounding.slice(0, lastIdx + 1) : surrounding
+  const after =
+    lastIdx >= 0
+      ? surrounding
+          .slice(lastIdx + 1)
+          .filter((m) => m.createdAt.getTime() <= capturedAtMs)
+          .slice(0, VIEWPORT_WINDOW_PAD)
+      : []
+  return [...before, ...after].slice(0, VIEWPORT_WINDOW_TOTAL)
 }
