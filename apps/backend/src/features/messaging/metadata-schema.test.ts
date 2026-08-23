@@ -6,6 +6,8 @@ import {
   MESSAGE_METADATA_MAX_KEY_LENGTH,
   MESSAGE_METADATA_MAX_VALUE_LENGTH,
   MESSAGE_METADATA_RESERVED_PREFIX,
+  MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY,
+  withDerivedMessageMetadata,
 } from "./metadata-schema"
 
 describe("messageMetadataSchema (create)", () => {
@@ -76,5 +78,26 @@ describe("messageMetadataFilterSchema (query)", () => {
       [`${MESSAGE_METADATA_RESERVED_PREFIX}source`]: "github",
     })
     expect(result.success).toBe(true)
+  })
+})
+
+describe("withDerivedMessageMetadata", () => {
+  test("marks the agents a message carries, alongside caller metadata", () => {
+    expect(withDerivedMessageMetadata({ source: "github" }, ["persona_1", "bot_2"])).toEqual({
+      source: "github",
+      [MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY]: "persona_1,bot_2",
+    })
+  })
+
+  test("leaves a message with no agent block exactly as the caller sent it", () => {
+    expect(withDerivedMessageMetadata({ source: "github" }, [])).toEqual({ source: "github" })
+    expect(withDerivedMessageMetadata(undefined, [])).toBeUndefined()
+  })
+
+  test("drops whole ids rather than truncating one into a different actor", () => {
+    const long = Array.from({ length: 12 }, (_, i) => `persona_${String(i).padStart(30, "0")}`)
+    const value = withDerivedMessageMetadata(undefined, long)?.[MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY] ?? ""
+    expect(value.length).toBeLessThanOrEqual(MESSAGE_METADATA_MAX_VALUE_LENGTH)
+    expect(value.split(",").every((id) => long.includes(id))).toBe(true)
   })
 })

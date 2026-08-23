@@ -2,6 +2,7 @@ import type { Components } from "react-markdown"
 import { Children, isValidElement, type ReactNode, type MouseEvent } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import {
+  parseAgentBlockHref,
   parseGiphyHref,
   parseMemoHref,
   parseMentionPointerHref,
@@ -26,6 +27,7 @@ import { useAttachmentContext } from "./attachment-context"
 import { PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
 import { useLinkPreviewContext } from "./link-preview-context"
 import { QuoteReplyBlock } from "./quote-reply-block"
+import { AgentBlock } from "./agent-block"
 import { BlockquoteBlock } from "./blockquote-block"
 import { SharedMessagePointerBlock } from "./shared-message-block"
 import CodeBlock from "./code-block"
@@ -120,6 +122,31 @@ function extractQuoteReplyFromChildren(children: ReactNode): {
     }
   }
 
+  return null
+}
+
+/**
+ * Walk a blockquote's children for the serializer's agent-block attribution
+ * paragraph: the FIRST `<p>`, whose children are exactly "— " followed by a
+ * single `agent:` anchor. Attribution leads here (a quote reply's trails), so
+ * the two blockquote-shaped nodes never claim each other's markdown.
+ */
+function extractAgentBlockFromChildren(children: ReactNode): {
+  authorId: string
+  authorName: string
+  body: ReactNode[]
+} | null {
+  const childArray: ReactNode[] = Children.toArray(children)
+  for (let i = 0; i < childArray.length; i++) {
+    const child = childArray[i]
+    // Whitespace between blocks is a child too; the attribution must be the
+    // first ELEMENT, and anything before it disqualifies the blockquote.
+    if (!isValidElement(child)) continue
+    const props = child.props as Record<string, unknown>
+    const match = matchAnchorParagraph(props.children as ReactNode, QUOTE_ATTRIBUTION_PREFIX, parseAgentBlockHref)
+    if (!match) return null
+    return { authorId: match.authorId, authorName: match.linkText, body: childArray.slice(i + 1) }
+  }
   return null
 }
 
@@ -425,6 +452,14 @@ export const markdownComponents: Components = {
 
   // Blockquote — detect quote-reply attribution pattern (quote: protocol link)
   blockquote: ({ children }) => {
+    const agentBlock = extractAgentBlockFromChildren(children)
+    if (agentBlock) {
+      return (
+        <AgentBlock authorId={agentBlock.authorId} authorName={agentBlock.authorName}>
+          {agentBlock.body}
+        </AgentBlock>
+      )
+    }
     const quoteReply = extractQuoteReplyFromChildren(children)
     if (quoteReply) {
       return (

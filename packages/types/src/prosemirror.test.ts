@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
-import { isThreaDocument, validateContent, type JSONContent } from "./prosemirror"
+import { isThreaDocument, tryValidateContent, validateContent, type JSONContent } from "./prosemirror"
 
 const pinnedQuote = (attrs: Record<string, unknown>): JSONContent => ({
   type: "doc",
@@ -16,6 +16,17 @@ const pinnedQuote = (attrs: Record<string, unknown>): JSONContent => ({
         snippet: "hello",
         ...attrs,
       },
+    },
+  ],
+})
+
+const agentBlock = (attrs: Record<string, unknown>) => ({
+  type: "doc",
+  content: [
+    {
+      type: "agentBlock",
+      attrs,
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }],
     },
   ],
 })
@@ -55,5 +66,40 @@ describe("reference pins survive validation", () => {
     expect(isThreaDocument(pinnedQuote({ version: 1.5 }))).toBe(false)
     expect(isThreaDocument(pinnedQuote({ version: 1, range: { from: -1, to: 3 } }))).toBe(false)
     expect(isThreaDocument(pinnedQuote({ version: 1, range: { from: 0, to: 0 } }))).toBe(false)
+  })
+})
+
+describe("agentBlock validation", () => {
+  it("accepts a stored agent block for a persona or a bot", () => {
+    expect(isThreaDocument(agentBlock({ authorId: "persona_1", authorName: "Ariadne" }))).toBe(true)
+    expect(isThreaDocument(agentBlock({ authorId: "bot_1", authorName: "Deploybot" }))).toBe(true)
+  })
+
+  it("rejects an agent block whose author is not an agent id, or whose name is empty", () => {
+    expect(isThreaDocument(agentBlock({ authorId: "", authorName: "Ariadne" }))).toBe(false)
+    expect(isThreaDocument(agentBlock({ authorId: "usr_01HUMAN", authorName: "Alice" }))).toBe(false)
+    expect(isThreaDocument(agentBlock({ authorId: `persona_${"x".repeat(70)}`, authorName: "Ariadne" }))).toBe(false)
+    expect(isThreaDocument(agentBlock({ authorId: "persona_1", authorName: "" }))).toBe(false)
+  })
+
+  it("accepts an agent block nested inside a list item", () => {
+    expect(
+      isThreaDocument({
+        type: "doc",
+        content: [
+          {
+            type: "bulletList",
+            content: [
+              { type: "listItem", content: agentBlock({ authorId: "persona_1", authorName: "Ariadne" }).content },
+            ],
+          },
+        ],
+      })
+    ).toBe(true)
+  })
+
+  it("rejects an agent block missing its attribution", () => {
+    expect(tryValidateContent(agentBlock({ authorName: "Ariadne" }))).toBeNull()
+    expect(tryValidateContent(agentBlock({ authorId: "persona_1" }))).toBeNull()
   })
 })

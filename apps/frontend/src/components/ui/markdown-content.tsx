@@ -47,6 +47,11 @@ function urlTransform(url: string): string {
   if (url.startsWith("memo:")) {
     return url
   }
+  // Allow agent: protocol so the blockquote renderer can detect the attribution
+  // anchor and swap the quote for the agent block. Same reasoning as above.
+  if (url.startsWith("agent:")) {
+    return url
+  }
   // Allow giphy: protocol so the link renderer can swap the anchor for the
   // inline GIF embed. Same reasoning as the pointer protocols above.
   if (url.startsWith("giphy:")) {

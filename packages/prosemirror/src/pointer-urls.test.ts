@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test"
 import {
+  buildAgentBlockHref,
   buildMemoHref,
   buildQuoteHref,
   buildSharedMessageHref,
+  parseAgentBlockHref,
   parseMemoHref,
   parseMentionPointerHref,
   parseQuoteHref,
@@ -210,5 +212,27 @@ describe("reference pins", () => {
   it("ignores query parameters it does not know", () => {
     expect(parseQuoteHref("quote:stream_1/msg_1?v=2&x=1")?.version).toBe(2)
     expect(parseSharedMessageHref("shared-message:stream_1/msg_1?x=1")?.version).toBeNull()
+  })
+})
+
+describe("parseAgentBlockHref", () => {
+  it("round-trips a persona and a bot attribution", () => {
+    expect(buildAgentBlockHref({ authorId: "persona_01ARIADNE" })).toBe("agent:persona_01ARIADNE")
+    expect(parseAgentBlockHref("agent:persona_01ARIADNE")).toEqual({ authorId: "persona_01ARIADNE" })
+    expect(parseAgentBlockHref(buildAgentBlockHref({ authorId: "bot_01X" }))).toEqual({ authorId: "bot_01X" })
+  })
+
+  it("rejects an author that is not an agent, so a human can never be rendered as one", () => {
+    expect(parseAgentBlockHref("agent:usr_01HUMAN")).toBeNull()
+    expect(parseAgentBlockHref("agent:01NOPREFIX")).toBeNull()
+    expect(parseAgentBlockHref("agent:")).toBeNull()
+  })
+
+  it("returns null for another scheme or a malformed shape", () => {
+    expect(parseAgentBlockHref("quote:stream_1/msg_1")).toBeNull()
+    // The aside an agent block came from is private: a second segment that
+    // would name it is rejected outright, never carried.
+    expect(parseAgentBlockHref("agent:persona_1/stream_1")).toBeNull()
+    expect(parseAgentBlockHref("agent:persona_1 x")).toBeNull()
   })
 })

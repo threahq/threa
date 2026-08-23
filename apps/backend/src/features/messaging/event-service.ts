@@ -47,7 +47,8 @@ import {
 } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { MessageComposeTraceRepository } from "./compose-trace-repository"
-import { collectMemoEmbedIds } from "@threa/prosemirror"
+import { collectAgentBlockAuthorIds, collectMemoEmbedIds } from "@threa/prosemirror"
+import { withDerivedMessageMetadata } from "./metadata-schema"
 import { serializeBigInt } from "@threa/backend-common"
 import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
@@ -876,7 +877,10 @@ export class EventService {
     }
 
     // Non-empty metadata only — keep payloads and projections clean of `{}`.
-    const metadata = params.metadata && Object.keys(params.metadata).length > 0 ? params.metadata : undefined
+    // The agent-block marker is derived here from the content itself: callers
+    // can't write `threa.*` (metadata-schema.ts rejects it), so attribution
+    // for agent-written text can't be spoofed or omitted.
+    const metadata = withDerivedMessageMetadata(params.metadata, collectAgentBlockAuthorIds(params.contentJson))
 
     // A message that declares an EXISTING conversation carries that id on its
     // event payload so the flat-timeline provenance chip renders membership the

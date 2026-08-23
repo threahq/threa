@@ -22,6 +22,7 @@ import {
   FolderInput,
   Check,
   MessageSquareDashed,
+  TextCursorInput,
 } from "lucide-react"
 import { toast } from "sonner"
 import type { QuoteSelection } from "@/lib/quote-selection"
@@ -186,6 +187,8 @@ export interface MessageActionContext {
   onDiscussWithAriadne?: () => void | Promise<void>
   /** Open a private aside anchored to this message. Set only on surfaces whose host can carry one. */
   onOpenAside?: () => void
+  /** Carry this agent message into the composer as an attributed block. Set only on agent messages inside an aside. */
+  onInsertAgentBlock?: () => void
   /**
    * Callback to enter batch-select mode with this message preselected, so
    * the user can extend the selection or drop straight onto a target. The
@@ -438,6 +441,13 @@ export const messageActions: MessageAction[] = [
     icon: Sparkles,
     when: (ctx) => !!ctx.onDiscussWithAriadne && !!ctx.streamId,
     action: (ctx) => ctx.onDiscussWithAriadne?.(),
+  },
+  {
+    id: "insert-agent-block",
+    label: "Insert into draft",
+    icon: TextCursorInput,
+    when: (ctx) => !!ctx.onInsertAgentBlock,
+    action: (ctx) => ctx.onInsertAgentBlock?.(),
   },
   {
     id: "open-aside",

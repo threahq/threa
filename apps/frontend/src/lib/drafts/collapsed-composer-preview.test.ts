@@ -86,6 +86,14 @@ const NODE_CASES: Record<string, { content: JSONContent; expected: string }> = {
     content: doc({ type: "quoteReply", attrs: { authorName: "Ada", snippet: "Original" } }),
     expected: "Replying to Ada",
   },
+  agentBlock: {
+    content: doc({
+      type: "agentBlock",
+      attrs: { authorId: "persona_1", authorName: "Ariadne" },
+      content: [paragraph(text("Two options."))],
+    }),
+    expected: "Text from Ariadne",
+  },
   sharedMessage: {
     content: doc({ type: "sharedMessage", attrs: { authorName: "Bob" } }),
     expected: "Sharing message from Bob",

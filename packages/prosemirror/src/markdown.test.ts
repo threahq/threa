@@ -1403,3 +1403,68 @@ describe("@threa/prosemirror reference pins", () => {
     expect(parseMarkdown(markdown).content?.[0]).toEqual(node)
   })
 })
+
+describe("@threa/prosemirror agent block round-trip", () => {
+  const block = (content: JSONContent[], attrs?: Record<string, unknown>): JSONContent => ({
+    type: "doc",
+    content: [
+      {
+        type: "agentBlock",
+        attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne", ...attrs },
+        content,
+      },
+    ],
+  })
+
+  it("serializes as a blockquote whose first line attributes the agent", () => {
+    const markdown = serializeToMarkdown(
+      block([{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }])
+    )
+    expect(markdown).toBe("> — [Ariadne](agent:persona_01ARIADNE)\n>\n> Two options.")
+  })
+
+  it("round-trips paragraphs, lists and code without losing the attribution", () => {
+    const doc = block([
+      { type: "paragraph", content: [{ type: "text", text: "Two options." }] },
+      {
+        type: "bulletList",
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "keep it" }] }] },
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "drop it" }] }] },
+        ],
+      },
+      { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "const a = 1" }] },
+    ])
+    expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(doc)
+  })
+
+  it("keeps a quoteReply and an agent block distinct in the same document", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "quoteReply",
+          attrs: {
+            messageId: "msg_1",
+            streamId: "stream_1",
+            authorName: "Alice",
+            authorId: "usr_1",
+            actorType: "user",
+            snippet: "what do you think?",
+          },
+        },
+        {
+          type: "agentBlock",
+          attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne" },
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }],
+        },
+      ],
+    }
+    expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(doc)
+  })
+
+  it("parses an attribution naming a non-agent id as an ordinary blockquote", () => {
+    const parsed = parseMarkdown("> — [Alice](agent:usr_01HUMAN)\n>\n> not an agent")
+    expect(parsed.content?.[0]?.type).toBe("blockquote")
+  })
+})

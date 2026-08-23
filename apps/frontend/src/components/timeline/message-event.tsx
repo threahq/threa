@@ -1,6 +1,7 @@
 import { type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
 import {
   isAsideHostType,
+  StreamTypes,
   isSentViaApi,
   LabelableResourceTypes,
   type StreamEvent,
@@ -66,6 +67,8 @@ import { ReminderPickerSheet } from "./reminder-picker-sheet"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useOpenAside } from "@/hooks/use-open-aside"
+import { useAgentBlock } from "./agent-block-context"
+import { parseMarkdown } from "@threa/prosemirror"
 import { MessageActionDrawer } from "./message-action-drawer"
 import { isAgentTraceActor } from "./message-actions"
 import { ThreadSlot } from "./thread-slot"
@@ -1191,6 +1194,23 @@ function SentMessageEvent({
     })
   }, [openAside, streamId, payload.messageId])
 
+  // "Insert into draft": carry an agent's message from an aside into the
+  // composer as an attributed block. Only agent-authored rows, only inside an
+  // aside — this is the one path agent text takes out of a thinking stream,
+  // and it always carries its attribution (INV-64 ids, never the slug).
+  const agentBlockCtx = useAgentBlock()
+  const agentAuthor =
+    (event.actorType === "persona" || event.actorType === "bot") && event.actorId ? event.actorId : null
+  const canInsertAgentBlock =
+    !!agentBlockCtx && !!agentAuthor && currentStream?.type === StreamTypes.ASIDE && !e2eEnabled
+  const handleInsertAgentBlock = useCallback(() => {
+    if (!agentBlockCtx || !agentAuthor) return
+    // The stored doc when the payload carries it (INV-58); markdown is the
+    // wire fallback for rows hydrated without one.
+    const content = payload.contentJson?.content ?? parseMarkdown(payload.contentMarkdown).content ?? []
+    agentBlockCtx.insertAgentBlock({ authorId: agentAuthor, authorName: actorName ?? agentAuthor, content })
+  }, [agentBlockCtx, agentAuthor, actorName, payload.contentJson, payload.contentMarkdown])
+
   // Shared action context for both desktop dropdown and mobile drawer
   const actionContext = useMemo(
     () => ({
@@ -1225,6 +1245,7 @@ function SentMessageEvent({
       onRequestReminder: handleRequestReminder,
       onDiscussWithAriadne: handleDiscussWithAriadne,
       onOpenAside: canOpenAside ? handleOpenAside : undefined,
+      onInsertAgentBlock: canInsertAgentBlock ? handleInsertAgentBlock : undefined,
       onQuoteReply: quoteReplyCtx
         ? () =>
             quoteReplyCtx.triggerQuoteReply({
@@ -1389,6 +1410,8 @@ function SentMessageEvent({
       handleDiscussWithAriadne,
       canOpenAside,
       handleOpenAside,
+      canInsertAgentBlock,
+      handleInsertAgentBlock,
       batch?.enabled,
       currentStream?.archivedAt,
       movedTombstoneEvent,
