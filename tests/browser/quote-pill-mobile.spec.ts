@@ -51,14 +51,37 @@ async function pillRect(page: Page): Promise<{ y: number; height: number }> {
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="selection-pill"]') as HTMLElement | null
     if (!el || el.className.includes("opacity-0")) return false
-    // Its entrance animation scales the box, so the rect it reports mid-flight
-    // is not where it will come to rest.
     return el.getAnimations().every((animation) => animation.playState === "finished")
   })
   return await page.evaluate(() => {
     const { y, height } = document.querySelector('[data-testid="selection-pill"]')!.getBoundingClientRect()
     return { y, height }
   })
+}
+
+/**
+ * Samples the pill every frame while `act` brings it on screen, so a test can
+ * assert on what was painted rather than on where it came to rest.
+ */
+async function sampleEntrance(page: Page, act: () => Promise<void>): Promise<{ top: number; opacity: number }[]> {
+  await page.evaluate(() => {
+    const samples: { top: number; opacity: number }[] = []
+    ;(window as unknown as { __pillSamples: typeof samples }).__pillSamples = samples
+    const started = performance.now()
+    const tick = () => {
+      const el = document.querySelector('[data-testid="selection-pill"]') as HTMLElement | null
+      if (el) {
+        samples.push({ top: el.getBoundingClientRect().top, opacity: Number(getComputedStyle(el).opacity) })
+      }
+      if (performance.now() - started < 1500) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+  await act()
+  await page.waitForTimeout(1600)
+  return await page.evaluate(
+    () => (window as unknown as { __pillSamples: { top: number; opacity: number }[] }).__pillSamples
+  )
 }
 
 /** Drags the pill by its grip, in steps, so the threshold and the move both fire. */
@@ -102,7 +125,7 @@ async function selectInExpandedBody(page: Page, start: number, end: number): Pro
   )
 }
 
-test("the quote pill lands below the selection, clear of the reserved band, and can be parked", async ({
+test("the quote pill appears where it lands, clear of the reserved band, and can be parked", async ({
   page: setupPage,
   browser,
 }) => {
@@ -137,11 +160,20 @@ test("the quote pill lands below the selection, clear of the reserved band, and 
 
   await openExpandedView(page)
 
-  await selectInExpandedBody(page, 4, 24)
+  const entrance = await sampleEntrance(page, () => selectInExpandedBody(page, 4, 24))
 
   const pill = page.getByTestId("selection-pill")
   await expect(pill).toBeVisible({ timeout: 10_000 })
   await expect(page.getByTestId("expanded-quote-title")).toHaveText(/20 characters selected/)
+
+  // It appears where it lands. Anything the reader can see has to already be at
+  // rest: the pill has to render before it can measure itself, so it is briefly
+  // at the sheet's origin, and every frame of that has to be fully transparent.
+  const visible = entrance.filter((sample) => sample.opacity > 0.05)
+  expect(visible.length, "the pill should have been sampled while visible").toBeGreaterThan(0)
+  const settled = visible[visible.length - 1].top
+  const travelled = visible.filter((sample) => Math.abs(sample.top - settled) > 1)
+  expect(travelled, `the pill moved while visible: ${JSON.stringify(travelled)}`).toHaveLength(0)
 
   // Below the selection, and never in the band the Touch to Search peek owns.
   const selectionBottom = await page.evaluate(() => window.getSelection()!.getRangeAt(0).getBoundingClientRect().bottom)
