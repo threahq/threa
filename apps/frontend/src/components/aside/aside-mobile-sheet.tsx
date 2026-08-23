@@ -1,6 +1,7 @@
 import {
   useRef,
   useState,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react"
@@ -33,10 +34,14 @@ function viewportHeight(): number {
   return window.visualViewport?.height ?? window.innerHeight
 }
 
-/** A drag would fight the on-screen keyboard, so a focused composer wins: the tap blurs it instead. */
-function composerHasFocus(sheet: HTMLElement | null): boolean {
+/** The focused editor inside the sheet, if any. */
+function focusedComposer(sheet: HTMLElement | null): HTMLElement | null {
   const active = document.activeElement
-  return active instanceof HTMLElement && !!sheet?.contains(active) && active.isContentEditable
+  return active instanceof HTMLElement && !!sheet?.contains(active) && active.isContentEditable ? active : null
+}
+
+function isEditorTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.isContentEditable
 }
 
 /**
@@ -49,6 +54,18 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const sheetRef = useRef<HTMLDivElement>(null)
   const [dragHeight, setDragHeight] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
+  // The on-screen keyboard takes the bottom of the viewport; a 45% peek of
+  // what is left is all chrome and composer, no conversation. While an editor
+  // in the sheet has focus the sheet rises to the full (keyboard-shrunk)
+  // viewport — presentation only, the chosen detent is kept and returns when
+  // the keyboard goes.
+  const [keyboardLift, setKeyboardLift] = useState(false)
+  const onFocusCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (isEditorTarget(event.target)) setKeyboardLift(true)
+  }
+  const onBlurCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (isEditorTarget(event.target)) setKeyboardLift(false)
+  }
   const drag = useRef<{
     startY: number
     startHeight: number
@@ -60,7 +77,15 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (composerHasFocus(sheetRef.current)) return
+    // A drag would fight the on-screen keyboard, so while an editor in the
+    // sheet has focus the handle dismisses the keyboard instead; the next
+    // touch resizes.
+    const composer = focusedComposer(sheetRef.current)
+    if (composer) {
+      event.preventDefault()
+      composer.blur()
+      return
+    }
     // The handle carries text; without this a drag starts a text selection and
     // the browser cancels the pointer stream mid-gesture, so the sheet snaps
     // back to where it started.
@@ -116,7 +141,8 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     setAsideSurface(steppedAsideSurface(surface, direction))
   }
 
-  const restingHeight = surface === "fullscreen" ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
+  const lifted = keyboardLift || surface === "fullscreen"
+  const restingHeight = lifted ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
   const height = dragging && dragHeight != null ? `${dragHeight}px` : restingHeight
 
   return (
@@ -126,6 +152,9 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         ref={sheetRef}
         data-testid="aside-sheet"
         data-surface={surface}
+        data-keyboard-lift={keyboardLift || undefined}
+        onFocusCapture={onFocusCapture}
+        onBlurCapture={onBlurCapture}
         data-suppress-pull-refresh="true"
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-xl border-t-2 border-primary/70 bg-background shadow-lg",

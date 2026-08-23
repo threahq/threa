@@ -307,22 +307,49 @@ describe("aside surfaces", () => {
       expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
     })
 
-    it("leaves the sheet alone while the composer holds focus, so a drag cannot fight the keyboard", () => {
+    it("rises to the full viewport while an editor in it has focus, and settles back when the keyboard goes", () => {
+      openOnHost()
+      renderPage()
+
+      const sheet = screen.getByTestId("aside-sheet")
+      const editor = document.createElement("div")
+      editor.setAttribute("contenteditable", "true")
+      editor.tabIndex = 0
+      sheet.appendChild(editor)
+      Object.defineProperty(editor, "isContentEditable", { value: true })
+
+      expect(sheet).toHaveStyle({ height: "45dvh" })
+      fireEvent.focus(editor)
+      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveAttribute("data-keyboard-lift", "true")
+      // The chosen detent is presentation-independent: still the peek.
+      expect(getAsideState()?.surface).toBe("dock")
+
+      fireEvent.blur(editor)
+      expect(sheet).toHaveStyle({ height: "45dvh" })
+      expect(sheet).not.toHaveAttribute("data-keyboard-lift")
+    })
+
+    it("dismisses the keyboard on a handle touch while the composer holds focus, instead of dragging against it", () => {
       openOnHost()
       renderPage()
 
       const handle = screen.getByTestId("aside-sheet-handle")
       const editor = document.createElement("div")
       editor.setAttribute("contenteditable", "true")
+      editor.tabIndex = 0
       screen.getByTestId("aside-sheet").appendChild(editor)
       Object.defineProperty(editor, "isContentEditable", { value: true })
       editor.focus()
+      expect(document.activeElement).toBe(editor)
       handle.setPointerCapture = vi.fn()
 
       fireEvent.pointerDown(handle, { pointerId: 1, clientY: 100 })
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
       fireEvent.pointerUp(handle, { pointerId: 1, clientY: 500 })
 
+      expect(document.activeElement).not.toBe(editor)
+      expect(handle.setPointerCapture).not.toHaveBeenCalled()
       expect(getAsideState()?.surface).toBe("dock")
       expect(screen.getByTestId("aside-sheet")).toBeInTheDocument()
     })
