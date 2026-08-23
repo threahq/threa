@@ -291,6 +291,33 @@ describe("aside surfaces", () => {
       expect(screen.getAllByTestId("aside-strip")).toHaveLength(1)
     })
 
+    it("settles back where it was when the browser cancels the gesture mid-drag, committing nothing", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      const sheet = screen.getByTestId("aside-sheet")
+      sheet.getBoundingClientRect = () => ({
+        height: 360,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+      handle.setPointerCapture = vi.fn()
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
+      fireEvent.pointerCancel(handle, { pointerId: 1, clientY: 500 })
+
+      expect(getAsideState()?.surface).toBe("dock")
+      expect(sheet).toHaveStyle({ height: "45dvh" })
+    })
+
     it("reaches the same detents from the keyboard, since the sheet hides the surface picker", () => {
       openOnHost()
       renderPage()

@@ -54,14 +54,16 @@ async function sheetHeight(page: Page): Promise<number> {
 async function dragHandle(page: Page, dy: number): Promise<void> {
   const box = await handle(page).boundingBox()
   if (!box) throw new Error("aside handle has no box")
-  const x = box.x + box.width / 2
-  const y = box.y + box.height / 2
-  const endY = Math.max(2, Math.min(PHONE.height - 2, y + dy))
-  await page.mouse.move(x, y)
+  const handleCenterX = box.x + box.width / 2
+  const handleCenterY = box.y + box.height / 2
+  const endY = Math.max(2, Math.min(PHONE.height - 2, handleCenterY + dy))
+  await page.mouse.move(handleCenterX, handleCenterY)
   await page.mouse.down()
   // Several steps so the drag reads as a drag, ending slowly so the release
   // settles on distance rather than a flick.
-  for (const step of [0.25, 0.5, 0.75, 1]) await page.mouse.move(x, y + (endY - y) * step)
+  for (const step of [0.25, 0.5, 0.75, 1]) {
+    await page.mouse.move(handleCenterX, handleCenterY + (endY - handleCenterY) * step)
+  }
   await page.waitForTimeout(200)
   await page.mouse.up()
 }

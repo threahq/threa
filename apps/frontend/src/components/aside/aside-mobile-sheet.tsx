@@ -121,6 +121,14 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     setDragHeight(next)
   }
 
+  // The browser took the pointer (a scroll, a system gesture): the drag never
+  // finished, so nothing is committed — the sheet settles back where it was.
+  const onPointerCancel = () => {
+    drag.current = null
+    setDragging(false)
+    setDragHeight(null)
+  }
+
   const onPointerUp = () => {
     const state = drag.current
     drag.current = null
@@ -174,7 +182,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
+          onPointerCancel={onPointerCancel}
         >
           <span aria-hidden className="h-1 w-8 shrink-0 rounded-full bg-muted-foreground/40" />
           {/* Where the aside sits, not what it is — the pane header below carries
