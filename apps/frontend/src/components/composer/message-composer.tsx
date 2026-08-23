@@ -1326,7 +1326,14 @@ export function MessageComposer({
               editor to the top of this scroller once the keyboard shortens it, which would
               push a top toolbar out of view; the chrome lives at the foot instead. */}
             <div
-              className="flex-1 min-h-0 overflow-y-auto px-4 [&_.tiptap]:max-h-none [&_.tiptap]:min-h-[200px]"
+              className={cn(
+                "flex-1 min-h-0 overflow-y-auto px-4 [&_.tiptap]:max-h-none",
+                // Desktop gives the editor a floor and extra room below so the
+                // writing position can sit mid-screen; on touch the pane is
+                // short and the keyboard eats half of it, so the scroller only
+                // scrolls when the text itself needs it.
+                !isMobile && "[&_.tiptap]:min-h-[200px]"
+              )}
               onClick={(e) => {
                 if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
                   return
@@ -1366,8 +1373,7 @@ export function MessageComposer({
                   ) : undefined
                 }
               />
-              {/* Extra space so the writing position can be centered on screen */}
-              <div className="h-[50vh]" />
+              {!isMobile && <div className="h-[50vh]" />}
             </div>
 
             {isMobile ? (
