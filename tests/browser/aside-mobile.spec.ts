@@ -46,34 +46,37 @@ async function sheetHeight(page: Page): Promise<number> {
   return Math.round(box.height)
 }
 
-/** Drag the handle by `dy` (negative = up) as a real pointer gesture. */
+/**
+ * Drag the handle by `dy` (negative = up) as a real pointer gesture. The end
+ * point is kept inside the viewport — a synthetic move past the edge is not
+ * delivered, which silently turns a full-length drag into no drag at all.
+ */
 async function dragHandle(page: Page, dy: number): Promise<void> {
   const box = await handle(page).boundingBox()
   if (!box) throw new Error("aside handle has no box")
   const x = box.x + box.width / 2
   const y = box.y + box.height / 2
+  const endY = Math.max(2, Math.min(PHONE.height - 2, y + dy))
   await page.mouse.move(x, y)
   await page.mouse.down()
   // Several steps so the drag reads as a drag, ending slowly so the release
   // settles on distance rather than a flick.
-  for (const step of [0.4, 0.7, 0.9, 1]) await page.mouse.move(x, y + dy * step)
+  for (const step of [0.25, 0.5, 0.75, 1]) await page.mouse.move(x, y + (endY - y) * step)
   await page.waitForTimeout(200)
   await page.mouse.up()
 }
 
-async function openAsideFromComposer(page: Page): Promise<void> {
-  const editor = page.getByRole("main").locator("[data-editor-zone='main'] [contenteditable='true']").first()
-  // Focus rather than click: at phone width the composer card's own padding
-  // owns the pointer at the editor's hit point, so a click never lands.
-  await editor.focus()
-  await page.keyboard.type("/aside")
-  const popup = page.locator("[aria-label='Slash command suggestions']")
-  await expect(popup).toBeVisible({ timeout: 5000 })
-  await popup
-    .getByRole("option", { name: /^\/?aside\b/ })
-    .first()
-    .click()
-  await page.keyboard.press("Enter")
+async function openAsideFromPalette(page: Page): Promise<void> {
+  // The command palette, not the slash command: at phone width the suggestion
+  // popup's rows are unreliable to hit, and the palette is the entry point a
+  // phone actually offers (the sidebar's Commands button opens the same thing).
+  await page.keyboard.press("ControlOrMeta+Shift+KeyK")
+  const command = page.getByText("Open an aside here").first()
+  await expect(command).toBeVisible({ timeout: 10000 })
+  await command.click()
+  // The palette's overlay covers the page while it closes, and a drag started
+  // against it never reaches the sheet's handle.
+  await expect(page.getByRole("dialog")).toHaveCount(0)
 }
 
 test.describe("Aside — mobile surface", () => {
@@ -84,7 +87,7 @@ test.describe("Aside — mobile surface", () => {
     testId = result.testId
   })
 
-  test("peeks over the host, pulls up to full, parks in the strip, and closes on back", async ({ page }) => {
+  test("peeks over the host, pulls up to full, closes on back, and parks in the strip", async ({ page }) => {
     // Channel creation drives desktop chrome (the sidebar's "+ New Channel"),
     // so the phone viewport is taken only once the fixture stream exists.
     await createChannel(page, `aside-m-${testId}`)
@@ -95,7 +98,7 @@ test.describe("Aside — mobile surface", () => {
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await expect(hostScroller(page, streamId)).toBeVisible({ timeout: 20000 })
 
-    await openAsideFromComposer(page)
+    await openAsideFromPalette(page)
 
     // Peek: the sheet is well short of the viewport, and the host is still there.
     await expect(sheet(page)).toHaveAttribute("data-surface", "dock", { timeout: 15000 })
@@ -110,23 +113,28 @@ test.describe("Aside — mobile surface", () => {
     await expect(sheet(page)).toHaveAttribute("data-surface", "fullscreen", { timeout: 10000 })
     expect(await sheetHeight(page)).toBeGreaterThan(PHONE.height * 0.9)
 
+    // OS back closes the aside rather than leaving the stream.
+    await page.goBack()
+    await expect(sheet(page)).toHaveCount(0)
+    await expect(strip(page)).toHaveCount(0)
+    expect(page.url()).toContain(streamId)
+
+    // The anchor row is the way back in.
+    const anchor = hostScroller(page, streamId).locator("[data-aside-id]").first()
+    await expect(anchor).toBeVisible({ timeout: 10000 })
+    await anchor.getByRole("button", { name: "Resume" }).click()
+    await expect(sheet(page)).toBeVisible({ timeout: 10000 })
+
     // Drag to the floor: the aside parks in the strip above the composer.
     await dragHandle(page, PHONE.height)
     await expect(strip(page)).toBeVisible({ timeout: 10000 })
     await expect(sheet(page)).toHaveCount(0)
     await expect(page.locator("[data-sonner-toast]")).toHaveCount(0)
 
-    // Back out of the strip and into the sheet again, then close with OS back.
+    // And the strip brings it back, into the surface it was last read in.
     await strip(page)
       .getByRole("button", { name: /^Open aside:/ })
       .click()
-    await expect(sheet(page)).toBeVisible({ timeout: 10000 })
-    await page.goBack()
-    await expect(sheet(page)).toHaveCount(0)
-    await expect(strip(page)).toHaveCount(0)
-    // Back closed the aside rather than leaving the stream.
-    expect(page.url()).toContain(streamId)
-    // The anchor row is still the way back in.
-    await expect(hostScroller(page, streamId).locator("[data-aside-id]").first()).toBeVisible({ timeout: 10000 })
+    await expect(sheet(page)).toHaveAttribute("data-surface", "fullscreen", { timeout: 10000 })
   })
 })

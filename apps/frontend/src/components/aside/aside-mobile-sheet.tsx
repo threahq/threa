@@ -50,6 +50,10 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (composerHasFocus(sheetRef.current)) return
+    // The handle carries text; without this a drag starts a text selection and
+    // the browser cancels the pointer stream mid-gesture, so the sheet snaps
+    // back to where it started.
+    event.preventDefault()
     const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(surface, viewportHeight())
     drag.current = {
       startY: event.clientY,
@@ -114,7 +118,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           aria-orientation="horizontal"
           aria-label="Resize aside"
           data-testid="aside-sheet-handle"
-          className="flex shrink-0 touch-none items-center gap-2 px-3 py-2"
+          className="flex shrink-0 touch-none select-none items-center gap-2 px-3 py-2"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
