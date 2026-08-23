@@ -1,9 +1,9 @@
 import { useCallback, useMemo } from "react"
-import { ASIDE_COMMAND, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
+import { toast } from "sonner"
+import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "@/lib/commands"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
-import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useOpenAside } from "@/hooks/use-open-aside"
 import { useStreamCommands } from "@/hooks/use-stream-commands"
 
@@ -41,7 +41,6 @@ export function useComposerCommandSend(
   conversationId?: string
 ) {
   const availableCommands = useStreamCommands(workspaceId, streamId)
-  const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
   const openAside = useOpenAside(workspaceId)
   const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId ?? "")
 
@@ -85,23 +84,13 @@ export function useComposerCommandSend(
   )
 
   /**
-   * Run a planned command. Client-action commands route locally
-   * (`/discuss-with-ariadne` creates a scratchpad + navigates; `/aside` opens an
-   * aside beside this surface) and swallow their failure — the hook already
-   * toasts, so a second inline error would render the same failure twice. A
-   * runtime dispatch throws, leaving the surface to report.
+   * Run a planned command. Client-action commands route locally (`/aside`
+   * opens an aside beside this surface) and swallow their failure — the hook
+   * already toasts, so a second inline error would render the same failure
+   * twice. A runtime dispatch throws, leaving the surface to report.
    */
   const dispatchCommand = useCallback(
     async (plan: ComposerCommandPlan) => {
-      if (plan.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) {
-        if (!streamId) return
-        try {
-          await startDiscussWithAriadne({ kind: "thread", sourceStreamId: streamId })
-        } catch {
-          /* hook already toasted; composer stays clean */
-        }
-        return
-      }
       if (plan.clientActionId === ASIDE_COMMAND) {
         if (!streamId) return
         try {
@@ -115,13 +104,20 @@ export function useComposerCommandSend(
         }
         return
       }
+      // A client action the composer no longer knows: a draft written before it
+      // was removed still carries the node. Queueing it would send a command the
+      // backend has no handler for, so it stops here and says so (INV-11).
+      if (plan.clientActionId) {
+        toast.error(`/${plan.commandName} isn't available any more.`)
+        return
+      }
       await queueCommand({
         commandMarkdown: plan.commandMarkdown,
         commandName: plan.commandName,
         ...(conversationId && { conversationId }),
       })
     },
-    [conversationId, queueCommand, startDiscussWithAriadne, openAside, streamId]
+    [conversationId, queueCommand, openAside, streamId]
   )
 
   return { availableCommands, planSend, dispatchCommand }

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
+import { toast } from "sonner"
 import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
 import { spyOnExport } from "@/test"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as dispatchQueueModule from "@/hooks/use-command-dispatch-queue"
-import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { useComposerCommandSend } from "./use-composer-command-send"
 
@@ -28,7 +28,6 @@ beforeEach(() => {
     queuedFor.push(streamId)
     return { queueCommand }
   }) as never)
-  spyOnExport(discussModule, "useDiscussWithAriadne").mockReturnValue((() => vi.fn()) as never)
   openAside = vi.fn().mockResolvedValue(undefined)
   spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((() => openAside) as never)
 })
@@ -130,6 +129,20 @@ describe("useComposerCommandSend dispatchCommand", () => {
       kind: "conversation",
       hostStreamId: "stream_root",
       conversationId: "conv_1",
+    })
+  })
+
+  it("refuses a client action this build no longer has, instead of queueing it to the backend", async () => {
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "")
+    await hook("stream_host").current.dispatchCommand({
+      kind: "command",
+      commandName: "discuss-with-ariadne",
+      clientActionId: "discuss-with-ariadne",
+      commandMarkdown: "/discuss-with-ariadne",
+    })
+    expect({ queued: queueCommand.mock.calls, toasts: error.mock.calls }).toEqual({
+      queued: [],
+      toasts: [["/discuss-with-ariadne isn't available any more."]],
     })
   })
 })

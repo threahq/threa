@@ -27,7 +27,7 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
-import * as discussModule from "@/hooks/use-discuss-with-ariadne"
+import * as openAsideModule from "@/hooks/use-open-aside"
 import * as shareHandoffModule from "@/stores/composer-handoff-store"
 import * as boardReplyComposerModule from "@/components/board/board-reply-composer"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
@@ -480,17 +480,13 @@ describe("ConversationPanel", () => {
     // A foreign scope's stash id (e.g. a thread draft on the same route) must be
     // left for its own host — opening here would strand the restore.
     await seedStashRow("draft_foreign", "thread:msg_9")
-    const originalGet = db.drafts.get.bind(db.drafts) as (
-      key: string
-    ) => ReturnType<typeof db.drafts.get>
+    const originalGet = db.drafts.get.bind(db.drafts) as (key: string) => ReturnType<typeof db.drafts.get>
     let rowQueryResolved = false
-    vi.spyOn(db.drafts, "get").mockImplementation(
-      ((key: string) => {
-        const request = originalGet(key)
-        if (key === "draft_foreign") void request.then(() => (rowQueryResolved = true))
-        return request
-      }) as typeof db.drafts.get
-    )
+    vi.spyOn(db.drafts, "get").mockImplementation(((key: string) => {
+      const request = originalGet(key)
+      if (key === "draft_foreign") void request.then(() => (rowQueryResolved = true))
+      return request
+    }) as typeof db.drafts.get)
     let captured: number | undefined
     let renderedAfterQuery = false
     vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
@@ -707,13 +703,13 @@ describe("ConversationPanel", () => {
     await waitFor(() => expect(deleteMessage).toHaveBeenCalledWith(WORKSPACE_ID, "msg_1"))
   })
 
-  it("offers Discuss with Ariadne seeded with the whole conversation's span, not one stream", async () => {
-    // The conversation surface must start the discussion with a conversation-
-    // scoped target (root + its threads), never a single-stream thread ref —
-    // that's the whole point of #2. The hook itself is unit-tested; here we pin
-    // the wiring: the row passes the conversation id + its root + the focal.
-    const startDiscuss = vi.fn().mockResolvedValue(undefined)
-    vi.spyOn(discussModule, "useDiscussWithAriadne").mockReturnValue(startDiscuss)
+  it("opens an aside anchored to the whole conversation, not one stream", async () => {
+    // The conversation surface must anchor with a conversation-scoped origin
+    // (root + its threads), never a single-stream ref. The hook itself is
+    // unit-tested; here we pin the wiring: the row passes the conversation id,
+    // its root, and the focal message.
+    const openAside = vi.fn().mockResolvedValue(undefined)
+    vi.spyOn(openAsideModule, "useOpenAside").mockReturnValue(openAside)
 
     const user = userEvent.setup()
     mountPanel({ cached: asCached(makePost()) })
@@ -721,13 +717,13 @@ describe("ConversationPanel", () => {
 
     const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
     await user.click(firstRowMenu)
-    await user.click(await screen.findByText("Discuss with Ariadne"))
+    await user.click(await screen.findByText("Open an aside here"))
 
-    expect(startDiscuss).toHaveBeenCalledWith({
+    expect(openAside).toHaveBeenCalledWith({
       kind: "conversation",
+      hostStreamId: "stream_1",
       conversationId: CONVERSATION_ID,
-      rootStreamId: "stream_1",
-      sourceMessageId: "msg_1",
+      anchorId: "msg_1",
     })
   })
 

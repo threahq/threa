@@ -285,7 +285,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     return (
       allDrafts
         // No payload filter here, deliberately: a draft carrying only context refs
-        // (seeded by "Discuss with Ariadne") has an empty body and no attachments,
+        // (seeded with a context bag) has an empty body and no attachments,
         // and the explorer already skips it — the scope's own picker is the last
         // surface that can reach it, so filtering here would strand it while it
         // keeps syncing. The only exclusion is this host's own loaded draft (it's

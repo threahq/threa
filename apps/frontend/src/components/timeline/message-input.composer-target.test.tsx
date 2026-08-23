@@ -16,7 +16,6 @@ import * as e2eSessionStore from "@/stores/e2e-session-store"
 import * as conversationReplyModule from "./conversation-reply-context"
 import * as useConversationsModule from "@/hooks/use-conversations"
 import * as composerModule from "@/components/composer"
-import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import { spyOnExport } from "@/test"
@@ -147,9 +146,6 @@ beforeEach(async () => {
     () => undefined as unknown as ReturnType<typeof hooksModule.useComposerHeightPublish>
   )
   vi.spyOn(hooksModule, "useDecryptedDraftPreviews").mockReturnValue(new Map())
-  vi.spyOn(discussModule, "useDiscussWithAriadne").mockImplementation(
-    () => vi.fn() as unknown as ReturnType<typeof discussModule.useDiscussWithAriadne>
-  )
   vi.spyOn(streamContextBagModule, "useStreamContextBag").mockReturnValue({
     data: { bag: null, refs: [] },
     isLoading: false,

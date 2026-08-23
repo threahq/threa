@@ -36,7 +36,7 @@ export interface ChannelItem {
  *
  * - `"message"` commands take over the whole message (they're dispatched as a
  *   command, not embedded in prose), so they only appear when the `/` is the
- *   sole content of the message — e.g. `/invite`, `/discuss-with-ariadne`.
+ *   sole content of the message — e.g. `/invite`, `/aside`.
  * - `"inline"` commands insert into the surrounding text and may be triggered
  *   mid-sentence — e.g. the memo embed.
  *
@@ -54,7 +54,7 @@ export interface CommandItem {
   /**
    * Client-action id. When present the suggestion list invokes the matching
    * handler directly instead of inserting a `/command` node that'd be sent
-   * to the backend. Used for UI-only commands like `/discuss-with-ariadne`.
+   * to the backend. Used for UI-only commands like `/aside`.
    */
   clientActionId?: string
   /** See {@link CommandPlacement}. Defaults to `"message"` when omitted. */

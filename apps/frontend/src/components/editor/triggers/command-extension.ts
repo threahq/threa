@@ -59,7 +59,7 @@ export type CommandOptions = TriggerExtensionOptions<CommandItem>
  * The palette triggers mid-sentence (`startOfLine: false`), not just at the
  * start of a block. Which commands surface is decided per-item by the
  * suggestion list's filter (see `useCommandSuggestion`): whole-message commands
- * (`placement: "message"`, the default — e.g. `/invite`, `/discuss-with-ariadne`)
+ * (`placement: "message"`, the default — e.g. `/invite`, `/aside`)
  * only show when the `/` opens the message, while inline commands
  * (`placement: "inline"` — e.g. the memo embed) show anywhere.
  */

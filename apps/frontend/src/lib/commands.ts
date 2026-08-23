@@ -21,7 +21,7 @@ export interface ExtractedCommand {
   name: string
   /**
    * Opaque discriminator for client-action commands. When non-null the
-   * composer handles the command locally (e.g. `/discuss-with-ariadne`)
+   * composer handles the command locally (e.g. `/aside`)
    * instead of dispatching to `commandsApi`. Persisted on the node at pick
    * time via `CommandExtension.mapPropsToAttrs` so the composer doesn't
    * have to maintain a list of per-`name` client-action switches.

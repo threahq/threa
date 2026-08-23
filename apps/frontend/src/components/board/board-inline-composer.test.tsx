@@ -151,7 +151,7 @@ beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue(undefined as never)
   // Send-time command routing reaches for app-wide services (stream creation for
-  // `/discuss-with-ariadne`, the dispatch queue's Dexie tables). Inert by
+  // `/aside`, the dispatch queue's Dexie tables). Inert by
   // default — the dispatch describe below drives it directly.
   spyOnExport(commandSendModule, "useComposerCommandSend").mockReturnValue((() => ({
     availableCommands: [],

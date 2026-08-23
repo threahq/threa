@@ -46,7 +46,6 @@ import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
-import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useOpenAside } from "@/hooks/use-open-aside"
 import { useSettleConversationMessage } from "@/hooks/use-conversations"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
@@ -131,9 +130,9 @@ interface MessageItemProps {
    * link instead of the stream permalink; the label page leaves it unset. */
   conversationId?: string
   /** The conversation's root stream, set alongside `conversationId` by the
-   * conversation surfaces. Enables "Discuss with Ariadne" to seed the scratchpad
-   * with the whole conversation's span (root + threads) rather than one stream's
-   * window. The label page leaves both unset, so the action hides there. */
+   * conversation surfaces. Lets an aside anchor to the whole conversation's span
+   * (root + threads) rather than one stream's window. The label page leaves both
+   * unset, so the action hides there. */
   conversationRootStreamId?: string
   /** Scroll this row into view and flash it — the conversation panel sets it for
    * the `?m=` deep-link target so a shared message link lands on the right row. */
@@ -289,26 +288,10 @@ export function MessageItem({
     setDeleteDialogOpen(false)
   }, [deleteMessage, message.id])
 
-  // "Discuss with Ariadne" from a conversation surface seeds the scratchpad with
-  // the whole conversation's span (root + threads), not one stream's window — a
-  // conversation-scoped context ref the backend resolves. Only wired when both
-  // the conversation id and its root are known (the conversation surfaces set
-  // both); the label page leaves them unset, so the action hides there. The menu
-  // invokes fire-and-forget, so swallow after the hook's own error toast (INV-11:
-  // the toast is the loud failure, not an unhandled rejection).
-  const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
-  const canDiscussConversation = Boolean(conversationId && conversationRootStreamId)
-  const handleDiscussWithAriadne = useCallback(() => {
-    if (!conversationId || !conversationRootStreamId) return
-    void startDiscussWithAriadne({
-      kind: "conversation",
-      conversationId,
-      rootStreamId: conversationRootStreamId,
-      sourceMessageId: message.id,
-    }).catch(() => {
-      /* toast already surfaced inside the hook */
-    })
-  }, [startDiscussWithAriadne, conversationId, conversationRootStreamId, message.id])
+  // Only wired when both the conversation id and its root are known (the
+  // conversation surfaces set both); the label page leaves them unset, so the
+  // action hides there.
+  const canAnchorConversation = Boolean(conversationId && conversationRootStreamId)
 
   // Conversation-anchored aside: the conversation's root stream is the host and
   // the conversation id the authoritative anchor unit (a card's rows span
@@ -320,7 +303,7 @@ export function MessageItem({
   // nothing about whether the server would accept the aside.
   const conversationRootStream = useStreamFromStore(conversationRootStreamId)
   const canOpenAside =
-    canDiscussConversation &&
+    canAnchorConversation &&
     isAsideHostType(conversationRootStream?.type ?? "") &&
     conversationRootStream?.e2eEnabled !== true &&
     !conversationRootStream?.archivedAt
@@ -491,7 +474,6 @@ export function MessageItem({
     isSaved,
     onToggleSave: handleToggleSave,
     onRequestReminder: handleRequestReminder,
-    onDiscussWithAriadne: canDiscussConversation ? handleDiscussWithAriadne : undefined,
     onOpenAside: canOpenAside ? handleOpenAside : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,

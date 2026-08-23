@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { ASIDE_COMMAND, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo, type StreamType } from "@threa/types"
+import { ASIDE_COMMAND, type CommandInfo, type StreamType } from "@threa/types"
 import type { BotRuntimeInstance } from "../bot-runtimes"
 import type { Stream } from "../streams"
 import {
@@ -49,9 +49,6 @@ describe("session-control command advertisement", () => {
 
 describe("client-action command availability", () => {
   const aside = listClientActionCommandInfos().find((info) => info.clientActionId === ASIDE_COMMAND) as CommandInfo
-  const discuss = listClientActionCommandInfos().find(
-    (info) => info.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND
-  ) as CommandInfo
   const stream = (type: StreamType, overrides: Partial<Stream> = {}): Stream =>
     ({ id: `stream_${type}`, type, ...overrides }) as Stream
 
@@ -74,6 +71,9 @@ describe("client-action command availability", () => {
 
   it("never offers /aside on an end-to-end encrypted host", () => {
     expect(isClientActionAvailableInStream(aside, stream("scratchpad", { e2eEnabled: true }))).toBe(false)
-    expect(isClientActionAvailableInStream(discuss, stream("scratchpad", { e2eEnabled: true }))).toBe(true)
+  })
+
+  it("is the only client action left in the catalog", () => {
+    expect(listClientActionCommandInfos().map((info) => info.clientActionId)).toEqual([ASIDE_COMMAND])
   })
 })
