@@ -179,6 +179,10 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: frontendPort,
+    // Bind the port asked for or fail. Vite's default is to slide to the next
+    // free one, which leaves the dev stack's readiness probe, its CORS origins
+    // and its Tailscale proxy all addressing a server that is not this one.
+    strictPort: true,
     allowedHosts,
     hmr: isE2ETest ? false : undefined,
     proxy: buildProxyConfig(),
@@ -193,6 +197,7 @@ export default defineConfig({
   preview: {
     host: "0.0.0.0",
     port: frontendPort,
+    strictPort: true,
     proxy: buildProxyConfig(),
   },
 })

@@ -70,6 +70,20 @@ async function dragGripTo(page: Page, to: { x: number; y: number }): Promise<voi
   await page.mouse.up()
 }
 
+/**
+ * Opens the full-message view and waits for the sheet to finish growing into
+ * its expanded height. Measuring against a scroller still in motion samples a
+ * placement that is already stale, and the sheet collapses on Back, so the
+ * reopen path needs the same wait as the first open.
+ */
+async function openExpandedView(page: Page): Promise<void> {
+  await page.getByTestId("expanded-quote-open").click()
+  await expect(page.getByTestId("expanded-quote-title")).toBeVisible()
+  await expect
+    .poll(async () => page.evaluate(() => document.querySelector("[data-vaul-drawer]")!.getBoundingClientRect().top))
+    .toBeLessThan(60)
+}
+
 /** Selects `[start, end)` of the expanded view's body, as a long-press drag does. */
 async function selectInExpandedBody(page: Page, start: number, end: number): Promise<void> {
   await page.evaluate(
@@ -121,13 +135,7 @@ test("the quote pill lands below the selection, clear of the reserved band, and 
   const sheet = page.locator("[data-vaul-drawer]")
   await expect(sheet).toBeVisible({ timeout: 10_000 })
 
-  await page.getByTestId("expanded-quote-open").click()
-  await expect(page.getByTestId("expanded-quote-title")).toBeVisible()
-  // The sheet grows into its expanded height; measuring against a moving
-  // scroller would sample a placement that is already stale.
-  await expect
-    .poll(async () => page.evaluate(() => document.querySelector("[data-vaul-drawer]")!.getBoundingClientRect().top))
-    .toBeLessThan(60)
+  await openExpandedView(page)
 
   await selectInExpandedBody(page, 4, 24)
 
@@ -168,7 +176,7 @@ test("the quote pill lands below the selection, clear of the reserved band, and 
   await dragGripTo(page, { x: 90, y: 200 })
   expect((await pillRect(page)).y).toBeLessThan(home)
   await page.getByRole("button", { name: /back to actions/i }).click()
-  await page.getByTestId("expanded-quote-open").click()
+  await openExpandedView(page)
   await selectInExpandedBody(page, 4, 24)
   const reopened = await pillRect(page)
   expect(Math.abs(reopened.y - placed.y)).toBeLessThan(4)

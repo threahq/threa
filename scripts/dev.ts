@@ -11,7 +11,20 @@ const POSTGRES_HOST = "localhost"
 // here is read by whichever one starts first — the backoffice takes the port,
 // the frontend silently falls back to the next one, and the Tailscale proxy
 // then serves the wrong app.
-const FRONTEND_PORT = process.env.DEV_FRONTEND_PORT?.trim() || "3000"
+const FRONTEND_PORT = resolveFrontendPort()
+
+function resolveFrontendPort(): string {
+  const raw = process.env.DEV_FRONTEND_PORT?.trim()
+  if (!raw) return "3000"
+  const port = Number(raw)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`Invalid DEV_FRONTEND_PORT: ${raw}`)
+    process.exit(1)
+  }
+  // Canonical decimal, so every consumer below and Vite itself agree on one
+  // spelling of the same port.
+  return String(port)
+}
 
 const POSTGRES_PORT = 5454
 const MINIO_HOST = "localhost"
