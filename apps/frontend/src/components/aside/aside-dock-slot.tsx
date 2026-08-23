@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useAsideForHost, type OpenAsideState } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
+import { AsideMobileSheet } from "./aside-mobile-sheet"
+import { AsideMinimizedStrip } from "./aside-minimized-strip"
 
 export const ASIDE_DOCK_WIDTH = 400
 // Matches the thread panel slot (`duration-200`): the dock folds shut on the
@@ -46,25 +48,29 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
   const rendered = useFoldingState(reading)
   const isMobile = useIsMobile()
 
+  // On a phone the parked strip is this slot's too: the page's main column is
+  // invisible and inert under a panel takeover, so a strip inside it would
+  // vanish with the aside the moment it was parked from a thread or
+  // conversation panel. Here it sits over whichever surface is showing.
+  if (isMobile && current?.surface === "minimized") {
+    return <AsideMinimizedStrip workspaceId={workspaceId} hostKey={hostKey} overlay />
+  }
+
   if (!rendered) return null
   const surface = rendered.surface === "fullscreen" ? "fullscreen" : "dock"
 
   if (isMobile) {
+    // The sheet owns its own drag-to-resize, so a fold animation here would
+    // fight it; it simply unmounts with the aside.
+    if (!reading) return null
     return (
-      <div
-        data-testid="aside-dock"
-        data-surface="takeover"
-        className="absolute inset-0 z-30 flex flex-col bg-background"
-      >
-        <AsidePane
-          workspaceId={workspaceId}
-          asideId={rendered.asideId}
-          hostStreamId={rendered.hostStreamId}
-          originScope={rendered.originScope}
-          surface={surface}
-          takeover
-        />
-      </div>
+      <AsideMobileSheet
+        workspaceId={workspaceId}
+        asideId={rendered.asideId}
+        hostStreamId={rendered.hostStreamId}
+        originScope={rendered.originScope}
+        surface={surface}
+      />
     )
   }
 

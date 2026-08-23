@@ -5,6 +5,7 @@ import { StreamTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
 import { createMockStream } from "@/test/fixtures"
 import * as workspaceStoreModule from "@/stores/workspace-store"
+import * as useMobileModule from "@/hooks/use-mobile"
 import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
 import { useAgentBlock } from "@/components/timeline/agent-block-context"
@@ -25,12 +26,16 @@ const aside = createMockStream({
   parentStreamId: "stream_host",
 })
 
-/** The page's two mount points, bound to the route like the stream page binds them. */
-function Page() {
+/**
+ * The page's two mount points, bound to the route like the stream page binds
+ * them. `takeover` is the phone's panel takeover: the main column (and the
+ * strip inside it) is hidden and inert, so only the dock slot can draw.
+ */
+function Page({ takeover = false }: { takeover?: boolean }) {
   const hostKey = useAsideHost()
   return (
     <div className="flex">
-      <main className="relative">
+      <main className="relative" inert={takeover || undefined} hidden={takeover}>
         <AsideMinimizedStrip workspaceId="ws_1" hostKey={hostKey} />
       </main>
       <AsideDockSlot workspaceId="ws_1" hostKey={hostKey} />
@@ -38,12 +43,12 @@ function Page() {
   )
 }
 
-function renderPage(path = HOST_PATH) {
+function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/w/:workspaceId/s/:streamId" element={<Page />} />
-        <Route path="/w/:workspaceId/board" element={<Page />} />
+        <Route path="/w/:workspaceId/s/:streamId" element={<Page takeover={options.takeover} />} />
+        <Route path="/w/:workspaceId/board" element={<Page takeover={options.takeover} />} />
       </Routes>
     </MemoryRouter>
   )
@@ -227,6 +232,169 @@ describe("aside surfaces", () => {
 
       expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "dock")
       expect(screen.getByRole("button", { name: "Dock aside" })).toBeEnabled()
+    })
+  })
+
+  describe("on a phone", () => {
+    beforeEach(() => {
+      vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    })
+
+    it("opens as a sheet over the host, with the strip as its handle, and no desktop dock", () => {
+      openOnHost()
+      renderPage()
+
+      const sheet = screen.getByTestId("aside-sheet")
+      expect(sheet).toHaveAttribute("data-surface", "dock")
+      expect(sheet).toHaveAttribute("data-suppress-pull-refresh", "true")
+      expect(screen.getByTestId("aside-sheet-handle")).toBeInTheDocument()
+      expect(screen.queryByTestId("aside-dock")).toBeNull()
+      expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
+    })
+
+    it("parks in the strip when the sheet is dragged to the floor, and nothing else is left behind", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      const sheet = screen.getByTestId("aside-sheet")
+      // jsdom has no layout: the sheet reports its resting peek height.
+      sheet.getBoundingClientRect = () => ({
+        height: 360,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+      handle.setPointerCapture = vi.fn()
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 500 })
+
+      expect(getAsideState()?.surface).toBe("minimized")
+      expect(screen.queryByTestId("aside-sheet")).toBeNull()
+      expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
+    })
+
+    it("keeps the parked strip reachable under a panel takeover, where the main column is hidden", () => {
+      openOnHost("minimized")
+      renderPage(HOST_PATH, { takeover: true })
+
+      const strip = screen.getByTestId("aside-strip")
+      expect(strip).toBeVisible()
+      expect(strip.closest("main")).toBeNull()
+      expect(screen.getAllByTestId("aside-strip")).toHaveLength(1)
+    })
+
+    it("settles back where it was when the browser cancels the gesture mid-drag, committing nothing", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      const sheet = screen.getByTestId("aside-sheet")
+      sheet.getBoundingClientRect = () => ({
+        height: 360,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+      handle.setPointerCapture = vi.fn()
+
+      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
+      fireEvent.pointerCancel(handle, { pointerId: 1, clientY: 500 })
+
+      expect(getAsideState()?.surface).toBe("dock")
+      expect(sheet).toHaveStyle({ height: "45dvh" })
+    })
+
+    it("reaches the same detents from the keyboard, since the sheet hides the surface picker", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      expect(handle).toHaveAttribute("tabindex", "0")
+
+      fireEvent.keyDown(handle, { key: "ArrowUp" })
+      expect(getAsideState()?.surface).toBe("fullscreen")
+      fireEvent.keyDown(handle, { key: "ArrowDown" })
+      expect(getAsideState()?.surface).toBe("dock")
+      fireEvent.keyDown(handle, { key: "ArrowDown" })
+      expect(getAsideState()?.surface).toBe("minimized")
+      expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
+    })
+
+    it("rises to the full viewport while an editor in it has focus, and settles back when the keyboard goes", () => {
+      openOnHost()
+      renderPage()
+
+      const sheet = screen.getByTestId("aside-sheet")
+      const editor = document.createElement("div")
+      editor.setAttribute("contenteditable", "true")
+      editor.tabIndex = 0
+      sheet.appendChild(editor)
+      Object.defineProperty(editor, "isContentEditable", { value: true })
+
+      expect(sheet).toHaveStyle({ height: "45dvh" })
+      fireEvent.focus(editor)
+      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveAttribute("data-keyboard-lift", "true")
+      // The chosen detent is presentation-independent: still the peek.
+      expect(getAsideState()?.surface).toBe("dock")
+
+      fireEvent.blur(editor)
+      expect(sheet).toHaveStyle({ height: "45dvh" })
+      expect(sheet).not.toHaveAttribute("data-keyboard-lift")
+    })
+
+    it("resizes while the composer keeps focus — a drag never closes the keyboard, and it overrides the lift", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      const sheet = screen.getByTestId("aside-sheet")
+      const editor = document.createElement("div")
+      editor.setAttribute("contenteditable", "true")
+      editor.tabIndex = 0
+      sheet.appendChild(editor)
+      Object.defineProperty(editor, "isContentEditable", { value: true })
+      editor.focus()
+      fireEvent.focus(editor)
+      expect(sheet).toHaveStyle({ height: "100dvh" })
+      sheet.getBoundingClientRect = () => ({
+        height: 360,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
+      handle.setPointerCapture = vi.fn()
+
+      // Pull up to full, like the composer's own resize handle: preventDefault
+      // on pointerdown keeps focus — and the keyboard — where it is.
+      const down = fireEvent.pointerDown(handle, { pointerId: 1, clientY: 500 })
+      expect(down).toBe(false)
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 100 })
+
+      expect(document.activeElement).toBe(editor)
+      expect(getAsideState()?.surface).toBe("fullscreen")
+      expect(handle.setPointerCapture).toHaveBeenCalled()
+      expect(sheet).not.toHaveAttribute("data-keyboard-lift")
     })
   })
 })

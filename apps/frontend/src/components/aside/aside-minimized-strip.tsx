@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { X } from "lucide-react"
 import { StreamTypes } from "@threa/types"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, rememberedAsideSurface, setAsideSurface, useAsideForHost } from "@/stores/aside-store"
 import { resolveAsideRestoreSurface } from "@/lib/aside/surface"
@@ -10,6 +11,12 @@ import { useCallDocked } from "./use-call-docked"
 interface AsideMinimizedStripProps {
   workspaceId: string
   hostKey: string
+  /**
+   * Mounted by the dock slot over the whole content area (phones), rather than
+   * inside the page's main column (desktop). Each instance renders only on its
+   * own form factor, so the strip is never drawn twice.
+   */
+  overlay?: boolean
 }
 
 /**
@@ -17,13 +24,14 @@ interface AsideMinimizedStripProps {
  * the page's main column (never a global pill — it cannot outlive the stream).
  * The strip is the restore control; the title is its content.
  */
-export function AsideMinimizedStrip({ workspaceId, hostKey }: AsideMinimizedStripProps) {
+export function AsideMinimizedStrip({ workspaceId, hostKey, overlay = false }: AsideMinimizedStripProps) {
   const current = useAsideForHost(hostKey)
   const asideId = current?.surface === "minimized" ? current.asideId : null
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const callDocked = useCallDocked()
-  if (!asideId) return null
+  const isMobile = useIsMobile()
+  if (!asideId || isMobile !== overlay) return null
 
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
   const restore = () =>
