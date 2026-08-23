@@ -23,6 +23,7 @@ import * as composerModule from "@/components/composer"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
+import * as openAsideModule from "@/hooks/use-open-aside"
 import { spyOnExport } from "@/test"
 import { toast } from "sonner"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
@@ -267,6 +268,10 @@ beforeEach(async () => {
   vi.spyOn(hooksModule, "useComposerHeightPublish").mockImplementation(
     () => undefined as unknown as ReturnType<typeof hooksModule.useComposerHeightPublish>
   )
+  // Same wrapper gap: `/aside` in the composer creates a stream through the
+  // stream service. Stub the opener; the aside entry points are covered by
+  // `use-composer-command-send` and the desktop browser spec.
+  spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((async () => {}) as never)
   // The composer's schedule-send entry needs the scheduled service via
   // ServicesProvider; tests run without that wrapper, so stub the hook to a
   // no-op mutation. The schedule path itself is exercised by the page tests.

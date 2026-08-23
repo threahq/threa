@@ -7,6 +7,9 @@ import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { openAside, rememberedAsideSurface } from "@/stores/aside-store"
+import { resolveAsideOpenSurface } from "@/lib/aside/surface"
+import { isCallDocked } from "@/components/aside/use-call-docked"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -190,7 +193,10 @@ export function useStreamItems(context: ModeContext): ModeResult {
       mentionCount,
       urgency,
     }: (typeof enriched)[number]): QuickSwitcherItem => {
-      const href = `/w/${workspaceId}/s/${stream.id}`
+      // An aside is never a page: selecting one lands on its host and opens the
+      // surface there, the way its anchor row does.
+      const asideHost = stream.type === StreamTypes.ASIDE ? stream.parentStreamId : null
+      const href = `/w/${workspaceId}/s/${asideHost ?? stream.id}`
       const isArchived = stream.archivedAt != null
       const typeLabel = getStreamTypeLabel(stream.type)
       const notJoined = !memberStreamIds.has(stream.id) && stream.visibility === "public"
@@ -214,6 +220,17 @@ export function useStreamItems(context: ModeContext): ModeResult {
         href,
         onSelect: () => {
           closeDialog()
+          if (asideHost) {
+            openAside({
+              hostKey: href,
+              hostStreamId: asideHost,
+              asideId: stream.id,
+              surface: resolveAsideOpenSurface({
+                remembered: rememberedAsideSurface(stream.id),
+                callDocked: isCallDocked(),
+              }),
+            })
+          }
           navigate(href)
         },
         urgency,

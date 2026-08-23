@@ -40,6 +40,9 @@ export {
   SHARED_SOURCE_STREAM_KINDS,
   type SharedSourceStreamKind,
   DM_PARTICIPANT_COUNT,
+  ASIDE_HOST_STREAM_TYPES,
+  type AsideHostStreamType,
+  isAsideHostType,
   STREAM_READ_ONLY_REASONS,
   type StreamReadOnlyReason,
   StreamReadOnlyReasons,
@@ -764,6 +767,9 @@ export { draftStreamScope, draftThreadScope, MAX_DRAFTS_PER_USER, MAX_SEARCH_PHR
 
 // Discuss-with-Ariadne client-action id (single source of truth)
 export const DISCUSS_WITH_ARIADNE_COMMAND = "discuss-with-ariadne" as const
+
+// Open-an-aside client-action id (single source of truth)
+export const ASIDE_COMMAND = "aside" as const
 
 /**
  * Persona slug for Ariadne — the workspace-companion persona that backs

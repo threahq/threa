@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Quote, Check, FolderInput } from "lucide-react"
 import {
+  isAsideHostType,
   LabelableResourceTypes,
   type AttachmentSummary,
   type AuthorType,
@@ -46,6 +47,7 @@ import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
+import { useOpenAside } from "@/hooks/use-open-aside"
 import { useSettleConversationMessage } from "@/hooks/use-conversations"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { parseMarkdown } from "@threa/prosemirror"
@@ -308,6 +310,32 @@ export function MessageItem({
     })
   }, [startDiscussWithAriadne, conversationId, conversationRootStreamId, message.id])
 
+  // Conversation-anchored aside: the conversation's root stream is the host and
+  // the conversation id the authoritative anchor unit (a card's rows span
+  // streams). The message is a finer anchor only when it lives in the root —
+  // the server requires an anchor message to belong to the host stream.
+  const openAside = useOpenAside(workspaceId)
+  // Gated on the HOST (the conversation's root), not the row's own stream: a
+  // thread row's stream is never the host, so its type and E2E state say
+  // nothing about whether the server would accept the aside.
+  const conversationRootStream = useStreamFromStore(conversationRootStreamId)
+  const canOpenAside =
+    canDiscussConversation &&
+    isAsideHostType(conversationRootStream?.type ?? "") &&
+    conversationRootStream?.e2eEnabled !== true &&
+    !conversationRootStream?.archivedAt
+  const handleOpenAside = useCallback(() => {
+    if (!conversationId || !conversationRootStreamId) return
+    void openAside({
+      kind: "conversation",
+      hostStreamId: conversationRootStreamId,
+      conversationId,
+      anchorId: streamId === conversationRootStreamId ? message.id : undefined,
+    }).catch(() => {
+      /* toast already surfaced inside the hook */
+    })
+  }, [openAside, conversationId, conversationRootStreamId, streamId, message.id])
+
   // The settling pair. Both are wired only while the row is still settling and
   // the surface knows the conversation, so a settled row's menus and toolbar are
   // exactly what they were before this existed. "Not this topic" reuses the
@@ -464,6 +492,7 @@ export function MessageItem({
     onToggleSave: handleToggleSave,
     onRequestReminder: handleRequestReminder,
     onDiscussWithAriadne: canDiscussConversation ? handleDiscussWithAriadne : undefined,
+    onOpenAside: canOpenAside ? handleOpenAside : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
       label: viewInStreamLabel(rowStream?.type),

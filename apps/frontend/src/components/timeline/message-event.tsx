@@ -1,5 +1,6 @@
 import { type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
 import {
+  isAsideHostType,
   isSentViaApi,
   LabelableResourceTypes,
   type StreamEvent,
@@ -64,6 +65,7 @@ import { SaveMessageButton } from "./save-message-button"
 import { ReminderPickerSheet } from "./reminder-picker-sheet"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
+import { useOpenAside } from "@/hooks/use-open-aside"
 import { MessageActionDrawer } from "./message-action-drawer"
 import { isAgentTraceActor } from "./message-actions"
 import { ThreadSlot } from "./thread-slot"
@@ -1174,6 +1176,21 @@ function SentMessageEvent({
     [startDiscussWithAriadne, streamId, payload.messageId]
   )
 
+  // An aside anchors to this message in its host stream; the host must be a
+  // type an aside can sit in (the server enforces the same list), and never
+  // an E2E stream — there is no plaintext to snapshot. Fire-and-forget like
+  // discuss: the hook toasts on failure.
+  const openAside = useOpenAside(workspaceId)
+  // Archived hosts (directly or through the root) cannot open one — the aside
+  // would inherit the archive and the create path refuses it.
+  const hostArchived = !!currentStream?.archivedAt || !!rootStream?.archivedAt
+  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived
+  const handleOpenAside = useCallback(() => {
+    void openAside({ kind: "stream", hostStreamId: streamId, anchorId: payload.messageId }).catch(() => {
+      /* toast already surfaced inside the hook */
+    })
+  }, [openAside, streamId, payload.messageId])
+
   // Shared action context for both desktop dropdown and mobile drawer
   const actionContext = useMemo(
     () => ({
@@ -1207,6 +1224,7 @@ function SentMessageEvent({
       onLabelMessage: () => setLabelPickerOpen(true),
       onRequestReminder: handleRequestReminder,
       onDiscussWithAriadne: handleDiscussWithAriadne,
+      onOpenAside: canOpenAside ? handleOpenAside : undefined,
       onQuoteReply: quoteReplyCtx
         ? () =>
             quoteReplyCtx.triggerQuoteReply({
@@ -1369,6 +1387,8 @@ function SentMessageEvent({
       location,
       isMobile,
       handleDiscussWithAriadne,
+      canOpenAside,
+      handleOpenAside,
       batch?.enabled,
       currentStream?.archivedAt,
       movedTombstoneEvent,

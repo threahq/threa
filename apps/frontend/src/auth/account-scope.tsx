@@ -17,6 +17,7 @@ import { resetDraftContextCache } from "@/hooks/use-board-draft-context"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
 import { resetComposeOverlayStoreCache } from "@/stores/compose-overlay-store"
 import { resetBoardFlashStoreCache } from "@/stores/board-flash-store"
+import { resetAsideStoreCache } from "@/stores/aside-store"
 import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
 import { resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 import { resetReferenceSourceStoreCache } from "@/stores/reference-source-store"
@@ -98,6 +99,7 @@ function flushModuleStoreCaches(): void {
   resetE2eSessionStoreCache()
   resetComposeOverlayStoreCache()
   resetBoardFlashStoreCache()
+  resetAsideStoreCache()
   resetBoardUnreadLatches()
   resetConversationMessageSnapshots()
   // Ordered hangup before state drop: the call-store reset emits leave, closes

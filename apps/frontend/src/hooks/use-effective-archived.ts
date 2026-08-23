@@ -1,8 +1,13 @@
+import { StreamTypes } from "@threa/types"
 import { useStreamFromStore } from "@/stores/stream-store"
 
 export interface EffectiveArchivedInput {
-  /** The anchor stream row (its own `archivedAt` seals the surface directly). */
-  stream: { archivedAt?: string | null } | null | undefined
+  /**
+   * The anchor stream row (its own `archivedAt` seals the surface directly).
+   * An aside also carries its host pointer: it is a root of its own, so the
+   * host chain is read off `type` + `parentStreamId` rather than the root.
+   */
+  stream: { archivedAt?: string | null; type?: string; parentStreamId?: string | null } | null | undefined
   /** The root to inherit from (INV-62), or null when the anchor IS the root. */
   rootStreamId: string | null | undefined
   /**
@@ -23,7 +28,7 @@ export interface EffectiveArchivedInput {
 export interface EffectiveArchived {
   /** The anchor stream itself is archived. */
   ownArchived: boolean
-  /** The root this surface inherits from is archived. */
+  /** The lineage this surface inherits from is archived: its root, or for an aside its host chain. */
   rootArchived: boolean
   isArchived: boolean
 }
@@ -51,6 +56,10 @@ export interface EffectiveArchived {
  * The two absences ("root active" vs "root unknown") must NOT be merged — that
  * collapses them and lets a stale fallback win after unarchive, which was the
  * flicker/rapid-toggle bug.
+ *
+ * An aside is the twin of the backend's write-authority rule: it is a root of
+ * its own, so root archival never covers its host — the host (parent) and the
+ * host's root are read from the store and an archived one seals the aside.
  */
 export function useEffectiveArchived({
   stream,
@@ -59,6 +68,9 @@ export function useEffectiveArchived({
   fallbackRootArchived,
 }: EffectiveArchivedInput): EffectiveArchived {
   const selfResolvedRoot = useStreamFromStore(rootStream === undefined ? (rootStreamId ?? undefined) : undefined)
+  const asideHostId = stream?.type === StreamTypes.ASIDE ? (stream.parentStreamId ?? undefined) : undefined
+  const asideHost = useStreamFromStore(asideHostId)
+  const asideHostRoot = useStreamFromStore(asideHost?.rootStreamId ?? undefined)
   const rootRow = rootStream === undefined ? selfResolvedRoot : rootStream
   const fallbackArchived = fallbackRootArchived != null && fallbackRootArchived !== false
   let rootArchived = false
@@ -66,6 +78,9 @@ export function useEffectiveArchived({
     rootArchived = rootRow ? rootRow.archivedAt != null : fallbackArchived
   } else if (!stream) {
     rootArchived = fallbackArchived
+  }
+  if (asideHostId) {
+    rootArchived = rootArchived || asideHost?.archivedAt != null || asideHostRoot?.archivedAt != null
   }
   const ownArchived = stream?.archivedAt != null
   return { ownArchived, rootArchived, isArchived: ownArchived || rootArchived }

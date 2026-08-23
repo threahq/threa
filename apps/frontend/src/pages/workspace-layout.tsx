@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useSyncExternalStore,
+  type ComponentProps,
   type ReactNode,
 } from "react"
 import { Outlet, useParams, useSearchParams, useMatch, Navigate } from "react-router-dom"
@@ -66,6 +67,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
+import { useOpenAside } from "@/hooks/use-open-aside"
 import { draftsApi, messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
 import { ComposeOverlayMount } from "@/components/board/compose-overlay-mount"
@@ -444,6 +446,20 @@ function MentionableWrapper({ children, mentionables }: Omit<MentionableMarkdown
   )
 }
 
+/**
+ * The palette with the aside opener bound. The opener creates a stream, so it
+ * needs the services and sync providers the layout mounts below — hence a
+ * sibling of the palette inside them, not a hook on the layout itself.
+ */
+function WorkspaceQuickSwitcher(props: Omit<ComponentProps<typeof QuickSwitcher>, "openAside">) {
+  const openAside = useOpenAside(props.workspaceId)
+  const openAsideOnStream = useCallback(
+    (streamId: string) => openAside({ kind: "stream", hostStreamId: streamId }),
+    [openAside]
+  )
+  return <QuickSwitcher {...props} openAside={openAsideOnStream} />
+}
+
 export function WorkspaceLayout() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const [searchParams] = useSearchParams()
@@ -543,7 +559,7 @@ export function WorkspaceLayout() {
                                                     </MainContentGate>
                                                   </AppShell>
                                                 </CoordinatedLoadingGate>
-                                                <QuickSwitcher
+                                                <WorkspaceQuickSwitcher
                                                   workspaceId={workspaceId}
                                                   open={switcherOpen}
                                                   onOpenChange={setSwitcherOpen}

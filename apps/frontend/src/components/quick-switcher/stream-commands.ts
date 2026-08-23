@@ -1,4 +1,4 @@
-import { Archive, FileCode2, ListChecks, Paperclip, Settings, Tag, Trash2 } from "lucide-react"
+import { Archive, FileCode2, ListChecks, MessageSquareDashed, Paperclip, Settings, Tag, Trash2 } from "lucide-react"
 import { queueSnippetRequest } from "@/stores/snippet-request-store"
 import type { Command } from "./commands"
 
@@ -30,6 +30,21 @@ const createSnippetCommand: Command = {
  */
 export const streamCommands: Command[] = [
   createSnippetCommand,
+  {
+    // Surfaced only while `CommandContext.openAside` is set (the stream in view
+    // can host one) — see `use-command-items`.
+    id: "stream-open-aside",
+    label: "Open an aside here",
+    icon: MessageSquareDashed,
+    keywords: ["ariadne", "think", "draft", "private", "side", "current stream"],
+    action: ({ currentStreamId, openAside, closeDialog }) => {
+      if (!currentStreamId || !openAside) return
+      closeDialog()
+      void openAside(currentStreamId).catch(() => {
+        /* toast already surfaced inside the hook */
+      })
+    },
+  },
   {
     id: "stream-settings",
     label: "Open stream settings",

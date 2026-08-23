@@ -122,4 +122,55 @@ describe("useEffectiveArchived", () => {
     )
     expect(result.current.rootArchived).toBe(true)
   })
+
+  describe("aside host inheritance (twin of write-authority)", () => {
+    function seedRows(rows: Record<string, Partial<CachedStream>>) {
+      vi.spyOn(streamStore, "useStreamFromStore").mockImplementation(
+        (id) => (id ? (rows[id] as CachedStream | undefined) : undefined) as CachedStream | undefined
+      )
+    }
+    const aside = { archivedAt: null, type: "aside", parentStreamId: "stream_host" }
+
+    it("should seal an aside when its host is archived", () => {
+      seedRows({ stream_host: { id: "stream_host", rootStreamId: null, archivedAt: "2026-01-01T00:00:00.000Z" } })
+      const { result } = renderHook(() =>
+        useEffectiveArchived({ stream: aside, rootStreamId: null, fallbackRootArchived: false })
+      )
+      expect(result.current).toEqual({ ownArchived: false, rootArchived: true, isArchived: true })
+    })
+
+    it("should seal an aside on a thread whose root is archived", () => {
+      seedRows({
+        stream_host: { id: "stream_host", rootStreamId: "stream_root", archivedAt: null },
+        stream_root: { id: "stream_root", rootStreamId: null, archivedAt: "2026-01-01T00:00:00.000Z" },
+      })
+      const { result } = renderHook(() =>
+        useEffectiveArchived({ stream: aside, rootStreamId: null, fallbackRootArchived: false })
+      )
+      expect(result.current).toEqual({ ownArchived: false, rootArchived: true, isArchived: true })
+    })
+
+    it("should leave an aside writable while its host chain is live", () => {
+      seedRows({
+        stream_host: { id: "stream_host", rootStreamId: "stream_root", archivedAt: null },
+        stream_root: { id: "stream_root", rootStreamId: null, archivedAt: null },
+      })
+      const { result } = renderHook(() =>
+        useEffectiveArchived({ stream: aside, rootStreamId: null, fallbackRootArchived: false })
+      )
+      expect(result.current).toEqual({ ownArchived: false, rootArchived: false, isArchived: false })
+    })
+
+    it("should not read a non-aside's parent as a host", () => {
+      seedRows({ stream_host: { id: "stream_host", rootStreamId: null, archivedAt: "2026-01-01T00:00:00.000Z" } })
+      const { result } = renderHook(() =>
+        useEffectiveArchived({
+          stream: { archivedAt: null, type: "thread", parentStreamId: "stream_host" },
+          rootStreamId: null,
+          fallbackRootArchived: false,
+        })
+      )
+      expect(result.current).toEqual({ ownArchived: false, rootArchived: false, isArchived: false })
+    })
+  })
 })

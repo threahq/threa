@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, fireEvent } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import { StreamTypes, type StreamEvent } from "@threa/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
+import { getAsideState, openAside, resetAsideStoreCache, setAsideSurface, closeAside } from "@/stores/aside-store"
 import { createMockStream } from "@/test/fixtures"
 import { groupTimelineItems, TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 
 const CREATOR = "usr_creator"
 const OTHER = "usr_other"
 const ASIDE = "stream_aside_1"
+const HOST_PATH = "/w/ws_1/s/stream_host"
 
 const aside = createMockStream({
   id: ASIDE,
@@ -53,13 +56,13 @@ const ctx: TimelineItemRenderContext = {
 function renderTimeline(events: StreamEvent[], viewerId: string) {
   const items = groupTimelineItems(events, viewerId)
   return render(
-    <>
+    <MemoryRouter initialEntries={[HOST_PATH]}>
       {items.map((item, index) => (
         <div key={index} data-testid={`item-${index}`}>
           <TimelineItemContent item={item} ctx={ctx} deferSecondaryHydration={false} />
         </div>
       ))}
-    </>
+    </MemoryRouter>
   )
 }
 
@@ -79,13 +82,14 @@ function cardEvent(id: string, sequence: string): StreamEvent {
 }
 
 beforeEach(() => {
+  resetAsideStoreCache()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([aside] as never)
 })
 
 afterEach(() => vi.restoreAllMocks())
 
 describe("AsideAnchorEvent", () => {
-  it("renders the creator's row: title joined from the aside stream and age, no controls", () => {
+  it("renders the creator's row: title joined from the aside stream, age, and the resume control", () => {
     renderTimeline([anchorEvent()], CREATOR)
 
     const row = document.querySelector('[data-event-id="evt_aside"]')
@@ -93,7 +97,8 @@ describe("AsideAnchorEvent", () => {
     expect(row).toHaveTextContent("churn number sanity-check")
     expect(row).toHaveTextContent("9m ago")
     expect(row?.querySelector("[data-aside-id]")).toHaveAttribute("data-aside-id", ASIDE)
-    expect(screen.queryByRole("button")).toBeNull()
+    expect(row?.querySelector("[data-aside-id]")).toHaveAttribute("data-state", "closed")
+    expect(screen.getByRole("button", { name: "Resume" })).toHaveClass("opacity-0")
   })
 
   it("renders nothing for another viewer of the same host stream", () => {
@@ -140,5 +145,24 @@ describe("AsideAnchorEvent", () => {
     renderTimeline([anchorEvent()], CREATOR)
 
     expect(document.querySelector("[data-aside-id]")).toHaveTextContent("Aside")
+  })
+
+  it("resumes the aside on its host page, into the surface it was last read in, and reads as open", () => {
+    // A previous session on this aside ended in fullscreen; minimized never counts.
+    openAside({ hostKey: HOST_PATH, hostStreamId: "stream_host", asideId: ASIDE, surface: "fullscreen" })
+    setAsideSurface("minimized")
+    closeAside()
+    renderTimeline([anchorEvent()], CREATOR)
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }))
+
+    expect(getAsideState()).toEqual({
+      hostKey: HOST_PATH,
+      hostStreamId: "stream_host",
+      asideId: ASIDE,
+      surface: "fullscreen",
+    })
+    expect(document.querySelector("[data-aside-id]")).toHaveAttribute("data-state", "open")
+    expect(document.querySelector("[data-sonner-toast]")).toBeNull()
   })
 })

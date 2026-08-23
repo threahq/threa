@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { isUtilityStream } from "@/lib/streams"
+import { isAsideHostType } from "@threa/types"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
@@ -54,6 +55,8 @@ interface QuickSwitcherProps {
   initialMode?: QuickSwitcherMode
   /** Stream currently in view (route param) — drives contextual stream commands. */
   currentStreamId?: string | null
+  /** Open a private aside on a stream (the layout owns the creating hook); gated here per host rules. */
+  openAside?: (streamId: string) => Promise<void>
 }
 
 const MODE_PREFIXES: Record<QuickSwitcherMode, string> = {
@@ -83,7 +86,14 @@ export function getDisplayQuery(query: string, mode: QuickSwitcherMode): string 
   return query
 }
 
-export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, currentStreamId }: QuickSwitcherProps) {
+export function QuickSwitcher({
+  workspaceId,
+  open,
+  onOpenChange,
+  initialMode,
+  currentStreamId,
+  openAside,
+}: QuickSwitcherProps) {
   const navigate = useNavigate()
   const [, setSearchParams] = useSearchParams()
   const user = useUser()
@@ -108,6 +118,18 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   const [labelPickerStreamId, setLabelPickerStreamId] = useState<string | null>(null)
 
   const allStreams = useWorkspaceStreams(workspaceId)
+  // The palette's "Open an aside here" follows the host rules the server
+  // enforces (host type, no E2E), so it never offers an aside that would fail.
+  const currentStream = currentStreamId ? allStreams.find((s) => s.id === currentStreamId) : undefined
+  const currentRoot = currentStream?.rootStreamId
+    ? allStreams.find((s) => s.id === currentStream.rootStreamId)
+    : undefined
+  const canOpenAside =
+    !!openAside &&
+    isAsideHostType(currentStream?.type ?? "") &&
+    currentStream?.e2eEnabled !== true &&
+    !currentStream?.archivedAt &&
+    !currentRoot?.archivedAt
   // System-purpose streams (persona test scratchpads) are not navigable targets.
   const streams = useMemo(() => allStreams.filter((s) => !isUtilityStream(s)), [allStreams])
   const streamMemberships = useWorkspaceStreamMemberships(workspaceId)
@@ -289,8 +311,11 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       requestArchiveStream,
       openLabelPicker,
       createSavedTodo,
+      openAside: canOpenAside ? openAside : undefined,
     }),
     [
+      canOpenAside,
+      openAside,
       workspaceId,
       navigate,
       handleClose,

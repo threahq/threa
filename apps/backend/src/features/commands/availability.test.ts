@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test"
+import { ASIDE_COMMAND, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo, type StreamType } from "@threa/types"
 import type { BotRuntimeInstance } from "../bot-runtimes"
-import { commandRequiresWritableAuthority, resolveAdvertisedSessionControlCommandNames } from "./availability"
+import type { Stream } from "../streams"
+import {
+  commandRequiresWritableAuthority,
+  isClientActionAvailableInStream,
+  resolveAdvertisedSessionControlCommandNames,
+} from "./availability"
+import { listClientActionCommandInfos } from "./catalog"
 
 function presence(capabilities: Record<string, unknown>): BotRuntimeInstance {
   return { capabilities } as BotRuntimeInstance
@@ -37,5 +44,36 @@ describe("session-control command advertisement", () => {
     expect(resolveAdvertisedSessionControlCommandNames(presence({ sessionControlCommands: ["reconnect"] }))).toEqual(
       new Set()
     )
+  })
+})
+
+describe("client-action command availability", () => {
+  const aside = listClientActionCommandInfos().find((info) => info.clientActionId === ASIDE_COMMAND) as CommandInfo
+  const discuss = listClientActionCommandInfos().find(
+    (info) => info.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND
+  ) as CommandInfo
+  const stream = (type: StreamType, overrides: Partial<Stream> = {}): Stream =>
+    ({ id: `stream_${type}`, type, ...overrides }) as Stream
+
+  it("offers /aside on channel, dm, scratchpad and thread hosts only", () => {
+    const types: StreamType[] = ["channel", "dm", "scratchpad", "thread", "system", "aside"]
+    expect(types.map((type) => isClientActionAvailableInStream(aside, stream(type)))).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+    ])
+  })
+
+  it("never offers /aside on a read-only (archived) host", () => {
+    expect(isClientActionAvailableInStream(aside, stream("channel"), { writable: false })).toBe(false)
+    expect(isClientActionAvailableInStream(aside, stream("channel"), { writable: true })).toBe(true)
+  })
+
+  it("never offers /aside on an end-to-end encrypted host", () => {
+    expect(isClientActionAvailableInStream(aside, stream("scratchpad", { e2eEnabled: true }))).toBe(false)
+    expect(isClientActionAvailableInStream(discuss, stream("scratchpad", { e2eEnabled: true }))).toBe(true)
   })
 })

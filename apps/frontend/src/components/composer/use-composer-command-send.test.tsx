@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
-import type { CommandInfo, JSONContent } from "@threa/types"
+import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
 import { spyOnExport } from "@/test"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as dispatchQueueModule from "@/hooks/use-command-dispatch-queue"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
+import * as openAsideModule from "@/hooks/use-open-aside"
 import { useComposerCommandSend } from "./use-composer-command-send"
 
 const COMMANDS: CommandInfo[] = [
@@ -14,6 +15,7 @@ const COMMANDS: CommandInfo[] = [
 
 let queueCommand: ReturnType<typeof vi.fn>
 let queuedFor: Array<string | undefined>
+let openAside: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   queueCommand = vi.fn().mockResolvedValue(undefined)
@@ -27,6 +29,8 @@ beforeEach(() => {
     return { queueCommand }
   }) as never)
   spyOnExport(discussModule, "useDiscussWithAriadne").mockReturnValue((() => vi.fn()) as never)
+  openAside = vi.fn().mockResolvedValue(undefined)
+  spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((() => openAside) as never)
 })
 
 function doc(...content: JSONContent[]): JSONContent {
@@ -98,6 +102,33 @@ describe("useComposerCommandSend dispatchCommand", () => {
     expect(queueCommand.mock.calls[0][0]).toEqual({
       commandMarkdown: "/compact",
       commandName: "compact",
+      conversationId: "conv_1",
+    })
+  })
+
+  it("should open an aside beside the host stream for /aside from a timeline composer, never queueing a dispatch", async () => {
+    await hook("stream_host").current.dispatchCommand({
+      kind: "command",
+      commandName: ASIDE_COMMAND,
+      clientActionId: ASIDE_COMMAND,
+      commandMarkdown: "/aside",
+    })
+    expect({ origin: openAside.mock.calls[0][0], queued: queueCommand.mock.calls.length }).toEqual({
+      origin: { kind: "stream", hostStreamId: "stream_host" },
+      queued: 0,
+    })
+  })
+
+  it("should anchor /aside to the conversation from a board or panel composer", async () => {
+    await hook("stream_root", "conv_1").current.dispatchCommand({
+      kind: "command",
+      commandName: ASIDE_COMMAND,
+      clientActionId: ASIDE_COMMAND,
+      commandMarkdown: "/aside",
+    })
+    expect(openAside.mock.calls[0][0]).toEqual({
+      kind: "conversation",
+      hostStreamId: "stream_root",
       conversationId: "conv_1",
     })
   })
