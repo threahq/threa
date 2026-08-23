@@ -90,11 +90,11 @@ async function settledScrollMetrics(
   return previous
 }
 
-async function openAsideFromMessage(page: Page, streamId: string, prefix: string, num: number): Promise<void> {
+async function openMessageActions(page: Page, streamId: string, prefix: string, num: number): Promise<void> {
   const row = hostRow(page, streamId, prefix, num)
   await row.hover()
   await row.getByRole("button", { name: /message actions/i }).click()
-  await page.getByRole("menuitem", { name: "Open an aside here" }).click()
+  await expect(page.getByRole("menuitem", { name: "Open an aside here" })).toBeVisible()
 }
 
 const dock = (page: Page) => page.getByTestId("aside-dock")
@@ -149,13 +149,17 @@ test.describe("Aside — desktop surface", () => {
         { timeout: 15000 }
       )
       .toBeLessThan(MESSAGE_COUNT - 8)
-    // Settle before the baseline: virtua re-measures after a wheel, and under CI
-    // load that can still be moving 300ms later — a baseline caught mid-settle
-    // reads as an aside-caused shift below, which is the opposite of the claim.
+    const anchorNum = (await settledScrollMetrics(page, streamId)).topNum
+    expect(anchorNum).not.toBeNull()
+
+    // Baseline with the row's menu already open: Playwright's hover/click
+    // scrolls a partially clipped actions toolbar into view (Chromium centres
+    // it, ~260px), which is the driver's doing, not the surface's. Everything
+    // from the menu item click on is the aside's.
+    await openMessageActions(page, streamId, prefix, anchorNum! + 1)
     const before = await settledScrollMetrics(page, streamId)
     expect(before.topNum).not.toBeNull()
-
-    await openAsideFromMessage(page, streamId, prefix, before.topNum! + 1)
+    await page.getByRole("menuitem", { name: "Open an aside here" }).click()
 
     await expect(dock(page)).toHaveAttribute("data-surface", "dock", { timeout: 15000 })
     await expect(pane(page)).toBeVisible()
