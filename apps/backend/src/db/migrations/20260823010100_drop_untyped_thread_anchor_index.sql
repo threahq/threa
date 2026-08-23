@@ -2,4 +2,11 @@
 -- holding ACCESS EXCLUSIVE on streams. Anchor uniqueness is a THREAD invariant
 -- only from here on; the typed index (guarded by the migration before this one)
 -- is the arbiter every deployed replica names.
+--
+-- DEPLOY WINDOW (honest, same shape as 20260722120000): this runs at
+-- new-instance boot, before the new code serves. Until the last pre-stack
+-- replica drains, its insertThreadOrFind still names the untyped predicate as
+-- its ON CONFLICT arbiter, so thread creation on that replica fails (42P10)
+-- for the rollout window — a retryable error on one operation, not a data
+-- loss. Merge the stack in a quiet window; nothing else is affected.
 DROP INDEX CONCURRENTLY IF EXISTS idx_streams_thread_anchor;

@@ -1229,13 +1229,16 @@ export const StreamRepository = {
     // must keep source and destination roots aligned so root_stream_id remains
     // valid. The `workspace_id` filter is defense-in-depth for INV-8 — even
     // if a caller ever passes mismatched stream IDs, this UPDATE will refuse
-    // to cross workspace boundaries.
+    // to cross workspace boundaries. Thread-typed: an aside on a moved message
+    // stays with the host its anchor row lives in (its parent is a pointer,
+    // never access — INV-62), so it must not follow the message.
     await db.query(sql`
       UPDATE streams
       SET parent_stream_id = ${params.destinationParentStreamId}, updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId}
         AND parent_stream_id = ${params.sourceParentStreamId}
         AND parent_anchor_id = ANY(${params.parentMessageIds})
+        AND type = 'thread'
     `)
   },
 

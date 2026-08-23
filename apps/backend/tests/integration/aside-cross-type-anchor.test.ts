@@ -127,4 +127,47 @@ describe("Aside cross-type anchor sharing (post index drop)", () => {
     expect(aside.type).toBe(StreamTypes.ASIDE)
     expect(aside.id).not.toBe(thread.id)
   })
+
+  test("moving a message takes its thread along and leaves its aside with the host", async () => {
+    const channel = await streamService.createChannel({
+      workspaceId: wsId,
+      slug: "aside-move-stays",
+      visibility: "public",
+      createdBy: creator,
+    })
+    const anchorId = await insertMessage(channel.id, creator)
+    const destinationAnchor = await insertMessage(channel.id, creator)
+    const thread = await streamService.createThread({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      parentAnchorId: anchorId,
+      createdBy: creator,
+      principal: { kind: "user", userId: creator },
+    })
+    const aside = await streamService.createAside({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      parentAnchorId: anchorId,
+      createdBy: creator,
+    })
+    const destination = await streamService.createThread({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      parentAnchorId: destinationAnchor,
+      createdBy: creator,
+      principal: { kind: "user", userId: creator },
+    })
+
+    await withTransaction(pool, (client) =>
+      StreamRepository.moveChildThreadsToParent(client, {
+        workspaceId: wsId,
+        sourceParentStreamId: channel.id,
+        destinationParentStreamId: destination.id,
+        parentMessageIds: [anchorId],
+      })
+    )
+
+    expect((await StreamRepository.findById(pool, thread.id))?.parentStreamId).toBe(destination.id)
+    expect((await StreamRepository.findById(pool, aside.id))?.parentStreamId).toBe(channel.id)
+  })
 })
