@@ -142,11 +142,12 @@ describe("share handoff store", () => {
     expect(peekShareHandoffBatch("stream_1")).toBeNull()
   })
 
-  it("notifies a mounted composer when an aside hands content off", () => {
-    const listener = vi.fn()
-    const unsubscribe = subscribeShareHandoff("stream_1", listener)
-    queueContentHandoff("stream_1", [{ type: "paragraph" }])
-    expect(listener).toHaveBeenCalledTimes(1)
+  it("notifies a mounted composer with the content it now has to drain", () => {
+    const content = [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }]
+    const seen: unknown[] = []
+    const unsubscribe = subscribeShareHandoff("stream_1", () => seen.push(peekShareHandoffBatch("stream_1")?.handoffs))
+    queueContentHandoff("stream_1", content)
+    expect(seen).toEqual([[{ kind: "content", content }]])
     unsubscribe()
   })
 })

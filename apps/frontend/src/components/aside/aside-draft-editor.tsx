@@ -1,11 +1,10 @@
-import { useCallback, useRef } from "react"
+import { useRef } from "react"
 import { ArrowLeft, Send, Trash2 } from "lucide-react"
-import { toast } from "sonner"
 import type { JSONContent } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { RichEditor, type RichEditorHandle } from "@/components/editor"
 import { useDraftComposer } from "@/hooks/use-draft-composer"
-import { isEmptyContent } from "@/lib/prosemirror-utils"
+import { useAsideDraftActions } from "@/hooks/use-aside-draft-actions"
 
 interface AsideDraftEditorProps {
   workspaceId: string
@@ -25,24 +24,7 @@ interface AsideDraftEditorProps {
 export function AsideDraftEditor({ workspaceId, scope, onBack, onSendToComposer }: AsideDraftEditorProps) {
   const composer = useDraftComposer({ workspaceId, draftKey: scope, scopeId: scope })
   const editorRef = useRef<RichEditorHandle>(null)
-
-  const handleSend = useCallback(async () => {
-    const content = composer.content
-    if (isEmptyContent(content)) return
-    // Persist before handing off: the hand-off is a copy into another composer,
-    // so the draft must survive it even if the destination refuses.
-    await composer.flushDraft()
-    if (!(await onSendToComposer(content.content ?? []))) {
-      toast.error("Couldn't hand this draft to the composer.")
-      return
-    }
-    onBack()
-  }, [composer, onSendToComposer, onBack])
-
-  const handleDelete = useCallback(async () => {
-    await composer.clearDraft()
-    onBack()
-  }, [composer, onBack])
+  const { send, remove, busy, canSend } = useAsideDraftActions(composer, { onSendToComposer, onDone: onBack })
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="aside-draft-editor" data-draft-scope={scope}>
@@ -56,7 +38,8 @@ export function AsideDraftEditor({ workspaceId, scope, onBack, onSendToComposer 
           size="icon"
           className="h-8 w-8 text-muted-foreground"
           aria-label="Delete draft"
-          onClick={() => void handleDelete()}
+          disabled={busy}
+          onClick={() => void remove()}
         >
           <Trash2 className="h-4 w-4" />
         </Button>
@@ -64,8 +47,8 @@ export function AsideDraftEditor({ workspaceId, scope, onBack, onSendToComposer 
           variant="ghost"
           size="sm"
           className="h-8 gap-1.5"
-          disabled={isEmptyContent(composer.content)}
-          onClick={() => void handleSend()}
+          disabled={!canSend || busy}
+          onClick={() => void send()}
         >
           <Send className="h-4 w-4" />
           Send to composer
@@ -76,7 +59,7 @@ export function AsideDraftEditor({ workspaceId, scope, onBack, onSendToComposer 
           ref={editorRef}
           value={composer.content}
           onChange={composer.handleContentChange}
-          onSubmit={() => void handleSend()}
+          onSubmit={() => void send()}
           messageSendMode="cmdEnter"
           placeholder="Write here, then send it to the composer…"
           ariaLabel="Aside draft"

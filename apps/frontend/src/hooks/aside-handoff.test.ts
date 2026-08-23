@@ -63,7 +63,15 @@ describe("useAsideHandoff", () => {
   })
 
   it("rides the same queue as a share, in order, so one insert path drains both", async () => {
-    queueShareHandoff("stream_host", { messageId: "msg_1", streamId: "stream_src" } as never)
+    queueShareHandoff("stream_host", {
+      messageId: "msg_1",
+      streamId: "stream_src",
+      authorName: "Alice",
+      authorId: "usr_1",
+      actorType: "user",
+      version: null,
+      range: null,
+    })
     await handoff()({ hostStreamId: "stream_host", originScope: "stream:stream_host", content: CONTENT })
 
     expect(peekShareHandoffBatch("stream_host")?.handoffs.map((entry) => entry.kind)).toEqual(["pointer", "content"])

@@ -26,7 +26,9 @@ function findStreamScroller(streamId: string): HTMLElement | null {
 
 /** The composer a hand-off from this aside files into. */
 function originScopeOf(origin: AsideOrigin): string {
-  return origin.kind === "conversation" ? boardReplyDraftKey(origin.conversationId) : draftStreamScope(origin.hostStreamId)
+  return origin.kind === "conversation"
+    ? boardReplyDraftKey(origin.conversationId)
+    : draftStreamScope(origin.hostStreamId)
 }
 
 function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
@@ -96,11 +98,19 @@ export function useOpenAside(workspaceId: string) {
   )
 }
 
+/** What the anchor row hands back when re-opening its aside. */
+export interface ResumeAsideParams {
+  asideId: string
+  hostStreamId: string
+  /** Set when the aside was opened on a conversation, so a hand-off files back into it. */
+  conversationId?: string
+}
+
 /** Re-open an existing aside from its anchor row, into the surface it was last read in. */
 export function useResumeAside() {
   const { pathname: hostKey } = useLocation()
   return useCallback(
-    (params: { asideId: string; hostStreamId: string; conversationId?: string }) => {
+    (params: ResumeAsideParams) => {
       openAside({
         hostKey,
         hostStreamId: params.hostStreamId,
