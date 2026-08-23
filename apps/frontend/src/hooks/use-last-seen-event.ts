@@ -180,7 +180,7 @@ export function useLastSeenEvent({
   const indexById = useMemo(() => {
     const m = new Map<string, number>()
     // An aside anchor row renders beside its anchor, not at its sequence
-    // position (`placeAsideAnchors`), so its index would misreport what is on
+    // position (`attachAsideAnchors`), so its index would misreport what is on
     // screen; left unmapped, the scan skips its row like a foreign one.
     for (let i = 0; i < events.length; i++) {
       if (events[i].eventType === "aside:anchored") continue

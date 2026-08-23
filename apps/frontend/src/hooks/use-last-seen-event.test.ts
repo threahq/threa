@@ -781,7 +781,7 @@ describe("useLastSeenEvent re-scan triggers", () => {
 
   it("never lets a relocated aside anchor row drive the frontier — at the viewport bottom or top", () => {
     // Sequence order: e1..e5 then the aside row (created last, anchored on e2).
-    // `placeAsideAnchors` renders it right after e2, so by index it is the
+    // `attachAsideAnchors` renders it right after e2, so by index it is the
     // newest row while on screen it sits among the oldest.
     const events = [
       { id: "e1", sequence: "1", eventType: "message_created" },

@@ -23,7 +23,7 @@ import {
   OLDER_SKELETON_ITEMS,
   type TimelineItem,
   type TimelineItemRenderContext,
-  placeAsideAnchors,
+  attachAsideAnchors,
 } from "./event-list"
 import { localStartOfDayMs } from "@/lib/dates"
 
@@ -1243,21 +1243,30 @@ describe("aside anchor rows", () => {
       actorType: "user",
     }
   }
-  const ids = (items: TimelineItem[]) => items.map((item) => (item.type === "event" ? item.event.id : item.type))
+  /** Item ids, with an item's folded anchor rows in brackets after it. */
+  const ids = (items: TimelineItem[]) =>
+    items.map((item) => {
+      const own = item.type === "event" ? item.event.id : item.type
+      const anchors = "asideAnchors" in item ? item.asideAnchors : undefined
+      return anchors && anchors.length > 0 ? `${own}[${anchors.map((e) => e.id).join(",")}]` : own
+    })
 
   it("keeps the creator's anchor row and drops another actor's (author-scoped like commands)", () => {
     const events = [message("evt_m1", "1", "msg_1"), asideRow("evt_aside", "2", "msg_1")]
-    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1", "evt_aside"])
+    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1[evt_aside]"])
     expect(ids(groupTimelineItems(events, "user_other"))).toEqual(["evt_m1"])
   })
 
-  it("places the row directly after its anchor message when the anchor is in the window", () => {
+  it("folds the row into its anchor message's item when the anchor is in the window — never a new item", () => {
     const events = [
       message("evt_m1", "1", "msg_1"),
       message("evt_m2", "2", "msg_2"),
       asideRow("evt_aside", "3", "msg_1"),
     ]
-    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1", "evt_aside", "evt_m2"])
+    const items = groupTimelineItems(events, "user_me")
+    expect(ids(items)).toEqual(["evt_m1[evt_aside]", "evt_m2"])
+    // The item count is what the virtualizer sees: the aside added nothing.
+    expect(items).toHaveLength(2)
   })
 
   it("places a card-anchored row after the card (anchor by event id)", () => {
@@ -1268,7 +1277,7 @@ describe("aside anchor rows", () => {
       payload: { callId: "call_1", mode: "audio_only", startedBy: "user_me", startedAt: "2026-02-19T00:00:00.000Z" },
     })
     const events = [card, message("evt_m2", "2", "msg_2"), asideRow("evt_aside", "3", "evt_call")]
-    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_call", "evt_aside", "evt_m2"])
+    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_call[evt_aside]", "evt_m2"])
   })
 
   it("places a row anchored to an event folded into a command group after that group", () => {
@@ -1279,7 +1288,7 @@ describe("aside anchor rows", () => {
       { type: "event", event: message("evt_m2", "3", "msg_2") },
       { type: "event", event: asideRow("evt_aside", "4", "evt_cmd") },
     ]
-    expect(ids(placeAsideAnchors(items))).toEqual(["evt_m1", "command_group", "evt_aside", "evt_m2"])
+    expect(ids(attachAsideAnchors(items))).toEqual(["evt_m1", "command_group[evt_aside]", "evt_m2"])
   })
 
   it("keeps creation position when the anchor is outside the window, or when there is no anchor", () => {
@@ -1303,7 +1312,7 @@ describe("aside anchor rows", () => {
       asideRow("evt_a1", "3", "msg_1"),
       asideRow("evt_a2", "4", "msg_1"),
     ]
-    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1", "evt_a1", "evt_a2", "evt_m2"])
+    expect(ids(groupTimelineItems(events, "user_me"))).toEqual(["evt_m1[evt_a1,evt_a2]", "evt_m2"])
   })
 
   it("opens no day divider of its own — the row rides its anchor's day", () => {
@@ -1318,13 +1327,7 @@ describe("aside anchor rows", () => {
       { ...asideRow("evt_aside", "4", "msg_1"), createdAt: "2026-08-21T10:00:00.000Z" },
     ]
     const items = injectDayDividers(groupTimelineItems(events, "user_me"))
-    expect(items.map((item) => (item.type === "event" ? item.event.id : item.type))).toEqual([
-      "evt_m1",
-      "evt_aside",
-      "evt_m2",
-      "day_divider",
-      "evt_m3",
-    ])
+    expect(ids(items)).toEqual(["evt_m1[evt_aside]", "evt_m2", "day_divider", "evt_m3"])
   })
 
   it("does not break a same-author run (the creator's layout matches everyone else's)", () => {
@@ -1336,6 +1339,20 @@ describe("aside anchor rows", () => {
     const items = annotateAuthorGroups(groupTimelineItems(events, "user_me"))
     expect(
       items.map((item) => (item.type === "event" ? [item.event.id, item.groupContinuation ?? false] : []))
+    ).toEqual([
+      ["evt_m1", false],
+      ["evt_m2", true],
+    ])
+    // And a row left at its creation position (anchor out of the window)
+    // still breaks no run.
+    const loose = annotateAuthorGroups(
+      groupTimelineItems(
+        [message("evt_m1", "1", "msg_1"), asideRow("evt_aside", "2", "msg_older"), message("evt_m2", "3", "msg_2")],
+        "user_me"
+      )
+    )
+    expect(
+      loose.map((item) => (item.type === "event" ? [item.event.id, item.groupContinuation ?? false] : []))
     ).toEqual([
       ["evt_m1", false],
       ["evt_aside", false],
