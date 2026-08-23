@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { ContextRefKinds, StreamTypes, type ContextRef } from "@threa/types"
@@ -48,6 +48,18 @@ function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
 export function useOpenAside(workspaceId: string) {
   const createStream = useCreateStream(workspaceId)
   const { pathname: hostKey } = useLocation()
+  // The create is a round trip; the page can be left (or the account switched)
+  // before it lands. Writing the surface then would strand an aside on a host
+  // that is gone — `dropAsideForHost` already ran against an empty store — and
+  // it would reappear on returning to that path. The ref is the page's own
+  // liveness: null once this host is no longer mounted.
+  const mountedHostKey = useRef<string | null>(hostKey)
+  useEffect(() => {
+    mountedHostKey.current = hostKey
+    return () => {
+      mountedHostKey.current = null
+    }
+  }, [hostKey])
 
   return useCallback(
     async (origin: AsideOrigin) => {
@@ -65,6 +77,7 @@ export function useOpenAside(workspaceId: string) {
         toast.error("Couldn't open an aside. Please try again.")
         throw err
       }
+      if (mountedHostKey.current !== hostKey) return
       openAside({
         hostKey,
         hostStreamId: origin.hostStreamId,
