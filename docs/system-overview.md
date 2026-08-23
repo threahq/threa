@@ -89,9 +89,9 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 
 **What:** Internal platform-admin SPA — workspace registry browser, workspace owner invitation manager, and the eventual home of any future operator-only tooling (billing, audits, support). Gated to platform admins only.
 
-**Deployed on:** Cloudflare Pages (`threa-backoffice` and `threa-backoffice-staging` projects) at `admin.threa.io` and `admin-staging.threa.io`.
+**Deployed on:** Cloudflare Pages (`threa-backoffice`) at `admin.threa.io`.
 
-**Deploy trigger:** Automatic on push to `main` via `.github/workflows/deploy-cloudflare.yml` (jobs: `deploy-backoffice`, `deploy-backoffice-staging`).
+**Deploy trigger:** Automatic on push to `main` via `.github/workflows/deploy-cloudflare.yml` (job: `deploy-backoffice`).
 
 **Key infrastructure dependencies:**
 
@@ -136,7 +136,7 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 3. On cache miss: call control plane at `GET /internal/workspaces/:id/region`, cache result in KV
 4. Proxy the request to the resolved region's backend URL
 
-**Auth forwarding:** Passes through the browser's `Cookie` header (WorkOS session cookie, name per env: `wos_session` in prod, `wos_session_staging` in staging) and all standard headers. The downstream service validates the session.
+**Auth forwarding:** Passes through the browser's `Cookie` header (`wos_session`) and all standard headers. The downstream service validates the session.
 
 **Inter-service auth:** Uses `INTERNAL_API_KEY` in a custom header (`X-Internal-API-Key`) when calling the control plane's internal endpoints.
 
@@ -146,9 +146,9 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 
 **What:** Tiny edge routing layer that fronts the backoffice. Independent of the workspace router so the backoffice doesn't inherit any workspace-routing concerns.
 
-**Deployed on:** Cloudflare Workers at `admin.threa.io/*` (prod: `backoffice-router`) and `admin-staging.threa.io/*` (staging: `backoffice-router-staging`). Route bindings are declarative in `apps/backoffice-router/wrangler.production.toml` and `wrangler.staging.toml` respectively.
+**Deployed on:** Cloudflare Workers at `admin.threa.io/*` (`backoffice-router`). The route binding is declared in `apps/backoffice-router/wrangler.production.toml`.
 
-**Deploy trigger:** Automatic on push to `main` via `.github/workflows/deploy-cloudflare.yml` (jobs: `deploy-backoffice-router`, `deploy-backoffice-router-staging`).
+**Deploy trigger:** Automatic on push to `main` via `.github/workflows/deploy-cloudflare.yml` (job: `deploy-backoffice-router`).
 
 **Talks to:**
 
@@ -157,12 +157,12 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 
 **What it routes:**
 
-| Pattern             | Destination                                                            |
-| ------------------- | ---------------------------------------------------------------------- |
-| `/readyz`           | Returns 200 directly (router health)                                   |
-| `/api/*`            | Control plane                                                          |
-| `/test-auth-login*` | Control plane (stub-auth dev only)                                     |
-| Everything else     | `threa-backoffice.pages.dev` (or `threa-backoffice-staging.pages.dev`) |
+| Pattern             | Destination                          |
+| ------------------- | ------------------------------------ |
+| `/readyz`           | Returns 200 directly (router health) |
+| `/api/*`            | Control plane                        |
+| `/test-auth-login*` | Control plane (stub-auth dev only)   |
+| Everything else     | `threa-backoffice.pages.dev`         |
 
 **Security posture:** Mirrors the workspace router — trust only `CF-Connecting-IP`, strip client-supplied `X-Forwarded-For` to prevent rate-limit bypass on the control plane, set `X-Forwarded-Host`/`-Proto` plus the custom `X-Threa-Host` header so the control plane can build per-host redirect URIs. The control plane reads `X-Threa-Host` (not `X-Forwarded-Host`, which Railway's edge overwrites) — see `WORKOS_DEDICATED_REDIRECT_HOSTS` in `docs/deployment.md`.
 
@@ -266,7 +266,7 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 
 ## Inter-Service Authentication
 
-Services authenticate to each other using a shared `INTERNAL_API_KEY` sent in the `X-Internal-API-Key` header. User-facing auth uses WorkOS session cookies set on `.threa.io` so they're valid across subdomains. The cookie name is env-driven via `SESSION_COOKIE_NAME` (`wos_session` in prod, `wos_session_staging` in staging) so prod and staging sessions don't collide on the shared parent domain.
+Services authenticate to each other using a shared `INTERNAL_API_KEY` sent in the `X-Internal-API-Key` header. User-facing auth uses the `wos_session` WorkOS session cookie set on `.threa.io` so it is valid across application subdomains.
 
 ```
 Browser -> Workspace Router:    Cookie (session cookie, name per env)
@@ -285,8 +285,8 @@ Browser -> Backend (WebSocket):      Cookie (session cookie, name per env)
 
 | Infrastructure           | Used by                                                    | Purpose                                                                                                                           |
 | ------------------------ | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Cloudflare Pages         | Frontend, Backoffice (prod + staging)                      | Static SPA hosting                                                                                                                |
-| Cloudflare Workers       | Workspace Router, Backoffice Router (prod + staging)       | Edge API routing                                                                                                                  |
+| Cloudflare Pages         | Frontend, Backoffice                                       | Static SPA hosting                                                                                                                |
+| Cloudflare Workers       | Workspace Router, Backoffice Router                        | Edge API routing                                                                                                                  |
 | Cloudflare KV            | Workspace Router, Control Plane                            | Workspace-to-region cache                                                                                                         |
 | Railway                  | Backend, Control Plane, PostgreSQL                         | Application hosting                                                                                                               |
 | PostgreSQL 17 + pgvector | Backend (`railway` db), Control Plane (`control_plane` db) | All persistent state                                                                                                              |

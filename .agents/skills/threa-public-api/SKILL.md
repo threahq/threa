@@ -5,18 +5,14 @@ description: >-
   streams/users/members, search memos/attachments) with curl or a Bun script.
   Use when asked to post messages to a stream, seed a stream with test data,
   drive the API from automation, dedupe by metadata, inspect a production
-  workspace (streams, messages, members) for troubleshooting, or otherwise
-  hit https://staging.threa.io / https://app.threa.io endpoints with an API
-  key. Reads from production should use the read-only prod key.
+  workspace (streams, messages, members) for troubleshooting, or otherwise hit
+  https://app.threa.io endpoints with an API key. Reads from production should
+  use the read-only prod key.
 ---
 
 # Threa Public API
 
-The public API is mounted under `/api/v1`. Staging and production share the
-same contract:
-
-- **Staging:** `https://staging.threa.io/api/v1`
-- **Production:** `https://app.threa.io/api/v1`
+The public API is mounted at `https://app.threa.io/api/v1`.
 
 Authoritative contract (read these if anything below looks stale — routes are
 the single source of truth and a pre-commit check fails on drift):
@@ -28,21 +24,18 @@ the single source of truth and a pre-commit check fails on drift):
 
 ## Auth
 
-HTTP Bearer. Two keys are pre-provisioned in the runtime env — pick the one
-that matches the environment you actually want to hit (do not paste keys
-into committed files or chat — read from the env var):
+HTTP Bearer. Use the pre-provisioned production read-only key for diagnostics.
+A write requires an explicitly supplied target and key. Read credentials from
+environment variables and never paste them into committed files or chat.
 
-| Env        | Base URL var                                      | Workspace var                   | Key var                         | Scopes        |
-| ---------- | ------------------------------------------------- | ------------------------------- | ------------------------------- | ------------- |
-| Staging    | _(use `https://staging.threa.io` directly)_       | _(from app URL)_                | `$THREA_STAGING_TOKEN`          | read + write  |
-| Production | `$THREA_PROD_BASE_URL` (= `https://app.threa.io`) | `$THREA_PROD_DEFAULT_WORKSPACE` | `$THREA_PROD_READ_ONLY_API_KEY` | **read-only** |
+| Use              | Base URL var                                      | Workspace var                   | Key var                         | Scopes        |
+| ---------------- | ------------------------------------------------- | ------------------------------- | ------------------------------- | ------------- |
+| Production reads | `$THREA_PROD_BASE_URL` (= `https://app.threa.io`) | `$THREA_PROD_DEFAULT_WORKSPACE` | `$THREA_PROD_READ_ONLY_API_KEY` | **read-only** |
+| Explicit writes  | `$THREA_BASE_URL`                                 | supplied by the user            | `$THREA_API_KEY`                | key-defined   |
 
 ```bash
-# Staging (writes OK — seeding, load tests, dogfooding)
-Authorization: Bearer $THREA_STAGING_TOKEN
-
-# Production (read-only — diagnostics, never seed/spam)
 Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY
+Authorization: Bearer $THREA_API_KEY
 ```
 
 Key prefixes: `threa_bk_` = bot-scoped (sends as a bot), `threa_uk_` =
@@ -74,7 +67,7 @@ management API (`PATCH` the key with `{"apiVersion": "<date>"}` or
 Threa app URLs encode both IDs — copy them straight out:
 
 ```
-https://staging.threa.io/w/<workspaceId>/s/<streamId>
+https://app.threa.io/w/<workspaceId>/s/<streamId>
                             ^^^^^^^^^^^^   ^^^^^^^^^^
 ```
 
@@ -82,37 +75,37 @@ Or discover via `GET /api/v1/workspaces/{workspaceId}/streams`.
 
 ## Endpoints
 
-| Method | Path                                              | Scope              | Notes                                                                                                                                                                                                |
-| ------ | ------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| POST   | `/workspaces/{ws}/streams/{stream}/messages`      | `messages:write`   | Send a message. **201**. Body below.                                                                                                                                                                 |
-| GET    | `/workspaces/{ws}/streams/{stream}/messages`      | `messages:read`    | List messages. Query: `before`/`after` (numeric sequence, at most one), `limit≤100` (default 50).                                                                                                    |
-| PATCH  | `/workspaces/{ws}/messages/{messageId}`           | `messages:write`   | Edit a message you sent via API. Body `{content}`.                                                                                                                                                   |
-| DELETE | `/workspaces/{ws}/messages/{messageId}`           | `messages:write`   | Delete a message you sent via API. **204**.                                                                                                                                                          |
-| POST   | `/workspaces/{ws}/messages/search`                | `messages:search`  | Body `{query, semantic?, exact?, streams?, type?, before?, after?, limit≤50}`.                                                                                                                       |
-| POST   | `/workspaces/{ws}/messages/find-by-metadata`      | `messages:read`    | Body `{metadata:{k:v,…}, streamId?, limit≤100}`. AND-containment — the dedup primitive.                                                                                                              |
-| GET    | `/workspaces/{ws}/streams`                        | `streams:read`     | Query: `type?`, `query?`, `after?`, `limit≤200`. Paginated.                                                                                                                                          |
-| GET    | `/workspaces/{ws}/streams/{stream}`               | `streams:read`     | One stream.                                                                                                                                                                                          |
-| GET    | `/workspaces/{ws}/streams/{stream}/members`       | `streams:read`     | Paginated.                                                                                                                                                                                           |
-| GET    | `/workspaces/{ws}/users`                          | `users:read`       | Query: `query?`, `after?`, `limit≤200`.                                                                                                                                                              |
-| GET    | `/workspaces/{ws}/me`                             | _(none)_           | Identify the principal behind the key. Use to verify a key works.                                                                                                                                    |
-| GET    | `/workspaces/{ws}/me/bots`                        | _(none)_           | User keys only — lists caller's personal bots.                                                                                                                                                       |
-| POST   | `/workspaces/{ws}/memos/search`                   | `memos:read`       |                                                                                                                                                                                                      |
-| GET    | `/workspaces/{ws}/memos/{memoId}`                 | `memos:read`       |                                                                                                                                                                                                      |
-| POST   | `/workspaces/{ws}/attachments/search`             | `attachments:read` |                                                                                                                                                                                                      |
-| GET    | `/workspaces/{ws}/attachments/{attachmentId}`     | `attachments:read` |                                                                                                                                                                                                      |
-| GET    | `/workspaces/{ws}/attachments/{attachmentId}/url` | `attachments:read` | Short-lived signed URL.                                                                                                                                                                              |
-| GET    | `/workspaces/{ws}/labels`                         | `labels:read`      | The key actor's label catalog: `{labels, assignments}`. Every label is private to its owner.                                                                                                         |
-| POST   | `/workspaces/{ws}/labels`                         | `labels:write`     | Create-or-update a label **by name** (idempotent). **201**. Body `{name, color?:"#RRGGBB", emoji?, description?}`. Posting an existing name returns it, applying any appearance fields given.        |
-| POST   | `/workspaces/{ws}/labels/assignments`             | `labels:write`     | Apply a label to a resource **by name** (finds-or-creates it, then assigns). **201**. Body `{name, color?, emoji?, description?, resourceType:"stream", resourceId}`. Returns `{label, assignment}`. |
-| DELETE | `/workspaces/{ws}/labels/assignments`             | `labels:write`     | Remove a label (by name) from a resource. **204**. Query `?name=…&resourceType=stream&resourceId=…`.                                                                                                 |
-| PATCH  | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Edit a label you created. Body any of `{name, color, emoji, description}`.                                                                                                                           |
-| DELETE | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Archive a label you created (drops its assignments). **204**.                                                                                                                                        |
-| GET    | `/workspaces/{ws}/delegations`                    | `delegations:read` | Open delegated tasks the key can see. Query `since=<ISO>` for a cheap delta. User keys see the user's streams; workspace keys see the bot's channel grants.                                          |
-| POST   | `/workspaces/{ws}/delegations/{id}/claim`         | `delegations:write`| Body `{claimedByLabel, idempotencyKey?}`. Returns brief + contextRefs + **`claimToken` (cleartext, once)** + expiry. Lost race → **409**. Persist the idempotencyKey BEFORE claiming: a retry with it re-keys your own live claim (crash recovery).      |
-| POST   | `/workspaces/{ws}/delegations/{id}/heartbeat`     | `delegations:write`| Header `X-Threa-Callback-Token: <claimToken>`. Renews the 15-min claim TTL. Gone claim → **404**.                                                                                                    |
-| POST   | `/workspaces/{ws}/delegations/{id}/status`        | `delegations:write`| Header token. Body `{statusNote?}` — marks running, note shows on the card, TTL renews.                                                                                                              |
-| POST   | `/workspaces/{ws}/delegations/{id}/complete`      | `delegations:write`| Header token. Body `{resultMarkdown?, metadata?}` — posts the result atomically with completion, authored as the key's user (via-API badge) or as the bot for a workspace key; GAM memorizes it. Retries with the same token return the committed outcome. |
-| POST   | `/workspaces/{ws}/delegations/{id}/fail`          | `delegations:write`| Header token. Body `{errorMessage}` — shows on the card.                                                                                                                                             |
+| Method | Path                                              | Scope               | Notes                                                                                                                                                                                                                                                      |
+| ------ | ------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/workspaces/{ws}/streams/{stream}/messages`      | `messages:write`    | Send a message. **201**. Body below.                                                                                                                                                                                                                       |
+| GET    | `/workspaces/{ws}/streams/{stream}/messages`      | `messages:read`     | List messages. Query: `before`/`after` (numeric sequence, at most one), `limit≤100` (default 50).                                                                                                                                                          |
+| PATCH  | `/workspaces/{ws}/messages/{messageId}`           | `messages:write`    | Edit a message you sent via API. Body `{content}`.                                                                                                                                                                                                         |
+| DELETE | `/workspaces/{ws}/messages/{messageId}`           | `messages:write`    | Delete a message you sent via API. **204**.                                                                                                                                                                                                                |
+| POST   | `/workspaces/{ws}/messages/search`                | `messages:search`   | Body `{query, semantic?, exact?, streams?, type?, before?, after?, limit≤50}`.                                                                                                                                                                             |
+| POST   | `/workspaces/{ws}/messages/find-by-metadata`      | `messages:read`     | Body `{metadata:{k:v,…}, streamId?, limit≤100}`. AND-containment — the dedup primitive.                                                                                                                                                                    |
+| GET    | `/workspaces/{ws}/streams`                        | `streams:read`      | Query: `type?`, `query?`, `after?`, `limit≤200`. Paginated.                                                                                                                                                                                                |
+| GET    | `/workspaces/{ws}/streams/{stream}`               | `streams:read`      | One stream.                                                                                                                                                                                                                                                |
+| GET    | `/workspaces/{ws}/streams/{stream}/members`       | `streams:read`      | Paginated.                                                                                                                                                                                                                                                 |
+| GET    | `/workspaces/{ws}/users`                          | `users:read`        | Query: `query?`, `after?`, `limit≤200`.                                                                                                                                                                                                                    |
+| GET    | `/workspaces/{ws}/me`                             | _(none)_            | Identify the principal behind the key. Use to verify a key works.                                                                                                                                                                                          |
+| GET    | `/workspaces/{ws}/me/bots`                        | _(none)_            | User keys only — lists caller's personal bots.                                                                                                                                                                                                             |
+| POST   | `/workspaces/{ws}/memos/search`                   | `memos:read`        |                                                                                                                                                                                                                                                            |
+| GET    | `/workspaces/{ws}/memos/{memoId}`                 | `memos:read`        |                                                                                                                                                                                                                                                            |
+| POST   | `/workspaces/{ws}/attachments/search`             | `attachments:read`  |                                                                                                                                                                                                                                                            |
+| GET    | `/workspaces/{ws}/attachments/{attachmentId}`     | `attachments:read`  |                                                                                                                                                                                                                                                            |
+| GET    | `/workspaces/{ws}/attachments/{attachmentId}/url` | `attachments:read`  | Short-lived signed URL.                                                                                                                                                                                                                                    |
+| GET    | `/workspaces/{ws}/labels`                         | `labels:read`       | The key actor's label catalog: `{labels, assignments}`. Every label is private to its owner.                                                                                                                                                               |
+| POST   | `/workspaces/{ws}/labels`                         | `labels:write`      | Create-or-update a label **by name** (idempotent). **201**. Body `{name, color?:"#RRGGBB", emoji?, description?}`. Posting an existing name returns it, applying any appearance fields given.                                                              |
+| POST   | `/workspaces/{ws}/labels/assignments`             | `labels:write`      | Apply a label to a resource **by name** (finds-or-creates it, then assigns). **201**. Body `{name, color?, emoji?, description?, resourceType:"stream", resourceId}`. Returns `{label, assignment}`.                                                       |
+| DELETE | `/workspaces/{ws}/labels/assignments`             | `labels:write`      | Remove a label (by name) from a resource. **204**. Query `?name=…&resourceType=stream&resourceId=…`.                                                                                                                                                       |
+| PATCH  | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`      | Edit a label you created. Body any of `{name, color, emoji, description}`.                                                                                                                                                                                 |
+| DELETE | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`      | Archive a label you created (drops its assignments). **204**.                                                                                                                                                                                              |
+| GET    | `/workspaces/{ws}/delegations`                    | `delegations:read`  | Open delegated tasks the key can see. Query `since=<ISO>` for a cheap delta. User keys see the user's streams; workspace keys see the bot's channel grants.                                                                                                |
+| POST   | `/workspaces/{ws}/delegations/{id}/claim`         | `delegations:write` | Body `{claimedByLabel, idempotencyKey?}`. Returns brief + contextRefs + **`claimToken` (cleartext, once)** + expiry. Lost race → **409**. Persist the idempotencyKey BEFORE claiming: a retry with it re-keys your own live claim (crash recovery).        |
+| POST   | `/workspaces/{ws}/delegations/{id}/heartbeat`     | `delegations:write` | Header `X-Threa-Callback-Token: <claimToken>`. Renews the 15-min claim TTL. Gone claim → **404**.                                                                                                                                                          |
+| POST   | `/workspaces/{ws}/delegations/{id}/status`        | `delegations:write` | Header token. Body `{statusNote?}` — marks running, note shows on the card, TTL renews.                                                                                                                                                                    |
+| POST   | `/workspaces/{ws}/delegations/{id}/complete`      | `delegations:write` | Header token. Body `{resultMarkdown?, metadata?}` — posts the result atomically with completion, authored as the key's user (via-API badge) or as the bot for a workspace key; GAM memorizes it. Retries with the same token return the committed outcome. |
+| POST   | `/workspaces/{ws}/delegations/{id}/fail`          | `delegations:write` | Header token. Body `{errorMessage}` — shows on the card.                                                                                                                                                                                                   |
 
 ### Send-message body (`sendMessageSchema`)
 
@@ -147,11 +140,11 @@ fire 100 requests in a tight loop — you'll get throttled mid-run.
 ### Verify the key
 
 ```bash
-# Staging
-curl -s -H "Authorization: Bearer $THREA_STAGING_TOKEN" \
-  https://staging.threa.io/api/v1/workspaces/<ws>/me
+# Explicit target
+curl -s -H "Authorization: Bearer $THREA_API_KEY" \
+  "$THREA_BASE_URL/api/v1/workspaces/<ws>/me"
 
-# Production (use the env vars — workspace is pinned by the key)
+# Production (use the env vars; the key pins the workspace)
 curl -s -H "Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY" \
   "$THREA_PROD_BASE_URL/api/v1/workspaces/$THREA_PROD_DEFAULT_WORKSPACE/me"
 ```
@@ -181,8 +174,8 @@ curl -sX POST -H "$AUTH" -H "Content-Type: application/json" \
 
 ```bash
 curl -sS -X POST \
-  https://staging.threa.io/api/v1/workspaces/<ws>/streams/<stream>/messages \
-  -H "Authorization: Bearer $THREA_STAGING_TOKEN" \
+  "$THREA_BASE_URL/api/v1/workspaces/<ws>/streams/<stream>/messages" \
+  -H "Authorization: Bearer $THREA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"content":"hello from the API","clientMessageId":"oneoff-1"}'
 ```
@@ -194,8 +187,8 @@ first" step. Every label is private to the key's actor (a user key labels for
 the user; a personal bot key labels for its owner).
 
 ```bash
-BASE="https://staging.threa.io/api/v1/workspaces/<ws>"
-AUTH="Authorization: Bearer $THREA_STAGING_TOKEN"
+BASE="$THREA_BASE_URL/api/v1/workspaces/<ws>"
+AUTH="Authorization: Bearer $THREA_API_KEY"
 JSON="Content-Type: application/json"
 
 # Create or update a label by name (idempotent). Omit color/emoji/description
@@ -239,16 +232,17 @@ auth failures), then throttle, retry 429/network with backoff, and use a
 stable `clientMessageId` per item so a re-run is idempotent.
 
 ```ts
-// bun run seed.ts   (reads $THREA_STAGING_TOKEN from env; never hardcode keys)
-const TOKEN = process.env.THREA_STAGING_TOKEN
-if (!TOKEN) {
-  console.error("THREA_STAGING_TOKEN required")
+// bun run seed.ts   (reads target and key from env; never hardcode them)
+const TOKEN = process.env.THREA_API_KEY
+const BASE_URL = process.env.THREA_BASE_URL
+if (!TOKEN || !BASE_URL) {
+  console.error("THREA_API_KEY and THREA_BASE_URL required")
   process.exit(1)
 }
 
 const WS = "ws_…",
   STREAM = "stream_…"
-const URL = `https://staging.threa.io/api/v1/workspaces/${WS}/streams/${STREAM}/messages`
+const URL = `${BASE_URL}/api/v1/workspaces/${WS}/streams/${STREAM}/messages`
 
 async function post(content: string, clientMessageId: string) {
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -307,8 +301,8 @@ posts it as the bot — the shared-runner setup.
 Manual walkthrough with curl:
 
 ```bash
-BASE="https://staging.threa.io/api/v1/workspaces/<ws>"
-AUTH="Authorization: Bearer $THREA_STAGING_TOKEN"
+BASE="$THREA_BASE_URL/api/v1/workspaces/<ws>"
+AUTH="Authorization: Bearer $THREA_API_KEY"
 JSON="Content-Type: application/json"
 
 # List open delegations in streams you can access.
@@ -342,15 +336,16 @@ path either completes, fails, or lets the claim lapse to `expired`. The card
 never shows a stale "Running".
 
 ```ts
-// bun run delegate.ts <delegationId>   (reads $THREA_STAGING_TOKEN; never hardcode keys)
-const TOKEN = process.env.THREA_STAGING_TOKEN
-if (!TOKEN) {
-  console.error("THREA_STAGING_TOKEN required")
+// bun run delegate.ts <delegationId>   (reads target and key from env; never hardcode them)
+const TOKEN = process.env.THREA_API_KEY
+const BASE_URL = process.env.THREA_BASE_URL
+if (!TOKEN || !BASE_URL) {
+  console.error("THREA_API_KEY and THREA_BASE_URL required")
   process.exit(1)
 }
 
 const WS = "ws_…"
-const BASE = `https://staging.threa.io/api/v1/workspaces/${WS}/delegations`
+const BASE = `${BASE_URL}/api/v1/workspaces/${WS}/delegations`
 
 interface Delegation {
   id: string
@@ -394,9 +389,12 @@ const claimed = await api<ClaimedDelegation>(`/${delegationId}/claim`, {
 console.log(`Claimed "${claimed.title}", expires ${claimed.claimExpiresAt}`)
 
 const { claimToken } = claimed
-const heartbeat = setInterval(() => {
-  api(`/${claimed.id}/heartbeat`, { method: "POST", claimToken }).catch(() => clearInterval(heartbeat))
-}, 5 * 60 * 1000)
+const heartbeat = setInterval(
+  () => {
+    api(`/${claimed.id}/heartbeat`, { method: "POST", claimToken }).catch(() => clearInterval(heartbeat))
+  },
+  5 * 60 * 1000
+)
 
 try {
   await api(`/${claimed.id}/status`, {
@@ -435,15 +433,16 @@ normal pipeline, so workspace memory extracts the outcome.
 
 ## Safety
 
-- **Staging vs production:** `$THREA_STAGING_TOKEN` is staging-scoped.
-  `$THREA_PROD_READ_ONLY_API_KEY` is production but read-only — write
-  endpoints (send/edit/delete message) will 403. Never use a write-capable
-  prod key without explicit instruction; these endpoints write real,
-  user-visible messages.
+- **Write target:** `$THREA_BASE_URL` and `$THREA_API_KEY` must be supplied
+  explicitly. Confirm the target before using write endpoints. Never use a
+  write-capable production key without explicit instruction because writes are
+  immediately visible to users.
+- **Production reads:** `$THREA_PROD_READ_ONLY_API_KEY` is read-only. Write
+  endpoints return 403.
 - **The prod key is owned by a real user.** Calls show up as that user's
   activity in audit/usage logs. Stay on `:read` endpoints unless explicitly
   asked to do something else.
-- **Idempotency:** for write paths (staging only by default), always set
+- **Idempotency:** for write paths, always set
   `clientMessageId`; before a re-run consider `find-by-metadata` to check
   what's already posted.
 - **Never** commit or echo API keys; read them from the env var.

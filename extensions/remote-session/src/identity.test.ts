@@ -106,13 +106,13 @@ describe("loadConfig", () => {
       {
         ...base,
         env: { THREA_WORKSPACE_ID: "ws_env", THREA_API_KEY: "threa_bk_env" },
-        file: { workspaceId: "ws_file", apiKey: "threa_bk_file", baseUrl: "https://staging.threa.io" },
+        file: { workspaceId: "ws_file", apiKey: "threa_bk_file", baseUrl: "https://remote.threa.test" },
       },
       IDENTITY
     )
     if ("config" in result) {
       expect(result.config.workspaceId).toBe("ws_env")
-      expect(result.config.baseUrl).toBe("https://staging.threa.io")
+      expect(result.config.baseUrl).toBe("https://remote.threa.test")
     }
   })
 

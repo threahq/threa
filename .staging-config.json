@@ -1,8 +1,0 @@
-{
-  "_comment": "Staging environment configuration.",
-  "seedWorkspaceId": "ws_01KMQCGJ197RAQ3JRRBM5G93BN",
-  "stagingDomain": "staging.threa.io",
-  "railwayProjectId": "616c8d93-5286-4819-888a-766530d3e84d",
-  "kvNamespaceId": "ab43236b60bd44e08741917db834ba08",
-  "controlPlaneUrl": "https://control-plane-production-abf8.up.railway.app"
-}

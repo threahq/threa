@@ -26,7 +26,7 @@ Notes:
 
 Use this when someone should be allowed to create a brand-new workspace.
 
-1. Open the WorkOS Dashboard for the same environment as Threa (`staging` or `production`).
+1. Open the production WorkOS Dashboard.
 2. Go to `User Management` -> `Users` -> `Invites`.
 3. Click `Invite user` (or equivalent action in the current Dashboard UI).
 4. Enter the recipient email.
@@ -64,7 +64,7 @@ In Threa:
 - **User still blocked after accepting invite**:
   - Confirm the invite was application-wide (no organization).
   - Confirm the invite state is `accepted` (not `pending`/`expired`/`revoked`).
-  - Confirm you issued the invite in the correct WorkOS environment (staging vs production).
+  - Confirm you issued the invite in the production WorkOS environment.
 - **Local dev behavior looks inconsistent**:
   - `USE_STUB_AUTH=true` does not validate real WorkOS invites.
   - `WORKSPACE_CREATION_SKIP_INVITE=true` explicitly bypasses workspace-creation invite enforcement (used by `dev:test`).

@@ -37,35 +37,16 @@ const logoutQuerySchema = z.object({
   scope: z.enum(["current"]).optional(),
 })
 
-/**
- * Validate that a forwarded host is an allowed staging subdomain.
- * Prevents open redirect via X-Forwarded-Host spoofing.
- *
- * Matches both nested subdomains (foo.staging.threa.io) and flat PR subdomains
- * (pr-123-staging.threa.io) which are siblings of the allowed domain, not children.
- */
-function isAllowedForwardedHost(host: string, allowedDomain: string): boolean {
-  if (host === allowedDomain) return true
-  if (host.endsWith(`.${allowedDomain}`)) return true
-  // Flat PR subdomain: pr-N-staging.threa.io is a sibling of staging.threa.io
-  // under the same base domain. Match the explicit PR pattern only.
-  const prPrefix = /^pr-\d+-/
-  if (prPrefix.test(host) && host.endsWith(`-${allowedDomain}`)) return true
-  return false
-}
-
 interface Dependencies {
   authService: AuthService
   sessionCookies: SessionCookies
   /** Owns the park/coalesce cookie-mutation sequence for the add-account flow. */
   accountsService: AccountsService
-  /** Base URL of the frontend app (e.g. "https://threa-staging.pages.dev"). Empty string for same-origin. */
+  /** Base URL of the frontend app. Empty string for same-origin. */
   frontendUrl: string
-  /** Allowed staging domain for forwarded-host redirects (e.g. "staging.threa.io") */
-  allowedRedirectDomain: string
   /**
-   * Forwarded hosts that get a dedicated WorkOS redirect URI (and are trusted
-   * as redirect targets in the callback independent of `allowedRedirectDomain`).
+   * Forwarded hosts that get a dedicated WorkOS redirect URI and are trusted
+   * as redirect targets in the callback.
    * Used for origins that can't share cookies with the default redirect host,
    * e.g. the backoffice at admin.threa.io.
    */
@@ -92,10 +73,8 @@ function readForwardedHost(req: Request): string | undefined {
 }
 
 /** Is `host` a trusted redirect target? */
-function isTrustedHost(host: string, allowedDomain: string, dedicatedHosts: string[]): boolean {
-  if (dedicatedHosts.includes(host)) return true
-  if (allowedDomain && isAllowedForwardedHost(host, allowedDomain)) return true
-  return false
+function isTrustedHost(host: string, dedicatedHosts: string[]): boolean {
+  return dedicatedHosts.includes(host)
 }
 
 export function createControlPlaneAuthHandlers({
@@ -103,7 +82,6 @@ export function createControlPlaneAuthHandlers({
   sessionCookies,
   accountsService,
   frontendUrl,
-  allowedRedirectDomain,
   dedicatedRedirectHosts,
   authLogService,
 }: Dependencies) {
@@ -115,7 +93,7 @@ export function createControlPlaneAuthHandlers({
       // The workspace-router (and backoffice-router) set ORIGINAL_HOST_HEADER on all proxied
       // requests; we cross-check against the allow-list before trusting it.
       const forwardedHost = readForwardedHost(req)
-      const hostTrusted = !!forwardedHost && isTrustedHost(forwardedHost, allowedRedirectDomain, dedicatedRedirectHosts)
+      const hostTrusted = !!forwardedHost && isTrustedHost(forwardedHost, dedicatedRedirectHosts)
 
       const isAdd = typeof req.query.intent === "string" && req.query.intent === "add"
       const providerRaw = typeof req.query.provider === "string" ? req.query.provider : undefined
@@ -185,8 +163,7 @@ export function createControlPlaneAuthHandlers({
       let redirectPath = basePath
       // "host|path" state redirects back to the original forwarded host when
       // it's trusted; otherwise fall back to the canonical frontend origin.
-      const appOrigin =
-        host && isTrustedHost(host, allowedRedirectDomain, dedicatedRedirectHosts) ? `https://${host}` : frontendUrl
+      const appOrigin = host && isTrustedHost(host, dedicatedRedirectHosts) ? `https://${host}` : frontendUrl
 
       if (isAdd) {
         const parked = await accountsService.addAndParkActive(
@@ -225,7 +202,7 @@ export function createControlPlaneAuthHandlers({
       // back to the configured frontend origin, then "/" — same precedence the
       // full-logout path uses below.
       const sameAppOrigin =
-        forwardedHost && isTrustedHost(forwardedHost, allowedRedirectDomain, dedicatedRedirectHosts)
+        forwardedHost && isTrustedHost(forwardedHost, dedicatedRedirectHosts)
           ? `https://${forwardedHost}`
           : frontendUrl || "/"
 

@@ -22,7 +22,6 @@ describe("CP auth callback failure → auth_log own-handler row", () => {
       sessionCookies,
       accountsService: {} as unknown as AccountsService,
       frontendUrl: "https://app.example.com",
-      allowedRedirectDomain: "example.com",
       dedicatedRedirectHosts: [],
       authLogService,
     })
@@ -65,7 +64,6 @@ describe("CP auth callback failure → auth_log own-handler row", () => {
       sessionCookies,
       accountsService: {} as unknown as AccountsService,
       frontendUrl: "https://app.example.com",
-      allowedRedirectDomain: "example.com",
       dedicatedRedirectHosts: [],
       authLogService,
     })

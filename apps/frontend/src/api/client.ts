@@ -58,8 +58,8 @@ export async function parseApiError(
 }
 
 /**
- * Base URL for API calls. Empty string for same-origin (dev/prod),
- * absolute URL for staging (e.g. "https://staging.threa.io").
+ * Base URL for API calls. Empty string for same-origin deployments; an
+ * absolute override supports remote development targets.
  */
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ""
 
