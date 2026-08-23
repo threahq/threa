@@ -584,8 +584,9 @@ const quoteReplyNodeSchema = z.object({
 const agentBlockNodeSchema = z.object({
   type: z.literal("agentBlock"),
   attrs: z.object({
-    authorId: z.string().min(1).max(64),
-    authorName: z.string().max(200),
+    // An agent id, never a human's (INV-64): the frame credits an agent.
+    authorId: z.string().regex(/^(persona_|bot_)[\w-]{1,56}$/),
+    authorName: z.string().min(1).max(200),
   }),
   content: z.array(blockNodeSchema),
 })

@@ -75,9 +75,11 @@ describe("agentBlock validation", () => {
     expect(isThreaDocument(agentBlock({ authorId: "bot_1", authorName: "Deploybot" }))).toBe(true)
   })
 
-  it("rejects an agent block whose author id is empty or oversized", () => {
+  it("rejects an agent block whose author is not an agent id, or whose name is empty", () => {
     expect(isThreaDocument(agentBlock({ authorId: "", authorName: "Ariadne" }))).toBe(false)
+    expect(isThreaDocument(agentBlock({ authorId: "usr_01HUMAN", authorName: "Alice" }))).toBe(false)
     expect(isThreaDocument(agentBlock({ authorId: `persona_${"x".repeat(70)}`, authorName: "Ariadne" }))).toBe(false)
+    expect(isThreaDocument(agentBlock({ authorId: "persona_1", authorName: "" }))).toBe(false)
   })
 
   it("accepts an agent block nested inside a list item", () => {
