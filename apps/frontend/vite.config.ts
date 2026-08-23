@@ -8,7 +8,7 @@ import path from "path"
 // Ports can be configured via env vars for browser E2E tests
 const backendPort = process.env.VITE_BACKEND_PORT || "3001"
 const socketPort = process.env.VITE_SOCKET_PORT || "3002"
-const frontendPort = parseInt(process.env.VITE_PORT || "3000", 10)
+const frontendPort = parseInt(process.env.VITE_PORT?.trim() || "3000", 10)
 const backendTarget = `http://localhost:${backendPort}`
 const socketTarget = `http://localhost:${socketPort}`
 const allowedHosts = (process.env.VITE_ALLOWED_HOSTS ?? "")
