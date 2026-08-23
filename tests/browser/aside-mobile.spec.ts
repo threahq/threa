@@ -80,14 +80,16 @@ test.describe("Aside — mobile surface", () => {
   test.beforeEach(async ({ page }) => {
     const result = await loginAndCreateWorkspace(page, "aside-mobile")
     testId = result.testId
-    await page.setViewportSize(PHONE)
   })
 
   test("peeks over the host, pulls up to full, parks in the strip, and closes on back", async ({ page }) => {
+    // Channel creation drives desktop chrome (the sidebar's "+ New Channel"),
+    // so the phone viewport is taken only once the fixture stream exists.
     await createChannel(page, `aside-m-${testId}`)
     const { workspaceId, streamId } = extractIds(page)
     const prefix = `[${testId}]`
     await seedMessages(page, workspaceId, streamId, prefix)
+    await page.setViewportSize(PHONE)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await expect(hostScroller(page, streamId)).toBeVisible({ timeout: 20000 })
 
