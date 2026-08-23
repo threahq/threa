@@ -1,29 +1,30 @@
 import { useEffect, useRef } from "react"
 import { ArrowLeft, Send, Trash2 } from "lucide-react"
-import type { JSONContent } from "@threa/types"
 import { Button } from "@/components/ui/button"
-import { RichEditor, type RichEditorHandle } from "@/components/editor"
+import { MessageComposer, type ComposerControlHandle } from "@/components/composer"
 import { appendAgentBlockNode, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { useDraftComposer } from "@/hooks/use-draft-composer"
-import { useAsideDraftActions } from "@/hooks/use-aside-draft-actions"
+import { useAsideDraftActions, type AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
 
 interface AsideDraftEditorProps {
   workspaceId: string
   /** `aside:{asideId}:{draftId}` — the one draft this editor writes. */
   scope: string
   onBack: () => void
-  /** Hand the body to the host composer. Resolves false when it couldn't be delivered. */
-  onSendToComposer: (content: JSONContent[]) => Promise<boolean>
+  /** Hand the body and files to the host composer. Resolves false when it couldn't be delivered. */
+  onSendToComposer: (handoff: AsideDraftHandoff) => Promise<boolean>
   /** Agent replies queued by "Insert into draft"; appended as attributed blocks once the draft has loaded. */
   pendingAgentBlocks?: AgentBlockData[]
   onPendingAgentBlocksConsumed?: () => void
 }
 
 /**
- * One aside draft, open for writing. Deliberately not a composer host: no send
- * pipeline, no attachments, no commands — an aside draft is written here and
- * leaves only through the hand-off, which is the single path content takes out
- * of a private stream.
+ * One aside draft, open for writing: the same composer card the stream
+ * composer is — formatting, emoji, mentions, files, dictation — with "Send to
+ * composer" as its only way out. No fullscreen document editor, nothing to
+ * schedule, no stash pile (the aside's drafts live in its own dock), and no
+ * slash commands: an aside draft is written here and leaves only through the
+ * hand-off, the single path content takes out of a private stream.
  */
 export function AsideDraftEditor({
   workspaceId,
@@ -34,7 +35,7 @@ export function AsideDraftEditor({
   onPendingAgentBlocksConsumed,
 }: AsideDraftEditorProps) {
   const composer = useDraftComposer({ workspaceId, draftKey: scope, scopeId: scope })
-  const editorRef = useRef<RichEditorHandle>(null)
+  const controlRef = useRef<ComposerControlHandle | null>(null)
   const { send, remove, busy, canSend } = useAsideDraftActions(composer, { onSendToComposer, onDone: onBack })
 
   const { isLoaded, content, handleContentChange } = composer
@@ -44,7 +45,7 @@ export function AsideDraftEditor({
     for (const block of pendingAgentBlocks) next = appendAgentBlockNode(next, block)
     handleContentChange(next)
     onPendingAgentBlocksConsumed?.()
-    editorRef.current?.focusAfterQuoteReply()
+    controlRef.current?.focusAfterQuoteReply()
   }, [isLoaded, content, handleContentChange, pendingAgentBlocks, onPendingAgentBlocksConsumed])
 
   return (
@@ -75,17 +76,30 @@ export function AsideDraftEditor({
           Send to composer
         </Button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-        <RichEditor
-          ref={editorRef}
-          value={composer.content}
-          onChange={composer.handleContentChange}
+      <div className="flex min-h-0 flex-1 flex-col justify-end px-3 py-2">
+        <MessageComposer
+          composerRef={controlRef}
+          content={composer.content}
+          onContentChange={composer.handleContentChange}
+          pendingAttachments={composer.pendingAttachments}
+          onRemoveAttachment={composer.handleRemoveAttachment}
+          onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
+          workspaceId={workspaceId}
+          commandStreamId={null}
+          fileInputRef={composer.fileInputRef}
+          onFileSelect={composer.handleFileSelect}
+          onFileUpload={composer.uploadFile}
+          imageCount={composer.imageCount}
           onSubmit={() => void send()}
-          messageSendMode="cmdEnter"
+          canSubmit={canSend && !busy}
+          isSubmitting={busy}
+          submitLabel="Send to composer"
+          submittingLabel="Sending to composer…"
           placeholder="Write here, then send it to the composer…"
-          ariaLabel="Aside draft"
-          autoFocus
+          messageSendMode="cmdEnter"
           scopeId={scope}
+          autoFocus
+          initialMobileChromeOpen
         />
       </div>
     </div>

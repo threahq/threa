@@ -24,6 +24,7 @@ import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { spyOnExport } from "@/test"
+import * as streamStoreModule from "@/stores/stream-store"
 import { toast } from "sonner"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 // eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
@@ -302,6 +303,8 @@ beforeEach(async () => {
     pendingAttachments,
     composerRef,
     scheduledMessagesTrigger,
+    stashedDrafts,
+    onExpandClick,
   }: {
     content: JSONContent
     onContentChange: (v: JSONContent) => void
@@ -312,6 +315,8 @@ beforeEach(async () => {
     pendingAttachments: Array<{ id: string; filename: string; sizeBytes: number; status: string }>
     composerRef?: { current: { focus: () => void; focusAfterQuoteReply: () => void } | null }
     scheduledMessagesTrigger?: ReactNode
+    stashedDrafts?: unknown
+    onExpandClick?: () => void
   }) => {
     if (composerRef) {
       composerRef.current = {
@@ -321,7 +326,11 @@ beforeEach(async () => {
     }
 
     return (
-      <div data-testid="message-composer">
+      <div
+        data-testid="message-composer"
+        data-stash={stashedDrafts ? "yes" : "no"}
+        data-expand={onExpandClick ? "yes" : "no"}
+      >
         <textarea data-testid="rich-editor" />
         {pendingAttachments.map((a) => (
           <div key={a.id}>
@@ -422,6 +431,28 @@ describe("MessageInput", () => {
       expect(screen.getByTestId("message-composer")).toBeInTheDocument()
       expect(screen.getByTestId("rich-editor")).toBeInTheDocument()
       expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument()
+    })
+
+    it("keeps schedule, the stash pile and fullscreen off an aside's composer, on for a channel's", () => {
+      const store = spyOnExport(streamStoreModule, "useStreamFromStore")
+      store.mockReturnValue((() => ({ id: streamId, type: "aside" })) as never)
+      const { unmount } = render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      const aside = screen.getByTestId("message-composer")
+      expect({
+        schedule: screen.queryByTestId("scheduled-messages-picker") !== null,
+        stash: aside.getAttribute("data-stash"),
+        expand: aside.getAttribute("data-expand"),
+      }).toEqual({ schedule: false, stash: "no", expand: "no" })
+      unmount()
+
+      store.mockReturnValue((() => ({ id: streamId, type: "channel" })) as never)
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      const channel = screen.getByTestId("message-composer")
+      expect({
+        schedule: screen.queryByTestId("scheduled-messages-picker") !== null,
+        stash: channel.getAttribute("data-stash"),
+        expand: channel.getAttribute("data-expand"),
+      }).toEqual({ schedule: true, stash: "yes", expand: "yes" })
     })
 
     it("should disable send button when canSend is false", () => {

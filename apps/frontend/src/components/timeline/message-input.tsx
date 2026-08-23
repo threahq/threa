@@ -55,7 +55,8 @@ import {
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
-import type { JSONContent } from "@threa/types"
+import { StreamTypes, type JSONContent } from "@threa/types"
+import { useStreamFromStore } from "@/stores/stream-store"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 
@@ -402,6 +403,10 @@ function MessageInputComponent({
     e2eStreamId: e2eRootStreamId,
   })
   const quoteReplyCtx = useQuoteReply()
+  // An aside's composer is a private thinking surface: nothing to schedule,
+  // no stash pile (its drafts live in the aside's own dock), no fullscreen
+  // document editor — the pane is the surface. Those three slots stay off.
+  const isAsideComposer = useStreamFromStore(streamId)?.type === StreamTypes.ASIDE
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
@@ -710,6 +715,11 @@ function MessageInputComponent({
           }
           const inserted = destinationEditor.chain().setContent(shareContent).focus("end").run()
           if (!inserted) throw new Error("destination editor rejected the share")
+          // An aside draft's files arrive with its blocks and become this
+          // draft's own (the source let go of them on delivery).
+          composerRef.current.adoptAttachments(
+            batch.handoffs.flatMap((handoff) => (handoff.kind === "content" ? handoff.attachments : []))
+          )
           acknowledgeShareHandoffBatch(streamId, batch)
           const persisted = await composerRef.current.flushDraftWithResult({ contentJson: shareContent })
           if (!persisted) toast.error("Couldn't save the shared message as a draft. Keep this composer open.")
@@ -1034,19 +1044,21 @@ function MessageInputComponent({
       : undefined,
     streamContext,
     composerRef: composerFocusRef,
-    onStashDraft: stash.handleStashDraft,
-    stashedDrafts: {
-      drafts: stash.drafts,
-      previewById: stashPreviews,
-      originById: stashOrigins,
-      canStashCurrent: composer.canSend,
-      onStashCurrent: stash.handleStashDraft,
-      onRestore: stash.handleRestoreStashed,
-      onDelete: stash.handleDeleteStashed,
-      onOpenChange: stash.setPileOpen,
-      controlsDisabled: composer.isSending,
-    },
-    scheduledMessagesTrigger: (
+    onStashDraft: isAsideComposer ? undefined : stash.handleStashDraft,
+    stashedDrafts: isAsideComposer
+      ? undefined
+      : {
+          drafts: stash.drafts,
+          previewById: stashPreviews,
+          originById: stashOrigins,
+          canStashCurrent: composer.canSend,
+          onStashCurrent: stash.handleStashDraft,
+          onRestore: stash.handleRestoreStashed,
+          onDelete: stash.handleDeleteStashed,
+          onOpenChange: stash.setPileOpen,
+          controlsDisabled: composer.isSending,
+        },
+    scheduledMessagesTrigger: isAsideComposer ? undefined : (
       <ScheduledMessagesPicker
         workspaceId={workspaceId}
         streamId={streamId}
@@ -1055,7 +1067,7 @@ function MessageInputComponent({
         controlsDisabled={composer.isSending}
       />
     ),
-    scheduledMessagesTriggerFab: (
+    scheduledMessagesTriggerFab: isAsideComposer ? undefined : (
       <ScheduledMessagesPicker
         workspaceId={workspaceId}
         streamId={streamId}
@@ -1110,7 +1122,13 @@ function MessageInputComponent({
       <FloatingComposerShell ref={composerHeightRef} hidden={expanded} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {!expanded && conversationReplyStrip}
-        {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
+        {!expanded && (
+          <MessageComposer
+            {...composerProps}
+            autoFocus={autoFocus}
+            onExpandClick={isAsideComposer ? undefined : handleExpandClick}
+          />
+        )}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>
     </>

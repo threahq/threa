@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from "react"
 import { toast } from "sonner"
 import type { JSONContent } from "@threa/types"
+import type { DraftAttachment } from "@/db"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { DraftComposerState } from "./use-draft-composer"
 
 export interface AsideDraftActions {
-  /** Persist the draft, then hand its blocks to the host composer. */
+  /** Persist the draft, then hand its blocks and files to the host composer. */
   send: () => Promise<void>
   /** Discard the draft. */
   remove: () => Promise<void>
@@ -14,34 +15,49 @@ export interface AsideDraftActions {
   canSend: boolean
 }
 
+export interface AsideDraftHandoff {
+  content: JSONContent[]
+  attachments: DraftAttachment[]
+}
+
 /**
  * The two things an aside draft can do, kept out of the editor component
  * (INV-15). A send is serialized: the draft is flushed before it leaves, and a
  * second send (or a delete) while one is in flight is refused rather than
- * queueing the same content twice or clearing a draft mid-handoff.
+ * queueing the same content twice or clearing a draft mid-handoff. The text is
+ * copied (the draft survives); the files MOVE — an upload can belong to one
+ * message, so once the host composer adopts them this draft lets go.
  */
 export function useAsideDraftActions(
   composer: DraftComposerState,
-  params: { onSendToComposer: (content: JSONContent[]) => Promise<boolean>; onDone: () => void }
+  params: { onSendToComposer: (handoff: AsideDraftHandoff) => Promise<boolean>; onDone: () => void }
 ): AsideDraftActions {
   const [busy, setBusy] = useState(false)
   const inFlight = useRef(false)
   const { onSendToComposer, onDone } = params
+  const uploaded = composer.pendingAttachments.filter((attachment) => attachment.status === "uploaded")
+  const canSend = (!isEmptyContent(composer.content) || uploaded.length > 0) && !composer.isUploading
 
   const send = useCallback(async () => {
     if (inFlight.current) return
     const content = composer.content
-    if (isEmptyContent(content)) return
+    const attachments = composer
+      .getPendingAttachmentsSnapshot()
+      .filter((attachment) => attachment.status === "uploaded")
+      .map(({ id, filename, mimeType, sizeBytes }) => ({ id, filename, mimeType, sizeBytes }))
+    if (isEmptyContent(content) && attachments.length === 0) return
+    if (composer.isUploading) return
     inFlight.current = true
     setBusy(true)
     try {
-      // Persist before handing off: the hand-off is a copy into another
+      // Persist before handing off: the hand-off copies the text into another
       // composer, so the draft must survive it even if the destination refuses.
       await composer.flushDraft()
-      if (!(await onSendToComposer(content.content ?? []))) {
+      if (!(await onSendToComposer({ content: content.content ?? [], attachments }))) {
         toast.error("Couldn't hand this draft to the composer.")
         return
       }
+      composer.releaseAttachments()
       onDone()
     } catch {
       // The editor fires send without awaiting it; a rejected flush or
@@ -59,5 +75,5 @@ export function useAsideDraftActions(
     onDone()
   }, [composer, onDone])
 
-  return { send, remove, busy, canSend: !isEmptyContent(composer.content) }
+  return { send, remove, busy, canSend }
 }

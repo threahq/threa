@@ -189,6 +189,17 @@ export interface DraftComposerState {
    */
   resolveDraft: () => Promise<void>
   clearAttachments: () => void
+  /**
+   * Take over already-uploaded attachments from another draft (a hand-off):
+   * held by this composer and persisted onto this draft's row, bytes untouched.
+   */
+  adoptAttachments: (attachments: DraftAttachment[]) => void
+  /**
+   * Let go of this draft's uploaded attachments without deleting the uploads —
+   * the other half of a hand-off, once another draft has adopted them. The
+   * chips leave and the row forgets them; the files stay.
+   */
+  releaseAttachments: () => void
 
   // Loading
   isLoaded: boolean
@@ -664,6 +675,24 @@ export function useDraftComposer({
     [removeAttachment, removeDraftAttachment]
   )
 
+  const adoptAttachments = useCallback(
+    (attachments: DraftAttachment[]) => {
+      if (attachments.length === 0) return
+      // Marked restored so the persistence effect doesn't add them a second
+      // time; the one explicit add below is what writes them onto the row.
+      for (const attachment of attachments) restoredAttachmentIdsRef.current.add(attachment.id)
+      restoreAttachments(attachments)
+      for (const attachment of attachments) addDraftAttachment(attachment)
+    },
+    [restoreAttachments, addDraftAttachment]
+  )
+
+  const releaseAttachments = useCallback(() => {
+    const held = pendingAttachmentsRef.current.filter((attachment) => attachment.status === "uploaded")
+    clearAttachments()
+    for (const attachment of held) removeDraftAttachment(attachment.id)
+  }, [clearAttachments, removeDraftAttachment])
+
   // Cancel an in-flight upload: abort the transfer, drop the chip, delete the
   // reservation — and remove it from the persisted draft so a rehydrate
   // doesn't resurrect a file the user just abandoned.
@@ -736,6 +765,8 @@ export function useDraftComposer({
     clearDraft,
     resolveDraft,
     clearAttachments,
+    adoptAttachments,
+    releaseAttachments,
 
     // Loading
     isLoaded: isDraftLoaded,

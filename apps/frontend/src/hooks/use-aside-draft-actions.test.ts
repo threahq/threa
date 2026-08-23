@@ -11,13 +11,20 @@ const CONTENT: JSONContent = {
 }
 
 function composerStub(overrides: Partial<DraftComposerState> = {}): DraftComposerState {
+  const pendingAttachments = overrides.pendingAttachments ?? []
   return {
     content: CONTENT,
+    pendingAttachments,
+    getPendingAttachmentsSnapshot: () => pendingAttachments,
+    isUploading: false,
     flushDraft: vi.fn(async () => {}),
     clearDraft: vi.fn(async () => {}),
+    releaseAttachments: vi.fn(),
     ...overrides,
   } as unknown as DraftComposerState
 }
+
+const FILE = { id: "attach_1", filename: "brief.pdf", mimeType: "application/pdf", sizeBytes: 1200 }
 
 describe("useAsideDraftActions", () => {
   it("delivers the draft once when send is pressed twice before the hand-off resolves", async () => {
@@ -38,7 +45,7 @@ describe("useAsideDraftActions", () => {
       await first
     })
     expect({ sent: onSendToComposer.mock.calls, done: onDone.mock.calls }).toEqual({
-      sent: [[CONTENT.content]],
+      sent: [[{ content: CONTENT.content, attachments: [] }]],
       done: [[]],
     })
   })
@@ -90,6 +97,52 @@ describe("useAsideDraftActions", () => {
       await result.current.send()
     })
     expect({ done: onDone.mock.calls.length, busy: result.current.busy }).toEqual({ done: 0, busy: false })
+  })
+
+  it("moves uploaded files with the text: hands them over, then lets go of them once delivered", async () => {
+    const onSendToComposer = vi.fn(async () => true)
+    const composer = composerStub({
+      pendingAttachments: [
+        { ...FILE, status: "uploaded" },
+        { id: "attach_2", filename: "x.png", mimeType: "image/png", sizeBytes: 10, status: "error" },
+      ] as never,
+    })
+    const { result } = renderHook(() => useAsideDraftActions(composer, { onSendToComposer, onDone: vi.fn() }))
+
+    await act(async () => {
+      await result.current.send()
+    })
+
+    expect({
+      sent: onSendToComposer.mock.calls,
+      released: (composer.releaseAttachments as ReturnType<typeof vi.fn>).mock.calls,
+    }).toEqual({
+      sent: [[{ content: CONTENT.content, attachments: [FILE] }]],
+      released: [[]],
+    })
+  })
+
+  it("keeps its files when the hand-off is refused, and holds while one is still uploading", async () => {
+    const refused = composerStub({ pendingAttachments: [{ ...FILE, status: "uploaded" }] as never })
+    const { result } = renderHook(() =>
+      useAsideDraftActions(refused, { onSendToComposer: vi.fn(async () => false), onDone: vi.fn() })
+    )
+    await act(async () => {
+      await result.current.send()
+    })
+    expect(refused.releaseAttachments).not.toHaveBeenCalled()
+
+    const uploading = composerStub({
+      isUploading: true,
+      pendingAttachments: [{ ...FILE, status: "uploading" }] as never,
+    })
+    const onSendToComposer = vi.fn(async () => true)
+    const held = renderHook(() => useAsideDraftActions(uploading, { onSendToComposer, onDone: vi.fn() }))
+    expect(held.result.current.canSend).toBe(false)
+    await act(async () => {
+      await held.result.current.send()
+    })
+    expect(onSendToComposer).not.toHaveBeenCalled()
   })
 
   it("does nothing for an empty draft", async () => {

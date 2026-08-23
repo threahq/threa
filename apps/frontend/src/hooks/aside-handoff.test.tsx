@@ -62,7 +62,9 @@ describe("useAsideHandoff", () => {
       })
 
       expect(delivered).toBe(true)
-      expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([{ kind: "content", content: CONTENT }])
+      expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+        { kind: "content", content: CONTENT, attachments: [] },
+      ])
       expect(await db.composerTarget.get("stream:stream_host")).toBeUndefined()
       expect(pathname).toBe("/w/ws_1/board")
     } finally {
@@ -78,7 +80,9 @@ describe("useAsideHandoff", () => {
     })
 
     expect(delivered).toBe(true)
-    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([{ kind: "content", content: CONTENT }])
+    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+      { kind: "content", content: CONTENT, attachments: [] },
+    ])
     await waitFor(() => expect(pathname).toBe("/w/ws_1/s/stream_host"))
   })
 
@@ -91,7 +95,9 @@ describe("useAsideHandoff", () => {
 
     expect(delivered).toBe(true)
     expect((await db.composerTarget.get("stream:stream_host"))?.scope).toBe("board:reply:conv_1")
-    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([{ kind: "content", content: CONTENT }])
+    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+      { kind: "content", content: CONTENT, attachments: [] },
+    ])
   })
 
   it("refuses an origin the host composer cannot send, rather than stranding the draft", async () => {
@@ -120,7 +126,23 @@ describe("useAsideHandoff", () => {
 
     expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
       { kind: "pointer", attrs: pointer },
-      { kind: "content", content: CONTENT },
+      { kind: "content", content: CONTENT, attachments: [] },
     ])
+  })
+
+  it("carries the draft's files with its blocks, and a files-only draft still hands off", async () => {
+    const unmount = mountHostScroller("stream_host")
+    try {
+      const file = { id: "attach_1", filename: "brief.pdf", mimeType: "application/pdf", sizeBytes: 1200 }
+      const send = handoff()
+      expect(
+        await send({ hostStreamId: "stream_host", originScope: "stream:stream_host", content: [], attachments: [file] })
+      ).toBe(true)
+      expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+        { kind: "content", content: [], attachments: [file] },
+      ])
+    } finally {
+      unmount()
+    }
   })
 })

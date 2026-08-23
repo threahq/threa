@@ -1,6 +1,7 @@
 import { useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { draftStreamScope, type JSONContent } from "@threa/types"
+import type { DraftAttachment } from "@/db"
 import { queueContentHandoff } from "@/stores/composer-handoff-store"
 import { setComposerTarget } from "./use-composer-target"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
@@ -25,8 +26,13 @@ function hostComposerMounted(hostStreamId: string): boolean {
 export function useAsideHandoff(workspaceId: string) {
   const navigate = useNavigate()
   return useCallback(
-    async (params: { hostStreamId: string; originScope: string; content: JSONContent[] }): Promise<boolean> => {
-      if (params.content.length === 0) return false
+    async (params: {
+      hostStreamId: string
+      originScope: string
+      content: JSONContent[]
+      attachments?: DraftAttachment[]
+    }): Promise<boolean> => {
+      if (params.content.length === 0 && (params.attachments?.length ?? 0) === 0) return false
       const hostScope = draftStreamScope(params.hostStreamId)
       if (params.originScope !== hostScope) {
         // Only scopes the timeline composer can hold: today the conversation
@@ -36,7 +42,7 @@ export function useAsideHandoff(workspaceId: string) {
         if (board?.kind !== "reply") return false
         await setComposerTarget(workspaceId, hostScope, params.originScope)
       }
-      queueContentHandoff(params.hostStreamId, params.content)
+      queueContentHandoff(params.hostStreamId, params.content, params.attachments ?? [])
       if (!hostComposerMounted(params.hostStreamId)) {
         navigate(`/w/${workspaceId}/s/${params.hostStreamId}`)
       }

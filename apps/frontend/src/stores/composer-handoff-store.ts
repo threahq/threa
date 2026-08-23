@@ -1,5 +1,6 @@
 import type { JSONContent } from "@threa/types"
 import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
+import type { DraftAttachment } from "@/db"
 
 /**
  * Ephemeral per-stream "hand-off" of content into a target stream's composer:
@@ -33,13 +34,15 @@ export interface PlaintextShareHandoffEntry {
  */
 export interface ContentHandoffEntry {
   content: JSONContent[]
+  /** Uploaded attachments that move with the blocks; the destination adopts them as its own. */
+  attachments: DraftAttachment[]
   expiresAt: number
 }
 
 export type PendingShareHandoff =
   | { kind: "pointer"; attrs: SharedMessageAttrs }
   | { kind: "plaintext"; markdown: string; attrs: SharedMessageAttrs }
-  | { kind: "content"; content: JSONContent[] }
+  | { kind: "content"; content: JSONContent[]; attachments: DraftAttachment[] }
 
 export interface ShareHandoffBatch {
   ids: readonly number[]
@@ -123,9 +126,19 @@ export function queuePlaintextShareHandoff(targetStreamId: string, markdown: str
  * notification as a share; the composer inserts it through the same path, so a
  * draft already in the destination is stashed rather than overwritten.
  */
-export function queueContentHandoff(targetStreamId: string, content: JSONContent[]): void {
+export function queueContentHandoff(
+  targetStreamId: string,
+  content: JSONContent[],
+  attachments: DraftAttachment[] = []
+): void {
   const queued = cache.get(targetStreamId) ?? []
-  queued.push({ queueId: ++nextQueueId, kind: "content", content, expiresAt: Date.now() + HANDOFF_TTL_MS })
+  queued.push({
+    queueId: ++nextQueueId,
+    kind: "content",
+    content,
+    attachments,
+    expiresAt: Date.now() + HANDOFF_TTL_MS,
+  })
   cache.set(targetStreamId, queued)
   const subs = listeners.get(targetStreamId)
   if (subs) {
@@ -155,7 +168,7 @@ export function peekShareHandoffBatch(targetStreamId: string): ShareHandoffBatch
     ids: queued.map((entry) => entry.queueId),
     handoffs: queued.map((entry) => {
       if (entry.kind === "pointer") return { kind: "pointer", attrs: entry.attrs }
-      if (entry.kind === "content") return { kind: "content", content: entry.content }
+      if (entry.kind === "content") return { kind: "content", content: entry.content, attachments: entry.attachments }
       return { kind: "plaintext", markdown: entry.markdown, attrs: entry.attrs }
     }),
   }
