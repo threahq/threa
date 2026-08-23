@@ -92,6 +92,9 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
       sourceConversationId: CONV,
     }),
   ],
+  "aside:anchored": [
+    cachedEvent("aside:anchored", { asideId: "stream_aside_1", anchorId: MEMBER_MESSAGE, conversationId: CONV }),
+  ],
 }
 
 function rowsFor(events: CachedEvent[]): BoardEventRow[] {
@@ -156,6 +159,7 @@ describe("BoardEventRowItem renders every spec-declared board row", () => {
       "memos:captured": ["memo"],
       "agent:follow_up_scheduled": ["followUp"],
       "delegation:created": ["delegation"],
+      "aside:anchored": ["aside"],
       command_dispatched: ["command"],
       command_completed: ["command"],
       command_failed: ["command"],

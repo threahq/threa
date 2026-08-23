@@ -445,6 +445,14 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
       payload: { delegationId: "dlg_fixture", title: "Fixture", sourceConversationId: CONV },
     }),
   ],
+  "aside:anchored": [
+    cachedEvent({
+      eventType: "aside:anchored",
+      createdAt: "2026-07-04T10:00:00Z",
+      actorId: USER,
+      payload: { asideId: "stream_aside_fixture", anchorId: "msg_1", conversationId: CONV },
+    }),
+  ],
 }
 
 describe("resolveBoardEventRows covers every spec-declared board row type", () => {
@@ -470,6 +478,7 @@ describe("resolveBoardEventRows covers every spec-declared board row type", () =
       "memos:captured": ["memo"],
       "agent:follow_up_scheduled": ["followUp"],
       "delegation:created": ["delegation"],
+      "aside:anchored": ["aside"],
       command_dispatched: ["command"],
       command_completed: ["command"],
       command_failed: ["command"],
@@ -506,5 +515,58 @@ describe("BOARD_RAIL_EVENT_TYPES covers every patch belonging to a board row typ
     )
     const subscribed = new Set<EventType>(BOARD_RAIL_EVENT_TYPES)
     expect(requiredPatches.filter((type) => !subscribed.has(type))).toEqual([])
+  })
+})
+
+describe("resolveBoardEventRows — aside anchor rows", () => {
+  const asideRow = (id: string, actorId: string, conversationId?: string) =>
+    cachedEvent({
+      id,
+      eventType: "aside:anchored",
+      createdAt: "2026-08-20T10:00:00Z",
+      actorId,
+      actorType: "user",
+      payload: { asideId: `stream_${id}`, anchorId: "msg_1", ...(conversationId && { conversationId }) },
+    })
+
+  it("draws the creator's conversation-anchored row on that conversation only", () => {
+    const events = [asideRow("mine", "usr_me", CONV), asideRow("elsewhere", "usr_me", "conv_other")]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: "usr_me",
+    })
+    expect(rows).toEqual([expect.objectContaining({ kind: "aside", key: "mine" })])
+  })
+
+  it("never draws another member's row, even on the matching conversation", () => {
+    const events = [asideRow("theirs", "usr_other", CONV)]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: "usr_me",
+    })
+    expect(rows).toEqual([])
+  })
+
+  it("draws nothing for an archived aside, so a folded ledger never keeps a row the full card dropped", () => {
+    const events = [asideRow("live", "usr_me", CONV), asideRow("gone", "usr_me", CONV)]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: "usr_me",
+      archivedAsideIds: new Set(["stream_gone"]),
+    })
+    expect(rows).toEqual([expect.objectContaining({ kind: "aside", key: "live" })])
+  })
+
+  it("draws nothing for a message-anchored aside (no conversation named)", () => {
+    const events = [asideRow("plain", "usr_me")]
+    const rows = resolveBoardEventRows(events, {
+      conversationId: CONV,
+      memberMessageIds: new Set(),
+      currentUserId: "usr_me",
+    })
+    expect(rows).toEqual([])
   })
 })

@@ -23,7 +23,8 @@ const archived = createMockStream({
   archivedAt: "2025-01-01T00:00:00Z",
 })
 const thread = createMockStream({ id: "stream_t1", type: StreamTypes.THREAD, rootStreamId: "stream_c1" })
-const allStreams = [general, random, dm, scratch, archived, thread]
+const aside = createMockStream({ id: "stream_a1", type: StreamTypes.ASIDE, displayName: "churn number sanity-check" })
+const allStreams = [general, random, dm, scratch, archived, thread, aside]
 
 beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(allStreams as never)
@@ -39,12 +40,13 @@ function groupIds(groups: Map<StreamType, { stream: { id: string } }[]>, type: S
 }
 
 describe("useStreamPickerGroups", () => {
-  it("groups accessible streams by type and drops archived + thread/system", () => {
+  it("groups accessible streams by type and drops archived + thread/system/aside", () => {
     const { result } = renderHook(() => useStreamPickerGroups("workspace_1", { search: "", sortMode: "alphabetical" }))
     expect(groupIds(result.current, StreamTypes.CHANNEL)).toEqual([general.id, random.id])
     expect(groupIds(result.current, StreamTypes.DM)).toEqual([dm.id])
     expect(groupIds(result.current, StreamTypes.SCRATCHPAD)).toEqual([scratch.id])
     expect(result.current.get(StreamTypes.THREAD)).toBeUndefined()
+    expect(result.current.get(StreamTypes.ASIDE)).toBeUndefined()
     expect(groupIds(result.current, StreamTypes.CHANNEL)).not.toContain(archived.id)
   })
 

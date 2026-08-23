@@ -6,6 +6,7 @@ import {
   type AgentSessionCompletedPayload,
   type AgentSessionFailedPayload,
   type AgentSessionStartedPayload,
+  type AsideAnchoredEventPayload,
   type AttachmentSummary,
   type CommandDispatchedPayload,
   type DelegationCreatedEventPayload,
@@ -165,6 +166,8 @@ export interface LedgerEventContent {
 export interface LedgerEventContentCtx {
   /** The session's trace-view URL, from the surface's `useTrace`. */
   traceUrl: (sessionId: string) => string
+  /** An aside's title from the creator's stream cache; null when not cached. */
+  asideTitle?: (asideId: string) => string | null
 }
 
 function stepsLabel(count: number): string {
@@ -266,6 +269,15 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
         kind: "delegation",
         label: payload?.title ? `Delegation: ${payload.title}` : "Delegation",
         meta: delegationAvailabilityLabel(row.statusPatch?.status ?? DelegationStatuses.OPEN, row.statusPatch?.reason),
+      }
+    }
+    case "aside": {
+      const payload = row.event.payload as AsideAnchoredEventPayload | undefined
+      const title = payload ? ctx.asideTitle?.(payload.asideId) : null
+      return {
+        key: row.key,
+        kind: "aside",
+        label: title ? `Aside: ${title}` : "Aside",
       }
     }
     default: {

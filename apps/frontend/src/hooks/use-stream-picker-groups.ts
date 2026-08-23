@@ -7,6 +7,7 @@ import {
   type CachedStream,
 } from "@/stores/workspace-store"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
+import { isHiddenStreamType } from "@/lib/streams"
 import { scoreStreamMatch, compareStreamEntries, type SortableEntry, type StreamSortMode } from "@/lib/stream-sort"
 
 /** Stable identity for the no-unread-state case so the memo doesn't re-sort every render. */
@@ -18,7 +19,7 @@ export interface StreamPickerGroupsOptions {
   sortMode: StreamSortMode
   /**
    * Extra predicate applied ON TOP of the baseline access filter
-   * (public-or-member, not archived, not a thread/system stream). Lets a caller
+   * (public-or-member, not archived, not a thread/system/aside stream). Lets a caller
    * narrow to postable channels+DMs while another caller keeps scratchpads.
    */
   filter?: (stream: CachedStream) => boolean
@@ -59,7 +60,7 @@ export function useStreamPickerGroups(
     const matchable = streams.filter((s) => {
       if (s.archivedAt) return false
       if (s.rootStreamId) return false
-      if (s.type === StreamTypes.THREAD || s.type === StreamTypes.SYSTEM) return false
+      if (s.type === StreamTypes.THREAD || s.type === StreamTypes.SYSTEM || isHiddenStreamType(s)) return false
       const accessible = s.visibility === Visibilities.PUBLIC || memberStreamIds.has(s.id)
       if (!accessible) return false
       return filter ? filter(s) : true

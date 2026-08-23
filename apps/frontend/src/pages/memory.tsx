@@ -32,7 +32,7 @@ import {
   type MemoEditControls,
 } from "@/components/memo/memo-detail"
 import { cn } from "@/lib/utils"
-import { streamLabel } from "@/lib/streams"
+import { isHiddenStreamType, streamLabel } from "@/lib/streams"
 import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
 import type { MemoExplorerResult, MemoUpdateRequest } from "@/api"
 
@@ -338,7 +338,7 @@ export function MemoryPage() {
   const isRefreshing = searchResponse.isFetching || selectedMemo.isFetching
 
   const streamOptions = streams
-    .filter((stream) => !stream.archivedAt)
+    .filter((stream) => !stream.archivedAt && !isHiddenStreamType(stream))
     .map((stream) => ({
       id: stream.id,
       label: streamLabel(stream),

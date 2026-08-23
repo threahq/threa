@@ -779,6 +779,71 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.lastSeenEventId).toBe("evt_real")
   })
 
+  it("never lets a relocated aside anchor row drive the frontier — at the viewport bottom or top", () => {
+    // Sequence order: e1..e5 then the aside row (created last, anchored on e2).
+    // `attachAsideAnchors` renders it right after e2, so by index it is the
+    // newest row while on screen it sits among the oldest.
+    const events = [
+      { id: "e1", sequence: "1", eventType: "message_created" },
+      { id: "e2", sequence: "2", eventType: "message_created" },
+      { id: "e3", sequence: "3", eventType: "message_created" },
+      { id: "e4", sequence: "4", eventType: "message_created" },
+      { id: "e5", sequence: "5", eventType: "message_created" },
+      { id: "aside", sequence: "6", eventType: "aside:anchored" },
+    ] as unknown as StreamEvent[]
+    const mount = (positions: Record<string, { top: number; bottom: number }>, lastReadEventId: string) => {
+      const container = document.createElement("div")
+      container.getBoundingClientRect = () => rect(0, 100)
+      for (const id of ["e1", "e2", "aside", "e3", "e4", "e5"]) {
+        const row = document.createElement("div")
+        row.setAttribute("data-event-id", id)
+        row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+        container.appendChild(row)
+      }
+      return renderHook(() =>
+        useLastSeenEvent({
+          scrollContainerRef: { current: container },
+          events,
+          streamId: "s",
+          lastReadEventId,
+          enabled: true,
+        })
+      )
+    }
+
+    // Bottom: e2 and the aside row fill the viewport; e3..e5 are below the fold.
+    // The aside's index (5) must not become the frontier — e3/e4 were never seen.
+    const bottom = mount(
+      {
+        e1: { top: -50, bottom: -10 },
+        e2: { top: 0, bottom: 50 },
+        aside: { top: 50, bottom: 70 },
+        e3: { top: 110, bottom: 150 },
+        e4: { top: 160, bottom: 200 },
+        e5: { top: 210, bottom: 250 },
+      },
+      "e1"
+    )
+    expect(bottom.result.current.lastSeenEventId).toBe("e2")
+    expect(bottom.result.current.atLastRow).toBe(false)
+
+    // Top: the aside row is the topmost visible row above e3/e4, pointer at e2.
+    // Its index would read as a gap; skipping it keeps the run contiguous.
+    const top = mount(
+      {
+        e1: { top: -100, bottom: -60 },
+        e2: { top: -50, bottom: -10 },
+        aside: { top: 0, bottom: 20 },
+        e3: { top: 20, bottom: 60 },
+        e4: { top: 60, bottom: 100 },
+        e5: { top: 110, bottom: 150 },
+      },
+      "e2"
+    )
+    expect(top.result.current.lastSeenEventId).toBe("e4")
+    expect(top.result.current.unreadAboveViewport).toBe(false)
+  })
+
   it("ignores foreign rows (the thread parent banner) instead of vetoing the scan", () => {
     // A thread renders its parent message as a timeline row carrying the PARENT
     // stream's event id — never present in the thread's own window. In a short

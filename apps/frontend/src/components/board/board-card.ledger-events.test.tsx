@@ -419,3 +419,58 @@ describe("BoardCard running agent sessions", () => {
     expect(screen.queryByText("Ariadne is working…")).toBeNull()
   })
 })
+
+describe("BoardCard aside anchor rows", () => {
+  const MINE = "stream_aside_mine"
+  const THEIRS = "stream_aside_theirs"
+
+  async function seedAsides() {
+    await db.streams.bulkPut([
+      { ...cachedStream(MINE, StreamTypes.ASIDE), displayName: "churn number sanity-check", visibility: "private" },
+      {
+        ...cachedStream(THEIRS, StreamTypes.ASIDE),
+        displayName: "Member's private aside",
+        visibility: "private",
+        createdBy: "usr_other",
+      },
+    ])
+  }
+
+  function asideEvent(id: string, seconds: number, asideId: string, actorId: string): CachedEvent {
+    return { ...event("aside:anchored", seconds, { asideId, anchorId: "r1", conversationId: CONV }, id), actorId }
+  }
+
+  it("renders the creator's row in the full-tail region and never another member's", async () => {
+    await seedAsides()
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      messageEvent("r2", 11, "Second reply."),
+      messageEvent("r3", 12, "Third reply."),
+      asideEvent("evt_aside_mine", 13, MINE, "usr_me"),
+      asideEvent("evt_aside_theirs", 14, THEIRS, "usr_other"),
+    ])
+    await db.conversations.put(post())
+    mount()
+
+    const title = await screen.findByText("churn number sanity-check")
+    expect(title.closest("[data-aside-id]")).toHaveAttribute("data-aside-id", MINE)
+    expect(screen.queryByText("Member's private aside")).toBeNull()
+    expect(document.querySelector(`[data-aside-id="${THEIRS}"]`)).toBeNull()
+  })
+
+  it("folds the creator's row into a ledger line carrying the aside's title", async () => {
+    await seedAsides()
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      asideEvent("evt_aside_mine", 11, MINE, "usr_me"),
+      asideEvent("evt_aside_theirs", 12, THEIRS, "usr_other"),
+      messageEvent("r2", 13, "Second reply."),
+      messageEvent("r3", 14, "Third reply."),
+    ])
+    await db.conversations.put(post())
+    mount()
+
+    await screen.findByText("Aside: churn number sanity-check")
+    expect(screen.queryByText(/Member's private aside/)).toBeNull()
+  })
+})

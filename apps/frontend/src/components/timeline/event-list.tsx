@@ -2,6 +2,7 @@ import { memo, useMemo } from "react"
 import {
   ConversationStatuses,
   type StreamEvent,
+  type AsideAnchoredEventPayload,
   type DelegationStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
@@ -13,6 +14,7 @@ import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
+import { AsideAnchorEvent } from "./aside-anchor-event"
 import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
 import { UnreadDivider } from "./unread-divider"
@@ -109,9 +111,16 @@ export type TimelineItem =
        * provenance chip. Absent on non-message events and non-revival rows.
        */
       revival?: ConversationRevival
+      asideAnchors?: StreamEvent[]
     }
-  | { type: "command_group"; commandId: string; events: StreamEvent[] }
-  | { type: "session_group"; sessionId: string; sessionVersion: number; events: StreamEvent[] }
+  | { type: "command_group"; commandId: string; events: StreamEvent[]; asideAnchors?: StreamEvent[] }
+  | {
+      type: "session_group"
+      sessionId: string
+      sessionVersion: number
+      events: StreamEvent[]
+      asideAnchors?: StreamEvent[]
+    }
   /**
    * An in-place loading placeholder for a detected hole in the broadcast
    * chain (INV-61): events are known to be missing right after
@@ -162,6 +171,8 @@ function isGroupableMessage(event: StreamEvent): boolean {
 export function annotateAuthorGroups(items: TimelineItem[]): TimelineItem[] {
   let previousMessage: { event: StreamEvent; timeMs: number } | null = null
   return items.map((item) => {
+    // An aside anchor row never breaks a same-author run.
+    if (item.type === "event" && item.event.eventType === "aside:anchored") return item
     if (item.type !== "event" || !isGroupableMessage(item.event)) {
       previousMessage = null
       return item
@@ -602,6 +613,8 @@ export function injectGapItems(
 export function itemDayStartMs(item: TimelineItem): number | null {
   switch (item.type) {
     case "event":
+      // A relocated aside row rides its anchor's day, never opening one of its own.
+      if (item.event.eventType === "aside:anchored") return null
       return localStartOfDayMs(new Date(item.event.createdAt))
     case "command_group":
     case "session_group": {
@@ -716,6 +729,10 @@ export function groupTimelineItems(events: StreamEvent[], currentUserId: string 
       }
 
       slot.events.push(event)
+    } else if (event.eventType === "aside:anchored") {
+      // Author-scoped like command events: the REST filter hides other actors'
+      // rows, the socket path re-applies the rule here.
+      if (isOwnCommandEvent(event, currentUserId)) result.push({ type: "event", event })
     } else {
       result.push({ type: "event", event })
     }
@@ -738,7 +755,60 @@ export function groupTimelineItems(events: StreamEvent[], currentUserId: string 
     }
   }
 
-  return result
+  return attachAsideAnchors(result)
+}
+
+/**
+ * Fold each aside anchor row (`aside:anchored`) into the item it was opened
+ * from — the anchor message or card — when that item is in the window: the row
+ * renders at the foot of that item's cell as `asideAnchors`, never as an item of
+ * its own. The row's sequence is allocated at aside creation, so by sequence
+ * alone it would sit at the tail of a stream whose anchor is far above; and
+ * splicing it in as a new item changed the virtualized list's item count
+ * under the reader, which the virtualizer can answer with a scroll correction
+ * the size of the row (INV-70). A row whose anchor is not in the window, or
+ * that has none (composer/palette aside), stays an item at its creation
+ * position so it is never silently missing. Rows on one anchor keep their
+ * relative (creation) order.
+ */
+export function attachAsideAnchors(items: TimelineItem[]): TimelineItem[] {
+  const anchorIds = new Set<string>()
+  for (const item of items) for (const id of itemAnchorIds(item)) anchorIds.add(id)
+  const byAnchor = new Map<string, StreamEvent[]>()
+  const folded = new Set<TimelineItem>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "aside:anchored") continue
+    const anchorId = (item.event.payload as AsideAnchoredEventPayload | undefined)?.anchorId
+    if (!anchorId || !anchorIds.has(anchorId)) continue
+    const rows = byAnchor.get(anchorId) ?? []
+    rows.push(item.event)
+    byAnchor.set(anchorId, rows)
+    folded.add(item)
+  }
+  if (folded.size === 0) return items
+  const placed: TimelineItem[] = []
+  for (const item of items) {
+    if (folded.has(item)) continue
+    const rows = itemAnchorIds(item).flatMap((id) => byAnchor.get(id) ?? [])
+    placed.push(
+      rows.length > 0 && item.type !== "gap" && item.type !== "skeleton" && item.type !== "day_divider"
+        ? { ...item, asideAnchors: rows }
+        : item
+    )
+  }
+  return placed
+}
+
+/** Ids an aside may be anchored to within one timeline item: the event ids it
+ *  renders (a card, or every event folded into a command/session group) plus
+ *  the message id of a message event. */
+function itemAnchorIds(item: TimelineItem): string[] {
+  if (item.type === "event") {
+    const messageId = (item.event.payload as { messageId?: string })?.messageId
+    return messageId ? [item.event.id, messageId] : [item.event.id]
+  }
+  if (item.type === "command_group" || item.type === "session_group") return item.events.map((event) => event.id)
+  return []
 }
 
 /** Shared context for rendering a timeline item (used by both Virtuoso and non-virtualized paths) */
@@ -905,6 +975,12 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         </div>
       )}
       {eventNode}
+      {"asideAnchors" in item &&
+        item.asideAnchors?.map((anchor) => (
+          <div key={anchor.id} data-event-id={anchor.id}>
+            <AsideAnchorEvent event={anchor} workspaceId={ctx.workspaceId} />
+          </div>
+        ))}
     </>
   )
 
@@ -924,6 +1000,8 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
 function getEventMessageId(event: StreamEvent): string | undefined {
   return (event.payload as { messageId?: string })?.messageId
 }
+
+const NO_EVENTS: StreamEvent[] = []
 
 function eventsArrayEqual(a: StreamEvent[], b: StreamEvent[]): boolean {
   if (a.length !== b.length) return false
@@ -948,6 +1026,7 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
       if (a.event !== other.event || (a.groupContinuation ?? false) !== (other.groupContinuation ?? false)) {
         return false
       }
+      if (!eventsArrayEqual(a.asideAnchors ?? NO_EVENTS, other.asideAnchors ?? NO_EVENTS)) return false
       // Overlay + revival annotation objects are rebuilt by every annotation
       // pass, so compare by value — identity would defeat the memo on each
       // data tick.
@@ -961,14 +1040,19 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
     }
     case "command_group": {
       const other = b as Extract<TimelineItem, { type: "command_group" }>
-      return a.commandId === other.commandId && eventsArrayEqual(a.events, other.events)
+      return (
+        a.commandId === other.commandId &&
+        eventsArrayEqual(a.events, other.events) &&
+        eventsArrayEqual(a.asideAnchors ?? NO_EVENTS, other.asideAnchors ?? NO_EVENTS)
+      )
     }
     case "session_group": {
       const other = b as Extract<TimelineItem, { type: "session_group" }>
       return (
         a.sessionId === other.sessionId &&
         a.sessionVersion === other.sessionVersion &&
-        eventsArrayEqual(a.events, other.events)
+        eventsArrayEqual(a.events, other.events) &&
+        eventsArrayEqual(a.asideAnchors ?? NO_EVENTS, other.asideAnchors ?? NO_EVENTS)
       )
     }
     case "gap": {

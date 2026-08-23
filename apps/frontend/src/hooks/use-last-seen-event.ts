@@ -179,7 +179,13 @@ export function useLastSeenEvent({
 
   const indexById = useMemo(() => {
     const m = new Map<string, number>()
-    for (let i = 0; i < events.length; i++) m.set(events[i].id, i)
+    // An aside anchor row renders beside its anchor, not at its sequence
+    // position (`attachAsideAnchors`), so its index would misreport what is on
+    // screen; left unmapped, the scan skips its row like a foreign one.
+    for (let i = 0; i < events.length; i++) {
+      if (events[i].eventType === "aside:anchored") continue
+      m.set(events[i].id, i)
+    }
     return m
   }, [events])
   // Refs keep the scroll-listener closure stable across data ticks — re-attaching

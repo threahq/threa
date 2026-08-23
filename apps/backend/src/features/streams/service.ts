@@ -15,6 +15,7 @@ import { getEffectiveReadState, type EffectiveReadState } from "./effective-read
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { MessageRepository, type Message } from "../messaging"
+import { ConversationRepository } from "../conversations"
 import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { OutboxRepository } from "../../lib/outbox"
 import { streamId, eventId, streamContextItemId } from "../../lib/id"
@@ -58,6 +59,7 @@ import {
   type E2eKeyRollInput,
   type E2eActorRewrapInput,
   type ToolPrivacyPolicy,
+  type AsideAnchoredEventPayload,
   type JSONContent,
   type AuthorType,
   type DescriptionSetEventPayload,
@@ -196,6 +198,8 @@ const createAsideParamsSchema = z.object({
   parentStreamId: z.string(),
   /** Optional anchor (`msg_…` / `event_…`) in the host stream; composer/palette asides carry none. */
   parentAnchorId: z.string().optional(),
+  /** Set when opened from a conversation surface (board card / panel); stamped on the anchor row. */
+  conversationId: z.string().optional(),
   displayName: z.string().optional(),
   companionPersonaId: z.string().optional(),
   createdBy: z.string(),
@@ -219,6 +223,7 @@ const createStreamParamsSchema = z.object({
   parentStreamId: z.string().optional(),
   /** Canonical thread anchor (`msg_…` / `event_…`). */
   parentAnchorId: z.string().optional(),
+  conversationId: z.string().optional(),
   memberIds: z.array(z.string()).optional(),
   createdBy: z.string(),
 })
@@ -530,6 +535,7 @@ export class StreamService {
           workspaceId: params.workspaceId,
           parentStreamId: params.parentStreamId,
           parentAnchorId: params.parentAnchorId,
+          conversationId: params.conversationId,
           displayName: params.displayName,
           companionPersonaId: params.companionPersonaId,
           createdBy: params.createdBy,
@@ -691,6 +697,21 @@ export class StreamService {
         }
       }
 
+      if (params.conversationId !== undefined) {
+        // After the host access check (a non-member learns nothing about the
+        // conversation), workspace-scoped: the conversation's own stream is the
+        // authoritative host (INV-62).
+        const [conversation] = await ConversationRepository.findByIds(client, params.workspaceId, [
+          params.conversationId,
+        ])
+        if (!conversation || conversation.streamId !== params.parentStreamId) {
+          throw new HttpError("Aside conversation not found in the host stream", {
+            status: 400,
+            code: "ASIDE_CONVERSATION_INVALID",
+          })
+        }
+      }
+
       const stream = await StreamRepository.insert(client, {
         id: streamId(),
         workspaceId: params.workspaceId,
@@ -734,6 +755,30 @@ export class StreamService {
         workspaceId: params.workspaceId,
         streamId: stream.id,
         stream,
+      })
+
+      // The creator-only anchor row in the host stream, same transaction as the
+      // aside (INV-4). Author-scoped: the repo viewer filter and the outbox
+      // routing both key off the actor, so no other member ever receives it.
+      // Inserted after `stream:created` so the creator's client has the aside
+      // row (title) before the anchor row that joins against it.
+      const anchorEvent = await StreamEventRepository.insert(client, {
+        id: eventId(),
+        streamId: params.parentStreamId,
+        eventType: "aside:anchored",
+        payload: {
+          asideId: stream.id,
+          anchorId: anchorId ?? null,
+          ...(params.conversationId && { conversationId: params.conversationId }),
+        } satisfies AsideAnchoredEventPayload,
+        actorId: params.createdBy,
+        actorType: "user",
+      })
+      await OutboxRepository.insert(client, "stream:aside_anchored", {
+        workspaceId: params.workspaceId,
+        streamId: params.parentStreamId,
+        authorId: params.createdBy,
+        event: anchorEvent,
       })
 
       return stream

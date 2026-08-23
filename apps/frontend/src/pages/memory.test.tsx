@@ -98,6 +98,20 @@ describe("MemoryPage", () => {
     mockUseIsMobile.mockReturnValue(false)
   })
 
+  it("never offers an aside in the stream filter (memory is off there)", async () => {
+    mockUseMemoSearch.mockReturnValue({ data: { results: [] }, isFetching: false, refetch: vi.fn() })
+    mockUseMemoDetail.mockReturnValue({ data: undefined, isLoading: false, isFetching: false, refetch: vi.fn() })
+    mockUseWorkspaceStreams.mockReturnValue([
+      { id: "stream_general", type: "channel", slug: "general", displayName: "General", archivedAt: null },
+      { id: "stream_aside", type: "aside", slug: null, displayName: "churn number sanity-check", archivedAt: null },
+    ])
+    renderPage("/w/ws_1/memory")
+
+    await userEvent.click(screen.getByText("All streams"))
+    expect(await screen.findByRole("option", { name: "#general" })).toBeInTheDocument()
+    expect(screen.queryByRole("option", { name: "churn number sanity-check" })).toBeNull()
+  })
+
   it("manually refreshes the memo list and selected memo", async () => {
     const refetchSearch = vi.fn().mockResolvedValue(undefined)
     const refetchDetail = vi.fn().mockResolvedValue(undefined)

@@ -219,6 +219,13 @@ describe("selectLabelStreams", () => {
     expect(selectLabelStreams(assignments, streams, "label_a").map((s) => s.id)).toEqual(["stream_keep"])
   })
 
+  it("never lists an aside under a label (asides are reachable by anchor row only)", () => {
+    const assignments = [cachedAssignment("label_a", "stream_keep"), cachedAssignment("label_a", "stream_aside")]
+    const streams = [cachedStream("stream_keep"), cachedStream("stream_aside", { type: "aside" })]
+
+    expect(selectLabelStreams(assignments, streams, "label_a").map((s) => s.id)).toEqual(["stream_keep"])
+  })
+
   it("returns an empty list when nothing carries the label", () => {
     expect(
       selectLabelStreams([cachedAssignment("label_a", "stream_1")], [cachedStream("stream_1")], "label_z")

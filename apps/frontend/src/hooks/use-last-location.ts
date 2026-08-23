@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react"
 import { useLocation, useMatch } from "react-router-dom"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { hiddenStreamIds } from "@/lib/streams"
 import {
   buildBoardHref,
   freshExactPath,
@@ -53,15 +54,20 @@ interface UseLastLocationResult {
  */
 export function useLastLocation(workspaceId: string): UseLastLocationResult {
   const { user } = useAuth()
-  const allStreams = useWorkspaceStreams(workspaceId)
+  const cachedStreams = useWorkspaceStreams(workspaceId)
 
   return useMemo(() => {
+    // An aside opens beside its host stream, never as a page of its own, so it
+    // (and a thread inside it) is neither a restore target nor a most-recent
+    // fallback.
+    const hidden = hiddenStreamIds(cachedStreams)
+    const visibleStreams = cachedStreams.filter((stream) => !hidden.has(stream.id))
     // The stream cache durably holds archived rows (archived-stream index).
     // They must not count as landing targets: archiving bumps updated_at, so an
     // unfiltered most-recent fallback would redirect a fresh device INTO the
     // most-recently-archived stream, and a workspace whose only streams are
     // archived must still land on the fresh-start state.
-    const streams = allStreams.filter((s) => !s.archivedAt)
+    const streams = visibleStreams.filter((stream) => !stream.archivedAt)
     const record = user ? getLastLocation(user.id, workspaceId) : null
 
     const exactPath = coldLaunch ? freshExactPath(record, workspaceId, Date.now()) : null
@@ -87,7 +93,7 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
       // Deliberately checked against ALL rows: a stored pointer to a stream
       // archived since the last visit is still viewable, so honor it rather
       // than falling back. Only the fallbacks below exclude archived.
-      const stillExists = allStreams.some((s) => s.id === storedId)
+      const stillExists = visibleStreams.some((stream) => stream.id === storedId)
       if (stillExists) {
         return {
           exactPath: null,
@@ -119,7 +125,7 @@ export function useLastLocation(workspaceId: string): UseLastLocationResult {
       boardHref: null,
       shouldOpenSidebar: true,
     }
-  }, [user, workspaceId, allStreams])
+  }, [user, workspaceId, cachedStreams])
 }
 
 /**
@@ -135,9 +141,13 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
   const streamMatch = useMatch("/w/:workspaceId/s/:streamId")
   const boardMatch = useMatch("/w/:workspaceId/board")
   const { pathname, search } = useLocation()
+  const cachedStreams = useWorkspaceStreams(workspaceId ?? "")
 
   const streamId = streamMatch?.params.streamId
   const onBoard = boardMatch !== null
+  // A hidden stream's page (an aside reached by URL) is never a place to
+  // restore to: it is not recorded, as exact path or as the stream arm.
+  const onHiddenStream = streamId !== undefined && hiddenStreamIds(cachedStreams).has(streamId)
 
   useEffect(() => {
     if (!user || !workspaceId) return
@@ -152,6 +162,7 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
     // that visit warmed, the exact arm would never serve.
     coldLaunch = false
     if (pathname.startsWith(`/w/${workspaceId}/delegations/`) || pathname.startsWith(`/w/${workspaceId}/memos/`)) return
+    if (onHiddenStream) return
     const persist = () => {
       const exact = { path: `${pathname}${search}`, at: Date.now() }
       const existing = getLastLocation(user.id, workspaceId)
@@ -195,7 +206,7 @@ export function usePersistLastLocation(workspaceId: string | undefined) {
     }
     document.addEventListener("visibilitychange", onVisibilityChange)
     return () => document.removeEventListener("visibilitychange", onVisibilityChange)
-  }, [user, workspaceId, streamId, search, onBoard, pathname])
+  }, [user, workspaceId, streamId, search, onBoard, pathname, onHiddenStream])
 }
 
 function getMostRecentStreamId(streams: CachedStream[]): string {

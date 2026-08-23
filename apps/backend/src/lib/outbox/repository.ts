@@ -66,6 +66,7 @@ export type OutboxEventType =
   | "command:dispatched"
   | "command:completed"
   | "command:failed"
+  | "stream:aside_anchored"
   | "agent_session:started"
   | "agent_session:completed"
   | "agent_session:failed"
@@ -645,6 +646,16 @@ export interface CommandCompletedOutboxPayload extends StreamScopedPayload {
 }
 
 export interface CommandFailedOutboxPayload extends StreamScopedPayload {
+  authorId: string
+  event: StreamEvent
+}
+
+/**
+ * The `aside:anchored` row of a freshly created aside. Carries the host
+ * `streamId` but routes via `AUTHOR_SCOPED_EVENTS` to the creator's user group
+ * only — never the host stream's room.
+ */
+export interface StreamAsideAnchoredOutboxPayload extends StreamScopedPayload {
   authorId: string
   event: StreamEvent
 }
@@ -1245,6 +1256,7 @@ export interface OutboxEventPayloadMap {
   "command:dispatched": CommandDispatchedOutboxPayload
   "command:completed": CommandCompletedOutboxPayload
   "command:failed": CommandFailedOutboxPayload
+  "stream:aside_anchored": StreamAsideAnchoredOutboxPayload
   "agent_session:started": AgentSessionStartedOutboxPayload
   "agent_session:completed": AgentSessionCompletedOutboxPayload
   "agent_session:failed": AgentSessionFailedOutboxPayload
@@ -1395,8 +1407,10 @@ export type AuthorScopedEventType =
   | "user_preferences:updated"
   | "sidebar_config:updated"
   | "link_preview:dismissed"
+  | "stream:aside_anchored"
 
 const AUTHOR_SCOPED_EVENTS: AuthorScopedEventType[] = [
+  "stream:aside_anchored",
   "stream:read",
   "stream:read_set",
   "stream:read_all",

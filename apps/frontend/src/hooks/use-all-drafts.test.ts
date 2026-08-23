@@ -557,6 +557,24 @@ describe("useAllDrafts E2E drafts", () => {
 })
 
 describe("useAllDrafts archived streams", () => {
+  it("hides a draft typed in an aside from the list and the badge alike", async () => {
+    await seedStream({ id: "stream_active" })
+    await seedStream({ id: "stream_aside", type: "aside", parentStreamId: "stream_active" })
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_active", scope: "stream:stream_active", contentJson: makeDoc("keep me") }),
+      syncedDraft({ id: "draft_aside", scope: "stream:stream_aside", contentJson: makeDoc("private thinking") }),
+    ])
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
+
+    await waitFor(() => expect(result.current.all.drafts.map((d) => d.id)).toEqual(["draft_active"]))
+    await waitFor(() => expect(result.current.summary.isLoading).toBe(false))
+    expect(result.current.summary.draftCount).toBe(1)
+  })
+
   it("hides a draft whose stream is archived and keeps one whose stream is active", async () => {
     await seedStream({ id: "stream_active" })
     await seedStream({ id: "stream_archived", archivedAt: "2026-01-01T00:00:00Z" })

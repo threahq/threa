@@ -4,6 +4,7 @@ import {
   ActivityTypes,
   ConversationStatuses,
   LabelableResourceTypes,
+  StreamTypes,
   type ConversationStatus,
   type BoardLens,
   type TitleSource,
@@ -598,7 +599,9 @@ export const ConversationRepository = {
     const scopeCond = boardScopeCondSql(options?.scopeStreamIds)
     const typeCond = boardTypeCondSql(options?.scopeStreamTypes)
     const scopeExcludeCond = boardScopeExcludeCondSql(options?.excludeStreamIds)
-    const typeExcludeCond = boardTypeExcludeCondSql(options?.excludeStreamTypes)
+    // An aside never lists: its own conversation stays off the board — the
+    // anchor row on the host's card is its trace — so the veto always names it.
+    const typeExcludeCond = boardTypeExcludeCondSql([...(options?.excludeStreamTypes ?? []), StreamTypes.ASIDE])
     const labelCond = boardLabelCondSql(userId, options?.scopeLabelIds)
     const labelExcludeCond = boardLabelExcludeCondSql(userId, options?.excludeLabelIds)
     const hiddenCond = boardHiddenExcludeSql(userId)

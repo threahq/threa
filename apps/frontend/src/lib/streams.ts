@@ -29,6 +29,34 @@ export function isUtilityStream(stream: { purpose?: string | null }): boolean {
   return stream.purpose != null
 }
 
+/**
+ * A stream type that never lists by itself: an aside is reachable only through
+ * its anchor row in the host stream (and the command palette, own asides only).
+ * The sidebar, the unread badge, the last-location landing and the stream
+ * pickers all apply this one predicate instead of each knowing the type — an
+ * unhandled aside would otherwise inherit scratchpad listing and light the
+ * badge on every agent reply, against its decided silent attention.
+ */
+export function isHiddenStreamType(stream: { type: string }): boolean {
+  return stream.type === StreamTypes.ASIDE
+}
+
+/**
+ * The ids that never list, out of a workspace's cached streams: every hidden
+ * stream and every stream rooted in one (a thread opened inside an aside is a
+ * `thread` row whose root is the aside). For the surfaces that aggregate over
+ * all streams — the tab badge, the last-location landing, label lists — where
+ * a row's own type is not enough to tell.
+ */
+export function hiddenStreamIds(
+  streams: readonly { id: string; type: string; rootStreamId?: string | null }[]
+): Set<string> {
+  const hidden = new Set<string>()
+  for (const stream of streams) if (isHiddenStreamType(stream)) hidden.add(stream.id)
+  for (const stream of streams) if (stream.rootStreamId && hidden.has(stream.rootStreamId)) hidden.add(stream.id)
+  return hidden
+}
+
 /** Human-readable label for a stream type ("Scratchpad", "Channel", …). */
 export function getStreamTypeLabel(type: StreamType): string {
   switch (type) {

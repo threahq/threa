@@ -8,7 +8,8 @@ import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
 import { SidebarProvider } from "@/contexts/sidebar-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
-import { mockStreamsList } from "@/test/fixtures"
+import { StreamTypes } from "@threa/types"
+import { createMockStream, mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
@@ -320,6 +321,28 @@ describe("QuickSwitcher Integration Tests", () => {
       renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
 
       expect(screen.queryByText("Archived QS Channel")).not.toBeInTheDocument()
+    })
+
+    it("lists the viewer's own asides (palette reachability) and never another member's", () => {
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({
+          id: "stream_aside_mine",
+          type: StreamTypes.ASIDE,
+          displayName: "churn number sanity-check",
+          createdBy: "member_1",
+        }),
+        createMockStream({
+          id: "stream_aside_theirs",
+          type: StreamTypes.ASIDE,
+          displayName: "Member's private aside",
+          createdBy: "member_2",
+        }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      expect(screen.getByText("churn number sanity-check")).toBeInTheDocument()
+      expect(screen.queryByText("Member's private aside")).not.toBeInTheDocument()
     })
 
     it("should not render dialog content when open=false", () => {
