@@ -11,8 +11,8 @@ interface AsideDraftEditorProps {
   /** `aside:{asideId}:{draftId}` — the one draft this editor writes. */
   scope: string
   onBack: () => void
-  /** Hand the body and files to the host composer. Resolves false when it couldn't be delivered. */
-  onSendToComposer: (handoff: AsideDraftHandoff) => Promise<boolean>
+  /** Hand the body and files to the host composer: null when refused, else the destination's verdict. */
+  onSendToComposer: (handoff: AsideDraftHandoff) => Promise<{ delivered: Promise<boolean> } | null>
   /** Agent replies queued by "Insert into draft"; appended as attributed blocks once the draft has loaded. */
   pendingAgentBlocks?: AgentBlockData[]
   onPendingAgentBlocksConsumed?: () => void

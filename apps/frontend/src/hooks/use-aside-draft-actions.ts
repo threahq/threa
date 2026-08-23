@@ -20,17 +20,25 @@ export interface AsideDraftHandoff {
   attachments: DraftAttachment[]
 }
 
+/** How long the source waits for the destination to persist before it keeps its files. */
+const DELIVERY_WAIT_MS = 20_000
+
 /**
  * The two things an aside draft can do, kept out of the editor component
  * (INV-15). A send is serialized: the draft is flushed before it leaves, and a
  * second send (or a delete) while one is in flight is refused rather than
  * queueing the same content twice or clearing a draft mid-handoff. The text is
- * copied (the draft survives); the files MOVE — an upload can belong to one
- * message, so once the host composer adopts them this draft lets go.
+ * copied (the draft survives); the files MOVE — an upload belongs to one
+ * message — but only once the destination reports them persisted: if it
+ * cannot (or never answers), this draft keeps them and says so. A failed or
+ * still-uploading file never travels and is never let go of.
  */
 export function useAsideDraftActions(
   composer: DraftComposerState,
-  params: { onSendToComposer: (handoff: AsideDraftHandoff) => Promise<boolean>; onDone: () => void }
+  params: {
+    onSendToComposer: (handoff: AsideDraftHandoff) => Promise<{ delivered: Promise<boolean> } | null>
+    onDone: () => void
+  }
 ): AsideDraftActions {
   const [busy, setBusy] = useState(false)
   const inFlight = useRef(false)
@@ -53,12 +61,22 @@ export function useAsideDraftActions(
       // Persist before handing off: the hand-off copies the text into another
       // composer, so the draft must survive it even if the destination refuses.
       await composer.flushDraft()
-      if (!(await onSendToComposer({ content: content.content ?? [], attachments }))) {
+      const queued = await onSendToComposer({ content: content.content ?? [], attachments })
+      if (!queued) {
         toast.error("Couldn't hand this draft to the composer.")
         return
       }
-      composer.releaseAttachments()
       onDone()
+      if (attachments.length === 0) return
+      const delivered = await Promise.race([
+        queued.delivered,
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), DELIVERY_WAIT_MS)),
+      ])
+      if (delivered) {
+        composer.releaseAttachments(attachments.map((attachment) => attachment.id))
+      } else {
+        toast.error("The composer didn't confirm it has the files; this draft keeps them.")
+      }
     } catch {
       // The editor fires send without awaiting it; a rejected flush or
       // hand-off must still reach the user, and the draft stays where it is.

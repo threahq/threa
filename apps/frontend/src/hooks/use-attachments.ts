@@ -97,6 +97,8 @@ export interface UseAttachmentsReturn {
   hasFailed: boolean
   /** Clear all attachments (releases them — in-flight uploads keep running) */
   clear: () => void
+  /** Drop the given uploaded attachments from this composer without deleting them — another draft now holds them. */
+  forget: (attachmentIds: readonly string[]) => void
   /** Restore attachments from saved state */
   restore: (attachments: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }>) => void
   /** Current image count for numbering */
@@ -288,6 +290,19 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
   // message already bound the reserved ids, so the bytes must keep streaming
   // after the composer clears. The claim/release effect above handles the
   // manager side when `entries` empties.
+  const forget = useCallback(
+    (attachmentIds: readonly string[]) => {
+      const gone = new Set(attachmentIds)
+      updateEntries((prev) =>
+        prev.filter((entry) => {
+          const id = entry.kind === "job" ? findUploadJob(entry.jobId)?.attachmentId : entry.id
+          return !(id && gone.has(id))
+        })
+      )
+    },
+    [updateEntries]
+  )
+
   const clear = useCallback(() => {
     entriesRef.current = []
     setEntries([])
@@ -353,6 +368,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
     isReserving,
     hasFailed,
     clear,
+    forget,
     restore,
     imageCount,
   }

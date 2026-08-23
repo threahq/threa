@@ -195,11 +195,12 @@ export interface DraftComposerState {
    */
   adoptAttachments: (attachments: DraftAttachment[]) => void
   /**
-   * Let go of this draft's uploaded attachments without deleting the uploads —
-   * the other half of a hand-off, once another draft has adopted them. The
-   * chips leave and the row forgets them; the files stay.
+   * Let go of the given uploaded attachments without deleting the uploads —
+   * the other half of a hand-off, once another draft has adopted them. Those
+   * chips leave and the row forgets them; the files stay, and so does anything
+   * else this draft holds (a failed or in-flight upload keeps its retry).
    */
-  releaseAttachments: () => void
+  releaseAttachments: (attachmentIds: readonly string[]) => void
 
   // Loading
   isLoaded: boolean
@@ -264,6 +265,7 @@ export function useDraftComposer({
     isReserving,
     hasFailed,
     clear: clearAttachments,
+    forget: forgetAttachments,
     restore: restoreAttachments,
     imageCount,
   } = useAttachments(workspaceId, { e2eEnabled: !!e2eStreamId })
@@ -687,11 +689,14 @@ export function useDraftComposer({
     [restoreAttachments, addDraftAttachment]
   )
 
-  const releaseAttachments = useCallback(() => {
-    const held = pendingAttachmentsRef.current.filter((attachment) => attachment.status === "uploaded")
-    clearAttachments()
-    for (const attachment of held) removeDraftAttachment(attachment.id)
-  }, [clearAttachments, removeDraftAttachment])
+  const releaseAttachments = useCallback(
+    (attachmentIds: readonly string[]) => {
+      if (attachmentIds.length === 0) return
+      forgetAttachments(attachmentIds)
+      for (const id of attachmentIds) removeDraftAttachment(id)
+    },
+    [forgetAttachments, removeDraftAttachment]
+  )
 
   // Cancel an in-flight upload: abort the transfer, drop the chip, delete the
   // reservation — and remove it from the persisted draft so a rehydrate

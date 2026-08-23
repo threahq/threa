@@ -58,11 +58,11 @@ export function AsidePane({
   const handoff = useAsideHandoff(workspaceId)
   const sendToComposer = useCallback(
     async ({ content, attachments }: AsideDraftHandoff) => {
-      const delivered = await handoff({ hostStreamId, originScope, content, attachments })
+      const queued = await handoff({ hostStreamId, originScope, content, attachments })
       // Get out of the composer's way once the blocks are on their way to it;
       // the aside stays one tap away in the strip.
-      if (delivered) setAsideSurface("minimized")
-      return delivered
+      if (queued) setAsideSurface("minimized")
+      return queued
     },
     [handoff, hostStreamId, originScope]
   )

@@ -49,6 +49,7 @@ import { usePanel, createConversationPanelId } from "@/contexts"
 import {
   acknowledgeShareHandoffBatch,
   peekShareHandoffBatch,
+  settleShareHandoffBatch,
   subscribeShareHandoff,
   type ShareHandoffBatch,
 } from "@/stores/composer-handoff-store"
@@ -722,6 +723,7 @@ function MessageInputComponent({
           )
           acknowledgeShareHandoffBatch(streamId, batch)
           const persisted = await composerRef.current.flushDraftWithResult({ contentJson: shareContent })
+          settleShareHandoffBatch(batch, persisted)
           if (!persisted) toast.error("Couldn't save the shared message as a draft. Keep this composer open.")
         }
       } catch (err) {
