@@ -12,7 +12,7 @@ import {
   useLayoutEffect,
 } from "react"
 import { flushSync } from "react-dom"
-import { ArrowUp, X, AtSign, Slash, Paperclip } from "lucide-react"
+import { ArrowUp, AtSign, Slash, Paperclip } from "lucide-react"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import {
   isEditableFocused,
@@ -29,7 +29,6 @@ import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
 import type { RichEditorHandle } from "@/components/editor"
 import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
@@ -241,11 +240,6 @@ export interface MessageComposerProps {
   expanded?: boolean
   /** Called to collapse the expanded editor back to inline mode */
   onCollapse?: () => void
-  /**
-   * Suppress the expanded editor's own toolbar close (X) — for overlay hosts that
-   * render their own close in a surrounding header, so the affordance isn't doubled.
-   */
-  hideExpandedClose?: boolean
   /** Stream context for filtering which broadcast mentions (@channel, @here) are available */
   streamContext?: MentionStreamContext
   /** Imperative handle ref for programmatic focus from parent */
@@ -313,7 +307,6 @@ export function MessageComposer({
   onExpandClick,
   expanded = false,
   onCollapse,
-  hideExpandedClose = false,
   streamContext,
   composerRef,
   onStashDraft,
@@ -1274,30 +1267,6 @@ export function MessageComposer({
     />
   ) : null
 
-  const expandedTrailingContent =
-    expanded && !hideExpandedClose ? (
-      <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-        <Separator orientation="vertical" className="mx-1 h-6" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Close editor"
-              className="h-8 w-8 p-0 hover:bg-muted"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => onCollapse?.()}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            Close (Esc)
-          </TooltipContent>
-        </Tooltip>
-      </div>
-    ) : undefined
-
   if (expanded) {
     return (
       <TooltipProvider delayDuration={300}>
@@ -1356,7 +1325,6 @@ export function MessageComposer({
                 disableSelectionToolbar
                 onEditLastMessage={onEditLastMessage}
                 onFocus={onComposerFocus}
-                toolbarTrailingContent={expandedTrailingContent}
                 ariaLabel="Fullscreen message editor"
                 ariaDescribedBy={instructionsId}
                 blurOnEscape

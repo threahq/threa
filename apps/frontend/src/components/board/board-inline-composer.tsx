@@ -711,7 +711,6 @@ export function InlineComposerForm({
           {...sharedComposerProps}
           composerRef={composerControlRef}
           expanded
-          hideExpandedClose
           onCollapse={() => setExpanded(false)}
           autoFocus
         />
