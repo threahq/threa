@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { AuthorType } from "@threa/types"
-import { ChevronLeft, Quote, Share2 } from "lucide-react"
+import { ChevronLeft, Quote } from "lucide-react"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
-import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -20,6 +19,20 @@ import {
   groupVisibleActions,
 } from "./message-actions"
 import { EmojiQuickBar } from "./emoji-quick-bar"
+import { SelectionPill } from "./selection-pill"
+
+function isSameRange(a: Range | null, b: Range): boolean {
+  return (
+    a !== null &&
+    a.startContainer === b.startContainer &&
+    a.startOffset === b.startOffset &&
+    a.endContainer === b.endContainer &&
+    a.endOffset === b.endOffset
+  )
+}
+
+/** Quiet time after the last `selectionchange` before the pill is offered. */
+const SELECTION_SETTLE_MS = 250
 
 interface MessageActionDrawerProps {
   open: boolean
@@ -42,7 +55,20 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
     : undefined
   const [expanded, setExpanded] = useState(false)
   const [selection, setSelection] = useState<QuoteSelection | null>(null)
+  const [range, setRange] = useState<Range | null>(null)
+  // A selection is only worth acting on once it stops moving: the pill would
+  // otherwise chase every `selectionchange` tick of a handle drag, under the
+  // very finger doing the dragging.
+  const [settled, setSettled] = useState(false)
+  const [touching, setTouching] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // A callback ref, so a sheet node swapped out mid-transition is replaced
+  // rather than remembered. The pill portals into whatever this holds.
+  const [sheet, setSheet] = useState<HTMLDivElement | null>(null)
+  const pillInteractingRef = useRef(false)
+  const rangeRef = useRef<Range | null>(null)
+  rangeRef.current = range
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -52,40 +78,94 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
     [onOpenChange]
   )
 
+  /**
+   * Touching the pill is a press outside the selection, and dragging it drags a
+   * new one, so by the time the finger lifts the highlight it acts on is gone.
+   * Put it back, or the pill tears itself down between its own pointerup and
+   * click. Releasing is idempotent because the finger can lift anywhere: the
+   * pill reports its own pointerup, and the document listener below catches the
+   * lifts and cancels that never reach it.
+   */
+  const releasePillGuard = useCallback(() => {
+    if (!pillInteractingRef.current) return
+    pillInteractingRef.current = false
+    const stored = rangeRef.current
+    if (!stored) return
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(stored)
+  }, [])
+
   useEffect(() => {
     if (!expanded) {
+      pillInteractingRef.current = false
       setSelection(null)
+      setRange(null)
+      setSettled(false)
+      setTouching(false)
       return
     }
 
+    let settleTimer: ReturnType<typeof setTimeout> | undefined
+    const clear = () => {
+      clearTimeout(settleTimer)
+      setSelection(null)
+      setRange(null)
+      setSettled(false)
+    }
+
     const handleSelectionChange = () => {
+      // Pressing the pill is a tap on an overlay outside the selection, which
+      // Chrome collapses. Holding what was already read keeps the button's own
+      // click from tearing its owner down.
+      if (pillInteractingRef.current) return
+
       const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || !sel.rangeCount) {
-        setSelection(null)
-        return
-      }
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return clear()
 
       const text = sel.toString().trim()
       const contentEl = contentRef.current
-      if (!text || !contentEl) {
-        setSelection(null)
-        return
-      }
+      if (!text || !contentEl) return clear()
 
-      const range = sel.getRangeAt(0)
-      if (contentEl.contains(range.startContainer) && contentEl.contains(range.endContainer)) {
-        const prefix = contentEl.ownerDocument.createRange()
-        prefix.selectNodeContents(contentEl)
-        prefix.setEnd(range.startContainer, range.startOffset)
-        setSelection({ text, prefixText: prefix.toString() })
-      } else {
-        setSelection(null)
-      }
+      const selected = sel.getRangeAt(0)
+      if (!contentEl.contains(selected.startContainer) || !contentEl.contains(selected.endContainer)) return clear()
+
+      // Putting the selection back after a press on the pill raises a
+      // `selectionchange` of our own. Recognising it by identity is what keeps
+      // the repair from reading as the reader starting over, which would hide
+      // the pill for another settle and swallow the tap already in flight.
+      if (isSameRange(rangeRef.current, selected)) return
+
+      const prefix = contentEl.ownerDocument.createRange()
+      prefix.selectNodeContents(contentEl)
+      prefix.setEnd(selected.startContainer, selected.startOffset)
+      setSelection({ text, prefixText: prefix.toString() })
+      setRange(selected.cloneRange())
+      setSettled(false)
+      clearTimeout(settleTimer)
+      settleTimer = setTimeout(() => setSettled(true), SELECTION_SETTLE_MS)
+    }
+
+    const handlePointerDown = () => {
+      if (!pillInteractingRef.current) setTouching(true)
+    }
+    const handlePointerUp = () => {
+      setTouching(false)
+      releasePillGuard()
     }
 
     document.addEventListener("selectionchange", handleSelectionChange)
-    return () => document.removeEventListener("selectionchange", handleSelectionChange)
-  }, [expanded])
+    document.addEventListener("pointerdown", handlePointerDown)
+    document.addEventListener("pointerup", handlePointerUp)
+    document.addEventListener("pointercancel", handlePointerUp)
+    return () => {
+      clearTimeout(settleTimer)
+      document.removeEventListener("selectionchange", handleSelectionChange)
+      document.removeEventListener("pointerdown", handlePointerDown)
+      document.removeEventListener("pointerup", handlePointerUp)
+      document.removeEventListener("pointercancel", handlePointerUp)
+    }
+  }, [expanded, releasePillGuard])
 
   const handleQuoteSelected = useCallback(() => {
     if (!selection || !context.onQuoteReplyWithSelection) return
@@ -105,6 +185,17 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
     window.getSelection()?.removeAllRanges()
     setExpanded(false)
   }, [])
+
+  const handlePillInteracting = useCallback(
+    (interacting: boolean) => {
+      if (interacting) {
+        pillInteractingRef.current = true
+        return
+      }
+      releasePillGuard()
+    },
+    [releasePillGuard]
+  )
 
   const activeShortcodes = useMemo(() => {
     if (!context.currentUserId || !context.reactions) return new Set<string>()
@@ -154,7 +245,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
-      <DrawerContent className={cn(expanded ? "h-[95dvh]" : "max-h-[85dvh]")}>
+      <DrawerContent ref={setSheet} className={cn(expanded ? "h-[95dvh]" : "max-h-[85dvh]")}>
         <DrawerTitle className="sr-only">{expanded ? "Select text to quote or share" : "Message actions"}</DrawerTitle>
 
         {expanded ? (
@@ -165,8 +256,12 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
             statusEmoji={authorStatus?.emoji ?? null}
             statusText={authorStatus?.text ?? null}
             selectedText={selection?.text ?? ""}
+            pillRange={settled && !touching ? range : null}
             contentRef={contentRef}
+            scrollRef={scrollRef}
+            sheet={sheet}
             onBack={handleBack}
+            onPillInteracting={handlePillInteracting}
             onQuote={handleQuoteSelected}
             onShare={context.onShareWithSelection ? handleShareSelected : undefined}
           />
@@ -175,6 +270,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
             <div className="px-4 pt-1 pb-3">
               <button
                 type="button"
+                data-testid="expanded-quote-open"
                 className={cn(
                   "group/preview relative w-full text-left rounded-xl bg-muted/60 px-3.5 py-2.5 disabled:opacity-100 disabled:cursor-default",
                   context.onQuoteReplyWithSelection && "active:bg-muted/80 transition-colors cursor-pointer"
@@ -252,8 +348,13 @@ interface ExpandedQuoteViewProps {
   statusEmoji: string | null
   statusText: string | null
   selectedText: string
+  /** The settled selection the pill anchors to, or null while it is still moving. */
+  pillRange: Range | null
   contentRef: React.RefObject<HTMLDivElement | null>
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  sheet: HTMLDivElement | null
   onBack: () => void
+  onPillInteracting: (interacting: boolean) => void
   onQuote: () => void
   onShare?: () => void
 }
@@ -265,8 +366,12 @@ function ExpandedQuoteView({
   statusEmoji,
   statusText,
   selectedText,
+  pillRange,
   contentRef,
+  scrollRef,
+  sheet,
   onBack,
+  onPillInteracting,
   onQuote,
   onShare,
 }: ExpandedQuoteViewProps) {
@@ -305,11 +410,23 @@ function ExpandedQuoteView({
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
-        <h2 className="text-[15px] font-semibold tracking-tight text-muted-foreground">Full message</h2>
+        <h2
+          data-testid="expanded-quote-title"
+          className="text-[15px] font-semibold tracking-tight text-muted-foreground"
+        >
+          {charCount > 0 ? (
+            <>
+              <span className="tabular-nums text-foreground/85">{charCount}</span>{" "}
+              {charCount === 1 ? "character" : "characters"} selected
+            </>
+          ) : (
+            "Full message"
+          )}
+        </h2>
         <div className="absolute left-0 right-0 bottom-0 h-px bg-gradient-to-r from-transparent via-border/70 to-transparent" />
       </div>
 
-      <div data-vaul-no-drag className="flex-1 min-h-0 overflow-y-auto">
+      <div ref={scrollRef} data-vaul-no-drag className="flex-1 min-h-0 overflow-y-auto">
         <div className={cn("relative", accentClass)}>
           <div aria-hidden="true" className={watermarkClass}>
             &ldquo;
@@ -353,6 +470,7 @@ function ExpandedQuoteView({
 
           <div
             ref={contentRef}
+            data-testid="expanded-quote-body"
             className="relative px-4 pb-6 select-text [-webkit-touch-callout:none] outline-none"
             tabIndex={-1}
           >
@@ -361,36 +479,14 @@ function ExpandedQuoteView({
         </div>
       </div>
 
-      <div className="relative px-4 pt-2.5 pb-[max(10px,env(safe-area-inset-bottom))]">
-        <div
-          aria-hidden="true"
-          className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-border/70 to-transparent"
-        />
-        {selectedText ? (
-          <div className="flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-1 duration-150">
-            <p className="text-[12px] text-muted-foreground tabular-nums">
-              <span className="font-semibold text-foreground/85">{charCount}</span>{" "}
-              {charCount === 1 ? "character" : "characters"} selected
-            </p>
-            <div className="flex shrink-0 items-center gap-2">
-              {onShare && (
-                <Button size="sm" variant="secondary" className="h-9 gap-1.5 px-3.5 font-medium" onClick={onShare}>
-                  <Share2 className="h-3.5 w-3.5" />
-                  Share
-                </Button>
-              )}
-              <Button size="sm" className="h-9 gap-1.5 px-3.5 font-medium" onClick={onQuote}>
-                <Quote className="h-3.5 w-3.5" />
-                Quote
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <p className="text-[12px] text-muted-foreground/70 text-center py-1">
-            Long-press the message to highlight a passage
-          </p>
-        )}
-      </div>
+      <SelectionPill
+        range={pillRange}
+        viewportRef={scrollRef}
+        portalHost={sheet}
+        onInteractingChange={onPillInteracting}
+        onQuote={onQuote}
+        onShare={onShare}
+      />
     </div>
   )
 }
