@@ -322,7 +322,8 @@ export function MessageItem({
   const canOpenAside =
     canDiscussConversation &&
     isAsideHostType(conversationRootStream?.type ?? "") &&
-    conversationRootStream?.e2eEnabled !== true
+    conversationRootStream?.e2eEnabled !== true &&
+    !conversationRootStream?.archivedAt
   const handleOpenAside = useCallback(() => {
     if (!conversationId || !conversationRootStreamId) return
     void openAside({

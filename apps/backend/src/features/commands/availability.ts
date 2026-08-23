@@ -145,7 +145,7 @@ export class CommandAvailabilityService {
     }
 
     for (const info of listClientActionCommandInfos()) {
-      if (isClientActionAvailableInStream(info, stream)) {
+      if (isClientActionAvailableInStream(info, stream, { writable })) {
         commands.push({ info, executionKind: CommandKinds.CLIENT_ACTION })
       }
     }
@@ -181,12 +181,20 @@ async function isServerCommandAvailableInStream(name: string, stream: Stream, db
 
 /**
  * Client-action commands are gated per host stream. `/aside` follows the create
- * path's own rules (host type, no E2E host) so the palette never offers an
- * aside the server would refuse — and never inside an aside.
+ * path's own rules (host type, no E2E host, writable host) so the palette never
+ * offers an aside the server would refuse — and never inside an aside.
  */
-export function isClientActionAvailableInStream(info: CommandInfo, stream: Stream): boolean {
+export function isClientActionAvailableInStream(
+  info: CommandInfo,
+  stream: Stream,
+  options?: { writable?: boolean }
+): boolean {
   if (info.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) return !!stream.id
-  if (info.clientActionId === ASIDE_COMMAND) return isAsideHostType(stream.type) && stream.e2eEnabled !== true
+  if (info.clientActionId === ASIDE_COMMAND) {
+    // An aside inherits its host's archive state, so an archived (read-only)
+    // host cannot open one — the create path refuses it.
+    return isAsideHostType(stream.type) && stream.e2eEnabled !== true && options?.writable !== false
+  }
   return true
 }
 

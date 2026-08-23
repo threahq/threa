@@ -86,7 +86,8 @@ export function ConversationActionsMenu({
   const stream = streams.find((item) => item.id === streamId)
   const isScratchpad = stream?.type === StreamTypes.SCRATCHPAD
   const openAside = useOpenAside(workspaceId)
-  const canOpenAside = !!streamId && isAsideHostType(stream?.type ?? "") && stream?.e2eEnabled !== true
+  const canOpenAside =
+    !!streamId && isAsideHostType(stream?.type ?? "") && stream?.e2eEnabled !== true && !stream?.archivedAt
   const effectiveTitle = effectiveConversationTitle({ streamId: streamId ?? "", topicSummary }, stream)
   const hide = useHideConversation(workspaceId)
   const unhide = useUnhideConversation(workspaceId)

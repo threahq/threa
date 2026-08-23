@@ -67,6 +67,11 @@ describe("client-action command availability", () => {
     ])
   })
 
+  it("never offers /aside on a read-only (archived) host", () => {
+    expect(isClientActionAvailableInStream(aside, stream("channel"), { writable: false })).toBe(false)
+    expect(isClientActionAvailableInStream(aside, stream("channel"), { writable: true })).toBe(true)
+  })
+
   it("never offers /aside on an end-to-end encrypted host", () => {
     expect(isClientActionAvailableInStream(aside, stream("scratchpad", { e2eEnabled: true }))).toBe(false)
     expect(isClientActionAvailableInStream(discuss, stream("scratchpad", { e2eEnabled: true }))).toBe(true)

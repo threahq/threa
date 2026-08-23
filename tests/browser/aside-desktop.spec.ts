@@ -229,6 +229,16 @@ test.describe("Aside — desktop surface", () => {
     // Surface switching: fullscreen, minimized strip, back to the last reading surface.
     await pane(page).getByRole("button", { name: "Aside fullscreen" }).click()
     await expect(dock(page)).toHaveAttribute("data-surface", "fullscreen")
+    // Half the row: the live host keeps the other half beside the aside.
+    await expect
+      .poll(async () => {
+        const [dockBox, hostBox] = await Promise.all([
+          dock(page).boundingBox(),
+          hostScroller(page, streamId).boundingBox(),
+        ])
+        return dockBox && hostBox ? Math.abs(dockBox.width - hostBox.width) <= 8 : false
+      })
+      .toBe(true)
     await pane(page).getByRole("button", { name: "Minimize aside" }).click()
     await expect(strip(page)).toBeVisible()
     await expect(dock(page)).toHaveCount(0)

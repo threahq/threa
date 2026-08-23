@@ -70,7 +70,8 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
       data-surface={surface}
       className={cn(
         "flex-shrink-0 overflow-hidden border-l transition-[width] duration-200 ease-out",
-        surface === "fullscreen" && open && "flex-1 basis-1/2"
+        // Half the row: a fixed basis, so the host's `flex-1` takes the other half.
+        surface === "fullscreen" && open && "basis-1/2"
       )}
       style={{ width }}
     >

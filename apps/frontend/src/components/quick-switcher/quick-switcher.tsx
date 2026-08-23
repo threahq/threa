@@ -121,7 +121,15 @@ export function QuickSwitcher({
   // The palette's "Open an aside here" follows the host rules the server
   // enforces (host type, no E2E), so it never offers an aside that would fail.
   const currentStream = currentStreamId ? allStreams.find((s) => s.id === currentStreamId) : undefined
-  const canOpenAside = !!openAside && isAsideHostType(currentStream?.type ?? "") && currentStream?.e2eEnabled !== true
+  const currentRoot = currentStream?.rootStreamId
+    ? allStreams.find((s) => s.id === currentStream.rootStreamId)
+    : undefined
+  const canOpenAside =
+    !!openAside &&
+    isAsideHostType(currentStream?.type ?? "") &&
+    currentStream?.e2eEnabled !== true &&
+    !currentStream?.archivedAt &&
+    !currentRoot?.archivedAt
   // System-purpose streams (persona test scratchpads) are not navigable targets.
   const streams = useMemo(() => allStreams.filter((s) => !isUtilityStream(s)), [allStreams])
   const streamMemberships = useWorkspaceStreamMemberships(workspaceId)

@@ -1181,7 +1181,10 @@ function SentMessageEvent({
   // an E2E stream — there is no plaintext to snapshot. Fire-and-forget like
   // discuss: the hook toasts on failure.
   const openAside = useOpenAside(workspaceId)
-  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled
+  // Archived hosts (directly or through the root) cannot open one — the aside
+  // would inherit the archive and the create path refuses it.
+  const hostArchived = !!currentStream?.archivedAt || !!rootStream?.archivedAt
+  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived
   const handleOpenAside = useCallback(() => {
     void openAside({ kind: "stream", hostStreamId: streamId, anchorId: payload.messageId }).catch(() => {
       /* toast already surfaced inside the hook */
