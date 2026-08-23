@@ -10,6 +10,7 @@ import { SidebarProvider } from "@/contexts/sidebar-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
 import { StreamTypes } from "@threa/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
+import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
@@ -343,6 +344,32 @@ describe("QuickSwitcher Integration Tests", () => {
 
       expect(screen.getByText("churn number sanity-check")).toBeInTheDocument()
       expect(screen.queryByText("Member's private aside")).not.toBeInTheDocument()
+    })
+
+    it("opens a selected aside on its host page as a surface, never as a page of its own", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      resetAsideStoreCache()
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({
+          id: "stream_aside_mine",
+          type: StreamTypes.ASIDE,
+          displayName: "churn number sanity-check",
+          createdBy: "member_1",
+          parentStreamId: "stream_host",
+        }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      await user.click(screen.getByText("churn number sanity-check"))
+
+      expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_host")
+      expect(getAsideState()).toMatchObject({
+        hostKey: "/w/workspace_1/s/stream_host",
+        hostStreamId: "stream_host",
+        asideId: "stream_aside_mine",
+        surface: "dock",
+      })
     })
 
     it("should not render dialog content when open=false", () => {
