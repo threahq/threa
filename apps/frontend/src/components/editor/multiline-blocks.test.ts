@@ -668,26 +668,26 @@ describe("multiline beforeinput enter handling", () => {
     editor.destroy()
   })
 
-  it("flushes the pending autocorrect before splitting, so the corrected word survives Enter", () => {
-    const editor = createTestEditor("- List items steugge")
+  it("reads Gboard's same-batch autocorrect before splitting, even under ProseMirror's deferred flush", () => {
+    const editor = createTestEditor("- Fish and chops")
     editor.commands.setTextSelection(editor.state.doc.content.size - 1)
-    const domObserver = (editor.view as unknown as { domObserver: { flush: () => void } }).domObserver
-    const originalFlush = domObserver.flush.bind(domObserver)
-    // Gboard commits "steugge" → "struggle" into the DOM in the same task as the
-    // newline; ProseMirror only reads it on flush.
-    domObserver.flush = () => {
-      const from = findTextPosition(editor, "steugge")
-      editor.view.dispatch(editor.state.tr.insertText("struggle", from, from + "steugge".length))
-      editor.commands.setTextSelection(editor.state.doc.content.size - 1)
-    }
+    const view = editor.view as unknown as typeof editor.view & { domObserver: { flushSoon: () => void } }
+
+    // Enter-and-pick as traced on Chrome Android: the IME deletes the word and
+    // inserts the correction straight into the DOM, its `deleteContentBackward`
+    // makes ProseMirror schedule a deferred flush (plain `flush()` is then a
+    // no-op), and `insertParagraph` arrives before anything was read back.
+    const textNode = Array.from(view.dom.querySelectorAll("li p"))
+      .flatMap((p) => Array.from(p.childNodes))
+      .find((node): node is Text => node instanceof Text && node.data === "Fish and chops")
+    if (!textNode) throw new Error("text node not found")
+    textNode.data = "Fish and Chips"
+    view.domObserver.flushSoon()
 
     const event = makeBeforeInput("insertParagraph")
-    const handled = handleBeforeInputNewline(editor, event)
-    domObserver.flush = originalFlush
-
-    expect(handled).toBe(true)
+    expect(handleBeforeInputNewline(editor, event)).toBe(true)
     expect(event.prevented).toBe(true)
-    expect(serializeToMarkdown(editor.getJSON())).toBe("- List items struggle\n- ")
+    expect(serializeToMarkdown(editor.getJSON())).toBe("- Fish and Chips\n- ")
     editor.destroy()
   })
 

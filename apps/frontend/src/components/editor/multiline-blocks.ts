@@ -45,6 +45,7 @@ interface DeleteAdjacentInlineAtomOptions {
 interface EditorViewWithDomObserver {
   domObserver?: {
     flush?: () => void
+    forceFlush?: () => void
   }
 }
 
@@ -226,8 +227,13 @@ function rangeContainsInlineAtom(state: EditorState, from: number, to: number): 
   return containsAtom
 }
 
+// `forceFlush` first: ProseMirror's own Chrome Android `deleteContentBackward`
+// handler schedules a 20 ms deferred flush, and while that timer is pending a
+// plain `flush()` is a no-op — exactly the window Gboard's enter-and-pick
+// (delete word → insert correction → Enter, one batch) lands in.
 function flushPendingDomSelection(editor: Editor): void {
   const domObserver = (editor.view as unknown as EditorViewWithDomObserver).domObserver
+  domObserver?.forceFlush?.()
   domObserver?.flush?.()
 }
 
@@ -855,9 +861,11 @@ interface HandleBeforeInputNewlineOptions {
  * Mobile Enter. Chrome Android drops `keydown` Enter inside ProseMirror, so the
  * keystroke only surfaces here. Re-dispatch it as a keydown so the popovers,
  * pickers and the Enter keymap see the same single keystroke desktop does.
- * Flush the DOM observer first: Gboard commits its autocorrect in the same
- * task as the newline, so editor state can still trail the DOM by a word —
- * acting on the stale word is what used to eat it. Mid-composition the native
+ * Flush the DOM observer first: Gboard's enter-and-pick deletes the word,
+ * inserts the correction and presses Enter in one batch, so editor state can
+ * still trail the DOM by a word — acting on the stale word is what used to eat
+ * it (and left ProseMirror's 50 ms lost-backspace hack to join the new item
+ * back, since it never saw a DOM change). Mid-composition the native
  * path is left alone (ProseMirror's own Android handling); only an open
  * popover overrides that, since it must claim Enter or the newline closes it.
  */
