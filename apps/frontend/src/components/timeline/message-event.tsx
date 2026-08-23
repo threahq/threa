@@ -1205,14 +1205,11 @@ function SentMessageEvent({
     !!agentBlockCtx && !!agentAuthor && currentStream?.type === StreamTypes.ASIDE && !e2eEnabled
   const handleInsertAgentBlock = useCallback(() => {
     if (!agentBlockCtx || !agentAuthor) return
-    const parsed = parseMarkdown(payload.contentMarkdown)
-    agentBlockCtx.insertAgentBlock({
-      authorId: agentAuthor,
-      authorName: actorName ?? agentAuthor,
-      sourceAsideId: streamId,
-      content: parsed.content ?? [],
-    })
-  }, [agentBlockCtx, agentAuthor, actorName, payload.contentMarkdown, streamId])
+    // The stored doc when the payload carries it (INV-58); markdown is the
+    // wire fallback for rows hydrated without one.
+    const content = payload.contentJson?.content ?? parseMarkdown(payload.contentMarkdown).content ?? []
+    agentBlockCtx.insertAgentBlock({ authorId: agentAuthor, authorName: actorName ?? agentAuthor, content })
+  }, [agentBlockCtx, agentAuthor, actorName, payload.contentJson, payload.contentMarkdown])
 
   // Shared action context for both desktop dropdown and mobile drawer
   const actionContext = useMemo(

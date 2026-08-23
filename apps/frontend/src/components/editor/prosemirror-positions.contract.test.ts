@@ -112,7 +112,7 @@ const fixture: JSONContent = {
     },
     {
       type: "agentBlock",
-      attrs: { authorId: "persona_1", authorName: "Ariadne", sourceAsideId: "stream_aside" },
+      attrs: { authorId: "persona_1", authorName: "Ariadne" },
       content: [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }],
     },
     { type: "paragraph" },

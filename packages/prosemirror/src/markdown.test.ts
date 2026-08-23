@@ -1424,20 +1424,17 @@ describe("@threa/prosemirror agent block round-trip", () => {
   })
 
   it("round-trips paragraphs, lists and code without losing the attribution", () => {
-    const doc = block(
-      [
-        { type: "paragraph", content: [{ type: "text", text: "Two options." }] },
-        {
-          type: "bulletList",
-          content: [
-            { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "keep it" }] }] },
-            { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "drop it" }] }] },
-          ],
-        },
-        { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "const a = 1" }] },
-      ],
-      { sourceAsideId: "stream_01ASIDE" }
-    )
+    const doc = block([
+      { type: "paragraph", content: [{ type: "text", text: "Two options." }] },
+      {
+        type: "bulletList",
+        content: [
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "keep it" }] }] },
+          { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "drop it" }] }] },
+        ],
+      },
+      { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "const a = 1" }] },
+    ])
     expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(doc)
   })
 

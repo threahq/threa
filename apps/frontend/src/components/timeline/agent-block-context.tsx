@@ -1,41 +1,34 @@
-import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode } from "react"
+import { createContext, useContext, useMemo, type ReactNode } from "react"
 import type { JSONContent } from "@threa/types"
 
 export interface AgentBlockData {
   /** `persona_…` / `bot_…` — the agent credited with the text (INV-64). */
   authorId: string
   authorName: string
-  /** The aside the text was drafted in, when it came from one. */
-  sourceAsideId?: string
-  /** The agent's message, already parsed — `contentJson` end to end (INV-58). */
+  /** The agent's message — `contentJson` end to end (INV-58). */
   content: JSONContent[]
 }
 
 interface AgentBlockContextValue {
-  /** Carry an agent message into the composer — called by message actions. */
+  /** Carry an agent message out of the timeline as an attributed block. */
   insertAgentBlock: (data: AgentBlockData) => void
-  /** Register the composer's insertion handler. */
-  registerHandler: (handler: (data: AgentBlockData) => void) => () => void
 }
 
 const AgentBlockCtx = createContext<AgentBlockContextValue | null>(null)
 
-export function AgentBlockProvider({ children }: { children: ReactNode }) {
-  const handlerRef = useRef<((data: AgentBlockData) => void) | null>(null)
-
-  const registerHandler = useCallback((handler: (data: AgentBlockData) => void) => {
-    handlerRef.current = handler
-    return () => {
-      handlerRef.current = null
-    }
-  }, [])
-
-  const insertAgentBlock = useCallback((data: AgentBlockData) => {
-    handlerRef.current?.(data)
-  }, [])
-
-  const value = useMemo(() => ({ insertAgentBlock, registerHandler }), [insertAgentBlock, registerHandler])
-
+/**
+ * Provided by the surface that owns where agent text goes (the aside pane:
+ * its draft editor). A timeline without a provider offers no insert action —
+ * the timeline's own composer is never the destination.
+ */
+export function AgentBlockProvider({
+  onInsert,
+  children,
+}: {
+  onInsert: (data: AgentBlockData) => void
+  children: ReactNode
+}) {
+  const value = useMemo(() => ({ insertAgentBlock: onInsert }), [onInsert])
   return <AgentBlockCtx.Provider value={value}>{children}</AgentBlockCtx.Provider>
 }
 
@@ -52,11 +45,7 @@ export function useAgentBlock(): AgentBlockContextValue | null {
 export function appendAgentBlockNode(content: JSONContent, data: AgentBlockData): JSONContent {
   const agentNode: JSONContent = {
     type: "agentBlock",
-    attrs: {
-      authorId: data.authorId,
-      authorName: data.authorName,
-      sourceAsideId: data.sourceAsideId ?? null,
-    },
+    attrs: { authorId: data.authorId, authorName: data.authorName },
     content: data.content.length > 0 ? data.content : [{ type: "paragraph" }],
   }
 

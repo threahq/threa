@@ -197,7 +197,7 @@ describe("applyMentionResolution inside an agent block", () => {
       content: [
         {
           type: "agentBlock",
-          attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne", sourceAsideId: "stream_01ASIDE" },
+          attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne" },
           content: [{ type: "paragraph", content: [mentionNode] }],
         },
       ],

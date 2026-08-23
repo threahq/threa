@@ -20,10 +20,10 @@
  *     link title; see `attachment-markdown.ts`).
  *   - `memo:memoId` — the pointer link a `memoEmbed` block serialises
  *     to. Single segment; the memo card body is hydrated at read time.
- *   - `agent:authorId[/sourceAsideId]` — the attribution link on the first
- *     line of an `agentBlock`. `authorId` is a `persona_`/`bot_` actor id
- *     (INV-64); the optional second segment is the aside the text was
- *     drafted in.
+ *   - `agent:authorId` — the attribution link on the first line of an
+ *     `agentBlock`. `authorId` is a `persona_`/`bot_` actor id (INV-64).
+ *     Nothing else rides here: the aside the text came from is private, so
+ *     its id never enters a message another member can read.
  *
  * Centralising the build/parse helpers here keeps the format in one
  * place: the markdown serializer, the markdown parser, and the
@@ -204,15 +204,12 @@ export function parseMemoHref(href: string): MemoHref | null {
 export interface AgentBlockHref {
   /** `persona_…` or `bot_…` — the agent credited with the text. */
   authorId: string
-  /** The aside the text came from, when it was drafted in one. */
-  sourceAsideId?: string
 }
 
 const AGENT_BLOCK_AUTHOR_PREFIXES = ["persona_", "bot_"] as const
 
 export function buildAgentBlockHref(params: AgentBlockHref): string {
-  if (!params.sourceAsideId) return `agent:${params.authorId}`
-  return `agent:${params.authorId}/${params.sourceAsideId}`
+  return `agent:${params.authorId}`
 }
 
 /**
@@ -222,14 +219,10 @@ export function buildAgentBlockHref(params: AgentBlockHref): string {
  */
 export function parseAgentBlockHref(href: string): AgentBlockHref | null {
   if (!href.startsWith("agent:")) return null
-  const parts = href.slice("agent:".length).split("/")
-  if (parts.length < 1 || parts.length > 2) return null
-  const authorId = parts[0]
+  const authorId = href.slice("agent:".length)
   if (!AGENT_BLOCK_AUTHOR_PREFIXES.some((prefix) => authorId.startsWith(prefix))) return null
   if (!/^[\w-]+$/.test(authorId)) return null
-  const sourceAsideId = parts[1]
-  if (sourceAsideId !== undefined && !/^[\w-]+$/.test(sourceAsideId)) return null
-  return { authorId, ...(sourceAsideId && { sourceAsideId }) }
+  return { authorId }
 }
 
 export interface GiphyHref {

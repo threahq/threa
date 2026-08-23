@@ -216,13 +216,10 @@ describe("reference pins", () => {
 })
 
 describe("parseAgentBlockHref", () => {
-  it("round-trips a persona attribution with and without its source aside", () => {
+  it("round-trips a persona and a bot attribution", () => {
     expect(buildAgentBlockHref({ authorId: "persona_01ARIADNE" })).toBe("agent:persona_01ARIADNE")
     expect(parseAgentBlockHref("agent:persona_01ARIADNE")).toEqual({ authorId: "persona_01ARIADNE" })
-
-    const href = buildAgentBlockHref({ authorId: "bot_01X", sourceAsideId: "stream_01ASIDE" })
-    expect(href).toBe("agent:bot_01X/stream_01ASIDE")
-    expect(parseAgentBlockHref(href)).toEqual({ authorId: "bot_01X", sourceAsideId: "stream_01ASIDE" })
+    expect(parseAgentBlockHref(buildAgentBlockHref({ authorId: "bot_01X" }))).toEqual({ authorId: "bot_01X" })
   })
 
   it("rejects an author that is not an agent, so a human can never be rendered as one", () => {
@@ -233,7 +230,9 @@ describe("parseAgentBlockHref", () => {
 
   it("returns null for another scheme or a malformed shape", () => {
     expect(parseAgentBlockHref("quote:stream_1/msg_1")).toBeNull()
-    expect(parseAgentBlockHref("agent:persona_1/stream_1/extra")).toBeNull()
-    expect(parseAgentBlockHref("agent:persona_1/stream 1")).toBeNull()
+    // The aside an agent block came from is private: a second segment that
+    // would name it is rejected outright, never carried.
+    expect(parseAgentBlockHref("agent:persona_1/stream_1")).toBeNull()
+    expect(parseAgentBlockHref("agent:persona_1 x")).toBeNull()
   })
 })

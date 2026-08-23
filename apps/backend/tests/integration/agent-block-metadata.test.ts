@@ -36,12 +36,12 @@ describe("Agent block metadata", () => {
           { type: "paragraph", content: [{ type: "text", text: "sending this along:" }] },
           {
             type: "agentBlock",
-            attrs: { authorId: AGENT_ID, authorName: "Ariadne", sourceAsideId: "stream_01ASIDE" },
+            attrs: { authorId: AGENT_ID, authorName: "Ariadne" },
             content: [{ type: "paragraph", content: [{ type: "text", text }] }],
           },
         ],
       },
-      contentMarkdown: `sending this along:\n\n> — [Ariadne](agent:${AGENT_ID}/stream_01ASIDE)\n>\n> ${text}`,
+      contentMarkdown: `sending this along:\n\n> — [Ariadne](agent:${AGENT_ID})\n>\n> ${text}`,
     }
   }
 

@@ -70,11 +70,14 @@ describe("reference pins survive validation", () => {
 })
 
 describe("agentBlock validation", () => {
-  it("accepts a stored agent block, with and without its source aside", () => {
+  it("accepts a stored agent block for a persona or a bot", () => {
     expect(isThreaDocument(agentBlock({ authorId: "persona_1", authorName: "Ariadne" }))).toBe(true)
-    expect(isThreaDocument(agentBlock({ authorId: "bot_1", authorName: "Deploybot", sourceAsideId: "stream_1" }))).toBe(
-      true
-    )
+    expect(isThreaDocument(agentBlock({ authorId: "bot_1", authorName: "Deploybot" }))).toBe(true)
+  })
+
+  it("rejects an agent block whose author id is empty or oversized", () => {
+    expect(isThreaDocument(agentBlock({ authorId: "", authorName: "Ariadne" }))).toBe(false)
+    expect(isThreaDocument(agentBlock({ authorId: `persona_${"x".repeat(70)}`, authorName: "Ariadne" }))).toBe(false)
   })
 
   it("accepts an agent block nested inside a list item", () => {

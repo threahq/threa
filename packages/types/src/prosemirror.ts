@@ -117,8 +117,6 @@ export interface ThreaAgentBlock {
     authorId: string
     /** Display name at insertion time (denormalized). */
     authorName: string
-    /** The aside the text was drafted in, when it came from one. */
-    sourceAsideId?: string
   }
   content: ThreaBlockNode[]
 }
@@ -586,9 +584,8 @@ const quoteReplyNodeSchema = z.object({
 const agentBlockNodeSchema = z.object({
   type: z.literal("agentBlock"),
   attrs: z.object({
-    authorId: z.string(),
-    authorName: z.string(),
-    sourceAsideId: z.string().optional(),
+    authorId: z.string().min(1).max(64),
+    authorName: z.string().max(200),
   }),
   content: z.array(blockNodeSchema),
 })

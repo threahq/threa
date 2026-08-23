@@ -17,8 +17,7 @@ function renderMarkdown(content: string) {
   )
 }
 
-const AGENT_BLOCK =
-  "> — [Ariadne](agent:persona_01ARIADNE/stream_01ASIDE)\n>\n> Two options.\n>\n> - keep it\n> - drop it"
+const AGENT_BLOCK = "> — [Ariadne](agent:persona_01ARIADNE)\n>\n> Two options.\n>\n> - keep it\n> - drop it"
 
 describe("MarkdownContent — agent block", () => {
   it("renders a received agent block as an attributed frame, not a blockquote", () => {
@@ -30,7 +29,7 @@ describe("MarkdownContent — agent block", () => {
     expect(screen.getByText("Two options.")).toBeInTheDocument()
     expect(block?.querySelectorAll("li")).toHaveLength(2)
     // The attribution line itself is chrome, never body text.
-    expect(screen.queryByText("agent:persona_01ARIADNE/stream_01ASIDE")).toBeNull()
+    expect(screen.queryByText("agent:persona_01ARIADNE")).toBeNull()
   })
 
   it("leaves an ordinary blockquote alone", () => {

@@ -135,13 +135,9 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
     }
 
     case "agentBlock": {
-      const { authorId, authorName, sourceAsideId } = node.attrs as {
-        authorId: string
-        authorName: string
-        sourceAsideId?: string | null
-      }
+      const { authorId, authorName } = node.attrs as { authorId: string; authorName: string }
       const escapedAuthor = authorName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
-      const href = buildAgentBlockHref({ authorId, sourceAsideId: sourceAsideId ?? undefined })
+      const href = buildAgentBlockHref({ authorId })
       // Attribution leads (the quoteReply block puts it last), so the two
       // blockquote-shaped nodes stay unambiguous on parse and the body below
       // it is ordinary markdown — lists and code blocks included.
@@ -648,7 +644,7 @@ export function parseMarkdown(
       }
 
       // Agent block: attribution on the FIRST line, body below it.
-      const agentMatch = quoteLines[0]?.match(/^—\s*\[((?:\\.|[^\]])+)\]\((agent:[\w\-/]+)\)$/)
+      const agentMatch = quoteLines[0]?.match(/^—\s*\[((?:\\.|[^\]])+)\]\((agent:[\w-]+)\)$/)
       const agentHref = agentMatch ? parseAgentBlockHref(agentMatch[2]) : null
       if (agentMatch && agentHref) {
         const bodyLines = quoteLines.slice(1)
@@ -659,7 +655,6 @@ export function parseMarkdown(
           attrs: {
             authorId: agentHref.authorId,
             authorName: agentMatch[1].replace(/\\([\]\\])/g, "$1"),
-            ...(agentHref.sourceAsideId && { sourceAsideId: agentHref.sourceAsideId }),
           },
           content: body.content ?? [{ type: "paragraph" }],
         })

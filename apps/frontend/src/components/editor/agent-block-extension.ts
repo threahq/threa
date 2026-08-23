@@ -7,8 +7,6 @@ export interface AgentBlockAttrs {
   authorId: string
   /** Display name at insertion time (denormalized). */
   authorName: string
-  /** The aside the text was drafted in, when it came from one. */
-  sourceAsideId: string | null
 }
 
 /**
@@ -35,11 +33,6 @@ export const AgentBlockExtension = Node.create({
         default: "",
         parseHTML: (element) => element.getAttribute("data-author-name"),
         renderHTML: (attrs) => ({ "data-author-name": attrs.authorName }),
-      },
-      sourceAsideId: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-source-aside-id"),
-        renderHTML: (attrs) => (attrs.sourceAsideId ? { "data-source-aside-id": attrs.sourceAsideId } : {}),
       },
     }
   },

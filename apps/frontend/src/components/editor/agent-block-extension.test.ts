@@ -11,7 +11,7 @@ function agentDoc(text = "Two options."): JSONContent {
     content: [
       {
         type: "agentBlock",
-        attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne", sourceAsideId: "stream_01ASIDE" },
+        attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne" },
         content: [{ type: "paragraph", content: [{ type: "text", text }] }],
       },
     ],
@@ -37,7 +37,7 @@ describe("agentBlock in the composer", () => {
     const block = (editor.getJSON() as JSONContent).content?.[0]
     expect({ type: block?.type, attrs: block?.attrs, text: block?.content?.[0]?.content?.[0]?.text }).toEqual({
       type: "agentBlock",
-      attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne", sourceAsideId: "stream_01ASIDE" },
+      attrs: { authorId: "persona_01ARIADNE", authorName: "Ariadne" },
       text: "My own wording.",
     })
     editor.destroy()
@@ -46,7 +46,7 @@ describe("agentBlock in the composer", () => {
   it("round-trips through the composer's markdown serializer", () => {
     const editor = createEditor(agentDoc())
     const markdown = serializeToMarkdown(editor.getJSON() as JSONContent)
-    expect(markdown).toBe("> — [Ariadne](agent:persona_01ARIADNE/stream_01ASIDE)\n>\n> Two options.")
+    expect(markdown).toBe("> — [Ariadne](agent:persona_01ARIADNE)\n>\n> Two options.")
     expect(parseMarkdown(markdown)).toEqual(agentDoc())
     editor.destroy()
   })

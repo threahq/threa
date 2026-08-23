@@ -41,7 +41,6 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { buildImageIndexByAttachment, isMaterializableAttachment } from "./attachment-image-index"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
-import { useAgentBlock, appendAgentBlockNode, type AgentBlockData } from "./agent-block-context"
 import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
@@ -403,7 +402,6 @@ function MessageInputComponent({
     e2eStreamId: e2eRootStreamId,
   })
   const quoteReplyCtx = useQuoteReply()
-  const agentBlockCtx = useAgentBlock()
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
@@ -465,16 +463,6 @@ function MessageInputComponent({
       composerFocusRef.current?.focusAfterQuoteReply()
     })
   }, [quoteReplyCtx])
-
-  // Register with AgentBlockContext so "Insert into draft" on an agent message
-  // lands in this composer as an attributed block.
-  useEffect(() => {
-    if (!agentBlockCtx) return
-    return agentBlockCtx.registerHandler((data: AgentBlockData) => {
-      composerRef.current.setContent(appendAgentBlockNode(composerRef.current.content, data))
-      composerFocusRef.current?.focusAfterQuoteReply()
-    })
-  }, [agentBlockCtx])
 
   // "Reply in conversation" changes the filing of the content already in this
   // mounted editor. Flush it, move that same draft row, and update the durable
