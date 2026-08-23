@@ -255,8 +255,14 @@ export function SelectionPill({
       className={cn(
         "absolute z-[60] flex h-11 touch-none select-none items-stretch overflow-hidden rounded-full",
         "border border-border bg-popover/95 shadow-lg backdrop-blur-sm",
-        dragging ? "cursor-grabbing will-change-transform" : "animate-in fade-in-0 zoom-in-95 duration-150",
-        placement ? "opacity-100" : "pointer-events-none opacity-0"
+        dragging && "cursor-grabbing will-change-transform",
+        // The pill has to render before it can measure itself, and it renders
+        // at the origin. Fading in only once a placement lands is what keeps
+        // that first frame from reading as a flight in from the corner: a
+        // running `fade-in` animation outranks the `opacity-0` that is supposed
+        // to be hiding it. Tied to `placement` rather than to `dragging`, so a
+        // drop does not replay it either.
+        placement ? "animate-in fade-in-0 duration-100 opacity-100" : "pointer-events-none opacity-0"
       )}
       style={{ top: (placement?.top ?? 0) - origin.top, left: (placement?.left ?? 0) - origin.left }}
       onPointerDown={() => onInteractingChange(true)}
