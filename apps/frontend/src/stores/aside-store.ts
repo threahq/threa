@@ -23,6 +23,12 @@ export interface OpenAsideState {
   hostStreamId: string
   asideId: string
   surface: AsideSurface
+  /**
+   * The draft scope a hand-off files into: the host stream's own composer, or
+   * the conversation's reply composer when the aside was opened on one. Fixed
+   * at open, so what you send lands where you were writing.
+   */
+  originScope: string
 }
 
 let state: OpenAsideState | null = null

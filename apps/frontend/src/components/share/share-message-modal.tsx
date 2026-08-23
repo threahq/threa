@@ -14,7 +14,7 @@ import { StreamSortToggle } from "@/components/composer/stream-sort-toggle"
 import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { useStoredStreamSortMode } from "@/lib/stream-sort"
 import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
-import { queueShareHandoff, queuePlaintextShareHandoff } from "@/stores/share-handoff-store"
+import { queueShareHandoff, queuePlaintextShareHandoff } from "@/stores/composer-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
 import { useIsMobile } from "@/hooks/use-mobile"
 import {

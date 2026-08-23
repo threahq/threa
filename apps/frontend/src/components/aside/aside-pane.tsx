@@ -1,18 +1,27 @@
-import { useMemo } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { Maximize2, Minus, PanelRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { StreamContent } from "@/components/timeline"
+import { AgentBlockProvider, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes, type JSONContent } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { useCallDocked } from "./use-call-docked"
+import { AsideDraftDock } from "./aside-draft-dock"
+import { AsideDraftEditor } from "./aside-draft-editor"
+import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
+import { useAsideHandoff } from "@/hooks/use-aside-handoff"
 
 interface AsidePaneProps {
   workspaceId: string
   asideId: string
+  /** The stream the aside sits beside — the hand-off's destination. */
+  hostStreamId: string
+  /** The draft scope a hand-off files into (`OpenAsideState.originScope`). */
+  originScope: string
   surface: Exclude<AsideSurface, "minimized">
   /** Phone-width takeover: no surface picker, the close control is the way out. */
   takeover?: boolean
@@ -23,7 +32,40 @@ interface AsidePaneProps {
  * companion stream with Ariadne — the same `StreamContent` a scratchpad or a
  * thread panel mounts), under a gold hairline that marks the private surface.
  */
-export function AsidePane({ workspaceId, asideId, surface, takeover = false }: AsidePaneProps) {
+export function AsidePane({
+  workspaceId,
+  asideId,
+  hostStreamId,
+  originScope,
+  surface,
+  takeover = false,
+}: AsidePaneProps) {
+  const [openDraftScope, setOpenDraftScope] = useState<string | null>(null)
+  // "Insert into draft" on one of Ariadne's replies: the block goes into an
+  // aside draft — the open one, else a new one — never into the chat composer
+  // (that would address it back to Ariadne). Queued here because the editor
+  // mounts with the draft; it appends the blocks once the draft has loaded.
+  const [pendingAgentBlocks, setPendingAgentBlocks] = useState<AgentBlockData[]>([])
+  const insertAgentBlock = useCallback(
+    (data: AgentBlockData) => {
+      setPendingAgentBlocks((pending) => [...pending, data])
+      setOpenDraftScope((scope) => scope ?? newAsideDraftScope(asideId))
+    },
+    [asideId]
+  )
+  const consumePendingAgentBlocks = useCallback(() => setPendingAgentBlocks([]), [])
+  const handoff = useAsideHandoff(workspaceId)
+  const sendToComposer = useCallback(
+    async (content: JSONContent[]) => {
+      const delivered = await handoff({ hostStreamId, originScope, content })
+      // Get out of the composer's way once the blocks are on their way to it;
+      // the aside stays one tap away in the strip.
+      if (delivered) setAsideSurface("minimized")
+      return delivered
+    },
+    [handoff, hostStreamId, originScope]
+  )
+
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
@@ -77,11 +119,32 @@ export function AsidePane({ workspaceId, asideId, surface, takeover = false }: A
           <X className="h-4 w-4" />
         </Button>
       </header>
-      <div className="relative min-h-0 flex-1">
-        <StreamErrorBoundary streamId={asideId}>
-          <StreamContent workspaceId={workspaceId} streamId={asideId} stream={aside} autoFocus={!takeover} />
-        </StreamErrorBoundary>
-      </div>
+      {openDraftScope ? (
+        <AsideDraftEditor
+          workspaceId={workspaceId}
+          scope={openDraftScope}
+          onBack={() => setOpenDraftScope(null)}
+          onSendToComposer={sendToComposer}
+          pendingAgentBlocks={pendingAgentBlocks}
+          onPendingAgentBlocksConsumed={consumePendingAgentBlocks}
+        />
+      ) : (
+        <>
+          <AsideDraftDock
+            workspaceId={workspaceId}
+            asideId={asideId}
+            onOpenDraft={setOpenDraftScope}
+            openScope={openDraftScope}
+          />
+          <div className="relative min-h-0 flex-1">
+            <StreamErrorBoundary streamId={asideId}>
+              <AgentBlockProvider onInsert={insertAgentBlock}>
+                <StreamContent workspaceId={workspaceId} streamId={asideId} stream={aside} autoFocus={!takeover} />
+              </AgentBlockProvider>
+            </StreamErrorBoundary>
+          </div>
+        </>
+      )}
     </div>
   )
 }

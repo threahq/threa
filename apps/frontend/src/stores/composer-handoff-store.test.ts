@@ -9,8 +9,9 @@ import {
   peekShareHandoffBatch,
   queueShareHandoff,
   queuePlaintextShareHandoff,
+  queueContentHandoff,
   subscribeShareHandoff,
-} from "./share-handoff-store"
+} from "./composer-handoff-store"
 
 const sampleAttrs = {
   messageId: "msg_1",
@@ -122,5 +123,31 @@ describe("share handoff store", () => {
     queueShareHandoff("stream_a", sampleAttrs)
     expect(onA).toHaveBeenCalledTimes(1)
     expect(onB).not.toHaveBeenCalled()
+  })
+
+  it("carries an aside hand-off on the same queue, in order, and acknowledges it with the rest", () => {
+    const content = [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }]
+    queueShareHandoff("stream_1", sampleAttrs)
+    queueContentHandoff("stream_1", content)
+    queuePlaintextShareHandoff("stream_1", "sealed body", { ...sampleAttrs, messageId: "msg_2" })
+
+    const batch = peekShareHandoffBatch("stream_1")
+    expect(batch?.handoffs).toEqual([
+      { kind: "pointer", attrs: sampleAttrs },
+      { kind: "content", content },
+      { kind: "plaintext", markdown: "sealed body", attrs: { ...sampleAttrs, messageId: "msg_2" } },
+    ])
+
+    acknowledgeShareHandoffBatch("stream_1", batch!)
+    expect(peekShareHandoffBatch("stream_1")).toBeNull()
+  })
+
+  it("notifies a mounted composer with the content it now has to drain", () => {
+    const content = [{ type: "paragraph", content: [{ type: "text", text: "Two options." }] }]
+    const seen: unknown[] = []
+    const unsubscribe = subscribeShareHandoff("stream_1", () => seen.push(peekShareHandoffBatch("stream_1")?.handoffs))
+    queueContentHandoff("stream_1", content)
+    expect(seen).toEqual([[{ kind: "content", content }]])
+    unsubscribe()
   })
 })

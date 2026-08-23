@@ -25,7 +25,7 @@ import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-stor
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { resetApplyWindow } from "@/stores/apply-window"
 import { setComposerTarget } from "@/hooks/use-composer-target"
-import { peekShareHandoff, queueShareHandoff, resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
+import { peekShareHandoff, queueShareHandoff, resetShareHandoffStoreCache } from "@/stores/composer-handoff-store"
 // eslint-disable-next-line no-restricted-imports -- seeds/asserts the real draft + composer-target rows
 import { db } from "@/db"
 import { MessageInput } from "./message-input"

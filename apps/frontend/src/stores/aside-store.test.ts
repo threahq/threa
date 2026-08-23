@@ -21,6 +21,7 @@ const open = {
   hostStreamId: "stream_host",
   asideId: "stream_aside",
   surface: "dock",
+  originScope: "stream:stream_host",
 } as const
 
 beforeEach(() => resetAsideStoreCache())

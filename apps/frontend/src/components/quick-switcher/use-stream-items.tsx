@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, Plus, X, Archive } from "lucide-react"
-import { StreamTypes, getAvatarUrl } from "@threa/types"
+import { StreamTypes, draftStreamScope, getAvatarUrl } from "@threa/types"
 import type { Stream, StreamType } from "@threa/types"
 import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
@@ -229,6 +229,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
                 remembered: rememberedAsideSurface(stream.id),
                 callDocked: isCallDocked(),
               }),
+              originScope: draftStreamScope(asideHost),
             })
           }
           navigate(href)

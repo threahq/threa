@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useLocation } from "react-router-dom"
 import { toast } from "sonner"
-import { ContextRefKinds, StreamTypes, type ContextRef } from "@threa/types"
+import { ContextRefKinds, StreamTypes, draftStreamScope, type ContextRef } from "@threa/types"
+import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { useCreateStream } from "./use-streams"
 import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"
 import { resolveAsideOpenSurface } from "@/lib/aside/surface"
@@ -21,6 +22,13 @@ export type AsideOrigin =
 /** The scroller of the host stream's mounted timeline (`StreamContent` stamps it), if any. */
 function findStreamScroller(streamId: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-stream-scroller="${streamId}"]`)
+}
+
+/** The composer a hand-off from this aside files into. */
+function originScopeOf(origin: AsideOrigin): string {
+  return origin.kind === "conversation"
+    ? boardReplyDraftKey(origin.conversationId)
+    : draftStreamScope(origin.hostStreamId)
 }
 
 function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
@@ -83,21 +91,33 @@ export function useOpenAside(workspaceId: string) {
         hostStreamId: origin.hostStreamId,
         asideId: aside.id,
         surface: resolveAsideOpenSurface({ remembered: null, callDocked: isCallDocked() }),
+        originScope: originScopeOf(origin),
       })
     },
     [createStream, hostKey]
   )
 }
 
+/** What the anchor row hands back when re-opening its aside. */
+export interface ResumeAsideParams {
+  asideId: string
+  hostStreamId: string
+  /** Set when the aside was opened on a conversation, so a hand-off files back into it. */
+  conversationId?: string
+}
+
 /** Re-open an existing aside from its anchor row, into the surface it was last read in. */
 export function useResumeAside() {
   const { pathname: hostKey } = useLocation()
   return useCallback(
-    (params: { asideId: string; hostStreamId: string }) => {
+    (params: ResumeAsideParams) => {
       openAside({
         hostKey,
         hostStreamId: params.hostStreamId,
         asideId: params.asideId,
+        originScope: params.conversationId
+          ? boardReplyDraftKey(params.conversationId)
+          : draftStreamScope(params.hostStreamId),
         surface: resolveAsideOpenSurface({
           remembered: rememberedAsideSurface(params.asideId),
           callDocked: isCallDocked(),
