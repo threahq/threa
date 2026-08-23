@@ -60,7 +60,8 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
     const conversation = await ConversationRepository.findByIdForUpdate(client, params.workspaceId, params.targetId)
     if (!conversation) return null
     const stream = await StreamRepository.findById(client, conversation.streamId)
-    if (!stream || stream.workspaceId !== params.workspaceId || stream.type === StreamTypes.SCRATCHPAD) return null
+    if (!stream || stream.workspaceId !== params.workspaceId) return null
+    if (stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return null
     if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, conversation.streamId)) return null
     const source = conversation.topicSummarySource ?? (conversation.topicSummary ? TitleSources.LEGACY : null)
     if (source !== null && source !== TitleSources.GENERATED) return null
@@ -87,7 +88,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       const conversation = await ConversationRepository.findById(client, target.targetId)
       if (!conversation || conversation.workspaceId !== target.workspaceId) return null
       const stream = await StreamRepository.findById(client, conversation.streamId)
-      if (!stream || stream.type === StreamTypes.SCRATCHPAD) return null
+      if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return null
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, conversation.streamId)) return null
       const byId = await MessageRepository.findByIdsInWorkspace(client, target.workspaceId, conversation.messageIds)
       const messages = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)

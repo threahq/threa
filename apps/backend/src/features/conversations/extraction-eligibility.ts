@@ -15,9 +15,9 @@ export function isClusteredAuthorType(authorType: AuthorType | string): boolean 
   return authorType === AuthorTypes.USER
 }
 
-/** A scratchpad is one conversation by decision — no clustering. */
+/** Scratchpads and asides are one conversation by decision — no clustering. */
 export function isClusteredStreamType(streamType: StreamType | string): boolean {
-  return streamType !== StreamTypes.SCRATCHPAD
+  return streamType !== StreamTypes.SCRATCHPAD && streamType !== StreamTypes.ASIDE
 }
 
 /**

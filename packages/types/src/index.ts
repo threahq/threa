@@ -36,6 +36,9 @@ export {
   STREAM_TYPES,
   type StreamType,
   StreamTypes,
+  // Shared-message private-placeholder kinds (STREAM_TYPES minus aside)
+  SHARED_SOURCE_STREAM_KINDS,
+  type SharedSourceStreamKind,
   DM_PARTICIPANT_COUNT,
   STREAM_READ_ONLY_REASONS,
   type StreamReadOnlyReason,

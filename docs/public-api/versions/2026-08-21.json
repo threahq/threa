@@ -40,7 +40,7 @@
                   "from": { "type": "string" },
                   "type": {
                     "type": "array",
-                    "items": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] }
+                    "items": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"] }
                   },
                   "before": { "type": "string", "format": "date-time" },
                   "after": { "type": "string", "format": "date-time" },
@@ -4333,7 +4333,10 @@
                         "type": "object",
                         "properties": {
                           "id": { "type": "string" },
-                          "type": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] },
+                          "type": {
+                            "type": "string",
+                            "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                          },
                           "displayName": { "type": "string" },
                           "slug": { "type": "string" },
                           "description": { "type": "string" },
@@ -4431,7 +4434,10 @@
                       "type": "object",
                       "properties": {
                         "id": { "type": "string" },
-                        "type": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] },
+                        "type": {
+                          "type": "string",
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                        },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
                         "description": { "type": "string" },
@@ -4540,7 +4546,10 @@
                       "type": "object",
                       "properties": {
                         "id": { "type": "string" },
-                        "type": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] },
+                        "type": {
+                          "type": "string",
+                          "enum": ["scratchpad", "channel", "dm", "thread", "system", "aside"]
+                        },
                         "displayName": { "type": "string" },
                         "slug": { "type": "string" },
                         "description": { "type": "string" },
@@ -7637,7 +7646,7 @@
   },
   "tags": [
     { "name": "Identity", "description": "Confirm who a key belongs to and list the bots you own." },
-    { "name": "Streams", "description": "List and inspect streams (channels, scratchpads, threads)" },
+    { "name": "Streams", "description": "List and inspect accessible streams" },
     { "name": "Messages", "description": "Read, send, update, and delete messages" },
     {
       "name": "Conversations",

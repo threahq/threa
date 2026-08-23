@@ -1,6 +1,6 @@
 import { StreamTypes } from "@threa/types"
 import type { StreamType } from "@threa/types"
-import { Bell, FileText, Hash, MessageSquare } from "lucide-react"
+import { Bell, FileText, Hash, MessageSquare, MessageSquareDashed } from "lucide-react"
 import type { ComponentType } from "react"
 
 /**
@@ -14,6 +14,7 @@ export const STREAM_ICONS: Record<StreamType, ComponentType<{ className?: string
   [StreamTypes.DM]: MessageSquare,
   [StreamTypes.THREAD]: MessageSquare,
   [StreamTypes.SYSTEM]: Bell,
+  [StreamTypes.ASIDE]: MessageSquareDashed,
 }
 
 /**
@@ -39,6 +40,8 @@ export function getStreamTypeLabel(type: StreamType): string {
       return "DM"
     case StreamTypes.THREAD:
       return "Thread"
+    case StreamTypes.ASIDE:
+      return "Aside"
     default:
       return type
   }
@@ -98,6 +101,7 @@ const FALLBACK_LABELS: Record<string, Record<FallbackContext, string>> = {
   channel: { sidebar: "Untitled", activity: "a channel", breadcrumb: "...", generic: "Untitled", noun: "channel" },
   dm: { sidebar: "Direct message", activity: "a conversation", breadcrumb: "DM", generic: "DM", noun: "DM" },
   system: { sidebar: "System", activity: "system", breadcrumb: "System", generic: "System", noun: "system stream" },
+  aside: { sidebar: "New aside", activity: "an aside", breadcrumb: "Aside", generic: "Aside", noun: "aside" },
 }
 
 /** Context-appropriate fallback text for streams that truly have no name yet. */

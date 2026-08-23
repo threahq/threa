@@ -7,7 +7,7 @@ export const TitleSources = {
   LEGACY: "legacy",
 } as const satisfies Record<string, TitleSource>
 
-export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system"] as const
+export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system", "aside"] as const
 export type StreamType = (typeof STREAM_TYPES)[number]
 
 export const StreamTypes = {
@@ -16,7 +16,22 @@ export const StreamTypes = {
   DM: "dm",
   THREAD: "thread",
   SYSTEM: "system",
+  ASIDE: "aside",
 } as const satisfies Record<string, StreamType>
+
+/**
+ * Stream kinds a shared-message `private` placeholder may report. Derived from
+ * `STREAM_TYPES` minus `aside`: an aside presents as a scratchpad to
+ * non-viewers, so the placeholder vocabulary never discloses one exists.
+ */
+export const SHARED_SOURCE_STREAM_KINDS = [
+  "scratchpad",
+  "channel",
+  "dm",
+  "thread",
+  "system",
+] as const satisfies readonly Exclude<StreamType, "aside">[]
+export type SharedSourceStreamKind = (typeof SHARED_SOURCE_STREAM_KINDS)[number]
 
 export const DM_PARTICIPANT_COUNT = 2
 
@@ -268,6 +283,8 @@ export const NOTIFICATION_CONFIG: Record<StreamType, NotificationConfig> = {
   system: { defaultLevel: "everything", allowedLevels: ["everything", "muted"] },
   channel: { defaultLevel: "mentions", allowedLevels: ["everything", "activity", "mentions", "muted"] },
   thread: { defaultLevel: "activity", allowedLevels: ["everything", "activity", "mentions", "muted"] },
+  // Asides are a silent pull surface: the anchor row is the whole signal.
+  aside: { defaultLevel: "muted", allowedLevels: ["muted"] },
 }
 
 export const ACTIVITY_TYPES = [

@@ -42,7 +42,7 @@ export class ContextBagPrecomputeHandler extends DebouncedOutboxHandler {
     }
 
     const { workspaceId, streamId, stream } = event.payload
-    if (stream.type !== StreamTypes.SCRATCHPAD) {
+    if (stream.type !== StreamTypes.SCRATCHPAD && stream.type !== StreamTypes.ASIDE) {
       return
     }
     if (stream.companionMode !== CompanionModes.ON) {

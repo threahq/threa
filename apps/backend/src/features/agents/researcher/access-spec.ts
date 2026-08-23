@@ -57,6 +57,10 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
         ? { type: "user_full_access", userId: invokingUserId }
         : { type: "public_only" }
 
+    case StreamTypes.ASIDE:
+      // An aside is always private to its creator: scratchpad semantics.
+      return { type: "user_full_access", userId: invokingUserId }
+
     case StreamTypes.CHANNEL:
       // Private channel: public streams + this channel
       // Public channel: only public streams

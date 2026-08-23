@@ -89,6 +89,14 @@ import { normalizeStreamDescription } from "./description"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
+/** Streams an aside may anchor to: no aside-on-aside, no system hosts. */
+const ASIDE_HOST_TYPES: readonly StreamType[] = [
+  StreamTypes.CHANNEL,
+  StreamTypes.DM,
+  StreamTypes.SCRATCHPAD,
+  StreamTypes.THREAD,
+]
+
 const createScratchpadParamsSchema = z.object({
   workspaceId: z.string(),
   displayName: z.string().optional(),
@@ -182,6 +190,21 @@ const createThreadParamsSchema = z.object({
 })
 
 export type CreateThreadParams = z.infer<typeof createThreadParamsSchema>
+
+const createAsideParamsSchema = z.object({
+  workspaceId: z.string(),
+  parentStreamId: z.string(),
+  /** Optional anchor (`msg_…` / `event_…`) in the host stream; composer/palette asides carry none. */
+  parentAnchorId: z.string().optional(),
+  displayName: z.string().optional(),
+  companionPersonaId: z.string().optional(),
+  createdBy: z.string(),
+})
+
+export type CreateAsideParams = z.infer<typeof createAsideParamsSchema> & {
+  contextBag?: ContextBag
+  allowedToolCategories?: ToolPrivacyPolicy
+}
 
 const createStreamParamsSchema = z.object({
   workspaceId: z.string(),
@@ -499,6 +522,21 @@ export class StreamService {
           principal: { kind: "user", userId: params.createdBy },
         })
       }
+      case StreamTypes.ASIDE: {
+        if (!params.parentStreamId) {
+          throw new Error("parentStreamId is required for asides")
+        }
+        return this.createAside({
+          workspaceId: params.workspaceId,
+          parentStreamId: params.parentStreamId,
+          parentAnchorId: params.parentAnchorId,
+          displayName: params.displayName,
+          companionPersonaId: params.companionPersonaId,
+          createdBy: params.createdBy,
+          contextBag: params.contextBag,
+          allowedToolCategories: params.allowedToolCategories,
+        })
+      }
       default:
         throw new Error(`Unsupported stream type for create: ${params.type}`)
     }
@@ -593,6 +631,113 @@ export class StreamService {
     }
 
     return stream
+  }
+
+  /**
+   * An aside: a private, creator-only, companion-backed root stream anchored to
+   * a spot in a host stream. `parentStreamId`/`parentAnchorId` are contextual
+   * pointers only — never access-bearing (INV-62): access resolves through the
+   * aside's own creator membership, which is what lets a private aside sit
+   * inside a public channel. Not idempotent per anchor by design; until the
+   * untyped anchor index is dropped in the stack's final layer, the database
+   * still rejects a second stream (of any type) on the same anchor.
+   */
+  async createAside(params: CreateAsideParams): Promise<Stream> {
+    return withTransaction(this.pool, async (client) => {
+      const parent = await checkStreamAccess(client, params.parentStreamId, params.workspaceId, params.createdBy)
+      if (!parent) throw new StreamNotFoundError()
+
+      if (!ASIDE_HOST_TYPES.includes(parent.type)) {
+        throw new HttpError("An aside cannot be opened on this stream type", {
+          status: 400,
+          code: "ASIDE_HOST_TYPE_INVALID",
+        })
+      }
+
+      // An aside's viewport snapshot and context bag are plaintext; an E2E host
+      // has no server-readable content to snapshot, so refuse loudly (INV-11)
+      // rather than create a snapshot-less aside silently.
+      if (parent.e2eEnabled === true) {
+        throw new HttpError("Asides cannot be opened on an end-to-end encrypted stream", {
+          status: 400,
+          code: "ASIDE_E2E_HOST_NOT_ALLOWED",
+        })
+      }
+
+      // An aside inherits its host's archive state (lockEffectiveStreams), so an
+      // aside opened on an archived host would be born read-only.
+      await assertStreamWritable(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.parentStreamId,
+        principal: { kind: "user", userId: params.createdBy },
+      })
+
+      const anchorId = params.parentAnchorId
+      if (anchorId !== undefined) {
+        if (anchorId.startsWith("msg_")) {
+          // Locked like the thread path: a concurrent move would re-parent the
+          // message between an unlocked read and the insert (INV-20).
+          const anchorMessage = await MessageRepository.findByIdForUpdate(client, anchorId)
+          if (!anchorMessage || anchorMessage.streamId !== params.parentStreamId) {
+            throw new MessageNotFoundError()
+          }
+        } else if (anchorId.startsWith("event_")) {
+          const anchorEvent = await StreamEventRepository.findById(client, anchorId)
+          if (!anchorEvent || anchorEvent.streamId !== params.parentStreamId) {
+            throw new HttpError("Aside anchor event not found", { status: 404, code: "ANCHOR_NOT_FOUND" })
+          }
+        } else {
+          throw new HttpError("Unrecognized aside anchor id", { status: 400, code: "ANCHOR_INVALID" })
+        }
+      }
+
+      const stream = await StreamRepository.insert(client, {
+        id: streamId(),
+        workspaceId: params.workspaceId,
+        type: StreamTypes.ASIDE,
+        displayName: params.displayName,
+        displayNameSource: params.displayName === undefined ? undefined : TitleSources.EXPLICIT,
+        displayNameUpdatedByUserId: params.displayName === undefined ? undefined : params.createdBy,
+        visibility: Visibilities.PRIVATE,
+        companionMode: CompanionModes.ON,
+        companionPersonaId: params.companionPersonaId,
+        // Pinned off: the raw insert defaults 'auto', and an aside is a private
+        // thinking surface — never passively extracted.
+        memoryMode: MemoryModes.OFF,
+        parentStreamId: params.parentStreamId,
+        parentAnchorId: anchorId,
+        createdBy: params.createdBy,
+      })
+
+      await StreamMemberRepository.insert(client, stream.id, params.createdBy)
+
+      if (params.contextBag) {
+        await ContextBagRepository.insert(client, {
+          workspaceId: params.workspaceId,
+          streamId: stream.id,
+          intent: params.contextBag.intent,
+          refs: params.contextBag.refs,
+          createdBy: params.createdBy,
+        })
+      }
+
+      if (params.allowedToolCategories !== undefined) {
+        await StreamPoliciesRepository.setToolPolicy(
+          client,
+          params.workspaceId,
+          stream.id,
+          params.allowedToolCategories
+        )
+      }
+
+      await OutboxRepository.insert(client, "stream:created", {
+        workspaceId: params.workspaceId,
+        streamId: stream.id,
+        stream,
+      })
+
+      return stream
+    })
   }
 
   async createChannel(params: CreateChannelParams): Promise<Stream> {
@@ -777,10 +922,10 @@ export class StreamService {
     const rootStream =
       rootStreamId === parentStream.id ? parentStream : await StreamRepository.findById(client, rootStreamId)
     const inheritedVisibility = rootStream?.visibility ?? Visibilities.PRIVATE
-    const inheritedCompanionMode =
-      rootStream?.type === StreamTypes.SCRATCHPAD ? rootStream.companionMode : CompanionModes.OFF
-    const inheritedCompanionPersonaId =
-      rootStream?.type === StreamTypes.SCRATCHPAD ? (rootStream.companionPersonaId ?? undefined) : undefined
+    const companionRoot =
+      rootStream?.type === StreamTypes.SCRATCHPAD || rootStream?.type === StreamTypes.ASIDE ? rootStream : null
+    const inheritedCompanionMode = companionRoot?.companionMode ?? CompanionModes.OFF
+    const inheritedCompanionPersonaId = companionRoot?.companionPersonaId ?? undefined
     // Threads carry no memory setting of their own — the memo gate resolves to
     // the root (INV-62) — but copy the root's value onto the thread row at
     // creation so the persisted row matches its effective behavior.
@@ -903,11 +1048,17 @@ export class StreamService {
     actingUserId: string
   ): Promise<Stream> {
     return withTransaction(this.pool, async (client) => {
-      await assertStreamWritable(client, {
+      const { target } = await assertStreamWritable(client, {
         workspaceId,
         streamId,
         principal: { kind: "user", userId: actingUserId },
       })
+      if (target.type === StreamTypes.ASIDE) {
+        throw new HttpError("An aside is always a companion conversation", {
+          status: 400,
+          code: "INVALID_STREAM_TYPE",
+        })
+      }
       await assertAssignablePersona(client, companionPersonaId, workspaceId, { callerUserId: actingUserId })
       const stream = await StreamRepository.update(client, streamId, {
         companionMode,
@@ -941,15 +1092,15 @@ export class StreamService {
   ): Promise<ToolPrivacyPolicy> {
     return withTransaction(this.pool, async (client) => {
       const { target } = await assertStreamWritable(client, { workspaceId, streamId, principal })
-      if (target.type !== StreamTypes.SCRATCHPAD) {
-        throw new HttpError("Tool policy can only be set on a scratchpad", {
+      if (target.type !== StreamTypes.SCRATCHPAD && target.type !== StreamTypes.ASIDE) {
+        throw new HttpError("Tool policy can only be set on a scratchpad or aside", {
           status: 400,
           code: "INVALID_STREAM_TYPE",
         })
       }
       const ownerId = principal.kind === "user" ? principal.userId : null
       if (target.createdBy !== ownerId) {
-        throw new HttpError("Only the scratchpad owner can change its tool policy", {
+        throw new HttpError("Only the stream owner can change its tool policy", {
           status: 403,
           code: "FORBIDDEN",
         })

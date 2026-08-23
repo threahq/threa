@@ -351,10 +351,10 @@ export class BoundaryExtractionService {
     // Phase 2: determine conversation (AI call only for channels/threads).
     let decision: ConversationDecision
 
-    if (stream.type === StreamTypes.SCRATCHPAD) {
-      // Scratchpad = one conversation, by decision (board-view-design.md). The
-      // staleness sweep may have faded it to stalled/resolved, so fall back to
-      // the most-recently-active conversation and let the assignment
+    if (!isClusteredStreamType(stream.type)) {
+      // Scratchpad/aside = one conversation, by decision (board-view-design.md).
+      // The staleness sweep may have faded it to stalled/resolved, so fall back
+      // to the most-recently-active conversation and let the assignment
       // reactivation flip it — never mint a second same-named conversation.
       const existingConversation =
         scratchpadConversations?.find((c) => c.status === ConversationStatuses.ACTIVE) ?? scratchpadConversations?.[0]
@@ -405,7 +405,7 @@ export class BoundaryExtractionService {
       // For scratchpads: race-safe re-check that the active conversation still
       // exists / doesn't exist (another process may have created it).
       if (
-        stream.type === StreamTypes.SCRATCHPAD &&
+        !isClusteredStreamType(stream.type) &&
         decision.assignments.length === 1 &&
         decision.assignments[0].conversationId === null
       ) {
@@ -851,7 +851,7 @@ export class BoundaryExtractionService {
       // session and a new conversation is correct.
       const existing =
         (await ConversationRepository.findActiveByStream(client, stream.id))[0] ??
-        (stream.type === StreamTypes.SCRATCHPAD
+        (!isClusteredStreamType(stream.type)
           ? (await ConversationRepository.findByStream(client, stream.id, { limit: 1 }))[0]
           : undefined)
       const isNew = !existing

@@ -45,7 +45,12 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
     // acknowledge and permanently lose an eligible checkpoint.
     const stream = await StreamRepository.findByIdForUpdateBlocking(client, params.targetId)
     if (!stream || stream.workspaceId !== params.workspaceId || stream.archivedAt) return null
-    if (stream.type !== StreamTypes.SCRATCHPAD && stream.type !== StreamTypes.THREAD) return null
+    if (
+      stream.type !== StreamTypes.SCRATCHPAD &&
+      stream.type !== StreamTypes.THREAD &&
+      stream.type !== StreamTypes.ASIDE
+    )
+      return null
     if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.targetId)) return null
 
     const source = stream.displayNameSource ?? (stream.displayName ? TitleSources.LEGACY : null)
@@ -74,7 +79,11 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, target.targetId)) return null
       const replies = await MessageRepository.list(client, stream.id, { limit: DYNAMIC_NAMING_MAX_MESSAGES })
       const messages = await prependThreadNamingAnchor(client, stream, replies)
-      const siblings = await StreamRepository.list(client, stream.workspaceId, { types: [stream.type] })
+      const sameType = await StreamRepository.list(client, stream.workspaceId, { types: [stream.type] })
+      // Aside titles are private to their creator; only the creator's own asides
+      // may inform a title, never another member's.
+      const siblings =
+        stream.type === StreamTypes.ASIDE ? sameType.filter((s) => s.createdBy === stream.createdBy) : sameType
       const attachmentsByMessage = await AttachmentRepository.findByMessageIds(
         client,
         messages.map((message) => message.id)

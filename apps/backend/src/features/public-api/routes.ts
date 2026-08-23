@@ -14,6 +14,7 @@ import {
   BOT_TRAITS,
   CONVERSATION_STATUSES,
   WORKSPACE_PERMISSION_SCOPES,
+  SHARED_SOURCE_STREAM_KINDS,
   STREAM_TYPES,
   VISIBILITY_OPTIONS,
   MEMORY_MODES,
@@ -195,7 +196,7 @@ const sharedMessageSlotSchema = z.discriminatedUnion("state", [
     type: z.literal("sharedMessage"),
     state: z.literal("private"),
     messageId: z.string(),
-    sourceStreamKind: z.enum(STREAM_TYPES),
+    sourceStreamKind: z.enum(SHARED_SOURCE_STREAM_KINDS),
     sourceVisibility: z.enum(VISIBILITY_OPTIONS),
   }),
   z.object({

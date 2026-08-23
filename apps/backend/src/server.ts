@@ -1149,7 +1149,7 @@ export async function startServer(): Promise<ServerInstance> {
         }
       )
       return result.ok
-        ? { ok: true, memoId: result.memoId, title: result.title, deduped: result.deduped }
+        ? { ok: true, memoId: result.memoId, title: result.title, deduped: result.deduped, scope: result.scope }
         : { ok: false }
     },
   })

@@ -9,7 +9,7 @@
  * a future slot type adds a union member and its own namespace without
  * reinterpreting these keys. Wire shape only — strings/dates, never `Date`.
  */
-import type { StreamType, Visibility } from "./constants"
+import type { SharedSourceStreamKind, Visibility } from "./constants"
 import type { AttachmentSummary } from "./domain"
 import type { ContentRange } from "./prosemirror"
 
@@ -53,7 +53,7 @@ export type SharedMessageSlot =
       type: "sharedMessage"
       state: "private"
       messageId: string
-      sourceStreamKind: StreamType
+      sourceStreamKind: SharedSourceStreamKind
       sourceVisibility: Visibility
     }
   | { type: "sharedMessage"; state: "truncated"; messageId: string; streamId: string }

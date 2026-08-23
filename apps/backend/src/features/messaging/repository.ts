@@ -153,7 +153,7 @@ function aggregateReactionsByMessage(rows: ReactionRow[]): Map<string, Record<st
 // thread stream anchored on it (`streams.parent_anchor_id = <message id>`), so
 // the count is that thread row's maintained `reply_count` (0 when no thread).
 // Correlate BOTH anchor columns (`parent_stream_id = <msg>.stream_id AND
-// parent_anchor_id = <msg>.id`) so the lookup seeks `idx_streams_thread_anchor
+// parent_anchor_id = <msg>.id`) so the lookup seeks `idx_streams_thread_anchor_typed
 // (parent_stream_id, parent_anchor_id)` instead of scanning `streams` per row —
 // this fires on every message read (lists, search, bootstrap). A thread's parent
 // stream is always its anchor's stream (the move path relinks both together).

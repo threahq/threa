@@ -94,6 +94,7 @@ const STREAM_TYPE_TO_DB_STREAM_TYPE: Record<
   thread: StreamTypes.THREAD,
   dm: StreamTypes.DM,
   system: StreamTypes.SYSTEM,
+  aside: StreamTypes.ASIDE,
 }
 
 function mapStreamTypeToDbStreamType(

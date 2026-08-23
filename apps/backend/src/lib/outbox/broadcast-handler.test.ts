@@ -252,7 +252,7 @@ describe("BroadcastHandler", () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_parent",
-      stream: { id: "stream_thread", parentAnchorId: "msg_1" },
+      stream: { id: "stream_thread", type: "thread", parentAnchorId: "msg_1" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
@@ -272,7 +272,7 @@ describe("BroadcastHandler", () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_parent",
-      stream: { id: "stream_thread", parentAnchorId: "event_call" },
+      stream: { id: "stream_thread", type: "thread", parentAnchorId: "event_call" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])

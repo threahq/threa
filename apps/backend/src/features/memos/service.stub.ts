@@ -6,6 +6,7 @@ import type {
   CaptureSessionReflectionParams,
   CaptureSessionReflectionResult,
 } from "./service"
+import { MemoScopes } from "@threa/types"
 import { memoId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import type { StreamWritePrincipal } from "../streams"
@@ -19,7 +20,7 @@ export class StubMemoService implements MemoServiceLike {
   async saveMemo(params: SaveMemoParams): Promise<SaveMemoResult> {
     logger.debug({ workspaceId: params.workspaceId, streamId: params.streamId }, "Stub memo service - save_memo no-op")
     if (params.sourceMessageIds.length === 0) return { ok: false, reason: "no_source_messages" }
-    return { ok: true, memoId: memoId(), title: params.title, deduped: false }
+    return { ok: true, memoId: memoId(), title: params.title, deduped: false, scope: MemoScopes.WORKSPACE }
   }
 
   async saveMemoGenerated(_principal: StreamWritePrincipal, params: SaveMemoParams): Promise<SaveMemoResult> {

@@ -4,6 +4,7 @@ import {
   FileText,
   Hash,
   MessageSquare,
+  MessageSquareDashed,
   Bell,
   Search,
   Plus,
@@ -42,6 +43,7 @@ const STREAM_ICONS: Record<StreamType, React.ComponentType<{ className?: string 
   [StreamTypes.DM]: MessageSquare,
   [StreamTypes.THREAD]: MessageSquare,
   [StreamTypes.SYSTEM]: Bell,
+  [StreamTypes.ASIDE]: MessageSquareDashed,
 }
 
 const TYPE_LABELS: Partial<Record<StreamType, string>> = {

@@ -24,6 +24,7 @@ describe("save_memo tool", () => {
         ok: true,
         memoId: "memo_new",
         title: input.title,
+        scope: "workspace",
         deduped: false,
       })
     )
@@ -42,6 +43,7 @@ describe("save_memo tool", () => {
       async (): Promise<SaveMemoToolResult> => ({
         ok: true,
         memoId: "memo_existing",
+        scope: "workspace",
         title: "Existing",
         deduped: true,
       })
@@ -83,15 +85,17 @@ describe("save_memo effects", () => {
   }
 
   it("declares the memo it captured", async () => {
-    expect(await effectsOf({ ok: true, memoId: "memo_new", title: input.title, deduped: false })).toEqual([
-      { kind: "memo", label: input.title, target: "memo_new" },
-    ])
+    expect(
+      await effectsOf({ ok: true, memoId: "memo_new", title: input.title, deduped: false, scope: "workspace" })
+    ).toEqual([{ kind: "memo", label: input.title, target: "memo_new" }])
   })
 
   // A deduped save returned the memo that was already there; nothing was
   // written, so claiming a capture would be a lie the fallback can't tell apart.
   it("declares nothing when the save deduped", async () => {
-    expect(await effectsOf({ ok: true, memoId: "memo_existing", title: "Existing", deduped: true })).toEqual([])
+    expect(
+      await effectsOf({ ok: true, memoId: "memo_existing", title: "Existing", deduped: true, scope: "workspace" })
+    ).toEqual([])
   })
 
   it("declares nothing when the write failed", async () => {

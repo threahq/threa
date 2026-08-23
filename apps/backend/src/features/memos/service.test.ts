@@ -833,7 +833,7 @@ describe("MemoService.saveMemo — agent-authored memo (roadmap 6.2)", () => {
 
     const result = await service.saveMemo(saveMemoInput)
 
-    expect(result).toEqual({ ok: true, memoId: "memo_existing", title: "Existing", deduped: true })
+    expect(result).toEqual({ ok: true, memoId: "memo_existing", title: "Existing", deduped: true, scope: "workspace" })
     expect(insert).not.toHaveBeenCalled()
     expect(streamEventInsertMany).not.toHaveBeenCalled()
     expect(outboxInsert).not.toHaveBeenCalled()
