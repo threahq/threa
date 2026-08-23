@@ -39,6 +39,8 @@ describe("AsideDraftEditor — Insert into draft", () => {
       scheduledMessagesTrigger?: unknown
       stashedDrafts?: unknown
       commandStreamId?: string | null
+      includeStreamCommands?: boolean
+      expanded?: boolean
     }) => (
       <div
         data-testid="message-composer"
@@ -46,7 +48,8 @@ describe("AsideDraftEditor — Insert into draft", () => {
         data-expand={props.onExpandClick ? "yes" : "no"}
         data-schedule={props.scheduledMessagesTrigger ? "yes" : "no"}
         data-stash={props.stashedDrafts ? "yes" : "no"}
-        data-commands={props.commandStreamId ?? "none"}
+        data-commands={props.includeStreamCommands === false ? "editor-only" : "stream"}
+        data-expanded={props.expanded ? "yes" : "no"}
       />
     )) as never)
     const onConsumed = vi.fn()
@@ -91,7 +94,15 @@ describe("AsideDraftEditor — Insert into draft", () => {
       schedule: card.getAttribute("data-schedule"),
       stash: card.getAttribute("data-stash"),
       commands: card.getAttribute("data-commands"),
-    }).toEqual({ submit: "Send to composer", expand: "no", schedule: "no", stash: "no", commands: "none" })
+      expanded: card.getAttribute("data-expanded"),
+    }).toEqual({
+      submit: "Send to composer",
+      expand: "no",
+      schedule: "no",
+      stash: "no",
+      commands: "editor-only",
+      expanded: "yes",
+    })
   })
 
   it("waits for the draft to load before appending, so a block never lands on a stale empty body", () => {

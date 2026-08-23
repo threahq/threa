@@ -21,10 +21,13 @@ interface AsideDraftEditorProps {
 /**
  * One aside draft, open for writing: the same composer card the stream
  * composer is — formatting, emoji, mentions, files, dictation — with "Send to
- * composer" as its only way out. No fullscreen document editor, nothing to
- * schedule, no stash pile (the aside's drafts live in its own dock), and no
- * slash commands: an aside draft is written here and leaves only through the
- * hand-off, the single path content takes out of a private stream.
+ * composer" as its only way out, in the composer's expanded (document) shape
+ * on every device: full-height editor, formatting toolbar, action bar at the
+ * foot. Nothing to schedule, no stash pile (the aside's drafts live in its own
+ * dock), and no stream/runtime commands in the `/` menu — a command written
+ * here would dispatch from wherever the text is sent, not here. An aside draft
+ * leaves only through the hand-off, the single path content takes out of a
+ * private stream.
  */
 export function AsideDraftEditor({
   workspaceId,
@@ -91,6 +94,7 @@ export function AsideDraftEditor({
           onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
           workspaceId={workspaceId}
           commandStreamId={null}
+          includeStreamCommands={false}
           fileInputRef={composer.fileInputRef}
           onFileSelect={composer.handleFileSelect}
           onFileUpload={composer.uploadFile}
