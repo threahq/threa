@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { Editor } from "@tiptap/core"
 import type { JSONContent } from "@tiptap/react"
 import { createEditorExtensions } from "./editor-extensions"
+import { EditorBehaviors } from "./editor-behaviors"
 import { serializeToMarkdown, parseMarkdown } from "./editor-markdown"
 import { NodeSelection } from "@tiptap/pm/state"
 import {
@@ -34,9 +35,11 @@ function createTestEditor(content: string | JSONContent) {
     toEmoji: (code) => (code === "rocket" ? "🚀" : null),
   })
 
+  // EditorBehaviors owns the Enter keymap that `handleBeforeInputNewline`
+  // re-dispatches into, mirroring how rich-editor registers it.
   return new Editor({
     element: document.createElement("div"),
-    extensions,
+    extensions: [...extensions, EditorBehaviors],
     content:
       typeof content === "string"
         ? parseMarkdown(
@@ -662,6 +665,91 @@ describe("multiline beforeinput enter handling", () => {
     expect(editor.state.doc.firstChild?.childCount).toBe(2)
     expect(editor.state.doc.lastChild?.type.name).toBe("paragraph")
     expect(editor.isActive("blockquote")).toBe(false)
+    editor.destroy()
+  })
+
+  it("reads Gboard's same-batch autocorrect before splitting, even under ProseMirror's deferred flush", () => {
+    const editor = createTestEditor("- Fish and chops")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    const view = editor.view as unknown as typeof editor.view & { domObserver: { flushSoon: () => void } }
+
+    // Enter-and-pick as traced on Chrome Android: the IME deletes the word and
+    // inserts the correction straight into the DOM, its `deleteContentBackward`
+    // makes ProseMirror schedule a deferred flush (plain `flush()` is then a
+    // no-op), and `insertParagraph` arrives before anything was read back.
+    const textNode = Array.from(view.dom.querySelectorAll("li p"))
+      .flatMap((p) => Array.from(p.childNodes))
+      .find((node): node is Text => node instanceof Text && node.data === "Fish and chops")
+    if (!textNode) throw new Error("text node not found")
+    textNode.data = "Fish and Chips"
+    view.domObserver.flushSoon()
+
+    const event = makeBeforeInput("insertParagraph")
+    expect(handleBeforeInputNewline(editor, event)).toBe(true)
+    expect(event.prevented).toBe(true)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("- Fish and Chips\n- ")
+    editor.destroy()
+  })
+
+  it("clears ProseMirror's iOS Enter fallback marker once it claims the newline", () => {
+    const editor = createTestEditor("plain")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    const input = (editor.view as unknown as { input: { lastIOSEnter: number } }).input
+    input.lastIOSEnter = 123
+
+    expect(handleBeforeInputNewline(editor, makeBeforeInput("insertParagraph"))).toBe(true)
+    expect(input.lastIOSEnter).toBe(0)
+    editor.destroy()
+  })
+
+  it("leaves the native newline alone while composing", () => {
+    const editor = createTestEditor("- List items")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    ;(editor.view as unknown as { input: { composing: boolean } }).input.composing = true
+
+    const event = makeBeforeInput("insertParagraph")
+    expect(handleBeforeInputNewline(editor, event)).toBe(false)
+    expect(event.prevented).toBe(false)
+    expect(serializeToMarkdown(editor.getJSON())).toBe("- List items")
+    editor.destroy()
+  })
+
+  it("hands Enter to a keydown handler while composing when told to (open popover)", () => {
+    const editor = createTestEditor("plain :ups")
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    ;(editor.view as unknown as { input: { composing: boolean } }).input.composing = true
+    const seen: KeyboardEvent[] = []
+    editor.setOptions({
+      editorProps: {
+        handleKeyDown: (_view, keydown) => {
+          seen.push(keydown)
+          return true
+        },
+      },
+    })
+
+    const event = makeBeforeInput("insertParagraph")
+    expect(handleBeforeInputNewline(editor, event, { allowDuringComposition: true })).toBe(true)
+    expect(event.prevented).toBe(true)
+    expect(seen.map((keydown) => [keydown.key, keydown.shiftKey])).toEqual([["Enter", false]])
+    expect(serializeToMarkdown(editor.getJSON())).toBe("plain :ups")
+    editor.destroy()
+  })
+
+  it("dispatches insertLineBreak as Shift+Enter", () => {
+    const editor = createTestEditor("plain")
+    const seen: KeyboardEvent[] = []
+    editor.setOptions({
+      editorProps: {
+        handleKeyDown: (_view, keydown) => {
+          seen.push(keydown)
+          return true
+        },
+      },
+    })
+
+    expect(handleBeforeInputNewline(editor, makeBeforeInput("insertLineBreak"))).toBe(true)
+    expect(seen.map((keydown) => [keydown.key, keydown.shiftKey])).toEqual([["Enter", true]])
     editor.destroy()
   })
 })

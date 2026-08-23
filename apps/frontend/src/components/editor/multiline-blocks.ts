@@ -45,7 +45,15 @@ interface DeleteAdjacentInlineAtomOptions {
 interface EditorViewWithDomObserver {
   domObserver?: {
     flush?: () => void
+    forceFlush?: () => void
   }
+  input?: {
+    lastIOSEnter?: number
+  }
+}
+
+interface FlushPendingDomOptions {
+  cancelDeferred?: boolean
 }
 
 interface IntlSegmenterLike {
@@ -226,8 +234,13 @@ function rangeContainsInlineAtom(state: EditorState, from: number, to: number): 
   return containsAtom
 }
 
-function flushPendingDomSelection(editor: Editor): void {
+// `cancelDeferred`: ProseMirror's own Chrome Android `deleteContentBackward`
+// handler schedules a 20 ms deferred flush, and while that timer is pending a
+// plain `flush()` is a no-op — exactly the window Gboard's enter-and-pick
+// (delete word → insert correction → Enter, one batch) lands in.
+function flushPendingDomSelection(editor: Editor, options: FlushPendingDomOptions = {}): void {
   const domObserver = (editor.view as unknown as EditorViewWithDomObserver).domObserver
+  if (options.cancelDeferred) domObserver?.forceFlush?.()
   domObserver?.flush?.()
 }
 
@@ -847,14 +860,46 @@ export function handleEnterTextBehavior(editor: Editor): boolean {
   return editor.chain().focus().splitBlock().run()
 }
 
-export function handleBeforeInputNewline(editor: Editor, event: BeforeInputEventLike): boolean {
+interface HandleBeforeInputNewlineOptions {
+  allowDuringComposition?: boolean
+}
+
+/**
+ * Mobile Enter. Chrome Android drops `keydown` Enter inside ProseMirror, so the
+ * keystroke only surfaces here. Re-dispatch it as a keydown so the popovers,
+ * pickers and the Enter keymap see the same single keystroke desktop does.
+ * Flush the DOM observer first: Gboard's enter-and-pick deletes the word,
+ * inserts the correction and presses Enter in one batch, so editor state can
+ * still trail the DOM by a word — acting on the stale word is what used to eat
+ * it (and left ProseMirror's 50 ms lost-backspace hack to join the new item
+ * back, since it never saw a DOM change). Mid-composition the native
+ * path is left alone (ProseMirror's own Android handling); only an open
+ * popover overrides that, since it must claim Enter or the newline closes it.
+ */
+export function handleBeforeInputNewline(
+  editor: Editor,
+  event: BeforeInputEventLike,
+  options: HandleBeforeInputNewlineOptions = {}
+): boolean {
   if (event.inputType !== "insertParagraph" && event.inputType !== "insertLineBreak") {
     return false
   }
 
-  const handled = handleEnterTextBehavior(editor)
+  const { view } = editor
+  if (view.composing && !options.allowDuringComposition) return false
+
+  flushPendingDomSelection(editor, { cancelDeferred: true })
+
+  const keydown = new KeyboardEvent("keydown", { key: "Enter", shiftKey: event.inputType === "insertLineBreak" })
+  const handled = !!view.someProp("handleKeyDown", (handleKeyDown) => handleKeyDown(view, keydown))
   if (handled) {
     event.preventDefault()
+    // iOS Safari: ProseMirror lets the Return keydown through and arms a 200 ms
+    // fallback that re-dispatches Enter unless a DOM change was read. Claiming
+    // the newline here means no DOM change is read, so clear the marker the
+    // same way ProseMirror does when it handles the Enter itself.
+    const input = (view as unknown as EditorViewWithDomObserver).input
+    if (input?.lastIOSEnter) input.lastIOSEnter = 0
   }
 
   return handled

@@ -188,7 +188,13 @@ export function DocumentEditorModal({
       handleDOMEvents: {
         beforeinput: (_view, event) => {
           const editor = editorRef.current
-          if (!editor || isSuggestionActive(editor)) return false
+          if (!editor) return false
+
+          const suggestionActive = isSuggestionActive(editor)
+          if (handleBeforeInputNewline(editor, event as InputEvent, { allowDuringComposition: suggestionActive })) {
+            return true
+          }
+          if (suggestionActive) return false
 
           // Android atom deletion: keymap doesn't fire for Backspace, so delete
           // adjacent inline atoms here before the browser's two-step selection.
@@ -215,7 +221,7 @@ export function DocumentEditorModal({
             return true
           }
 
-          return handleBeforeInputNewline(editor, event as InputEvent)
+          return false
         },
       },
       handleKeyDown: (_view, event) => {

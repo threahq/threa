@@ -79,6 +79,27 @@ test.describe("Message Send Mode", () => {
       await expect(page.locator("p").filter({ hasText: messageContent }).first()).toBeVisible({ timeout: 5000 })
     })
 
+    test("should send on a mobile-keyboard Enter (beforeinput insertParagraph)", async ({ page }) => {
+      await page.getByRole("button", { name: "+ New Scratchpad" }).click()
+      const editor = page.locator("[contenteditable='true']")
+      await expect(editor).toBeVisible({ timeout: 5000 })
+
+      const messageContent = `Beforeinput enter test ${testId}`
+      await editor.click()
+      await page.keyboard.type(messageContent)
+
+      // Chrome Android drops keydown Enter inside ProseMirror; the keystroke
+      // only surfaces as this event.
+      await editor.evaluate((element) => {
+        element.dispatchEvent(
+          new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertParagraph" })
+        )
+      })
+
+      await expect(page.locator("p").filter({ hasText: messageContent }).first()).toBeVisible({ timeout: 5000 })
+      await expect(editor).not.toContainText(messageContent)
+    })
+
     test("should create newline with Shift+Enter (not send)", async ({ page }) => {
       await page.getByRole("button", { name: "+ New Scratchpad" }).click()
       await expect(page.locator("[contenteditable='true']")).toBeVisible({ timeout: 5000 })

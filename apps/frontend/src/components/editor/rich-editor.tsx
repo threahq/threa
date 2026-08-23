@@ -859,7 +859,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         beforeinput: (_view, event) => {
           const editor = editorRef.current
           if (!editor) return false
-          if (isSuggestionActive(editor)) return false
+
+          const suggestionActive = isSuggestionActive(editor)
+          if (handleBeforeInputNewline(editor, event as InputEvent, { allowDuringComposition: suggestionActive })) {
+            return true
+          }
+          if (suggestionActive) return false
 
           // Android atom deletion: keymap doesn't fire for Backspace, so delete
           // adjacent inline atoms here before the browser's two-step selection.
@@ -901,9 +906,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
             return true
           }
 
-          // Newline handling only matters in cmdEnter mode (Enter sends in default mode).
-          if (messageSendModeRef.current !== "cmdEnter") return false
-          return handleBeforeInputNewline(editor, event as InputEvent)
+          return false
         },
       },
       handleDrop: (_view, event, _slice, moved) => {
