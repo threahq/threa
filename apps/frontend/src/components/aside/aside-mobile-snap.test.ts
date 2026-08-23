@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { ASIDE_TAB_HEIGHT, asideMobileHeight, asideMobileSteps, nearestAsideSurface } from "./aside-mobile-snap"
+import {
+  ASIDE_TAB_HEIGHT,
+  asideMobileHeight,
+  asideMobileSteps,
+  nearestAsideSurface,
+  steppedAsideSurface,
+} from "./aside-mobile-snap"
 
 const VIEWPORT = 800
 
@@ -26,5 +32,12 @@ describe("aside mobile snap", () => {
 
   it("parks in the strip when the sheet is dragged to the floor", () => {
     expect(nearestAsideSurface(ASIDE_TAB_HEIGHT, 0, VIEWPORT)).toBe("minimized")
+  })
+
+  it("steps one detent at a time for the keyboard, clamped at both ends", () => {
+    expect(steppedAsideSurface("dock", 1)).toBe("fullscreen")
+    expect(steppedAsideSurface("dock", -1)).toBe("minimized")
+    expect(steppedAsideSurface("fullscreen", 1)).toBe("fullscreen")
+    expect(steppedAsideSurface("minimized", -1)).toBe("minimized")
   })
 })

@@ -1,10 +1,21 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import {
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { cn } from "@/lib/utils"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
-import { ASIDE_PEEK_FRACTION, ASIDE_TAB_HEIGHT, asideMobileHeight, nearestAsideSurface } from "./aside-mobile-snap"
+import {
+  ASIDE_PEEK_FRACTION,
+  ASIDE_TAB_HEIGHT,
+  asideMobileHeight,
+  nearestAsideSurface,
+  steppedAsideSurface,
+} from "./aside-mobile-snap"
 
 interface AsideMobileSheetProps {
   workspaceId: string
@@ -96,6 +107,15 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     setAsideSurface(nearestAsideSurface(state.height, velocity, viewportHeight()))
   }
 
+  // The drag is the primary gesture, but it is a pointer gesture: the handle is
+  // a focusable separator so a keyboard reaches the same three detents.
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return
+    const direction = event.key === "ArrowUp" ? 1 : -1
+    event.preventDefault()
+    setAsideSurface(steppedAsideSurface(surface, direction))
+  }
+
   const restingHeight = surface === "fullscreen" ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
   const height = dragging && dragHeight != null ? `${dragHeight}px` : restingHeight
 
@@ -117,7 +137,10 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           role="separator"
           aria-orientation="horizontal"
           aria-label="Resize aside"
+          aria-valuetext={surface === "fullscreen" ? "Full screen" : "Peek"}
+          tabIndex={0}
           data-testid="aside-sheet-handle"
+          onKeyDown={onKeyDown}
           className="flex shrink-0 touch-none select-none items-center gap-2 px-3 py-2"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}

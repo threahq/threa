@@ -277,6 +277,22 @@ describe("aside surfaces", () => {
       expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
     })
 
+    it("reaches the same detents from the keyboard, since the sheet hides the surface picker", () => {
+      openOnHost()
+      renderPage()
+
+      const handle = screen.getByTestId("aside-sheet-handle")
+      expect(handle).toHaveAttribute("tabindex", "0")
+
+      fireEvent.keyDown(handle, { key: "ArrowUp" })
+      expect(getAsideState()?.surface).toBe("fullscreen")
+      fireEvent.keyDown(handle, { key: "ArrowDown" })
+      expect(getAsideState()?.surface).toBe("dock")
+      fireEvent.keyDown(handle, { key: "ArrowDown" })
+      expect(getAsideState()?.surface).toBe("minimized")
+      expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
+    })
+
     it("leaves the sheet alone while the composer holds focus, so a drag cannot fight the keyboard", () => {
       openOnHost()
       renderPage()

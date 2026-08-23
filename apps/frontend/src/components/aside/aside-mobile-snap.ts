@@ -16,6 +16,13 @@ export const ASIDE_PEEK_FRACTION = 0.45
 
 const MOBILE_SURFACES: readonly AsideSurface[] = ["minimized", "dock", "fullscreen"]
 
+/** The next detent in `direction` (+1 larger, -1 smaller), clamped at the ends. */
+export function steppedAsideSurface(surface: AsideSurface, direction: 1 | -1): AsideSurface {
+  const index = MOBILE_SURFACES.indexOf(surface)
+  if (index < 0) return surface
+  return MOBILE_SURFACES[Math.min(Math.max(index + direction, 0), MOBILE_SURFACES.length - 1)]
+}
+
 export function asideMobileSteps(viewportHeight: number): number[] {
   return [ASIDE_TAB_HEIGHT, Math.round(viewportHeight * ASIDE_PEEK_FRACTION), viewportHeight]
 }
