@@ -23,9 +23,10 @@ export interface DraftContextRef {
   conversationId: string | null
   streamId: string
   /**
-   * Lower slice anchor for the resolver. Setting this narrows the AI's
-   * view of the thread; UI labels show "Slice of …". Leave null for
-   * whole-thread context (the default).
+   * Lower slice anchor for the resolver. Setting this narrows the AI's view of
+   * the referenced context; UI labels show "Slice of …". Null selects the whole
+   * of it — the full thread for a thread ref, the full conversation for a
+   * conversation ref (the default for both).
    */
   fromMessageId: string | null
   toMessageId: string | null

@@ -88,6 +88,16 @@ describe("Aside cross-type anchor sharing (post index drop)", () => {
     expect(thread.type).toBe(StreamTypes.THREAD)
     expect([first.id, second.id]).not.toContain(thread.id)
 
+    // The drop narrows anchor uniqueness to threads; it does not remove it.
+    const sameThread = await streamService.createThread({
+      workspaceId: wsId,
+      parentStreamId: channel.id,
+      parentAnchorId: anchorId,
+      createdBy: creator,
+      principal: { kind: "user", userId: creator },
+    })
+    expect(sameThread.id).toBe(thread.id)
+
     const threadsByAnchor = await StreamRepository.findThreadsForMessages(pool, channel.id)
     expect(threadsByAnchor.get(anchorId)).toBe(thread.id)
   })

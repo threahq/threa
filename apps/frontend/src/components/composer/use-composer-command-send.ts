@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react"
+import { toast } from "sonner"
 import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "@/lib/commands"
@@ -101,6 +102,13 @@ export function useComposerCommandSend(
         } catch {
           /* hook already toasted; composer stays clean */
         }
+        return
+      }
+      // A client action the composer no longer knows: a draft written before it
+      // was removed still carries the node. Queueing it would send a command the
+      // backend has no handler for, so it stops here and says so (INV-11).
+      if (plan.clientActionId) {
+        toast.error(`/${plan.commandName} isn't available any more.`)
         return
       }
       await queueCommand({

@@ -130,4 +130,14 @@ describe("useComposerCommandSend dispatchCommand", () => {
       conversationId: "conv_1",
     })
   })
+
+  it("refuses a client action this build no longer has, instead of queueing it to the backend", async () => {
+    await hook("stream_host").current.dispatchCommand({
+      kind: "command",
+      commandName: "discuss-with-ariadne",
+      clientActionId: "discuss-with-ariadne",
+      commandMarkdown: "/discuss-with-ariadne",
+    })
+    expect(queueCommand).not.toHaveBeenCalled()
+  })
 })
