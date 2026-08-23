@@ -211,7 +211,7 @@ describe("Aside foundations", () => {
       invokingUserId: creator,
       scope: MemoScopes.WORKSPACE,
     })
-    expect(saved).toMatchObject({ ok: true })
+    expect(saved).toMatchObject({ ok: true, scope: MemoScopes.USER })
 
     const memo = await pool.query<{ scope: string; scope_user_id: string | null }>(
       `SELECT scope, scope_user_id FROM memos WHERE id = $1`,
@@ -269,6 +269,39 @@ describe("Aside foundations", () => {
         details: { reason: "archived" },
       }
     )
+  })
+
+  test("a thread inside an aside is read-only when the aside's host is archived", async () => {
+    const channel = await createChannel("aside-archive-thread-in-aside")
+    const aside = await streamService.createAside({ workspaceId: wsId, parentStreamId: channel.id, createdBy: creator })
+    const asideMessage = await insertMessage(aside.id, creator)
+    const thread = await streamService.createThread({
+      workspaceId: wsId,
+      parentStreamId: aside.id,
+      parentAnchorId: asideMessage,
+      createdBy: creator,
+      principal: { kind: "user", userId: creator },
+    })
+    await expect(
+      streamService.assertWritable(thread.id, wsId, { kind: "user", userId: creator })
+    ).resolves.toBeUndefined()
+
+    await streamService.archiveStream(channel.id, wsId, creator)
+    await expect(
+      streamService.assertWritable(thread.id, wsId, { kind: "user", userId: creator })
+    ).rejects.toMatchObject({
+      code: StreamErrorCodes.READ_ONLY,
+      details: { reason: "archived" },
+    })
+  })
+
+  test("an aside's companion cannot be switched off or replaced", async () => {
+    const channel = await createChannel("aside-companion-pinned")
+    const aside = await streamService.createAside({ workspaceId: wsId, parentStreamId: channel.id, createdBy: creator })
+    await expect(streamService.updateCompanionMode(aside.id, wsId, "off", null, creator)).rejects.toMatchObject({
+      status: 400,
+      code: "INVALID_STREAM_TYPE",
+    })
   })
 
   test("aside stream:created routes to the creator group only", async () => {

@@ -165,7 +165,9 @@ export interface DelegateTaskToolDeps {
  * tool surfaces `deduped` so the model learns "already remembered" rather than
  * re-saving.
  */
-export type SaveMemoToolResult = { ok: true; memoId: string; title: string; deduped: boolean } | { ok: false }
+export type SaveMemoToolResult =
+  | { ok: true; memoId: string; title: string; deduped: boolean; scope: MemoScope }
+  | { ok: false }
 
 /**
  * Callback for the `save_memo` tool, bound to the running persona's

@@ -32,9 +32,10 @@ export function deriveStreamViewerState(params: {
   root: Pick<AuthorityStream, "archivedAt">
   participates: boolean
   /**
-   * Asides only: whether the host (parent) stream is effectively archived.
-   * An aside is a root of its own, so root-archival never covers the host —
-   * it reads read-only while the host it annotates is archived.
+   * Whether the host (parent) of the effective aside root is archived. An aside
+   * is a root of its own, so root-archival never covers the host — the aside,
+   * and every thread rooted in it, reads read-only while the host it annotates
+   * is archived.
    */
   parentEffectivelyArchived?: boolean
 }): StreamViewerState {
@@ -135,28 +136,37 @@ export async function lockEffectiveStreams(
   const snapshots = suppliedSnapshots ?? (await StreamRepository.findByIdsInWorkspace(db, workspaceId, targetIds))
   const snapshotById = new Map(snapshots.map((stream) => [stream.id, stream]))
   const lockIds = new Set<string>()
-  const asideParentIds = new Set<string>()
   for (const targetId of targetIds) {
     const target = snapshotById.get(targetId)
     if (!target || target.workspaceId !== workspaceId) throw inaccessibleStream()
     lockIds.add(target.id)
     lockIds.add(target.rootStreamId ?? target.id)
-    if (target.type === StreamTypes.ASIDE && target.parentStreamId) {
-      asideParentIds.add(target.parentStreamId)
-    }
-  }
-  // An aside's effective archive state includes its host (parent) chain, so the
-  // parent and the parent's root join the same id-ordered lock set.
-  if (asideParentIds.size > 0) {
-    const parents = await StreamRepository.findByIdsInWorkspace(db, workspaceId, [...asideParentIds])
-    if (parents.length !== asideParentIds.size) throw inaccessibleStream()
-    for (const parent of parents) {
-      lockIds.add(parent.id)
-      lockIds.add(parent.rootStreamId ?? parent.id)
-    }
   }
   const locked = await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, [...lockIds])
   const lockedById = new Map(locked.map((stream) => [stream.id, stream]))
+  // An aside's effective archive state includes its host (parent) chain — for
+  // the aside itself and for every thread rooted in it. The root row is only
+  // known once locked, so the host and the host's root join in a second round;
+  // only the aside's creator and its companion ever write here, and both lock
+  // in this same order, so the two rounds cannot form a cycle.
+  const hostIds = new Set<string>()
+  for (const stream of lockedById.values()) {
+    if (stream.type === StreamTypes.ASIDE && stream.parentStreamId && !lockedById.has(stream.parentStreamId)) {
+      hostIds.add(stream.parentStreamId)
+    }
+  }
+  if (hostIds.size > 0) {
+    const hosts = await StreamRepository.findByIdsInWorkspace(db, workspaceId, [...hostIds])
+    if (hosts.length !== hostIds.size) throw inaccessibleStream()
+    const hostLockIds = new Set<string>()
+    for (const host of hosts) {
+      hostLockIds.add(host.id)
+      hostLockIds.add(host.rootStreamId ?? host.id)
+    }
+    for (const stream of await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, [...hostLockIds])) {
+      lockedById.set(stream.id, stream)
+    }
+  }
   return targetIds.map((targetId) => {
     const target = lockedById.get(targetId)
     const root = target && lockedById.get(target.rootStreamId ?? target.id)
@@ -164,11 +174,11 @@ export async function lockEffectiveStreams(
       throw inaccessibleStream()
     }
     let parentEffectivelyArchived = false
-    if (target.type === StreamTypes.ASIDE && target.parentStreamId) {
-      const parent = lockedById.get(target.parentStreamId)
-      const parentRoot = parent && lockedById.get(parent.rootStreamId ?? parent.id)
-      if (!parent || !parentRoot) throw inaccessibleStream()
-      parentEffectivelyArchived = Boolean(parent.archivedAt || parentRoot.archivedAt)
+    if (root.type === StreamTypes.ASIDE && root.parentStreamId) {
+      const host = lockedById.get(root.parentStreamId)
+      const hostRoot = host && lockedById.get(host.rootStreamId ?? host.id)
+      if (!host || !hostRoot) throw inaccessibleStream()
+      parentEffectivelyArchived = Boolean(host.archivedAt || hostRoot.archivedAt)
     }
     return { target, root, parentEffectivelyArchived }
   })

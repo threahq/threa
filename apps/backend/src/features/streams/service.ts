@@ -675,7 +675,9 @@ export class StreamService {
       const anchorId = params.parentAnchorId
       if (anchorId !== undefined) {
         if (anchorId.startsWith("msg_")) {
-          const anchorMessage = await MessageRepository.findById(client, anchorId)
+          // Locked like the thread path: a concurrent move would re-parent the
+          // message between an unlocked read and the insert (INV-20).
+          const anchorMessage = await MessageRepository.findByIdForUpdate(client, anchorId)
           if (!anchorMessage || anchorMessage.streamId !== params.parentStreamId) {
             throw new MessageNotFoundError()
           }
@@ -1046,11 +1048,17 @@ export class StreamService {
     actingUserId: string
   ): Promise<Stream> {
     return withTransaction(this.pool, async (client) => {
-      await assertStreamWritable(client, {
+      const { target } = await assertStreamWritable(client, {
         workspaceId,
         streamId,
         principal: { kind: "user", userId: actingUserId },
       })
+      if (target.type === StreamTypes.ASIDE) {
+        throw new HttpError("An aside is always a companion conversation", {
+          status: 400,
+          code: "INVALID_STREAM_TYPE",
+        })
+      }
       await assertAssignablePersona(client, companionPersonaId, workspaceId, { callerUserId: actingUserId })
       const stream = await StreamRepository.update(client, streamId, {
         companionMode,

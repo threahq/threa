@@ -201,7 +201,7 @@ export interface SaveMemoParams {
  * remembered rather than stacking a near-duplicate.
  */
 export type SaveMemoResult =
-  | { ok: true; memoId: string; title: string; deduped: boolean }
+  | { ok: true; memoId: string; title: string; deduped: boolean; scope: MemoScope }
   | { ok: false; reason: "no_source_messages" }
 
 /**
@@ -1011,8 +1011,8 @@ export class MemoService implements MemoServiceLike {
       let resolvedScopeUserId = natural.scopeUserId
       if (scopeOverride === MemoScopes.WORKSPACE) {
         // Aside content never lands workspace-scoped: the tool's LLM-supplied
-        // override silently downgrades to the aside's natural user tier, and the
-        // returned memo carries its actual scope.
+        // override downgrades to the aside's natural user tier, and the result
+        // reports the scope it actually landed in.
         const root = await StreamRepository.findById(client, natural.rootStreamId)
         if (root?.type !== StreamTypes.ASIDE) {
           resolvedScope = MemoScopes.WORKSPACE
@@ -1050,7 +1050,7 @@ export class MemoService implements MemoServiceLike {
           { streamId, existingMemoId: duplicate.memo.id, distance: duplicate.distance },
           "save_memo: knowledge already captured in this stream — returning existing memo"
         )
-        return { ok: true, memoId: duplicate.memo.id, title: duplicate.memo.title, deduped: true }
+        return { ok: true, memoId: duplicate.memo.id, title: duplicate.memo.title, deduped: true, scope: resolvedScope }
       }
 
       await MemoRepository.insert(client, {
@@ -1119,7 +1119,7 @@ export class MemoService implements MemoServiceLike {
       }
 
       logger.info({ streamId, memoId: newMemoId, sessionId, scope: resolvedScope }, "save_memo: agent memo created")
-      return { ok: true, memoId: newMemoId, title, deduped: false }
+      return { ok: true, memoId: newMemoId, title, deduped: false, scope: resolvedScope }
     })
   }
 

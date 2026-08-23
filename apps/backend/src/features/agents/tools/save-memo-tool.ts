@@ -102,8 +102,12 @@ Use when the user asks you to remember something, or when something clearly wort
             memoId: result.memoId,
             title: result.title,
             deduped: result.deduped,
+            scope: result.scope,
             ...(result.deduped
               ? { note: "This knowledge was already captured in this stream; returned the existing memo." }
+              : {}),
+            ...(input.scope && input.scope !== result.scope
+              ? { note: `Saved at ${result.scope} scope: this stream's content never lands ${input.scope}-wide.` }
               : {}),
           }),
         }
