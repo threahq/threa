@@ -25,7 +25,6 @@ import { ScheduledActionDrawer } from "@/components/scheduled/scheduled-action-d
 import { ScheduledActions } from "@/components/scheduled/scheduled-actions"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
-import { useFabDrawerClose } from "./fab-drawer-close-context"
 import { useComposerAnchor } from "./use-composer-anchor"
 
 interface ScheduledMessagesPickerProps {
@@ -86,7 +85,6 @@ export function ScheduledMessagesPicker({
   // bottom sheet). We instead close the popover when long-press fires and
   // render the drawer at the picker's top level, outside the popover tree.
   const [actionTarget, setActionTarget] = useState<ScheduledMessageView | null>(null)
-  const closeFabDrawer = useFabDrawerClose()
   const { setTriggerRef, anchor } = useComposerAnchor(open)
 
   const { items } = useScheduledList(workspaceId, "pending", streamId)
@@ -144,14 +142,12 @@ export function ScheduledMessagesPicker({
     setShowDuration(false)
   }
 
-  // A picked time is the END of the schedule flow — the popover and any
-  // hosting FAB drawer close together. The "Schedule send" mode switch and
-  // the picking UI itself never close: the flow stays open until a time is
-  // actually chosen.
+  // A picked time is the END of the schedule flow — only then does the
+  // popover close. The "Schedule send" mode switch and the picking UI itself
+  // never close: the flow stays open until a time is actually chosen.
   const finishSchedule = (when: Date) => {
     onSchedule(when)
     setOpen(false)
-    closeFabDrawer?.()
     resetToList()
   }
 
@@ -186,7 +182,6 @@ export function ScheduledMessagesPicker({
     // overlay and dismiss it immediately. Same defer pattern is used by
     // the action drawer below.
     setOpen(false)
-    closeFabDrawer?.()
     setTimeout(() => setEditing(scheduled), 0)
   }
 
@@ -195,7 +190,6 @@ export function ScheduledMessagesPicker({
     // backdrop doesn't paint over the bottom sheet, then surface the drawer
     // (rendered at the top level below, outside the popover tree).
     setOpen(false)
-    closeFabDrawer?.()
     setTimeout(() => setActionTarget(scheduled), 0)
   }
 
@@ -249,10 +243,7 @@ export function ScheduledMessagesPicker({
               now={now}
               timezone={timezone}
               canSchedule={canSchedule}
-              onClose={() => {
-                handleOpenChange(false)
-                closeFabDrawer?.()
-              }}
+              onClose={() => handleOpenChange(false)}
               onSchedulePress={enterPickingMode}
               onEdit={handleEdit}
               onSendNow={(id) => sendNowMutation.mutate(id)}

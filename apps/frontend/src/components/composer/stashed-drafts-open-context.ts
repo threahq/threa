@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, type MutableRefObject } from "rea
 
 /**
  * Two-way bridge between MessageComposer and the stashed-drafts picker it
- * hosts as a slot node (same travel-by-context shape as FabDrawerCloseContext):
+ * hosts as a slot node, so the signal travels by context:
  *
  *  - composer → picker: Cmd/Ctrl+S on an EMPTY composer opens the drafts
  *    popover (nothing to stash, so the shortcut flips to "show me my drafts").

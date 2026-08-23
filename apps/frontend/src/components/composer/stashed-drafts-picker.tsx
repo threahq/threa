@@ -23,7 +23,6 @@ import { composerPopoverAlign, useComposerActionSide } from "@/hooks/use-compose
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { usePreferencesOptional } from "@/contexts"
 import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
-import { useFabDrawerClose } from "./fab-drawer-close-context"
 import { useRegisterStashedDraftsOpen, useStashedDraftsBridge } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
@@ -146,7 +145,6 @@ export function StashedDraftsPicker({
   }, [])
   useEffect(() => onOpenChange?.(open), [open, onOpenChange])
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
-  const closeFabDrawer = useFabDrawerClose()
   const bridge = useStashedDraftsBridge()
   const { setTriggerRef, anchor } = useComposerAnchor(open)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -178,8 +176,7 @@ export function StashedDraftsPicker({
   const handleStashCurrent = useCallback(() => {
     onStashCurrent()
     setOpen(false)
-    closeFabDrawer?.()
-  }, [onStashCurrent, closeFabDrawer])
+  }, [onStashCurrent])
 
   const handleRestore = useCallback(
     async (id: string) => {
@@ -212,7 +209,6 @@ export function StashedDraftsPicker({
         return
       }
       setOpen(false)
-      closeFabDrawer?.()
       // Focus follows the restored content: skip Radix's trigger refocus and
       // land in the editor once the popover has torn down. The caret ends up
       // after the restored body via applyExternalEditorContent's end-focus
@@ -221,7 +217,7 @@ export function StashedDraftsPicker({
       const focusComposer = bridge?.focusComposer
       if (focusComposer) setTimeout(() => focusComposer(), 0)
     },
-    [onRestore, closeFabDrawer, bridge, drafts, previewById, originById]
+    [onRestore, bridge, drafts, previewById, originById]
   )
 
   // A navigate row (branch reply, or a draft whose own composer is mounted —
@@ -232,7 +228,6 @@ export function StashedDraftsPicker({
   const handleOpenElsewhere = useCallback(
     (href: string, conversationId: string | null) => {
       setOpen(false)
-      closeFabDrawer?.()
       navigate(href)
       // Arrival focus rides the reply-open store, NOT the URL: when the panel is
       // already open beside this host the href can equal the current location and
@@ -240,21 +235,17 @@ export function StashedDraftsPicker({
       // nothing visible (the silent no-op this routing exists to eliminate).
       if (conversationId) requestConversationReplyOpen(conversationId)
     },
-    [closeFabDrawer, navigate]
+    [navigate]
   )
 
   // Two-step delete: the trash icon opens a confirm dialog (parity with the
   // Drafts explorer — a draft is a draft, so both surfaces guard a delete the
   // same way). Close the popover first so the modal isn't trapped behind it. No
   // success toast by design: the confirm already makes the delete deliberate.
-  const requestDelete = useCallback(
-    (id: string) => {
-      setOpen(false)
-      closeFabDrawer?.()
-      setDraftToDelete(id)
-    },
-    [closeFabDrawer]
-  )
+  const requestDelete = useCallback((id: string) => {
+    setOpen(false)
+    setDraftToDelete(id)
+  }, [])
 
   const confirmDelete = useCallback(() => {
     if (draftToDelete) onDelete(draftToDelete)

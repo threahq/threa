@@ -5,7 +5,6 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
-import { FabDrawerCloseContext } from "./fab-drawer-close-context"
 import { StashedDraftsComposerBridgeContext } from "./stashed-drafts-open-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as replyOpenStore from "@/stores/conversation-reply-open-store"
@@ -39,16 +38,13 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
     onDelete: vi.fn(),
     ...overrides,
   }
-  const closeFabDrawer = vi.fn()
   const focusComposer = vi.fn()
   const tree = (pickerProps: typeof props) => (
     <MemoryRouter initialEntries={["/start"]}>
       <TooltipProvider>
-        <FabDrawerCloseContext.Provider value={closeFabDrawer}>
-          <StashedDraftsComposerBridgeContext.Provider value={{ openRef: { current: null }, focusComposer }}>
-            <StashedDraftsPicker {...pickerProps} />
-          </StashedDraftsComposerBridgeContext.Provider>
-        </FabDrawerCloseContext.Provider>
+        <StashedDraftsComposerBridgeContext.Provider value={{ openRef: { current: null }, focusComposer }}>
+          <StashedDraftsPicker {...pickerProps} />
+        </StashedDraftsComposerBridgeContext.Provider>
       </TooltipProvider>
       <Routes>
         <Route path="/start" element={null} />
@@ -60,7 +56,7 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
   )
   const { rerender, unmount } = render(tree(props))
   const rerenderWith = (next: Partial<typeof props>) => rerender(tree({ ...props, ...next }))
-  return { ...props, closeFabDrawer, focusComposer, rerenderWith, unmount }
+  return { ...props, focusComposer, rerenderWith, unmount }
 }
 
 describe("StashedDraftsPicker", () => {
@@ -116,26 +112,24 @@ describe("StashedDraftsPicker", () => {
   })
 
   describe("close on action", () => {
-    it("closes the popover and the hosting FAB drawer after Save current", async () => {
-      const { onStashCurrent, closeFabDrawer } = renderPicker()
+    it("closes the popover after Save current", async () => {
+      const { onStashCurrent } = renderPicker()
 
       await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
       await userEvent.click(screen.getByRole("button", { name: /save current/i }))
 
       expect(onStashCurrent).toHaveBeenCalledOnce()
       await waitFor(() => expect(screen.queryByRole("button", { name: /save current/i })).not.toBeInTheDocument())
-      expect(closeFabDrawer).toHaveBeenCalled()
     })
 
-    it("closes the popover and the hosting FAB drawer after restoring a draft", async () => {
-      const { onRestore, closeFabDrawer } = renderPicker()
+    it("closes the popover after restoring a draft", async () => {
+      const { onRestore } = renderPicker()
 
       await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
       await userEvent.click(screen.getByText("Saved one"))
 
       expect(onRestore).toHaveBeenCalledWith("draft_1")
       await waitFor(() => expect(screen.queryByText("Saved one")).not.toBeInTheDocument())
-      expect(closeFabDrawer).toHaveBeenCalled()
     })
 
     // Closing + focusing the composer IS the success signal (INV-63), so a
@@ -147,14 +141,13 @@ describe("StashedDraftsPicker", () => {
       ["raced", "moved before it could be restored"],
     ] as const)("says why a %s restore did nothing and keeps the picker open", async (reason, message) => {
       const onRestore = vi.fn().mockResolvedValue({ ok: false, reason })
-      const { closeFabDrawer, focusComposer } = renderPicker({ onRestore })
+      const { focusComposer } = renderPicker({ onRestore })
 
       await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
       await userEvent.click(screen.getByText("Saved one"))
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining(message)))
       expect(screen.getByText("Saved one")).toBeInTheDocument()
-      expect(closeFabDrawer).not.toHaveBeenCalled()
       expect(focusComposer).not.toHaveBeenCalled()
     })
 
@@ -489,7 +482,7 @@ describe("navigate rows (branch replies / mounted composers)", () => {
   it("navigates instead of restoring, closes the picker, and says so in the meta line", async () => {
     const replyOpenSpy = vi.spyOn(replyOpenStore, "requestConversationReplyOpen")
     const onRestore = vi.fn()
-    const { closeFabDrawer } = renderPicker({
+    renderPicker({
       drafts: [makeDraft("draft_nav", "branch body"), makeDraft("draft_plain", "plain body")],
       originById: new Map<string, StashedDraftRowOrigin>([
         [
@@ -534,7 +527,6 @@ describe("navigate rows (branch replies / mounted composers)", () => {
     expect(onRestore).not.toHaveBeenCalled()
     const landed = await screen.findByTestId("navigated-away")
     expect(landed.textContent).toBe("/w/ws_1/s/stream_1?panel=conv%3Aconv_1&stash=draft_nav")
-    expect(closeFabDrawer).toHaveBeenCalled()
     // Arrival focus rides the reply-open store — a same-URL navigation is a
     // router no-op, so without this the tap can be a silent nothing.
     expect(replyOpenSpy).toHaveBeenCalledWith("conv_1")
@@ -566,7 +558,7 @@ describe("navigate rows (branch replies / mounted composers)", () => {
 
   it("a throwing restore toasts and keeps the picker open — never a silent no-op", async () => {
     const onRestore = vi.fn().mockRejectedValue(new Error("navigate row reached restore"))
-    const { closeFabDrawer } = renderPicker({
+    renderPicker({
       drafts: [makeDraft("draft_boom", "drifting row")],
       onRestore,
     })
@@ -575,7 +567,6 @@ describe("navigate rows (branch replies / mounted composers)", () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("could not be restored")))
     expect(screen.getByText("drifting row")).toBeInTheDocument()
-    expect(closeFabDrawer).not.toHaveBeenCalled()
   })
 
   it("a control row without openHref still restores", async () => {
