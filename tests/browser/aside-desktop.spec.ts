@@ -71,6 +71,25 @@ async function scrollMetrics(page: Page, streamId: string): Promise<{ scrollTop:
   }, streamId)
 }
 
+/**
+ * A scroll reading the timeline has stopped changing: two identical samples
+ * 250ms apart. The strict equality below is only meaningful against a host that
+ * had already settled when the baseline was taken.
+ */
+async function settledScrollMetrics(
+  page: Page,
+  streamId: string
+): Promise<{ scrollTop: number; topNum: number | null }> {
+  let previous = await scrollMetrics(page, streamId)
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await page.waitForTimeout(250)
+    const current = await scrollMetrics(page, streamId)
+    if (current.topNum === previous.topNum && Math.abs(current.scrollTop - previous.scrollTop) <= 1) return current
+    previous = current
+  }
+  return previous
+}
+
 async function openAsideFromMessage(page: Page, streamId: string, prefix: string, num: number): Promise<void> {
   const row = hostRow(page, streamId, prefix, num)
   await row.hover()
@@ -130,8 +149,10 @@ test.describe("Aside — desktop surface", () => {
         { timeout: 15000 }
       )
       .toBeLessThan(MESSAGE_COUNT - 8)
-    await page.waitForTimeout(300)
-    const before = await scrollMetrics(page, streamId)
+    // Settle before the baseline: virtua re-measures after a wheel, and under CI
+    // load that can still be moving 300ms later — a baseline caught mid-settle
+    // reads as an aside-caused shift below, which is the opposite of the claim.
+    const before = await settledScrollMetrics(page, streamId)
     expect(before.topNum).not.toBeNull()
 
     await openAsideFromMessage(page, streamId, prefix, before.topNum! + 1)
@@ -142,10 +163,11 @@ test.describe("Aside — desktop surface", () => {
     expect(asideId).toBeTruthy()
 
     // INV-70: the host's landing is untouched — same top row, same scrollTop.
-    await page.waitForTimeout(500)
-    const after = await scrollMetrics(page, streamId)
-    expect(after.topNum).toBe(before.topNum)
-    expect(Math.abs(after.scrollTop - before.scrollTop)).toBeLessThanOrEqual(2)
+    const after = await settledScrollMetrics(page, streamId)
+    expect({ topRow: after.topNum, scrollTop: after.scrollTop }).toEqual({
+      topRow: before.topNum,
+      scrollTop: before.scrollTop,
+    })
 
     // The creator-only anchor row lands in the host timeline at the message.
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })
