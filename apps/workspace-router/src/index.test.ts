@@ -92,6 +92,31 @@ describe("workspace-router", () => {
         region: "eu-north-1",
         wsUrl: "ws://eu-north-1.backend:3002",
       })
+      expect(res.headers.get("Set-Cookie")).toBeNull()
+    })
+
+    test("clears retired staging cookies on production config responses without changing the body", async () => {
+      const env = makeEnvWithKv("eu-north-1")
+      const req = new Request("https://app.threa.io/api/workspaces/ws_123/config")
+      const res = await worker.fetch(req, env)
+
+      expect({
+        status: res.status,
+        body: await getJson<{ region: string; wsUrl: string }>(res),
+        cookies: res.headers.get("Set-Cookie")?.split(", "),
+      }).toEqual({
+        status: 200,
+        body: {
+          region: "eu-north-1",
+          wsUrl: "ws://eu-north-1.backend:3002",
+        },
+        cookies: [
+          "wos_session_staging=; Path=/; Domain=.threa.io; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+          "wos_session_staging_alt_0=; Path=/; Domain=.threa.io; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+          "wos_session_staging_alt_1=; Path=/; Domain=.threa.io; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+          "wos_session_staging_alt_2=; Path=/; Domain=.threa.io; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+        ],
+      })
     })
 
     test("falls back to control-plane when workspace not in KV", async () => {

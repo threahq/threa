@@ -27,8 +27,7 @@ export interface SessionCookieConfig {
 // limit (~32 KB total, ~16 KB per header) — the browser concatenates every
 // cookie for the origin into a single `Cookie:` header, so that combined header
 // is the binding constraint. We size conservatively from documented worst-case
-// inputs (an empirical measurement is recorded in the PR); PR-5 may
-// only relax MAX_ACCOUNTS upward with a fresh measurement.
+// inputs; MAX_ACCOUNTS may only increase with a fresh measurement.
 const WORST_CASE_SEALED_BYTES = 3072
 const PER_COOKIE_OVERHEAD_BYTES = 32
 // Conservative reservation for session cookies within the single `Cookie:`

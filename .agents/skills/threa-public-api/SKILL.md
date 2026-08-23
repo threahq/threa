@@ -28,10 +28,10 @@ HTTP Bearer. Use the pre-provisioned production read-only key for diagnostics.
 A write requires an explicitly supplied target and key. Read credentials from
 environment variables and never paste them into committed files or chat.
 
-| Use              | Base URL var                                      | Workspace var                   | Key var                         | Scopes        |
-| ---------------- | ------------------------------------------------- | ------------------------------- | ------------------------------- | ------------- |
-| Production reads | `$THREA_PROD_BASE_URL` (= `https://app.threa.io`) | `$THREA_PROD_DEFAULT_WORKSPACE` | `$THREA_PROD_READ_ONLY_API_KEY` | **read-only** |
-| Explicit writes  | `$THREA_BASE_URL`                                 | supplied by the user            | `$THREA_API_KEY`                | key-defined   |
+| Use              | Base URL var                                                    | Workspace var                   | Key var                         | Scopes        |
+| ---------------- | --------------------------------------------------------------- | ------------------------------- | ------------------------------- | ------------- |
+| Production reads | `$THREA_PROD_BASE_URL` (= `https://app.threa.io`)               | `$THREA_PROD_DEFAULT_WORKSPACE` | `$THREA_PROD_READ_ONLY_API_KEY` | **read-only** |
+| Explicit writes  | `$THREA_BASE_URL` (origin only; no `/api/v1` or trailing slash) | supplied by the user            | `$THREA_API_KEY`                | key-defined   |
 
 ```bash
 Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY
@@ -142,11 +142,11 @@ fire 100 requests in a tight loop — you'll get throttled mid-run.
 ```bash
 # Explicit target
 curl -s -H "Authorization: Bearer $THREA_API_KEY" \
-  "$THREA_BASE_URL/api/v1/workspaces/<ws>/me"
+  "${THREA_BASE_URL%/}/api/v1/workspaces/<ws>/me"
 
 # Production (use the env vars; the key pins the workspace)
 curl -s -H "Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY" \
-  "$THREA_PROD_BASE_URL/api/v1/workspaces/$THREA_PROD_DEFAULT_WORKSPACE/me"
+  "${THREA_PROD_BASE_URL%/}/api/v1/workspaces/$THREA_PROD_DEFAULT_WORKSPACE/me"
 ```
 
 ### Production diagnostic snippets (read-only)
@@ -155,7 +155,7 @@ When triaging a production issue, the API is the first stop before
 reaching for psql. Examples — all use the read-only key:
 
 ```bash
-BASE="$THREA_PROD_BASE_URL/api/v1/workspaces/$THREA_PROD_DEFAULT_WORKSPACE"
+BASE="${THREA_PROD_BASE_URL%/}/api/v1/workspaces/$THREA_PROD_DEFAULT_WORKSPACE"
 AUTH="Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY"
 
 # What's in this workspace
@@ -174,7 +174,7 @@ curl -sX POST -H "$AUTH" -H "Content-Type: application/json" \
 
 ```bash
 curl -sS -X POST \
-  "$THREA_BASE_URL/api/v1/workspaces/<ws>/streams/<stream>/messages" \
+  "${THREA_BASE_URL%/}/api/v1/workspaces/<ws>/streams/<stream>/messages" \
   -H "Authorization: Bearer $THREA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"content":"hello from the API","clientMessageId":"oneoff-1"}'
@@ -187,7 +187,7 @@ first" step. Every label is private to the key's actor (a user key labels for
 the user; a personal bot key labels for its owner).
 
 ```bash
-BASE="$THREA_BASE_URL/api/v1/workspaces/<ws>"
+BASE="${THREA_BASE_URL%/}/api/v1/workspaces/<ws>"
 AUTH="Authorization: Bearer $THREA_API_KEY"
 JSON="Content-Type: application/json"
 
@@ -234,7 +234,7 @@ stable `clientMessageId` per item so a re-run is idempotent.
 ```ts
 // bun run seed.ts   (reads target and key from env; never hardcode them)
 const TOKEN = process.env.THREA_API_KEY
-const BASE_URL = process.env.THREA_BASE_URL
+const BASE_URL = process.env.THREA_BASE_URL?.replace(/\/+$/, "")
 if (!TOKEN || !BASE_URL) {
   console.error("THREA_API_KEY and THREA_BASE_URL required")
   process.exit(1)
@@ -301,7 +301,7 @@ posts it as the bot — the shared-runner setup.
 Manual walkthrough with curl:
 
 ```bash
-BASE="$THREA_BASE_URL/api/v1/workspaces/<ws>"
+BASE="${THREA_BASE_URL%/}/api/v1/workspaces/<ws>"
 AUTH="Authorization: Bearer $THREA_API_KEY"
 JSON="Content-Type: application/json"
 
@@ -338,7 +338,7 @@ never shows a stale "Running".
 ```ts
 // bun run delegate.ts <delegationId>   (reads target and key from env; never hardcode them)
 const TOKEN = process.env.THREA_API_KEY
-const BASE_URL = process.env.THREA_BASE_URL
+const BASE_URL = process.env.THREA_BASE_URL?.replace(/\/+$/, "")
 if (!TOKEN || !BASE_URL) {
   console.error("THREA_API_KEY and THREA_BASE_URL required")
   process.exit(1)
@@ -433,8 +433,9 @@ normal pipeline, so workspace memory extracts the outcome.
 
 ## Safety
 
-- **Write target:** `$THREA_BASE_URL` and `$THREA_API_KEY` must be supplied
-  explicitly. Confirm the target before using write endpoints. Never use a
+- **Write target:** `$THREA_BASE_URL` must be an origin without `/api/v1`, and
+  `$THREA_BASE_URL` plus `$THREA_API_KEY` must be supplied explicitly. Confirm
+  the target before using write endpoints. Never use a
   write-capable production key without explicit instruction because writes are
   immediately visible to users.
 - **Production reads:** `$THREA_PROD_READ_ONLY_API_KEY` is read-only. Write

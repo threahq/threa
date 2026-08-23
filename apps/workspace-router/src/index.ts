@@ -71,65 +71,70 @@ function getRegionsFromEnv(raw: string): RegionsMap {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const regions = getRegionsFromEnv(env.REGIONS)
-    const url = new URL(request.url)
-    const path = url.pathname
+    const response = await routeRequest(request, env)
+    return expireRetiredSessionCookies(request, response)
+  },
+}
 
-    // Router health check (handled locally, not proxied)
-    if (path === "/readyz" && request.method === "GET") {
-      return new Response("OK", { status: 200 })
-    }
+async function routeRequest(request: Request, env: Env): Promise<Response> {
+  const regions = getRegionsFromEnv(env.REGIONS)
+  const url = new URL(request.url)
+  const path = url.pathname
 
-    // Control-plane routes (auth, workspace list/create, regions, dev auth)
-    if (env.CONTROL_PLANE_URL) {
-      const method = request.method
-      if (
-        AUTH_ROUTE_RE.test(path) ||
-        ACCOUNTS_ROUTE_RE.test(path) ||
-        INTEGRATION_CALLBACK_RE.test(path) ||
-        (GITHUB_WEBHOOK_RE.test(path) && method === "POST") ||
-        (WORKSPACES_COLLECTION_RE.test(path) && (method === "GET" || method === "POST")) ||
-        REGIONS_ROUTE_RE.test(path) ||
-        DEV_AUTH_ROUTE_RE.test(path) ||
-        (INVITATION_ACCEPT_RE.test(path) && method === "POST") ||
-        (INVITATION_LOOKUP_RE.test(path) && method === "GET") ||
-        (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
-        (WAITLIST_ROUTE_RE.test(path) && (method === "POST" || method === "OPTIONS"))
-      ) {
-        try {
-          return await proxyRequest(request, env.CONTROL_PLANE_URL)
-        } catch {
-          return errorResponse(502, "Control plane unavailable")
-        }
+  // Router health check (handled locally, not proxied)
+  if (path === "/readyz" && request.method === "GET") {
+    return new Response("OK", { status: 200 })
+  }
+
+  // Control-plane routes (auth, workspace list/create, regions, dev auth)
+  if (env.CONTROL_PLANE_URL) {
+    const method = request.method
+    if (
+      AUTH_ROUTE_RE.test(path) ||
+      ACCOUNTS_ROUTE_RE.test(path) ||
+      INTEGRATION_CALLBACK_RE.test(path) ||
+      (GITHUB_WEBHOOK_RE.test(path) && method === "POST") ||
+      (WORKSPACES_COLLECTION_RE.test(path) && (method === "GET" || method === "POST")) ||
+      REGIONS_ROUTE_RE.test(path) ||
+      DEV_AUTH_ROUTE_RE.test(path) ||
+      (INVITATION_ACCEPT_RE.test(path) && method === "POST") ||
+      (INVITATION_LOOKUP_RE.test(path) && method === "GET") ||
+      (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
+      (WAITLIST_ROUTE_RE.test(path) && (method === "POST" || method === "OPTIONS"))
+    ) {
+      try {
+        return await proxyRequest(request, env.CONTROL_PLANE_URL)
+      } catch {
+        return errorResponse(502, "Control plane unavailable")
       }
     }
+  }
 
-    // Config endpoint: returns the direct WebSocket URL for a workspace
-    const configMatch = path.match(CONFIG_ROUTE_RE)
-    if (configMatch && request.method === "GET") {
-      return handleConfigRequest(configMatch[1], regions, env)
-    }
+  // Config endpoint: returns the direct WebSocket URL for a workspace
+  const configMatch = path.match(CONFIG_ROUTE_RE)
+  if (configMatch && request.method === "GET") {
+    return handleConfigRequest(configMatch[1], regions, env)
+  }
 
-    // Public API v1 routes (API key auth, routed to regional backend)
-    const publicApiMatch = path.match(PUBLIC_API_ROUTE_RE)
-    if (publicApiMatch) {
-      return routeWorkspaceRequest(request, publicApiMatch[1], regions, env)
-    }
+  // Public API v1 routes (API key auth, routed to regional backend)
+  const publicApiMatch = path.match(PUBLIC_API_ROUTE_RE)
+  if (publicApiMatch) {
+    return routeWorkspaceRequest(request, publicApiMatch[1], regions, env)
+  }
 
-    // Workspace-scoped API routes
-    const workspaceMatch = path.match(WORKSPACE_ROUTE_RE)
-    if (workspaceMatch) {
-      return routeWorkspaceRequest(request, workspaceMatch[1], regions, env)
-    }
+  // Workspace-scoped API routes
+  const workspaceMatch = path.match(WORKSPACE_ROUTE_RE)
+  if (workspaceMatch) {
+    return routeWorkspaceRequest(request, workspaceMatch[1], regions, env)
+  }
 
-    // Dev workspace routes (e.g. /api/dev/workspaces/:id/join) — test only
-    const devWorkspaceMatch = path.match(DEV_WORKSPACE_ROUTE_RE)
-    if (devWorkspaceMatch) {
-      return routeWorkspaceRequest(request, devWorkspaceMatch[1], regions, env)
-    }
+  // Dev workspace routes (e.g. /api/dev/workspaces/:id/join) — test only
+  const devWorkspaceMatch = path.match(DEV_WORKSPACE_ROUTE_RE)
+  if (devWorkspaceMatch) {
+    return routeWorkspaceRequest(request, devWorkspaceMatch[1], regions, env)
+  }
 
-    return errorResponse(404, "Not found")
-  },
+  return errorResponse(404, "Not found")
 }
 
 function parseRegions(raw: string): RegionsMap {
@@ -281,14 +286,16 @@ async function proxyRequest(request: Request, targetBaseUrl: string): Promise<Re
 
   headers.delete("host")
 
-  const response = await fetch(targetUrl.toString(), {
+  return fetch(targetUrl.toString(), {
     method: request.method,
     headers,
     body: request.body,
     redirect: "manual",
   })
+}
 
-  if (url.hostname !== "app.threa.io") return response
+function expireRetiredSessionCookies(request: Request, response: Response): Response {
+  if (new URL(request.url).hostname !== "app.threa.io") return response
 
   const responseHeaders = new Headers(response.headers)
   for (const name of RETIRED_SESSION_COOKIE_NAMES) {

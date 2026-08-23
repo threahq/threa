@@ -269,14 +269,14 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 Services authenticate to each other using a shared `INTERNAL_API_KEY` sent in the `X-Internal-API-Key` header. User-facing auth uses the `wos_session` WorkOS session cookie set on `.threa.io` so it is valid across application subdomains.
 
 ```
-Browser -> Workspace Router:    Cookie (session cookie, name per env)
-Browser -> Backoffice Router:   Cookie (session cookie, name per env)
+Browser -> Workspace Router:    Cookie (`wos_session`)
+Browser -> Backoffice Router:   Cookie (`wos_session`)
 Workspace Router -> Control Plane:   Cookie passthrough + INTERNAL_API_KEY (for /internal/*)
 Workspace Router -> Backend:         Cookie passthrough
 Backoffice Router -> Control Plane:  Cookie passthrough + X-Threa-Host (for per-host WorkOS redirect; survives Railway)
 Control Plane -> Backend:            INTERNAL_API_KEY
 Backend -> Control Plane:            INTERNAL_API_KEY
-Browser -> Backend (WebSocket):      Cookie (session cookie, name per env)
+Browser -> Backend (WebSocket):      Cookie (`wos_session`)
 ```
 
 ---
