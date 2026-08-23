@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { renderHook, act } from "@testing-library/react"
+import { toast } from "sonner"
 import type { JSONContent } from "@threa/types"
 import type { DraftComposerState } from "./use-draft-composer"
 import { useAsideDraftActions } from "./use-aside-draft-actions"
@@ -36,7 +37,31 @@ describe("useAsideDraftActions", () => {
       deliver(true)
       await first
     })
-    expect({ calls: onSendToComposer.mock.calls.length, done: onDone.mock.calls.length }).toEqual({ calls: 1, done: 1 })
+    expect({ sent: onSendToComposer.mock.calls, done: onDone.mock.calls }).toEqual({
+      sent: [[CONTENT.content]],
+      done: [[]],
+    })
+  })
+
+  it("says so and keeps the draft when the flush or the hand-off throws", async () => {
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "")
+    const onDone = vi.fn()
+    const flushDraft = vi.fn(async () => {
+      throw new Error("offline")
+    })
+    const { result } = renderHook(() =>
+      useAsideDraftActions(composerStub({ flushDraft }), { onSendToComposer: vi.fn(async () => true), onDone })
+    )
+
+    await act(async () => {
+      await result.current.send()
+    })
+
+    expect({ toasts: error.mock.calls, done: onDone.mock.calls, busy: result.current.busy }).toEqual({
+      toasts: [["Couldn't hand this draft to the composer."]],
+      done: [],
+      busy: false,
+    })
   })
 
   it("refuses to delete the draft while its hand-off is in flight", async () => {

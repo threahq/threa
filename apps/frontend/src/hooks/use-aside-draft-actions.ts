@@ -43,6 +43,10 @@ export function useAsideDraftActions(
         return
       }
       onDone()
+    } catch {
+      // The editor fires send without awaiting it; a rejected flush or
+      // hand-off must still reach the user, and the draft stays where it is.
+      toast.error("Couldn't hand this draft to the composer.")
     } finally {
       inFlight.current = false
       setBusy(false)
