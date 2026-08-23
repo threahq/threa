@@ -26,12 +26,16 @@ const aside = createMockStream({
   parentStreamId: "stream_host",
 })
 
-/** The page's two mount points, bound to the route like the stream page binds them. */
-function Page() {
+/**
+ * The page's two mount points, bound to the route like the stream page binds
+ * them. `takeover` is the phone's panel takeover: the main column (and the
+ * strip inside it) is hidden and inert, so only the dock slot can draw.
+ */
+function Page({ takeover = false }: { takeover?: boolean }) {
   const hostKey = useAsideHost()
   return (
     <div className="flex">
-      <main className="relative">
+      <main className="relative" inert={takeover || undefined} hidden={takeover}>
         <AsideMinimizedStrip workspaceId="ws_1" hostKey={hostKey} />
       </main>
       <AsideDockSlot workspaceId="ws_1" hostKey={hostKey} />
@@ -39,12 +43,12 @@ function Page() {
   )
 }
 
-function renderPage(path = HOST_PATH) {
+function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/w/:workspaceId/s/:streamId" element={<Page />} />
-        <Route path="/w/:workspaceId/board" element={<Page />} />
+        <Route path="/w/:workspaceId/s/:streamId" element={<Page takeover={options.takeover} />} />
+        <Route path="/w/:workspaceId/board" element={<Page takeover={options.takeover} />} />
       </Routes>
     </MemoryRouter>
   )
@@ -275,6 +279,16 @@ describe("aside surfaces", () => {
       expect(getAsideState()?.surface).toBe("minimized")
       expect(screen.queryByTestId("aside-sheet")).toBeNull()
       expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
+    })
+
+    it("keeps the parked strip reachable under a panel takeover, where the main column is hidden", () => {
+      openOnHost("minimized")
+      renderPage(HOST_PATH, { takeover: true })
+
+      const strip = screen.getByTestId("aside-strip")
+      expect(strip).toBeVisible()
+      expect(strip.closest("main")).toBeNull()
+      expect(screen.getAllByTestId("aside-strip")).toHaveLength(1)
     })
 
     it("reaches the same detents from the keyboard, since the sheet hides the surface picker", () => {

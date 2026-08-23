@@ -4,6 +4,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useAsideForHost, type OpenAsideState } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
 import { AsideMobileSheet } from "./aside-mobile-sheet"
+import { AsideMinimizedStrip } from "./aside-minimized-strip"
 
 export const ASIDE_DOCK_WIDTH = 400
 // Matches the thread panel slot (`duration-200`): the dock folds shut on the
@@ -46,6 +47,14 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
   const reading = current && current.surface !== "minimized" ? current : null
   const rendered = useFoldingState(reading)
   const isMobile = useIsMobile()
+
+  // On a phone the parked strip is this slot's too: the page's main column is
+  // invisible and inert under a panel takeover, so a strip inside it would
+  // vanish with the aside the moment it was parked from a thread or
+  // conversation panel. Here it sits over whichever surface is showing.
+  if (isMobile && current?.surface === "minimized") {
+    return <AsideMinimizedStrip workspaceId={workspaceId} hostKey={hostKey} overlay />
+  }
 
   if (!rendered) return null
   const surface = rendered.surface === "fullscreen" ? "fullscreen" : "dock"
