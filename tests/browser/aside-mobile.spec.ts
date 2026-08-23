@@ -63,7 +63,9 @@ async function dragHandle(page: Page, dy: number): Promise<void> {
 
 async function openAsideFromComposer(page: Page): Promise<void> {
   const editor = page.getByRole("main").locator("[data-editor-zone='main'] [contenteditable='true']").first()
-  await editor.click()
+  // Focus rather than click: at phone width the composer card's own padding
+  // owns the pointer at the editor's hit point, so a click never lands.
+  await editor.focus()
   await page.keyboard.type("/aside")
   const popup = page.locator("[aria-label='Slash command suggestions']")
   await expect(popup).toBeVisible({ timeout: 5000 })
