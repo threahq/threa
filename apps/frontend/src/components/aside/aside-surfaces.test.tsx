@@ -357,28 +357,44 @@ describe("aside surfaces", () => {
       expect(sheet).not.toHaveAttribute("data-keyboard-lift")
     })
 
-    it("dismisses the keyboard on a handle touch while the composer holds focus, instead of dragging against it", () => {
+    it("resizes while the composer keeps focus — a drag never closes the keyboard, and it overrides the lift", () => {
       openOnHost()
       renderPage()
 
       const handle = screen.getByTestId("aside-sheet-handle")
+      const sheet = screen.getByTestId("aside-sheet")
       const editor = document.createElement("div")
       editor.setAttribute("contenteditable", "true")
       editor.tabIndex = 0
-      screen.getByTestId("aside-sheet").appendChild(editor)
+      sheet.appendChild(editor)
       Object.defineProperty(editor, "isContentEditable", { value: true })
       editor.focus()
-      expect(document.activeElement).toBe(editor)
+      fireEvent.focus(editor)
+      expect(sheet).toHaveStyle({ height: "100dvh" })
+      sheet.getBoundingClientRect = () => ({
+        height: 360,
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      })
       handle.setPointerCapture = vi.fn()
 
-      fireEvent.pointerDown(handle, { pointerId: 1, clientY: 100 })
-      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
-      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 500 })
+      // Pull up to full, like the composer's own resize handle: preventDefault
+      // on pointerdown keeps focus — and the keyboard — where it is.
+      const down = fireEvent.pointerDown(handle, { pointerId: 1, clientY: 500 })
+      expect(down).toBe(false)
+      fireEvent.pointerMove(handle, { pointerId: 1, clientY: 100 })
+      fireEvent.pointerUp(handle, { pointerId: 1, clientY: 100 })
 
-      expect(document.activeElement).not.toBe(editor)
-      expect(handle.setPointerCapture).not.toHaveBeenCalled()
-      expect(getAsideState()?.surface).toBe("dock")
-      expect(screen.getByTestId("aside-sheet")).toBeInTheDocument()
+      expect(document.activeElement).toBe(editor)
+      expect(getAsideState()?.surface).toBe("fullscreen")
+      expect(handle.setPointerCapture).toHaveBeenCalled()
+      expect(sheet).not.toHaveAttribute("data-keyboard-lift")
     })
   })
 })

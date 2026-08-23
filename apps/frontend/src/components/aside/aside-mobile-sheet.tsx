@@ -34,12 +34,6 @@ function viewportHeight(): number {
   return window.visualViewport?.height ?? window.innerHeight
 }
 
-/** The focused editor inside the sheet, if any. */
-function focusedComposer(sheet: HTMLElement | null): HTMLElement | null {
-  const active = document.activeElement
-  return active instanceof HTMLElement && !!sheet?.contains(active) && active.isContentEditable ? active : null
-}
-
 function isEditorTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.isContentEditable
 }
@@ -58,7 +52,9 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   // what is left is all chrome and composer, no conversation. While an editor
   // in the sheet has focus the sheet rises to the full (keyboard-shrunk)
   // viewport — presentation only, the chosen detent is kept and returns when
-  // the keyboard goes.
+  // the keyboard goes. A drag while typing is the user's own call and wins
+  // over the lift; the keyboard stays up through it (the composer's own
+  // resize handle sets the precedent: preventDefault keeps focus).
   const [keyboardLift, setKeyboardLift] = useState(false)
   const onFocusCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
     if (isEditorTarget(event.target)) setKeyboardLift(true)
@@ -77,19 +73,12 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    // A drag would fight the on-screen keyboard, so while an editor in the
-    // sheet has focus the handle dismisses the keyboard instead; the next
-    // touch resizes.
-    const composer = focusedComposer(sheetRef.current)
-    if (composer) {
-      event.preventDefault()
-      composer.blur()
-      return
-    }
     // The handle carries text; without this a drag starts a text selection and
     // the browser cancels the pointer stream mid-gesture, so the sheet snaps
-    // back to where it started.
+    // back to where it started. It also keeps focus (and the keyboard) in an
+    // editor that has it — a drag never closes the keyboard.
     event.preventDefault()
+    setKeyboardLift(false)
     const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(surface, viewportHeight())
     drag.current = {
       startY: event.clientY,
