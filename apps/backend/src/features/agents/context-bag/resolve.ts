@@ -3,12 +3,14 @@ import type { Pool } from "pg"
 import { withClient } from "../../../db"
 import type { AI, CostContext } from "@threa/agent-runtime"
 import { logger } from "../../../lib/logger"
-import { ContextIntents, ContextRefKinds, type ContextRefKind } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextRef, type ContextRefKind } from "@threa/types"
+import { HttpError } from "../../../lib/errors"
 import { MessageRepository } from "../../messaging"
 import { StreamRepository } from "../../streams"
 import { ContextBagRepository } from "./repository"
 import { SummaryRepository } from "./summary-repository"
-import { canonicalRefKey, fetchRef, getIntentConfig } from "./registry"
+import { assertRefAccess, canonicalRefKey, fetchRef, getIntentConfig } from "./registry"
+import { CONTEXT_VIEWPORT_GONE } from "./resolvers/viewport-resolver"
 import { diffInputs } from "./diff"
 import { buildSnapshot, renderDelta, renderStable } from "./render"
 import { summarizeThread } from "./summarizer"
@@ -116,13 +118,38 @@ export async function resolveBagForStream(
 
     const config = getIntentConfig(bag.intent)
     const resolveds: ResolvedRef[] = []
+    const goneRefs: ContextRef[] = []
     for (const ref of bag.refs) {
       if (!config.supportedKinds.includes(ref.kind)) {
         logger.warn({ intent: bag.intent, kind: ref.kind }, "context-bag: unsupported ref kind for intent, skipping")
         continue
       }
-      const part = await fetchRef(db, ref, { intent: bag.intent })
-      resolveds.push({ ref, ...part })
+      // The agent sees exactly what the bag's creator can see, re-checked every
+      // turn: a source the creator has lost access to since the bag was
+      // attached drops out (the other refs survive), mirroring what the
+      // context chip shows them (`fetchStreamBag`). Anything other than a clean
+      // FORBIDDEN is a real failure and still surfaces.
+      if (!(await canCreatorRead(db, bag.createdBy, bag.workspaceId, ref))) {
+        logger.info(
+          { workspaceId: bag.workspaceId, streamId, refKind: ref.kind, refStreamId: ref.streamId },
+          "context-bag: dropping ref the creator can no longer read"
+        )
+        continue
+      }
+      try {
+        const part = await fetchRef(db, ref, { intent: bag.intent })
+        resolveds.push({ ref, ...part })
+      } catch (err) {
+        // A viewport whose on-screen messages are all gone has no snapshot to
+        // show: the agent is told so in the source's place rather than handed
+        // something else as "what you saw" (INV-11).
+        if (!(err instanceof HttpError && err.code === CONTEXT_VIEWPORT_GONE)) throw err
+        logger.warn(
+          { workspaceId: bag.workspaceId, streamId, refStreamId: ref.streamId },
+          "context-bag: viewport snapshot no longer resolves"
+        )
+        goneRefs.push(ref)
+      }
     }
 
     // Source-stream enrichment for the trace UI's "X messages in #foo" pill.
@@ -142,12 +169,12 @@ export async function resolveBagForStream(
       : [[], new Map<string, number>()]
     const streamById = new Map(sourceStreams.map((s) => [s.id, s]))
 
-    return { bag, config, resolveds, streamById, itemCounts }
+    return { bag, config, resolveds, goneRefs, streamById, itemCounts }
   })
 
   if (!phase1 || phase1 === "already-rendered") return null
 
-  const { bag, config, resolveds, streamById, itemCounts } = phase1
+  const { bag, config, resolveds, goneRefs, streamById, itemCounts } = phase1
 
   // Phase 2 (maybe AI): for each ref, decide inline vs summary. Summaries use
   // the shared cache keyed by (workspace, refKind, refKey, fingerprint).
@@ -158,13 +185,13 @@ export async function resolveBagForStream(
   const nextItems: SummaryInput[] = []
   let nextTail: string | null = null
 
-  // For windowed bags (DISCUSS_THREAD), the trace pill should report the
+  // For windowed bags (DISCUSS_THREAD, ASIDE), the trace pill should report the
   // actual resolved item count, not the global cap. `ThreadResolver` prepends
   // the thread root on top of the discuss window, so the resolved length can
   // exceed `DISCUSS_WINDOW_TOTAL` by one — the trace exists to show what the
   // AI actually saw, so the chip and the disclosure must agree on the same
   // number. Non-windowed intents fall back to the raw source-stream count.
-  const isWindowedIntent = bag.intent === ContextIntents.DISCUSS_THREAD
+  const isWindowedIntent = bag.intent === ContextIntents.DISCUSS_THREAD || bag.intent === ContextIntents.ASIDE
 
   for (const resolved of resolveds) {
     const inlineSize = resolved.items.reduce((acc, m) => acc + m.contentMarkdown.length, 0)
@@ -191,6 +218,7 @@ export async function resolveBagForStream(
       summaryText,
       refLabel: refKey,
       focalMessageId: resolved.focalMessageId,
+      viewport: resolved.viewport,
     })
     stableParts.push(stable)
 
@@ -212,7 +240,7 @@ export async function resolveBagForStream(
       conversationId: ref.kind === ContextRefKinds.CONVERSATION ? ref.conversationId : null,
       fromMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.fromMessageId ?? null) : null,
       toMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.toMessageId ?? null) : null,
-      originMessageId: ref.originMessageId ?? null,
+      originMessageId: ref.kind === ContextRefKinds.VIEWPORT ? null : (ref.originMessageId ?? null),
       source: {
         displayName: sourceStream?.displayName ?? null,
         slug: sourceStream?.slug ?? null,
@@ -223,6 +251,16 @@ export async function resolveBagForStream(
     })
   }
 
+  for (const ref of goneRefs) {
+    stableParts.push(
+      renderStable({
+        preamble: config.systemPreamble,
+        refLabel: canonicalRefKey(ref),
+        notice: VIEWPORT_GONE_NOTICE,
+      })
+    )
+  }
+
   return {
     bagId: bag.id,
     intent: bag.intent,
@@ -231,6 +269,21 @@ export async function resolveBagForStream(
     items: allItems,
     refs: groupedRefs,
     nextSnapshot: buildSnapshot(nextItems, nextTail),
+  }
+}
+
+const VIEWPORT_GONE_NOTICE =
+  "The snapshot of what was on screen when this aside was opened is no longer available: every message it " +
+  "captured has since been deleted. Say so if the user refers to what they were looking at; fetch what you " +
+  "need with `get_stream_messages` instead of guessing."
+
+async function canCreatorRead(db: Querier, userId: string, workspaceId: string, ref: ContextRef): Promise<boolean> {
+  try {
+    await assertRefAccess(db, ref, userId, workspaceId)
+    return true
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 403) return false
+    throw err
   }
 }
 

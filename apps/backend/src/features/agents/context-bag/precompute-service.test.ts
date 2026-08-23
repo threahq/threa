@@ -48,6 +48,7 @@ describe("precomputeRefSummaries", () => {
       fingerprint: "fp_small",
       tailMessageId: "msg_1",
       focalMessageId: null,
+      viewport: null,
       sourceStreamId: "stream_src",
     })
     const upsert = spyOn(SummaryRepository, "upsert")
@@ -91,6 +92,7 @@ describe("precomputeRefSummaries", () => {
       fingerprint: "fp_big",
       tailMessageId: "msg_49",
       focalMessageId: null,
+      viewport: null,
       sourceStreamId: "stream_src",
     })
     const find = spyOn(SummaryRepository, "find")
@@ -156,6 +158,7 @@ describe("precomputeRefSummaries", () => {
         fingerprint: "fp_a",
         tailMessageId: "msg_a",
         focalMessageId: null,
+        viewport: null,
         sourceStreamId: "stream_a",
       })
       .mockResolvedValueOnce({
@@ -164,6 +167,7 @@ describe("precomputeRefSummaries", () => {
         fingerprint: "fp_b",
         tailMessageId: "msg_b",
         focalMessageId: null,
+        viewport: null,
         sourceStreamId: "stream_b",
       })
 

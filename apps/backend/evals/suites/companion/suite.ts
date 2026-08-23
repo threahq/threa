@@ -57,6 +57,7 @@ import {
   SessionAbortRegistry,
   ConversationSummaryService,
   AgentSessionRepository,
+  ContextBagRepository,
 } from "../../../src/features/agents"
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
 import { SearchService } from "../../../src/features/search"
@@ -69,7 +70,7 @@ import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import { EventService } from "../../../src/features/messaging"
 import type { Server } from "socket.io"
 import { parseMarkdown } from "@threa/prosemirror"
-import { AuthorTypes, StreamTypes } from "@threa/types"
+import { AuthorTypes, ContextIntents, ContextRefKinds, StreamTypes } from "@threa/types"
 import { ulid } from "ulid"
 import { personaId as generatePersonaId, streamId as generateStreamId } from "../../../src/lib/id"
 
@@ -154,6 +155,24 @@ async function setupTestData(
   // Map stream type from eval input to database type
   const dbStreamType = mapStreamTypeToDbStreamType(input.streamType)
 
+  // An aside's host stream: created first so the aside can point at it; its
+  // history and the viewport bag are seeded below once the message path exists.
+  let hostStreamId: string | undefined
+  if (input.asideHost) {
+    hostStreamId = generateStreamId()
+    await StreamRepository.insert(pool, {
+      id: hostStreamId,
+      workspaceId: ctx.workspaceId,
+      type: StreamTypes.CHANNEL,
+      displayName: input.asideHost.name ?? "Eval aside host",
+      slug: `eval-host-${ulid().toLowerCase().slice(0, 8)}`,
+      visibility: "private",
+      companionMode: "off",
+      createdBy: ctx.userId,
+    })
+    await StreamMemberRepository.insert(pool, hostStreamId, ctx.userId)
+  }
+
   // Create the stream
   const testStreamId = generateStreamId()
   await StreamRepository.insert(pool, {
@@ -166,6 +185,7 @@ async function setupTestData(
     visibility: "private",
     companionMode: input.trigger === "companion" ? "on" : "off",
     companionPersonaId: input.trigger === "companion" ? testPersonaId : undefined,
+    parentStreamId: hostStreamId,
     createdBy: ctx.userId,
   })
 
@@ -239,6 +259,39 @@ async function setupTestData(
       await StreamMemberRepository.insert(pool, contextStreamId, ctx.userId)
       await seedConversationHistory(contextStreamId, contextStream.conversationHistory, input.currentTime)
     }
+  }
+
+  // Seed the aside's host history and attach the viewport snapshot exactly as
+  // aside creation does; `PersonaAgent.run` resolves it through the production
+  // `resolveBagForStream` path.
+  if (input.asideHost && hostStreamId) {
+    await seedConversationHistory(hostStreamId, input.asideHost.conversationHistory, input.currentTime)
+    const hostMessages = await MessageRepository.list(pool, hostStreamId, { limit: 100 })
+    const visibleMessageIds = (input.asideHost.visibleIndices ?? hostMessages.map((_, i) => i)).map(
+      (index, position) => {
+        const message = hostMessages[index]
+        if (!message) {
+          throw new Error(
+            `asideHost.visibleIndices[${position}] = ${index} is outside the seeded host history (${hostMessages.length} messages)`
+          )
+        }
+        return message.id
+      }
+    )
+    await ContextBagRepository.insert(pool, {
+      workspaceId: ctx.workspaceId,
+      streamId: testStreamId,
+      intent: ContextIntents.ASIDE,
+      refs: [
+        {
+          kind: ContextRefKinds.VIEWPORT,
+          streamId: hostStreamId,
+          visibleMessageIds,
+          capturedAt: new Date().toISOString(),
+        },
+      ],
+      createdBy: ctx.userId,
+    })
   }
 
   // Create the trigger message

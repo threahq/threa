@@ -1,14 +1,10 @@
-import type { Querier } from "../../../../db"
-import { ContextRefKinds, LinkPreviewStatuses, type AttachmentSummary, type ConversationContextRef } from "@threa/types"
+import { ContextRefKinds, type ConversationContextRef } from "@threa/types"
 import { HttpError } from "../../../../lib/errors"
-import { AttachmentRepository } from "../../../attachments"
-import { LinkPreviewRepository, renderLinkPreviewContext } from "../../../link-previews"
 import { MessageRepository } from "../../../messaging"
 import { ConversationRepository } from "../../../conversations"
 import { checkStreamAccess } from "../../../streams"
-import { resolveActorNames } from "../../actor-names"
-import { fingerprintContent, fingerprintManifest as fingerprintInputs } from "../fingerprint"
-import type { RenderableMessage, Resolver, SummaryInput } from "../types"
+import { hydrateRenderableItems } from "../renderable-items"
+import type { Resolver } from "../types"
 
 /**
  * Total conversation member messages we include as context. A conversation is
@@ -95,64 +91,16 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
     const focalIdx = ref.originMessageId ? ordered.findIndex((m) => m.id === ref.originMessageId) : -1
     const windowed = windowAround(ordered, focalIdx, CONVERSATION_WINDOW_TOTAL)
 
-    const authorIds = new Set(windowed.map((m) => m.authorId))
-    const messageIds = windowed.map((m) => m.id)
-    const [authorNames, attachmentsByMessage, linkPreviewsByMessage] = await Promise.all([
-      resolveActorNames(db, conversation.workspaceId, authorIds),
-      AttachmentRepository.findByMessageIds(db, messageIds),
-      LinkPreviewRepository.findByMessageIds(db, conversation.workspaceId, messageIds),
-    ])
-
-    const items: RenderableMessage[] = windowed.map((m) => {
-      const messageAttachments = attachmentsByMessage.get(m.id)
-      // Sort by id (ULID, time-ordered) so the rendered attachments line is
-      // byte-identical across resolves — `findByMessageIds` doesn't ORDER BY,
-      // so PG row order would otherwise drift and break prompt-cache reuse.
-      const attachments: AttachmentSummary[] | undefined =
-        messageAttachments && messageAttachments.length > 0
-          ? [...messageAttachments]
-              .sort((a, b) => a.id.localeCompare(b.id))
-              .map((a) => ({
-                id: a.id,
-                filename: a.filename,
-                mimeType: a.mimeType,
-                sizeBytes: a.sizeBytes,
-              }))
-          : undefined
-      const linkPreviews = (linkPreviewsByMessage.get(m.id) ?? []).filter(
-        (preview) => preview.status === LinkPreviewStatuses.COMPLETED
-      )
-      return {
-        messageId: m.id,
-        authorId: m.authorId,
-        authorName: authorNames.get(m.authorId) ?? "Unknown",
-        contentMarkdown: m.contentMarkdown,
-        createdAt: m.createdAt.toISOString(),
-        editedAt: m.editedAt?.toISOString() ?? null,
-        sequence: m.sequence,
-        ...(attachments && { attachments }),
-        ...(linkPreviews.length > 0 && { linkPreviews }),
-      }
-    })
-
-    const inputs: SummaryInput[] = items.map((item) => ({
-      messageId: item.messageId,
-      contentFingerprint: fingerprintContent(item.contentMarkdown + renderLinkPreviewContext(item.linkPreviews ?? [])),
-      editedAt: item.editedAt,
-      deleted: false,
-    }))
-
-    const fingerprint = fingerprintInputs(inputs)
-    const tail = items[items.length - 1]
+    const hydrated = await hydrateRenderableItems(db, conversation.workspaceId, windowed)
+    const tail = hydrated.items[hydrated.items.length - 1]
     const focalMessageId =
       ref.originMessageId && windowed.some((m) => m.id === ref.originMessageId) ? ref.originMessageId : null
 
     return {
-      items,
-      inputs,
-      fingerprint,
+      ...hydrated,
       tailMessageId: tail?.messageId ?? null,
       focalMessageId,
+      viewport: null,
       // Enrich the chip from the conversation's OWN root, never the client-
       // supplied `ref.streamId` (which access-checks nothing) — otherwise an
       // arbitrary/cross-workspace stream's metadata would leak (INV-8).

@@ -69,8 +69,10 @@ export {
   assertRefAccess,
   fetchRef,
   DiscussThreadIntent,
+  AsideIntent,
   ThreadResolver,
   ConversationResolver,
+  ViewportResolver,
   fingerprintContent,
   fingerprintManifest,
   diffInputs,
@@ -253,7 +255,13 @@ export {
   EPISODE_SUMMARY_INJECT_COUNT,
 } from "./companion/config"
 export { TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
-export { SUMMARIZER_MAX_TOKENS, SUMMARIZER_MODEL_ID, SUMMARIZER_TEMPERATURE } from "./context-bag/config"
+export {
+  SUMMARIZER_MAX_TOKENS,
+  SUMMARIZER_MODEL_ID,
+  SUMMARIZER_TEMPERATURE,
+  VIEWPORT_WINDOW_PAD,
+  VIEWPORT_WINDOW_TOTAL,
+} from "./context-bag/config"
 export { SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS, SUPERSEDE_RESPONSE_VALIDATOR_TEMPERATURE } from "./config"
 export { SUPERSEDE_RESPONSE_VALIDATOR_MODEL_ID } from "./config"
 export {

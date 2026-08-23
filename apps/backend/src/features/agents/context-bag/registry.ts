@@ -2,11 +2,14 @@ import { ContextIntents, ContextRefKinds, type ContextIntent, type ContextRef } 
 import type { Querier } from "../../../db"
 import { ThreadResolver } from "./resolvers/thread-resolver"
 import { ConversationResolver } from "./resolvers/conversation-resolver"
+import { ViewportResolver } from "./resolvers/viewport-resolver"
 import { DiscussThreadIntent } from "./intents/discuss-thread"
+import { AsideIntent } from "./intents/aside"
 import type { IntentConfig, ResolvedRef, ResolverFetchOptions } from "./types"
 
 const intents = new Map<ContextIntent, IntentConfig>()
 intents.set(ContextIntents.DISCUSS_THREAD, DiscussThreadIntent)
+intents.set(ContextIntents.ASIDE, AsideIntent)
 
 export function getIntentConfig(intent: ContextIntent): IntentConfig {
   const config = intents.get(intent)
@@ -23,13 +26,15 @@ export function getIntentConfig(intent: ContextIntent): IntentConfig {
 // invoked with a bare `ContextRef`. Adding a kind is a compile error here until
 // its case is added (the switch is exhaustive), which is the point.
 
-/** Stable cache/label key for a ref (`thread:<id>` / `conversation:<id>`). */
+/** Stable cache/label key for a ref (`thread:<id>` / `conversation:<id>` / `viewport:<id>`). */
 export function canonicalRefKey(ref: ContextRef): string {
   switch (ref.kind) {
     case ContextRefKinds.THREAD:
       return ThreadResolver.canonicalKey(ref)
     case ContextRefKinds.CONVERSATION:
       return ConversationResolver.canonicalKey(ref)
+    case ContextRefKinds.VIEWPORT:
+      return ViewportResolver.canonicalKey(ref)
   }
 }
 
@@ -40,6 +45,8 @@ export function assertRefAccess(db: Querier, ref: ContextRef, userId: string, wo
       return ThreadResolver.assertAccess(db, ref, userId, workspaceId)
     case ContextRefKinds.CONVERSATION:
       return ConversationResolver.assertAccess(db, ref, userId, workspaceId)
+    case ContextRefKinds.VIEWPORT:
+      return ViewportResolver.assertAccess(db, ref, userId, workspaceId)
   }
 }
 
@@ -54,5 +61,7 @@ export function fetchRef(
       return ThreadResolver.fetch(db, ref, options)
     case ContextRefKinds.CONVERSATION:
       return ConversationResolver.fetch(db, ref, options)
+    case ContextRefKinds.VIEWPORT:
+      return ViewportResolver.fetch(db, ref, options)
   }
 }

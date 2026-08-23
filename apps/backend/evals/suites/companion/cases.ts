@@ -39,6 +39,17 @@ export interface CompanionInput {
   }
   /** Name of the user sending the message */
   userName?: string
+  /**
+   * For `streamType: "aside"`: the host stream the aside is anchored to, seeded
+   * as its own stream with this history, plus a viewport context bag on the
+   * aside covering `visibleIndices` of that history (every row when omitted) —
+   * the snapshot an aside is created with in production.
+   */
+  asideHost?: {
+    name?: string
+    conversationHistory: Array<{ role: "user" | "assistant"; content: string; createdAt?: string }>
+    visibleIndices?: number[]
+  }
 }
 
 /**
@@ -723,6 +734,73 @@ const consistencyCases: EvalCase<CompanionInput, CompanionExpected>[] = [
 // Export all cases
 // =============================================================================
 
+// =============================================================================
+// Aside Cases (viewport snapshot grounding)
+// =============================================================================
+
+const asideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
+  createCase(
+    "viewport-001",
+    "Aside: answers from the host messages that were on screen",
+    {
+      message: "What was the corrected churn figure they mentioned?",
+      streamType: "aside",
+      trigger: "companion",
+      asideHost: {
+        name: "pipeline-review",
+        conversationHistory: [
+          {
+            role: "user",
+            content:
+              "Heads up: the Q3 churn number in the board deck is 4.2%, not 3.8%. Dana recomputed it this morning.",
+          },
+          { role: "user", content: "Can someone sanity-check the slide before the 3pm call?" },
+        ],
+      },
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldContain: ["4.2"],
+        shouldNotContain: ["get_stream_messages"],
+      },
+      reason:
+        "The viewport snapshot grounds the aside in what the user was reading; the agent answers from it without asking for a paste or leaking tool names",
+    }
+  ),
+  createCase(
+    "viewport-002",
+    "Aside: the on-screen span, not the whole host, is what the user was reading",
+    {
+      message: "Which figure was I just looking at for churn?",
+      streamType: "aside",
+      trigger: "companion",
+      asideHost: {
+        name: "pipeline-review",
+        conversationHistory: [
+          { role: "user", content: "Draft deck says Q3 churn is 3.8%." },
+          { role: "user", content: "Also: the retention slide still has last quarter's logo wall." },
+          {
+            role: "user",
+            content: "Correction from Dana: Q3 churn is 4.2%, the 3.8% figure double-counted the reactivations.",
+          },
+          { role: "user", content: "Can someone sanity-check the slide before the 3pm call?" },
+        ],
+        visibleIndices: [2, 3],
+      },
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldContain: ["4.2"],
+        shouldNotContain: ["get_stream_messages"],
+      },
+      reason:
+        "Only the correction and the follow-up were on screen (visibleIndices narrows the snapshot); the earlier 3.8% message sits outside the marked span, so the answer must come from the ► messages",
+    }
+  ),
+]
+
 export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...scratchpadCases,
   ...temporalGroundingCases,
@@ -732,6 +810,7 @@ export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...workspaceMemoryCases,
   ...edgeCases,
   ...consistencyCases,
+  ...asideCases,
 ]
 
 // Export case subsets for targeted testing

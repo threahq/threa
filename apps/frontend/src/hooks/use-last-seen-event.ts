@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { READ_BLOCKING_EVENT_TYPES, type StreamEvent } from "@threa/types"
+import { collectRowRects, pickVisibleRows, readViewportBounds, type VisibleRow } from "@/lib/timeline/visible-rows"
 
-export interface VisibleRow {
-  id: string
-  top: number
-  bottom: number
-}
+export type { VisibleRow }
 
 export interface VisibleRange {
   /** First row (chronological DOM order) intersecting the viewport. */
@@ -14,21 +11,11 @@ export interface VisibleRange {
   bottomId: string
 }
 
-/**
- * The contiguous run of rows intersecting the viewport — first and last. A row
- * counts as visible when any part of it is between the viewport top and bottom;
- * a row taller than the viewport still counts (the viewer has reached it).
- */
+/** The contiguous run of rows intersecting the viewport — first and last. */
 export function pickVisibleRange(rows: VisibleRow[], viewportTop: number, viewportBottom: number): VisibleRange | null {
-  let topId: string | null = null
-  let bottomId: string | null = null
-  for (const row of rows) {
-    if (row.top < viewportBottom && row.bottom > viewportTop) {
-      if (topId === null) topId = row.id
-      bottomId = row.id
-    }
-  }
-  return topId !== null && bottomId !== null ? { topId, bottomId } : null
+  const visible = pickVisibleRows(rows, { top: viewportTop, bottom: viewportBottom })
+  if (visible.length === 0) return null
+  return { topId: visible[0].id, bottomId: visible[visible.length - 1].id }
 }
 
 /**
@@ -240,28 +227,15 @@ export function useLastSeenEvent({
   const recompute = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
-    const containerRect = el.getBoundingClientRect()
-    // The floating composer overlaps the scroller's bottom; a row hidden behind
-    // it has not been seen, so exclude that band from the viewport.
-    const composerH = Number.parseFloat(getComputedStyle(el).getPropertyValue("--composer-height")) || 0
-    const viewportTop = containerRect.top
-    const viewportBottom = containerRect.bottom - composerH
+    const { top: viewportTop, bottom: viewportBottom } = readViewportBounds(el)
 
-    const rowEls = el.querySelectorAll<HTMLElement>("[data-event-id]")
-    if (rowEls.length === 0) return
     const map = indexByIdRef.current
-    const rows: VisibleRow[] = []
-    for (let i = 0; i < rowEls.length; i++) {
-      const id = rowEls[i].dataset.eventId
-      // Skip rows that aren't in the loaded window rather than letting them
-      // poison the range lookup below. The thread view renders its parent
-      // message as a row carrying the PARENT stream's event id — in a short
-      // thread it sits at the top of the viewport permanently, and bailing on
-      // its unmappable id would veto every scan, so the thread never auto-reads.
-      if (!id || !map.has(id)) continue
-      const r = rowEls[i].getBoundingClientRect()
-      rows.push({ id, top: r.top, bottom: r.bottom })
-    }
+    // Skip rows that aren't in the loaded window rather than letting them
+    // poison the range lookup below. The thread view renders its parent
+    // message as a row carrying the PARENT stream's event id — in a short
+    // thread it sits at the top of the viewport permanently, and bailing on
+    // its unmappable id would veto every scan, so the thread never auto-reads.
+    const rows = collectRowRects(el, "eventId", (id) => map.has(id))
     if (rows.length === 0) return
 
     const range = pickVisibleRange(rows, viewportTop, viewportBottom)
