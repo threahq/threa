@@ -8,7 +8,7 @@ import path from "path"
 // Ports can be configured via env vars for browser E2E tests
 const backendPort = process.env.VITE_BACKEND_PORT || "3001"
 const socketPort = process.env.VITE_SOCKET_PORT || "3002"
-const frontendPort = parseInt(process.env.VITE_PORT || "3000", 10)
+const frontendPort = parseInt(process.env.VITE_PORT?.trim() || "3000", 10)
 const backendTarget = `http://localhost:${backendPort}`
 const socketTarget = `http://localhost:${socketPort}`
 const allowedHosts = (process.env.VITE_ALLOWED_HOSTS ?? "")
@@ -179,6 +179,10 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: frontendPort,
+    // Bind the port asked for or fail. Vite's default is to slide to the next
+    // free one, which leaves the dev stack's readiness probe, its CORS origins
+    // and its Tailscale proxy all addressing a server that is not this one.
+    strictPort: true,
     allowedHosts,
     hmr: isE2ETest ? false : undefined,
     proxy: buildProxyConfig(),
@@ -193,6 +197,7 @@ export default defineConfig({
   preview: {
     host: "0.0.0.0",
     port: frontendPort,
+    strictPort: true,
     proxy: buildProxyConfig(),
   },
 })

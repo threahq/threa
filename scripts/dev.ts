@@ -5,6 +5,27 @@ import * as os from "os"
 import * as path from "path"
 
 const POSTGRES_HOST = "localhost"
+// Overridable because 3000 is a popular port and another project on the machine
+// may hold it. Deliberately not `VITE_PORT`: the dev stack runs several Vite
+// apps and spreads its own environment into all of them, so a `VITE_PORT` set
+// here is read by whichever one starts first — the backoffice takes the port,
+// the frontend silently falls back to the next one, and the Tailscale proxy
+// then serves the wrong app.
+const FRONTEND_PORT = resolveFrontendPort()
+
+function resolveFrontendPort(): string {
+  const raw = process.env.DEV_FRONTEND_PORT?.trim()
+  if (!raw) return "3000"
+  const port = Number(raw)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`Invalid DEV_FRONTEND_PORT: ${raw}`)
+    process.exit(1)
+  }
+  // Canonical decimal, so every consumer below and Vite itself agree on one
+  // spelling of the same port.
+  return String(port)
+}
+
 const POSTGRES_PORT = 5454
 const MINIO_HOST = "localhost"
 // Host-side port; docker-compose maps it to MinIO's own 9000 inside the container,
@@ -408,21 +429,21 @@ async function main() {
     console.log(`Remote mode: ${remoteOrigin}`)
   } else if (lanMode) {
     for (const host of lanHosts) {
-      console.log(`LAN mode: http://${host}:3000${host === primaryLanHost ? "  (auth callbacks)" : ""}`)
+      console.log(`LAN mode: http://${host}:${FRONTEND_PORT}${host === primaryLanHost ? "  (auth callbacks)" : ""}`)
     }
   }
 
   const corsOrigins = [
-    "http://localhost:3000",
+    `http://localhost:${FRONTEND_PORT}`,
     "http://localhost:3004",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
   ]
-  for (const host of lanHosts) corsOrigins.push(`http://${host}:3000`)
+  for (const host of lanHosts) corsOrigins.push(`http://${host}:${FRONTEND_PORT}`)
   if (remoteOrigin) corsOrigins.push(remoteOrigin)
 
   const cpEnvOverrides: Record<string, string> = {}
-  const authOrigin = remoteOrigin ?? (primaryLanHost ? `http://${primaryLanHost}:3000` : undefined)
+  const authOrigin = remoteOrigin ?? (primaryLanHost ? `http://${primaryLanHost}:${FRONTEND_PORT}` : undefined)
   const configuredWorkosRedirectUri = cpEnv.WORKOS_REDIRECT_URI ?? process.env.WORKOS_REDIRECT_URI
   if (authOrigin && configuredWorkosRedirectUri) {
     cpEnvOverrides.WORKOS_REDIRECT_URI = replaceUrlOrigin(configuredWorkosRedirectUri, authOrigin)
@@ -509,6 +530,7 @@ async function main() {
     stderr: "inherit",
     env: {
       ...process.env,
+      VITE_PORT: FRONTEND_PORT,
       // Vite rejects unknown Host headers for non-IP hostnames, so every
       // LAN-mode host (Tailscale name included) must be allowlisted or the
       // phone's request bounces with "Blocked request".
@@ -569,7 +591,7 @@ async function main() {
   // exits, unlike `tailscale serve --bg`, which strands a proxy to dead ports.
   const tailscaleServe =
     remoteOrigin && tailscale
-      ? Bun.spawn([tailscale.bin, "serve", `--https=${tailscaleHttpsPort}`, "http://127.0.0.1:3000"], {
+      ? Bun.spawn([tailscale.bin, "serve", `--https=${tailscaleHttpsPort}`, `http://127.0.0.1:${FRONTEND_PORT}`], {
           stdout: "inherit",
           stderr: "inherit",
         })
@@ -614,7 +636,7 @@ async function announceRemoteReady(origin: string): Promise<void> {
   const deadline = Date.now() + 120_000
   while (Date.now() < deadline) {
     try {
-      await fetch("http://127.0.0.1:3000/", { signal: AbortSignal.timeout(2_000) })
+      await fetch(`http://127.0.0.1:${FRONTEND_PORT}/`, { signal: AbortSignal.timeout(2_000) })
       break
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 1_000))
