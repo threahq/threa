@@ -97,7 +97,10 @@ export function StreamPage() {
     handleTransitionEnd,
   } = usePanelLayout(isPanelOpen)
   const asideHostKey = useAsideHost()
-  const asideFullscreen = useAsideForHost(asideHostKey)?.surface === "fullscreen"
+  const openAside = useAsideForHost(asideHostKey)
+  // Desktop only: on a phone "fullscreen" is a sheet detent over a timeline
+  // that must stay where it was, not a stage that replaces it.
+  const asideStage = !isMobile && openAside?.surface === "fullscreen"
 
   useTypeToFocus()
 
@@ -857,10 +860,10 @@ export function StreamPage() {
         {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId!} streamId={streamId!} />}
         <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
-            {/* Fullscreen aside: the host is what you are answering, not a
-                second place to write — its composer stands down so there is one
-                obvious place for the words (the draft on the right). */}
-            <TimelineView isDraft={isDraft} autoFocus={!isMobile && !asideFullscreen} hideComposer={asideFullscreen} />
+            {/* The fullscreen aside brings its own copy of this timeline, as
+                the reference pane beside the draft. This one stands down so
+                there is never a second host timeline mounted behind it. */}
+            {!asideStage && <TimelineView isDraft={isDraft} autoFocus={!isMobile} />}
           </StreamEncryptionGate>
         </main>
         {stream && !isDraft && (

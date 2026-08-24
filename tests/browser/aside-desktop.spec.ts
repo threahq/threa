@@ -105,11 +105,13 @@ async function openMessageActions(page: Page, streamId: string, prefix: string, 
 }
 
 const dock = (page: Page) => page.getByTestId("aside-dock")
+const stage = (page: Page) => page.getByTestId("aside-fullscreen-stage")
 const pane = (page: Page) => page.getByTestId("aside-pane")
 const anchorRow = (page: Page, streamId: string) => hostScroller(page, streamId).locator("[data-aside-id]").first()
 
 async function expectNoAsideChrome(page: Page): Promise<void> {
   await expect(dock(page)).toHaveCount(0)
+  await expect(stage(page)).toHaveCount(0)
   await expect(pane(page)).toHaveCount(0)
 }
 
@@ -239,19 +241,16 @@ test.describe("Aside — desktop surface", () => {
     // Surface switching: fullscreen and back. There is no parked state — an
     // aside is closed and re-entered from its anchor row.
     await pane(page).getByRole("button", { name: "Aside fullscreen" }).click()
-    await expect(dock(page)).toHaveAttribute("data-surface", "fullscreen")
-    // Half the row: the live host keeps the other half beside the aside.
-    await expect
-      .poll(async () => {
-        const [dockBox, hostBox] = await Promise.all([
-          dock(page).boundingBox(),
-          hostScroller(page, streamId).boundingBox(),
-        ])
-        return dockBox && hostBox ? Math.abs(dockBox.width - hostBox.width) <= 8 : false
-      })
-      .toBe(true)
-    await pane(page).getByRole("button", { name: "Dock aside" }).click()
+    // Fullscreen is a stage over the content region, not a wider dock: the
+    // host comes along as the reference pane, and exactly one host timeline is
+    // mounted (the page stands its own down).
+    await expect(stage(page)).toBeVisible()
+    await expect(dock(page)).toHaveCount(0)
+    await expect(stage(page).getByText("read only")).toBeVisible()
+    await expect(hostScroller(page, streamId)).toHaveCount(1)
+    await stage(page).getByRole("button", { name: "Dock aside" }).click()
     await expect(dock(page)).toHaveAttribute("data-surface", "dock")
+    await expect(stage(page)).toHaveCount(0)
 
     // Leave: the next stream carries no aside chrome at all.
     await page.getByRole("link", { name: `#elsewhere-${testId}` }).click()

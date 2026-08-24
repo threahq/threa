@@ -12,6 +12,7 @@ import {
 } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
 import { AsideMobileSheet } from "./aside-mobile-sheet"
+import { AsideFullscreenStage } from "./aside-fullscreen-stage"
 
 // What the host stream keeps for itself: below this its timeline and composer
 // stop being a place you can read the thing you are writing about. The dock
@@ -68,9 +69,9 @@ interface AsideDockSlotProps {
  * The aside's reading surfaces, mounted as the last flex child of a page's
  * content row — after the thread panel slot, so the aside owns the page's
  * right edge (calls own the app's). Dock pushes the host by its dragged width;
- * fullscreen takes half the row with the live host timeline on the left. On a
- * phone the dock is a plain takeover of the content area (PR7 owns the real
- * mobile surface). Renders nothing while no aside is open.
+ * fullscreen leaves the row entirely and takes the content region as its own
+ * stage. On a phone both surfaces are detents of one sheet. Renders nothing
+ * while no aside is open.
  */
 export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
   const current = useAsideForHost(hostKey)
@@ -132,11 +133,22 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
     )
   }
 
-  const open = current !== null
-  const docked = surface === "dock"
+  if (surface === "fullscreen") {
+    // The stage covers the whole content row rather than sharing it, so there
+    // is nothing here to fold — it unmounts with the aside.
+    if (!current) return null
+    return (
+      <AsideFullscreenStage
+        workspaceId={workspaceId}
+        asideId={current.asideId}
+        hostStreamId={current.hostStreamId}
+        originScope={current.originScope}
+      />
+    )
+  }
 
-  let width: number | undefined = 0
-  if (open) width = docked ? dockWidth : undefined
+  const open = current !== null
+  const width = open ? dockWidth : 0
   return (
     <div
       ref={slotRef}
@@ -146,26 +158,22 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
         "flex-shrink-0 overflow-hidden border-l",
         // No width transition while dragging — the handle sets the width every
         // frame, and an eased transition would trail the pointer.
-        !isResizing && "transition-[width] duration-200 ease-out",
-        // Half the row: a fixed basis, so the host's `flex-1` takes the other half.
-        surface === "fullscreen" && open && "basis-1/2"
+        !isResizing && "transition-[width] duration-200 ease-out"
       )}
       style={{ width }}
     >
-      <div className="flex h-full" style={{ minWidth: docked ? dockWidth : undefined }}>
-        {docked && (
-          <PanelResizeHandle
-            isResizing={isResizing}
-            panelWidth={dockWidth}
-            minWidth={ASIDE_DOCK_MIN_WIDTH}
-            maxWidth={maxWidth}
-            onPointerDown={handleResizeStart}
-            onPointerMove={handleResizeMove}
-            onPointerEnd={handleResizeEnd}
-            onKeyDown={handleResizeKeyDown}
-            ariaLabel="Resize aside"
-          />
-        )}
+      <div className="flex h-full" style={{ minWidth: dockWidth }}>
+        <PanelResizeHandle
+          isResizing={isResizing}
+          panelWidth={dockWidth}
+          minWidth={ASIDE_DOCK_MIN_WIDTH}
+          maxWidth={maxWidth}
+          onPointerDown={handleResizeStart}
+          onPointerMove={handleResizeMove}
+          onPointerEnd={handleResizeEnd}
+          onKeyDown={handleResizeKeyDown}
+          ariaLabel="Resize aside"
+        />
         <div className="min-w-0 flex-1">
           <AsidePane
             workspaceId={workspaceId}

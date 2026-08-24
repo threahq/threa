@@ -72,8 +72,15 @@ beforeEach(() => {
   // The chat pane is the real companion timeline; its data plumbing is out of
   // scope here, so the barrel export renders a marker carrying the stream it
   // was mounted against.
-  spyOnExport(timelineModule, "StreamContent").mockReturnValue(((props: { streamId: string }) => (
-    <div data-testid="stream-content" data-stream-id={props.streamId} />
+  spyOnExport(timelineModule, "StreamContent").mockReturnValue(((props: {
+    streamId: string
+    hideComposer?: boolean
+  }) => (
+    <div
+      data-testid="stream-content"
+      data-stream-id={props.streamId}
+      data-composer={props.hideComposer ? "hidden" : "shown"}
+    />
   )) as never)
   spyOnExport(boundaryModule, "StreamErrorBoundary").mockReturnValue(((props: { children: React.ReactNode }) => (
     <>{props.children}</>
@@ -126,7 +133,7 @@ describe("aside surfaces", () => {
     // The conversation stays on screen beside the draft — a draft is written
     // FROM what was just said — and the block went nowhere but the draft.
     expect(screen.getByRole("button", { name: "insert into draft" })).toBeInTheDocument()
-    expect(screen.getByTestId("aside-draft-region")).toHaveAttribute("data-open", "true")
+    expect(screen.getByTestId("aside-drafts")).toHaveAttribute("data-open", "true")
   })
 
   it("should render no aside chrome while nothing is open on this page", () => {
@@ -145,8 +152,22 @@ describe("aside surfaces", () => {
     expect(screen.getByRole("heading", { name: "churn number sanity-check" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Dock aside" })).toHaveAttribute("aria-pressed", "true")
 
+    // Fullscreen leaves the row entirely: the stage takes the content region
+    // and brings the host timeline with it as the reference pane.
     fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
-    expect(screen.getByTestId("aside-dock")).toHaveAttribute("data-surface", "fullscreen")
+    expect(screen.queryByTestId("aside-dock")).toBeNull()
+    expect(screen.getByTestId("aside-fullscreen-stage")).toBeInTheDocument()
+    // The host is what you are answering, not a second place to write: its
+    // composer is absent, and the aside's is the only one on the stage.
+    expect(
+      screen
+        .getAllByTestId("stream-content")
+        .map((node) => [node.getAttribute("data-stream-id"), node.getAttribute("data-composer")])
+    ).toEqual([
+      ["stream_host", "hidden"],
+      [ASIDE, "shown"],
+    ])
+    expect(screen.getByText("read only")).toBeInTheDocument()
     expect(getAsideState()?.surface).toBe("fullscreen")
 
     // Closing is the only way out: an aside is left, not parked, and its anchor
@@ -158,12 +179,13 @@ describe("aside surfaces", () => {
     renderPage()
     openOnHost("dock")
 
-    expect(await screen.findByText("Only you")).toBeInTheDocument()
+    expect(await screen.findByText("Private")).toBeInTheDocument()
     // Anchored to a message that isn't in this test's timeline cache: it names
-    // the host stream rather than inventing an author, and still offers the jump.
-    const jump = screen.getByRole("link", { name: "Scroll to it" })
+    // the host stream rather than inventing an author, and the sentence itself
+    // is the jump — there is no separate "scroll to it" to hunt for.
+    const jump = screen.getByTestId("aside-anchor-line")
     expect(jump).toHaveAttribute("href", `${HOST_PATH}?m=msg_anchor_1`)
-    expect(screen.getByText(/^Anchored in/)).toBeInTheDocument()
+    expect(jump).toHaveTextContent(/^Anchored in/)
   })
 
   it("resizes the dock from its handle, keyboard included, and holds the width across a surface round trip", async () => {
@@ -188,6 +210,7 @@ describe("aside surfaces", () => {
     // Fullscreen owns its own geometry; coming back lands on the dragged width.
     fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
     expect(screen.queryByRole("separator", { name: "Resize aside" })).toBeNull()
+    expect(screen.getByTestId("aside-fullscreen-stage")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Dock aside" }))
     await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "540px" }))
   })
@@ -230,7 +253,8 @@ describe("aside surfaces", () => {
       renderPage()
       openOnHost(resolveAsideOpenSurface({ remembered: null, callDocked: isCallDocked() }))
 
-      expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "fullscreen")
+      expect(await screen.findByTestId("aside-fullscreen-stage")).toBeInTheDocument()
+      expect(screen.queryByTestId("aside-dock")).toBeNull()
       expect(screen.getByRole("button", { name: "Dock aside" })).toBeDisabled()
     })
 

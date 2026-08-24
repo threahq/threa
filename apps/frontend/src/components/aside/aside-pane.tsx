@@ -1,10 +1,7 @@
-import { useCallback, useMemo, useState } from "react"
-import { Eye, X } from "lucide-react"
+import { useMemo } from "react"
+import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { StreamContent } from "@/components/timeline"
-import { AgentBlockProvider, type AgentBlockData } from "@/components/timeline/agent-block-context"
-import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
@@ -13,11 +10,10 @@ import { cn } from "@/lib/utils"
 import { useCallDocked } from "./use-call-docked"
 import { AsideSurfacePicker } from "./aside-surface-picker"
 import { AsideAnchorLine } from "./aside-anchor-line"
-import { AsideDraftDock } from "./aside-draft-dock"
-import { AsideDraftEditor } from "./aside-draft-editor"
-import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
-import { useAsideHandoff } from "@/hooks/use-aside-handoff"
-import type { AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
+import { AsideConversation } from "./aside-conversation"
+import { AsideDrafts } from "./aside-drafts"
+import { AsideGlyph, AsidePrivateBadge } from "./aside-chrome"
+import { useAsideDraftSurface } from "./use-aside-draft-surface"
 
 interface AsidePaneProps {
   workspaceId: string
@@ -32,9 +28,11 @@ interface AsidePaneProps {
 }
 
 /**
- * The aside's chat: the companion timeline against the aside stream (it IS a
- * companion stream with Ariadne — the same `StreamContent` a scratchpad or a
- * thread panel mounts), under a gold hairline that marks the private surface.
+ * The aside in one column: what it is, what it is anchored to, what you are
+ * writing, and the conversation you are writing it from. Drafts sit above the
+ * chat because the chat owns the bottom edge — its composer is where the
+ * cursor rests, and a draft opening under it would keep moving the one input
+ * that never moves anywhere else in the app.
  */
 export function AsidePane({
   workspaceId,
@@ -44,33 +42,7 @@ export function AsidePane({
   surface,
   takeover = false,
 }: AsidePaneProps) {
-  const [openDraftScope, setOpenDraftScope] = useState<string | null>(null)
-  // "Insert into draft" on one of Ariadne's replies: the block goes into an
-  // aside draft — the open one, else a new one — never into the chat composer
-  // (that would address it back to Ariadne). Queued here because the editor
-  // mounts with the draft; it appends the blocks once the draft has loaded.
-  const [pendingAgentBlocks, setPendingAgentBlocks] = useState<AgentBlockData[]>([])
-  const insertAgentBlock = useCallback(
-    (data: AgentBlockData) => {
-      setPendingAgentBlocks((pending) => [...pending, data])
-      setOpenDraftScope((scope) => scope ?? newAsideDraftScope(asideId))
-    },
-    [asideId]
-  )
-  const consumePendingAgentBlocks = useCallback(() => setPendingAgentBlocks([]), [])
-  const handoff = useAsideHandoff(workspaceId)
-  const sendToComposer = useCallback(
-    async ({ content, attachments }: AsideDraftHandoff) => {
-      const queued = await handoff({ hostStreamId, originScope, content, attachments })
-      // Get out of the composer's way once the blocks are on their way to it.
-      // The aside closes rather than parking: its anchor row is still in the
-      // timeline, and that is the one way back in.
-      if (queued) closeAside()
-      return queued
-    },
-    [handoff, hostStreamId, originScope]
-  )
-
+  const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
@@ -86,13 +58,9 @@ export function AsidePane({
     >
       <TooltipProvider delayDuration={300}>
         <header className="flex h-11 shrink-0 items-center gap-2 border-b pl-3 pr-1.5">
+          <AsideGlyph className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
           <h2 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
-          {/* Nobody else can open this stream — the badge says so where the
-              surface is read, not only where it was created. */}
-          <span className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-border/80 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            <Eye className="h-2.5 w-2.5 text-primary" aria-hidden />
-            Only you
-          </span>
+          <AsidePrivateBadge />
           <span className="flex-1" />
           {!takeover && <AsideSurfacePicker value={surface} onChange={setAsideSurface} dockDisabled={callDocked} />}
           <Button
@@ -107,57 +75,25 @@ export function AsidePane({
         </header>
       </TooltipProvider>
       <AsideAnchorLine workspaceId={workspaceId} hostStreamId={hostStreamId} anchorId={aside?.parentAnchorId} />
-      {/* Conversation above, drafts below — the two halves of an aside are on
-          screen together, because a draft is written FROM what Ariadne just
-          said. Opening one used to replace the pane, which took the reply away
-          at the moment it was most needed. */}
-      <div className="relative min-h-0 flex-1">
-        <StreamErrorBoundary streamId={asideId}>
-          <AgentBlockProvider onInsert={insertAgentBlock}>
-            <StreamContent
-              workspaceId={workspaceId}
-              streamId={asideId}
-              stream={aside}
-              autoFocus={!takeover && !openDraftScope}
-              emptyState={
-                <div className="max-w-[15rem] px-6 text-center">
-                  <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                    Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
-                  </p>
-                </div>
-              }
-            />
-          </AgentBlockProvider>
-        </StreamErrorBoundary>
-      </div>
-      <div
-        data-testid="aside-draft-region"
-        data-open={openDraftScope ? "true" : undefined}
+      <AsideDrafts
+        workspaceId={workspaceId}
+        asideId={asideId}
+        surface={draftSurface}
         className={cn(
-          "flex min-h-0 shrink-0 flex-col border-t bg-muted/20",
-          // An open draft takes a little under half the pane and never less
-          // than a paragraph's worth; closed, the dock is just its own height.
-          openDraftScope && "h-[48%] min-h-[220px]"
+          "shrink-0 border-b bg-muted/20",
+          // An open draft takes a little under half the column and never less
+          // than a paragraph's worth; closed, the strip is just its own height.
+          draftSurface.openScope && "h-[48%] min-h-[220px]"
         )}
-      >
-        <AsideDraftDock
+      />
+      <div className="relative min-h-0 flex-1">
+        <AsideConversation
           workspaceId={workspaceId}
           asideId={asideId}
-          onOpenDraft={setOpenDraftScope}
-          openScope={openDraftScope}
-          compact={openDraftScope !== null}
+          aside={aside}
+          autoFocus={!takeover && !draftSurface.openScope}
+          onInsertAgentBlock={draftSurface.insertAgentBlock}
         />
-        {openDraftScope && (
-          <AsideDraftEditor
-            workspaceId={workspaceId}
-            scope={openDraftScope}
-            onBack={() => setOpenDraftScope(null)}
-            onSendToComposer={sendToComposer}
-            pendingAgentBlocks={pendingAgentBlocks}
-            onPendingAgentBlocksConsumed={consumePendingAgentBlocks}
-          />
-        )}
       </div>
     </div>
   )
