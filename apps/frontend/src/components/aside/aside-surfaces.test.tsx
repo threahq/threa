@@ -210,6 +210,24 @@ describe("aside surfaces", () => {
     await waitFor(() => expect(screen.queryByTestId("aside-strip")).toBeNull())
   })
 
+  it("parks as a card with the aside's name and its way back in, not a clickable bar", async () => {
+    // It sits where a composer's attachment and reply strips sit, and those mean
+    // "part of what I am about to send" — so this one names itself and offers an
+    // explicit Open rather than being a row that happens to be clickable.
+    renderPage()
+    openOnHost("dock")
+    fireEvent.click(await screen.findByRole("button", { name: "Minimize aside" }))
+
+    const strip = await screen.findByTestId("aside-strip")
+    expect(strip).toHaveTextContent("churn number sanity-check")
+    const open = screen.getByRole("button", { name: "Open aside: churn number sanity-check" })
+    expect(open).toHaveTextContent("Open")
+    expect(strip).toContainElement(open)
+
+    fireEvent.click(open)
+    expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "dock")
+  })
+
   it("should fold the dock away on close and leave no chrome", async () => {
     renderPage()
     openOnHost("dock")

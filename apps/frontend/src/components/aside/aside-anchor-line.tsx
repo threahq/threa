@@ -32,7 +32,7 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId }: AsideAn
     : `Anchored in ${hostName ?? "this conversation"}`
 
   return (
-    <div className="flex h-7 shrink-0 items-center gap-2 border-b px-4 text-xs text-muted-foreground">
+    <div className="flex h-7 shrink-0 items-center gap-2 border-b bg-muted/20 px-3 text-[11px] text-muted-foreground">
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {anchorId && (
         // The host timeline is on screen beside this pane, and `?m=` is how the
@@ -41,7 +41,7 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId }: AsideAn
         <Link
           to={{ pathname, search: `?m=${anchorId}` }}
           replace
-          className="shrink-0 rounded text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="shrink-0 rounded text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
           Scroll to it
         </Link>

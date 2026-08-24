@@ -43,7 +43,15 @@ describe("AsideDraftDock", () => {
 
     await waitFor(() => expect(screen.getByText("Drafts · 2")).toBeInTheDocument())
     const rows = screen.getAllByRole("button").filter((button) => button.hasAttribute("data-draft-scope"))
-    expect(rows.map((row) => row.textContent)).toEqual(["newer thought", "older thought"])
+    // Each row reads "<preview> <age>"; order is what this asserts.
+    expect(rows.map((row) => row.getAttribute("data-draft-scope"))).toEqual([
+      asideDraftScope(ASIDE, "draft_b"),
+      asideDraftScope(ASIDE, "draft_a"),
+    ])
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("newer thought"),
+      expect.stringContaining("older thought"),
+    ])
     expect(screen.queryByText("another aside")).toBeNull()
     expect(screen.queryByText("the host's own draft")).toBeNull()
   })
