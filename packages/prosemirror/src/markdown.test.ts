@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { normalizeMarkdownTables, parseMarkdown, serializeToMarkdown } from "./markdown"
+import { attachmentReferenceLabel, normalizeMarkdownTables, parseMarkdown, serializeToMarkdown } from "./markdown"
 import type { JSONContent } from "@threa/types"
 
 describe("@threa/prosemirror markdown links", () => {
@@ -84,6 +84,12 @@ describe("@threa/prosemirror markdown links", () => {
 })
 
 describe("@threa/prosemirror markdown attachment metadata", () => {
+  it("uses a legacy ordinal only when attachment metadata has no filename", () => {
+    expect(attachmentReferenceLabel({ filename: "photo.png", imageIndex: 2 })).toBe("photo.png")
+    expect(attachmentReferenceLabel({ filename: "", imageIndex: 2 })).toBe("Image #2")
+    expect(attachmentReferenceLabel({ filename: "", imageIndex: null })).toBe("Attachment")
+  })
+
   it("serializes attachment metadata into the markdown link title", () => {
     const doc: JSONContent = {
       type: "doc",
@@ -113,6 +119,35 @@ describe("@threa/prosemirror markdown attachment metadata", () => {
     )
   })
 
+  it("serializes image references with the filename instead of an ordinal", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "attachmentReference",
+              attrs: {
+                id: "attach_789",
+                filename: "pasted-image-4.png",
+                mimeType: "image/png",
+                sizeBytes: 4096,
+                status: "uploaded",
+                imageIndex: 3,
+                error: null,
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(serializeToMarkdown(doc)).toBe(
+      '[pasted-image-4.png](attachment:attach_789 "threa-attachment:filename=pasted-image-4.png&mimeType=image%2Fpng&sizeBytes=4096")'
+    )
+  })
+
   it("restores attachment metadata from the markdown link title", () => {
     const parsed = parseMarkdown(
       '[Image #2](attachment:attach_789 "threa-attachment:filename=photo.png&mimeType=image%2Fpng&sizeBytes=4096")'
@@ -127,6 +162,25 @@ describe("@threa/prosemirror markdown attachment metadata", () => {
         sizeBytes: 4096,
         status: "uploaded",
         imageIndex: 2,
+        error: null,
+      },
+    })
+  })
+
+  it("parses filename-labeled image metadata without manufacturing an ordinal", () => {
+    const parsed = parseMarkdown(
+      '[pasted-image-4.png](attachment:attach_789 "threa-attachment:filename=pasted-image-4.png&mimeType=image%2Fpng&sizeBytes=4096")'
+    )
+
+    expect(parsed.content?.[0]?.content?.[0]).toEqual({
+      type: "attachmentReference",
+      attrs: {
+        id: "attach_789",
+        filename: "pasted-image-4.png",
+        mimeType: "image/png",
+        sizeBytes: 4096,
+        status: "uploaded",
+        imageIndex: null,
         error: null,
       },
     })

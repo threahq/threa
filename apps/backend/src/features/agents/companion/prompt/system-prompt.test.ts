@@ -64,6 +64,14 @@ describe("buildSystemPrompt", () => {
     expect(prompt.indexOf("## Scratchpad Custom Instructions")).toBeLessThan(prompt.indexOf("## Context"))
   })
 
+  test("tells the agent to label attachment pointers with filenames", () => {
+    const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
+
+    expect(prompt).toContain("[filename.ext](attachment:att_xxx)")
+    expect(prompt).toContain("label the pointer with the filename")
+    expect(prompt).not.toContain("[Image #1](attachment:att_xxx)")
+  })
+
   test("omits the custom instruction section when no scratchpad prompt exists", () => {
     const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
 

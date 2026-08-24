@@ -279,6 +279,12 @@ function mentionPointerUrl(id: string): string | null {
   return null
 }
 
+export function attachmentReferenceLabel(attrs: { filename?: unknown; imageIndex?: unknown }): string {
+  if (typeof attrs.filename === "string" && attrs.filename.length > 0) return attrs.filename
+  if (typeof attrs.imageIndex === "number" && attrs.imageIndex > 0) return `Image #${attrs.imageIndex}`
+  return "Attachment"
+}
+
 function getNodeText(node: JSONContent): string {
   if (node.type === "hardBreak") return "\n"
   if (node.type === "mention") {
@@ -306,18 +312,15 @@ function getNodeText(node: JSONContent): string {
   }
   if (node.type === "attachmentReference") {
     const id = node.attrs?.id as string
-    const filename = node.attrs?.filename as string
-    const mimeType = node.attrs?.mimeType as string
-    const imageIndex = node.attrs?.imageIndex as number | null
     const status = node.attrs?.status as string
 
     if (status === "uploading" || status === "error") {
       return ""
     }
 
-    // Format: [Image #1](attachment:id) or [filename](attachment:id)
-    const isImage = mimeType?.startsWith("image/")
-    const displayText = isImage && imageIndex ? `Image #${imageIndex}` : filename
+    // Filenames match the attachment tray and stay stable when files are removed.
+    // The ordinal fallback keeps metadata-free legacy image references readable.
+    const displayText = attachmentReferenceLabel(node.attrs ?? {})
     const escapedDisplayText = escapeMarkdownLinkText(displayText)
     const metadata = serializeAttachmentMetadata(node.attrs)
     return `[${escapedDisplayText}](attachment:${id}${metadata})`

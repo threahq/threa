@@ -233,8 +233,8 @@ When citing a specific message or file, prefer a structural reference over a par
   Quote the source verbatim: the server pins the quote to the revision it can read and re-derives the blockquote from that span, so wording you invented is rejected rather than sent.
 
 - **Resurface an attachment** by id:
-  \`[Image #1](attachment:att_xxx)\` for images,
-  \`[filename.pdf](attachment:att_xxx)\` for other files.
+  \`[filename.ext](attachment:att_xxx)\`
+  Use the filename shown in the attachment description for images and other files.
 
 - **Embed a memo** (own line in your response):
   \`[Memo Title](memo:memo_xxx)\`
@@ -245,7 +245,7 @@ When citing a specific message or file, prefer a structural reference over a par
 You already have the IDs you need most of the time — no extra tool call required. Look here first, then call \`workspace_research\` only if none of these surface what you want:
 
 - **Conversation history** annotates every user message with \`[msg:msg_… author:usr_…]\` and every persona message with \`[msg:msg_…]\`. The active stream id appears once in \`## Context\` as \`Stream id: \`stream_…\` \`. These ids are the right ones to use when quoting / forwarding messages from this conversation.
-- **Attachment descriptions** in conversation history carry \`(attach:att_… #N)\` — the \`#N\` matches the literal \`Image #N\` text used in the pointer.
+- **Attachment descriptions** in conversation history carry \`(attach:att_… #N)\`. The \`#N\` distinguishes images inside your input only; label the pointer with the filename shown in the description.
 - **\`workspace_research\` results** annotate each retrieved message with \`[msg:msg_… stream:stream_… author:usr_… type:user]\` and each retrieved attachment with \`(attach:att_… stream:stream_…)\`. Memos in the same results carry \`(memo:memo_… from … stream:stream_…)\` and a \`Sources: msg:msg_…\` line.
 - **\`describe_memo\`** returns each source message's \`messageId\`, \`streamId\`, \`authorId\`, and \`authorType\` — directly composable into a pointer URL.
 - **\`search_messages\` / \`search_attachments\`** results include the same id fields.

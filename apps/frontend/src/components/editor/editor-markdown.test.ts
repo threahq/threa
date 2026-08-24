@@ -1132,7 +1132,7 @@ const x = 1
         }
 
         expect(serializeToMarkdown(doc)).toBe(
-          'Check this [Image #1](attachment:attach_123 "threa-attachment:filename=screenshot.png&mimeType=image%2Fpng&sizeBytes=1024")'
+          'Check this [screenshot.png](attachment:attach_123 "threa-attachment:filename=screenshot.png&mimeType=image%2Fpng&sizeBytes=1024")'
         )
       })
 
@@ -1325,7 +1325,7 @@ const x = 1
 
         const md = serializeToMarkdown(doc)
         expect(md).toBe(
-          '[Image #2](attachment:attach_789 "threa-attachment:filename=photo.png&mimeType=image%2Fpng&sizeBytes=4096")'
+          '[photo.png](attachment:attach_789 "threa-attachment:filename=photo.png&mimeType=image%2Fpng&sizeBytes=4096")'
         )
 
         const parsed = parseMarkdown(md)
@@ -1334,7 +1334,7 @@ const x = 1
           filename: "photo.png",
           mimeType: "image/png",
           sizeBytes: 4096,
-          imageIndex: 2,
+          imageIndex: null,
         })
       })
 

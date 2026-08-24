@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core"
 import { ReactNodeViewRenderer } from "@tiptap/react"
+import { attachmentReferenceLabel } from "@threa/prosemirror"
 import { AttachmentReferenceView } from "./attachment-reference-view"
 
 export type AttachmentStatus = "uploading" | "uploaded" | "error"
@@ -15,7 +16,7 @@ export interface AttachmentReferenceAttrs {
   sizeBytes: number | null
   /** Upload status */
   status: AttachmentStatus
-  /** Image index (1, 2, 3...) - only for images */
+  /** Image ordinal retained in content for backward compatibility; labels prefer the filename. */
   imageIndex: number | null
   /** Error message if status is "error" */
   error: string | null
@@ -122,11 +123,7 @@ export const AttachmentReferenceExtension = Node.create({
     if (attrs.status === "error") {
       return "[Upload failed]"
     }
-    const isImage = attrs.mimeType.startsWith("image/")
-    if (isImage && attrs.imageIndex) {
-      return `[Image #${attrs.imageIndex}]`
-    }
-    return `[${attrs.filename}]`
+    return `[${attachmentReferenceLabel(attrs)}]`
   },
 
   addNodeView() {
