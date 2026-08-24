@@ -24,9 +24,14 @@ export interface AsideSplit {
  * How the aside divides itself between the draft and the conversation. The
  * default split is a guess about one draft in one column; a long draft beside a
  * short answer (or the reverse) is the normal case, so it is dragged, and the
- * drag is stored per aside for the session like the dock's width.
+ * drag is stored per aside for the session like the stage's width.
+ *
+ * `reservedHeight` is whatever sits between the two halves in the caller's own
+ * layout (gaps, the divider) — without it the conversation's floor is measured
+ * against height the conversation never gets.
  */
-export function useAsideSplit(asideId: string, active: boolean): AsideSplit {
+export function useAsideSplit(asideId: string, options: { active: boolean; reservedHeight?: number }): AsideSplit {
+  const { active, reservedHeight = 0 } = options
   const containerRef = useRef<HTMLDivElement>(null)
   const [available, setAvailable] = useState(0)
   useLayoutEffect(() => {
@@ -44,7 +49,7 @@ export function useAsideSplit(asideId: string, active: boolean): AsideSplit {
   // stored height instead would make the divider inert on the frame the user
   // grabs it (the dock's width cap has the same guard).
   const column = available > 0 ? available : (globalThis.window?.innerHeight ?? 0)
-  const maxHeight = Math.max(ASIDE_DRAFT_MIN_HEIGHT, column - CONVERSATION_MIN_HEIGHT)
+  const maxHeight = Math.max(ASIDE_DRAFT_MIN_HEIGHT, column - CONVERSATION_MIN_HEIGHT - reservedHeight)
   const height = Math.min(Math.max(stored, ASIDE_DRAFT_MIN_HEIGHT), maxHeight)
 
   const apply = useCallback(

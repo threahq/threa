@@ -1,11 +1,10 @@
 import { ChevronDown, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
 import { setAsideTrayExpanded, useAsideTrayExpanded } from "@/stores/aside-store"
 import { ASIDE_META, ASIDE_TRAY } from "./aside-chrome"
 import { AsideDraftStrip } from "./aside-draft-strip"
 import { AsideDraftEditor } from "./aside-draft-editor"
-import { useAsideDrafts, useDeleteAsideDraft } from "./use-aside-drafts"
+import { useAsideDrafts } from "./use-aside-drafts"
 import type { AsideDraftSurface } from "./use-aside-draft-surface"
 
 interface AsideDraftsProps {
@@ -27,7 +26,6 @@ interface AsideDraftsProps {
  */
 export function AsideDrafts({ workspaceId, asideId, surface, className, style }: AsideDraftsProps) {
   const drafts = useAsideDrafts(workspaceId, asideId)
-  const deleteDraft = useDeleteAsideDraft(workspaceId)
   const expanded = useAsideTrayExpanded(asideId)
   const open = surface.openScope
 
@@ -57,13 +55,8 @@ export function AsideDrafts({ workspaceId, asideId, surface, className, style }:
             drafts={drafts}
             openScope={open}
             onOpen={surface.openDraft}
-            onNew={() => surface.openDraft(newAsideDraftScope(asideId))}
-            onDelete={(scope) => {
-              // Closing first: the editor's teardown flush would otherwise
-              // re-save the draft it is holding, moments after the row's gone.
-              if (scope === open) surface.closeDraft()
-              void deleteDraft(scope)
-            }}
+            onNew={surface.startDraft}
+            onDelete={surface.discardDraft}
           />
         )}
       </div>

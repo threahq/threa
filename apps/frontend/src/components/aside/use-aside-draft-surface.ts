@@ -12,12 +12,17 @@ import {
 } from "@/stores/aside-store"
 import { useAsideHandoff } from "@/hooks/use-aside-handoff"
 import type { AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
+import { useDeleteAsideDraft } from "./use-aside-drafts"
 
 export interface AsideDraftSurface {
   /** The draft open for writing, or null when the strip is just a strip. */
   openScope: string | null
   openDraft: (scope: string) => void
   closeDraft: () => void
+  /** Start a new draft in this aside and open it. */
+  startDraft: () => void
+  /** Throw a draft away, open or not. */
+  discardDraft: (scope: string) => void
   /** Agent replies queued by "Insert into draft", waiting for the editor to load. */
   pendingAgentBlocks: AgentBlockData[]
   insertAgentBlock: (data: AgentBlockData) => void
@@ -71,11 +76,25 @@ export function useAsideDraftSurface(params: {
 
   const openDraft = useCallback((scope: string) => setAsideOpenDraft(asideId, scope), [asideId])
   const closeDraft = useCallback(() => setAsideOpenDraft(asideId, null), [asideId])
+  const startDraft = useCallback(() => setAsideOpenDraft(asideId, newAsideDraftScope(asideId)), [asideId])
+
+  const deleteDraft = useDeleteAsideDraft(workspaceId)
+  const discardDraft = useCallback(
+    (scope: string) => {
+      // Closed first: the editor's teardown flush would otherwise re-save the
+      // draft it is still holding, moments after the row was deleted.
+      if (asideOpenDraft(asideId) === scope) setAsideOpenDraft(asideId, null)
+      void deleteDraft(scope)
+    },
+    [asideId, deleteDraft]
+  )
 
   return {
     openScope,
     openDraft,
     closeDraft,
+    startDraft,
+    discardDraft,
     pendingAgentBlocks,
     insertAgentBlock,
     consumePendingAgentBlocks,

@@ -26,6 +26,10 @@ import { useAsideDrafts } from "./use-aside-drafts"
 /** What the host pane keeps: below this it stops being readable as the thing
  *  you are answering, which is the only reason it is on the stage. */
 const MIN_HOST_WIDTH = 420
+/** The stage's own horizontal chrome, which neither pane gets: `p-3` either
+ *  side, the two `gap-1` gutters, and the divider. Counted so the host really
+ *  keeps `MIN_HOST_WIDTH` at the aside's widest, not that minus the furniture. */
+const STAGE_CHROME_WIDTH = 24 + 8 + 1
 
 interface AsideStageProps {
   workspaceId: string
@@ -44,7 +48,10 @@ interface AsideStageProps {
  */
 export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: AsideStageProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
-  const split = useAsideSplit(asideId, draftSurface.openScope !== null)
+  // The right column stacks with `gap-3` and the divider between the halves, so
+  // the conversation's floor is measured against what is left after that
+  // furniture, not the column's whole height.
+  const split = useAsideSplit(asideId, { active: draftSurface.openScope !== null, reservedHeight: 12 + 12 + 1 })
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const host = useMemo(() => streams.find((stream) => stream.id === hostStreamId), [streams, hostStreamId])
@@ -76,7 +83,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   // Before the first measurement the viewport stands in — capping at the
   // stored width would make the divider inert on the frame it is grabbed.
   const measured = stageWidth > 0 ? stageWidth : (globalThis.window?.innerWidth ?? 0)
-  const maxWidth = Math.max(ASIDE_STAGE_MIN_WIDTH, measured - MIN_HOST_WIDTH)
+  const maxWidth = Math.max(ASIDE_STAGE_MIN_WIDTH, measured - MIN_HOST_WIDTH - STAGE_CHROME_WIDTH)
   const columnWidth = Math.min(Math.max(storedWidth, ASIDE_STAGE_MIN_WIDTH), maxWidth)
   const applyWidth = useCallback(
     (next: number) => setAsideStageWidth(asideId, Math.min(Math.max(next, ASIDE_STAGE_MIN_WIDTH), maxWidth)),

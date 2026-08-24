@@ -32,7 +32,9 @@ interface AsidePaneProps {
  */
 export function AsidePane({ workspaceId, asideId, hostStreamId, originScope }: AsidePaneProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
-  const split = useAsideSplit(asideId, draftSurface.openScope !== null)
+  // No gaps in this column: the drafts region's border and the divider sit
+  // flush, so only the divider's hairline is between the two halves.
+  const split = useAsideSplit(asideId, { active: draftSurface.openScope !== null, reservedHeight: 1 })
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
