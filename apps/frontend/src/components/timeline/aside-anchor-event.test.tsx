@@ -5,7 +5,7 @@ import { StreamTypes, type StreamEvent } from "@threa/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
-import { getAsideState, openAside, resetAsideStoreCache, setAsideSurface, closeAside } from "@/stores/aside-store"
+import { getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
 import { createMockStream } from "@/test/fixtures"
 import { groupTimelineItems, TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 
@@ -98,7 +98,11 @@ describe("AsideAnchorEvent", () => {
     expect(row).toHaveTextContent("9m ago")
     expect(row?.querySelector("[data-aside-id]")).toHaveAttribute("data-aside-id", ASIDE)
     expect(row?.querySelector("[data-aside-id]")).toHaveAttribute("data-state", "closed")
-    expect(screen.getByRole("button", { name: "Resume" })).toHaveClass("opacity-0")
+    // The whole row is the control now; the "Resume" label rides it, revealed on
+    // hover over space it already occupies (INV-21).
+    const control = screen.getByRole("button", { name: /^Resume aside:/ })
+    expect(control).toHaveAttribute("data-aside-id", ASIDE)
+    expect(control.querySelector("span.opacity-0")).toHaveTextContent("Resume")
   })
 
   it("renders nothing for another viewer of the same host stream", () => {
@@ -148,7 +152,7 @@ describe("AsideAnchorEvent", () => {
   })
 
   it("resumes the aside on its host page, into the surface it was last read in, and reads as open", () => {
-    // A previous session on this aside ended in fullscreen; minimized never counts.
+    // A previous session on this aside ended in fullscreen; resume returns there.
     openAside({
       hostKey: HOST_PATH,
       hostStreamId: "stream_host",
@@ -156,11 +160,10 @@ describe("AsideAnchorEvent", () => {
       surface: "fullscreen",
       originScope: "stream:stream_host",
     })
-    setAsideSurface("minimized")
     closeAside()
     renderTimeline([anchorEvent()], CREATOR)
 
-    fireEvent.click(screen.getByRole("button", { name: "Resume" }))
+    fireEvent.click(screen.getByRole("button", { name: /^Resume aside:/ }))
 
     expect(getAsideState()).toEqual({
       hostKey: HOST_PATH,

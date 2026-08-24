@@ -33,7 +33,6 @@ function extractIds(page: Page): { workspaceId: string; streamId: string } {
 
 const sheet = (page: Page) => page.getByTestId("aside-sheet")
 const handle = (page: Page) => page.getByTestId("aside-sheet-handle")
-const strip = (page: Page) => page.getByTestId("aside-strip")
 const pane = (page: Page) => page.getByTestId("aside-pane")
 
 function hostScroller(page: Page, streamId: string): Locator {
@@ -89,7 +88,9 @@ test.describe("Aside — mobile surface", () => {
     testId = result.testId
   })
 
-  test("peeks over the host, pulls up to full, closes on back, and parks in the strip", async ({ page }) => {
+  test("peeks over the host, pulls up to full, closes on back, and dismisses when dragged to the floor", async ({
+    page,
+  }) => {
     // Channel creation drives desktop chrome (the sidebar's "+ New Channel"),
     // so the phone viewport is taken only once the fixture stream exists.
     await createChannel(page, `aside-m-${testId}`)
@@ -118,25 +119,22 @@ test.describe("Aside — mobile surface", () => {
     // OS back closes the aside rather than leaving the stream.
     await page.goBack()
     await expect(sheet(page)).toHaveCount(0)
-    await expect(strip(page)).toHaveCount(0)
     expect(page.url()).toContain(streamId)
 
     // The anchor row is the way back in.
     const anchor = hostScroller(page, streamId).locator("[data-aside-id]").first()
     await expect(anchor).toBeVisible({ timeout: 10000 })
-    await anchor.getByRole("button", { name: "Resume" }).click()
+    // The whole row is the control.
+    await anchor.click()
     await expect(sheet(page)).toBeVisible({ timeout: 10000 })
 
-    // Drag to the floor: the aside parks in the strip above the composer.
+    // Drag to the floor: the aside is left, silently, with nothing behind it.
     await dragHandle(page, PHONE.height)
-    await expect(strip(page)).toBeVisible({ timeout: 10000 })
-    await expect(sheet(page)).toHaveCount(0)
+    await expect(sheet(page)).toHaveCount(0, { timeout: 10000 })
     await expect(page.locator("[data-sonner-toast]")).toHaveCount(0)
 
-    // And the strip brings it back, into the surface it was last read in.
-    await strip(page)
-      .getByRole("button", { name: /^Open aside:/ })
-      .click()
+    // And its anchor row still brings it back, into the surface it was last read in.
+    await anchor.click()
     await expect(sheet(page)).toHaveAttribute("data-surface", "fullscreen", { timeout: 10000 })
   })
 })

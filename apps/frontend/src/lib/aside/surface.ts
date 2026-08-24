@@ -1,24 +1,15 @@
 import type { AsideSurface } from "@/stores/aside-store"
 
 /**
- * The surface an aside opens into. Calls own the right edge: while a call is
- * docked there, an aside that would dock opens minimized (the strip above the
- * composer) instead, and an explicit open from the strip goes fullscreen.
+ * The surface an aside opens into. Calls own the right edge: while one is
+ * docked there, an aside that would dock opens fullscreen instead — there is
+ * no parked state to fall back to, and the anchor row in the timeline is how
+ * an aside is left and re-entered.
  */
 export function resolveAsideOpenSurface(params: {
-  remembered: Exclude<AsideSurface, "minimized"> | null
+  remembered: AsideSurface | null
   callDocked: boolean
 }): AsideSurface {
-  const wanted = params.remembered ?? "dock"
-  if (wanted === "dock" && params.callDocked) return "minimized"
-  return wanted
-}
-
-/** The surface a minimized aside restores into. */
-export function resolveAsideRestoreSurface(params: {
-  remembered: Exclude<AsideSurface, "minimized"> | null
-  callDocked: boolean
-}): Exclude<AsideSurface, "minimized"> {
   const wanted = params.remembered ?? "dock"
   if (wanted === "dock" && params.callDocked) return "fullscreen"
   return wanted

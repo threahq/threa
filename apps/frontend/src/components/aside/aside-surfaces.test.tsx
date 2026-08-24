@@ -14,7 +14,7 @@ import { clearCallState, setCallPhase, setCallSession, setDesktopSurfaceOverride
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
 import { getAsideState, openAside, resetAsideStoreCache } from "@/stores/aside-store"
 import { resolveAsideOpenSurface } from "@/lib/aside/surface"
-import { AsideDockSlot, AsideMinimizedStrip, useAsideHost } from "./index"
+import { AsideDockSlot, useAsideHost } from "./index"
 import { isCallDocked } from "./use-call-docked"
 
 const HOST_PATH = "/w/ws_1/s/stream_host"
@@ -36,9 +36,7 @@ function Page({ takeover = false }: { takeover?: boolean }) {
   const hostKey = useAsideHost()
   return (
     <div className="flex">
-      <main className="relative" inert={takeover || undefined} hidden={takeover}>
-        <AsideMinimizedStrip workspaceId="ws_1" hostKey={hostKey} />
-      </main>
+      <main className="relative" inert={takeover || undefined} hidden={takeover}></main>
       <AsideDockSlot workspaceId="ws_1" hostKey={hostKey} />
     </div>
   )
@@ -55,7 +53,7 @@ function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
   )
 }
 
-function openOnHost(surface: "dock" | "fullscreen" | "minimized" = "dock") {
+function openOnHost(surface: "dock" | "fullscreen" = "dock") {
   openAside({
     hostKey: HOST_PATH,
     hostStreamId: "stream_host",
@@ -133,7 +131,6 @@ describe("aside surfaces", () => {
   it("should render no aside chrome while nothing is open on this page", () => {
     renderPage()
     expect(screen.queryByTestId("aside-dock")).toBeNull()
-    expect(screen.queryByTestId("aside-strip")).toBeNull()
   })
 
   it("should dock the companion timeline against the aside and switch surfaces from the header", async () => {
@@ -151,9 +148,9 @@ describe("aside surfaces", () => {
     expect(screen.getByTestId("aside-dock")).toHaveAttribute("data-surface", "fullscreen")
     expect(getAsideState()?.surface).toBe("fullscreen")
 
-    fireEvent.click(screen.getByRole("button", { name: "Minimize aside" }))
-    await waitFor(() => expect(screen.queryByTestId("aside-dock")).toBeNull())
-    expect(screen.getByTestId("aside-strip")).toHaveTextContent("churn number sanity-check")
+    // Closing is the only way out: an aside is left, not parked, and its anchor
+    // row in the host timeline is the way back in.
+    expect(screen.queryByRole("button", { name: "Minimize aside" })).toBeNull()
   })
 
   it("names the aside as private and points back at the message it was opened from", async () => {
@@ -194,40 +191,6 @@ describe("aside surfaces", () => {
     await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "540px" }))
   })
 
-  it("should restore a minimized aside into the surface it was last read in, and close from the strip", async () => {
-    renderPage()
-    openOnHost("fullscreen")
-    fireEvent.click(await screen.findByRole("button", { name: "Minimize aside" }))
-    await waitFor(() => expect(screen.queryByTestId("aside-dock")).toBeNull())
-
-    fireEvent.click(screen.getByRole("button", { name: "Open aside: churn number sanity-check" }))
-    expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "fullscreen")
-    expect(screen.queryByTestId("aside-strip")).toBeNull()
-
-    fireEvent.click(screen.getByRole("button", { name: "Minimize aside" }))
-    fireEvent.click(await screen.findByRole("button", { name: "Close aside" }))
-    expect(getAsideState()).toBeNull()
-    await waitFor(() => expect(screen.queryByTestId("aside-strip")).toBeNull())
-  })
-
-  it("parks as a card with the aside's name and its way back in, not a clickable bar", async () => {
-    // It sits where a composer's attachment and reply strips sit, and those mean
-    // "part of what I am about to send" — so this one names itself and offers an
-    // explicit Open rather than being a row that happens to be clickable.
-    renderPage()
-    openOnHost("dock")
-    fireEvent.click(await screen.findByRole("button", { name: "Minimize aside" }))
-
-    const strip = await screen.findByTestId("aside-strip")
-    expect(strip).toHaveTextContent("churn number sanity-check")
-    const open = screen.getByRole("button", { name: "Open aside: churn number sanity-check" })
-    expect(open).toHaveTextContent("Open")
-    expect(strip).toContainElement(open)
-
-    fireEvent.click(open)
-    expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "dock")
-  })
-
   it("should fold the dock away on close and leave no chrome", async () => {
     renderPage()
     openOnHost("dock")
@@ -237,7 +200,6 @@ describe("aside surfaces", () => {
     // The slot snaps to zero width first (the fold), then unmounts.
     expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "0px" })
     await waitFor(() => expect(screen.queryByTestId("aside-dock")).toBeNull())
-    expect(screen.queryByTestId("aside-strip")).toBeNull()
   })
 
   it("should drop the aside when its host page goes away", async () => {
@@ -253,7 +215,6 @@ describe("aside surfaces", () => {
     openOnHost("dock")
     renderPage("/w/ws_1/board")
     expect(screen.queryByTestId("aside-dock")).toBeNull()
-    expect(screen.queryByTestId("aside-strip")).toBeNull()
   })
 
   describe("right-edge contention with a docked call", () => {
@@ -263,19 +224,10 @@ describe("aside surfaces", () => {
       setDesktopSurfaceOverride("sidebar")
     })
 
-    it("should open minimized instead of docking while a call owns the right edge", async () => {
+    it("should open fullscreen instead of docking while a call owns the right edge", async () => {
       expect(isCallDocked()).toBe(true)
       renderPage()
       openOnHost(resolveAsideOpenSurface({ remembered: null, callDocked: isCallDocked() }))
-
-      expect(await screen.findByTestId("aside-strip")).toBeInTheDocument()
-      expect(screen.queryByTestId("aside-dock")).toBeNull()
-    })
-
-    it("should restore from the strip into fullscreen and keep the dock control disabled", async () => {
-      renderPage()
-      openOnHost("minimized")
-      fireEvent.click(await screen.findByRole("button", { name: "Open aside: churn number sanity-check" }))
 
       expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "fullscreen")
       expect(screen.getByRole("button", { name: "Dock aside" })).toBeDisabled()
@@ -309,7 +261,7 @@ describe("aside surfaces", () => {
       expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
     })
 
-    it("parks in the strip when the sheet is dragged to the floor, and nothing else is left behind", () => {
+    it("closes when the sheet is dragged to the floor, and nothing is left behind", () => {
       openOnHost()
       renderPage()
 
@@ -333,19 +285,10 @@ describe("aside surfaces", () => {
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
       fireEvent.pointerUp(handle, { pointerId: 1, clientY: 500 })
 
-      expect(getAsideState()?.surface).toBe("minimized")
+      // Dragged to the floor: the aside is left, not parked. The anchor row in
+      // the host timeline is the way back in.
+      expect(getAsideState()).toBeNull()
       expect(screen.queryByTestId("aside-sheet")).toBeNull()
-      expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
-    })
-
-    it("keeps the parked strip reachable under a panel takeover, where the main column is hidden", () => {
-      openOnHost("minimized")
-      renderPage(HOST_PATH, { takeover: true })
-
-      const strip = screen.getByTestId("aside-strip")
-      expect(strip).toBeVisible()
-      expect(strip.closest("main")).toBeNull()
-      expect(screen.getAllByTestId("aside-strip")).toHaveLength(1)
     })
 
     it("settles back where it was when the browser cancels the gesture mid-drag, committing nothing", () => {
@@ -387,8 +330,7 @@ describe("aside surfaces", () => {
       fireEvent.keyDown(handle, { key: "ArrowDown" })
       expect(getAsideState()?.surface).toBe("dock")
       fireEvent.keyDown(handle, { key: "ArrowDown" })
-      expect(getAsideState()?.surface).toBe("minimized")
-      expect(screen.getByTestId("aside-strip")).toBeInTheDocument()
+      expect(getAsideState()).toBeNull()
     })
 
     it("rises to the full viewport while an editor in it has focus, and settles back when the keyboard goes", () => {
