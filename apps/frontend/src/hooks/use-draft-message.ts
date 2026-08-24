@@ -827,6 +827,11 @@ export function useDraftMessage(
 ) {
   const e2eEnabled = !!e2eStreamId
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The payload the armed debounce would persist, kept beside the timer so a
+  // teardown can FIRE it instead of dropping it (see the unmount effect). Every
+  // deliberate cancel clears both — an armed save that was cancelled as moot
+  // must not come back to life at unmount.
+  const pendingSaveRef = useRef<{ contentJson: JSONContent; expectedDraftId: string | null } | null>(null)
   const fallbackContentDraftIdRef = useRef<string | null>(null)
   // Serializes this composer's WRITES (typing saves, attachment edits): under a
   // main-thread stall, two queued debounce timers can fire back-to-back and the
@@ -917,6 +922,7 @@ export function useDraftMessage(
         clearTimeout(debounceRef.current)
         debounceRef.current = null
       }
+      pendingSaveRef.current = null
       return chainWrite(async () => {
         // The row this content belongs to. An explicit NON-NULL argument (the
         // debounced save's arm-time id, a repoint flush, a minted detach id) wins;
@@ -1055,11 +1061,13 @@ export function useDraftMessage(
       // `contentJson` belong to the draft loaded now, and the scope's pointer (and
       // with it the composer's identity) may be repointed before the timer fires.
       const expectedDraftId = contentDraftId.current
+      pendingSaveRef.current = { contentJson, expectedDraftId }
       // `saveDraft` reads the live E2E gate when the timer fires, so a value typed
       // while the stream was plaintext is sealed (or dropped) — never written as
       // plaintext — if the stream became encrypted in the meantime (E2EE-4).
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null
+        pendingSaveRef.current = null
         void saveDraft(contentJson, undefined, expectedDraftId)
       }, DEBOUNCE_MS)
     },
@@ -1268,6 +1276,7 @@ export function useDraftMessage(
       clearTimeout(debounceRef.current)
       debounceRef.current = null
     }
+    pendingSaveRef.current = null
   }, [])
 
   const clearDraft = useCallback(async () => {
@@ -1276,6 +1285,7 @@ export function useDraftMessage(
       clearTimeout(debounceRef.current)
       debounceRef.current = null
     }
+    pendingSaveRef.current = null
 
     await clearLoadedDraft(workspaceId, draftKey)
     contentDraftId.current = null
@@ -1294,18 +1304,37 @@ export function useDraftMessage(
       clearTimeout(debounceRef.current)
       debounceRef.current = null
     }
+    pendingSaveRef.current = null
 
     await resolveLoadedDraft(workspaceId, draftKey, contentDraftId.current)
     contentDraftId.current = null
     syncEngine?.kickOperationQueue()
   }, [draftKey, workspaceId, syncEngine, contentDraftId])
 
-  // Cleanup timeout on unmount
+  // Teardown FIRES the armed save rather than dropping it. Clearing the timer
+  // was silent data loss: a composer that unmounts inside the debounce window
+  // (an aside draft closed with "Back", a panel dismissed mid-sentence) left the
+  // tail only in the localStorage staging buffer, which is recovered at the next
+  // WORKSPACE LOAD — so until a reload the row, the dock preview, and anything
+  // reading the draft server-side (the aside's agent) all showed the older body.
+  // Deliberate cancels (`cancelPendingSave`, `clearDraft`, `resolveDraft`) null
+  // the payload, so only a save that was still meant to happen is fired here.
+  // Fire-and-forget by necessity: cleanup cannot await, and `saveDraft`'s write
+  // chain and sync queue outlive this component.
+  const saveDraftRef = useRef(saveDraft)
+  saveDraftRef.current = saveDraft
   useEffect(() => {
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
+        debounceRef.current = null
       }
+      const pending = pendingSaveRef.current
+      pendingSaveRef.current = null
+      if (!pending) return
+      void saveDraftRef.current(pending.contentJson, undefined, pending.expectedDraftId).catch((err) => {
+        console.error("Failed to persist the draft tail on teardown", err)
+      })
     }
   }, [])
 

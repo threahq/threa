@@ -39,7 +39,10 @@ export function AsideDraftEditor({
 }: AsideDraftEditorProps) {
   const composer = useDraftComposer({ workspaceId, draftKey: scope, scopeId: scope })
   const controlRef = useRef<ComposerControlHandle | null>(null)
-  const { send, remove, busy, canSend } = useAsideDraftActions(composer, { onSendToComposer, onDone: onBack })
+  const { send, leave, remove, busy, canSend } = useAsideDraftActions(composer, {
+    onSendToComposer,
+    onDone: onBack,
+  })
 
   const { isLoaded, content, handleContentChange } = composer
   useEffect(() => {
@@ -54,7 +57,14 @@ export function AsideDraftEditor({
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="aside-draft-editor" data-draft-scope={scope}>
       <header className="flex h-11 shrink-0 items-center gap-1 border-b pl-2 pr-2">
-        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Back to drafts" onClick={onBack}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          aria-label="Back to drafts"
+          disabled={busy}
+          onClick={() => void leave()}
+        >
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <span className="flex-1" />

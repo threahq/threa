@@ -18,6 +18,7 @@ function composerStub(overrides: Partial<DraftComposerState> = {}): DraftCompose
     getPendingAttachmentsSnapshot: () => pendingAttachments,
     isUploading: false,
     flushDraft: vi.fn(async () => {}),
+    flushDraftWithResult: vi.fn(async () => true),
     clearDraft: vi.fn(async () => {}),
     releaseAttachments: vi.fn(),
     ...overrides,
@@ -76,6 +77,55 @@ describe("useAsideDraftActions", () => {
       toasts: [["Couldn't hand this draft to the composer."]],
       done: [],
       busy: false,
+    })
+  })
+
+  describe("leave", () => {
+    it("persists what is written before closing the editor, so the agent reads it and not the older copy", async () => {
+      const flushDraftWithResult = vi.fn(async () => true)
+      const onDone = vi.fn()
+      const { result } = renderHook(() =>
+        useAsideDraftActions(composerStub({ flushDraftWithResult }), { onSendToComposer: vi.fn(), onDone })
+      )
+
+      await act(async () => await result.current.leave())
+
+      expect({ flushed: flushDraftWithResult.mock.calls.length, closed: onDone.mock.calls.length }).toEqual({
+        flushed: 1,
+        closed: 1,
+      })
+    })
+
+    it("keeps the editor open and says so when the text could not be saved", async () => {
+      const error = vi.spyOn(toast, "error").mockImplementation(() => "")
+      const onDone = vi.fn()
+      const { result } = renderHook(() =>
+        useAsideDraftActions(composerStub({ flushDraftWithResult: vi.fn(async () => false) }), {
+          onSendToComposer: vi.fn(),
+          onDone,
+        })
+      )
+
+      await act(async () => await result.current.leave())
+
+      expect(onDone).not.toHaveBeenCalled()
+      expect(error.mock.calls).toEqual([[expect.stringContaining("Couldn't save this draft")]])
+    })
+
+    it("closes an untouched draft without writing a row for it", async () => {
+      const flushDraftWithResult = vi.fn(async () => true)
+      const onDone = vi.fn()
+      const { result } = renderHook(() =>
+        useAsideDraftActions(
+          composerStub({ flushDraftWithResult, content: { type: "doc", content: [{ type: "paragraph" }] } }),
+          { onSendToComposer: vi.fn(), onDone }
+        )
+      )
+
+      await act(async () => await result.current.leave())
+
+      expect(flushDraftWithResult).not.toHaveBeenCalled()
+      expect(onDone).toHaveBeenCalledOnce()
     })
   })
 
