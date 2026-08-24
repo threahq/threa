@@ -41,6 +41,7 @@ import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
 import { resolveTurnModel } from "./turn-model"
 import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
+import { renderAsideDrafts } from "./aside-drafts-context"
 import {
   canOfferUserSettings,
   createMemoizedGithubClient,
@@ -1188,10 +1189,24 @@ export class PersonaAgent {
         // Split at its cache boundary: the stable half is what the prompt-cache
         // breakpoint covers (tool definitions ride the same span), the volatile
         // half carries temporal grounding, turn digests, and the bag delta.
-        const composedPrompt = appendBagToSystemPrompt(
-          agentContext.composeSystemPrompt(tools, effectivePurpose),
-          resolvedBag
-        )
+        // An aside's drafts are read fresh every turn, independent of the bag:
+        // the dock is the point of that surface, and an aside opened over an
+        // empty host viewport carries no bag at all. Owner is the aside's
+        // creator — asides are creator-only, so that is whose drafts these are.
+        // Read here rather than earlier in the turn so the model sees the text
+        // as it stood when the call was made, not when the turn started.
+        const asideDrafts =
+          stream.type === StreamTypes.ASIDE
+            ? await renderAsideDrafts(pool, { workspaceId, asideId: streamId, ownerId: stream.createdBy })
+            : null
+
+        const withBag = appendBagToSystemPrompt(agentContext.composeSystemPrompt(tools, effectivePurpose), resolvedBag)
+        // Drafts join the volatile half for the same reason the bag delta does:
+        // they change between turns, and a changing body inside the cached
+        // prefix would invalidate it every time the user typed.
+        const composedPrompt = asideDrafts
+          ? { stable: withBag.stable, volatile: [withBag.volatile, asideDrafts].filter(Boolean).join("\n\n") }
+          : withBag
 
         // The turn as dispatch mints it: delivery + model binding + this
         // turn's prompt, history, toolset, and sampling params.

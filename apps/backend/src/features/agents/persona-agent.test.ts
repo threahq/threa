@@ -6,6 +6,7 @@ import { HttpError } from "../../lib/errors"
 import { MessageVersionRepository } from "../messaging"
 import { StreamPoliciesRepository, StreamRepository, StreamEventRepository } from "../streams"
 import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./persona-agent"
+import { DraftsRepository, type Draft } from "../drafts"
 import { PersonaRepository, type Persona } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 import { SessionAbortRegistry } from "./session-abort-registry"
@@ -55,6 +56,33 @@ const stream = {
   displayName: "Test pad",
   createdBy: "usr_1",
 } as any
+
+function makeDraft(overrides?: Partial<Draft>): Draft {
+  return {
+    id: "draft_1",
+    workspaceId: WORKSPACE_ID,
+    userId: "usr_owner",
+    scope: `aside:${STREAM_ID}:draft_1`,
+    rootStreamId: null,
+    contentJson: null,
+    contentMarkdown: "body",
+    attachmentIds: [],
+    command: null,
+    contextRefs: null,
+    ciphertext: null,
+    envelope: null,
+    e2eVersion: null,
+    version: 1,
+    lastClientWriteId: null,
+    supersededWriteIds: null,
+    clientUpdatedAt: new Date("2026-08-24T07:05:00Z"),
+    stashedAt: null,
+    createdAt: new Date("2026-08-24T07:00:00Z"),
+    updatedAt: new Date("2026-08-24T07:05:00Z"),
+    deletedAt: null,
+    ...overrides,
+  } as Draft
+}
 
 function makeSession(overrides?: Partial<AgentSession>): AgentSession {
   return {
@@ -167,11 +195,13 @@ async function runSupersedeRerun(params: {
   spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
 
   const capturedModelStrings: string[] = []
+  const capturedVolatilePrompts: string[] = []
   const ai = {
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
-    generateTextWithTools: async (opts: { modelString?: string }) => {
+    generateTextWithTools: async (opts: { modelString?: string; volatileSystem?: string }) => {
       capturedModelStrings.push(opts.modelString ?? "unknown")
+      capturedVolatilePrompts.push(opts.volatileSystem ?? "")
       return {
         text: "Revised final answer.",
         toolCalls: [],
@@ -240,6 +270,7 @@ async function runSupersedeRerun(params: {
   return {
     result,
     capturedModelStrings,
+    capturedVolatilePrompts,
     escalationSteps,
     markResponseValidationFailed,
     createMessage,
@@ -248,6 +279,40 @@ async function runSupersedeRerun(params: {
     assertInitiatorWritable,
   }
 }
+
+describe("PersonaAgent aside drafts in context", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("reads the aside's own drafts into the volatile prompt", async () => {
+    const listByScopePrefix = spyOn(DraftsRepository, "listByScopePrefix").mockResolvedValue([
+      makeDraft({ contentMarkdown: "Half a thought about the rollout window" }),
+    ])
+
+    const { capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      streamOverride: { type: StreamTypes.ASIDE, createdBy: "usr_owner" },
+    })
+
+    expect(listByScopePrefix.mock.calls[0]?.[1]).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      userId: "usr_owner",
+      scopePrefix: `aside:${STREAM_ID}:`,
+    })
+    expect(capturedVolatilePrompts[0]).toContain("## Drafts open in this aside")
+    expect(capturedVolatilePrompts[0]).toContain("Half a thought about the rollout window")
+  })
+
+  it("leaves every other stream type's prompt alone", async () => {
+    const listByScopePrefix = spyOn(DraftsRepository, "listByScopePrefix").mockResolvedValue([])
+
+    const { capturedVolatilePrompts } = await runSupersedeRerun({ supersededFailedValidation: false })
+
+    expect(listByScopePrefix).not.toHaveBeenCalled()
+    expect(capturedVolatilePrompts[0]).not.toContain("Drafts open in this aside")
+  })
+})
 
 describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
   afterEach(() => {

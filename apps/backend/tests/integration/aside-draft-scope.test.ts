@@ -113,4 +113,106 @@ describe("aside draft scopes", () => {
     const original = await DraftsRepository.findByIdForUpdate(pool, testWorkspaceId, testUserId, id)
     expect(original?.contentMarkdown).toBe("second pass")
   })
+
+  /**
+   * The aside agent reads its own aside's drafts by scope prefix every turn
+   * (`renderAsideDrafts`), so this is the query that decides what it may see.
+   */
+  describe("listByScopePrefix — what the aside's agent reads", () => {
+    test("returns this aside's live drafts newest-first, and no one else's", async () => {
+      const asideId = "stream_01LISTASIDE"
+      const otherAsideId = "stream_01LISTOTHER"
+      const strangerId = userId()
+      await withTransaction(pool, async (client) => {
+        await addTestMember(client, testWorkspaceId, strangerId)
+      })
+
+      const older = draftId()
+      const newer = draftId()
+      const deleted = draftId()
+      await service.upsert(
+        upsertParams(older, {
+          scope: `aside:${asideId}:${older}`,
+          contentMarkdown: "older body",
+          clientUpdatedAt: new Date("2026-08-24T07:00:00.000Z"),
+        })
+      )
+      await service.upsert(
+        upsertParams(newer, {
+          scope: `aside:${asideId}:${newer}`,
+          contentMarkdown: "newer body",
+          clientUpdatedAt: new Date("2026-08-24T07:05:00.000Z"),
+        })
+      )
+      await service.upsert(
+        upsertParams(deleted, { scope: `aside:${asideId}:${deleted}`, contentMarkdown: "discarded body" })
+      )
+      await DraftsRepository.softDelete(pool, testWorkspaceId, testUserId, deleted)
+      // A second aside of the same owner, and another member's draft in THIS
+      // aside's scope — neither may reach the agent.
+      const neighbour = draftId()
+      await service.upsert(
+        upsertParams(neighbour, { scope: `aside:${otherAsideId}:${neighbour}`, contentMarkdown: "other aside" })
+      )
+      const strangers = draftId()
+      await service.upsert(
+        upsertParams(strangers, {
+          userId: strangerId,
+          scope: `aside:${asideId}:${strangers}`,
+          contentMarkdown: "not yours",
+        })
+      )
+
+      const rows = await DraftsRepository.listByScopePrefix(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        scopePrefix: `aside:${asideId}:`,
+        limit: 10,
+      })
+
+      expect(rows.map((row) => row.contentMarkdown)).toEqual(["newer body", "older body"])
+    })
+
+    test("matches the prefix literally — an id's underscore is not a wildcard", async () => {
+      // `starts_with`, not LIKE: prefixed ids (INV-2) carry `_`, which LIKE
+      // reads as "any single character", so `aside:stream_01A:` would also
+      // match another aside's `aside:streamX01A:`.
+      const decoy = draftId()
+      await service.upsert(
+        upsertParams(decoy, { scope: "aside:streamX01WILDCARD:" + decoy, contentMarkdown: "decoy body" })
+      )
+
+      const rows = await DraftsRepository.listByScopePrefix(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        scopePrefix: "aside:stream_01WILDCARD:",
+        limit: 10,
+      })
+
+      expect(rows).toEqual([])
+    })
+
+    test("honours the limit, keeping the most recently edited", async () => {
+      const asideId = "stream_01LIMITASIDE"
+      for (const [index, when] of ["07:00", "07:01", "07:02"].entries()) {
+        const id = draftId()
+        await service.upsert(
+          upsertParams(id, {
+            scope: `aside:${asideId}:${id}`,
+            contentMarkdown: `body ${index}`,
+            clientUpdatedAt: new Date(`2026-08-24T${when}:00.000Z`),
+          })
+        )
+      }
+
+      const rows = await DraftsRepository.listByScopePrefix(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        scopePrefix: `aside:${asideId}:`,
+        limit: 2,
+      })
+
+      expect(rows.map((row) => row.contentMarkdown)).toEqual(["body 2", "body 1"])
+    })
+  })
 })

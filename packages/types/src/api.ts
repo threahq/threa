@@ -2500,6 +2500,47 @@ export function draftThreadScope(anchorId: string): DraftScope {
   return `thread:${anchorId}`
 }
 
+/**
+ * Draft scopes inside an aside: `aside:{asideId}:{draftId}`. An aside holds
+ * several living drafts at once and a scope holds exactly one draft, so the
+ * draft id is part of the scope rather than a column beside it.
+ *
+ * Shared rather than client-only (INV-33): the aside's agent reads the drafts
+ * open beside it, which means the server has to recognise the grammar it was
+ * once free to treat as opaque. The client still mints the ids.
+ */
+const ASIDE_DRAFT_SCOPE_PREFIX = "aside:"
+
+export interface AsideDraftScope {
+  asideId: string
+  draftId: string
+}
+
+export function asideDraftScope(asideId: string, draftId: string): DraftScope {
+  return `${ASIDE_DRAFT_SCOPE_PREFIX}${asideId}:${draftId}`
+}
+
+/** The scope prefix every draft of `asideId` starts with — the server's list key. */
+export function asideDraftScopePrefix(asideId: string): string {
+  return `${ASIDE_DRAFT_SCOPE_PREFIX}${asideId}:`
+}
+
+export function parseAsideDraftScope(scope: string): AsideDraftScope | null {
+  if (!scope.startsWith(ASIDE_DRAFT_SCOPE_PREFIX)) return null
+  const [asideId, draftId, ...rest] = scope.slice(ASIDE_DRAFT_SCOPE_PREFIX.length).split(":")
+  if (!asideId || !draftId || rest.length > 0) return null
+  return { asideId, draftId }
+}
+
+export function isAsideDraftScope(scope: string): boolean {
+  return parseAsideDraftScope(scope) !== null
+}
+
+/** The scopes of `asideId`'s own drafts, out of a workspace-wide list. */
+export function asideDraftScopesOf(asideId: string, scopes: readonly string[]): string[] {
+  return scopes.filter((scope) => parseAsideDraftScope(scope)?.asideId === asideId)
+}
+
 /** Slash-command draft payload (mirrors the composer's `ExtractedCommand`). */
 export interface DraftCommand {
   name: string
