@@ -136,10 +136,15 @@ describe("aside surfaces", () => {
     expect(screen.getByTestId("aside-drafts")).toHaveAttribute("data-open", "true")
 
     // Dock and fullscreen are different components; the draft you are writing
-    // is not, so it survives the switch instead of closing mid-sentence.
+    // is not, so it survives the switch — and so does a block still queued for
+    // an editor that has not finished hydrating (this mock never consumes it).
     const scope = editor.getAttribute("data-draft-scope")
     fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
-    expect(await screen.findByTestId("aside-draft-editor")).toHaveAttribute("data-draft-scope", scope!)
+    const moved = await screen.findByTestId("aside-draft-editor")
+    expect({
+      scope: moved.getAttribute("data-draft-scope"),
+      pending: moved.getAttribute("data-pending"),
+    }).toEqual({ scope, pending: "persona_01ARIADNE" })
   })
 
   it("should render no aside chrome while nothing is open on this page", () => {

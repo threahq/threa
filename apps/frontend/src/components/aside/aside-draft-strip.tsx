@@ -31,7 +31,7 @@ export function AsideDraftStrip({ drafts, openScope, onOpen, onNew, onDelete }: 
       <button
         type="button"
         aria-label="New draft"
-        onClick={onNew}
+        onClick={() => onNew()}
         className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed px-2 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/[0.06] hover:text-primary"
       >
         <Plus className="h-3 w-3" aria-hidden />

@@ -46,9 +46,11 @@ describe("AsideDraftStrip", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete draft: Empty draft" }))
     fireEvent.click(screen.getByRole("button", { name: "New draft" }))
 
-    expect(onOpen).toHaveBeenCalledWith("aside:stream_a:draft_1")
-    expect(onDelete).toHaveBeenCalledWith("aside:stream_a:draft_2")
-    expect(onNew).toHaveBeenCalledTimes(1)
+    expect({ opened: onOpen.mock.calls, deleted: onDelete.mock.calls, created: onNew.mock.calls }).toEqual({
+      opened: [["aside:stream_a:draft_1"]],
+      deleted: [["aside:stream_a:draft_2"]],
+      created: [[]],
+    })
   })
 
   it("says what the button is for while there is nothing in the tray", () => {

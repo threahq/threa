@@ -1,7 +1,15 @@
-import { useCallback, useState } from "react"
+import { useCallback } from "react"
 import type { AgentBlockData } from "@/components/timeline/agent-block-context"
 import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
-import { asideOpenDraft, closeAside, setAsideOpenDraft, useAsideOpenDraft } from "@/stores/aside-store"
+import {
+  asideOpenDraft,
+  clearAsideAgentBlocks,
+  closeAside,
+  queueAsideAgentBlock,
+  setAsideOpenDraft,
+  useAsideOpenDraft,
+  useAsidePendingAgentBlocks,
+} from "@/stores/aside-store"
 import { useAsideHandoff } from "@/hooks/use-aside-handoff"
 import type { AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
 
@@ -19,9 +27,11 @@ export interface AsideDraftSurface {
 
 /**
  * The state the aside's two halves share: which draft is open, what Ariadne
- * has queued for it, and the one way content leaves. Held here rather than in
- * a surface component because the dock and the fullscreen stage arrange the
- * same two halves differently and must not each own a copy.
+ * has queued for it, and the one way content leaves. The first two live in the
+ * aside store rather than here: dock and fullscreen are different components,
+ * so anything this hook owned outright would be destroyed by a surface switch —
+ * the open draft mid-sentence, and a queued block still waiting for the editor
+ * to hydrate.
  */
 export function useAsideDraftSurface(params: {
   workspaceId: string
@@ -31,7 +41,7 @@ export function useAsideDraftSurface(params: {
 }): AsideDraftSurface {
   const { workspaceId, asideId, hostStreamId, originScope } = params
   const openScope = useAsideOpenDraft(asideId)
-  const [pendingAgentBlocks, setPendingAgentBlocks] = useState<AgentBlockData[]>([])
+  const pendingAgentBlocks = useAsidePendingAgentBlocks(asideId)
 
   // "Insert into draft" on one of Ariadne's replies: the block goes into an
   // aside draft — the open one, else a new one — never into the chat composer
@@ -39,12 +49,12 @@ export function useAsideDraftSurface(params: {
   // mounts with the draft; it appends the blocks once the draft has loaded.
   const insertAgentBlock = useCallback(
     (data: AgentBlockData) => {
-      setPendingAgentBlocks((pending) => [...pending, data])
+      queueAsideAgentBlock(asideId, data)
       setAsideOpenDraft(asideId, asideOpenDraft(asideId) ?? newAsideDraftScope(asideId))
     },
     [asideId]
   )
-  const consumePendingAgentBlocks = useCallback(() => setPendingAgentBlocks([]), [])
+  const consumePendingAgentBlocks = useCallback(() => clearAsideAgentBlocks(asideId), [asideId])
 
   const handoff = useAsideHandoff(workspaceId)
   const sendToComposer = useCallback(

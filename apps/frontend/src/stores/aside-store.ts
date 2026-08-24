@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react"
+import type { AgentBlockData } from "@/components/timeline/agent-block-context"
 
 /**
  * Module store for the one aside surface open on the current page. An aside is
@@ -50,6 +51,11 @@ const lastReadingSurfaceByAside = new Map<string, AsideSurface>()
 // component because dock and fullscreen are different components: holding it
 // locally would close the draft mid-sentence every time the surface changed.
 const openDraftByAside = new Map<string, string>()
+// Agent replies queued by "Insert into draft" and not yet appended — the
+// editor takes them once its draft has hydrated. Here for the same reason as
+// the open draft above: a surface switch during that hydration would otherwise
+// unmount the only copy and lose the block.
+const pendingAgentBlocksByAside = new Map<string, AgentBlockData[]>()
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -103,6 +109,7 @@ export function resetAsideStoreCache(): void {
   lastReadingSurfaceByAside.clear()
   dockWidthByAside.clear()
   openDraftByAside.clear()
+  pendingAgentBlocksByAside.clear()
   setState(null)
 }
 
@@ -123,6 +130,32 @@ export function useAsideOpenDraft(asideId: string): string | null {
     subscribe,
     () => asideOpenDraft(asideId),
     () => asideOpenDraft(asideId)
+  )
+}
+
+const NO_PENDING_BLOCKS: AgentBlockData[] = []
+
+/** Agent replies waiting to be appended to `asideId`'s open draft. */
+export function asidePendingAgentBlocks(asideId: string): AgentBlockData[] {
+  return pendingAgentBlocksByAside.get(asideId) ?? NO_PENDING_BLOCKS
+}
+
+export function queueAsideAgentBlock(asideId: string, block: AgentBlockData): void {
+  pendingAgentBlocksByAside.set(asideId, [...asidePendingAgentBlocks(asideId), block])
+  emit()
+}
+
+export function clearAsideAgentBlocks(asideId: string): void {
+  if (!pendingAgentBlocksByAside.delete(asideId)) return
+  emit()
+}
+
+/** The queue for `asideId`, across a surface switch. */
+export function useAsidePendingAgentBlocks(asideId: string): AgentBlockData[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => asidePendingAgentBlocks(asideId),
+    () => asidePendingAgentBlocks(asideId)
   )
 }
 
