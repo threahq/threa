@@ -355,10 +355,6 @@ export function MessageComposer({
   const [mobileFormatToolbarHeight, setMobileFormatToolbarHeight] = useState(0)
   const mobileFormatToolbarHeightRef = useRef(mobileFormatToolbarHeight)
   mobileFormatToolbarHeightRef.current = mobileFormatToolbarHeight
-  // The expanded shell on touch keeps its format toolbar open from the start:
-  // it is a writing surface, and the toolbar is the only formatting affordance
-  // there (no selection bubble on touch).
-  const [formatOpen, setFormatOpen] = useState(expanded)
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
   // User-chosen composer height from the drag handle (mobile, chrome open).
@@ -474,6 +470,12 @@ export function MessageComposer({
   // isn't torn down mid-take.
   const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobileOrCoarse()
+  // The expanded shell opens its format toolbar from the start on a pointer
+  // device: it is a writing surface, and there is no selection bubble to reach
+  // formatting from. On touch it starts closed like every other composer in the
+  // app — `Aa` opens it — so a phone's writing surface doesn't hand two rows of
+  // chrome to a keyboard that is about to take half the screen.
+  const [formatOpen, setFormatOpen] = useState(expanded && !isMobile)
   // Height of everything above the editor card (attachment tray, link previews)
   // — the same "extras" the drag floor reserves, measured live because a
   // persisted cap outlives the state it was chosen in: shrink the composer with
@@ -780,12 +782,12 @@ export function MessageComposer({
       blurTimeoutRef.current = null
     }
     cancelPendingChromeOpen()
-    setFormatOpen(expanded)
+    setFormatOpen(expanded && !isMobile)
     setMobileExpanded(false)
     setMobileFocused(false)
     setMobileLinkPopoverOpen(false)
     setVoiceActive(false)
-  }, [scopeId, expanded, cancelPendingChromeOpen])
+  }, [scopeId, expanded, isMobile, cancelPendingChromeOpen])
 
   // Reset mobile-only state when viewport crosses the mobile/desktop threshold
   useEffect(() => {

@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useRef,
   useState,
   type FocusEvent as ReactFocusEvent,
@@ -6,9 +7,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
-import { useStreamName } from "@/hooks/use-stream-name"
 import { cn } from "@/lib/utils"
-import { closeAside, setAsideSheetDetent, useAsideSheetDetent } from "@/stores/aside-store"
+import { closeAside, setAsideSheetDetent, useAsideOpenDraft, useAsideSheetDetent } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
 import {
   ASIDE_PEEK_FRACTION,
@@ -29,8 +29,19 @@ interface AsideMobileSheetProps {
 const REDUCED_MOTION =
   typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
 
-function viewportHeight(): number {
-  return window.visualViewport?.height ?? window.innerHeight
+const SETTLE_MS = 200
+
+/**
+ * The sheet's ceiling is its host's box, never a viewport unit: the app is
+ * sized by `--viewport-height` (use-visual-viewport.ts), written on its own
+ * schedule around the keyboard — shrink at once, growth debounced, an
+ * optimistic restore on focusout — while `dvh` follows the browser's. Sized
+ * in dvh, the bottom-anchored sheet ran taller than the app while the
+ * keyboard rose (header clipped off the top) and shorter while it fell (host
+ * showing above). A percentage of the host is the same clock.
+ */
+function hostHeight(sheet: HTMLElement | null): number {
+  return sheet?.parentElement?.clientHeight || window.innerHeight
 }
 
 function isEditorTarget(target: EventTarget | null): boolean {
@@ -40,27 +51,34 @@ function isEditorTarget(target: EventTarget | null): boolean {
 /**
  * The aside on a phone: a sheet over the host that peeks at 45% of the
  * viewport, pulls up to the whole of it, and drags down off the bottom to
- * leave. The context strip doubles as the drag handle — the aside's own
- * chrome is the affordance, so nothing has to tell you to pull it.
+ * leave. The handle carries nothing but the grab pill: every row above the
+ * conversation is a row of it the reader doesn't get, and the pane's own
+ * anchor line already says which stream this sits beside.
  */
 export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope }: AsideMobileSheetProps) {
   const detent = useAsideSheetDetent()
   const sheetRef = useRef<HTMLDivElement>(null)
-  const [dragHeight, setDragHeight] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
-  // The on-screen keyboard takes the bottom of the viewport; a 45% peek of
-  // what is left is all chrome and composer, no conversation. While an editor
-  // in the sheet has focus the sheet rises to the full (keyboard-shrunk)
-  // viewport — presentation only, the chosen detent is kept and returns when
-  // the keyboard goes. A drag while typing is the user's own call and wins
-  // over the lift; the keyboard stays up through it (the composer's own
-  // resize handle sets the precedent: preventDefault keeps focus).
-  const [keyboardLift, setKeyboardLift] = useState(false)
+  // The height eases only on the way from a gesture to its detent. Viewport
+  // changes — the keyboard, mostly — must land instantly: the host resizes in
+  // steps as the keyboard animates, and easing each step left the sheet
+  // trailing it.
+  // A count, not a flag: a second settle inside the window restarts the
+  // timer instead of leaving the first one to cut the ease short.
+  const [settling, setSettling] = useState(0)
+  useEffect(() => {
+    if (!settling) return
+    const timer = window.setTimeout(() => setSettling(0), SETTLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [settling])
+  // Writing takes the sheet over: the keyboard takes the bottom of the
+  // viewport, and a 45% peek of what is left is chrome and two lines. The
+  // sheet moves to the full detent and stays there — a real state change a
+  // drag can undo, not a presentation the sheet undoes for you. Rising on
+  // focus and falling back on blur put a resize on both edges of every
+  // keyboard, two heights and a viewport moving at once, and it showed.
   const onFocusCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
-    if (isEditorTarget(event.target)) setKeyboardLift(true)
-  }
-  const onBlurCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
-    if (isEditorTarget(event.target)) setKeyboardLift(false)
+    if (isEditorTarget(event.target)) setAsideSheetDetent("full")
   }
   const drag = useRef<{
     startY: number
@@ -70,16 +88,20 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     lastY: number
     lastT: number
   } | null>(null)
-  const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
+  // Opening a draft takes the sheet over in its own right, ahead of the focus
+  // its editor then takes.
+  const openDraft = useAsideOpenDraft(asideId)
+  useEffect(() => {
+    if (openDraft) setAsideSheetDetent("full")
+  }, [openDraft])
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    // The handle carries text; without this a drag starts a text selection and
-    // the browser cancels the pointer stream mid-gesture, so the sheet snaps
-    // back to where it started. It also keeps focus (and the keyboard) in an
-    // editor that has it — a drag never closes the keyboard.
+    // Without this the browser turns the drag into a text selection and
+    // cancels the pointer stream mid-gesture, so the sheet snaps back to where
+    // it started. It also keeps focus — and the keyboard — in an editor that
+    // has it: a drag never closes the keyboard.
     event.preventDefault()
-    setKeyboardLift(false)
-    const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, viewportHeight())
+    const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, hostHeight(sheetRef.current))
     drag.current = {
       startY: event.clientY,
       startHeight,
@@ -89,7 +111,6 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
       lastT: performance.now(),
     }
     event.currentTarget.setPointerCapture(event.pointerId)
-    setDragHeight(startHeight)
     setDragging(true)
   }
 
@@ -100,14 +121,18 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     // Bottom-anchored: the sheet grows as the pointer moves UP, so the delta is inverted.
     const next = Math.min(
       Math.max(state.startHeight - (event.clientY - state.startY), ASIDE_DISMISS_HEIGHT),
-      viewportHeight()
+      hostHeight(sheetRef.current)
     )
     const dt = now - state.lastT
     if (dt > 0) state.velocity = -(event.clientY - state.lastY) / dt
     state.lastY = event.clientY
     state.lastT = now
     state.height = next
-    setDragHeight(next)
+    // Written straight to the node, not through state: a render per pointermove
+    // re-renders the pane — a whole timeline — on every frame of the gesture,
+    // and that is the drag's jank. React owns the resting height; the gesture
+    // owns the node for as long as it holds the pointer.
+    if (sheetRef.current) sheetRef.current.style.height = `${next}px`
   }
 
   // The browser took the pointer (a scroll, a system gesture): the drag never
@@ -115,26 +140,25 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const onPointerCancel = () => {
     drag.current = null
     setDragging(false)
-    setDragHeight(null)
   }
 
   const onPointerUp = () => {
     const state = drag.current
     drag.current = null
     setDragging(false)
-    setDragHeight(null)
     if (!state) return
     // A pause before release means the drag stopped — don't flick on stale velocity.
     const velocity = performance.now() - state.lastT > 120 ? 0 : state.velocity
-    settle(nearestAsideDetent(state.height, velocity, viewportHeight()))
+    settle(nearestAsideDetent(state.height, velocity, hostHeight(sheetRef.current)))
   }
 
   // Dragging (or arrowing) below the smallest reading surface dismisses: an
   // aside is left, not parked, and its anchor row in the timeline is the way
   // back in.
   const settle = (next: AsideDetent) => {
-    if (next === "closed") closeAside()
-    else setAsideSheetDetent(next)
+    if (next === "closed") return closeAside()
+    setSettling((count) => count + 1)
+    setAsideSheetDetent(next)
   }
 
   // The drag is the primary gesture, but it is a pointer gesture: the handle is
@@ -150,9 +174,11 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (next !== "closed") settle(next)
   }
 
-  const lifted = keyboardLift || detent === "full"
-  const restingHeight = lifted ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
-  const height = dragging && dragHeight != null ? `${dragHeight}px` : restingHeight
+  const restingHeight = detent === "full" ? "100%" : `${ASIDE_PEEK_FRACTION * 100}%`
+  // Read from the drag rather than state: an unrelated re-render mid-gesture
+  // must re-apply the height the node already has, not the one the drag
+  // started on.
+  const height = dragging && drag.current ? `${drag.current.height}px` : restingHeight
 
   return (
     <>
@@ -161,13 +187,11 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         ref={sheetRef}
         data-testid="aside-sheet"
         data-detent={detent}
-        data-keyboard-lift={keyboardLift || undefined}
         onFocusCapture={onFocusCapture}
-        onBlurCapture={onBlurCapture}
         data-suppress-pull-refresh="true"
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-xl border-t-2 border-primary/70 bg-background shadow-lg",
-          !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
+          settling > 0 && !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
         )}
         style={{ height }}
       >
@@ -182,16 +206,13 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           tabIndex={0}
           data-testid="aside-sheet-handle"
           onKeyDown={onKeyDown}
-          className="flex shrink-0 touch-none select-none items-center gap-2 px-3 py-2"
+          className="flex shrink-0 touch-none select-none items-center justify-center py-2"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerCancel}
         >
-          <span aria-hidden className="h-1 w-8 shrink-0 rounded-full bg-muted-foreground/40" />
-          {/* Where the aside sits, not what it is — the pane header below carries
-              its title and the way out, so the handle stays one line of context. */}
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{hostName ?? ""}</span>
+          <span aria-hidden className="h-1 w-9 rounded-full bg-muted-foreground/40" />
         </div>
         <div className="min-h-0 flex-1">
           <AsidePane

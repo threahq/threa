@@ -7,6 +7,54 @@ import { AsideDraftEditor } from "./aside-draft-editor"
 import { useAsideDrafts } from "./use-aside-drafts"
 import type { AsideDraftSurface } from "./use-aside-draft-surface"
 
+interface AsideDraftTrayProps {
+  workspaceId: string
+  asideId: string
+  surface: AsideDraftSurface
+  className?: string
+}
+
+/**
+ * The aside's drafts as a tray: a count with a chevron, folding to one line
+ * the way the composer's attachment tray does, over the pills themselves.
+ */
+export function AsideDraftTray({ workspaceId, asideId, surface, className }: AsideDraftTrayProps) {
+  const drafts = useAsideDrafts(workspaceId, asideId)
+  const expanded = useAsideTrayExpanded(asideId)
+
+  return (
+    // preventDefault keeps editor focus — and the phone's keyboard — through
+    // taps anywhere in the tray, the same guard the composer's attachment tray
+    // uses. Safe as a blanket here: every child is one of our own buttons,
+    // nothing portaled. Without it, folding the tray closed the keyboard, and
+    // the sheet dropped out of its keyboard lift with it.
+    <div className={cn(ASIDE_TRAY, "flex-col gap-1.5", className)} onMouseDown={(event) => event.preventDefault()}>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setAsideTrayExpanded(asideId, !expanded)}
+        className="flex w-full items-center gap-1.5 rounded text-left text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <FileText className="h-3 w-3 shrink-0" aria-hidden />
+        <span className={ASIDE_META}>
+          {drafts.length === 0 ? "No drafts" : `${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"}`}
+        </span>
+        <span className="flex-1" />
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
+      </button>
+      {expanded && (
+        <AsideDraftStrip
+          drafts={drafts}
+          openScope={surface.openScope}
+          onOpen={surface.openDraft}
+          onNew={surface.startDraft}
+          onDelete={surface.discardDraft}
+        />
+      )}
+    </div>
+  )
+}
+
 interface AsideDraftsProps {
   workspaceId: string
   asideId: string
@@ -17,16 +65,15 @@ interface AsideDraftsProps {
 }
 
 /**
- * What you are writing here, as opposed to what you are saying to Ariadne.
+ * What you are writing here, as opposed to what you are saying to Ariadne, on
+ * a surface with room for both at once.
  *
- * Two things stacked, each carrying its own controls: the tray of drafts,
- * which folds to its count the way the composer's attachment tray does, and —
- * below it, so its controls sit against the thing they act on — the draft
+ * Two things stacked, each carrying its own controls: the tray of drafts, and
+ * — below it, so its controls sit against the thing they act on — the draft
  * currently open for writing.
  */
 export function AsideDrafts({ workspaceId, asideId, surface, className, style }: AsideDraftsProps) {
   const drafts = useAsideDrafts(workspaceId, asideId)
-  const expanded = useAsideTrayExpanded(asideId)
   const open = surface.openScope
 
   return (
@@ -36,30 +83,7 @@ export function AsideDrafts({ workspaceId, asideId, surface, className, style }:
       className={cn("flex min-h-0 flex-col", className)}
       style={style}
     >
-      <div className={cn(ASIDE_TRAY, "flex-col gap-1.5")}>
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={() => setAsideTrayExpanded(asideId, !expanded)}
-          className="flex w-full items-center gap-1.5 rounded text-left text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        >
-          <FileText className="h-3 w-3 shrink-0" aria-hidden />
-          <span className={ASIDE_META}>
-            {drafts.length === 0 ? "No drafts" : `${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"}`}
-          </span>
-          <span className="flex-1" />
-          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
-        </button>
-        {expanded && (
-          <AsideDraftStrip
-            drafts={drafts}
-            openScope={open}
-            onOpen={surface.openDraft}
-            onNew={surface.startDraft}
-            onDelete={surface.discardDraft}
-          />
-        )}
-      </div>
+      <AsideDraftTray workspaceId={workspaceId} asideId={asideId} surface={surface} />
       {open && (
         <AsideDraftEditor
           key={open}

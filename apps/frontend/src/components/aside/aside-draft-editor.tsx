@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { Send, X } from "lucide-react"
+import { ArrowLeft, Send, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { MessageComposer, type ComposerControlHandle } from "@/components/composer"
 import { appendAgentBlockNode, type AgentBlockData } from "@/components/timeline/agent-block-context"
@@ -14,6 +14,11 @@ interface AsideDraftEditorProps {
   /** One line of the draft's own body, so its bar names the thing it acts on. */
   title?: string
   onClose: () => void
+  /**
+   * The draft has the whole surface to itself (the phone sheet), so its way
+   * out is a way back to what it replaced rather than a close.
+   */
+  takeover?: boolean
   /** Hand the body and files to the host composer: null when refused, else the destination's verdict. */
   onSendToComposer: (handoff: AsideDraftHandoff) => Promise<{ delivered: Promise<boolean> } | null>
   /** Agent replies queued by "Insert into draft"; appended as attributed blocks once the draft has loaded. */
@@ -41,6 +46,7 @@ export function AsideDraftEditor({
   scope,
   title,
   onClose,
+  takeover = false,
   onSendToComposer,
   pendingAgentBlocks,
   onPendingAgentBlocksConsumed,
@@ -66,7 +72,19 @@ export function AsideDraftEditor({
     <div className="flex h-full min-h-0 flex-col" data-testid="aside-draft-editor" data-draft-scope={scope}>
       {/* This draft's own bar, directly above this draft's body: every control
           on it acts on the words below it, and nothing on it acts on the tray. */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-y border-border/70 bg-muted/30 px-3">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-y border-border/70 px-3">
+        {takeover && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-1.5 h-6 w-6 shrink-0 text-muted-foreground"
+            aria-label="Back to drafts"
+            disabled={busy}
+            onClick={() => void leave()}
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </Button>
+        )}
         <span className={ASIDE_LABEL}>Draft</span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{title || "Empty"}</span>
         <Button
@@ -79,16 +97,18 @@ export function AsideDraftEditor({
           <Send className="h-3 w-3" />
           Send to composer
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0 text-muted-foreground"
-          aria-label="Close draft"
-          disabled={busy}
-          onClick={() => void leave()}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
+        {!takeover && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 text-muted-foreground"
+            aria-label="Close draft"
+            disabled={busy}
+            onClick={() => void leave()}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
       <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-1.5">
         {/* Expanded: the editor fills the pane like a document, with the
@@ -118,7 +138,6 @@ export function AsideDraftEditor({
           messageSendMode="cmdEnter"
           scopeId={scope}
           autoFocus
-          initialMobileChromeOpen
         />
       </div>
     </div>

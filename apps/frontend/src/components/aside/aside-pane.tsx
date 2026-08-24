@@ -8,11 +8,11 @@ import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threa/types"
 import { AsideAnchorLine } from "./aside-anchor-line"
 import { AsideConversation } from "./aside-conversation"
-import { AsideDrafts } from "./aside-drafts"
+import { AsideDraftEditor } from "./aside-draft-editor"
+import { AsideDraftTray } from "./aside-drafts"
 import { AsideGlyph, AsidePrivateBadge } from "./aside-chrome"
-import { AsideSplitHandle } from "./aside-split-handle"
+import { useAsideDrafts } from "./use-aside-drafts"
 import { useAsideDraftSurface } from "./use-aside-draft-surface"
-import { useAsideSplit } from "./use-aside-split"
 
 interface AsidePaneProps {
   workspaceId: string
@@ -24,26 +24,28 @@ interface AsidePaneProps {
 }
 
 /**
- * The aside in one column, for the phone sheet: what it is, what it is
- * anchored to, what you are writing, and the conversation you are writing it
- * from. Drafts sit above the chat because the chat owns the bottom edge — its
- * composer is where the cursor rests, and a draft opening under it would keep
- * moving the one input that never moves anywhere else in the app.
+ * The aside on a phone: one thing at a time, under its own header. Either the
+ * conversation with Ariadne — the drafts folded into a tray above it — or one
+ * draft, open for writing, with the whole sheet to itself.
+ *
+ * Not both: a phone sheet split between a draft and a timeline gives each half
+ * a few lines and a keyboard takes what is left, so neither is usable. The
+ * stage stacks them side by side because it has the room to; this doesn't.
  */
 export function AsidePane({ workspaceId, asideId, hostStreamId, originScope }: AsidePaneProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
-  // No gaps in this column: the drafts region's border and the divider sit
-  // flush, so only the divider's hairline is between the two halves.
-  const split = useAsideSplit(asideId, { reservedHeight: 1 })
   const streams = useWorkspaceStreams(workspaceId)
+  const drafts = useAsideDrafts(workspaceId, asideId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
+  const open = draftSurface.openScope
 
   return (
     <div
       data-testid="aside-pane"
       data-aside-id={asideId}
       data-editor-zone="aside"
+      data-view={open ? "draft" : "chat"}
       className="flex h-full min-h-0 flex-col border-t-2 border-primary/70 bg-card"
     >
       <TooltipProvider delayDuration={300}>
@@ -63,26 +65,33 @@ export function AsidePane({ workspaceId, asideId, hostStreamId, originScope }: A
           </Button>
         </header>
       </TooltipProvider>
-      <AsideAnchorLine workspaceId={workspaceId} hostStreamId={hostStreamId} anchorId={aside?.parentAnchorId} />
-      <div ref={split.containerRef} className="flex min-h-0 flex-1 flex-col">
-        <AsideDrafts
+      {open ? (
+        <AsideDraftEditor
+          key={open}
+          takeover
           workspaceId={workspaceId}
-          asideId={asideId}
-          surface={draftSurface}
-          className="shrink-0 border-b bg-muted/20"
-          style={draftSurface.openScope ? { height: split.height } : undefined}
+          scope={open}
+          title={drafts.find((draft) => draft.scope === open)?.preview}
+          onClose={draftSurface.closeDraft}
+          onSendToComposer={draftSurface.sendToComposer}
+          pendingAgentBlocks={draftSurface.pendingAgentBlocks}
+          onPendingAgentBlocksConsumed={draftSurface.consumePendingAgentBlocks}
         />
-        {draftSurface.openScope && <AsideSplitHandle split={split} />}
-        <div className="relative min-h-0 flex-1">
-          <AsideConversation
-            workspaceId={workspaceId}
-            asideId={asideId}
-            aside={aside}
-            autoFocus={false}
-            onInsertAgentBlock={draftSurface.insertAgentBlock}
-          />
-        </div>
-      </div>
+      ) : (
+        <>
+          <AsideAnchorLine workspaceId={workspaceId} hostStreamId={hostStreamId} anchorId={aside?.parentAnchorId} />
+          <AsideDraftTray workspaceId={workspaceId} asideId={asideId} surface={draftSurface} className="border-b" />
+          <div className="relative min-h-0 flex-1">
+            <AsideConversation
+              workspaceId={workspaceId}
+              asideId={asideId}
+              aside={aside}
+              autoFocus={false}
+              onInsertAgentBlock={draftSurface.insertAgentBlock}
+            />
+          </div>
+        </>
+      )}
     </div>
   )
 }
