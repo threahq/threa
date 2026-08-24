@@ -3,7 +3,7 @@ import { act, renderHook } from "@testing-library/react"
 import { spyOnExport } from "@/test"
 import * as handoffModule from "@/hooks/use-aside-handoff"
 import * as draftsModule from "./use-aside-drafts"
-import { asideOpenDraft, openAside, resetAsideStoreCache } from "@/stores/aside-store"
+import { asideOpenDraft, asidePendingAgentBlocksForTest, openAside, resetAsideStoreCache } from "@/stores/aside-store"
 import { useAsideDraftSurface } from "./use-aside-draft-surface"
 
 const ASIDE = "stream_aside_1"
@@ -53,6 +53,19 @@ describe("useAsideDraftSurface", () => {
     expect(order).toEqual(["purged:closed"])
     expect(purge).toHaveBeenCalledWith("aside:stream_aside_1:draft_1")
     expect(asideOpenDraft(ASIDE)).toBeNull()
+  })
+
+  it("takes a block still queued for the discarded draft with it", async () => {
+    spyOnExport(draftsModule, "useDeleteAsideDraft").mockReturnValue((() => async () => {}) as never)
+    const { result } = renderHook(() => useAsideDraftSurface(params))
+    act(() => result.current.insertAgentBlock({ authorId: "persona_01ARIADNE", authorName: "Ariadne", content: [] }))
+    const scope = asideOpenDraft(ASIDE)!
+
+    await act(async () => result.current.discardDraft(scope))
+
+    // The block was meant for the draft that was just thrown away; it must not
+    // land in whatever is opened next.
+    expect(asidePendingAgentBlocksForTest(ASIDE)).toEqual([])
   })
 
   it("leaves another draft open when a different one is discarded", async () => {

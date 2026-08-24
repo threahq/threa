@@ -33,7 +33,6 @@ describe("AsideDraftStrip", () => {
     )
 
     expect(screen.getByRole("button", { name: "Open draft: Worth a caveat before Thursday" })).toHaveTextContent("9m")
-    // The open one says so to a screen reader, not only through its tint.
     expect(screen.getByRole("button", { name: "Open draft: Empty draft" })).toHaveAttribute("aria-current", "true")
     expect(screen.getByRole("button", { name: "Open draft: Worth a caveat before Thursday" })).not.toHaveAttribute(
       "aria-current"

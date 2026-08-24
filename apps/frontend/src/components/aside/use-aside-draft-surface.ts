@@ -82,8 +82,13 @@ export function useAsideDraftSurface(params: {
   const discardDraft = useCallback(
     (scope: string) => {
       // Closed first: the editor's teardown flush would otherwise re-save the
-      // draft it is still holding, moments after the row was deleted.
-      if (asideOpenDraft(asideId) === scope) setAsideOpenDraft(asideId, null)
+      // draft it is still holding, moments after the row was deleted. Anything
+      // still queued was queued FOR this draft, so it goes with it rather than
+      // landing in whatever is opened next.
+      if (asideOpenDraft(asideId) === scope) {
+        setAsideOpenDraft(asideId, null)
+        clearAsideAgentBlocks(asideId)
+      }
       void deleteDraft(scope)
     },
     [asideId, deleteDraft]
