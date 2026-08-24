@@ -63,10 +63,12 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   // changes — the keyboard, mostly — must land instantly: the host resizes in
   // steps as the keyboard animates, and easing each step left the sheet
   // trailing it.
-  const [settling, setSettling] = useState(false)
+  // A count, not a flag: a second settle inside the window restarts the
+  // timer instead of leaving the first one to cut the ease short.
+  const [settling, setSettling] = useState(0)
   useEffect(() => {
     if (!settling) return
-    const timer = window.setTimeout(() => setSettling(false), SETTLE_MS)
+    const timer = window.setTimeout(() => setSettling(0), SETTLE_MS)
     return () => window.clearTimeout(timer)
   }, [settling])
   // Writing takes the sheet over: the keyboard takes the bottom of the
@@ -155,7 +157,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   // back in.
   const settle = (next: AsideDetent) => {
     if (next === "closed") return closeAside()
-    setSettling(true)
+    setSettling((count) => count + 1)
     setAsideSheetDetent(next)
   }
 
@@ -189,7 +191,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         data-suppress-pull-refresh="true"
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-xl border-t-2 border-primary/70 bg-background shadow-lg",
-          settling && !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
+          settling > 0 && !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
         )}
         style={{ height }}
       >

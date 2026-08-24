@@ -375,9 +375,23 @@ describe("aside surfaces", () => {
       const handle = screen.getByTestId("aside-sheet-handle")
       expect(sheet.className).not.toContain("transition-[height]")
 
-      fireEvent.keyDown(handle, { key: "ArrowUp" })
-      expect(getAsideSheetDetent()).toBe("full")
-      expect(sheet.className).toContain("transition-[height]")
+      vi.useFakeTimers()
+      try {
+        fireEvent.keyDown(handle, { key: "ArrowUp" })
+        expect(getAsideSheetDetent()).toBe("full")
+        expect(sheet.className).toContain("transition-[height]")
+
+        // A second settle inside the window restarts it: the ease must outlive
+        // the second transition, not end on the first one's clock.
+        act(() => vi.advanceTimersByTime(150))
+        fireEvent.keyDown(handle, { key: "ArrowDown" })
+        act(() => vi.advanceTimersByTime(100))
+        expect(sheet.className).toContain("transition-[height]")
+        act(() => vi.advanceTimersByTime(150))
+        expect(sheet.className).not.toContain("transition-[height]")
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it("reaches the same detents from the keyboard, since the sheet hides the surface picker", () => {
