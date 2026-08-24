@@ -115,7 +115,7 @@ describe("EffectRow", () => {
     return render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter>
-          <EffectRow effect={e} workspaceId={workspaceId} getSettingsUrl={ctx.getSettingsUrl} variant="session" />
+          <EffectRow effect={e} workspaceId={workspaceId} getSettingsUrl={ctx.getSettingsUrl} variant="grid" />
         </MemoryRouter>
       </QueryClientProvider>
     )

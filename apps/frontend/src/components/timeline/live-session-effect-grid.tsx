@@ -7,7 +7,7 @@ import {
 } from "@threa/types"
 import { useAgentTrace } from "@/hooks/use-agent-trace"
 import { isDescribedEffect } from "@/lib/effect-links"
-import { SessionEffectList } from "./session-effect-list"
+import { SessionEffectGrid } from "./session-effect-grid"
 
 interface KeyedEffect {
   key: string
@@ -54,7 +54,7 @@ function keyedStepEffects(steps: AgentSessionStep[]): KeyedEffect[] {
  * A separate component so the subscription can be conditional on the session
  * still running — the caller mounts it only then (INV-18).
  */
-export function LiveSessionEffectList({
+export function LiveSessionEffectGrid({
   workspaceId,
   sessionId,
   priorEffects,
@@ -103,5 +103,5 @@ export function LiveSessionEffectList({
     setEffects((prev) => [...prev, ...additions].slice(0, EFFECTS_PER_SESSION_MAX))
   }, [steps])
 
-  return <SessionEffectList effects={effects} />
+  return <SessionEffectGrid effects={effects} />
 }

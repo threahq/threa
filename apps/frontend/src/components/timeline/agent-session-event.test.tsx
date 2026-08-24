@@ -435,8 +435,8 @@ describe("AgentSessionEvent effects", () => {
     expect(screen.getByRole("button", { name: /Saved a memo/ })).toBeInTheDocument()
   })
 
-  it("shows changes as one readable vertical list", () => {
-    const { container } = renderInWorkspace([
+  it("spans the last line across both columns on an odd count", () => {
+    renderInWorkspace([
       startedEvent(),
       completedEvent([
         { kind: "memo", label: "Memo A", target: "memo_1" },
@@ -445,9 +445,8 @@ describe("AgentSessionEvent effects", () => {
       ]),
     ])
 
-    expect(screen.getByText("Changes made")).toBeInTheDocument()
-    expect(screen.getByRole("list", { name: "Changes made" })).toBeInTheDocument()
-    expect(container.querySelector(".effect-grid")).toBeNull()
+    expect(screen.getByRole("button", { name: /Memo C/ }).className).toContain("effect-grid-span")
+    expect(screen.getByRole("button", { name: /Memo A/ }).className).not.toContain("effect-grid-span")
   })
 
   it("renders a routeless effect as inert text that cannot be focused", () => {
@@ -462,7 +461,7 @@ describe("AgentSessionEvent effects", () => {
     expect(screen.queryByRole("link", { name: /Reminder on Friday/ })).not.toBeInTheDocument()
   })
 
-  it("renders no change list while a running session has written nothing yet", () => {
+  it("renders no grid while a running session has written nothing yet", () => {
     renderInWorkspace([startedEvent()])
 
     expect(screen.queryByText("Saved a memo")).not.toBeInTheDocument()
@@ -498,7 +497,7 @@ describe("AgentSessionEvent effects", () => {
   })
 
   // The row on screen may not move when the next one lands (INV-21), and it may
-  // not survive into the terminal list twice.
+  // not survive into the terminal grid twice.
   it("appends live rows without reordering or dropping the ones already shown", async () => {
     const first = toolStep(1, { effects: [{ kind: "memo", label: "Memo A", target: "memo_1" }] })
     const second = toolStep(2, { effects: [{ kind: "memo", label: "Memo B", target: "memo_2" }] })
@@ -540,7 +539,7 @@ describe("AgentSessionEvent effects", () => {
   // `retrying` is started + interrupted with no terminal event — an attempt is
   // running RIGHT NOW, so it has to stream too. The earlier attempt's writes only
   // survive on the interrupted payload (the retry's `upsertStep` resets the step's
-  // effects), so they seed the list and the new attempt appends to them.
+  // effects), so they seed the grid and the new attempt appends to them.
   it("keeps an interrupted attempt's writes and streams the retry's onto the end", async () => {
     const interrupted = createSessionEvent("agent_session:interrupted", {
       sessionId: "session_fx",
@@ -581,7 +580,7 @@ describe("AgentSessionEvent effects", () => {
   // Only a bare `{ kind }` is a layer-0 marker — a mutating tool that declared
   // nothing. There is no label, target or diff to render, so it earns a count
   // and no row.
-  it("counts bare layer-0 markers on the meta line instead of adding list rows", () => {
+  it("counts bare layer-0 markers on the meta line instead of adding grid rows", () => {
     renderInWorkspace([startedEvent(), completedEvent([{ kind: "other" }, { kind: "brief" }])])
 
     expect(screen.getByText(/3 steps • 1\.0s • 1 message sent • 2 changes/)).toBeInTheDocument()
@@ -589,7 +588,7 @@ describe("AgentSessionEvent effects", () => {
   })
 
   // The shape `update_user_settings` actually declares: no label at all, named
-  // from its kind, described by target + diff. Filtering the list on `label`
+  // from its kind, described by target + diff. Filtering the grid on `label`
   // would have dropped the write this whole feature exists to surface.
   it("renders a label-less settings write as a row, not a bare count", () => {
     renderInWorkspace([
@@ -629,16 +628,19 @@ describe("AgentSessionEvent effects", () => {
     expect(screen.getByText(/dark/)).toBeInTheDocument()
   })
 
-  it("labels the old and new values instead of compressing the change into an arrow", () => {
+  // The columns are decided by the CONTAINER, not the viewport: a board card is
+  // a narrow column inside a wide window, and a viewport breakpoint gave it two
+  // 145px columns that clipped every value. jsdom cannot evaluate a container
+  // query, so this pins the wiring; the layout itself is checked by screenshot.
+  it("sizes its columns from the container, not the viewport", () => {
     const { container } = renderInWorkspace([
       startedEvent(),
       completedEvent([{ kind: "settings", target: "theme", before: "light", after: "dark" }]),
     ])
 
-    expect(screen.getByText("Before")).toBeInTheDocument()
-    expect(screen.getByText("After")).toBeInTheDocument()
-    expect(container.querySelector("del")).toHaveTextContent("light")
-    expect(container.querySelector("ins")).toHaveTextContent("dark")
+    expect(container.querySelector(".effect-grid-host")).not.toBeNull()
+    expect(container.querySelector(".effect-grid")).not.toBeNull()
+    expect(container.querySelector('[class*="sm:grid-cols"]')).toBeNull()
   })
 
   // A session keeps its id across retries, so a turn that is retried twice
