@@ -92,11 +92,11 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Revised plan")).toBeInTheDocument()
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
     expect(screen.getByText("1 tool call")).toBeInTheDocument()
-    expect(screen.getAllByRole("button", { name: /tool activity/i })).toHaveLength(2)
+    expect(screen.getAllByRole("button", { name: /working/i })).toHaveLength(2)
     expect(screen.queryByText(/0 errors/)).not.toBeInTheDocument()
   })
 
-  it("previews the latest tool in the active phase and summarises settled phases as rows", () => {
+  it("previews the latest tool in the active phase and summarises settled phases as chips", () => {
     renderList(
       [
         thinking("think_1", 1, "First plan"),
@@ -124,11 +124,11 @@ describe("TraceStepList", () => {
       true
     )
 
-    expect(screen.getAllByText("Tool activity")).toHaveLength(2)
-    expect(screen.getByText("In progress")).toBeInTheDocument()
+    expect(screen.getAllByText("Working")).toHaveLength(2)
+    expect(screen.getByText("Working in progress")).toBeInTheDocument()
     expect(screen.getByText("Run current test")).toBeInTheDocument()
     expect(screen.getByText("latest preview")).toBeInTheDocument()
-    // The settled phase keeps its headline in the summary, but never a stale preview body.
+    // The settled phase keeps its headline as a chip, but never a stale preview body.
     expect(screen.getByText("Read old file")).toBeInTheDocument()
     expect(screen.queryByText("old preview")).not.toBeInTheDocument()
   })
@@ -141,7 +141,7 @@ describe("TraceStepList", () => {
       createStep({ id: "tool_2", stepNumber: 4 }),
     ])
 
-    expect(screen.getAllByText("Tool activity")).toHaveLength(1)
+    expect(screen.getAllByText("Working")).toHaveLength(1)
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
   })
 
@@ -182,8 +182,8 @@ describe("TraceStepList", () => {
       createStep({ id: "tool_2", stepNumber: 3 }),
     ])
 
-    expect(screen.getByText("Tool activity")).toBeInTheDocument()
-    expect(screen.getByText("Finished")).toBeInTheDocument()
+    expect(screen.getByText("Working")).toBeInTheDocument()
+    expect(screen.getByText("Working complete")).toBeInTheDocument()
     expect(screen.queryByText("first output line")).not.toBeInTheDocument()
   })
 
@@ -191,7 +191,7 @@ describe("TraceStepList", () => {
     const initial = [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2 })]
     const view = renderList(initial, true)
 
-    expect(screen.getByRole("button", { name: /tool activity/i })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "false")
 
     view.rerender(
       listElement(
@@ -219,11 +219,11 @@ describe("TraceStepList", () => {
     const steps = [thinking("think_1", 1, "Plan"), createStep({ id: "tool_1", stepNumber: 2, messageId: "msg_tool" })]
     const view = renderList(steps)
 
-    expect(screen.getByRole("button", { name: /tool activity/i })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "false")
 
     view.rerender(listElement(steps, false, "msg_tool"))
 
-    expect(screen.getByRole("button", { name: /tool activity/i })).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "true")
     expect(screen.getByText("Run bash")).toBeInTheDocument()
   })
 
@@ -247,19 +247,19 @@ describe("TraceStepList", () => {
     expect(screen.getByText(/1 error/)).toBeInTheDocument()
     expect(screen.getByText("boom stack")).toBeInTheDocument()
 
-    await user.click(screen.getByRole("button", { name: /tool activity/i }))
+    await user.click(screen.getByRole("button", { name: /working/i }))
     expect(screen.queryByText("boom stack")).not.toBeInTheDocument()
   })
 
-  it("groups bot tools without thinking under a plain tool activity section", () => {
+  it("groups bot tools without thinking under a bare Working section", () => {
     renderList([createStep({ id: "tool_1", stepNumber: 1 }), createStep({ id: "tool_2", stepNumber: 2 })])
 
-    expect(screen.getByText("Tool activity")).toBeInTheDocument()
+    expect(screen.getByText("Working")).toBeInTheDocument()
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument()
   })
 
-  it("counts paired use/result steps as one call each and spells out repeated calls", () => {
+  it("counts paired use/result steps as one call each and collapses repeats into one chip", () => {
     renderList([
       toolUse("use_1", 1, "Running shell command"),
       toolResult("res_1", 2, "Running shell command"),
@@ -268,15 +268,11 @@ describe("TraceStepList", () => {
     ])
 
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
-    const summary = screen.getByRole("listitem", { name: /Running shell command/ })
-    expect(summary).toHaveTextContent("Running shell command")
-    expect(summary).toHaveTextContent("2 calls")
-    expect(summary).toHaveTextContent("Complete")
-    expect(summary).toHaveAccessibleName("Running shell command, 2 calls, Complete")
-    expect(summary).not.toHaveTextContent("×")
+    expect(screen.getByText("Running shell command ×2")).toBeInTheDocument()
+    expect(screen.queryByText("Running shell command")).not.toBeInTheDocument()
   })
 
-  it("keeps distinct tools as their own rows within a mixed run", () => {
+  it("keeps distinct tools as their own chips within a mixed run", () => {
     renderList([
       toolUse("use_1", 1, "Running shell command"),
       toolResult("res_1", 2, "Running shell command"),
@@ -287,8 +283,8 @@ describe("TraceStepList", () => {
     ])
 
     expect(screen.getByText("3 tool calls")).toBeInTheDocument()
-    expect(screen.getByRole("listitem", { name: /Running shell command/ })).toHaveTextContent("2 calls")
-    expect(screen.getByRole("listitem", { name: /Reading file src\/app\.ts/ })).toHaveTextContent("Complete")
+    expect(screen.getByText("Running shell command ×2")).toBeInTheDocument()
+    expect(screen.getByText("Reading file src/app.ts")).toBeInTheDocument()
   })
 
   it("says one call and drops the repeat suffix for a single tool call", () => {
@@ -298,7 +294,7 @@ describe("TraceStepList", () => {
     expect(screen.getByText("Running shell command")).toBeInTheDocument()
   })
 
-  it("shows the overflow affordance over deduped summaries, not steps", () => {
+  it("shows the overflow affordance over deduped chips, not steps", () => {
     const steps = ["alpha", "alpha", "bravo", "charlie", "delta"].flatMap((name, index) => [
       toolUse(`use_${index}`, index * 2 + 1, `Running ${name}`),
       toolResult(`res_${index}`, index * 2 + 2, `Running ${name}`),
@@ -306,9 +302,9 @@ describe("TraceStepList", () => {
     renderList(steps)
 
     expect(screen.getByText("5 tool calls")).toBeInTheDocument()
-    expect(screen.getByRole("listitem", { name: /Running alpha/ })).toHaveTextContent("2 calls")
-    // 4 deduped summaries, 3 shown → one hidden, even though 10 steps went in.
-    expect(screen.getByText("1 more call")).toBeInTheDocument()
+    expect(screen.getByText("Running alpha ×2")).toBeInTheDocument()
+    // 4 deduped chips, 3 shown → one hidden, even though 10 steps went in.
+    expect(screen.getByText("+1")).toBeInTheDocument()
   })
 
   it("counts a parallel batch of the same tool as one call per use", () => {
@@ -320,7 +316,7 @@ describe("TraceStepList", () => {
     ])
 
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
-    expect(screen.getByRole("listitem", { name: /Running shell command/ })).toHaveTextContent("2 calls")
+    expect(screen.getByText("Running shell command ×2")).toBeInTheDocument()
   })
 
   it("counts a parallel batch whose results come back out of order", () => {
@@ -334,7 +330,7 @@ describe("TraceStepList", () => {
     expect(screen.getByText("2 tool calls")).toBeInTheDocument()
   })
 
-  it("keeps a mixed parallel batch as one row per distinct tool", () => {
+  it("keeps a mixed parallel batch as one chip per distinct tool", () => {
     renderList([
       toolUse("use_1", 1, "Running shell command"),
       toolUse("use_2", 2, "Reading file src/app.ts"),
@@ -355,7 +351,7 @@ describe("TraceStepList", () => {
     expect(screen.queryByText("Used bash")).not.toBeInTheDocument()
   })
 
-  it("groups and summarizes sealed steps from the decrypt cache", () => {
+  it("groups and chips sealed steps from the decrypt cache", () => {
     const sealedContent = (headline: string, label: string) =>
       JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections: [{ label, body: "sealed", lang: null }] })
     seedDecryption("sealed_use", {

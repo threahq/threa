@@ -171,7 +171,7 @@ export function unionSessionEffects(
 
 /**
  * One effect's row content, shared by the trace step list and the in-stream
- * summary so the two cannot drift (INV-35) — they had drifted into byte-identical
+ * grid so the two cannot drift (INV-35) — they had drifted into byte-identical
  * copies once already.
  *
  * The label is capped ONLY when a diff shares the row. Capping unconditionally
@@ -183,55 +183,34 @@ export function EffectRowContent({ effect, trailing }: { effect: AgentToolEffect
   const Icon = kindIcon(effect.kind)
   return (
     <>
-      <Icon aria-hidden className="mt-0.5 h-3 w-3 shrink-0 opacity-70" />
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate">{effectLabel(effect)}</span>
-          {trailing}
+      <Icon aria-hidden className="h-3 w-3 shrink-0 opacity-70" />
+      <span className={cn("truncate", diff ? "max-w-[55%] shrink-0" : "min-w-0")}>{effectLabel(effect)}</span>
+      {diff && (
+        <span className="min-w-0 truncate text-muted-foreground/70">
+          {diff.before !== undefined && `${diff.before} `}→ {diff.after}
         </span>
-        {diff && (
-          <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-            {diff.before !== undefined && (
-              <span className="inline-flex min-w-0 items-baseline gap-1.5">
-                <span className="shrink-0 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Before
-                </span>
-                <del className="truncate rounded bg-destructive/[0.08] px-1.5 py-0.5 text-destructive/80 decoration-destructive/50">
-                  {diff.before}
-                </del>
-              </span>
-            )}
-            <span className="inline-flex min-w-0 items-baseline gap-1.5">
-              <span className="shrink-0 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
-                After
-              </span>
-              <ins className="truncate rounded bg-primary/10 px-1.5 py-0.5 text-foreground no-underline">
-                {diff.after}
-              </ins>
-            </span>
-          </span>
-        )}
-      </span>
+      )}
+      {trailing}
     </>
   )
 }
 
 /**
  * Per-surface styling for a row. The affordance logic below is shared; only
- * these class names differ between the in-stream summary and the trace step list,
+ * these class names differ between the in-stream grid and the trace step list,
  * so the two cannot drift again (INV-29, INV-35).
  */
 const EFFECT_ROW_VARIANTS = {
-  session: {
+  grid: {
     interactive:
-      "flex w-full min-w-0 items-start gap-2 py-2 text-left text-muted-foreground no-underline transition-colors hover:text-primary",
-    inert: "flex w-full min-w-0 items-start gap-2 py-2 text-muted-foreground/70",
+      "flex min-w-0 items-center gap-1.5 py-[3px] text-left text-muted-foreground no-underline transition-colors hover:text-primary",
+    inert: "flex min-w-0 items-center gap-1.5 py-[3px] text-muted-foreground/60",
     chevron: "ml-auto shrink-0 text-muted-foreground/50",
   },
   list: {
-    interactive: "flex w-full min-w-0 items-start gap-2 text-left text-primary hover:underline",
-    inert: "flex w-full min-w-0 items-start gap-2 text-muted-foreground",
-    chevron: "ml-auto shrink-0 text-muted-foreground/60",
+    interactive: "flex min-w-0 items-center gap-1.5 text-left text-primary hover:underline",
+    inert: "flex min-w-0 items-center gap-1.5 text-muted-foreground",
+    chevron: "shrink-0 text-muted-foreground/60",
   },
 } as const
 

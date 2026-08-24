@@ -30,7 +30,7 @@ function sessionEvent(eventType: StreamEvent["eventType"], payload: unknown): St
 }
 
 // A terminal board session renders the shared timeline card with no extra
-// providers, so the change list must behave identically here — this is the surface
+// providers, so the grid must behave identically here — this is the surface
 // that calls `AgentSessionEvent` with `events` only.
 describe("BoardEventRowItem session effects", () => {
   beforeEach(() => {
@@ -41,7 +41,7 @@ describe("BoardEventRowItem session effects", () => {
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
   })
 
-  it("renders the change list without nesting an interactive element in the card link", () => {
+  it("renders the effect grid without nesting an interactive element in the card link", () => {
     const row = {
       kind: "session",
       key: "session:session_fx",
@@ -118,7 +118,7 @@ describe("BoardEventRowItem running session", () => {
 
   function mount(onRedirectSession?: () => void) {
     return render(
-      // A running card mounts the live effect list, which subscribes through
+      // A running card mounts the live effect grid, which subscribes through
       // `useAgentTrace` — so this harness needs the query client the board sits
       // under in the app.
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
