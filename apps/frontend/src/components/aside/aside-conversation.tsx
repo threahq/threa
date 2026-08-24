@@ -26,21 +26,26 @@ export function AsideConversation({
 }: AsideConversationProps) {
   return (
     <StreamErrorBoundary streamId={asideId}>
+      {/* Named because the stage puts two live timelines side by side and the
+          host's composer is a real one too — anything reaching for "the aside's
+          editor" has to say which. */}
       <AgentBlockProvider onInsert={onInsertAgentBlock}>
-        <StreamContent
-          workspaceId={workspaceId}
-          streamId={asideId}
-          stream={aside}
-          autoFocus={autoFocus}
-          emptyState={
-            <div className="max-w-[15rem] px-6 text-center">
-              <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
-              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
-              </p>
-            </div>
-          }
-        />
+        <div data-testid="aside-conversation" className="h-full">
+          <StreamContent
+            workspaceId={workspaceId}
+            streamId={asideId}
+            stream={aside}
+            autoFocus={autoFocus}
+            emptyState={
+              <div className="max-w-[15rem] px-6 text-center">
+                <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
+                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
+                </p>
+              </div>
+            }
+          />
+        </div>
       </AgentBlockProvider>
     </StreamErrorBoundary>
   )

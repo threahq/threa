@@ -105,6 +105,9 @@ async function openMessageActions(page: Page, streamId: string, prefix: string, 
 }
 
 const stage = (page: Page) => page.getByTestId("aside-stage")
+// The stage carries two live timelines and two real composers; this is the
+// aside's own.
+const asideChat = (page: Page) => page.getByTestId("aside-conversation")
 const anchorRow = (page: Page, streamId: string) => hostScroller(page, streamId).locator("[data-aside-id]").first()
 
 async function expectNoAsideChrome(page: Page): Promise<void> {
@@ -188,16 +191,16 @@ test.describe("Aside — desktop surface", () => {
 
     // Talk to Ariadne in the aside: the first turn carries the viewport
     // snapshot ("what you saw") and the companion answers in the aside pane.
-    const asideEditor = stage(page).locator("[contenteditable='true']")
+    const asideEditor = asideChat(page).locator("[contenteditable='true']")
     await asideEditor.click()
     await page.keyboard.type("What is this about?")
     await page.keyboard.press("Meta+Enter")
-    await expect(stage(page).locator(".message-item").filter({ hasText: "What is this about?" })).toBeVisible({
+    await expect(asideChat(page).locator(".message-item").filter({ hasText: "What is this about?" })).toBeVisible({
       timeout: 10000,
     })
-    await expect(stage(page).getByText(/What you saw in/)).toBeVisible({ timeout: 15000 })
+    await expect(asideChat(page).getByText(/What you saw in/)).toBeVisible({ timeout: 15000 })
     await expect(
-      stage(page)
+      asideChat(page)
         .locator(".message-item")
         .filter({ hasText: /stub response from the companion/ })
     ).toBeVisible({ timeout: AGENT_REPLY_TIMEOUT })
