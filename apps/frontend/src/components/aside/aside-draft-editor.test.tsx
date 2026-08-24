@@ -58,7 +58,7 @@ describe("AsideDraftEditor — Insert into draft", () => {
       <AsideDraftEditor
         workspaceId="ws_1"
         scope="aside:stream_aside:draft_1"
-        tabs={null}
+        strip={null}
         onClose={vi.fn()}
         onSendToComposer={vi.fn(async () => null)}
         pendingAgentBlocks={[
@@ -116,7 +116,7 @@ describe("AsideDraftEditor — Insert into draft", () => {
       <AsideDraftEditor
         workspaceId="ws_1"
         scope="aside:stream_aside:draft_1"
-        tabs={null}
+        strip={null}
         onClose={vi.fn()}
         onSendToComposer={vi.fn(async () => null)}
         pendingAgentBlocks={[{ authorId: "bot_1", authorName: "Deploybot", content: [] }]}

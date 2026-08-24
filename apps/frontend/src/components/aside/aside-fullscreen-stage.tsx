@@ -108,7 +108,7 @@ export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, origi
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-[1.02] basis-0 flex-col gap-3">
+        <div className="flex min-h-0 min-w-0 flex-[1.02] basis-0 flex-col gap-3">
           <AsideDrafts
             workspaceId={workspaceId}
             asideId={asideId}

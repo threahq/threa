@@ -1,18 +1,19 @@
 import { useEffect, useRef, type ReactNode } from "react"
-import { ChevronUp, Send, Trash2 } from "lucide-react"
+import { ChevronUp, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { MessageComposer, type ComposerControlHandle } from "@/components/composer"
 import { appendAgentBlockNode, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { useDraftComposer } from "@/hooks/use-draft-composer"
 import { useAsideDraftActions, type AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
-import { ASIDE_LABEL, ASIDE_PANE_HEAD } from "./aside-chrome"
+import { cn } from "@/lib/utils"
+import { ASIDE_LABEL, ASIDE_TRAY } from "./aside-chrome"
 
 interface AsideDraftEditorProps {
   workspaceId: string
   /** `aside:{asideId}:{draftId}` — the one draft this editor writes. */
   scope: string
-  /** The draft strip, rendered into this pane's head so the drafts stay one row. */
-  tabs: ReactNode
+  /** The drafts tray, rendered into this pane's head so there is one drafts row, not two. */
+  strip: ReactNode
   onClose: () => void
   /** Hand the body and files to the host composer: null when refused, else the destination's verdict. */
   onSendToComposer: (handoff: AsideDraftHandoff) => Promise<{ delivered: Promise<boolean> } | null>
@@ -38,7 +39,7 @@ interface AsideDraftEditorProps {
 export function AsideDraftEditor({
   workspaceId,
   scope,
-  tabs,
+  strip,
   onClose,
   onSendToComposer,
   pendingAgentBlocks,
@@ -46,7 +47,7 @@ export function AsideDraftEditor({
 }: AsideDraftEditorProps) {
   const composer = useDraftComposer({ workspaceId, draftKey: scope, scopeId: scope })
   const controlRef = useRef<ComposerControlHandle | null>(null)
-  const { send, leave, remove, busy, canSend } = useAsideDraftActions(composer, {
+  const { send, leave, busy, canSend } = useAsideDraftActions(composer, {
     onSendToComposer,
     onDone: onClose,
   })
@@ -63,42 +64,38 @@ export function AsideDraftEditor({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="aside-draft-editor" data-draft-scope={scope}>
-      <div className={ASIDE_PANE_HEAD}>
-        <span className={ASIDE_LABEL}>Draft</span>
-        {tabs}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0 text-muted-foreground"
-          aria-label="Delete draft"
-          disabled={busy}
-          onClick={() => void remove()}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0 text-muted-foreground"
-          aria-label="Close draft"
-          disabled={busy}
-          onClick={() => void leave()}
-        >
-          <ChevronUp className="h-3.5 w-3.5" />
-        </Button>
-        {/* The one way content leaves an aside, said in words — the composer's
+      {/* Two rows, not one: the tray needs the column's full width to show a
+          draft's name, and at dock width these controls would leave it four
+          characters. */}
+      <div className={cn(ASIDE_TRAY, "flex-col gap-1.5 border-b border-border/70")}>
+        <div className="flex w-full items-center gap-2">
+          <span className={ASIDE_LABEL}>Draft</span>
+          <span className="flex-1" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 text-muted-foreground"
+            aria-label="Close draft"
+            disabled={busy}
+            onClick={() => void leave()}
+          >
+            <ChevronUp className="h-3.5 w-3.5" />
+          </Button>
+          {/* The one way content leaves an aside, said in words — the composer's
             own send arrow carries the same action but nothing on screen would
             tell you where it goes. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 shrink-0 gap-1.5 rounded-full bg-primary/10 px-2.5 text-[11px] font-medium text-primary hover:bg-primary/15 hover:text-primary"
-          disabled={!canSend || busy}
-          onClick={() => void send()}
-        >
-          <Send className="h-3 w-3" />
-          Send to composer
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 shrink-0 gap-1.5 rounded-full bg-primary/10 px-2.5 text-[11px] font-medium text-primary hover:bg-primary/15 hover:text-primary"
+            disabled={!canSend || busy}
+            onClick={() => void send()}
+          >
+            <Send className="h-3 w-3" />
+            Send to composer
+          </Button>
+        </div>
+        {strip}
       </div>
       <div className="flex min-h-0 flex-1 flex-col px-2 pb-2 pt-1.5">
         {/* Expanded: the editor fills the pane like a document, with the

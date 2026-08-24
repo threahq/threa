@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react"
 import type { AgentBlockData } from "@/components/timeline/agent-block-context"
 import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
-import { closeAside } from "@/stores/aside-store"
+import { asideOpenDraft, closeAside, setAsideOpenDraft, useAsideOpenDraft } from "@/stores/aside-store"
 import { useAsideHandoff } from "@/hooks/use-aside-handoff"
 import type { AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
 
@@ -30,7 +30,7 @@ export function useAsideDraftSurface(params: {
   originScope: string
 }): AsideDraftSurface {
   const { workspaceId, asideId, hostStreamId, originScope } = params
-  const [openScope, setOpenScope] = useState<string | null>(null)
+  const openScope = useAsideOpenDraft(asideId)
   const [pendingAgentBlocks, setPendingAgentBlocks] = useState<AgentBlockData[]>([])
 
   // "Insert into draft" on one of Ariadne's replies: the block goes into an
@@ -40,7 +40,7 @@ export function useAsideDraftSurface(params: {
   const insertAgentBlock = useCallback(
     (data: AgentBlockData) => {
       setPendingAgentBlocks((pending) => [...pending, data])
-      setOpenScope((scope) => scope ?? newAsideDraftScope(asideId))
+      setAsideOpenDraft(asideId, asideOpenDraft(asideId) ?? newAsideDraftScope(asideId))
     },
     [asideId]
   )
@@ -59,8 +59,8 @@ export function useAsideDraftSurface(params: {
     [handoff, hostStreamId, originScope]
   )
 
-  const openDraft = useCallback((scope: string) => setOpenScope(scope), [])
-  const closeDraft = useCallback(() => setOpenScope(null), [])
+  const openDraft = useCallback((scope: string) => setAsideOpenDraft(asideId, scope), [asideId])
+  const closeDraft = useCallback(() => setAsideOpenDraft(asideId, null), [asideId])
 
   return {
     openScope,

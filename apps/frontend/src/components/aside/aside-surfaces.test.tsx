@@ -134,6 +134,12 @@ describe("aside surfaces", () => {
     // FROM what was just said — and the block went nowhere but the draft.
     expect(screen.getByRole("button", { name: "insert into draft" })).toBeInTheDocument()
     expect(screen.getByTestId("aside-drafts")).toHaveAttribute("data-open", "true")
+
+    // Dock and fullscreen are different components; the draft you are writing
+    // is not, so it survives the switch instead of closing mid-sentence.
+    const scope = editor.getAttribute("data-draft-scope")
+    fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
+    expect(await screen.findByTestId("aside-draft-editor")).toHaveAttribute("data-draft-scope", scope!)
   })
 
   it("should render no aside chrome while nothing is open on this page", () => {

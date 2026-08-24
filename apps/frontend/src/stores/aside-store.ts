@@ -46,6 +46,10 @@ const listeners = new Set<() => void>()
 const dockWidthByAside = new Map<string, number>()
 // Resume re-enters the surface the aside was last read in.
 const lastReadingSurfaceByAside = new Map<string, AsideSurface>()
+// The draft open for writing, per aside. Here rather than in the surface
+// component because dock and fullscreen are different components: holding it
+// locally would close the draft mid-sentence every time the surface changed.
+const openDraftByAside = new Map<string, string>()
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -98,7 +102,28 @@ export function dropAsideForHost(hostKey: string): void {
 export function resetAsideStoreCache(): void {
   lastReadingSurfaceByAside.clear()
   dockWidthByAside.clear()
+  openDraftByAside.clear()
   setState(null)
+}
+
+/** The draft scope open for writing in this aside, or null. */
+export function asideOpenDraft(asideId: string): string | null {
+  return openDraftByAside.get(asideId) ?? null
+}
+
+export function setAsideOpenDraft(asideId: string, scope: string | null): void {
+  if (scope) openDraftByAside.set(asideId, scope)
+  else openDraftByAside.delete(asideId)
+  emit()
+}
+
+/** The draft open in `asideId`, across a surface switch. */
+export function useAsideOpenDraft(asideId: string): string | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => asideOpenDraft(asideId),
+    () => asideOpenDraft(asideId)
+  )
 }
 
 /** The width this aside's dock was last dragged to, or the default. */

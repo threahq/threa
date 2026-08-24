@@ -1,8 +1,9 @@
-import { useMemo } from "react"
+import { useCallback, useMemo } from "react"
 import { useDraftsFromStore } from "@/stores/draft-store"
 import { draftInlineText } from "@/lib/drafts/decryption"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { parseAsideDraftScope } from "@/lib/drafts/aside-scope"
+import { purgeScopeDrafts } from "@/hooks/use-draft-message"
 
 export interface AsideDraftRow {
   id: string
@@ -35,4 +36,13 @@ export function useAsideDrafts(workspaceId: string, asideId: string): AsideDraft
         .sort((a, b) => b.clientUpdatedAt - a.clientUpdatedAt),
     [drafts, asideId]
   )
+}
+
+/**
+ * Throw one aside draft away, open or not — the × on its pill. One aside draft
+ * is one scope, so the scope purge IS the delete, local rows and the server
+ * removal in the same transaction (persistence stays out of the pill, INV-15).
+ */
+export function useDeleteAsideDraft(workspaceId: string): (scope: string) => Promise<void> {
+  return useCallback((scope: string) => purgeScopeDrafts(workspaceId, scope), [workspaceId])
 }
