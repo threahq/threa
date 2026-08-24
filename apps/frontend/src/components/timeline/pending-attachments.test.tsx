@@ -118,6 +118,21 @@ describe("PendingAttachments", () => {
     expect(screen.queryByRole("button", { name: /^Preview / })).not.toBeInTheDocument()
   })
 
+  it("keeps a local file the gallery can't render off the preview path", () => {
+    // Local bytes alone don't make a preview: the lightbox has no renderer for a
+    // zip, so a tap would open an empty gallery.
+    render(
+      <PendingAttachments
+        attachments={[attachment({ id: "attach_zip", filename: "archive.zip", mimeType: "application/zip" })]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("archive.zip")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Preview / })).not.toBeInTheDocument()
+  })
+
   it("shows a non-image doc without local bytes as a plain chip (reloaded draft)", () => {
     // No previewUrl and no decrypt ref: the server bytes sit behind a presign the
     // static path doesn't reach, so a reloaded non-image draft attachment falls
@@ -336,6 +351,50 @@ describe("mobile rollup and drawer", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove failed" }))
     expect(onRemove.mock.calls.map((call) => call[0])).toEqual(["attach_net", "attach_dead"])
+  })
+
+  it("previews a file from its drawer row, keeping the drawer open underneath", () => {
+    render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all attachments" }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Preview ok.png" }))
+
+    // The lightbox is on top; the sheet is still mounted below it, so closing
+    // the preview lands back on the list rather than on a bare composer.
+    expect(screen.getByRole("dialog", { name: "ok.png" })).toBeInTheDocument()
+    expect(document.querySelector("[data-vaul-drawer]")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }))
+    expect(screen.queryByRole("dialog", { name: "ok.png" })).not.toBeInTheDocument()
+    const drawer = screen.getByRole("dialog")
+    expect(within(drawer).getByText("ok.png")).toBeInTheDocument()
+    fireEvent.click(within(drawer).getByRole("button", { name: "Preview up.png" }))
+    expect(screen.getByRole("dialog", { name: "up.png" })).toBeInTheDocument()
+  })
+
+  it("previews from the drawer while the composer rests and the chips are folded away", () => {
+    render(<PendingAttachments attachments={files} onRemove={vi.fn()} workspaceId="ws_1" resting />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all attachments" }))
+    // No chip is mounted to resolve a preview source — the tray owns them.
+    expect(screen.queryByTestId("attachment-chip-row")).not.toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Preview ok.png" }))
+    expect(screen.getByRole("dialog", { name: "ok.png" })).toBeInTheDocument()
+  })
+
+  it("leaves a non-previewable drawer row untappable", () => {
+    render(
+      <PendingAttachments
+        attachments={[attachment({ id: "attach_zip", filename: "archive.zip", mimeType: "application/zip" })]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all attachments" }))
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getByText("archive.zip")).toBeInTheDocument()
+    expect(within(dialog).queryByRole("button", { name: /^Preview / })).not.toBeInTheDocument()
   })
 
   it("cancels an in-flight upload from its drawer row instead of removing it", () => {
