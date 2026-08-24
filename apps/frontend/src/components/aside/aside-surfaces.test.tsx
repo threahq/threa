@@ -364,7 +364,7 @@ describe("aside surfaces", () => {
       fireEvent.pointerCancel(handle, { pointerId: 1, clientY: 500 })
 
       expect(getAsideSheetDetent()).toBe("peek")
-      expect(sheet).toHaveStyle({ height: "45dvh" })
+      expect(sheet).toHaveStyle({ height: "45%" })
     })
 
     it("eases only the settle from a gesture, so a keyboard's viewport change lands instantly", () => {
@@ -408,15 +408,15 @@ describe("aside surfaces", () => {
       sheet.appendChild(editor)
       Object.defineProperty(editor, "isContentEditable", { value: true })
 
-      expect(sheet).toHaveStyle({ height: "45dvh" })
+      expect(sheet).toHaveStyle({ height: "45%" })
       fireEvent.focus(editor)
-      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveStyle({ height: "100%" })
       expect(getAsideSheetDetent()).toBe("full")
 
       // Writing moved the sheet and it stays moved: the keyboard leaving is
       // not a second resize, and a drag is how it comes back down.
       fireEvent.blur(editor)
-      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveStyle({ height: "100%" })
       expect(getAsideSheetDetent()).toBe("full")
     })
 
@@ -431,7 +431,7 @@ describe("aside surfaces", () => {
       sheet.appendChild(editor)
       Object.defineProperty(editor, "isContentEditable", { value: true })
       act(() => editor.focus())
-      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveStyle({ height: "100%" })
 
       // The tray is chrome, not a focus target: the tap is prevented before it
       // reaches focus, so the keyboard stays up and the sheet stays put.
@@ -441,7 +441,7 @@ describe("aside surfaces", () => {
 
       expect(toggle).toHaveAttribute("aria-expanded", "true")
       expect(document.activeElement).toBe(editor)
-      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveStyle({ height: "100%" })
       expect(getAsideSheetDetent()).toBe("full")
     })
 
@@ -457,7 +457,7 @@ describe("aside surfaces", () => {
       sheet.appendChild(editor)
       Object.defineProperty(editor, "isContentEditable", { value: true })
       act(() => editor.focus())
-      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveStyle({ height: "100%" })
       sheet.getBoundingClientRect = () => ({
         height: 360,
         top: 0,

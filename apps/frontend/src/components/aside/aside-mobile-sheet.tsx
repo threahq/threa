@@ -31,8 +31,17 @@ const REDUCED_MOTION =
 
 const SETTLE_MS = 200
 
-function viewportHeight(): number {
-  return window.visualViewport?.height ?? window.innerHeight
+/**
+ * The sheet's ceiling is its host's box, never a viewport unit: the app is
+ * sized by `--viewport-height` (use-visual-viewport.ts), written on its own
+ * schedule around the keyboard — shrink at once, growth debounced, an
+ * optimistic restore on focusout — while `dvh` follows the browser's. Sized
+ * in dvh, the bottom-anchored sheet ran taller than the app while the
+ * keyboard rose (header clipped off the top) and shorter while it fell (host
+ * showing above). A percentage of the host is the same clock.
+ */
+function hostHeight(sheet: HTMLElement | null): number {
+  return sheet?.parentElement?.clientHeight || window.innerHeight
 }
 
 function isEditorTarget(target: EventTarget | null): boolean {
@@ -51,9 +60,9 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const sheetRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
   // The height eases only on the way from a gesture to its detent. Viewport
-  // changes — the keyboard, mostly — must land instantly: dvh re-resolves in
+  // changes — the keyboard, mostly — must land instantly: the host resizes in
   // steps as the keyboard animates, and easing each step left the sheet
-  // taller than the viewport on the way up and shorter on the way down.
+  // trailing it.
   const [settling, setSettling] = useState(false)
   useEffect(() => {
     if (!settling) return
@@ -90,7 +99,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     // it started. It also keeps focus — and the keyboard — in an editor that
     // has it: a drag never closes the keyboard.
     event.preventDefault()
-    const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, viewportHeight())
+    const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, hostHeight(sheetRef.current))
     drag.current = {
       startY: event.clientY,
       startHeight,
@@ -110,7 +119,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     // Bottom-anchored: the sheet grows as the pointer moves UP, so the delta is inverted.
     const next = Math.min(
       Math.max(state.startHeight - (event.clientY - state.startY), ASIDE_DISMISS_HEIGHT),
-      viewportHeight()
+      hostHeight(sheetRef.current)
     )
     const dt = now - state.lastT
     if (dt > 0) state.velocity = -(event.clientY - state.lastY) / dt
@@ -138,7 +147,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (!state) return
     // A pause before release means the drag stopped — don't flick on stale velocity.
     const velocity = performance.now() - state.lastT > 120 ? 0 : state.velocity
-    settle(nearestAsideDetent(state.height, velocity, viewportHeight()))
+    settle(nearestAsideDetent(state.height, velocity, hostHeight(sheetRef.current)))
   }
 
   // Dragging (or arrowing) below the smallest reading surface dismisses: an
@@ -163,7 +172,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (next !== "closed") settle(next)
   }
 
-  const restingHeight = detent === "full" ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
+  const restingHeight = detent === "full" ? "100%" : `${ASIDE_PEEK_FRACTION * 100}%`
   // Read from the drag rather than state: an unrelated re-render mid-gesture
   // must re-apply the height the node already has, not the one the drag
   // started on.
