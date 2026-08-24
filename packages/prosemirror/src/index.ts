@@ -10,6 +10,7 @@ export {
   serializeToMarkdown,
   parseMarkdown,
   normalizeMarkdownTables,
+  attachmentReferenceLabel,
   INLINE_MARKDOWN_PATTERN,
   type MentionTypeLookup,
   type EmojiLookup,

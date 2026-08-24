@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { Editor } from "@tiptap/core"
+import { serializeToMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
 import { ComposerPillDndHost, ComposerPillDndProvider } from "@/components/editor/composer-pill-dnd"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
@@ -370,7 +371,24 @@ describe("referenced chip leading slot", () => {
   })
 })
 
-describe("tray-dragged image ordinal", () => {
+describe("tray-dragged image label", () => {
+  it("uses the filename after an earlier image was removed", () => {
+    const editor = createEditor()
+    vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })
+    const attachments = [
+      attachment({ id: "att_1", filename: "pasted-image-1.png", previewUrl: "blob:preview-1" }),
+      attachment({ id: "att_2", filename: "pasted-image-2.png", previewUrl: "blob:preview-2" }),
+      attachment({ id: "att_4", filename: "pasted-image-4.png", previewUrl: "blob:preview-4" }),
+    ]
+    renderTray(editor, attachments)
+
+    dragChipIntoEditor(screen.getByText("pasted-image-4.png"))
+
+    const markdown = serializeToMarkdown(editor.getJSON() as JSONContent)
+    expect(markdown).toContain("[pasted-image-4.png]")
+    expect(markdown).not.toContain("Image #3")
+  })
+
   it("stamps the ordinal send would give it, so both references read the same", () => {
     const editor = createEditor()
     vi.spyOn(editor.view, "posAtCoords").mockReturnValue({ pos: 1, inside: -1 })

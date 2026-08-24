@@ -1,4 +1,5 @@
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
+import { attachmentReferenceLabel } from "@threa/prosemirror"
 import { Loader2, FileIcon, AlertCircle, ImageIcon } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -20,11 +21,7 @@ function getDisplayText(attrs: AttachmentReferenceAttrs): string {
   if (attrs.status === "error") {
     return "Upload failed"
   }
-  const isImage = attrs.mimeType.startsWith("image/")
-  if (isImage && attrs.imageIndex) {
-    return `Image #${attrs.imageIndex}`
-  }
-  return attrs.filename
+  return attachmentReferenceLabel(attrs)
 }
 
 export function AttachmentReferenceView({ node }: NodeViewProps) {

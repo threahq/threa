@@ -7,10 +7,10 @@ import { createChannel, loginAndCreateWorkspace } from "./helpers"
  * Tests for inline file uploads via paste and drag-drop.
  *
  * Tests:
- * 1. Pasting an image inserts [Image #N] reference and attachment chip
- * 2. Pasting a non-image file inserts [filename] reference
+ * 1. Pasting an image inserts a filename reference and attachment chip
+ * 2. Pasting a non-image file inserts the same filename reference
  * 3. Drag-drop works the same as paste
- * 4. Multiple images get sequential numbering
+ * 4. Multiple images keep their filenames
  */
 
 test.describe("Inline File Uploads", () => {
@@ -35,7 +35,7 @@ test.describe("Inline File Uploads", () => {
     await createChannel(page, channelName)
   })
 
-  test("should insert [Image #1] reference when pasting an image with sequential name", async ({ page }) => {
+  test("should insert the generated filename when pasting an image", async ({ page }) => {
     // Focus the editor
     const editor = page.locator("[contenteditable='true']")
     await editor.click()
@@ -67,12 +67,13 @@ test.describe("Inline File Uploads", () => {
       editor.dispatchEvent(pasteEvent)
     }, Array.from(imageBuffer))
 
-    // Wait for upload to complete and verify the reference appears
-    // Should show [Image #1]
-    await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
+    // Wait for upload to complete and verify the reference matches the tray filename.
+    const reference = editor.locator("span[data-type='attachment-reference']")
+    await expect(reference).toBeVisible({ timeout: 10000 })
+    await expect(reference).toContainText("[pasted-image-1.png]")
 
-    // Verify attachment chip shows the renamed filename (pasted-image-1.png)
-    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
+    // Verify the tray chip shows the renamed filename.
+    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
   })
 
   test("should insert [filename] reference when pasting a non-image file", async ({ page }) => {
@@ -106,7 +107,7 @@ test.describe("Inline File Uploads", () => {
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
   })
 
-  test("should number images sequentially when pasting multiple", async ({ page }) => {
+  test("should keep generated filenames when pasting multiple images", async ({ page }) => {
     const editor = page.locator("[contenteditable='true']")
     await editor.click()
 
@@ -133,9 +134,9 @@ test.describe("Inline File Uploads", () => {
       editor.dispatchEvent(pasteEvent)
     }, Array.from(imageBuffer))
 
-    // Wait for first upload and verify filename
+    // Wait for first upload and verify the tray filename.
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
 
     // Paste second image
     await page.evaluate(async (imageData) => {
@@ -158,12 +159,15 @@ test.describe("Inline File Uploads", () => {
       editor.dispatchEvent(pasteEvent)
     }, Array.from(imageBuffer))
 
-    // Should have two references with sequential naming
-    await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(2, { timeout: 10000 })
-    await expect(page.getByText("pasted-image-2.png")).toBeVisible({ timeout: 5000 })
+    // Both inline references use the same generated names shown in the tray.
+    const references = editor.locator("span[data-type='attachment-reference']")
+    await expect(references).toHaveCount(2, { timeout: 10000 })
+    await expect(references.nth(0)).toContainText("[pasted-image-1.png]")
+    await expect(references.nth(1)).toContainText("[pasted-image-2.png]")
+    await expect(page.getByRole("button", { name: "Preview pasted-image-2.png" })).toBeVisible({ timeout: 5000 })
   })
 
-  test("should keep a mobile multi-pick inline with sequential image numbers", async ({ page }) => {
+  test("should keep a mobile multi-pick inline with filenames", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     const editor = page.locator("[contenteditable='true']")
     if (!(await editor.isVisible())) {
@@ -180,9 +184,9 @@ test.describe("Inline File Uploads", () => {
 
     const references = editor.locator("span[data-type='attachment-reference']")
     await expect(references).toHaveCount(3, { timeout: 10000 })
-    await expect(references.nth(0)).toContainText("[Image #1]", { timeout: 10000 })
-    await expect(references.nth(1)).toContainText("[Image #2]", { timeout: 10000 })
-    await expect(references.nth(2)).toContainText("[Image #3]", { timeout: 10000 })
+    await expect(references.nth(0)).toContainText("[one.png]", { timeout: 10000 })
+    await expect(references.nth(1)).toContainText("[two.png]", { timeout: 10000 })
+    await expect(references.nth(2)).toContainText("[three.png]", { timeout: 10000 })
   })
 
   test("should open lightbox when clicking image link in sent message", async ({ page }) => {
@@ -213,19 +217,21 @@ test.describe("Inline File Uploads", () => {
 
     // Wait for upload to complete (reference visible AND filename chip appears)
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
 
     // Type some text and send the message
     await editor.type("Check out this image: ")
     await page.getByRole("button", { name: "Send" }).click()
 
     // Wait for message to appear in timeline (not in editor anymore)
-    const imageLink = page.locator(".markdown-content button:has-text('Image #1')")
+    const imageLink = page.locator(".markdown-content p button:has-text('pasted-image-1.png')")
     await expect(imageLink).toBeVisible({ timeout: 10000 })
 
     // Wait until attachment metadata is hydrated in the rendered message.
     // Inline link click depends on attachment context, which can lag briefly in CI.
-    const attachmentPill = page.getByRole("button", { name: "pasted-image-1.png", exact: true })
+    const attachmentPill = page
+      .getByRole("button", { name: "pasted-image-1.png", exact: true })
+      .filter({ has: page.locator("img") })
     await expect(attachmentPill).toBeVisible({ timeout: 10000 })
 
     // Ensure the attachment image has loaded (src attribute is set and not a blob placeholder).
@@ -269,18 +275,20 @@ test.describe("Inline File Uploads", () => {
 
     // Wait for upload to complete (reference visible AND filename chip appears)
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText("pasted-image-1.png")).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
 
     // Type some text and send the message
     await editor.type("Hover test: ")
     await page.getByRole("button", { name: "Send" }).click()
 
     // Wait for message to appear
-    const imageLink = page.locator(".markdown-content button:has-text('Image #1')")
+    const imageLink = page.locator(".markdown-content p button:has-text('pasted-image-1.png')")
     await expect(imageLink).toBeVisible({ timeout: 10000 })
 
     // Find the attachment pill (the image button with the filename)
-    const attachmentPill = page.getByRole("button", { name: "pasted-image-1.png", exact: true })
+    const attachmentPill = page
+      .getByRole("button", { name: "pasted-image-1.png", exact: true })
+      .filter({ has: page.locator("img") })
     await expect(attachmentPill).toBeVisible({ timeout: 5000 })
 
     // Before hover: pill should NOT be highlighted

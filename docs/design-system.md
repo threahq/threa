@@ -323,7 +323,7 @@ Appears above selected text for formatting actions.
 }
 ```
 
-Format: `[Image #1]`, `[filename.ext]`
+Format: `[filename.ext]` for every attachment, including images.
 
 ### Code Blocks
 

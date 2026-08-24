@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { Editor } from "@tiptap/core"
 import { DOMParser as PMDOMParser, DOMSerializer, type Slice } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
+import { attachmentReferenceLabel } from "@threa/prosemirror"
 import { createEditorExtensions } from "./editor-extensions"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 
@@ -76,6 +77,16 @@ function pasteHtml(editor: Editor, html: string): Slice {
   wrapper.innerHTML = html
   return PMDOMParser.fromSchema(editor.schema).parseSlice(wrapper)
 }
+
+describe("attachment reference labels", () => {
+  it("uses the filename even when older content carries an image ordinal", () => {
+    expect(attachmentReferenceLabel({ filename: "pasted-image-4.png", imageIndex: 3 })).toBe("pasted-image-4.png")
+  })
+
+  it("keeps metadata-free legacy image references readable", () => {
+    expect(attachmentReferenceLabel({ filename: "", imageIndex: 3 })).toBe("Image #3")
+  })
+})
 
 describe("attachment reference insertion", () => {
   it.each([

@@ -438,7 +438,7 @@ export function createMessageHandlers({
       const { contentJson, contentMarkdown } = normalizeContent(data)
       // Union of explicit fresh-upload ids and inline references parsed from
       // the canonical contentJson. Without this, a markdown POST containing
-      // `[Image #1](attachment:att_x)` would skip the access gate AND the
+      // `[filename.png](attachment:att_x)` would skip the access gate AND the
       // attachment_references projection write.
       const inlineRefIds = collectAttachmentReferenceIds(contentJson)
       const attachmentIds = [...new Set([...explicitAttachmentIds, ...inlineRefIds])]
