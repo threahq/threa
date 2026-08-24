@@ -67,29 +67,6 @@
 
 @layer components {
   /*
-   * The effect grid pairs rows into two columns, but only when the CONTAINER is
-   * wide enough. A viewport breakpoint gets this wrong on the board: a card sits
-   * in a narrow column inside a wide window, so `sm:` would happily give a 360px
-   * card two 145px columns and clip every value in it. Container queries ask the
-   * only question that matters — how much room does this card actually have.
-   */
-  .effect-grid-host {
-    container-type: inline-size;
-  }
-  .effect-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-  @container (min-width: 40rem) {
-    .effect-grid {
-      grid-template-columns: 1fr 1fr;
-    }
-    .effect-grid > .effect-grid-span {
-      grid-column: 1 / -1;
-    }
-  }
-
-  /*
    * Action-affordance reveal model — see hooks/use-input-mode.tsx.
    * Keyed on `<html data-input>` (the input the user is actively using), NOT on
    * `@media (hover)`. A mouse on a touchscreen laptop is reported as `hover:none`

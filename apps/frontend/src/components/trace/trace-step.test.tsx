@@ -801,7 +801,7 @@ describe("TraceStep effects", () => {
     expect(screen.queryByText("Saved a memo")).not.toBeInTheDocument()
   })
 
-  it("renders a replaced value as a before → after diff", () => {
+  it("renders a replaced value with labeled before and after values", () => {
     renderStep(
       createStep({
         stepType: "tool_call",
@@ -810,7 +810,10 @@ describe("TraceStep effects", () => {
       })
     )
 
-    expect(screen.getByText("dark → light")).toBeInTheDocument()
+    expect(screen.getByText("Before")).toBeInTheDocument()
+    expect(screen.getByText("After")).toBeInTheDocument()
+    expect(document.querySelector("del")).toHaveTextContent("dark")
+    expect(document.querySelector("ins")).toHaveTextContent("light")
   })
 
   it("links an effect whose target resolves to a route", () => {
