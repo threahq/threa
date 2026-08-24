@@ -280,6 +280,36 @@ describe("aside surfaces", () => {
       expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
     })
 
+    it("gives an open draft the whole sheet, and comes back to the conversation behind it", () => {
+      spyOnExport(draftEditorModule, "AsideDraftEditor").mockReturnValue(((props: {
+        takeover?: boolean
+        onClose: () => void
+      }) => (
+        <div data-testid="aside-draft-editor" data-takeover={props.takeover ? "true" : undefined}>
+          <button type="button" onClick={props.onClose}>
+            back
+          </button>
+        </div>
+      )) as never)
+      openOnHost()
+      renderPage()
+
+      fireEvent.click(screen.getByRole("button", { name: /drafts?$/i }))
+      fireEvent.click(screen.getByRole("button", { name: "Start a draft" }))
+
+      // One thing at a time: the draft has the sheet, and the sheet came up to
+      // meet it — a writing surface at the peek is chrome and two lines.
+      expect(screen.getByTestId("aside-pane")).toHaveAttribute("data-view", "draft")
+      expect(screen.getByTestId("aside-draft-editor")).toHaveAttribute("data-takeover", "true")
+      expect(screen.queryByTestId("stream-content")).toBeNull()
+      expect(screen.queryByRole("separator", { name: "Resize draft" })).toBeNull()
+      expect(getAsideSheetDetent()).toBe("full")
+
+      fireEvent.click(screen.getByRole("button", { name: "back" }))
+      expect(screen.getByTestId("aside-pane")).toHaveAttribute("data-view", "chat")
+      expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
+    })
+
     it("closes when the sheet is dragged to the floor, and nothing is left behind", () => {
       openOnHost()
       renderPage()

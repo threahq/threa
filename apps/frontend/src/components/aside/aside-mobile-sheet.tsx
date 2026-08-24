@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useRef,
   useState,
   type FocusEvent as ReactFocusEvent,
@@ -6,9 +7,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
-import { useStreamName } from "@/hooks/use-stream-name"
 import { cn } from "@/lib/utils"
-import { closeAside, setAsideSheetDetent, useAsideSheetDetent } from "@/stores/aside-store"
+import { closeAside, setAsideSheetDetent, useAsideOpenDraft, useAsideSheetDetent } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
 import {
   ASIDE_PEEK_FRACTION,
@@ -40,8 +40,9 @@ function isEditorTarget(target: EventTarget | null): boolean {
 /**
  * The aside on a phone: a sheet over the host that peeks at 45% of the
  * viewport, pulls up to the whole of it, and drags down off the bottom to
- * leave. The context strip doubles as the drag handle — the aside's own
- * chrome is the affordance, so nothing has to tell you to pull it.
+ * leave. The handle carries nothing but the grab pill: every row above the
+ * conversation is a row of it the reader doesn't get, and the pane's own
+ * anchor line already says which stream this sits beside.
  */
 export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope }: AsideMobileSheetProps) {
   const detent = useAsideSheetDetent()
@@ -70,7 +71,13 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     lastY: number
     lastT: number
   } | null>(null)
-  const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
+  // A draft takes the sheet over, so the sheet comes up to meet it: at the
+  // peek a writing surface is all chrome and two lines of text. A real detent,
+  // not a forced height — a drag from here is still the user's call.
+  const openDraft = useAsideOpenDraft(asideId)
+  useEffect(() => {
+    if (openDraft) setAsideSheetDetent("full")
+  }, [openDraft])
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     // The handle carries text; without this a drag starts a text selection and
@@ -182,16 +189,13 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           tabIndex={0}
           data-testid="aside-sheet-handle"
           onKeyDown={onKeyDown}
-          className="flex shrink-0 touch-none select-none items-center gap-2 px-3 py-2"
+          className="flex shrink-0 touch-none select-none items-center justify-center py-2"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerCancel}
         >
-          <span aria-hidden className="h-1 w-8 shrink-0 rounded-full bg-muted-foreground/40" />
-          {/* Where the aside sits, not what it is — the pane header below carries
-              its title and the way out, so the handle stays one line of context. */}
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{hostName ?? ""}</span>
+          <span aria-hidden className="h-1 w-9 rounded-full bg-muted-foreground/40" />
         </div>
         <div className="min-h-0 flex-1">
           <AsidePane

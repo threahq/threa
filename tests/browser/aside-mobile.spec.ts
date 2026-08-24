@@ -139,4 +139,33 @@ test.describe("Aside — mobile surface", () => {
     await anchor.click()
     await expect(sheet(page)).toHaveAttribute("data-detent", "peek", { timeout: 10000 })
   })
+
+  test("gives an open draft the whole sheet, and comes back to the conversation behind it", async ({ page }) => {
+    await createChannel(page, `aside-md-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    // An empty stream renders its empty state rather than a scroller.
+    await seedMessages(page, workspaceId, streamId, `[${testId}-draft]`)
+    await page.setViewportSize(PHONE)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostScroller(page, streamId)).toBeVisible({ timeout: 20000 })
+
+    await openAsideFromPalette(page)
+    await expect(pane(page)).toHaveAttribute("data-view", "chat", { timeout: 15000 })
+
+    await sheet(page)
+      .getByRole("button", { name: /drafts?$/i })
+      .click()
+    await sheet(page).getByRole("button", { name: "Start a draft" }).click()
+
+    // One thing at a time on a phone: the draft has the sheet to itself, and
+    // the sheet has come up to meet it.
+    await expect(pane(page)).toHaveAttribute("data-view", "draft")
+    await expect(sheet(page)).toHaveAttribute("data-detent", "full", { timeout: 10000 })
+    await expect(sheet(page).getByTestId("aside-conversation")).toHaveCount(0)
+    await expect(sheet(page).locator("[data-stream-scroller]")).toHaveCount(0)
+
+    await sheet(page).getByRole("button", { name: "Back to drafts" }).click()
+    await expect(pane(page)).toHaveAttribute("data-view", "chat")
+    await expect(sheet(page).getByTestId("aside-conversation")).toBeVisible()
+  })
 })
