@@ -367,6 +367,19 @@ describe("aside surfaces", () => {
       expect(sheet).toHaveStyle({ height: "45dvh" })
     })
 
+    it("eases only the settle from a gesture, so a keyboard's viewport change lands instantly", () => {
+      openOnHost()
+      renderPage()
+
+      const sheet = screen.getByTestId("aside-sheet")
+      const handle = screen.getByTestId("aside-sheet-handle")
+      expect(sheet.className).not.toContain("transition-[height]")
+
+      fireEvent.keyDown(handle, { key: "ArrowUp" })
+      expect(getAsideSheetDetent()).toBe("full")
+      expect(sheet.className).toContain("transition-[height]")
+    })
+
     it("reaches the same detents from the keyboard, since the sheet hides the surface picker", () => {
       openOnHost()
       renderPage()

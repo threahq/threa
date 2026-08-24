@@ -29,6 +29,8 @@ interface AsideMobileSheetProps {
 const REDUCED_MOTION =
   typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
 
+const SETTLE_MS = 200
+
 function viewportHeight(): number {
   return window.visualViewport?.height ?? window.innerHeight
 }
@@ -48,6 +50,16 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const detent = useAsideSheetDetent()
   const sheetRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
+  // The height eases only on the way from a gesture to its detent. Viewport
+  // changes — the keyboard, mostly — must land instantly: dvh re-resolves in
+  // steps as the keyboard animates, and easing each step left the sheet
+  // taller than the viewport on the way up and shorter on the way down.
+  const [settling, setSettling] = useState(false)
+  useEffect(() => {
+    if (!settling) return
+    const timer = window.setTimeout(() => setSettling(false), SETTLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [settling])
   // Writing takes the sheet over: the keyboard takes the bottom of the
   // viewport, and a 45% peek of what is left is chrome and two lines. The
   // sheet moves to the full detent and stays there — a real state change a
@@ -133,8 +145,9 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   // aside is left, not parked, and its anchor row in the timeline is the way
   // back in.
   const settle = (next: AsideDetent) => {
-    if (next === "closed") closeAside()
-    else setAsideSheetDetent(next)
+    if (next === "closed") return closeAside()
+    setSettling(true)
+    setAsideSheetDetent(next)
   }
 
   // The drag is the primary gesture, but it is a pointer gesture: the handle is
@@ -167,7 +180,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         data-suppress-pull-refresh="true"
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-xl border-t-2 border-primary/70 bg-background shadow-lg",
-          !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
+          settling && !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
         )}
         style={{ height }}
       >
