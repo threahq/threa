@@ -16,8 +16,8 @@ import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
 import { findVisibleZoneEditor, focusAtEnd } from "@/hooks"
 import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
-import { SessionEffectGrid } from "./session-effect-grid"
-import { LiveSessionEffectGrid } from "./live-session-effect-grid"
+import { SessionEffectList } from "./session-effect-list"
+import { LiveSessionEffectList } from "./live-session-effect-list"
 import { isDescribedEffect, unionSessionEffects } from "@/lib/effect-links"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
@@ -149,7 +149,7 @@ function buildStatusConfig(
   /**
    * Layer-0 markers: a mutating tool declared nothing, so the effect is a bare
    * `{ kind }` with nothing to name, diff or link. They ride the meta line as a
-   * count rather than the grid, and the meta line is a single truncating line,
+   * count rather than the list, and the meta line is a single truncating line,
    * so this costs no height (INV-21).
    */
   markerEffectCount: number
@@ -358,7 +358,7 @@ export function AgentSessionEvent({
   } = deriveStatus(events)
 
   // A running turn streams its writes onto the card as each tool returns
-  // (`LiveSessionEffectGrid` below) — rows only ever append, so nothing already
+  // (`LiveSessionEffectList` below) — rows only ever append, so nothing already
   // on screen moves (INV-21).
   //
   // Once the session is terminal — and while `retrying`, which is not — the
@@ -369,7 +369,7 @@ export function AgentSessionEvent({
     status === "completed" || status === "failed" || status === "retrying"
       ? unionSessionEffects(...interruptedPayloads, completedPayload, failedPayload)
       : []
-  // What goes in the grid is decided by shape, not by whether a label happens
+  // What goes in the list is decided by shape, not by whether a label happens
   // to be set. A layer-0 marker is a bare `{ kind }` — a tool declared nothing,
   // so there is nothing to name, diff or link and it only earns a counter.
   // Anything carrying a target or a diff is a real declaration and renders as a
@@ -433,7 +433,7 @@ export function AgentSessionEvent({
   // `retrying` counts: it means started + interrupted with no terminal event, so
   // an attempt is running right now. Its earlier attempts' writes ride the
   // `interrupted` payloads (a retry's `upsertStep` resets the step's effects),
-  // and go in as `priorEffects` so the grid keeps them while the new attempt
+  // and go in as `priorEffects` so the list keeps them while the new attempt
   // streams onto the end. Same reason the live substep shows while retrying.
   const inFlight = status === "running" || status === "retrying"
   const showRedirectHint = showSessionActions && redirectHintVisible
@@ -550,14 +550,14 @@ export function AgentSessionEvent({
       </Link>
       {/* Sibling of the card link, never a child: the card is an <a>. */}
       {inFlight && workspaceId ? (
-        <LiveSessionEffectGrid
+        <LiveSessionEffectList
           key={sessionId}
           workspaceId={workspaceId}
           sessionId={sessionId}
           priorEffects={describedEffects}
         />
       ) : (
-        <SessionEffectGrid effects={describedEffects} />
+        <SessionEffectList effects={describedEffects} />
       )}
     </div>
   )

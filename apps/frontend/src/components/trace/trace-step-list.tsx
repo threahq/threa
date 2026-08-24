@@ -18,9 +18,9 @@ const WORK_CONFIG = STEP_DISPLAY_CONFIG.tool_call
 const workHue = (alpha?: number) =>
   `hsl(${WORK_CONFIG.hue} ${WORK_CONFIG.saturation}% ${WORK_CONFIG.lightness}%${alpha === undefined ? "" : ` / ${alpha}`})`
 
-const MAX_TOOL_CHIPS = 3
-/** A phone fits two chips on the wrapped line; a third truncates all of them to noise. */
-const MAX_TOOL_CHIPS_MOBILE = 2
+const MAX_TOOL_SUMMARIES = 3
+/** A phone shows two full-width summaries before the disclosure becomes the clearer path. */
+const MAX_TOOL_SUMMARIES_MOBILE = 2
 
 interface TraceStepListProps {
   steps: AgentSessionStep[]
@@ -50,7 +50,7 @@ export function TraceStepList({
   onSteerSession,
 }: TraceStepListProps) {
   const highlightRef = useRef<HTMLDivElement>(null)
-  // Grouping and the collapsed-row chips read a sealed step's plaintext out of
+  // Grouping and the collapsed summaries read a sealed step's plaintext out of
   // the module-global decrypt cache (the same entry `TraceStep` fills a level
   // down), so the list needs to re-render when one lands. One global-version
   // subscription for the whole list, not one per step: a trace is a bounded
@@ -148,13 +148,13 @@ function BotWorkingSection({
     if (errorCount > 0) setDetailsOpen(true)
   }, [errorCount])
   // A tool call is two steps on the wire (the use and its result), so the count
-  // and the chips are derived from paired calls, never from step rows.
+  // and the summaries are derived from paired calls, never from step rows.
   const calls = useMemo(() => deriveToolCalls(tools), [tools])
   const callCount = calls.length
   const toolLabel = `${callCount} tool ${callCount === 1 ? "call" : "calls"}`
-  const allChips = dedupeChips(calls)
-  const chips = allChips.slice(0, isMobile ? MAX_TOOL_CHIPS_MOBILE : MAX_TOOL_CHIPS)
-  const hiddenChipCount = allChips.length - chips.length
+  const allSummaries = summarizeCalls(calls)
+  const summaries = allSummaries.slice(0, isMobile ? MAX_TOOL_SUMMARIES_MOBILE : MAX_TOOL_SUMMARIES)
+  const hiddenSummaryCount = allSummaries.length - summaries.length
 
   return (
     <div
@@ -175,9 +175,11 @@ function BotWorkingSection({
             {active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TerminalSquare className="h-3.5 w-3.5" />}
           </span>
           <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: workHue() }}>
-            Working
+            Tool activity
           </span>
-          <span className="sr-only">{active ? "Working in progress" : "Working complete"}</span>
+          <span className="shrink-0 rounded-full bg-foreground/[0.05] px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            {active ? "In progress" : "Finished"}
+          </span>
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{toolLabel}</span>
           {errorCount > 0 && (
             <span className="shrink-0 text-[11px] font-medium text-destructive">
@@ -185,14 +187,10 @@ function BotWorkingSection({
             </span>
           )}
 
-          {/* The collapsed row carries the work itself: the live tool headline
-              while the phase runs, else a chip per call. Once expanded the rows
-              below say it in full, so the chips step aside.
-
-              Both wrap to a full-width second line below `sm` (order-last keeps
-              them under the label + chevron); on `sm` and up they take the rest
-              of the first line. A phone can't fit a headline and its output on
-              one 44px line without truncating both to nothing. */}
+          {/* The collapsed row carries the latest live tool, or one readable
+              line per completed call. Details below replace the summary when
+              expanded. The list always owns a full-width second line instead
+              of squeezing tool names into a chip grid. */}
           {preview && (
             <span className="order-last flex min-w-0 basis-full flex-col gap-0.5 sm:order-none sm:basis-0 sm:flex-1 sm:flex-row sm:items-baseline sm:gap-2">
               <span className="truncate font-mono text-[11.5px] text-foreground/90">{preview.headline}</span>
@@ -200,12 +198,18 @@ function BotWorkingSection({
             </span>
           )}
           {!preview && !open && (
-            <span className="order-last flex min-w-0 basis-full items-center gap-1.5 overflow-hidden sm:order-none sm:basis-0 sm:flex-1">
-              {chips.map((chip) => (
-                <ToolChip key={chip.key} chip={chip} />
+            <span
+              role="list"
+              aria-label="Completed tool calls"
+              className="order-last min-w-0 basis-full divide-y divide-border/60 overflow-hidden border-t border-border/60"
+            >
+              {summaries.map((summary) => (
+                <ToolSummaryRow key={summary.key} summary={summary} />
               ))}
-              {hiddenChipCount > 0 && (
-                <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">+{hiddenChipCount}</span>
+              {hiddenSummaryCount > 0 && (
+                <span role="listitem" className="block py-1.5 text-[10.5px] tabular-nums text-muted-foreground">
+                  {hiddenSummaryCount} more {hiddenSummaryCount === 1 ? "call" : "calls"}
+                </span>
               )}
             </span>
           )}
@@ -225,18 +229,23 @@ function BotWorkingSection({
   )
 }
 
-function ToolChip({ chip }: { chip: ToolChipItem }) {
-  const isError = chip.isError
-  const label = chip.count > 1 ? `${chip.headline} ×${chip.count}` : chip.headline
+function ToolSummaryRow({ summary }: { summary: ToolSummaryItem }) {
+  const status = summary.isError ? "Failed" : "Complete"
   return (
     <span
-      className={cn(
-        "max-w-[42vw] shrink-0 truncate rounded-full px-2 py-0.5 font-mono text-[10.5px] leading-[1.45] sm:max-w-[180px]",
-        isError ? "bg-destructive/10 text-destructive ring-1 ring-inset ring-destructive/25" : "text-foreground/75"
-      )}
-      style={isError ? undefined : { background: workHue(0.09), boxShadow: `inset 0 0 0 1px ${workHue(0.22)}` }}
+      role="listitem"
+      aria-label={`${summary.headline}, ${summary.count} ${summary.count === 1 ? "call" : "calls"}, ${status}`}
+      className="flex min-w-0 items-baseline gap-2 py-1.5 text-[11px]"
     >
-      {label}
+      <span
+        className={cn("min-w-0 flex-1 truncate font-mono", summary.isError ? "text-destructive" : "text-foreground/80")}
+      >
+        {summary.headline}
+      </span>
+      {summary.count > 1 && <span className="shrink-0 tabular-nums text-muted-foreground">{summary.count} calls</span>}
+      <span className={cn("shrink-0 font-medium", summary.isError ? "text-destructive" : "text-muted-foreground")}>
+        {status}
+      </span>
     </span>
   )
 }
@@ -248,7 +257,7 @@ interface ToolCall {
   isError: boolean
 }
 
-type ToolChipItem = ToolCall & { count: number }
+type ToolSummaryItem = ToolCall & { count: number }
 
 /**
  * One entry per tool call the agent actually made.
@@ -293,18 +302,18 @@ function deriveToolCalls(tools: AgentSessionStep[]): ToolCall[] {
   return calls
 }
 
-/** Consecutive identical calls become one chip carrying how many times it ran. */
-function dedupeChips(calls: ToolCall[]): ToolChipItem[] {
-  const chips: ToolChipItem[] = []
+/** Consecutive identical calls become one summary carrying how many times it ran. */
+function summarizeCalls(calls: ToolCall[]): ToolSummaryItem[] {
+  const summaries: ToolSummaryItem[] = []
   for (const call of calls) {
-    const last = chips.at(-1)
+    const last = summaries.at(-1)
     if (last && last.headline === call.headline && last.isError === call.isError) {
       last.count += 1
       continue
     }
-    chips.push({ ...call, count: 1 })
+    summaries.push({ ...call, count: 1 })
   }
-  return chips
+  return summaries
 }
 
 function toolStepRole(content: unknown): "use" | "result" | "unknown" {
@@ -322,7 +331,7 @@ function toolStepRole(content: unknown): "use" | "result" | "unknown" {
 /**
  * A sealed step's `content` is undefined here — decryption happens inside
  * `TraceStep`, a level below the grouping. Read the same module-global cache
- * entry it fills so sealed traces group and chip like plaintext ones instead of
+ * entry it fills so sealed traces group and summarize like plaintext ones instead of
  * silently falling out of the Working section.
  */
 function resolveStepContent(step: AgentSessionStep): unknown {
