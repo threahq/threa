@@ -393,6 +393,33 @@ export const DraftsRepository = {
   },
 
   /**
+   * One owner's live drafts under a scope prefix, most recently edited first.
+   * The aside agent reads its own aside's drafts this way
+   * (`asideDraftScopePrefix`), so the cap is a prompt-size bound, not a
+   * pagination story: an aside holds a handful of drafts and the caller says
+   * how many of them it can afford to render.
+   *
+   * `starts_with` rather than `LIKE`: prefixed ids carry `_`, which LIKE reads
+   * as a single-character wildcard.
+   */
+  async listByScopePrefix(
+    db: Querier,
+    params: { workspaceId: string; userId: string; scopePrefix: string; limit: number }
+  ): Promise<Draft[]> {
+    const result = await db.query<DraftRow>(sql`
+      SELECT ${sql.raw(COLUMNS)}
+      FROM drafts
+      WHERE workspace_id = ${params.workspaceId}
+        AND user_id = ${params.userId}
+        AND starts_with(scope, ${params.scopePrefix})
+        AND deleted_at IS NULL
+      ORDER BY client_updated_at DESC, id DESC
+      LIMIT ${params.limit}
+    `)
+    return result.rows.map(mapRow)
+  },
+
+  /**
    * Bootstrap list for a user — every live draft, newest edit first. Powers the
    * stash and the cross-device seed (INV-53). Tombstones are excluded; cleanup
    * of old tombstones is out of scope for v1.

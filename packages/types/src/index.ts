@@ -763,7 +763,17 @@ export { CommandKinds, CommandScopes } from "./api"
 
 // Draft scope builders (single source of truth for the scope string format)
 // and the shared bootstrap cap (the client must know when a snapshot is truncated)
-export { draftStreamScope, draftThreadScope, MAX_DRAFTS_PER_USER, MAX_SEARCH_PHRASES } from "./api"
+export {
+  draftStreamScope,
+  draftThreadScope,
+  asideDraftScope,
+  asideDraftScopePrefix,
+  parseAsideDraftScope,
+  isAsideDraftScope,
+  type AsideDraftScope,
+  MAX_DRAFTS_PER_USER,
+  MAX_SEARCH_PHRASES,
+} from "./api"
 
 // Open-an-aside client-action id (single source of truth)
 export const ASIDE_COMMAND = "aside" as const
