@@ -46,8 +46,8 @@ test("a file previews from the attachment sheet, and the sheet is still there be
   // the point under the middle of the viewport belongs to the gallery.
   await expect(sheet).toBeAttached()
   const coveredByGallery = await page.evaluate(() => {
-    const el = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
-    return !!el?.closest("[data-media-gallery]")
+    const centerElement = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
+    return !!centerElement?.closest("[data-media-gallery]")
   })
   expect(coveredByGallery, "the lightbox paints above the sheet").toBe(true)
 
