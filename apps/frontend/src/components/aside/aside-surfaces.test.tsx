@@ -69,15 +69,8 @@ beforeEach(() => {
   // The chat pane is the real companion timeline; its data plumbing is out of
   // scope here, so the barrel export renders a marker carrying the stream it
   // was mounted against.
-  spyOnExport(timelineModule, "StreamContent").mockReturnValue(((props: {
-    streamId: string
-    hideComposer?: boolean
-  }) => (
-    <div
-      data-testid="stream-content"
-      data-stream-id={props.streamId}
-      data-composer={props.hideComposer ? "hidden" : "shown"}
-    />
+  spyOnExport(timelineModule, "StreamContent").mockReturnValue(((props: { streamId: string }) => (
+    <div data-testid="stream-content" data-stream-id={props.streamId} />
   )) as never)
   spyOnExport(boundaryModule, "StreamErrorBoundary").mockReturnValue(((props: { children: React.ReactNode }) => (
     <>{props.children}</>
@@ -183,23 +176,18 @@ describe("aside surfaces", () => {
     expect(screen.queryByTestId("aside-stage")).toBeNull()
   })
 
-  it("puts the host beside the aside on one stage, and only the aside can be written in", async () => {
+  it("puts the host beside the aside on one stage, both of them live", async () => {
     renderPage()
     openOnHost()
 
     expect(await screen.findByTestId("aside-stage")).toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "churn number sanity-check" })).toBeInTheDocument()
-    // The host is what you are answering, not a second place to write: its
-    // composer is absent, and the aside's is the only one on the stage.
-    expect(
-      screen
-        .getAllByTestId("stream-content")
-        .map((node) => [node.getAttribute("data-stream-id"), node.getAttribute("data-composer")])
-    ).toEqual([
-      ["stream_host", "hidden"],
-      [ASIDE, "shown"],
+    // The host keeps its own composer: a quick line into the channel should not
+    // cost you the aside.
+    expect(screen.getAllByTestId("stream-content").map((node) => node.getAttribute("data-stream-id"))).toEqual([
+      "stream_host",
+      ASIDE,
     ])
-    expect(screen.getByText("read only")).toBeInTheDocument()
     // One surface: nothing to pick between, and nothing to park into.
     expect(screen.queryByRole("group", { name: "Aside surface" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Minimize aside" })).toBeNull()

@@ -173,7 +173,7 @@ test.describe("Aside — desktop surface", () => {
     const asideId = await stage(page).getAttribute("data-aside-id")
     expect(asideId).toBeTruthy()
 
-    // The stage brings the host with it as the reference pane, landed on the
+    // The stage brings the host with it, landed on the
     // message the aside was opened from — the page's own timeline is unmounted
     // behind it, so there is no scroll position to inherit (INV-70: one
     // landing, decided once, here by the anchor).
@@ -235,9 +235,8 @@ test.describe("Aside — desktop surface", () => {
     expect(asideId).toBeTruthy()
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })
 
-    // One surface: the stage owns the content region, the host rides along as
-    // the read-only reference pane, and exactly one host timeline is mounted.
-    await expect(stage(page).getByText("read only")).toBeVisible()
+    // One surface: the stage owns the content region, the host rides along
+    // still writable, and exactly one host timeline is mounted.
     await expect(hostScroller(page, streamId)).toHaveCount(1)
     await expect(stage(page).getByRole("group", { name: "Aside surface" })).toHaveCount(0)
 

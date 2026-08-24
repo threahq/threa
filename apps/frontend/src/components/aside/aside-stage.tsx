@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import { useLayoutEffect } from "react"
 import { useSearchParams } from "react-router-dom"
-import { Lock, X } from "lucide-react"
+import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StreamContent } from "@/components/timeline"
@@ -35,12 +35,12 @@ interface AsideStageProps {
 }
 
 /**
- * Fullscreen: the aside takes the content region, and the host stream comes
- * with it as reference. Left is the real timeline — live, scrollable, and
- * mute: while you are in here the only way a message reaches that stream is
- * through the draft on the right, so its composer is not merely disabled, it
- * is absent, and the pane says so. The page mounts no timeline of its own
- * while this stands, so there is exactly one host timeline on screen.
+ * The aside's surface: it takes the content region, and the host stream comes
+ * with it. Left is the real timeline — live, scrollable, and writable, because
+ * a quick line into the channel should not cost you the aside. Right is the
+ * aside itself, drafts over conversation, and the divider between them is
+ * dragged. The page mounts no timeline of its own while this stands, so there
+ * is exactly one host timeline on screen.
  */
 export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: AsideStageProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
@@ -141,8 +141,6 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
         <div className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
           <div className={ASIDE_PANE_HEAD}>
             <span className="min-w-0 truncate font-medium text-foreground">{hostName ?? "Conversation"}</span>
-            <span className="flex-1" />
-            <span className={ASIDE_META}>read only</span>
           </div>
           <div className="relative min-h-0 flex-1">
             <StreamErrorBoundary streamId={hostStreamId}>
@@ -151,13 +149,8 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
                 streamId={hostStreamId}
                 stream={host}
                 highlightMessageId={hostLanding}
-                hideComposer
               />
             </StreamErrorBoundary>
-          </div>
-          <div className="flex h-8 shrink-0 items-center gap-1.5 border-t border-border/70 px-3">
-            <Lock className="h-3 w-3 shrink-0 text-muted-foreground/70" aria-hidden />
-            <span className={ASIDE_META}>Reading. Replies leave from your draft.</span>
           </div>
         </div>
 
