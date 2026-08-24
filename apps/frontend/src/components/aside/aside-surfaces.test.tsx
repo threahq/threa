@@ -10,12 +10,10 @@ import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
 import { useAgentBlock } from "@/components/timeline/agent-block-context"
 import * as draftEditorModule from "./aside-draft-editor"
-import { clearCallState, setCallPhase, setCallSession, setDesktopSurfaceOverride } from "@/stores/call-store"
+import { clearCallState } from "@/stores/call-store"
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
-import { getAsideState, openAside, resetAsideStoreCache } from "@/stores/aside-store"
-import { resolveAsideOpenSurface } from "@/lib/aside/surface"
-import { AsideDockSlot, useAsideHost } from "./index"
-import { isCallDocked } from "./use-call-docked"
+import { getAsideSheetDetent, getAsideState, openAside, resetAsideStoreCache } from "@/stores/aside-store"
+import { AsideSlot, useAsideHost } from "./index"
 
 const HOST_PATH = "/w/ws_1/s/stream_host"
 const ASIDE = "stream_aside_1"
@@ -28,16 +26,16 @@ const aside = createMockStream({
 })
 
 /**
- * The page's two mount points, bound to the route like the stream page binds
- * them. `takeover` is the phone's panel takeover: the main column (and the
- * strip inside it) is hidden and inert, so only the dock slot can draw.
+ * The page's mount point, bound to the route like the stream page binds it.
+ * `takeover` is the phone's panel takeover: the main column is hidden and
+ * inert, so only the aside can draw.
  */
 function Page({ takeover = false }: { takeover?: boolean }) {
   const hostKey = useAsideHost()
   return (
     <div className="flex">
       <main className="relative" inert={takeover || undefined} hidden={takeover}></main>
-      <AsideDockSlot workspaceId="ws_1" hostKey={hostKey} />
+      <AsideSlot workspaceId="ws_1" hostKey={hostKey} />
     </div>
   )
 }
@@ -53,12 +51,11 @@ function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
   )
 }
 
-function openOnHost(surface: "dock" | "fullscreen" = "dock") {
+function openOnHost() {
   openAside({
     hostKey: HOST_PATH,
     hostStreamId: "stream_host",
     asideId: ASIDE,
-    surface,
     originScope: "stream:stream_host",
   })
 }
@@ -93,8 +90,11 @@ describe("aside surfaces", () => {
   it("should carry an agent reply into an aside draft, never the chat composer", async () => {
     // The companion timeline's "Insert into draft" action, reduced to the one
     // call it makes on the provider the pane mounts around it.
-    spyOnExport(timelineModule, "StreamContent").mockReturnValue((() => {
+    spyOnExport(timelineModule, "StreamContent").mockReturnValue(((props: { streamId: string }) => {
       const agentBlock = useAgentBlock()
+      // The host pane mounts one of these too; only the aside's sits inside the
+      // provider, and only it offers the action.
+      if (props.streamId !== ASIDE) return <div data-testid="stream-content" />
       return (
         <button
           type="button"
@@ -123,7 +123,7 @@ describe("aside surfaces", () => {
       />
     )) as never)
     renderPage()
-    openOnHost("dock")
+    openOnHost()
 
     fireEvent.click(await screen.findByRole("button", { name: "insert into draft" }))
 
@@ -135,22 +135,15 @@ describe("aside surfaces", () => {
     expect(screen.getByRole("button", { name: "insert into draft" })).toBeInTheDocument()
     expect(screen.getByTestId("aside-drafts")).toHaveAttribute("data-open", "true")
 
-    // Dock and fullscreen are different components; the draft you are writing
-    // is not, so it survives the switch — and so does a block still queued for
-    // an editor that has not finished hydrating (this mock never consumes it).
-    const scope = editor.getAttribute("data-draft-scope")
-    fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
-    const moved = await screen.findByTestId("aside-draft-editor")
-    expect({
-      scope: moved.getAttribute("data-draft-scope"),
-      pending: moved.getAttribute("data-pending"),
-    }).toEqual({ scope, pending: "persona_01ARIADNE" })
+    // The queue is the aside's, not the surface's: a block that has not reached
+    // an editor yet survives the editor remounting (this mock never consumes it).
+    expect(editor).toHaveAttribute("data-pending", "persona_01ARIADNE")
   })
 
   it("folds the drafts to their count, and unfolds to the tray on the chevron", async () => {
     spyOnExport(draftEditorModule, "AsideDraftEditor").mockReturnValue((() => <div />) as never)
     renderPage()
-    openOnHost("dock")
+    openOnHost()
 
     // Resting state is the count, the way the composer's attachment tray rests.
     const fold = await screen.findByRole("button", { name: /drafts?$/i })
@@ -165,7 +158,7 @@ describe("aside surfaces", () => {
   it("divides the aside between the draft and the conversation on a drag, keyboard included", async () => {
     spyOnExport(draftEditorModule, "AsideDraftEditor").mockReturnValue((() => <div />) as never)
     renderPage()
-    openOnHost("dock")
+    openOnHost()
 
     fireEvent.click(await screen.findByRole("button", { name: /drafts?$/i }))
     fireEvent.click(screen.getByRole("button", { name: "New draft" }))
@@ -187,25 +180,15 @@ describe("aside surfaces", () => {
 
   it("should render no aside chrome while nothing is open on this page", () => {
     renderPage()
-    expect(screen.queryByTestId("aside-dock")).toBeNull()
+    expect(screen.queryByTestId("aside-stage")).toBeNull()
   })
 
-  it("should dock the companion timeline against the aside and switch surfaces from the header", async () => {
+  it("puts the host beside the aside on one stage, and only the aside can be written in", async () => {
     renderPage()
-    openOnHost("dock")
+    openOnHost()
 
-    const dock = await screen.findByTestId("aside-dock")
-    expect(dock).toHaveAttribute("data-surface", "dock")
-    expect(dock).toHaveStyle({ width: "400px" })
-    expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
+    expect(await screen.findByTestId("aside-stage")).toBeInTheDocument()
     expect(screen.getByRole("heading", { name: "churn number sanity-check" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Dock aside" })).toHaveAttribute("aria-pressed", "true")
-
-    // Fullscreen leaves the row entirely: the stage takes the content region
-    // and brings the host timeline with it as the reference pane.
-    fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
-    expect(screen.queryByTestId("aside-dock")).toBeNull()
-    expect(screen.getByTestId("aside-fullscreen-stage")).toBeInTheDocument()
     // The host is what you are answering, not a second place to write: its
     // composer is absent, and the aside's is the only one on the stage.
     expect(
@@ -217,16 +200,14 @@ describe("aside surfaces", () => {
       [ASIDE, "shown"],
     ])
     expect(screen.getByText("read only")).toBeInTheDocument()
-    expect(getAsideState()?.surface).toBe("fullscreen")
-
-    // Closing is the only way out: an aside is left, not parked, and its anchor
-    // row in the host timeline is the way back in.
+    // One surface: nothing to pick between, and nothing to park into.
+    expect(screen.queryByRole("group", { name: "Aside surface" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Minimize aside" })).toBeNull()
   })
 
   it("names the aside as private and points back at the message it was opened from", async () => {
     renderPage()
-    openOnHost("dock")
+    openOnHost()
 
     expect(await screen.findByText("Private")).toBeInTheDocument()
     // Anchored to a message that isn't in this test's timeline cache: it names
@@ -237,85 +218,52 @@ describe("aside surfaces", () => {
     expect(jump).toHaveTextContent(/^Anchored in/)
   })
 
-  it("resizes the dock from its handle, keyboard included, and holds the width across a surface round trip", async () => {
-    // The sketch asks for the dock to be resizable like the thread panel and
-    // the call dock; before this it was a hardcoded 400.
+  it("divides the stage between the host and the aside on a drag, keyboard included", async () => {
+    // jsdom reports no layout, so the stage falls back to the viewport for its
+    // cap; a 1024px default would clamp every drag below the default width.
+    Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true })
     renderPage()
-    openOnHost("dock")
+    openOnHost()
 
     const handle = await screen.findByRole("separator", { name: "Resize aside" })
+    const column = () => screen.getByTestId("aside-drafts").parentElement as HTMLElement
+    expect(column()).toHaveStyle({ width: "620px" })
+
     handle.setPointerCapture = vi.fn()
     handle.releasePointerCapture = vi.fn()
     fireEvent.pointerDown(handle, { pointerId: 1, clientX: 1000, isPrimary: true, button: 0 })
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 900 })
     fireEvent.pointerUp(handle, { pointerId: 1, clientX: 900 })
-    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "500px" }))
+    await waitFor(() => expect(column()).toHaveStyle({ width: "720px" }))
 
     fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true })
-    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "550px" }))
+    await waitFor(() => expect(column()).toHaveStyle({ width: "770px" }))
     fireEvent.keyDown(handle, { key: "ArrowRight" })
-    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "540px" }))
-
-    // Fullscreen owns its own geometry; coming back lands on the dragged width.
-    fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
-    expect(screen.queryByRole("separator", { name: "Resize aside" })).toBeNull()
-    expect(screen.getByTestId("aside-fullscreen-stage")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "Dock aside" }))
-    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "540px" }))
+    await waitFor(() => expect(column()).toHaveStyle({ width: "760px" }))
   })
 
-  it("should fold the dock away on close and leave no chrome", async () => {
+  it("should leave nothing behind on close", async () => {
     renderPage()
-    openOnHost("dock")
+    openOnHost()
     fireEvent.click(await screen.findByRole("button", { name: "Close aside" }))
 
     expect(getAsideState()).toBeNull()
-    // The slot snaps to zero width first (the fold), then unmounts.
-    expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "0px" })
-    await waitFor(() => expect(screen.queryByTestId("aside-dock")).toBeNull())
+    expect(screen.queryByTestId("aside-stage")).toBeNull()
   })
 
   it("should drop the aside when its host page goes away", async () => {
     const view = renderPage()
-    openOnHost("dock")
-    await screen.findByTestId("aside-dock")
+    openOnHost()
+    await screen.findByTestId("aside-stage")
 
     view.unmount()
     expect(getAsideState()).toBeNull()
   })
 
   it("should not show another page's aside", () => {
-    openOnHost("dock")
+    openOnHost()
     renderPage("/w/ws_1/board")
-    expect(screen.queryByTestId("aside-dock")).toBeNull()
-  })
-
-  describe("right-edge contention with a docked call", () => {
-    beforeEach(() => {
-      setCallSession({ callId: "call_1", workspaceId: "ws_1", streamId: "stream_call", mode: "audio_only" })
-      setCallPhase("connected")
-      setDesktopSurfaceOverride("sidebar")
-    })
-
-    it("should open fullscreen instead of docking while a call owns the right edge", async () => {
-      expect(isCallDocked()).toBe(true)
-      renderPage()
-      openOnHost(resolveAsideOpenSurface({ remembered: null, callDocked: isCallDocked() }))
-
-      expect(await screen.findByTestId("aside-fullscreen-stage")).toBeInTheDocument()
-      expect(screen.queryByTestId("aside-dock")).toBeNull()
-      expect(screen.getByRole("button", { name: "Dock aside" })).toBeDisabled()
-    })
-
-    it("should dock again once the call floats", async () => {
-      setDesktopSurfaceOverride("floating")
-      expect(isCallDocked()).toBe(false)
-      renderPage()
-      openOnHost(resolveAsideOpenSurface({ remembered: null, callDocked: isCallDocked() }))
-
-      expect(await screen.findByTestId("aside-dock")).toHaveAttribute("data-surface", "dock")
-      expect(screen.getByRole("button", { name: "Dock aside" })).toBeEnabled()
-    })
+    expect(screen.queryByTestId("aside-stage")).toBeNull()
   })
 
   describe("on a phone", () => {
@@ -328,10 +276,10 @@ describe("aside surfaces", () => {
       renderPage()
 
       const sheet = screen.getByTestId("aside-sheet")
-      expect(sheet).toHaveAttribute("data-surface", "dock")
+      expect(sheet).toHaveAttribute("data-detent", "peek")
       expect(sheet).toHaveAttribute("data-suppress-pull-refresh", "true")
       expect(screen.getByTestId("aside-sheet-handle")).toBeInTheDocument()
-      expect(screen.queryByTestId("aside-dock")).toBeNull()
+      expect(screen.queryByTestId("aside-stage")).toBeNull()
       expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
     })
 
@@ -388,7 +336,7 @@ describe("aside surfaces", () => {
       fireEvent.pointerMove(handle, { pointerId: 1, clientY: 500 })
       fireEvent.pointerCancel(handle, { pointerId: 1, clientY: 500 })
 
-      expect(getAsideState()?.surface).toBe("dock")
+      expect(getAsideSheetDetent()).toBe("peek")
       expect(sheet).toHaveStyle({ height: "45dvh" })
     })
 
@@ -400,13 +348,13 @@ describe("aside surfaces", () => {
       expect(handle).toHaveAttribute("tabindex", "0")
 
       fireEvent.keyDown(handle, { key: "ArrowUp" })
-      expect(getAsideState()?.surface).toBe("fullscreen")
+      expect(getAsideSheetDetent()).toBe("full")
       fireEvent.keyDown(handle, { key: "ArrowDown" })
-      expect(getAsideState()?.surface).toBe("dock")
+      expect(getAsideSheetDetent()).toBe("peek")
       // The keyboard resizes but never dismisses: a drag to the floor is a
       // deliberate throw-away, an arrow press is not. Closing is the header's job.
       fireEvent.keyDown(handle, { key: "ArrowDown" })
-      expect(getAsideState()?.surface).toBe("dock")
+      expect(getAsideSheetDetent()).toBe("peek")
     })
 
     it("rises to the full viewport while an editor in it has focus, and settles back when the keyboard goes", () => {
@@ -425,7 +373,7 @@ describe("aside surfaces", () => {
       expect(sheet).toHaveStyle({ height: "100dvh" })
       expect(sheet).toHaveAttribute("data-keyboard-lift", "true")
       // The chosen detent is presentation-independent: still the peek.
-      expect(getAsideState()?.surface).toBe("dock")
+      expect(getAsideSheetDetent()).toBe("peek")
 
       fireEvent.blur(editor)
       expect(sheet).toHaveStyle({ height: "45dvh" })
@@ -467,7 +415,7 @@ describe("aside surfaces", () => {
       fireEvent.pointerUp(handle, { pointerId: 1, clientY: 100 })
 
       expect(document.activeElement).toBe(editor)
-      expect(getAsideState()?.surface).toBe("fullscreen")
+      expect(getAsideSheetDetent()).toBe("full")
       expect(handle.setPointerCapture).toHaveBeenCalled()
       expect(sheet).not.toHaveAttribute("data-keyboard-lift")
     })

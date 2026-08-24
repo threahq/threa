@@ -4,7 +4,7 @@ import { AlertCircle, ArrowLeft, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
-import { AsideDockSlot, useAsideHost } from "@/components/aside"
+import { AsideSlot, useAsideHost } from "@/components/aside"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
@@ -1034,7 +1034,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           <PanelHost workspaceId={workspaceId} onClose={closePanel} />
         </ThreadPanelSlot>
       )}
-      <AsideDockSlot workspaceId={workspaceId} hostKey={asideHostKey} />
+      <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
     </div>
   )
 }

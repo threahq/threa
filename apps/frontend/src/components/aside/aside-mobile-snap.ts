@@ -1,5 +1,5 @@
 import { nearestStep } from "@/components/call/mobile-call-drawer-snap"
-import type { AsideSurface } from "@/stores/aside-store"
+import type { AsideSheetDetent } from "@/stores/aside-store"
 
 /**
  * Drag/snap physics for the mobile aside sheet. The sheet hangs from the BOTTOM
@@ -11,19 +11,19 @@ import type { AsideSurface } from "@/stores/aside-store"
  * state between open and closed.
  */
 
-/** Where a drag can settle: the two reading surfaces, or gone. */
-export type AsideDetent = AsideSurface | "closed"
+/** Where a drag can settle: the two resting heights, or gone. */
+export type AsideDetent = AsideSheetDetent | "closed"
 /** The floor a dismissing drag settles on before the sheet leaves. */
 export const ASIDE_DISMISS_HEIGHT = 44
 /** The peek: enough aside to read and type in, with the host still on screen above it. */
 export const ASIDE_PEEK_FRACTION = 0.45
 
-const MOBILE_DETENTS: readonly AsideDetent[] = ["closed", "dock", "fullscreen"]
+const MOBILE_DETENTS: readonly AsideDetent[] = ["closed", "peek", "full"]
 
 /** The next detent in `direction` (+1 larger, -1 smaller), clamped at the ends. */
-export function steppedAsideSurface(surface: AsideDetent, direction: 1 | -1): AsideDetent {
-  const index = MOBILE_DETENTS.indexOf(surface)
-  if (index < 0) return surface
+export function steppedAsideDetent(detent: AsideDetent, direction: 1 | -1): AsideDetent {
+  const index = MOBILE_DETENTS.indexOf(detent)
+  if (index < 0) return detent
   return MOBILE_DETENTS[Math.min(Math.max(index + direction, 0), MOBILE_DETENTS.length - 1)]
 }
 
@@ -32,14 +32,14 @@ export function asideMobileSteps(viewportHeight: number): number[] {
 }
 
 /** The resting height of a detent at this viewport; `closed` is the floor it leaves on. */
-export function asideMobileHeight(surface: AsideDetent, viewportHeight: number): number {
-  return asideMobileSteps(viewportHeight)[MOBILE_DETENTS.indexOf(surface)] ?? ASIDE_DISMISS_HEIGHT
+export function asideMobileHeight(detent: AsideDetent, viewportHeight: number): number {
+  return asideMobileSteps(viewportHeight)[MOBILE_DETENTS.indexOf(detent)] ?? ASIDE_DISMISS_HEIGHT
 }
 
 /**
- * The surface to settle on when a drag ends at `heightPx` with
+ * The detent to settle on when a drag ends at `heightPx` with
  * `velocityPxPerMs` (positive = growing, i.e. the pointer moving up).
  */
-export function nearestAsideSurface(heightPx: number, velocityPxPerMs: number, viewportHeight: number): AsideDetent {
+export function nearestAsideDetent(heightPx: number, velocityPxPerMs: number, viewportHeight: number): AsideDetent {
   return MOBILE_DETENTS[nearestStep(heightPx, velocityPxPerMs, asideMobileSteps(viewportHeight))]
 }

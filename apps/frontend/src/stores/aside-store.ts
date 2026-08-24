@@ -9,21 +9,25 @@ import type { AgentBlockData } from "@/components/timeline/agent-block-context"
  * restores nothing — the anchor row is the way back in.
  *
  * INV-59 exemption, the call dock's shape (`call-dock.tsx`): which aside is
- * open and in what surface is transient view state that must NOT survive a
- * refresh or a shared link (a private aside re-opening from a URL would leak
- * its existence into the address bar), so it lives here, never in `?panel=`.
+ * open is transient view state that must NOT survive a refresh or a shared
+ * link (a private aside re-opening from a URL would leak its existence into
+ * the address bar), so it lives here, never in `?panel=`.
  * Registered in `flushModuleStoreCaches` (account-scope.tsx) like every
  * sibling store.
  */
 
-export type AsideSurface = "dock" | "fullscreen"
+/**
+ * Where a phone's sheet is resting. Desktop has one surface (the stage), so
+ * this is a sheet detent and nothing else — it never decides what is rendered,
+ * only how much of it you can see.
+ */
+export type AsideSheetDetent = "peek" | "full"
 
 export interface OpenAsideState {
   /** The page hosting the surface — `useLocation().pathname`. */
   hostKey: string
   hostStreamId: string
   asideId: string
-  surface: AsideSurface
   /**
    * The draft scope a hand-off files into: the host stream's own composer, or
    * the conversation's reply composer when the aside was opened on one. Fixed
@@ -32,11 +36,11 @@ export interface OpenAsideState {
   originScope: string
 }
 
-/** Dock width bounds. The floor keeps the chat and its composer usable; the
- *  ceiling is enforced against the live container by the slot, which knows how
- *  much room the host timeline still needs. */
-export const ASIDE_DOCK_MIN_WIDTH = 320
-export const ASIDE_DOCK_DEFAULT_WIDTH = 400
+/** How wide the aside's own column is on the stage. The floor keeps its chat
+ *  and composer usable; the ceiling is enforced against the live stage by the
+ *  component, which knows how much room the host pane still needs. */
+export const ASIDE_STAGE_MIN_WIDTH = 360
+export const ASIDE_STAGE_DEFAULT_WIDTH = 620
 
 /** How tall the drafts half of the aside is, between its own floor and whatever
  *  the surface can spare — the conversation's floor is enforced by the pane. */
@@ -45,24 +49,24 @@ export const ASIDE_DRAFT_DEFAULT_HEIGHT = 320
 
 let state: OpenAsideState | null = null
 const listeners = new Set<() => void>()
-// Dock width the user dragged, per aside. Session-scoped like the surface
+// The stage's vertical divide, per aside. Session-scoped like the aside
 // itself: a width is a reading preference for this sitting, not something a
 // refresh or a shared link should carry (INV-59 exemption, same rationale as
-// the open surface above).
-const dockWidthByAside = new Map<string, number>()
-// Resume re-enters the surface the aside was last read in.
-const lastReadingSurfaceByAside = new Map<string, AsideSurface>()
+// the open aside above).
+const stageWidthByAside = new Map<string, number>()
+// The phone sheet's detent. One aside is open at a time, so one value.
+let sheetDetent: AsideSheetDetent = "peek"
 // The draft open for writing, per aside. Here rather than in the surface
-// component because dock and fullscreen are different components: holding it
-// locally would close the draft mid-sentence every time the surface changed.
+// component because the stage and the phone sheet are different components:
+// holding it locally would close the draft mid-sentence on the crossover.
 const openDraftByAside = new Map<string, string>()
 // Agent replies queued by "Insert into draft" and not yet appended — the
 // editor takes them once its draft has hydrated. Here for the same reason as
-// the open draft above: a surface switch during that hydration would otherwise
-// unmount the only copy and lose the block.
+// the open draft above: unmounting the only copy during that hydration would
+// lose the block.
 const pendingAgentBlocksByAside = new Map<string, AgentBlockData[]>()
 // How the drafts half is split against the conversation, and whether the tray
-// of pills is unfolded. Session-scoped per aside, like the dock width.
+// of pills is unfolded. Session-scoped per aside, like the stage width.
 const draftHeightByAside = new Map<string, number>()
 const trayExpandedByAside = new Map<string, boolean>()
 
@@ -75,32 +79,33 @@ function setState(next: OpenAsideState | null): void {
   emit()
 }
 
-/**
- * Only a surface the user CHOSE is remembered. An open can be coerced — a
- * docked call pushes an aside that wanted the dock into fullscreen — and
- * recording that would make one call change where every later aside opens.
- */
-function remember(asideId: string, surface: AsideSurface): void {
-  lastReadingSurfaceByAside.set(asideId, surface)
-}
-
 export function getAsideState(): OpenAsideState | null {
   return state
 }
 
-/** The surface an aside was last read in, for resume; null for a never-opened aside. */
-export function rememberedAsideSurface(asideId: string): AsideSurface | null {
-  return lastReadingSurfaceByAside.get(asideId) ?? null
-}
-
 export function openAside(next: OpenAsideState): void {
+  // A sheet always opens at the peek: the host you asked about stays on screen
+  // above it, and pulling up is one gesture away.
+  sheetDetent = "peek"
   setState(next)
 }
 
-export function setAsideSurface(surface: AsideSurface): void {
-  if (!state || state.surface === surface) return
-  remember(state.asideId, surface)
-  setState({ ...state, surface })
+export function getAsideSheetDetent(): AsideSheetDetent {
+  return sheetDetent
+}
+
+export function setAsideSheetDetent(detent: AsideSheetDetent): void {
+  if (sheetDetent === detent) return
+  sheetDetent = detent
+  emit()
+}
+
+export function useAsideSheetDetent(): AsideSheetDetent {
+  return useSyncExternalStore(
+    subscribe,
+    () => sheetDetent,
+    () => sheetDetent
+  )
 }
 
 export function closeAside(): void {
@@ -115,8 +120,8 @@ export function dropAsideForHost(hostKey: string): void {
 }
 
 export function resetAsideStoreCache(): void {
-  lastReadingSurfaceByAside.clear()
-  dockWidthByAside.clear()
+  stageWidthByAside.clear()
+  sheetDetent = "peek"
   openDraftByAside.clear()
   pendingAgentBlocksByAside.clear()
   draftHeightByAside.clear()
@@ -135,7 +140,7 @@ export function setAsideOpenDraft(asideId: string, scope: string | null): void {
   emit()
 }
 
-/** The draft open in `asideId`, across a surface switch. */
+/** The draft open in `asideId`, whichever surface is showing it. */
 export function useAsideOpenDraft(asideId: string): string | null {
   return useSyncExternalStore(
     subscribe,
@@ -161,7 +166,7 @@ export function clearAsideAgentBlocks(asideId: string): void {
   emit()
 }
 
-/** The queue for `asideId`, across a surface switch. */
+/** The queue for `asideId`, whichever surface is showing it. */
 export function useAsidePendingAgentBlocks(asideId: string): AgentBlockData[] {
   return useSyncExternalStore(
     subscribe,
@@ -208,22 +213,22 @@ export function useAsideTrayExpanded(asideId: string): boolean {
   )
 }
 
-/** The width this aside's dock was last dragged to, or the default. */
-export function asideDockWidth(asideId: string): number {
-  return dockWidthByAside.get(asideId) ?? ASIDE_DOCK_DEFAULT_WIDTH
+/** The width this aside's column was last dragged to, or the default. */
+export function asideStageWidth(asideId: string): number {
+  return stageWidthByAside.get(asideId) ?? ASIDE_STAGE_DEFAULT_WIDTH
 }
 
-export function setAsideDockWidth(asideId: string, width: number): void {
-  dockWidthByAside.set(asideId, Math.max(ASIDE_DOCK_MIN_WIDTH, Math.round(width)))
+export function setAsideStageWidth(asideId: string, width: number): void {
+  stageWidthByAside.set(asideId, Math.max(ASIDE_STAGE_MIN_WIDTH, Math.round(width)))
   emit()
 }
 
-/** The dock width for `asideId`, re-rendering the slot as it is dragged. */
-export function useAsideDockWidth(asideId: string | null): number {
+/** The stage width for `asideId`, re-rendering the stage as it is dragged. */
+export function useAsideStageWidth(asideId: string): number {
   return useSyncExternalStore(
     subscribe,
-    () => (asideId ? asideDockWidth(asideId) : ASIDE_DOCK_DEFAULT_WIDTH),
-    () => (asideId ? asideDockWidth(asideId) : ASIDE_DOCK_DEFAULT_WIDTH)
+    () => asideStageWidth(asideId),
+    () => asideStageWidth(asideId)
   )
 }
 

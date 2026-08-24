@@ -8,14 +8,14 @@ import {
 import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { cn } from "@/lib/utils"
-import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
+import { closeAside, setAsideSheetDetent, useAsideSheetDetent } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
 import {
   ASIDE_PEEK_FRACTION,
   ASIDE_DISMISS_HEIGHT,
   asideMobileHeight,
-  nearestAsideSurface,
-  steppedAsideSurface,
+  nearestAsideDetent,
+  steppedAsideDetent,
   type AsideDetent,
 } from "./aside-mobile-snap"
 
@@ -24,8 +24,6 @@ interface AsideMobileSheetProps {
   asideId: string
   hostStreamId: string
   originScope: string
-  /** `dock` is the peek, `fullscreen` the whole viewport. */
-  surface: AsideSurface
 }
 
 const REDUCED_MOTION =
@@ -45,7 +43,8 @@ function isEditorTarget(target: EventTarget | null): boolean {
  * leave. The context strip doubles as the drag handle — the aside's own
  * chrome is the affordance, so nothing has to tell you to pull it.
  */
-export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope, surface }: AsideMobileSheetProps) {
+export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope }: AsideMobileSheetProps) {
+  const detent = useAsideSheetDetent()
   const sheetRef = useRef<HTMLDivElement>(null)
   const [dragHeight, setDragHeight] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -80,7 +79,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     // editor that has it — a drag never closes the keyboard.
     event.preventDefault()
     setKeyboardLift(false)
-    const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(surface, viewportHeight())
+    const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, viewportHeight())
     drag.current = {
       startY: event.clientY,
       startHeight,
@@ -127,15 +126,15 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (!state) return
     // A pause before release means the drag stopped — don't flick on stale velocity.
     const velocity = performance.now() - state.lastT > 120 ? 0 : state.velocity
-    settle(nearestAsideSurface(state.height, velocity, viewportHeight()))
+    settle(nearestAsideDetent(state.height, velocity, viewportHeight()))
   }
 
   // Dragging (or arrowing) below the smallest reading surface dismisses: an
   // aside is left, not parked, and its anchor row in the timeline is the way
   // back in.
-  const settle = (detent: AsideDetent) => {
-    if (detent === "closed") closeAside()
-    else setAsideSurface(detent)
+  const settle = (next: AsideDetent) => {
+    if (next === "closed") closeAside()
+    else setAsideSheetDetent(next)
   }
 
   // The drag is the primary gesture, but it is a pointer gesture: the handle is
@@ -147,11 +146,11 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     // The keyboard resizes; it does not dismiss. A drag to the floor is a
     // deliberate throw-away gesture, an arrow press is not — the header's close
     // is how a keyboard leaves.
-    const next = steppedAsideSurface(surface, direction)
+    const next = steppedAsideDetent(detent, direction)
     if (next !== "closed") settle(next)
   }
 
-  const lifted = keyboardLift || surface === "fullscreen"
+  const lifted = keyboardLift || detent === "full"
   const restingHeight = lifted ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
   const height = dragging && dragHeight != null ? `${dragHeight}px` : restingHeight
 
@@ -161,7 +160,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
       <div
         ref={sheetRef}
         data-testid="aside-sheet"
-        data-surface={surface}
+        data-detent={detent}
         data-keyboard-lift={keyboardLift || undefined}
         onFocusCapture={onFocusCapture}
         onBlurCapture={onBlurCapture}
@@ -178,8 +177,8 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           aria-label="Resize aside"
           aria-valuemin={1}
           aria-valuemax={2}
-          aria-valuenow={surface === "fullscreen" ? 2 : 1}
-          aria-valuetext={surface === "fullscreen" ? "Full screen" : "Peek"}
+          aria-valuenow={detent === "full" ? 2 : 1}
+          aria-valuetext={detent === "full" ? "Full screen" : "Peek"}
           tabIndex={0}
           data-testid="aside-sheet-handle"
           onKeyDown={onKeyDown}
@@ -200,8 +199,6 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
             asideId={asideId}
             hostStreamId={hostStreamId}
             originScope={originScope}
-            surface={surface}
-            takeover
           />
         </div>
       </div>

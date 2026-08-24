@@ -3,11 +3,9 @@ import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
+import { closeAside } from "@/stores/aside-store"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threa/types"
-import { useCallDocked } from "./use-call-docked"
-import { AsideSurfacePicker } from "./aside-surface-picker"
 import { AsideAnchorLine } from "./aside-anchor-line"
 import { AsideConversation } from "./aside-conversation"
 import { AsideDrafts } from "./aside-drafts"
@@ -23,38 +21,26 @@ interface AsidePaneProps {
   hostStreamId: string
   /** The draft scope a hand-off files into (`OpenAsideState.originScope`). */
   originScope: string
-  surface: AsideSurface
-  /** Phone-width takeover: no surface picker, the close control is the way out. */
-  takeover?: boolean
 }
 
 /**
- * The aside in one column: what it is, what it is anchored to, what you are
- * writing, and the conversation you are writing it from. Drafts sit above the
- * chat because the chat owns the bottom edge — its composer is where the
- * cursor rests, and a draft opening under it would keep moving the one input
- * that never moves anywhere else in the app.
+ * The aside in one column, for the phone sheet: what it is, what it is
+ * anchored to, what you are writing, and the conversation you are writing it
+ * from. Drafts sit above the chat because the chat owns the bottom edge — its
+ * composer is where the cursor rests, and a draft opening under it would keep
+ * moving the one input that never moves anywhere else in the app.
  */
-export function AsidePane({
-  workspaceId,
-  asideId,
-  hostStreamId,
-  originScope,
-  surface,
-  takeover = false,
-}: AsidePaneProps) {
+export function AsidePane({ workspaceId, asideId, hostStreamId, originScope }: AsidePaneProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
   const split = useAsideSplit(asideId, draftSurface.openScope !== null)
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
-  const callDocked = useCallDocked()
 
   return (
     <div
       data-testid="aside-pane"
       data-aside-id={asideId}
-      data-surface={surface}
       data-editor-zone="aside"
       className="flex h-full min-h-0 flex-col border-t-2 border-primary/70 bg-card"
     >
@@ -64,7 +50,6 @@ export function AsidePane({
           <h2 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
           <AsidePrivateBadge />
           <span className="flex-1" />
-          {!takeover && <AsideSurfacePicker value={surface} onChange={setAsideSurface} dockDisabled={callDocked} />}
           <Button
             variant="ghost"
             size="icon"
@@ -91,7 +76,7 @@ export function AsidePane({
             workspaceId={workspaceId}
             asideId={asideId}
             aside={aside}
-            autoFocus={!takeover && !draftSurface.openScope}
+            autoFocus={false}
             onInsertAgentBlock={draftSurface.insertAgentBlock}
           />
         </div>

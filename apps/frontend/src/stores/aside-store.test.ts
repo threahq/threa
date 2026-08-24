@@ -4,13 +4,15 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { renderHook, act } from "@testing-library/react"
 import {
+  asideStageWidth,
   closeAside,
   dropAsideForHost,
+  getAsideSheetDetent,
   getAsideState,
   openAside,
-  rememberedAsideSurface,
   resetAsideStoreCache,
-  setAsideSurface,
+  setAsideSheetDetent,
+  setAsideStageWidth,
   useAsideForHost,
 } from "./aside-store"
 
@@ -20,7 +22,6 @@ const open = {
   hostKey: "/w/ws_1/s/stream_host",
   hostStreamId: "stream_host",
   asideId: "stream_aside",
-  surface: "dock",
   originScope: "stream:stream_host",
 } as const
 
@@ -46,23 +47,32 @@ describe("aside-store", () => {
     expect(getAsideState()).toBeNull()
   })
 
-  it("should remember the last reading surface for resume", () => {
+  it("should keep the dragged stage width for this aside, and hand every other one the default", () => {
     openAside(open)
-    setAsideSurface("fullscreen")
-    expect(getAsideState()).toEqual({ ...open, surface: "fullscreen" })
-    expect(rememberedAsideSurface(open.asideId)).toBe("fullscreen")
+    setAsideStageWidth(open.asideId, 780)
 
     closeAside()
     expect(getAsideState()).toBeNull()
-    expect(rememberedAsideSurface(open.asideId)).toBe("fullscreen")
-    expect(rememberedAsideSurface("stream_never")).toBeNull()
+    expect(asideStageWidth(open.asideId)).toBe(780)
+    expect(asideStageWidth("stream_never")).toBe(620)
+  })
+
+  it("should open a sheet at the peek, whatever the last one was pulled to", () => {
+    openAside(open)
+    setAsideSheetDetent("full")
+    expect(getAsideSheetDetent()).toBe("full")
+
+    closeAside()
+    openAside({ ...open, asideId: "stream_other_aside" })
+    expect(getAsideSheetDetent()).toBe("peek")
   })
 
   it("should forget everything on an account switch", () => {
     openAside(open)
+    setAsideStageWidth(open.asideId, 780)
     resetAsideStoreCache()
     expect(getAsideState()).toBeNull()
-    expect(rememberedAsideSurface(open.asideId)).toBeNull()
+    expect(asideStageWidth(open.asideId)).toBe(620)
   })
 
   it("registration guard: account-scope flushes the aside store cache", () => {

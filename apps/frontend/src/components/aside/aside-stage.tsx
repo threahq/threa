@@ -1,4 +1,5 @@
-import { useMemo } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
+import { useLayoutEffect } from "react"
 import { useSearchParams } from "react-router-dom"
 import { Lock, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -7,12 +8,12 @@ import { StreamContent } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { closeAside, setAsideSurface } from "@/stores/aside-store"
+import { ASIDE_STAGE_MIN_WIDTH, closeAside, setAsideStageWidth, useAsideStageWidth } from "@/stores/aside-store"
+import { useResizeDrag } from "@/hooks/use-resize-drag"
+import { PanelResizeHandle } from "@/components/layout"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threa/types"
 import { cn } from "@/lib/utils"
-import { useCallDocked } from "./use-call-docked"
-import { AsideSurfacePicker } from "./aside-surface-picker"
 import { AsideAnchorLine } from "./aside-anchor-line"
 import { AsideConversation } from "./aside-conversation"
 import { AsideDrafts } from "./aside-drafts"
@@ -22,7 +23,11 @@ import { useAsideDraftSurface } from "./use-aside-draft-surface"
 import { useAsideSplit } from "./use-aside-split"
 import { useAsideDrafts } from "./use-aside-drafts"
 
-interface AsideFullscreenStageProps {
+/** What the host pane keeps: below this it stops being readable as the thing
+ *  you are answering, which is the only reason it is on the stage. */
+const MIN_HOST_WIDTH = 420
+
+interface AsideStageProps {
   workspaceId: string
   asideId: string
   hostStreamId: string
@@ -37,7 +42,7 @@ interface AsideFullscreenStageProps {
  * is absent, and the pane says so. The page mounts no timeline of its own
  * while this stands, so there is exactly one host timeline on screen.
  */
-export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, originScope }: AsideFullscreenStageProps) {
+export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: AsideStageProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
   const split = useAsideSplit(asideId, draftSurface.openScope !== null)
   const streams = useWorkspaceStreams(workspaceId)
@@ -46,14 +51,60 @@ export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, origi
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
   const drafts = useAsideDrafts(workspaceId, asideId)
-  const callDocked = useCallDocked()
   // The anchor line jumps by `?m=`, and while the stage stands this pane is
   // the only host timeline mounted — so it is the one that has to hear it.
+  // Absent a jump it opens on the message the aside was opened from: the page's
+  // own timeline is unmounted behind the stage, so this pane cannot inherit a
+  // scroll position, and the anchored message is the one place worth landing.
   const [searchParams] = useSearchParams()
+  const hostLanding = searchParams.get("m") ?? aside?.parentAnchorId ?? null
+
+  // The stage's own width, so the divider can be capped against what is on
+  // screen rather than the viewport.
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [stageWidth, setStageWidth] = useState(0)
+  useLayoutEffect(() => {
+    const element = stageRef.current
+    if (!element) return
+    const measure = () => setStageWidth(element.clientWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  const storedWidth = useAsideStageWidth(asideId)
+  // Before the first measurement the viewport stands in — capping at the
+  // stored width would make the divider inert on the frame it is grabbed.
+  const measured = stageWidth > 0 ? stageWidth : (globalThis.window?.innerWidth ?? 0)
+  const maxWidth = Math.max(ASIDE_STAGE_MIN_WIDTH, measured - MIN_HOST_WIDTH)
+  const columnWidth = Math.min(Math.max(storedWidth, ASIDE_STAGE_MIN_WIDTH), maxWidth)
+  const applyWidth = useCallback(
+    (next: number) => setAsideStageWidth(asideId, Math.min(Math.max(next, ASIDE_STAGE_MIN_WIDTH), maxWidth)),
+    [asideId, maxWidth]
+  )
+  const { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
+    width: columnWidth,
+    onWidthChange: applyWidth,
+    direction: "left",
+  })
+  const onDividerKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      const step = event.shiftKey ? 50 : 10
+      if (event.key === "ArrowLeft") {
+        event.preventDefault()
+        applyWidth(columnWidth + step)
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault()
+        applyWidth(columnWidth - step)
+      }
+    },
+    [applyWidth, columnWidth]
+  )
 
   return (
     <div
-      data-testid="aside-fullscreen-stage"
+      data-testid="aside-stage"
+      data-aside-id={asideId}
       data-editor-zone="aside"
       className="absolute inset-0 z-30 flex flex-col bg-muted/40"
     >
@@ -74,7 +125,6 @@ export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, origi
               {drafts.length} {drafts.length === 1 ? "draft" : "drafts"}
             </span>
           )}
-          <AsideSurfacePicker value="fullscreen" onChange={setAsideSurface} dockDisabled={callDocked} />
           <Button
             variant="ghost"
             size="icon"
@@ -87,8 +137,8 @@ export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, origi
         </header>
       </TooltipProvider>
 
-      <div className="flex min-h-0 flex-1 gap-3 p-3">
-        <div className={cn(ASIDE_PANE, "flex-[0.95] basis-0")}>
+      <div ref={stageRef} className="flex min-h-0 flex-1 gap-1 p-3">
+        <div className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
           <div className={ASIDE_PANE_HEAD}>
             <span className="min-w-0 truncate font-medium text-foreground">{hostName ?? "Conversation"}</span>
             <span className="flex-1" />
@@ -100,7 +150,7 @@ export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, origi
                 workspaceId={workspaceId}
                 streamId={hostStreamId}
                 stream={host}
-                highlightMessageId={searchParams.get("m")}
+                highlightMessageId={hostLanding}
                 hideComposer
               />
             </StreamErrorBoundary>
@@ -111,7 +161,23 @@ export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, origi
           </div>
         </div>
 
-        <div ref={split.containerRef} className="flex min-h-0 min-w-0 flex-[1.02] basis-0 flex-col gap-3">
+        <PanelResizeHandle
+          isResizing={isResizing}
+          panelWidth={columnWidth}
+          minWidth={ASIDE_STAGE_MIN_WIDTH}
+          maxWidth={maxWidth}
+          onPointerDown={handleResizeStart}
+          onPointerMove={handleResizeMove}
+          onPointerEnd={handleResizeEnd}
+          onKeyDown={onDividerKeyDown}
+          ariaLabel="Resize aside"
+        />
+
+        <div
+          ref={split.containerRef}
+          className="flex min-h-0 min-w-0 shrink-0 flex-col gap-3"
+          style={{ width: columnWidth }}
+        >
           <AsideDrafts
             workspaceId={workspaceId}
             asideId={asideId}

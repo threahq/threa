@@ -57,7 +57,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
-import { AsideDockSlot, useAsideHost } from "@/components/aside"
+import { AsideSlot, useAsideHost } from "@/components/aside"
 import { useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -98,9 +98,9 @@ export function StreamPage() {
   } = usePanelLayout(isPanelOpen)
   const asideHostKey = useAsideHost()
   const openAside = useAsideForHost(asideHostKey)
-  // Desktop only: on a phone "fullscreen" is a sheet detent over a timeline
-  // that must stay where it was, not a stage that replaces it.
-  const asideStage = !isMobile && openAside?.surface === "fullscreen"
+  // Desktop only: on a phone the aside is a sheet over a timeline that must
+  // stay where it was, not a stage that replaces it.
+  const asideStage = !isMobile && openAside !== null
 
   useTypeToFocus()
 
@@ -976,7 +976,7 @@ export function StreamPage() {
             <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>
         )}
-        <AsideDockSlot workspaceId={workspaceId} hostKey={asideHostKey} />
+        <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
       </div>
       {/* Both are `fixed` overlays that would paint over a fullscreen panel, so a
           takeover keeps them out of the tree entirely rather than merely closed —
