@@ -4,7 +4,7 @@ import { AlertCircle, ArrowLeft, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
-import { AsideDockSlot, AsideMinimizedStrip, useAsideHost } from "@/components/aside"
+import { AsideDockSlot, useAsideHost } from "@/components/aside"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
@@ -970,7 +970,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
             </main>
           </div>
         </FloatingComposerAnchorProvider>
-        <AsideMinimizedStrip workspaceId={workspaceId} hostKey={asideHostKey} />
         {/* Floating compose button — always reachable (doesn't scroll with the
             feed), bottom-right. Flat solid accent + a restrained warm shadow, per
             Threa's Button language (no gradient/gloss). On a pointer it expands to

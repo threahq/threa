@@ -57,7 +57,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
-import { AsideDockSlot, AsideMinimizedStrip, useAsideHost } from "@/components/aside"
+import { AsideDockSlot, useAsideHost } from "@/components/aside"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
@@ -857,7 +857,6 @@ export function StreamPage() {
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <TimelineView isDraft={isDraft} autoFocus={!isMobile} />
           </StreamEncryptionGate>
-          <AsideMinimizedStrip workspaceId={workspaceId} hostKey={asideHostKey} />
         </main>
         {stream && !isDraft && (
           <LabelPicker

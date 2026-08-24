@@ -13,7 +13,6 @@ import {
 } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
 import { AsideMobileSheet } from "./aside-mobile-sheet"
-import { AsideMinimizedStrip } from "./aside-minimized-strip"
 
 export const ASIDE_DOCK_WIDTH = ASIDE_DOCK_DEFAULT_WIDTH
 // What the host stream keeps for itself: below this its timeline and composer
@@ -73,11 +72,11 @@ interface AsideDockSlotProps {
  * right edge (calls own the app's). Dock pushes the host by ASIDE_DOCK_WIDTH;
  * fullscreen takes half the row with the live host timeline on the left. On a
  * phone the dock is a plain takeover of the content area (PR7 owns the real
- * mobile surface). Renders nothing while the aside is minimized or closed.
+ * mobile surface). Renders nothing while no aside is open.
  */
 export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
   const current = useAsideForHost(hostKey)
-  const reading = current && current.surface !== "minimized" ? current : null
+  const reading = current
   const rendered = useFoldingState(reading)
   const isMobile = useIsMobile()
   const slotRef = useRef<HTMLDivElement>(null)
@@ -117,14 +116,6 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
     },
     [applyWidth, dockWidth]
   )
-
-  // On a phone the parked strip is this slot's too: the page's main column is
-  // invisible and inert under a panel takeover, so a strip inside it would
-  // vanish with the aside the moment it was parked from a thread or
-  // conversation panel. Here it sits over whichever surface is showing.
-  if (isMobile && current?.surface === "minimized") {
-    return <AsideMinimizedStrip workspaceId={workspaceId} hostKey={hostKey} overlay />
-  }
 
   if (!rendered) return null
   const surface = rendered.surface === "fullscreen" ? "fullscreen" : "dock"

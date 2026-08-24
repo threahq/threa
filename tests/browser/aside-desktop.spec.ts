@@ -106,13 +106,11 @@ async function openMessageActions(page: Page, streamId: string, prefix: string, 
 
 const dock = (page: Page) => page.getByTestId("aside-dock")
 const pane = (page: Page) => page.getByTestId("aside-pane")
-const strip = (page: Page) => page.getByTestId("aside-strip")
 const anchorRow = (page: Page, streamId: string) => hostScroller(page, streamId).locator("[data-aside-id]").first()
 
 async function expectNoAsideChrome(page: Page): Promise<void> {
   await expect(dock(page)).toHaveCount(0)
   await expect(pane(page)).toHaveCount(0)
-  await expect(strip(page)).toHaveCount(0)
 }
 
 async function expectSilent(page: Page, asideId: string): Promise<void> {
@@ -238,7 +236,8 @@ test.describe("Aside — desktop surface", () => {
     expect(asideId).toBeTruthy()
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })
 
-    // Surface switching: fullscreen, minimized strip, back to the last reading surface.
+    // Surface switching: fullscreen and back. There is no parked state — an
+    // aside is closed and re-entered from its anchor row.
     await pane(page).getByRole("button", { name: "Aside fullscreen" }).click()
     await expect(dock(page)).toHaveAttribute("data-surface", "fullscreen")
     // Half the row: the live host keeps the other half beside the aside.
@@ -251,13 +250,6 @@ test.describe("Aside — desktop surface", () => {
         return dockBox && hostBox ? Math.abs(dockBox.width - hostBox.width) <= 8 : false
       })
       .toBe(true)
-    await pane(page).getByRole("button", { name: "Minimize aside" }).click()
-    await expect(strip(page)).toBeVisible()
-    await expect(dock(page)).toHaveCount(0)
-    await strip(page)
-      .getByRole("button", { name: /^Open aside:/ })
-      .click()
-    await expect(dock(page)).toHaveAttribute("data-surface", "fullscreen")
     await pane(page).getByRole("button", { name: "Dock aside" }).click()
     await expect(dock(page)).toHaveAttribute("data-surface", "dock")
 
@@ -273,8 +265,8 @@ test.describe("Aside — desktop surface", () => {
     await expectNoAsideChrome(page)
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-state", "closed")
 
-    await anchorRow(page, streamId).hover()
-    await anchorRow(page, streamId).getByRole("button", { name: "Resume" }).click()
+    // The whole row is the control, so the click lands anywhere on it.
+    await anchorRow(page, streamId).click()
     await expect(dock(page)).toHaveAttribute("data-surface", "dock", { timeout: 10000 })
     await expect(pane(page)).toHaveAttribute("data-aside-id", asideId!)
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-state", "open")

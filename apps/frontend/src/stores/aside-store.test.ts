@@ -46,11 +46,10 @@ describe("aside-store", () => {
     expect(getAsideState()).toBeNull()
   })
 
-  it("should remember the last reading surface, never minimized, for resume", () => {
+  it("should remember the last reading surface for resume", () => {
     openAside(open)
     setAsideSurface("fullscreen")
-    setAsideSurface("minimized")
-    expect(getAsideState()).toEqual({ ...open, surface: "minimized" })
+    expect(getAsideState()).toEqual({ ...open, surface: "fullscreen" })
     expect(rememberedAsideSurface(open.asideId)).toBe("fullscreen")
 
     closeAside()

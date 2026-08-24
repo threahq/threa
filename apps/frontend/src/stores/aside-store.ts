@@ -15,7 +15,7 @@ import { useSyncExternalStore } from "react"
  * sibling store.
  */
 
-export type AsideSurface = "dock" | "fullscreen" | "minimized"
+export type AsideSurface = "dock" | "fullscreen"
 
 export interface OpenAsideState {
   /** The page hosting the surface — `useLocation().pathname`. */
@@ -44,9 +44,8 @@ const listeners = new Set<() => void>()
 // refresh or a shared link should carry (INV-59 exemption, same rationale as
 // the open surface above).
 const dockWidthByAside = new Map<string, number>()
-// Resume re-enters the surface the aside was last read in. Minimized is a
-// parked state, not a reading surface, so it never becomes the remembered one.
-const lastReadingSurfaceByAside = new Map<string, Exclude<AsideSurface, "minimized">>()
+// Resume re-enters the surface the aside was last read in.
+const lastReadingSurfaceByAside = new Map<string, AsideSurface>()
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -58,7 +57,7 @@ function setState(next: OpenAsideState | null): void {
 }
 
 function remember(asideId: string, surface: AsideSurface): void {
-  if (surface !== "minimized") lastReadingSurfaceByAside.set(asideId, surface)
+  lastReadingSurfaceByAside.set(asideId, surface)
 }
 
 export function getAsideState(): OpenAsideState | null {
@@ -66,7 +65,7 @@ export function getAsideState(): OpenAsideState | null {
 }
 
 /** The surface an aside was last read in, for resume; null for a never-opened aside. */
-export function rememberedAsideSurface(asideId: string): Exclude<AsideSurface, "minimized"> | null {
+export function rememberedAsideSurface(asideId: string): AsideSurface | null {
   return lastReadingSurfaceByAside.get(asideId) ?? null
 }
 

@@ -16,6 +16,7 @@ import {
   asideMobileHeight,
   nearestAsideSurface,
   steppedAsideSurface,
+  type AsideDetent,
 } from "./aside-mobile-snap"
 
 interface AsideMobileSheetProps {
@@ -23,8 +24,8 @@ interface AsideMobileSheetProps {
   asideId: string
   hostStreamId: string
   originScope: string
-  /** `dock` is the peek, `fullscreen` the whole viewport; minimized never renders here. */
-  surface: Exclude<AsideSurface, "minimized">
+  /** `dock` is the peek, `fullscreen` the whole viewport. */
+  surface: AsideSurface
 }
 
 const REDUCED_MOTION =
@@ -126,7 +127,15 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (!state) return
     // A pause before release means the drag stopped — don't flick on stale velocity.
     const velocity = performance.now() - state.lastT > 120 ? 0 : state.velocity
-    setAsideSurface(nearestAsideSurface(state.height, velocity, viewportHeight()))
+    settle(nearestAsideSurface(state.height, velocity, viewportHeight()))
+  }
+
+  // Dragging (or arrowing) below the smallest reading surface dismisses: an
+  // aside is left, not parked, and its anchor row in the timeline is the way
+  // back in.
+  const settle = (detent: AsideDetent) => {
+    if (detent === "closed") closeAside()
+    else setAsideSurface(detent)
   }
 
   // The drag is the primary gesture, but it is a pointer gesture: the handle is
@@ -135,7 +144,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return
     const direction = event.key === "ArrowUp" ? 1 : -1
     event.preventDefault()
-    setAsideSurface(steppedAsideSurface(surface, direction))
+    settle(steppedAsideSurface(surface, direction))
   }
 
   const lifted = keyboardLift || surface === "fullscreen"

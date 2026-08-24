@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react"
-import { Eye, Minus, X } from "lucide-react"
+import { Eye, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StreamContent } from "@/components/timeline"
@@ -61,9 +61,10 @@ export function AsidePane({
   const sendToComposer = useCallback(
     async ({ content, attachments }: AsideDraftHandoff) => {
       const queued = await handoff({ hostStreamId, originScope, content, attachments })
-      // Get out of the composer's way once the blocks are on their way to it;
-      // the aside stays one tap away in the strip.
-      if (queued) setAsideSurface("minimized")
+      // Get out of the composer's way once the blocks are on their way to it.
+      // The aside closes rather than parking: its anchor row is still in the
+      // timeline, and that is the one way back in.
+      if (queued) closeAside()
       return queued
     },
     [handoff, hostStreamId, originScope]
@@ -92,20 +93,7 @@ export function AsidePane({
             Only you
           </span>
           <span className="flex-1" />
-          {!takeover && (
-            <>
-              <AsideSurfacePicker value={surface} onChange={setAsideSurface} dockDisabled={callDocked} />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground"
-                aria-label="Minimize aside"
-                onClick={() => setAsideSurface("minimized")}
-              >
-                <Minus className="h-3.5 w-3.5" />
-              </Button>
-            </>
-          )}
+          {!takeover && <AsideSurfacePicker value={surface} onChange={setAsideSurface} dockDisabled={callDocked} />}
           <Button
             variant="ghost"
             size="icon"

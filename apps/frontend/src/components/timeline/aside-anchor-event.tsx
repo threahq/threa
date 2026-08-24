@@ -3,9 +3,11 @@ import { StreamTypes, type AsideAnchoredEventPayload, type StreamEvent } from "@
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useAsideState } from "@/stores/aside-store"
 import { useResumeAside } from "@/hooks/use-open-aside"
-import { streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { STREAM_ICONS, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
+
+const AsideGlyph = STREAM_ICONS[StreamTypes.ASIDE]
 
 interface AsideAnchorEventProps {
   event: StreamEvent
@@ -33,33 +35,52 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
   const age = formatRelativeTime(new Date(event.createdAt), new Date(), undefined, { terse: true })
 
   return (
-    <div
-      className="group flex items-center gap-2 px-3 py-1 text-xs sm:px-6"
+    // The whole row is the control. It stays a hairline at rest — an aside is
+    // the user's own footnote in someone else's stream, and it must not read as
+    // a message — but the target is the full row rather than five characters of
+    // "Resume", and hover/focus lifts it just enough to say it is one. Reveal is
+    // opacity-only over reserved space (INV-21): no row ever changes height.
+    <button
+      type="button"
+      onClick={() =>
+        resume({
+          asideId,
+          hostStreamId: event.streamId,
+          ...(payload?.conversationId && { conversationId: payload.conversationId }),
+        })
+      }
+      aria-label={`Resume aside: ${title}`}
       data-aside-id={asideId}
       data-state={isOpen ? "open" : "closed"}
+      className={cn(
+        "group flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors sm:px-6",
+        "hover:bg-primary/[0.04] focus-visible:bg-primary/[0.04] focus-visible:outline-none",
+        isOpen && "bg-primary/[0.03]"
+      )}
     >
+      <AsideGlyph
+        className={cn(
+          "h-3 w-3 shrink-0 transition-colors",
+          isOpen ? "text-primary" : "text-primary/60 group-hover:text-primary"
+        )}
+        aria-hidden
+      />
       <span className="min-w-0 shrink truncate text-primary">{title}</span>
       <span
         aria-hidden
         className={cn(
-          "h-px min-w-4 flex-1 bg-gradient-to-r from-primary/60 to-primary/10 transition-opacity",
-          !isOpen && "opacity-70 group-hover:opacity-100"
+          "h-px min-w-4 flex-1 bg-gradient-to-r transition-opacity",
+          isOpen ? "from-primary/70 to-primary/10" : "from-primary/50 to-primary/10 opacity-70",
+          "group-hover:opacity-100"
         )}
       />
-      <button
-        type="button"
-        onClick={() =>
-          resume({
-            asideId,
-            hostStreamId: event.streamId,
-            ...(payload?.conversationId && { conversationId: payload.conversationId }),
-          })
-        }
-        className="shrink-0 rounded px-1 text-primary opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [@media(hover:none)]:opacity-100"
+      <span
+        aria-hidden
+        className="shrink-0 rounded-full bg-primary/10 px-2 py-px font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
       >
-        Resume
-      </button>
+        {isOpen ? "Open" : "Resume"}
+      </span>
       <span className="shrink-0 text-muted-foreground">{age}</span>
-    </div>
+    </button>
   )
 }
