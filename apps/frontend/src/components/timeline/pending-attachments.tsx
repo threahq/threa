@@ -137,12 +137,45 @@ function attachmentKey(a: PendingAttachment): string {
   return a.previewUrl ?? a.id
 }
 
+/**
+ * Resolved preview state for one attachment, owned by the tray and read by the
+ * chips, the drawer list and the lightbox. It lives above all three because the
+ * chips fold away on mobile (rollup, resting composer) — a source resolved
+ * inside a chip would take the drawer's rows and the open lightbox with it.
+ */
+interface PreviewSource {
+  /** Which gallery type this file previews as (drives the icon), or null. */
+  type: UploadGalleryType | null
+  /** Leading-slot preview image; absent for types that show a type icon. */
+  thumb?: string
+  /** Full-resolution URL for the lightbox, or null when there is nothing to open. */
+  full: string | null
+  /** True while an E2E file's bytes are still decrypting. */
+  decrypting: boolean
+}
+
+/** One tray attachment, resolved once for the chip row, the drawer list and the lightbox. */
+interface TrayEntry {
+  attachment: PendingAttachment
+  /** Stable identity across the temp→server id flip: the object URL never changes. */
+  key: string
+  /** Set only for an E2E file whose bytes have to be decrypted before it can preview. */
+  decryptRef?: AttachmentRef
+  source: PreviewSource
+}
+
+/** Decrypt result published by {@link E2eSourceProbe}; `pending` distinguishes in-flight from failed. */
+interface DecryptState {
+  url: string | null
+  pending: boolean
+}
+
 // Preview source for a chip that needs no decrypt: local bytes win for every
 // previewable type (image/video/pdf/markdown/html/text) and double as the image
 // thumbnail; otherwise a non-E2E image resolves to its deterministic content URL
 // (thumbnail variant for the chip, full for the lightbox). Returns null for
-// non-previewable files and for anything with no local bytes but a decryptable
-// ref (routed to E2eChip). A present ref means "E2E, unlocked"; its absence here
+// files the gallery can't render and for anything with no local bytes but a decryptable
+// ref (routed to {@link e2eRef}). A present ref means "E2E, unlocked"; its absence here
 // means non-E2E, where the content URL is real image bytes. Non-image types with
 // no local bytes (a reloaded draft) have no static source — their server bytes
 // sit behind a presign/decrypt this path doesn't reach, so they show a type icon
@@ -152,6 +185,7 @@ function staticSrc(
   type: UploadGalleryType | null,
   workspaceId: string | undefined
 ): { thumb?: string; full: string } | null {
+  if (type === null) return null
   if (a.previewUrl) return { thumb: type === "image" ? a.previewUrl : undefined, full: a.previewUrl }
   if (type !== "image" || !workspaceId || getAttachmentRef(a.id)) return null
   return {
@@ -160,21 +194,45 @@ function staticSrc(
   }
 }
 
+/** The decrypt ref for an E2E file with no local bytes, or undefined when {@link staticSrc} serves it. */
+function e2eRef(
+  a: PendingAttachment,
+  type: UploadGalleryType | null,
+  workspaceId: string | undefined
+): AttachmentRef | undefined {
+  if (!workspaceId || a.previewUrl || type === null) return undefined
+  return getAttachmentRef(a.id) ?? undefined
+}
+
+/** Decrypts one E2E file's bytes in memory and publishes them to the tray. Renders nothing. */
+function E2eSourceProbe({
+  sourceKey,
+  attachmentRef,
+  workspaceId,
+  onResolve,
+}: {
+  sourceKey: string
+  attachmentRef: AttachmentRef
+  workspaceId: string
+  onResolve: (key: string, state: DecryptState | null) => void
+}) {
+  const decrypted = useDecryptedAttachment(workspaceId, attachmentRef)
+  const url = decrypted.status === "ready" ? decrypted.url : null
+  const pending = decrypted.status === "pending"
+  useEffect(() => {
+    onResolve(sourceKey, { url, pending })
+  }, [sourceKey, url, pending, onResolve])
+  useEffect(() => () => onResolve(sourceKey, null), [sourceKey, onResolve])
+  return null
+}
+
 interface ChipViewProps {
   attachment: PendingAttachment
-  /** Which gallery type this file previews as (drives the icon), or null. */
-  galleryType: UploadGalleryType | null
-  /** Leading-slot preview image; falls back to the type icon when absent/failed. */
-  thumbnailSrc?: string
-  /** Full-resolution URL for the lightbox, or null when not previewable. */
-  fullSrc: string | null
-  /** True while an E2E file's bytes are still decrypting. */
-  decrypting?: boolean
+  source: PreviewSource
   onRemove: (id: string) => void
   /** Abort an in-flight upload and drop the chip. Drives the × while uploading. */
   onCancelUpload: (id: string) => void
   onOpen: (key: string) => void
-  onResolveSrc: (key: string, src: string | null) => void
   /** Inline references to this attachment in the message being composed. */
   referenceCount: number
   /** Mobile tray: a tighter label fits more chips per wrapped row. */
@@ -186,27 +244,16 @@ interface ChipViewProps {
 
 function ChipView({
   attachment,
-  galleryType,
-  thumbnailSrc,
-  fullSrc,
-  decrypting,
+  source,
   onRemove,
   onCancelUpload,
   onOpen,
-  onResolveSrc,
   referenceCount,
   compact,
   imageIndex,
   dragHost,
 }: ChipViewProps) {
   const key = attachmentKey(attachment)
-
-  // Publish the full-res URL so the parent can build the lightbox item list.
-  useEffect(() => {
-    onResolveSrc(key, fullSrc)
-  }, [key, fullSrc, onResolveSrc])
-  useEffect(() => () => onResolveSrc(key, null), [key, onResolveSrc])
-
   const status = STATUS_MAP[attachment.status]
   const isUploading = attachment.status === "uploading"
   const isError = attachment.status === "error"
@@ -233,11 +280,11 @@ function ChipView({
       : "We couldn't upload this file. Please remove it and try again."
   else if (isError) tooltip = attachment.error
 
-  let Icon = iconForType(galleryType)
-  if (isUploading || decrypting) Icon = Loader2
+  let Icon = iconForType(source.type)
+  if (isUploading || source.decrypting) Icon = Loader2
   else if (isError) Icon = AlertCircle
 
-  const canPreview = !!fullSrc && !isError
+  const canPreview = source.full !== null && !isError
   // A drag out of the tray ends in a click on the chip; it must not also open
   // the lightbox or retry the upload.
   const guard = (run: () => void) => () => {
@@ -252,8 +299,8 @@ function ChipView({
     <TrayPillDraggable host={dragHost} attachment={attachment} imageIndex={imageIndex}>
       <AttachmentPill
         icon={Icon}
-        thumbnailSrc={thumbnailSrc}
-        spinning={isUploading || decrypting}
+        thumbnailSrc={source.thumb}
+        spinning={isUploading || source.decrypting}
         label={attachment.filename}
         secondary={secondary}
         status={status}
@@ -270,99 +317,93 @@ function ChipView({
   )
 }
 
-/** Chip whose preview needs no decrypt: local object URL, non-E2E image thumbnail, or icon. */
-function StaticChip(
-  props: Omit<ChipViewProps, "galleryType" | "thumbnailSrc" | "fullSrc"> & {
-    workspaceId: string | undefined
-  }
-) {
-  const type = uploadGalleryType(props.attachment)
-  const src = staticSrc(props.attachment, type, props.workspaceId)
-  return <ChipView {...props} galleryType={type} thumbnailSrc={src?.thumb} fullSrc={src?.full ?? null} />
-}
-
-/** Chip for an E2E file: decrypts the bytes in memory (no server thumbnail exists). */
-function E2eChip({
-  attachmentRef,
-  ...props
-}: Omit<ChipViewProps, "galleryType" | "thumbnailSrc" | "fullSrc" | "decrypting"> & {
-  attachmentRef: AttachmentRef
-  workspaceId: string
-}) {
-  const type = uploadGalleryType(props.attachment)
-  const decrypted = useDecryptedAttachment(props.workspaceId, attachmentRef)
-  const url = decrypted.status === "ready" ? decrypted.url : null
-  return (
-    <ChipView
-      {...props}
-      galleryType={type}
-      thumbnailSrc={type === "image" ? (url ?? undefined) : undefined}
-      fullSrc={url}
-      decrypting={decrypted.status === "pending"}
-    />
-  )
-}
-
 /**
  * Bottom-sheet overview of the whole tray (mobile): full filenames, live
  * status, per-row retry/remove, and bulk recovery — the chips themselves show
  * a couple of wrapped rows at most, so this is where "what exactly is attached
  * and what failed" gets answered at twenty attachments.
+ *
+ * A previewable row opens the same lightbox the chips do, over the sheet: the
+ * drawer stays open underneath, so closing the preview lands back on the list
+ * and the next file is one tap away.
  */
 function AttachmentListDrawer({
   open,
   onOpenChange,
   onAnimationEnd,
-  attachments,
+  entries,
+  onOpenPreview,
   onRemove,
   onCancelUpload,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onAnimationEnd: (open: boolean) => void
-  attachments: PendingAttachment[]
+  entries: TrayEntry[]
+  onOpenPreview: (key: string) => void
   onRemove: (id: string) => void
   onCancelUpload: (id: string) => void
 }) {
-  const failed = attachments.filter((a) => a.status === "error")
+  const failed = entries.map((entry) => entry.attachment).filter((a) => a.status === "error")
   const retryable = failed.filter((a) => a.canRetry === true)
   return (
     <Drawer open={open} onOpenChange={onOpenChange} onAnimationEnd={onAnimationEnd}>
       <DrawerContent className="max-h-[85dvh]">
         <DrawerTitle className="px-4 pt-1 text-sm font-medium">Attachments</DrawerTitle>
         <p className="px-4 pb-2 text-xs text-muted-foreground">
-          {attachments.length} {attachments.length === 1 ? "file" : "files"}
+          {entries.length} {entries.length === 1 ? "file" : "files"}
           {failed.length > 0 && <span className="font-medium text-destructive"> · {failed.length} failed</span>}
         </p>
         <ul className="min-h-0 flex-1 overflow-y-auto px-2">
-          {attachments.map((attachment) => {
+          {entries.map(({ attachment, key, source }) => {
             const isUploading = attachment.status === "uploading"
             const isError = attachment.status === "error"
-            let Icon = iconForType(uploadGalleryType(attachment))
-            if (isUploading) Icon = Loader2
+            let Icon = iconForType(source.type)
+            if (isUploading || source.decrypting) Icon = Loader2
             else if (isError) Icon = AlertCircle
             let statusText: ReactNode = formatFileSize(attachment.sizeBytes)
             if (isUploading) statusText = `Uploading — ${Math.round((attachment.progress ?? 0) * 100)}%`
             else if (isError) statusText = attachment.error || "Upload failed"
-            return (
-              <li
-                key={attachmentKey(attachment)}
-                className="flex items-center gap-3 border-b border-border/50 px-2 py-2.5 last:border-b-0"
-              >
+            const canPreview = source.full !== null && !isError
+            const leading =
+              source.thumb && !isError ? (
+                <img src={source.thumb} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" draggable={false} />
+              ) : (
                 <span
                   className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground",
                     isError && "bg-destructive/10 text-destructive"
                   )}
                 >
-                  <Icon className={cn("h-4 w-4", isUploading && "animate-spin")} />
+                  <Icon className={cn("h-4 w-4", (isUploading || source.decrypting) && "animate-spin")} />
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{attachment.filename}</span>
-                  <span className={cn("block truncate text-xs text-muted-foreground", isError && "text-destructive")}>
-                    {statusText}
+              )
+            const details = (
+              <span className="min-w-0 flex-1 text-left">
+                <span className="block truncate text-sm">{attachment.filename}</span>
+                <span className={cn("block truncate text-xs text-muted-foreground", isError && "text-destructive")}>
+                  {statusText}
+                </span>
+              </span>
+            )
+            return (
+              <li key={key} className="flex items-center gap-3 border-b border-border/50 px-2 py-2.5 last:border-b-0">
+                {canPreview ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-md active:bg-muted"
+                    onClick={() => onOpenPreview(key)}
+                    aria-label={`Preview ${attachment.filename}`}
+                  >
+                    {leading}
+                    {details}
+                  </button>
+                ) : (
+                  <span className="flex min-w-0 flex-1 items-center gap-3">
+                    {leading}
+                    {details}
                   </span>
-                </span>
+                )}
                 {isError && attachment.canRetry === true && (
                   <button
                     type="button"
@@ -500,19 +541,45 @@ export function PendingAttachments({
   // Open lightbox tracked by the stable attachment key, not the id (which flips
   // temp→server on upload completion), so an open preview survives its upload.
   const [openKey, setOpenKey] = useState<string | null>(null)
-  // Preview URL per previewable chip, published by each chip (a chip owns the
-  // E2E decrypt / object-URL lifecycle), so the lightbox item list has every source.
-  const [srcByKey, setSrcByKey] = useState<Map<string, string>>(new Map())
+  // Decrypted bytes per E2E attachment, published by the probes below.
+  const [decryptedByKey, setDecryptedByKey] = useState<ReadonlyMap<string, DecryptState>>(new Map())
 
-  const onResolveSrc = useCallback((key: string, src: string | null) => {
-    setSrcByKey((prev) => {
-      if ((prev.get(key) ?? null) === src) return prev
+  const onResolveDecrypted = useCallback((key: string, state: DecryptState | null) => {
+    setDecryptedByKey((prev) => {
+      const current = prev.get(key)
+      if ((current?.url ?? null) === (state?.url ?? null) && (current?.pending ?? null) === (state?.pending ?? null))
+        return prev
       const next = new Map(prev)
-      if (src) next.set(key, src)
+      if (state) next.set(key, state)
       else next.delete(key)
       return next
     })
   }, [])
+
+  const entries = useMemo<TrayEntry[]>(
+    () =>
+      attachments.map((attachment) => {
+        const type = uploadGalleryType(attachment)
+        const key = attachmentKey(attachment)
+        const decryptRef = e2eRef(attachment, type, workspaceId)
+        let source: PreviewSource
+        if (decryptRef) {
+          const decrypt = decryptedByKey.get(key)
+          const url = decrypt?.url ?? null
+          source = {
+            type,
+            thumb: type === "image" && url ? url : undefined,
+            full: url,
+            decrypting: decrypt?.pending ?? true,
+          }
+        } else {
+          const src = staticSrc(attachment, type, workspaceId)
+          source = { type, thumb: src?.thumb, full: src?.full ?? null, decrypting: false }
+        }
+        return { attachment, key, decryptRef, source }
+      }),
+    [attachments, workspaceId, decryptedByKey]
+  )
 
   // A tray-dragged image reference carries the same ordinal send would give it,
   // so two references to one image never read as different files.
@@ -520,17 +587,10 @@ export function PendingAttachments({
 
   const galleryItems = useMemo<GalleryItem[]>(
     () =>
-      attachments
-        .map((a): GalleryItem | null => {
-          const type = uploadGalleryType(a)
-          if (!type) return null
-          const key = attachmentKey(a)
-          const url = srcByKey.get(key)
-          if (!url) return null
-          return buildPendingGalleryItem(type, url, a.filename, key)
-        })
-        .filter((item): item is GalleryItem => item !== null),
-    [attachments, srcByKey]
+      entries.flatMap(({ attachment, key, source }) =>
+        source.type && source.full ? [buildPendingGalleryItem(source.type, source.full, attachment.filename, key)] : []
+      ),
+    [entries]
   )
 
   // The drawer must survive its exit animation even when the list empties.
@@ -559,6 +619,18 @@ export function PendingAttachments({
 
   return (
     <>
+      {workspaceId &&
+        entries.map(({ key, decryptRef }) =>
+          decryptRef ? (
+            <E2eSourceProbe
+              key={key}
+              sourceKey={key}
+              attachmentRef={decryptRef}
+              workspaceId={workspaceId}
+              onResolve={onResolveDecrypted}
+            />
+          ) : null
+        )}
       {attachments.length > 0 && (
         // The rollup renders on every breakpoint — the counts, bulk retry and
         // fold ARE the overview; only the drawer behind the mobile tap is a
@@ -622,29 +694,20 @@ export function PendingAttachments({
           )}
         >
           {beforePills}
-          {attachments.map((attachment) => {
-            const key = attachmentKey(attachment)
-            const ref =
-              workspaceId && !attachment.previewUrl && uploadGalleryType(attachment) != null
-                ? getAttachmentRef(attachment.id)
-                : undefined
-            const shared = {
-              attachment,
-              onRemove,
-              onCancelUpload: onCancelUpload ?? onRemove,
-              onOpen: setOpenKey,
-              onResolveSrc,
-              referenceCount: referenceCounts?.get(attachment.id) ?? 0,
-              compact: isMobile,
-              imageIndex: imageIndexes.get(attachment) ?? null,
-              dragHost,
-            }
-            return ref && workspaceId ? (
-              <E2eChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />
-            ) : (
-              <StaticChip key={key} workspaceId={workspaceId} {...shared} />
-            )
-          })}
+          {entries.map(({ attachment, key, source }) => (
+            <ChipView
+              key={key}
+              attachment={attachment}
+              source={source}
+              onRemove={onRemove}
+              onCancelUpload={onCancelUpload ?? onRemove}
+              onOpen={setOpenKey}
+              referenceCount={referenceCounts?.get(attachment.id) ?? 0}
+              compact={isMobile}
+              imageIndex={imageIndexes.get(attachment) ?? null}
+              dragHost={dragHost}
+            />
+          ))}
         </div>
       )}
       {isMobile && (attachments.length > 0 || drawerOpen || drawerExiting) && (
@@ -652,7 +715,8 @@ export function PendingAttachments({
           open={drawerOpen}
           onOpenChange={handleDrawerOpenChange}
           onAnimationEnd={handleDrawerAnimationEnd}
-          attachments={attachments}
+          entries={entries}
+          onOpenPreview={setOpenKey}
           onRemove={onRemove}
           onCancelUpload={onCancelUpload ?? onRemove}
         />
