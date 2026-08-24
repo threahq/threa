@@ -26,9 +26,6 @@ export function AsideConversation({
 }: AsideConversationProps) {
   return (
     <StreamErrorBoundary streamId={asideId}>
-      {/* Named because the stage puts two live timelines side by side and the
-          host's composer is a real one too — anything reaching for "the aside's
-          editor" has to say which. */}
       <AgentBlockProvider onInsert={onInsertAgentBlock}>
         <div data-testid="aside-conversation" className="h-full">
           <StreamContent

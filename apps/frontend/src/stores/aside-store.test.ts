@@ -4,13 +4,19 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { renderHook, act } from "@testing-library/react"
 import {
+  ASIDE_STAGE_DEFAULT_WIDTH,
+  asideOpenDraft,
+  asidePendingAgentBlocksForTest,
   asideStageWidth,
   closeAside,
   dropAsideForHost,
   getAsideSheetDetent,
   getAsideState,
   openAside,
+  clearAsideAgentBlocks,
+  queueAsideAgentBlock,
   resetAsideStoreCache,
+  setAsideOpenDraft,
   setAsideSheetDetent,
   setAsideStageWidth,
   useAsideForHost,
@@ -54,7 +60,7 @@ describe("aside-store", () => {
     closeAside()
     expect(getAsideState()).toBeNull()
     expect(asideStageWidth(open.asideId)).toBe(780)
-    expect(asideStageWidth("stream_never")).toBe(620)
+    expect(asideStageWidth("stream_never")).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
   })
 
   it("should open a sheet at the peek, whatever the last one was pulled to", () => {
@@ -67,12 +73,46 @@ describe("aside-store", () => {
     expect(getAsideSheetDetent()).toBe("peek")
   })
 
+  it("should hold the open draft for the aside, not for whichever surface is showing it", () => {
+    // The stage and the phone sheet are different components: anything a
+    // surface owned outright would be destroyed crossing between them.
+    openAside(open)
+    setAsideOpenDraft(open.asideId, "aside:stream_aside:draft_1")
+
+    closeAside()
+    openAside(open)
+    expect(asideOpenDraft(open.asideId)).toBe("aside:stream_aside:draft_1")
+    expect(asideOpenDraft("stream_other")).toBeNull()
+  })
+
+  it("should drop a block still queued for an editor when the aside is closed", () => {
+    const block = { authorId: "persona_01ARIADNE", authorName: "Ariadne", content: [] }
+    openAside(open)
+    queueAsideAgentBlock(open.asideId, block)
+    expect(asidePendingAgentBlocksForTest(open.asideId)).toEqual([block])
+
+    // Reopening hours later must not append a block queued for a draft the
+    // editor never got around to hydrating.
+    closeAside()
+    openAside(open)
+    expect(asidePendingAgentBlocksForTest(open.asideId)).toEqual([])
+  })
+
+  it("should drop a queued block once the editor has taken it", () => {
+    openAside(open)
+    queueAsideAgentBlock(open.asideId, { authorId: "bot_1", authorName: "Deploybot", content: [] })
+    clearAsideAgentBlocks(open.asideId)
+    expect(asidePendingAgentBlocksForTest(open.asideId)).toEqual([])
+  })
+
   it("should forget everything on an account switch", () => {
     openAside(open)
     setAsideStageWidth(open.asideId, 780)
+    setAsideOpenDraft(open.asideId, "aside:stream_aside:draft_1")
     resetAsideStoreCache()
     expect(getAsideState()).toBeNull()
-    expect(asideStageWidth(open.asideId)).toBe(620)
+    expect(asideStageWidth(open.asideId)).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
+    expect(asideOpenDraft(open.asideId)).toBeNull()
   })
 
   it("registration guard: account-scope flushes the aside store cache", () => {

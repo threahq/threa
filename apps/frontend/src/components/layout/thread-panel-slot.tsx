@@ -19,6 +19,8 @@ interface ThreadPanelSlotProps {
   onResizeMove: (e: React.PointerEvent) => void
   onResizeEnd: (e: React.PointerEvent) => void
   onResizeKeyDown: (e: React.KeyboardEvent) => void
+  /** Hold the panel out of the tab order while something covers it. */
+  inert?: boolean
   children: React.ReactNode
 }
 
@@ -35,6 +37,7 @@ export function ThreadPanelSlot({
   onResizeMove,
   onResizeEnd,
   onResizeKeyDown,
+  inert,
   children,
 }: ThreadPanelSlotProps) {
   useLayoutEffect(() => {
@@ -60,6 +63,7 @@ export function ThreadPanelSlot({
   return (
     <div
       data-testid="panel"
+      inert={inert || undefined}
       className={cn("flex-shrink-0 overflow-hidden", shouldAnimate && "transition-[width] duration-200 ease-out")}
       style={{ width: displayWidth }}
       onTransitionEnd={onTransitionEnd}

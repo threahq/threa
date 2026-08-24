@@ -5,14 +5,21 @@ import { StreamTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
 import { createMockStream } from "@/test/fixtures"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
 import { useAgentBlock } from "@/components/timeline/agent-block-context"
 import * as draftEditorModule from "./aside-draft-editor"
 import { clearCallState } from "@/stores/call-store"
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
-import { getAsideSheetDetent, getAsideState, openAside, resetAsideStoreCache } from "@/stores/aside-store"
+import {
+  ASIDE_DRAFT_DEFAULT_HEIGHT,
+  ASIDE_STAGE_DEFAULT_WIDTH,
+  getAsideSheetDetent,
+  getAsideState,
+  openAside,
+  resetAsideStoreCache,
+} from "@/stores/aside-store"
 import { AsideSlot, useAsideHost } from "./index"
 
 const HOST_PATH = "/w/ws_1/s/stream_host"
@@ -40,8 +47,8 @@ function Page({ takeover = false }: { takeover?: boolean }) {
   )
 }
 
-function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
-  return render(
+function routes(path = HOST_PATH, options: { takeover?: boolean } = {}) {
+  return (
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/w/:workspaceId/s/:streamId" element={<Page takeover={options.takeover} />} />
@@ -49,6 +56,10 @@ function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
       </Routes>
     </MemoryRouter>
   )
+}
+
+function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
+  return render(routes(path, options))
 }
 
 function openOnHost() {
@@ -127,10 +138,6 @@ describe("aside surfaces", () => {
     // FROM what was just said — and the block went nowhere but the draft.
     expect(screen.getByRole("button", { name: "insert into draft" })).toBeInTheDocument()
     expect(screen.getByTestId("aside-drafts")).toHaveAttribute("data-open", "true")
-
-    // The queue is the aside's, not the surface's: a block that has not reached
-    // an editor yet survives the editor remounting (this mock never consumes it).
-    expect(editor).toHaveAttribute("data-pending", "persona_01ARIADNE")
   })
 
   it("folds the drafts to their count, and unfolds to the tray on the chevron", async () => {
@@ -141,11 +148,11 @@ describe("aside surfaces", () => {
     // Resting state is the count, the way the composer's attachment tray rests.
     const fold = await screen.findByRole("button", { name: /drafts?$/i })
     expect(fold).toHaveAttribute("aria-expanded", "false")
-    expect(screen.queryByRole("button", { name: "New draft" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Start a draft" })).toBeNull()
 
     fireEvent.click(fold)
     expect(fold).toHaveAttribute("aria-expanded", "true")
-    expect(screen.getByRole("button", { name: "New draft" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Start a draft" })).toBeInTheDocument()
   })
 
   it("divides the aside between the draft and the conversation on a drag, keyboard included", async () => {
@@ -154,10 +161,10 @@ describe("aside surfaces", () => {
     openOnHost()
 
     fireEvent.click(await screen.findByRole("button", { name: /drafts?$/i }))
-    fireEvent.click(screen.getByRole("button", { name: "New draft" }))
+    fireEvent.click(screen.getByRole("button", { name: "Start a draft" }))
 
     const drafts = await screen.findByTestId("aside-drafts")
-    expect(drafts).toHaveStyle({ height: "320px" })
+    expect(drafts).toHaveStyle({ height: `${ASIDE_DRAFT_DEFAULT_HEIGHT}px` })
 
     const divider = screen.getByRole("separator", { name: "Resize draft" })
     divider.setPointerCapture = vi.fn()
@@ -165,7 +172,9 @@ describe("aside surfaces", () => {
     fireEvent.pointerDown(divider, { pointerId: 1, clientY: 400, isPrimary: true, button: 0 })
     fireEvent.pointerMove(divider, { pointerId: 1, clientY: 460 })
     fireEvent.pointerUp(divider, { pointerId: 1, clientY: 460 })
-    await waitFor(() => expect(screen.getByTestId("aside-drafts")).toHaveStyle({ height: "380px" }))
+    await waitFor(() =>
+      expect(screen.getByTestId("aside-drafts")).toHaveStyle({ height: `${ASIDE_DRAFT_DEFAULT_HEIGHT + 60}px` })
+    )
 
     fireEvent.keyDown(divider, { key: "ArrowUp", shiftKey: true })
     await waitFor(() => expect(screen.getByTestId("aside-drafts")).toHaveStyle({ height: "316px" }))
@@ -215,14 +224,14 @@ describe("aside surfaces", () => {
 
     const handle = await screen.findByRole("separator", { name: "Resize aside" })
     const column = () => screen.getByTestId("aside-drafts").parentElement as HTMLElement
-    expect(column()).toHaveStyle({ width: "620px" })
+    expect(column()).toHaveStyle({ width: `${ASIDE_STAGE_DEFAULT_WIDTH}px` })
 
     handle.setPointerCapture = vi.fn()
     handle.releasePointerCapture = vi.fn()
     fireEvent.pointerDown(handle, { pointerId: 1, clientX: 1000, isPrimary: true, button: 0 })
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 900 })
     fireEvent.pointerUp(handle, { pointerId: 1, clientX: 900 })
-    await waitFor(() => expect(column()).toHaveStyle({ width: "720px" }))
+    await waitFor(() => expect(column()).toHaveStyle({ width: `${ASIDE_STAGE_DEFAULT_WIDTH + 100}px` }))
 
     fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true })
     await waitFor(() => expect(column()).toHaveStyle({ width: "770px" }))
@@ -256,10 +265,10 @@ describe("aside surfaces", () => {
 
   describe("on a phone", () => {
     beforeEach(() => {
-      vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+      vi.spyOn(pointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     })
 
-    it("opens as a sheet over the host, with the strip as its handle, and no desktop dock", () => {
+    it("opens as a sheet over the host, with the strip as its handle, and no stage", () => {
       openOnHost()
       renderPage()
 

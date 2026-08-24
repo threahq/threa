@@ -4,7 +4,8 @@ import { AlertCircle, ArrowLeft, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
-import { AsideSlot, useAsideHost } from "@/components/aside"
+import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
+import { useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
@@ -202,6 +203,11 @@ export function BoardPage() {
 function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
   useTypeToFocus()
   const asideHostKey = useAsideHost()
+  const asideIsSheet = useAsideIsSheet()
+  const asideOpen = useAsideForHost(asideHostKey)
+  // The stage covers this row; what stays mounted behind it must leave the tab
+  // order, or focus walks into content nobody can see.
+  const asideStage = !asideIsSheet && asideOpen !== null
   const { isMobile } = useSidebar()
   const { isPanelOpen, closePanel } = usePanel()
   // The board's filters live in the URL (INV-59) — six params, three dimensions
@@ -1009,7 +1015,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
 
   return (
     <div ref={containerRef} className={layout.container}>
-      <div className={layout.main} inert={layout.mainInert}>
+      <div className={layout.main} inert={layout.mainInert || asideStage || undefined}>
         {boardColumn}
       </div>
       {mobileTakeover ? (
@@ -1030,6 +1036,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           onResizeMove={handleResizeMove}
           onResizeEnd={handleResizeEnd}
           onResizeKeyDown={handleResizeKeyDown}
+          inert={asideStage}
         >
           <PanelHost workspaceId={workspaceId} onClose={closePanel} />
         </ThreadPanelSlot>

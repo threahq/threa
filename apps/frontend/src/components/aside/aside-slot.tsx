@@ -1,7 +1,17 @@
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useAsideForHost } from "@/stores/aside-store"
 import { AsideStage } from "./aside-stage"
 import { AsideMobileSheet } from "./aside-mobile-sheet"
+
+/**
+ * Whether the aside shows as a sheet rather than the stage. One predicate, read
+ * by the slot AND by the page that stands its own timeline down for the stage:
+ * two derivations of "is this a phone" drift, and the drift here mounts two
+ * live timelines on the same stream (a coarse-pointer tablet is wide).
+ */
+export function useAsideIsSheet(): boolean {
+  return useIsMobileOrCoarse()
+}
 
 interface AsideSlotProps {
   workspaceId: string
@@ -17,10 +27,10 @@ interface AsideSlotProps {
  */
 export function AsideSlot({ workspaceId, hostKey }: AsideSlotProps) {
   const current = useAsideForHost(hostKey)
-  const isMobile = useIsMobile()
+  const isSheet = useAsideIsSheet()
   if (!current) return null
 
-  return isMobile ? (
+  return isSheet ? (
     <AsideMobileSheet
       workspaceId={workspaceId}
       asideId={current.asideId}

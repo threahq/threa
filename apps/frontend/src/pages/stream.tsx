@@ -57,7 +57,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
-import { AsideSlot, useAsideHost } from "@/components/aside"
+import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -97,10 +97,13 @@ export function StreamPage() {
     handleTransitionEnd,
   } = usePanelLayout(isPanelOpen)
   const asideHostKey = useAsideHost()
+  // The stage replaces this page's timeline; the phone's sheet sits over one
+  // that has to stay where it was. `useAsideIsSheet` is the slot's own
+  // predicate — two derivations of it would eventually disagree and mount two
+  // live timelines on the same stream.
+  const asideIsSheet = useAsideIsSheet()
   const openAside = useAsideForHost(asideHostKey)
-  // Desktop only: on a phone the aside is a sheet over a timeline that must
-  // stay where it was, not a stage that replaces it.
-  const asideStage = !isMobile && openAside !== null
+  const asideStage = !asideIsSheet && openAside !== null
 
   useTypeToFocus()
 
@@ -947,7 +950,10 @@ export function StreamPage() {
       <div ref={containerRef} className={layout.container}>
         <div
           className={layout.main}
-          inert={layout.mainInert}
+          // The stage covers this row: everything under it stays mounted (the
+          // page keeps its header and its state) but must leave the tab order,
+          // or focus walks into content nobody can see.
+          inert={layout.mainInert || asideStage || undefined}
           onPointerDownCapture={() => setFocusedPane("main")}
           onFocusCapture={() => setFocusedPane("main")}
         >
@@ -972,6 +978,7 @@ export function StreamPage() {
             onResizeMove={handleResizeMove}
             onResizeEnd={handleResizeEnd}
             onResizeKeyDown={handleResizeKeyDown}
+            inert={asideStage}
           >
             <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>

@@ -10,7 +10,7 @@ interface AsideAnchorLineProps {
   hostStreamId: string
   /** The message the aside was opened from, when it was opened from one. */
   anchorId?: string | null
-  /** `chip` rides the fullscreen room bar; `line` is the dock's own row under the header. */
+  /** `chip` rides the stage's header; `line` is the phone sheet's own row under it. */
   variant?: "line" | "chip"
 }
 
@@ -76,11 +76,11 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
       to={to}
       data-testid="aside-anchor-line"
       className={cn(
-        "group flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground transition-colors",
+        "group flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground transition-colors",
         "hover:text-primary focus-visible:text-primary focus-visible:outline-none",
         chip
-          ? "rounded-full border px-2.5 py-1 hover:border-primary/40 hover:bg-primary/[0.06]"
-          : "h-7 border-b bg-primary/[0.025] px-3 hover:bg-primary/[0.06]"
+          ? "shrink rounded-full border px-2.5 py-1 hover:border-primary/40 hover:bg-primary/[0.06]"
+          : "h-7 shrink-0 border-b bg-primary/[0.025] px-3 hover:bg-primary/[0.06]"
       )}
     >
       <span className="min-w-0 truncate">{label}</span>

@@ -7,10 +7,10 @@ interface UseResizeDragOptions {
   onWidthChange: (newWidth: number) => void
   /**
    * Which way the pointer must travel to make the element bigger: "right"
-   * (sidebar), "left" (a right-edge panel), or "up" (a region growing from the
-   * bottom of its column, e.g. a stacked split). "up"/"down" read clientY.
+   * (sidebar), "left" (a right-edge panel), "down" (the upper half of a
+   * stacked split). "down" reads clientY.
    */
-  direction?: "right" | "left" | "up" | "down"
+  direction?: "right" | "left" | "down"
   /** Called when drag starts */
   onResizeStart?: () => void
   /** Called once with the final width when the pointer is released or cancelled */
@@ -32,13 +32,9 @@ interface ResizeState {
   emittedWidth: number
 }
 
-const isVertical = (direction: "right" | "left" | "up" | "down") => direction === "up" || direction === "down"
+const isVertical = (direction: "right" | "left" | "down") => direction === "down"
 
-function dragDelta(
-  event: React.PointerEvent,
-  resize: ResizeState,
-  direction: "right" | "left" | "up" | "down"
-): number {
+function dragDelta(event: React.PointerEvent, resize: ResizeState, direction: "right" | "left" | "down"): number {
   const raw = (isVertical(direction) ? event.clientY : event.clientX) - resize.startPos
   return direction === "right" || direction === "down" ? raw : -raw
 }

@@ -33,10 +33,10 @@ export interface AsideDraftSurface {
 /**
  * The state the aside's two halves share: which draft is open, what Ariadne
  * has queued for it, and the one way content leaves. The first two live in the
- * aside store rather than here: dock and fullscreen are different components,
- * so anything this hook owned outright would be destroyed by a surface switch —
- * the open draft mid-sentence, and a queued block still waiting for the editor
- * to hydrate.
+ * aside store rather than here: the stage and the phone sheet are different
+ * components, so anything this hook owned outright would be destroyed crossing
+ * between them — the open draft mid-sentence, and a queued block still waiting
+ * for the editor to hydrate.
  */
 export function useAsideDraftSurface(params: {
   workspaceId: string

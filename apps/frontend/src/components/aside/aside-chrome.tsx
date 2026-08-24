@@ -1,7 +1,6 @@
 import { Lock } from "lucide-react"
 import { StreamTypes } from "@threa/types"
 import { STREAM_ICONS } from "@/lib/streams"
-import { cn } from "@/lib/utils"
 
 export const AsideGlyph = STREAM_ICONS[StreamTypes.ASIDE]
 
@@ -16,10 +15,7 @@ export const ASIDE_PANE = "flex min-h-0 min-w-0 flex-col overflow-hidden rounded
 export const ASIDE_PANE_HEAD =
   "flex h-9 shrink-0 items-center gap-2 border-b border-border/70 px-3 text-[11.5px] text-muted-foreground"
 
-/**
- * The drafts tray: a wrapping row, so a narrow dock stacks pills onto a second
- * line instead of crushing every one of them into an unreadable stub.
- */
+/** The band the drafts tray sits in — the tray itself does the wrapping. */
 export const ASIDE_TRAY = "flex shrink-0 items-start gap-2 px-3 py-1.5"
 
 /** Counts, ages, "read only" — the quiet mono register the sketch uses for state. */
@@ -34,14 +30,9 @@ export const ASIDE_LABEL =
  * than only where it was created, because an aside looks like every other
  * stream once it is open.
  */
-export function AsidePrivateBadge({ className }: { className?: string }) {
+export function AsidePrivateBadge() {
   return (
-    <span
-      className={cn(
-        "flex shrink-0 items-center gap-1 rounded-full border border-primary/40 bg-primary/[0.07] px-2 py-0.5 text-[10.5px] font-medium text-primary",
-        className
-      )}
-    >
+    <span className="flex shrink-0 items-center gap-1 rounded-full border border-primary/40 bg-primary/[0.07] px-2 py-0.5 text-[10.5px] font-medium text-primary">
       <Lock className="h-2.5 w-2.5" aria-hidden />
       Private
     </span>

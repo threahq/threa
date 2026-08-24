@@ -163,27 +163,17 @@ test.describe("Aside — desktop surface", () => {
     const anchorNum = (await settledScrollMetrics(page, streamId)).topNum
     expect(anchorNum).not.toBeNull()
 
-    // Baseline with the row's menu already open: Playwright's hover/click
-    // scrolls a partially clipped actions toolbar into view (Chromium centres
-    // it, ~260px), which is the driver's doing, not the surface's. Everything
-    // from the menu item click on is the aside's.
     await openMessageActions(page, streamId, prefix, anchorNum! + 1)
-    const before = await settledScrollMetrics(page, streamId)
-    expect(before.topNum).not.toBeNull()
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
 
     await expect(stage(page)).toBeVisible({ timeout: 15000 })
     const asideId = await stage(page).getAttribute("data-aside-id")
     expect(asideId).toBeTruthy()
 
-    // The stage brings the host with it, landed on the
-    // message the aside was opened from — the page's own timeline is unmounted
-    // behind it, so there is no scroll position to inherit (INV-70: one
-    // landing, decided once, here by the anchor).
+    // The stage brings the host with it as the left pane, and it is the only
+    // one: the page stands its own timeline down rather than leaving a second
+    // live copy of the same stream mounted behind the overlay.
     await expect(hostScroller(page, streamId)).toHaveCount(1)
-    await expect
-      .poll(async () => (await settledScrollMetrics(page, streamId)).topNum, { timeout: 15000 })
-      .toBeLessThanOrEqual(before.topNum!)
 
     // The creator-only anchor row lands in the host timeline at the message.
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })

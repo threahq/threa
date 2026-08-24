@@ -33,7 +33,11 @@ describe("AsideDraftStrip", () => {
     )
 
     expect(screen.getByRole("button", { name: "Open draft: Worth a caveat before Thursday" })).toHaveTextContent("9m")
-    expect(screen.getByRole("button", { name: "Open draft: Empty draft" })).toBeInTheDocument()
+    // The open one says so to a screen reader, not only through its tint.
+    expect(screen.getByRole("button", { name: "Open draft: Empty draft" })).toHaveAttribute("aria-current", "true")
+    expect(screen.getByRole("button", { name: "Open draft: Worth a caveat before Thursday" })).not.toHaveAttribute(
+      "aria-current"
+    )
   })
 
   it("opens a draft from its pill, throws one away from its ×, and starts a new one", () => {
@@ -56,6 +60,8 @@ describe("AsideDraftStrip", () => {
   it("says what the button is for while there is nothing in the tray", () => {
     render(<AsideDraftStrip drafts={[]} openScope={null} onOpen={vi.fn()} onNew={vi.fn()} onDelete={vi.fn()} />)
 
-    expect(screen.getByRole("button", { name: "New draft" })).toHaveTextContent("Start a draft")
+    // The accessible name is the visible one, so "click Start a draft" works
+    // for speech input (WCAG 2.5.3).
+    expect(screen.getByRole("button", { name: "Start a draft" })).toHaveTextContent("Start a draft")
   })
 })

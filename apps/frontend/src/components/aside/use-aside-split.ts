@@ -30,8 +30,8 @@ export interface AsideSplit {
  * layout (gaps, the divider) — without it the conversation's floor is measured
  * against height the conversation never gets.
  */
-export function useAsideSplit(asideId: string, options: { active: boolean; reservedHeight?: number }): AsideSplit {
-  const { active, reservedHeight = 0 } = options
+export function useAsideSplit(asideId: string, options: { reservedHeight?: number } = {}): AsideSplit {
+  const { reservedHeight = 0 } = options
   const containerRef = useRef<HTMLDivElement>(null)
   const [available, setAvailable] = useState(0)
   useLayoutEffect(() => {
@@ -42,12 +42,12 @@ export function useAsideSplit(asideId: string, options: { active: boolean; reser
     const observer = new ResizeObserver(measure)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [active])
+  }, [])
 
   const stored = useAsideDraftHeight(asideId)
   // Before the first measurement the viewport stands in — capping at the
   // stored height instead would make the divider inert on the frame the user
-  // grabs it (the dock's width cap has the same guard).
+  // grabs it (the stage's width cap has the same guard).
   const column = available > 0 ? available : (globalThis.window?.innerHeight ?? 0)
   const maxHeight = Math.max(ASIDE_DRAFT_MIN_HEIGHT, column - CONVERSATION_MIN_HEIGHT - reservedHeight)
   const height = Math.min(Math.max(stored, ASIDE_DRAFT_MIN_HEIGHT), maxHeight)

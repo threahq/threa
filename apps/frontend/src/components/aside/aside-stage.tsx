@@ -1,5 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react"
-import { useLayoutEffect } from "react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -51,20 +50,19 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   // The right column stacks with `gap-3` and the divider between the halves, so
   // the conversation's floor is measured against what is left after that
   // furniture, not the column's whole height.
-  const split = useAsideSplit(asideId, { active: draftSurface.openScope !== null, reservedHeight: 12 + 12 + 1 })
+  const split = useAsideSplit(asideId, { reservedHeight: 12 + 12 + 1 })
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const host = useMemo(() => streams.find((stream) => stream.id === hostStreamId), [streams, hostStreamId])
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
   const drafts = useAsideDrafts(workspaceId, asideId)
-  // The anchor line jumps by `?m=`, and while the stage stands this pane is
-  // the only host timeline mounted — so it is the one that has to hear it.
-  // Absent a jump it opens on the message the aside was opened from: the page's
-  // own timeline is unmounted behind the stage, so this pane cannot inherit a
-  // scroll position, and the anchored message is the one place worth landing.
+  // The anchor line jumps by `?m=`, and while the stage stands this pane is the
+  // only host timeline mounted — so it is the one that has to hear it. Only the
+  // URL feeds this: standing in the aside's anchor would keep a deep link
+  // permanently "active", and `StreamContent` clears a landed one three seconds
+  // later, re-claiming the navigation and yanking the reader back every time.
   const [searchParams] = useSearchParams()
-  const hostLanding = searchParams.get("m") ?? aside?.parentAnchorId ?? null
 
   // The stage's own width, so the divider can be capped against what is on
   // screen rather than the viewport.
@@ -109,16 +107,11 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   )
 
   return (
-    <div
-      data-testid="aside-stage"
-      data-aside-id={asideId}
-      data-editor-zone="aside"
-      className="absolute inset-0 z-30 flex flex-col bg-muted/40"
-    >
+    <div data-testid="aside-stage" data-aside-id={asideId} className="absolute inset-0 z-30 flex flex-col bg-muted/40">
       <TooltipProvider delayDuration={300}>
         <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-background px-4">
           <AsideGlyph className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-          <h2 className="shrink-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
+          <h2 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
           <AsidePrivateBadge />
           <AsideAnchorLine
             workspaceId={workspaceId}
@@ -145,7 +138,10 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
       </TooltipProvider>
 
       <div ref={stageRef} className="flex min-h-0 flex-1 gap-1 p-3">
-        <div className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
+        {/* The two panes carry the app's editor zones rather than one of their
+            own: type-to-focus and the composer's height observer both route by
+            zone, and a zone they do not know is a zone they ignore. */}
+        <div data-editor-zone="main" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
           <div className={ASIDE_PANE_HEAD}>
             <span className="min-w-0 truncate font-medium text-foreground">{hostName ?? "Conversation"}</span>
           </div>
@@ -155,7 +151,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
                 workspaceId={workspaceId}
                 streamId={hostStreamId}
                 stream={host}
-                highlightMessageId={hostLanding}
+                highlightMessageId={searchParams.get("m")}
               />
             </StreamErrorBoundary>
           </div>
@@ -175,6 +171,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
 
         <div
           ref={split.containerRef}
+          data-editor-zone="panel"
           className="flex min-h-0 min-w-0 shrink-0 flex-col gap-3"
           style={{ width: columnWidth }}
         >

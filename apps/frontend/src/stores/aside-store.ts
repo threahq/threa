@@ -110,6 +110,10 @@ export function useAsideSheetDetent(): AsideSheetDetent {
 
 export function closeAside(): void {
   if (!state) return
+  // A block queued for an editor that never hydrated dies with the surface: it
+  // would otherwise append itself into whatever draft is open the next time
+  // this aside is reopened, minutes or hours later.
+  pendingAgentBlocksByAside.delete(state.asideId)
   setState(null)
 }
 
@@ -152,7 +156,7 @@ export function useAsideOpenDraft(asideId: string): string | null {
 const NO_PENDING_BLOCKS: AgentBlockData[] = []
 
 /** Agent replies waiting to be appended to `asideId`'s open draft. */
-export function asidePendingAgentBlocks(asideId: string): AgentBlockData[] {
+function asidePendingAgentBlocks(asideId: string): AgentBlockData[] {
   return pendingAgentBlocksByAside.get(asideId) ?? NO_PENDING_BLOCKS
 }
 
@@ -166,6 +170,11 @@ export function clearAsideAgentBlocks(asideId: string): void {
   emit()
 }
 
+/** The queue's contents, for the store's own tests — components read the hook. */
+export function asidePendingAgentBlocksForTest(asideId: string): AgentBlockData[] {
+  return asidePendingAgentBlocks(asideId)
+}
+
 /** The queue for `asideId`, whichever surface is showing it. */
 export function useAsidePendingAgentBlocks(asideId: string): AgentBlockData[] {
   return useSyncExternalStore(
@@ -176,7 +185,7 @@ export function useAsidePendingAgentBlocks(asideId: string): AgentBlockData[] {
 }
 
 /** How tall this aside's drafts half was last dragged to, or the default. */
-export function asideDraftHeight(asideId: string): number {
+function asideDraftHeight(asideId: string): number {
   return draftHeightByAside.get(asideId) ?? ASIDE_DRAFT_DEFAULT_HEIGHT
 }
 
@@ -196,7 +205,7 @@ export function useAsideDraftHeight(asideId: string): number {
 
 /** Whether this aside's tray of draft pills is unfolded. Folded by default: the
  *  count is the resting state, the pills are what you ask for. */
-export function asideTrayExpanded(asideId: string): boolean {
+function asideTrayExpanded(asideId: string): boolean {
   return trayExpandedByAside.get(asideId) ?? false
 }
 

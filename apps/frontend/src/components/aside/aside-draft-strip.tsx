@@ -17,8 +17,7 @@ interface AsideDraftStripProps {
  * The aside's drafts as a tray of pills — the composer's attachment tray, in
  * the same primitive (`AttachmentPill`) and with the same manners: each one
  * names itself, says how old it is, carries its own ×, and the row WRAPS
- * rather than squeezing every pill into an unreadable stub when the dock is
- * narrow. New-draft leads the tray rather than trailing it: trailing, it was
+ * rather than squeezing every pill into an unreadable stub in a narrow column. New-draft leads the tray rather than trailing it: trailing, it was
  * the first thing pushed past the scroll cap by the drafts it creates.
  */
 export function AsideDraftStrip({ drafts, openScope, onOpen, onNew, onDelete }: AsideDraftStripProps) {
@@ -30,7 +29,7 @@ export function AsideDraftStrip({ drafts, openScope, onOpen, onNew, onDelete }: 
     <div className="flex max-h-[72px] min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-y-auto">
       <button
         type="button"
-        aria-label="New draft"
+        aria-label={drafts.length === 0 ? "Start a draft" : "New draft"}
         onClick={() => onNew()}
         className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed px-2 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/[0.06] hover:text-primary"
       >
@@ -48,6 +47,7 @@ export function AsideDraftStrip({ drafts, openScope, onOpen, onNew, onDelete }: 
             labelMaxWidth="max-w-[150px]"
             secondary={formatRelativeTime(new Date(draft.clientUpdatedAt), now, undefined, { terse: true })}
             activateLabel={`Open draft: ${label}`}
+            current={active}
             onActivate={() => onOpen(draft.scope)}
             removeLabel={`Delete draft: ${label}`}
             onRemove={() => onDelete(draft.scope)}

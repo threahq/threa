@@ -158,6 +158,25 @@
       translate: 0 -50%;
     }
   }
+
+  /* The same target turned on its side, for a divider between stacked panes
+     (the aside's draft/conversation split). The rule above is axis-specific —
+     it grows a column handle sideways — so a row handle needs its own. */
+  .resize-handle-touch-target-y::after {
+    content: "";
+    left: 0;
+    right: 0;
+    height: 4px;
+  }
+  @media (pointer: coarse) {
+    .resize-handle-touch-target-y::after {
+      left: 50%;
+      right: auto;
+      width: 44px;
+      height: 44px;
+      translate: -50% 0;
+    }
+  }
 }
 
 /* Per-message hover wash (Slack-style row highlight) — GATED to mouse input via

@@ -6,14 +6,18 @@ import type { AsideSplit } from "./use-aside-split"
 /**
  * The divider between the draft and the conversation. A sibling of
  * `PanelResizeHandle` turned on its side — same hairline-plus-grip, same
- * keyboard contract — because the aside is the first surface in the app that
- * splits a column rather than a row.
+ * keyboard contract, same enlarged hit strip — because the aside is the first
+ * surface in the app that splits a column rather than a row.
  */
 export function AsideSplitHandle({ split }: { split: AsideSplit }) {
   return (
     <div
       className={cn(
-        "relative flex h-px shrink-0 cursor-row-resize touch-pan-x items-center justify-center bg-border",
+        "resize-handle-touch-target-y relative flex h-px shrink-0 cursor-row-resize touch-pan-x items-center justify-center bg-border",
+        // The hairline is 1px; the grabbable strip is the pseudo-element, 4px
+        // for a mouse and 44px under a coarse pointer — `PanelResizeHandle`'s
+        // deal, on the other axis.
+        "after:absolute after:top-1/2 after:-translate-y-1/2",
         "focus-visible:bg-primary/30 focus-visible:outline-none",
         !split.isResizing && "transition-colors duration-150",
         split.isResizing && "bg-primary/30"
