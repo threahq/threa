@@ -8,6 +8,8 @@ import type { DraftComposerState } from "./use-draft-composer"
 export interface AsideDraftActions {
   /** Persist the draft, then hand its blocks and files to the host composer. */
   send: () => Promise<void>
+  /** Persist what is written, then close the editor. */
+  leave: () => Promise<void>
   /** Discard the draft. */
   remove: () => Promise<void>
   /** True while a send is in flight — both controls are held so one draft is delivered once. */
@@ -87,11 +89,30 @@ export function useAsideDraftActions(
     }
   }, [composer, onSendToComposer, onDone])
 
+  // Leaving the editor is how the user gets back to the aside's chat to ask
+  // about what they just wrote, so the text must be on the server before the
+  // question can be asked — the agent reads the stored draft, not the screen.
+  // The teardown flush in `use-draft-message` is the net for every other way
+  // out (the pane closing, the sheet dismissed); this makes the ordering
+  // explicit on the one path that leads straight to asking.
+  const leave = useCallback(async () => {
+    if (inFlight.current) return
+    const hasPayload = !isEmptyContent(composer.content) || composer.pendingAttachments.length > 0
+    if (hasPayload) {
+      const persisted = await composer.flushDraftWithResult().catch(() => false)
+      if (!persisted) {
+        toast.error("Couldn't save this draft just now — it stays open so nothing is lost.")
+        return
+      }
+    }
+    onDone()
+  }, [composer, onDone])
+
   const remove = useCallback(async () => {
     if (inFlight.current) return
     await composer.clearDraft()
     onDone()
   }, [composer, onDone])
 
-  return { send, remove, busy, canSend }
+  return { send, leave, remove, busy, canSend }
 }

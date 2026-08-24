@@ -310,6 +310,32 @@ describe("useDraftMessage", () => {
       const persisted = await loadedDraft(draftKey)
       expect(persisted?.contentJson).toEqual(thirdContent)
     })
+
+    it("persists an armed save when the composer unmounts inside the debounce window", async () => {
+      // Dropping it was silent loss: the tail lived only in the staging buffer,
+      // which is recovered at the next workspace load — until then the row, the
+      // previews reading it, and the server all showed the older body.
+      const { result, unmount } = renderHook(() => useDraftMessage(workspaceId, draftKey))
+      const tail = makeDoc("Typed then left")
+
+      act(() => result.current.saveDraftDebounced(tail))
+      unmount()
+
+      await waitFor(async () => expect((await loadedDraft(draftKey))?.contentJson).toEqual(tail))
+    })
+
+    it("does not resurrect a save that was deliberately cancelled before teardown", async () => {
+      const { result, unmount } = renderHook(() => useDraftMessage(workspaceId, draftKey))
+
+      act(() => {
+        result.current.saveDraftDebounced(makeDoc("Moot"))
+        result.current.cancelPendingSave()
+      })
+      unmount()
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(await loadedDraft(draftKey)).toBeUndefined()
+    })
   })
 
   describe("addAttachment", () => {
