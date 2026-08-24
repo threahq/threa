@@ -2536,11 +2536,6 @@ export function isAsideDraftScope(scope: string): boolean {
   return parseAsideDraftScope(scope) !== null
 }
 
-/** The scopes of `asideId`'s own drafts, out of a workspace-wide list. */
-export function asideDraftScopesOf(asideId: string, scopes: readonly string[]): string[] {
-  return scopes.filter((scope) => parseAsideDraftScope(scope)?.asideId === asideId)
-}
-
 /** Slash-command draft payload (mirrors the composer's `ExtractedCommand`). */
 export interface DraftCommand {
   name: string

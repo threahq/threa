@@ -393,16 +393,6 @@ export const DraftsRepository = {
   },
 
   /**
-   * Bootstrap list for a user — every live draft, newest edit first. Powers the
-   * stash and the cross-device seed (INV-53). Tombstones are excluded; cleanup
-   * of old tombstones is out of scope for v1.
-   *
-   * The personal stash is a naturally bounded set, so this is a full read rather
-   * than a paginated one — but it carries a defensive `MAX_DRAFTS_PER_USER` cap
-   * so a pathological account can never return an unbounded result set on every
-   * bootstrap. Newest-first means the cap, if ever hit, keeps the freshest drafts.
-   */
-  /**
    * One owner's live drafts under a scope prefix, most recently edited first.
    * The aside agent reads its own aside's drafts this way
    * (`asideDraftScopePrefix`), so the cap is a prompt-size bound, not a
@@ -429,6 +419,16 @@ export const DraftsRepository = {
     return result.rows.map(mapRow)
   },
 
+  /**
+   * Bootstrap list for a user — every live draft, newest edit first. Powers the
+   * stash and the cross-device seed (INV-53). Tombstones are excluded; cleanup
+   * of old tombstones is out of scope for v1.
+   *
+   * The personal stash is a naturally bounded set, so this is a full read rather
+   * than a paginated one — but it carries a defensive `MAX_DRAFTS_PER_USER` cap
+   * so a pathological account can never return an unbounded result set on every
+   * bootstrap. Newest-first means the cap, if ever hit, keeps the freshest drafts.
+   */
   async listByUser(db: Querier, workspaceId: string, userId: string): Promise<Draft[]> {
     const result = await db.query<DraftRow>(sql`
       SELECT ${sql.raw(COLUMNS)}

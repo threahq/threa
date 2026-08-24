@@ -1,11 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import {
-  asideDraftScope,
-  asideDraftScopePrefix,
-  asideDraftScopesOf,
-  isAsideDraftScope,
-  parseAsideDraftScope,
-} from "./api"
+import { asideDraftScope, asideDraftScopePrefix, isAsideDraftScope, parseAsideDraftScope } from "./api"
 
 const ASIDE = "stream_01ASIDE"
 
@@ -40,19 +34,5 @@ describe("aside draft scopes", () => {
 
     expect(rejected.map(parseAsideDraftScope)).toEqual(rejected.map(() => null))
     expect(rejected.some(isAsideDraftScope)).toBe(false)
-  })
-
-  test("filters a mixed scope list down to one aside's own drafts", () => {
-    const mine = asideDraftScope(ASIDE, "draft_01ONE")
-    const alsoMine = asideDraftScope(ASIDE, "draft_01TWO")
-
-    expect(
-      asideDraftScopesOf(ASIDE, [
-        mine,
-        asideDraftScope("stream_01OTHER", "draft_01THREE"),
-        "stream:stream_01ASIDE",
-        alsoMine,
-      ])
-    ).toEqual([mine, alsoMine])
   })
 })

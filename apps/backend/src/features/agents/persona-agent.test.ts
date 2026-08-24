@@ -196,12 +196,14 @@ async function runSupersedeRerun(params: {
 
   const capturedModelStrings: string[] = []
   const capturedVolatilePrompts: string[] = []
+  const capturedStablePrompts: string[] = []
   const ai = {
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
-    generateTextWithTools: async (opts: { modelString?: string; volatileSystem?: string }) => {
+    generateTextWithTools: async (opts: { modelString?: string; system?: string; volatileSystem?: string }) => {
       capturedModelStrings.push(opts.modelString ?? "unknown")
       capturedVolatilePrompts.push(opts.volatileSystem ?? "")
+      capturedStablePrompts.push(opts.system ?? "")
       return {
         text: "Revised final answer.",
         toolCalls: [],
@@ -271,6 +273,7 @@ async function runSupersedeRerun(params: {
     result,
     capturedModelStrings,
     capturedVolatilePrompts,
+    capturedStablePrompts,
     escalationSteps,
     markResponseValidationFailed,
     createMessage,
@@ -290,7 +293,7 @@ describe("PersonaAgent aside drafts in context", () => {
       makeDraft({ contentMarkdown: "Half a thought about the rollout window" }),
     ])
 
-    const { capturedVolatilePrompts } = await runSupersedeRerun({
+    const { capturedVolatilePrompts, capturedStablePrompts } = await runSupersedeRerun({
       supersededFailedValidation: false,
       streamOverride: { type: StreamTypes.ASIDE, createdBy: "usr_owner" },
     })
@@ -302,6 +305,10 @@ describe("PersonaAgent aside drafts in context", () => {
     })
     expect(capturedVolatilePrompts[0]).toContain("## Drafts open in this aside")
     expect(capturedVolatilePrompts[0]).toContain("Half a thought about the rollout window")
+    // Never the cached half: the body changes as the user types, and a change
+    // inside the prefix invalidates the cache for every turn that follows.
+    expect(capturedStablePrompts[0]).not.toContain("Drafts open in this aside")
+    expect(capturedStablePrompts[0]).not.toContain("Half a thought about the rollout window")
   })
 
   it("leaves every other stream type's prompt alone", async () => {

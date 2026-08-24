@@ -15,10 +15,4 @@ export function newAsideDraftScope(asideId: string): string {
   return asideDraftScope(asideId, `draft_${ulid()}`)
 }
 
-export {
-  asideDraftScope,
-  asideDraftScopesOf,
-  isAsideDraftScope,
-  parseAsideDraftScope,
-  type AsideDraftScope,
-} from "@threa/types"
+export { asideDraftScope, isAsideDraftScope, parseAsideDraftScope, type AsideDraftScope } from "@threa/types"

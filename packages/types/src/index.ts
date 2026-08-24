@@ -770,7 +770,6 @@ export {
   asideDraftScopePrefix,
   parseAsideDraftScope,
   isAsideDraftScope,
-  asideDraftScopesOf,
   type AsideDraftScope,
   MAX_DRAFTS_PER_USER,
   MAX_SEARCH_PHRASES,

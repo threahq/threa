@@ -1193,11 +1193,16 @@ export class PersonaAgent {
         // the dock is the point of that surface, and an aside opened over an
         // empty host viewport carries no bag at all. Owner is the aside's
         // creator — asides are creator-only, so that is whose drafts these are.
-        // Read here rather than earlier in the turn so the model sees the text
-        // as it stood when the call was made, not when the turn started.
+        // Read at prompt-composition time, not turn start: the user may still
+        // have been typing when the turn was dispatched.
         const asideDrafts =
           stream.type === StreamTypes.ASIDE
-            ? await renderAsideDrafts(pool, { workspaceId, asideId: streamId, ownerId: stream.createdBy })
+            ? await renderAsideDrafts(pool, {
+                workspaceId,
+                asideId: streamId,
+                ownerId: stream.createdBy,
+                temporal: agentContext.streamContext.temporal,
+              })
             : null
 
         const withBag = appendBagToSystemPrompt(agentContext.composeSystemPrompt(tools, effectivePurpose), resolvedBag)
