@@ -407,6 +407,32 @@ describe("aside surfaces", () => {
       expect(sheet).not.toHaveAttribute("data-keyboard-lift")
     })
 
+    it("keeps the keyboard through a fold of the drafts tray", () => {
+      openOnHost()
+      renderPage()
+
+      const sheet = screen.getByTestId("aside-sheet")
+      const editor = document.createElement("div")
+      editor.setAttribute("contenteditable", "true")
+      editor.tabIndex = 0
+      sheet.appendChild(editor)
+      Object.defineProperty(editor, "isContentEditable", { value: true })
+      editor.focus()
+      fireEvent.focus(editor)
+      expect(sheet).toHaveStyle({ height: "100dvh" })
+
+      // The tray is chrome, not a focus target: the tap is prevented before it
+      // reaches focus, so the keyboard stays up and the sheet keeps its lift.
+      const toggle = screen.getByRole("button", { name: /drafts?$/i })
+      expect(fireEvent.mouseDown(toggle)).toBe(false)
+      fireEvent.click(toggle)
+
+      expect(toggle).toHaveAttribute("aria-expanded", "true")
+      expect(document.activeElement).toBe(editor)
+      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(sheet).toHaveAttribute("data-keyboard-lift", "true")
+    })
+
     it("resizes while the composer keeps focus — a drag never closes the keyboard, and it overrides the lift", () => {
       openOnHost()
       renderPage()

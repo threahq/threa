@@ -47,7 +47,6 @@ function isEditorTarget(target: EventTarget | null): boolean {
 export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope }: AsideMobileSheetProps) {
   const detent = useAsideSheetDetent()
   const sheetRef = useRef<HTMLDivElement>(null)
-  const [dragHeight, setDragHeight] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
   // The on-screen keyboard takes the bottom of the viewport; a 45% peek of
   // what is left is all chrome and composer, no conversation. While an editor
@@ -96,7 +95,6 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
       lastT: performance.now(),
     }
     event.currentTarget.setPointerCapture(event.pointerId)
-    setDragHeight(startHeight)
     setDragging(true)
   }
 
@@ -114,7 +112,11 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     state.lastY = event.clientY
     state.lastT = now
     state.height = next
-    setDragHeight(next)
+    // Written straight to the node, not through state: a render per pointermove
+    // re-renders the pane — a whole timeline — on every frame of the gesture,
+    // and that is the drag's jank. React owns the resting height; the gesture
+    // owns the node for as long as it holds the pointer.
+    if (sheetRef.current) sheetRef.current.style.height = `${next}px`
   }
 
   // The browser took the pointer (a scroll, a system gesture): the drag never
@@ -122,14 +124,12 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const onPointerCancel = () => {
     drag.current = null
     setDragging(false)
-    setDragHeight(null)
   }
 
   const onPointerUp = () => {
     const state = drag.current
     drag.current = null
     setDragging(false)
-    setDragHeight(null)
     if (!state) return
     // A pause before release means the drag stopped — don't flick on stale velocity.
     const velocity = performance.now() - state.lastT > 120 ? 0 : state.velocity
@@ -158,8 +158,20 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   }
 
   const lifted = keyboardLift || detent === "full"
+  // The lift lands in the same moment the keyboard resizes the viewport under
+  // the sheet. Easing the height across that leaves the sheet squashing for the
+  // length of the animation while the keyboard is already up, so a lift change
+  // is committed uncushioned; a detent the user chose still eases into place.
+  const previouslyLifted = useRef(keyboardLift)
+  const liftJustChanged = previouslyLifted.current !== keyboardLift
+  useEffect(() => {
+    previouslyLifted.current = keyboardLift
+  }, [keyboardLift])
   const restingHeight = lifted ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
-  const height = dragging && dragHeight != null ? `${dragHeight}px` : restingHeight
+  // Read from the drag rather than state: an unrelated re-render mid-gesture
+  // (a store update, the lift going off) must re-apply the height the node
+  // already has, not the one it started the drag on.
+  const height = dragging && drag.current ? `${drag.current.height}px` : restingHeight
 
   return (
     <>
@@ -174,7 +186,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         data-suppress-pull-refresh="true"
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-xl border-t-2 border-primary/70 bg-background shadow-lg",
-          !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
+          !dragging && !liftJustChanged && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
         )}
         style={{ height }}
       >

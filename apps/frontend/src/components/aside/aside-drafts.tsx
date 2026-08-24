@@ -23,7 +23,12 @@ export function AsideDraftTray({ workspaceId, asideId, surface, className }: Asi
   const expanded = useAsideTrayExpanded(asideId)
 
   return (
-    <div className={cn(ASIDE_TRAY, "flex-col gap-1.5", className)}>
+    // preventDefault keeps editor focus — and the phone's keyboard — through
+    // taps anywhere in the tray, the same guard the composer's attachment tray
+    // uses. Safe as a blanket here: every child is one of our own buttons,
+    // nothing portaled. Without it, folding the tray closed the keyboard, and
+    // the sheet dropped out of its keyboard lift with it.
+    <div className={cn(ASIDE_TRAY, "flex-col gap-1.5", className)} onMouseDown={(event) => event.preventDefault()}>
       <button
         type="button"
         aria-expanded={expanded}
