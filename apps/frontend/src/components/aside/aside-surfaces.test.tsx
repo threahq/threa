@@ -24,6 +24,7 @@ const aside = createMockStream({
   type: StreamTypes.ASIDE,
   displayName: "churn number sanity-check",
   parentStreamId: "stream_host",
+  parentAnchorId: "msg_anchor_1",
 })
 
 /**
@@ -153,6 +154,18 @@ describe("aside surfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Minimize aside" }))
     await waitFor(() => expect(screen.queryByTestId("aside-dock")).toBeNull())
     expect(screen.getByTestId("aside-strip")).toHaveTextContent("churn number sanity-check")
+  })
+
+  it("names the aside as private and points back at the message it was opened from", async () => {
+    renderPage()
+    openOnHost("dock")
+
+    expect(await screen.findByText("Only you")).toBeInTheDocument()
+    // Anchored to a message that isn't in this test's timeline cache: it names
+    // the host stream rather than inventing an author, and still offers the jump.
+    const jump = screen.getByRole("link", { name: "Scroll to it" })
+    expect(jump).toHaveAttribute("href", `${HOST_PATH}?m=msg_anchor_1`)
+    expect(screen.getByText(/^Anchored in/)).toBeInTheDocument()
   })
 
   it("resizes the dock from its handle, keyboard included, and holds the width across a surface round trip", async () => {

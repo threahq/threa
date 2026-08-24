@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react"
-import { Maximize2, Minus, PanelRight, X } from "lucide-react"
+import { Eye, Minus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { StreamContent } from "@/components/timeline"
 import { AgentBlockProvider, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
@@ -8,8 +9,9 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threa/types"
-import { cn } from "@/lib/utils"
 import { useCallDocked } from "./use-call-docked"
+import { AsideSurfacePicker } from "./aside-surface-picker"
+import { AsideAnchorLine } from "./aside-anchor-line"
 import { AsideDraftDock } from "./aside-draft-dock"
 import { AsideDraftEditor } from "./aside-draft-editor"
 import { newAsideDraftScope } from "@/lib/drafts/aside-scope"
@@ -80,46 +82,36 @@ export function AsidePane({
       data-editor-zone="aside"
       className="flex h-full min-h-0 flex-col border-t-2 border-primary/70 bg-background"
     >
-      <header className="flex h-12 shrink-0 items-center gap-1 border-b pl-4 pr-2">
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h2>
-        {!takeover && (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn("h-8 w-8", surface === "dock" && "bg-accent text-accent-foreground")}
-              aria-label="Dock aside"
-              aria-pressed={surface === "dock"}
-              disabled={callDocked}
-              onClick={() => setAsideSurface("dock")}
-            >
-              <PanelRight className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn("h-8 w-8", surface === "fullscreen" && "bg-accent text-accent-foreground")}
-              aria-label="Aside fullscreen"
-              aria-pressed={surface === "fullscreen"}
-              onClick={() => setAsideSurface("fullscreen")}
-            >
-              <Maximize2 className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              aria-label="Minimize aside"
-              onClick={() => setAsideSurface("minimized")}
-            >
-              <Minus className="h-4 w-4" />
-            </Button>
-          </>
-        )}
-        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Close aside" onClick={closeAside}>
-          <X className="h-4 w-4" />
-        </Button>
-      </header>
+      <TooltipProvider delayDuration={300}>
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b pl-4 pr-2">
+          <h2 className="min-w-0 truncate text-sm font-semibold">{title}</h2>
+          {/* Nobody else can open this stream — the badge says so where the
+              surface is read, not only where it was created. */}
+          <span className="flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <Eye className="h-2.5 w-2.5 text-primary" aria-hidden />
+            Only you
+          </span>
+          <span className="flex-1" />
+          {!takeover && (
+            <>
+              <AsideSurfacePicker value={surface} onChange={setAsideSurface} dockDisabled={callDocked} />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label="Minimize aside"
+                onClick={() => setAsideSurface("minimized")}
+              >
+                <Minus className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Close aside" onClick={closeAside}>
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+      </TooltipProvider>
+      <AsideAnchorLine workspaceId={workspaceId} hostStreamId={hostStreamId} anchorId={aside?.parentAnchorId} />
       {openDraftScope ? (
         <AsideDraftEditor
           workspaceId={workspaceId}
