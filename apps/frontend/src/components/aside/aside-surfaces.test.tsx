@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { StreamTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
@@ -384,7 +384,7 @@ describe("aside surfaces", () => {
       expect(getAsideSheetDetent()).toBe("peek")
     })
 
-    it("rises to the full viewport while an editor in it has focus, and settles back when the keyboard goes", () => {
+    it("takes the whole viewport once you write in it, and stays there when the keyboard goes", () => {
       openOnHost()
       renderPage()
 
@@ -398,13 +398,13 @@ describe("aside surfaces", () => {
       expect(sheet).toHaveStyle({ height: "45dvh" })
       fireEvent.focus(editor)
       expect(sheet).toHaveStyle({ height: "100dvh" })
-      expect(sheet).toHaveAttribute("data-keyboard-lift", "true")
-      // The chosen detent is presentation-independent: still the peek.
-      expect(getAsideSheetDetent()).toBe("peek")
+      expect(getAsideSheetDetent()).toBe("full")
 
+      // Writing moved the sheet and it stays moved: the keyboard leaving is
+      // not a second resize, and a drag is how it comes back down.
       fireEvent.blur(editor)
-      expect(sheet).toHaveStyle({ height: "45dvh" })
-      expect(sheet).not.toHaveAttribute("data-keyboard-lift")
+      expect(sheet).toHaveStyle({ height: "100dvh" })
+      expect(getAsideSheetDetent()).toBe("full")
     })
 
     it("keeps the keyboard through a fold of the drafts tray", () => {
@@ -417,12 +417,11 @@ describe("aside surfaces", () => {
       editor.tabIndex = 0
       sheet.appendChild(editor)
       Object.defineProperty(editor, "isContentEditable", { value: true })
-      editor.focus()
-      fireEvent.focus(editor)
+      act(() => editor.focus())
       expect(sheet).toHaveStyle({ height: "100dvh" })
 
       // The tray is chrome, not a focus target: the tap is prevented before it
-      // reaches focus, so the keyboard stays up and the sheet keeps its lift.
+      // reaches focus, so the keyboard stays up and the sheet stays put.
       const toggle = screen.getByRole("button", { name: /drafts?$/i })
       expect(fireEvent.mouseDown(toggle)).toBe(false)
       fireEvent.click(toggle)
@@ -430,10 +429,10 @@ describe("aside surfaces", () => {
       expect(toggle).toHaveAttribute("aria-expanded", "true")
       expect(document.activeElement).toBe(editor)
       expect(sheet).toHaveStyle({ height: "100dvh" })
-      expect(sheet).toHaveAttribute("data-keyboard-lift", "true")
+      expect(getAsideSheetDetent()).toBe("full")
     })
 
-    it("resizes while the composer keeps focus — a drag never closes the keyboard, and it overrides the lift", () => {
+    it("resizes while the composer keeps focus — a drag never closes the keyboard", () => {
       openOnHost()
       renderPage()
 
@@ -444,8 +443,7 @@ describe("aside surfaces", () => {
       editor.tabIndex = 0
       sheet.appendChild(editor)
       Object.defineProperty(editor, "isContentEditable", { value: true })
-      editor.focus()
-      fireEvent.focus(editor)
+      act(() => editor.focus())
       expect(sheet).toHaveStyle({ height: "100dvh" })
       sheet.getBoundingClientRect = () => ({
         height: 360,
@@ -470,7 +468,6 @@ describe("aside surfaces", () => {
       expect(document.activeElement).toBe(editor)
       expect(getAsideSheetDetent()).toBe("full")
       expect(handle.setPointerCapture).toHaveBeenCalled()
-      expect(sheet).not.toHaveAttribute("data-keyboard-lift")
     })
   })
 })

@@ -48,19 +48,14 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const detent = useAsideSheetDetent()
   const sheetRef = useRef<HTMLDivElement>(null)
   const [dragging, setDragging] = useState(false)
-  // The on-screen keyboard takes the bottom of the viewport; a 45% peek of
-  // what is left is all chrome and composer, no conversation. While an editor
-  // in the sheet has focus the sheet rises to the full (keyboard-shrunk)
-  // viewport — presentation only, the chosen detent is kept and returns when
-  // the keyboard goes. A drag while typing is the user's own call and wins
-  // over the lift; the keyboard stays up through it (the composer's own
-  // resize handle sets the precedent: preventDefault keeps focus).
-  const [keyboardLift, setKeyboardLift] = useState(false)
+  // Writing takes the sheet over: the keyboard takes the bottom of the
+  // viewport, and a 45% peek of what is left is chrome and two lines. The
+  // sheet moves to the full detent and stays there — a real state change a
+  // drag can undo, not a presentation the sheet undoes for you. Rising on
+  // focus and falling back on blur put a resize on both edges of every
+  // keyboard, two heights and a viewport moving at once, and it showed.
   const onFocusCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
-    if (isEditorTarget(event.target)) setKeyboardLift(true)
-  }
-  const onBlurCapture = (event: ReactFocusEvent<HTMLDivElement>) => {
-    if (isEditorTarget(event.target)) setKeyboardLift(false)
+    if (isEditorTarget(event.target)) setAsideSheetDetent("full")
   }
   const drag = useRef<{
     startY: number
@@ -70,21 +65,19 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     lastY: number
     lastT: number
   } | null>(null)
-  // A draft takes the sheet over, so the sheet comes up to meet it: at the
-  // peek a writing surface is all chrome and two lines of text. A real detent,
-  // not a forced height — a drag from here is still the user's call.
+  // Opening a draft takes the sheet over in its own right, ahead of the focus
+  // its editor then takes.
   const openDraft = useAsideOpenDraft(asideId)
   useEffect(() => {
     if (openDraft) setAsideSheetDetent("full")
   }, [openDraft])
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    // The handle carries text; without this a drag starts a text selection and
-    // the browser cancels the pointer stream mid-gesture, so the sheet snaps
-    // back to where it started. It also keeps focus (and the keyboard) in an
-    // editor that has it — a drag never closes the keyboard.
+    // Without this the browser turns the drag into a text selection and
+    // cancels the pointer stream mid-gesture, so the sheet snaps back to where
+    // it started. It also keeps focus — and the keyboard — in an editor that
+    // has it: a drag never closes the keyboard.
     event.preventDefault()
-    setKeyboardLift(false)
     const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, viewportHeight())
     drag.current = {
       startY: event.clientY,
@@ -157,20 +150,10 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (next !== "closed") settle(next)
   }
 
-  const lifted = keyboardLift || detent === "full"
-  // The lift lands in the same moment the keyboard resizes the viewport under
-  // the sheet. Easing the height across that leaves the sheet squashing for the
-  // length of the animation while the keyboard is already up, so a lift change
-  // is committed uncushioned; a detent the user chose still eases into place.
-  const previouslyLifted = useRef(keyboardLift)
-  const liftJustChanged = previouslyLifted.current !== keyboardLift
-  useEffect(() => {
-    previouslyLifted.current = keyboardLift
-  }, [keyboardLift])
-  const restingHeight = lifted ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
+  const restingHeight = detent === "full" ? "100dvh" : `${ASIDE_PEEK_FRACTION * 100}dvh`
   // Read from the drag rather than state: an unrelated re-render mid-gesture
-  // (a store update, the lift going off) must re-apply the height the node
-  // already has, not the one it started the drag on.
+  // must re-apply the height the node already has, not the one the drag
+  // started on.
   const height = dragging && drag.current ? `${drag.current.height}px` : restingHeight
 
   return (
@@ -180,13 +163,11 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         ref={sheetRef}
         data-testid="aside-sheet"
         data-detent={detent}
-        data-keyboard-lift={keyboardLift || undefined}
         onFocusCapture={onFocusCapture}
-        onBlurCapture={onBlurCapture}
         data-suppress-pull-refresh="true"
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 flex flex-col overflow-hidden rounded-t-xl border-t-2 border-primary/70 bg-background shadow-lg",
-          !dragging && !liftJustChanged && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
+          !dragging && !REDUCED_MOTION && "transition-[height] duration-200 ease-out"
         )}
         style={{ height }}
       >
