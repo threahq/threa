@@ -155,6 +155,32 @@ describe("aside surfaces", () => {
     expect(screen.getByTestId("aside-strip")).toHaveTextContent("churn number sanity-check")
   })
 
+  it("resizes the dock from its handle, keyboard included, and holds the width across a surface round trip", async () => {
+    // The sketch asks for the dock to be resizable like the thread panel and
+    // the call dock; before this it was a hardcoded 400.
+    renderPage()
+    openOnHost("dock")
+
+    const handle = await screen.findByRole("separator", { name: "Resize aside" })
+    handle.setPointerCapture = vi.fn()
+    handle.releasePointerCapture = vi.fn()
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 1000, isPrimary: true, button: 0 })
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 900 })
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 900 })
+    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "500px" }))
+
+    fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true })
+    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "550px" }))
+    fireEvent.keyDown(handle, { key: "ArrowRight" })
+    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "540px" }))
+
+    // Fullscreen owns its own geometry; coming back lands on the dragged width.
+    fireEvent.click(screen.getByRole("button", { name: "Aside fullscreen" }))
+    expect(screen.queryByRole("separator", { name: "Resize aside" })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Dock aside" }))
+    await waitFor(() => expect(screen.getByTestId("aside-dock")).toHaveStyle({ width: "540px" }))
+  })
+
   it("should restore a minimized aside into the surface it was last read in, and close from the strip", async () => {
     renderPage()
     openOnHost("fullscreen")

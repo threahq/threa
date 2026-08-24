@@ -31,8 +31,19 @@ export interface OpenAsideState {
   originScope: string
 }
 
+/** Dock width bounds. The floor keeps the chat and its composer usable; the
+ *  ceiling is enforced against the live container by the slot, which knows how
+ *  much room the host timeline still needs. */
+export const ASIDE_DOCK_MIN_WIDTH = 320
+export const ASIDE_DOCK_DEFAULT_WIDTH = 400
+
 let state: OpenAsideState | null = null
 const listeners = new Set<() => void>()
+// Dock width the user dragged, per aside. Session-scoped like the surface
+// itself: a width is a reading preference for this sitting, not something a
+// refresh or a shared link should carry (INV-59 exemption, same rationale as
+// the open surface above).
+const dockWidthByAside = new Map<string, number>()
 // Resume re-enters the surface the aside was last read in. Minimized is a
 // parked state, not a reading surface, so it never becomes the remembered one.
 const lastReadingSurfaceByAside = new Map<string, Exclude<AsideSurface, "minimized">>()
@@ -83,7 +94,27 @@ export function dropAsideForHost(hostKey: string): void {
 
 export function resetAsideStoreCache(): void {
   lastReadingSurfaceByAside.clear()
+  dockWidthByAside.clear()
   setState(null)
+}
+
+/** The width this aside's dock was last dragged to, or the default. */
+export function asideDockWidth(asideId: string): number {
+  return dockWidthByAside.get(asideId) ?? ASIDE_DOCK_DEFAULT_WIDTH
+}
+
+export function setAsideDockWidth(asideId: string, width: number): void {
+  dockWidthByAside.set(asideId, Math.max(ASIDE_DOCK_MIN_WIDTH, Math.round(width)))
+  emit()
+}
+
+/** The dock width for `asideId`, re-rendering the slot as it is dragged. */
+export function useAsideDockWidth(asideId: string | null): number {
+  return useSyncExternalStore(
+    subscribe,
+    () => (asideId ? asideDockWidth(asideId) : ASIDE_DOCK_DEFAULT_WIDTH),
+    () => (asideId ? asideDockWidth(asideId) : ASIDE_DOCK_DEFAULT_WIDTH)
+  )
 }
 
 function subscribe(listener: () => void): () => void {
