@@ -104,13 +104,14 @@ async function openMessageActions(page: Page, streamId: string, prefix: string, 
   await expect(page.getByRole("menuitem", { name: "Open an aside here" })).toBeVisible()
 }
 
-const dock = (page: Page) => page.getByTestId("aside-dock")
-const pane = (page: Page) => page.getByTestId("aside-pane")
+const stage = (page: Page) => page.getByTestId("aside-stage")
+// The stage carries two live timelines and two real composers; this is the
+// aside's own.
+const asideChat = (page: Page) => page.getByTestId("aside-conversation")
 const anchorRow = (page: Page, streamId: string) => hostScroller(page, streamId).locator("[data-aside-id]").first()
 
 async function expectNoAsideChrome(page: Page): Promise<void> {
-  await expect(dock(page)).toHaveCount(0)
-  await expect(pane(page)).toHaveCount(0)
+  await expect(stage(page)).toHaveCount(0)
 }
 
 async function expectSilent(page: Page, asideId: string): Promise<void> {
@@ -162,26 +163,17 @@ test.describe("Aside — desktop surface", () => {
     const anchorNum = (await settledScrollMetrics(page, streamId)).topNum
     expect(anchorNum).not.toBeNull()
 
-    // Baseline with the row's menu already open: Playwright's hover/click
-    // scrolls a partially clipped actions toolbar into view (Chromium centres
-    // it, ~260px), which is the driver's doing, not the surface's. Everything
-    // from the menu item click on is the aside's.
     await openMessageActions(page, streamId, prefix, anchorNum! + 1)
-    const before = await settledScrollMetrics(page, streamId)
-    expect(before.topNum).not.toBeNull()
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
 
-    await expect(dock(page)).toHaveAttribute("data-surface", "dock", { timeout: 15000 })
-    await expect(pane(page)).toBeVisible()
-    const asideId = await pane(page).getAttribute("data-aside-id")
+    await expect(stage(page)).toBeVisible({ timeout: 15000 })
+    const asideId = await stage(page).getAttribute("data-aside-id")
     expect(asideId).toBeTruthy()
 
-    // INV-70: the host's landing is untouched — same top row, same scrollTop.
-    const after = await settledScrollMetrics(page, streamId)
-    expect({ topRow: after.topNum, scrollTop: after.scrollTop }).toEqual({
-      topRow: before.topNum,
-      scrollTop: before.scrollTop,
-    })
+    // The stage brings the host with it as the left pane, and it is the only
+    // one: the page stands its own timeline down rather than leaving a second
+    // live copy of the same stream mounted behind the overlay.
+    await expect(hostScroller(page, streamId)).toHaveCount(1)
 
     // The creator-only anchor row lands in the host timeline at the message.
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })
@@ -189,16 +181,16 @@ test.describe("Aside — desktop surface", () => {
 
     // Talk to Ariadne in the aside: the first turn carries the viewport
     // snapshot ("what you saw") and the companion answers in the aside pane.
-    const asideEditor = pane(page).locator("[contenteditable='true']")
+    const asideEditor = asideChat(page).locator("[contenteditable='true']")
     await asideEditor.click()
     await page.keyboard.type("What is this about?")
     await page.keyboard.press("Meta+Enter")
-    await expect(pane(page).locator(".message-item").filter({ hasText: "What is this about?" })).toBeVisible({
+    await expect(asideChat(page).locator(".message-item").filter({ hasText: "What is this about?" })).toBeVisible({
       timeout: 10000,
     })
-    await expect(pane(page).getByText(/What you saw in/)).toBeVisible({ timeout: 15000 })
+    await expect(asideChat(page).getByText(/What you saw in/)).toBeVisible({ timeout: 15000 })
     await expect(
-      pane(page)
+      asideChat(page)
         .locator(".message-item")
         .filter({ hasText: /stub response from the companion/ })
     ).toBeVisible({ timeout: AGENT_REPLY_TIMEOUT })
@@ -231,27 +223,15 @@ test.describe("Aside — desktop surface", () => {
       .click()
     await page.keyboard.press("Meta+Enter")
 
-    await expect(dock(page)).toHaveAttribute("data-surface", "dock", { timeout: 15000 })
-    const asideId = await pane(page).getAttribute("data-aside-id")
+    await expect(stage(page)).toBeVisible({ timeout: 15000 })
+    const asideId = await stage(page).getAttribute("data-aside-id")
     expect(asideId).toBeTruthy()
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })
 
-    // Surface switching: fullscreen and back. There is no parked state — an
-    // aside is closed and re-entered from its anchor row.
-    await pane(page).getByRole("button", { name: "Aside fullscreen" }).click()
-    await expect(dock(page)).toHaveAttribute("data-surface", "fullscreen")
-    // Half the row: the live host keeps the other half beside the aside.
-    await expect
-      .poll(async () => {
-        const [dockBox, hostBox] = await Promise.all([
-          dock(page).boundingBox(),
-          hostScroller(page, streamId).boundingBox(),
-        ])
-        return dockBox && hostBox ? Math.abs(dockBox.width - hostBox.width) <= 8 : false
-      })
-      .toBe(true)
-    await pane(page).getByRole("button", { name: "Dock aside" }).click()
-    await expect(dock(page)).toHaveAttribute("data-surface", "dock")
+    // One surface: the stage owns the content region, the host rides along
+    // still writable, and exactly one host timeline is mounted.
+    await expect(hostScroller(page, streamId)).toHaveCount(1)
+    await expect(stage(page).getByRole("group", { name: "Aside surface" })).toHaveCount(0)
 
     // Leave: the next stream carries no aside chrome at all.
     await page.getByRole("link", { name: `#elsewhere-${testId}` }).click()
@@ -267,8 +247,8 @@ test.describe("Aside — desktop surface", () => {
 
     // The whole row is the control, so the click lands anywhere on it.
     await anchorRow(page, streamId).click()
-    await expect(dock(page)).toHaveAttribute("data-surface", "dock", { timeout: 10000 })
-    await expect(pane(page)).toHaveAttribute("data-aside-id", asideId!)
+    await expect(stage(page)).toBeVisible({ timeout: 10000 })
+    await expect(stage(page)).toHaveAttribute("data-aside-id", asideId!)
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-state", "open")
     await expectSilent(page, asideId!)
   })

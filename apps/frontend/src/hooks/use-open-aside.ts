@@ -5,9 +5,7 @@ import { ContextRefKinds, StreamTypes, draftStreamScope, type ContextRef } from 
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { useCreateStream } from "./use-streams"
 import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"
-import { resolveAsideOpenSurface } from "@/lib/aside/surface"
-import { openAside, rememberedAsideSurface } from "@/stores/aside-store"
-import { isCallDocked } from "@/components/aside/use-call-docked"
+import { openAside } from "@/stores/aside-store"
 
 /**
  * Where an aside is opened from. A timeline surface (channel, DM, scratchpad,
@@ -49,8 +47,7 @@ function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
 
 /**
  * Open a new aside on the current page: create the aside stream (viewport
- * captured once, here, before the create call) and show it in the surface it
- * belongs in. Auto-titled by the backend naming path, so no `displayName`.
+ * captured once, here, before the create call) and show it. Auto-titled by the backend naming path, so no `displayName`.
  * Creation failure toasts (the one loud signal); success is the surface itself.
  */
 export function useOpenAside(workspaceId: string) {
@@ -90,7 +87,6 @@ export function useOpenAside(workspaceId: string) {
         hostKey,
         hostStreamId: origin.hostStreamId,
         asideId: aside.id,
-        surface: resolveAsideOpenSurface({ remembered: null, callDocked: isCallDocked() }),
         originScope: originScopeOf(origin),
       })
     },
@@ -106,7 +102,7 @@ export interface ResumeAsideParams {
   conversationId?: string
 }
 
-/** Re-open an existing aside from its anchor row, into the surface it was last read in. */
+/** Re-open an existing aside from its anchor row. */
 export function useResumeAside() {
   const { pathname: hostKey } = useLocation()
   return useCallback(
@@ -118,10 +114,6 @@ export function useResumeAside() {
         originScope: params.conversationId
           ? boardReplyDraftKey(params.conversationId)
           : draftStreamScope(params.hostStreamId),
-        surface: resolveAsideOpenSurface({
-          remembered: rememberedAsideSurface(params.asideId),
-          callDocked: isCallDocked(),
-        }),
       })
     },
     [hostKey]

@@ -18,7 +18,10 @@ import { cn } from "@/lib/utils"
  */
 export function panelTakeoverClasses(takeover: boolean) {
   return {
-    container: cn("h-full", takeover ? "relative" : "flex"),
+    // Always positioned: a surface that takes the whole content region (the
+    // aside's fullscreen stage) anchors to this row, and it must stop at the
+    // sidebar rather than at the viewport.
+    container: cn("relative h-full", !takeover && "flex"),
     main: cn("min-w-0 overflow-hidden", takeover ? "invisible absolute inset-0" : "flex-1"),
     /** `undefined` rather than `false` — React omits the attribute entirely. */
     mainInert: takeover || undefined,

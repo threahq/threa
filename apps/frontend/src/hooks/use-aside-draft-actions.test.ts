@@ -129,22 +129,23 @@ describe("useAsideDraftActions", () => {
     })
   })
 
-  it("refuses to delete the draft while its hand-off is in flight", async () => {
+  it("refuses to leave the editor while its hand-off is in flight", async () => {
     let deliver: (queued: { delivered: Promise<boolean> } | null) => void = () => {}
     const onSendToComposer = vi.fn(
       () => new Promise<{ delivered: Promise<boolean> } | null>((resolve) => (deliver = resolve))
     )
-    const clearDraft = vi.fn(async () => {})
+    const onDone = vi.fn()
+    const flushDraftWithResult = vi.fn(async () => true)
     const { result } = renderHook(() =>
-      useAsideDraftActions(composerStub({ clearDraft }), { onSendToComposer, onDone: vi.fn() })
+      useAsideDraftActions(composerStub({ flushDraftWithResult }), { onSendToComposer, onDone })
     )
 
     let sending: Promise<void> = Promise.resolve()
     await act(async () => {
       sending = result.current.send()
-      await result.current.remove()
+      await result.current.leave()
     })
-    expect(clearDraft).not.toHaveBeenCalled()
+    expect(flushDraftWithResult).not.toHaveBeenCalled()
     await act(async () => {
       deliver(queued(true))
       await sending

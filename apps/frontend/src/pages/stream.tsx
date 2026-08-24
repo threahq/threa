@@ -57,7 +57,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
-import { AsideDockSlot, useAsideHost } from "@/components/aside"
+import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -97,7 +97,13 @@ export function StreamPage() {
     handleTransitionEnd,
   } = usePanelLayout(isPanelOpen)
   const asideHostKey = useAsideHost()
-  const asideFullscreen = useAsideForHost(asideHostKey)?.surface === "fullscreen"
+  // The stage replaces this page's timeline; the phone's sheet sits over one
+  // that has to stay where it was. `useAsideIsSheet` is the slot's own
+  // predicate — two derivations of it would eventually disagree and mount two
+  // live timelines on the same stream.
+  const asideIsSheet = useAsideIsSheet()
+  const openAside = useAsideForHost(asideHostKey)
+  const asideStage = !asideIsSheet && openAside !== null
 
   useTypeToFocus()
 
@@ -857,10 +863,10 @@ export function StreamPage() {
         {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId!} streamId={streamId!} />}
         <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
-            {/* Fullscreen aside: the host is what you are answering, not a
-                second place to write — its composer stands down so there is one
-                obvious place for the words (the draft on the right). */}
-            <TimelineView isDraft={isDraft} autoFocus={!isMobile && !asideFullscreen} hideComposer={asideFullscreen} />
+            {/* The fullscreen aside brings its own copy of this timeline, as
+                the reference pane beside the draft. This one stands down so
+                there is never a second host timeline mounted behind it. */}
+            {!asideStage && <TimelineView isDraft={isDraft} autoFocus={!isMobile} />}
           </StreamEncryptionGate>
         </main>
         {stream && !isDraft && (
@@ -944,7 +950,10 @@ export function StreamPage() {
       <div ref={containerRef} className={layout.container}>
         <div
           className={layout.main}
-          inert={layout.mainInert}
+          // The stage covers this row: everything under it stays mounted (the
+          // page keeps its header and its state) but must leave the tab order,
+          // or focus walks into content nobody can see.
+          inert={layout.mainInert || asideStage || undefined}
           onPointerDownCapture={() => setFocusedPane("main")}
           onFocusCapture={() => setFocusedPane("main")}
         >
@@ -969,11 +978,12 @@ export function StreamPage() {
             onResizeMove={handleResizeMove}
             onResizeEnd={handleResizeEnd}
             onResizeKeyDown={handleResizeKeyDown}
+            inert={asideStage}
           >
             <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>
         )}
-        <AsideDockSlot workspaceId={workspaceId} hostKey={asideHostKey} />
+        <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
       </div>
       {/* Both are `fixed` overlays that would paint over a fullscreen panel, so a
           takeover keeps them out of the tree entirely rather than merely closed —

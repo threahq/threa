@@ -626,12 +626,6 @@ interface StreamContentProps {
   /** Auto-focus the message input when mounted */
   autoFocus?: boolean
   /**
-   * Render the timeline without its composer — for a surface that is showing
-   * this stream as reference rather than as a place to write (the aside's
-   * fullscreen host pane). The stream is unchanged; only this view is mute.
-   */
-  hideComposer?: boolean
-  /**
    * What an empty stream shows in place of the default "No messages yet".
    * A surface whose emptiness means something specific says what it means —
    * an aside's blank timeline is a private page, not a conversation nobody
@@ -648,7 +642,6 @@ export function StreamContent({
   stream: streamFromProps,
   autoFocus,
   emptyState,
-  hideComposer = false,
 }: StreamContentProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
@@ -3233,7 +3226,7 @@ export function StreamContent({
                       </div>
                     </AlertDialogContent>
                   </AlertDialog>
-                  {!hideComposer && membershipResolved && !isMember && isPublicChannel && (
+                  {membershipResolved && !isMember && isPublicChannel && (
                     <div className="absolute inset-x-0 bottom-0 z-10">
                       <JoinChannelBar
                         workspaceId={workspaceId}
@@ -3244,7 +3237,7 @@ export function StreamContent({
                       />
                     </div>
                   )}
-                  {!hideComposer && (isMember || !isPublicChannel || !membershipResolved) && (
+                  {(isMember || !isPublicChannel || !membershipResolved) && (
                     <MessageInput
                       workspaceId={workspaceId}
                       streamId={streamId}

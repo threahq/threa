@@ -5,7 +5,7 @@ import { StreamTypes, type StreamEvent } from "@threa/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
-import { getAsideState, openAside, resetAsideStoreCache, setAsideSurface, closeAside } from "@/stores/aside-store"
+import { getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
 import { createMockStream } from "@/test/fixtures"
 import { groupTimelineItems, TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 
@@ -153,18 +153,13 @@ describe("AsideAnchorEvent", () => {
     expect(document.querySelector("[data-aside-id]")).toHaveTextContent("Aside")
   })
 
-  it("resumes the aside on its host page, into the surface it was last read in, and reads as open", () => {
-    // A previous session on this aside was switched to fullscreen from the
-    // picker — a surface the USER chose, which is what resume returns to (an
-    // open coerced by a docked call is deliberately not remembered).
+  it("resumes the aside on its host page and reads as open", () => {
     openAside({
       hostKey: HOST_PATH,
       hostStreamId: "stream_host",
       asideId: ASIDE,
-      surface: "dock",
       originScope: "stream:stream_host",
     })
-    setAsideSurface("fullscreen")
     closeAside()
     renderTimeline([anchorEvent()], CREATOR)
 
@@ -174,7 +169,6 @@ describe("AsideAnchorEvent", () => {
       hostKey: HOST_PATH,
       hostStreamId: "stream_host",
       asideId: ASIDE,
-      surface: "fullscreen",
       originScope: "stream:stream_host",
     })
     expect(document.querySelector("[data-aside-id]")).toHaveAttribute("data-state", "open")

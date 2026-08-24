@@ -104,7 +104,7 @@ test.describe("Aside — mobile surface", () => {
     await openAsideFromPalette(page)
 
     // Peek: the sheet is well short of the viewport, and the host is still there.
-    await expect(sheet(page)).toHaveAttribute("data-surface", "dock", { timeout: 15000 })
+    await expect(sheet(page)).toHaveAttribute("data-detent", "peek", { timeout: 15000 })
     await expect(pane(page)).toBeVisible()
     const peek = await sheetHeight(page)
     expect(peek).toBeLessThan(PHONE.height * 0.7)
@@ -113,7 +113,7 @@ test.describe("Aside — mobile surface", () => {
 
     // Pull up: the sheet takes the viewport.
     await dragHandle(page, -PHONE.height * 0.5)
-    await expect(sheet(page)).toHaveAttribute("data-surface", "fullscreen", { timeout: 10000 })
+    await expect(sheet(page)).toHaveAttribute("data-detent", "full", { timeout: 10000 })
     expect(await sheetHeight(page)).toBeGreaterThan(PHONE.height * 0.9)
 
     // OS back closes the aside rather than leaving the stream.
@@ -133,8 +133,10 @@ test.describe("Aside — mobile surface", () => {
     await expect(sheet(page)).toHaveCount(0, { timeout: 10000 })
     await expect(page.locator("[data-sonner-toast]")).toHaveCount(0)
 
-    // And its anchor row still brings it back, into the surface it was last read in.
+    // And its anchor row still brings it back — at the peek, whatever it was
+    // last pulled to: the host you asked about stays on screen above it, and
+    // pulling up is one gesture away.
     await anchor.click()
-    await expect(sheet(page)).toHaveAttribute("data-surface", "fullscreen", { timeout: 10000 })
+    await expect(sheet(page)).toHaveAttribute("data-detent", "peek", { timeout: 10000 })
   })
 })

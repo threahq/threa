@@ -7,9 +7,7 @@ import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
-import { openAside, rememberedAsideSurface } from "@/stores/aside-store"
-import { resolveAsideOpenSurface } from "@/lib/aside/surface"
-import { isCallDocked } from "@/components/aside/use-call-docked"
+import { openAside } from "@/stores/aside-store"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -225,10 +223,6 @@ export function useStreamItems(context: ModeContext): ModeResult {
               hostKey: href,
               hostStreamId: asideHost,
               asideId: stream.id,
-              surface: resolveAsideOpenSurface({
-                remembered: rememberedAsideSurface(stream.id),
-                callDocked: isCallDocked(),
-              }),
               originScope: draftStreamScope(asideHost),
             })
           }

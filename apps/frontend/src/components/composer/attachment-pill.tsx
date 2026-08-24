@@ -44,6 +44,8 @@ export interface AttachmentPillProps {
   removeLabel?: string
   /** Accessible name for the activate affordance (defaults to `label`). */
   activateLabel?: string
+  /** Marks the pill as the current one of its set (the aside's open draft). */
+  current?: boolean
   /**
    * Upload progress 0..1. While set (and < 1) a thin bar along the pill's
    * bottom edge fills gradually — inside the pill's existing bounds, so no
@@ -155,6 +157,7 @@ export function AttachmentPill({
   href,
   removeLabel,
   activateLabel,
+  current,
   progress,
   labelMaxWidth = "max-w-[160px]",
   referenceCount = 0,
@@ -236,6 +239,7 @@ export function AttachmentPill({
         role="button"
         tabIndex={0}
         aria-label={activateLabel ?? label}
+        aria-current={current || undefined}
         onClick={onActivate}
         onKeyDown={handleKeyDown}
         className={cn(

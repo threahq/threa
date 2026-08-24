@@ -10,9 +10,7 @@ export interface AsideDraftActions {
   send: () => Promise<void>
   /** Persist what is written, then close the editor. */
   leave: () => Promise<void>
-  /** Discard the draft. */
-  remove: () => Promise<void>
-  /** True while a send is in flight — both controls are held so one draft is delivered once. */
+  /** True while a send is in flight — the controls are held so one draft is delivered once. */
   busy: boolean
   canSend: boolean
 }
@@ -28,8 +26,9 @@ const DELIVERY_WAIT_MS = 20_000
 /**
  * The two things an aside draft can do, kept out of the editor component
  * (INV-15). A send is serialized: the draft is flushed before it leaves, and a
- * second send (or a delete) while one is in flight is refused rather than
- * queueing the same content twice or clearing a draft mid-handoff. The text is
+ * second send while one is in flight is refused rather than queueing the same
+ * content twice. Discarding is not here: a draft is thrown away from its pill
+ * in the tray (`useDeleteAsideDraft`), open or not. The text is
  * copied (the draft survives); the files MOVE — an upload belongs to one
  * message — but only once the destination reports them persisted: if it
  * cannot (or never answers), this draft keeps them and says so. A failed or
@@ -108,11 +107,5 @@ export function useAsideDraftActions(
     onDone()
   }, [composer, onDone])
 
-  const remove = useCallback(async () => {
-    if (inFlight.current) return
-    await composer.clearDraft()
-    onDone()
-  }, [composer, onDone])
-
-  return { send, leave, remove, busy, canSend }
+  return { send, leave, busy, canSend }
 }

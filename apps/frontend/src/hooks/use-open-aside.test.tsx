@@ -42,7 +42,7 @@ describe("useOpenAside", () => {
     resolveCreate({ id: "stream_aside" })
     await opening
 
-    expect(getAsideState()).toMatchObject({ hostKey: HOST_PATH, asideId: "stream_aside", surface: "dock" })
+    expect(getAsideState()).toMatchObject({ hostKey: HOST_PATH, asideId: "stream_aside" })
   })
 
   it("drops a create that lands after its host is gone, so it cannot resurface on return", async () => {

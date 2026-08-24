@@ -553,6 +553,11 @@ export async function resolveLoadedDraft(
  */
 export async function purgeScopeDrafts(workspaceId: string, scope: string): Promise<void> {
   clearStagedDraft(workspaceId, scope)
+  // Fence the scope before the rows go: a debounced save already armed (or the
+  // editor's own teardown flush, moments later) would otherwise find no loaded
+  // pointer and take the CREATE path, resurrecting the draft that was just
+  // deleted. `resolveLoadedDraft` fences for the same reason.
+  recordScopeResolved(scope)
   // Read + delete the rows, clear the loaded pointer, AND enqueue the server
   // deletes atomically: `baseVersion` reflects any server confirmation that
   // landed before the delete (ghost-draft race), and an inbound echo can never
