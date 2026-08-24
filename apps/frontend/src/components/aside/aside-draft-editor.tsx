@@ -72,7 +72,7 @@ export function AsideDraftEditor({
     <div className="flex h-full min-h-0 flex-col" data-testid="aside-draft-editor" data-draft-scope={scope}>
       {/* This draft's own bar, directly above this draft's body: every control
           on it acts on the words below it, and nothing on it acts on the tray. */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-y border-border/70 bg-muted/30 px-3">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-y border-border/70 px-3">
         {takeover && (
           <Button
             variant="ghost"

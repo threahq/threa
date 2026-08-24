@@ -80,12 +80,7 @@ export function AsidePane({ workspaceId, asideId, hostStreamId, originScope }: A
       ) : (
         <>
           <AsideAnchorLine workspaceId={workspaceId} hostStreamId={hostStreamId} anchorId={aside?.parentAnchorId} />
-          <AsideDraftTray
-            workspaceId={workspaceId}
-            asideId={asideId}
-            surface={draftSurface}
-            className="border-b bg-muted/20"
-          />
+          <AsideDraftTray workspaceId={workspaceId} asideId={asideId} surface={draftSurface} className="border-b" />
           <div className="relative min-h-0 flex-1">
             <AsideConversation
               workspaceId={workspaceId}
