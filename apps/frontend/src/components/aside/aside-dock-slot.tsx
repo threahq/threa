@@ -4,7 +4,6 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { PanelResizeHandle } from "@/components/layout"
 import {
-  ASIDE_DOCK_DEFAULT_WIDTH,
   ASIDE_DOCK_MIN_WIDTH,
   setAsideDockWidth,
   useAsideDockWidth,
@@ -14,7 +13,6 @@ import {
 import { AsidePane } from "./aside-pane"
 import { AsideMobileSheet } from "./aside-mobile-sheet"
 
-export const ASIDE_DOCK_WIDTH = ASIDE_DOCK_DEFAULT_WIDTH
 // What the host stream keeps for itself: below this its timeline and composer
 // stop being a place you can read the thing you are writing about. The dock
 // yields to it, which is what caps the drag on a narrow window.
@@ -69,15 +67,14 @@ interface AsideDockSlotProps {
 /**
  * The aside's reading surfaces, mounted as the last flex child of a page's
  * content row — after the thread panel slot, so the aside owns the page's
- * right edge (calls own the app's). Dock pushes the host by ASIDE_DOCK_WIDTH;
+ * right edge (calls own the app's). Dock pushes the host by its dragged width;
  * fullscreen takes half the row with the live host timeline on the left. On a
  * phone the dock is a plain takeover of the content area (PR7 owns the real
  * mobile surface). Renders nothing while no aside is open.
  */
 export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
   const current = useAsideForHost(hostKey)
-  const reading = current
-  const rendered = useFoldingState(reading)
+  const rendered = useFoldingState(current)
   const isMobile = useIsMobile()
   const slotRef = useRef<HTMLDivElement>(null)
   const rowWidth = useRowWidth(slotRef, rendered !== null)
@@ -123,7 +120,7 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
   if (isMobile) {
     // The sheet owns its own drag-to-resize, so a fold animation here would
     // fight it; it simply unmounts with the aside.
-    if (!reading) return null
+    if (!current) return null
     return (
       <AsideMobileSheet
         workspaceId={workspaceId}
@@ -135,7 +132,7 @@ export function AsideDockSlot({ workspaceId, hostKey }: AsideDockSlotProps) {
     )
   }
 
-  const open = reading !== null
+  const open = current !== null
   const docked = surface === "dock"
 
   let width: number | undefined = 0

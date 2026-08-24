@@ -330,8 +330,10 @@ describe("aside surfaces", () => {
       expect(getAsideState()?.surface).toBe("fullscreen")
       fireEvent.keyDown(handle, { key: "ArrowDown" })
       expect(getAsideState()?.surface).toBe("dock")
+      // The keyboard resizes but never dismisses: a drag to the floor is a
+      // deliberate throw-away, an arrow press is not. Closing is the header's job.
       fireEvent.keyDown(handle, { key: "ArrowDown" })
-      expect(getAsideState()).toBeNull()
+      expect(getAsideState()?.surface).toBe("dock")
     })
 
     it("rises to the full viewport while an editor in it has focus, and settles back when the keyboard goes", () => {

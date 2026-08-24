@@ -46,7 +46,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
           ...(payload?.conversationId && { conversationId: payload.conversationId }),
         })
       }
-      aria-label={`Resume aside: ${title}`}
+      aria-label={`${isOpen ? "Open" : "Resume"} aside: ${title}`}
       data-aside-id={asideId}
       data-state={isOpen ? "open" : "closed"}
       className={cn(

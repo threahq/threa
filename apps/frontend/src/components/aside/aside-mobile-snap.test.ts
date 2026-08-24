@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
-  ASIDE_TAB_HEIGHT,
+  ASIDE_DISMISS_HEIGHT,
   asideMobileHeight,
   asideMobileSteps,
   nearestAsideSurface,
@@ -11,8 +11,8 @@ const VIEWPORT = 800
 
 describe("aside mobile snap", () => {
   it("rests at the floor, the peek and the whole viewport", () => {
-    expect(asideMobileSteps(VIEWPORT)).toEqual([ASIDE_TAB_HEIGHT, 360, VIEWPORT])
-    expect(asideMobileHeight("closed", VIEWPORT)).toBe(ASIDE_TAB_HEIGHT)
+    expect(asideMobileSteps(VIEWPORT)).toEqual([ASIDE_DISMISS_HEIGHT, 360, VIEWPORT])
+    expect(asideMobileHeight("closed", VIEWPORT)).toBe(ASIDE_DISMISS_HEIGHT)
     expect(asideMobileHeight("dock", VIEWPORT)).toBe(360)
     expect(asideMobileHeight("fullscreen", VIEWPORT)).toBe(VIEWPORT)
   })
@@ -31,7 +31,7 @@ describe("aside mobile snap", () => {
   })
 
   it("dismisses when the sheet is dragged to the floor — an aside is left, not parked", () => {
-    expect(nearestAsideSurface(ASIDE_TAB_HEIGHT, 0, VIEWPORT)).toBe("closed")
+    expect(nearestAsideSurface(ASIDE_DISMISS_HEIGHT, 0, VIEWPORT)).toBe("closed")
   })
 
   it("steps one detent at a time for the keyboard, clamped at both ends", () => {

@@ -14,7 +14,7 @@ import type { AsideSurface } from "@/stores/aside-store"
 /** Where a drag can settle: the two reading surfaces, or gone. */
 export type AsideDetent = AsideSurface | "closed"
 /** The floor a dismissing drag settles on before the sheet leaves. */
-export const ASIDE_TAB_HEIGHT = 44
+export const ASIDE_DISMISS_HEIGHT = 44
 /** The peek: enough aside to read and type in, with the host still on screen above it. */
 export const ASIDE_PEEK_FRACTION = 0.45
 
@@ -28,12 +28,12 @@ export function steppedAsideSurface(surface: AsideDetent, direction: 1 | -1): As
 }
 
 export function asideMobileSteps(viewportHeight: number): number[] {
-  return [ASIDE_TAB_HEIGHT, Math.round(viewportHeight * ASIDE_PEEK_FRACTION), viewportHeight]
+  return [ASIDE_DISMISS_HEIGHT, Math.round(viewportHeight * ASIDE_PEEK_FRACTION), viewportHeight]
 }
 
 /** The resting height of a detent at this viewport; `closed` is the floor it leaves on. */
 export function asideMobileHeight(surface: AsideDetent, viewportHeight: number): number {
-  return asideMobileSteps(viewportHeight)[MOBILE_DETENTS.indexOf(surface)] ?? ASIDE_TAB_HEIGHT
+  return asideMobileSteps(viewportHeight)[MOBILE_DETENTS.indexOf(surface)] ?? ASIDE_DISMISS_HEIGHT
 }
 
 /**

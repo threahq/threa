@@ -26,7 +26,7 @@ interface AsidePaneProps {
   hostStreamId: string
   /** The draft scope a hand-off files into (`OpenAsideState.originScope`). */
   originScope: string
-  surface: Exclude<AsideSurface, "minimized">
+  surface: AsideSurface
   /** Phone-width takeover: no surface picker, the close control is the way out. */
   takeover?: boolean
 }

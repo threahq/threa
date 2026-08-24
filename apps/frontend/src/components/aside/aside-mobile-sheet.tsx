@@ -12,7 +12,7 @@ import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-s
 import { AsidePane } from "./aside-pane"
 import {
   ASIDE_PEEK_FRACTION,
-  ASIDE_TAB_HEIGHT,
+  ASIDE_DISMISS_HEIGHT,
   asideMobileHeight,
   nearestAsideSurface,
   steppedAsideSurface,
@@ -41,8 +41,8 @@ function isEditorTarget(target: EventTarget | null): boolean {
 
 /**
  * The aside on a phone: a sheet over the host that peeks at 45% of the
- * viewport, pulls up to the whole of it, and drags down to the strip above the
- * composer. The context strip doubles as the drag handle — the aside's own
+ * viewport, pulls up to the whole of it, and drags down off the bottom to
+ * leave. The context strip doubles as the drag handle — the aside's own
  * chrome is the affordance, so nothing has to tell you to pull it.
  */
 export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope, surface }: AsideMobileSheetProps) {
@@ -100,7 +100,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     const now = performance.now()
     // Bottom-anchored: the sheet grows as the pointer moves UP, so the delta is inverted.
     const next = Math.min(
-      Math.max(state.startHeight - (event.clientY - state.startY), ASIDE_TAB_HEIGHT),
+      Math.max(state.startHeight - (event.clientY - state.startY), ASIDE_DISMISS_HEIGHT),
       viewportHeight()
     )
     const dt = now - state.lastT
@@ -144,7 +144,11 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return
     const direction = event.key === "ArrowUp" ? 1 : -1
     event.preventDefault()
-    settle(steppedAsideSurface(surface, direction))
+    // The keyboard resizes; it does not dismiss. A drag to the floor is a
+    // deliberate throw-away gesture, an arrow press is not — the header's close
+    // is how a keyboard leaves.
+    const next = steppedAsideSurface(surface, direction)
+    if (next !== "closed") settle(next)
   }
 
   const lifted = keyboardLift || surface === "fullscreen"
@@ -172,7 +176,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
           role="separator"
           aria-orientation="horizontal"
           aria-label="Resize aside"
-          aria-valuemin={0}
+          aria-valuemin={1}
           aria-valuemax={2}
           aria-valuenow={surface === "fullscreen" ? 2 : 1}
           aria-valuetext={surface === "fullscreen" ? "Full screen" : "Peek"}
