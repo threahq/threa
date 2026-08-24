@@ -368,7 +368,6 @@ describe("QuickSwitcher Integration Tests", () => {
         hostKey: "/w/workspace_1/s/stream_host",
         hostStreamId: "stream_host",
         asideId: "stream_aside_mine",
-        surface: "dock",
       })
     })
 

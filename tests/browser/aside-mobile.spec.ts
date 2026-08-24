@@ -133,8 +133,10 @@ test.describe("Aside — mobile surface", () => {
     await expect(sheet(page)).toHaveCount(0, { timeout: 10000 })
     await expect(page.locator("[data-sonner-toast]")).toHaveCount(0)
 
-    // And its anchor row still brings it back, into the surface it was last read in.
+    // And its anchor row still brings it back — at the peek, whatever it was
+    // last pulled to: the host you asked about stays on screen above it, and
+    // pulling up is one gesture away.
     await anchor.click()
-    await expect(sheet(page)).toHaveAttribute("data-detent", "full", { timeout: 10000 })
+    await expect(sheet(page)).toHaveAttribute("data-detent", "peek", { timeout: 10000 })
   })
 })
