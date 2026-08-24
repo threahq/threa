@@ -35,11 +35,8 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
   const age = formatRelativeTime(new Date(event.createdAt), new Date(), undefined, { terse: true })
 
   return (
-    // The whole row is the control. It stays a hairline at rest — an aside is
-    // the user's own footnote in someone else's stream, and it must not read as
-    // a message — but the target is the full row rather than five characters of
-    // "Resume", and hover/focus lifts it just enough to say it is one. Reveal is
-    // opacity-only over reserved space (INV-21): no row ever changes height.
+    // The label's space is reserved: it fades in rather than appearing, so a
+    // hovered row never changes height and the timeline never shifts (INV-21).
     <button
       type="button"
       onClick={() =>

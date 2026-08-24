@@ -9,6 +9,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threa/types"
+import { cn } from "@/lib/utils"
 import { useCallDocked } from "./use-call-docked"
 import { AsideSurfacePicker } from "./aside-surface-picker"
 import { AsideAnchorLine } from "./aside-anchor-line"
@@ -106,45 +107,58 @@ export function AsidePane({
         </header>
       </TooltipProvider>
       <AsideAnchorLine workspaceId={workspaceId} hostStreamId={hostStreamId} anchorId={aside?.parentAnchorId} />
-      {openDraftScope ? (
-        <AsideDraftEditor
+      {/* Conversation above, drafts below — the two halves of an aside are on
+          screen together, because a draft is written FROM what Ariadne just
+          said. Opening one used to replace the pane, which took the reply away
+          at the moment it was most needed. */}
+      <div className="relative min-h-0 flex-1">
+        <StreamErrorBoundary streamId={asideId}>
+          <AgentBlockProvider onInsert={insertAgentBlock}>
+            <StreamContent
+              workspaceId={workspaceId}
+              streamId={asideId}
+              stream={aside}
+              autoFocus={!takeover && !openDraftScope}
+              emptyState={
+                <div className="max-w-[15rem] px-6 text-center">
+                  <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                    Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
+                  </p>
+                </div>
+              }
+            />
+          </AgentBlockProvider>
+        </StreamErrorBoundary>
+      </div>
+      <div
+        data-testid="aside-draft-region"
+        data-open={openDraftScope ? "true" : undefined}
+        className={cn(
+          "flex min-h-0 shrink-0 flex-col border-t bg-muted/20",
+          // An open draft takes a little under half the pane and never less
+          // than a paragraph's worth; closed, the dock is just its own height.
+          openDraftScope && "h-[48%] min-h-[220px]"
+        )}
+      >
+        <AsideDraftDock
           workspaceId={workspaceId}
-          scope={openDraftScope}
-          onBack={() => setOpenDraftScope(null)}
-          onSendToComposer={sendToComposer}
-          pendingAgentBlocks={pendingAgentBlocks}
-          onPendingAgentBlocksConsumed={consumePendingAgentBlocks}
+          asideId={asideId}
+          onOpenDraft={setOpenDraftScope}
+          openScope={openDraftScope}
+          compact={openDraftScope !== null}
         />
-      ) : (
-        <>
-          <AsideDraftDock
+        {openDraftScope && (
+          <AsideDraftEditor
             workspaceId={workspaceId}
-            asideId={asideId}
-            onOpenDraft={setOpenDraftScope}
-            openScope={openDraftScope}
+            scope={openDraftScope}
+            onBack={() => setOpenDraftScope(null)}
+            onSendToComposer={sendToComposer}
+            pendingAgentBlocks={pendingAgentBlocks}
+            onPendingAgentBlocksConsumed={consumePendingAgentBlocks}
           />
-          <div className="relative min-h-0 flex-1">
-            <StreamErrorBoundary streamId={asideId}>
-              <AgentBlockProvider onInsert={insertAgentBlock}>
-                <StreamContent
-                  workspaceId={workspaceId}
-                  streamId={asideId}
-                  stream={aside}
-                  autoFocus={!takeover}
-                  emptyState={
-                    <div className="max-w-[15rem] px-6 text-center">
-                      <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
-                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                        Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
-                      </p>
-                    </div>
-                  }
-                />
-              </AgentBlockProvider>
-            </StreamErrorBoundary>
-          </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   )
 }

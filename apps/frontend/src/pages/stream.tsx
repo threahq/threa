@@ -58,6 +58,7 @@ import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
 import { AsideDockSlot, useAsideHost } from "@/components/aside"
+import { useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
@@ -96,6 +97,7 @@ export function StreamPage() {
     handleTransitionEnd,
   } = usePanelLayout(isPanelOpen)
   const asideHostKey = useAsideHost()
+  const asideFullscreen = useAsideForHost(asideHostKey)?.surface === "fullscreen"
 
   useTypeToFocus()
 
@@ -855,7 +857,10 @@ export function StreamPage() {
         {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId!} streamId={streamId!} />}
         <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
-            <TimelineView isDraft={isDraft} autoFocus={!isMobile} />
+            {/* Fullscreen aside: the host is what you are answering, not a
+                second place to write — its composer stands down so there is one
+                obvious place for the words (the draft on the right). */}
+            <TimelineView isDraft={isDraft} autoFocus={!isMobile && !asideFullscreen} hideComposer={asideFullscreen} />
           </StreamEncryptionGate>
         </main>
         {stream && !isDraft && (
