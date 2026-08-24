@@ -5,7 +5,7 @@ import { StreamTypes, type StreamEvent } from "@threa/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
-import { getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
+import { getAsideState, openAside, resetAsideStoreCache, setAsideSurface, closeAside } from "@/stores/aside-store"
 import { createMockStream } from "@/test/fixtures"
 import { groupTimelineItems, TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 
@@ -102,7 +102,9 @@ describe("AsideAnchorEvent", () => {
     // hover over space it already occupies (INV-21).
     const control = screen.getByRole("button", { name: /^Resume aside:/ })
     expect(control).toHaveAttribute("data-aside-id", ASIDE)
-    expect(control.querySelector("span.opacity-0")).toHaveTextContent("Resume")
+    // The label is present in the row at rest — reserved space, revealed on
+    // hover — so the row can never change height when it lights up (INV-21).
+    expect(control).toHaveTextContent("Resume")
   })
 
   it("renders nothing for another viewer of the same host stream", () => {
@@ -152,14 +154,17 @@ describe("AsideAnchorEvent", () => {
   })
 
   it("resumes the aside on its host page, into the surface it was last read in, and reads as open", () => {
-    // A previous session on this aside ended in fullscreen; resume returns there.
+    // A previous session on this aside was switched to fullscreen from the
+    // picker — a surface the USER chose, which is what resume returns to (an
+    // open coerced by a docked call is deliberately not remembered).
     openAside({
       hostKey: HOST_PATH,
       hostStreamId: "stream_host",
       asideId: ASIDE,
-      surface: "fullscreen",
+      surface: "dock",
       originScope: "stream:stream_host",
     })
+    setAsideSurface("fullscreen")
     closeAside()
     renderTimeline([anchorEvent()], CREATOR)
 

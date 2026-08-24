@@ -13,6 +13,12 @@ interface AsideDraftDockProps {
   onOpenDraft: (scope: string) => void
   /** The draft currently open, so the dock marks it. */
   openScope: string | null
+  /**
+   * An open draft is sitting under this list, so it collapses to the row that
+   * draft is on plus the way to another — the editor below is where the space
+   * belongs.
+   */
+  compact?: boolean
 }
 
 /**
@@ -20,23 +26,24 @@ interface AsideDraftDockProps {
  * saying to Ariadne. Several can live at once, so the dock is a list rather
  * than one slot; each row is its own draft scope.
  */
-export function AsideDraftDock({ workspaceId, asideId, onOpenDraft, openScope }: AsideDraftDockProps) {
+export function AsideDraftDock({ workspaceId, asideId, onOpenDraft, openScope, compact = false }: AsideDraftDockProps) {
   const drafts = useAsideDrafts(workspaceId, asideId)
   const [expanded, setExpanded] = useState(false)
-  const visible = expanded ? drafts : drafts.slice(0, 3)
+  const listed = expanded ? drafts : drafts.slice(0, 3)
+  const visible = compact ? listed.filter((draft) => draft.scope === openScope) : listed
 
   const handleNew = useCallback(() => onOpenDraft(newAsideDraftScope(asideId)), [asideId, onOpenDraft])
 
   const now = new Date()
 
   return (
-    <div className="shrink-0 border-b px-3 py-2" data-testid="aside-draft-dock">
+    <div className={cn("shrink-0 px-3 py-2", !compact && "border-b")} data-testid="aside-draft-dock">
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           {drafts.length > 0 ? `Drafts · ${drafts.length}` : "Drafts"}
         </span>
         <span className="flex-1" />
-        {drafts.length > 3 && (
+        {!compact && drafts.length > 3 && (
           <Button
             variant="ghost"
             size="sm"

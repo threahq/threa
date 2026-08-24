@@ -123,9 +123,10 @@ describe("aside surfaces", () => {
     const editor = await screen.findByTestId("aside-draft-editor")
     expect(editor.getAttribute("data-draft-scope")).toMatch(/^aside:stream_aside_1:draft_/)
     expect(editor).toHaveAttribute("data-pending", "persona_01ARIADNE")
-    // The chat timeline is out of the way while the draft is open, and the
-    // block went nowhere else.
-    expect(screen.queryByRole("button", { name: "insert into draft" })).toBeNull()
+    // The conversation stays on screen beside the draft — a draft is written
+    // FROM what was just said — and the block went nowhere but the draft.
+    expect(screen.getByRole("button", { name: "insert into draft" })).toBeInTheDocument()
+    expect(screen.getByTestId("aside-draft-region")).toHaveAttribute("data-open", "true")
   })
 
   it("should render no aside chrome while nothing is open on this page", () => {
@@ -329,8 +330,10 @@ describe("aside surfaces", () => {
       expect(getAsideState()?.surface).toBe("fullscreen")
       fireEvent.keyDown(handle, { key: "ArrowDown" })
       expect(getAsideState()?.surface).toBe("dock")
+      // The keyboard resizes but never dismisses: a drag to the floor is a
+      // deliberate throw-away, an arrow press is not. Closing is the header's job.
       fireEvent.keyDown(handle, { key: "ArrowDown" })
-      expect(getAsideState()).toBeNull()
+      expect(getAsideState()?.surface).toBe("dock")
     })
 
     it("rises to the full viewport while an editor in it has focus, and settles back when the keyboard goes", () => {

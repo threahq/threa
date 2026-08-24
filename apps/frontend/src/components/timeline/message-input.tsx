@@ -992,7 +992,9 @@ function MessageInputComponent({
   else if (composer.isDecrypting) composerPlaceholder = "Decrypting your draft…"
   // An aside's composer talks to Ariadne about the stream beside it, not to a
   // room — the default "Type a message" invites the wrong thing.
-  else if (isAsideComposer) composerPlaceholder = "Ask about what you're reading"
+  // Offline still wins: a queued send is the one thing the placeholder must
+  // say, and the aside's wording would swallow it (INV-11).
+  else if (isAsideComposer && !isOffline) composerPlaceholder = "Ask about what you're reading"
 
   // Shared composer props used by both inline and expanded layouts
   const composerProps = {

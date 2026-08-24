@@ -56,6 +56,11 @@ function setState(next: OpenAsideState | null): void {
   emit()
 }
 
+/**
+ * Only a surface the user CHOSE is remembered. An open can be coerced — a
+ * docked call pushes an aside that wanted the dock into fullscreen — and
+ * recording that would make one call change where every later aside opens.
+ */
 function remember(asideId: string, surface: AsideSurface): void {
   lastReadingSurfaceByAside.set(asideId, surface)
 }
@@ -70,7 +75,6 @@ export function rememberedAsideSurface(asideId: string): AsideSurface | null {
 }
 
 export function openAside(next: OpenAsideState): void {
-  remember(next.asideId, next.surface)
   setState(next)
 }
 

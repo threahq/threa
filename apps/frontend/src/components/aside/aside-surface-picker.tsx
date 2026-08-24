@@ -4,16 +4,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils"
 import type { AsideSurface } from "@/stores/aside-store"
 
-type ReadingSurface = Exclude<AsideSurface, "minimized">
-
-const SURFACES: { value: ReadingSurface; label: string; icon: typeof PanelRight }[] = [
+const SURFACES: { value: AsideSurface; label: string; icon: typeof PanelRight }[] = [
   { value: "dock", label: "Dock aside", icon: PanelRight },
   { value: "fullscreen", label: "Aside fullscreen", icon: Maximize2 },
 ]
 
 interface AsideSurfacePickerProps {
-  value: ReadingSurface
-  onChange: (surface: ReadingSurface) => void
+  value: AsideSurface
+  onChange: (surface: AsideSurface) => void
   /** Dock is refused while a call owns the right edge. */
   dockDisabled?: boolean
 }
