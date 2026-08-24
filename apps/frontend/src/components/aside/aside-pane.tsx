@@ -6,14 +6,15 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { closeAside, setAsideSurface, type AsideSurface } from "@/stores/aside-store"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threa/types"
-import { cn } from "@/lib/utils"
 import { useCallDocked } from "./use-call-docked"
 import { AsideSurfacePicker } from "./aside-surface-picker"
 import { AsideAnchorLine } from "./aside-anchor-line"
 import { AsideConversation } from "./aside-conversation"
 import { AsideDrafts } from "./aside-drafts"
 import { AsideGlyph, AsidePrivateBadge } from "./aside-chrome"
+import { AsideSplitHandle } from "./aside-split-handle"
 import { useAsideDraftSurface } from "./use-aside-draft-surface"
+import { useAsideSplit } from "./use-aside-split"
 
 interface AsidePaneProps {
   workspaceId: string
@@ -43,6 +44,7 @@ export function AsidePane({
   takeover = false,
 }: AsidePaneProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
+  const split = useAsideSplit(asideId, draftSurface.openScope !== null)
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
@@ -75,25 +77,24 @@ export function AsidePane({
         </header>
       </TooltipProvider>
       <AsideAnchorLine workspaceId={workspaceId} hostStreamId={hostStreamId} anchorId={aside?.parentAnchorId} />
-      <AsideDrafts
-        workspaceId={workspaceId}
-        asideId={asideId}
-        surface={draftSurface}
-        className={cn(
-          "shrink-0 border-b bg-muted/20",
-          // An open draft takes a little under half the column and never less
-          // than a paragraph's worth; closed, the strip is just its own height.
-          draftSurface.openScope && "h-[48%] min-h-[220px]"
-        )}
-      />
-      <div className="relative min-h-0 flex-1">
-        <AsideConversation
+      <div ref={split.containerRef} className="flex min-h-0 flex-1 flex-col">
+        <AsideDrafts
           workspaceId={workspaceId}
           asideId={asideId}
-          aside={aside}
-          autoFocus={!takeover && !draftSurface.openScope}
-          onInsertAgentBlock={draftSurface.insertAgentBlock}
+          surface={draftSurface}
+          className="shrink-0 border-b bg-muted/20"
+          style={draftSurface.openScope ? { height: split.height } : undefined}
         />
+        {draftSurface.openScope && <AsideSplitHandle split={split} />}
+        <div className="relative min-h-0 flex-1">
+          <AsideConversation
+            workspaceId={workspaceId}
+            asideId={asideId}
+            aside={aside}
+            autoFocus={!takeover && !draftSurface.openScope}
+            onInsertAgentBlock={draftSurface.insertAgentBlock}
+          />
+        </div>
       </div>
     </div>
   )

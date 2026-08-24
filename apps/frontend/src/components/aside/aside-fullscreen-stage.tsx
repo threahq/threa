@@ -17,7 +17,9 @@ import { AsideAnchorLine } from "./aside-anchor-line"
 import { AsideConversation } from "./aside-conversation"
 import { AsideDrafts } from "./aside-drafts"
 import { ASIDE_META, ASIDE_PANE, ASIDE_PANE_HEAD, AsideGlyph, AsidePrivateBadge } from "./aside-chrome"
+import { AsideSplitHandle } from "./aside-split-handle"
 import { useAsideDraftSurface } from "./use-aside-draft-surface"
+import { useAsideSplit } from "./use-aside-split"
 import { useAsideDrafts } from "./use-aside-drafts"
 
 interface AsideFullscreenStageProps {
@@ -37,6 +39,7 @@ interface AsideFullscreenStageProps {
  */
 export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, originScope }: AsideFullscreenStageProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
+  const split = useAsideSplit(asideId, draftSurface.openScope !== null)
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const host = useMemo(() => streams.find((stream) => stream.id === hostStreamId), [streams, hostStreamId])
@@ -108,14 +111,16 @@ export function AsideFullscreenStage({ workspaceId, asideId, hostStreamId, origi
           </div>
         </div>
 
-        <div className="flex min-h-0 min-w-0 flex-[1.02] basis-0 flex-col gap-3">
+        <div ref={split.containerRef} className="flex min-h-0 min-w-0 flex-[1.02] basis-0 flex-col gap-3">
           <AsideDrafts
             workspaceId={workspaceId}
             asideId={asideId}
             surface={draftSurface}
-            className={cn(ASIDE_PANE, draftSurface.openScope ? "min-h-0 flex-1 basis-0" : "shrink-0")}
+            className={cn(ASIDE_PANE, "shrink-0")}
+            style={draftSurface.openScope ? { height: split.height } : undefined}
           />
-          <div className={cn(ASIDE_PANE, "min-h-0 flex-[1.45] basis-0")}>
+          {draftSurface.openScope && <AsideSplitHandle split={split} />}
+          <div className={cn(ASIDE_PANE, "min-h-0 flex-1")}>
             <div className={ASIDE_PANE_HEAD}>
               <AsideGlyph className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
               <span className="font-medium text-foreground">Conversation</span>

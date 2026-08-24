@@ -38,6 +38,11 @@ export interface OpenAsideState {
 export const ASIDE_DOCK_MIN_WIDTH = 320
 export const ASIDE_DOCK_DEFAULT_WIDTH = 400
 
+/** How tall the drafts half of the aside is, between its own floor and whatever
+ *  the surface can spare — the conversation's floor is enforced by the pane. */
+export const ASIDE_DRAFT_MIN_HEIGHT = 180
+export const ASIDE_DRAFT_DEFAULT_HEIGHT = 320
+
 let state: OpenAsideState | null = null
 const listeners = new Set<() => void>()
 // Dock width the user dragged, per aside. Session-scoped like the surface
@@ -56,6 +61,10 @@ const openDraftByAside = new Map<string, string>()
 // the open draft above: a surface switch during that hydration would otherwise
 // unmount the only copy and lose the block.
 const pendingAgentBlocksByAside = new Map<string, AgentBlockData[]>()
+// How the drafts half is split against the conversation, and whether the tray
+// of pills is unfolded. Session-scoped per aside, like the dock width.
+const draftHeightByAside = new Map<string, number>()
+const trayExpandedByAside = new Map<string, boolean>()
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -110,6 +119,8 @@ export function resetAsideStoreCache(): void {
   dockWidthByAside.clear()
   openDraftByAside.clear()
   pendingAgentBlocksByAside.clear()
+  draftHeightByAside.clear()
+  trayExpandedByAside.clear()
   setState(null)
 }
 
@@ -156,6 +167,44 @@ export function useAsidePendingAgentBlocks(asideId: string): AgentBlockData[] {
     subscribe,
     () => asidePendingAgentBlocks(asideId),
     () => asidePendingAgentBlocks(asideId)
+  )
+}
+
+/** How tall this aside's drafts half was last dragged to, or the default. */
+export function asideDraftHeight(asideId: string): number {
+  return draftHeightByAside.get(asideId) ?? ASIDE_DRAFT_DEFAULT_HEIGHT
+}
+
+export function setAsideDraftHeight(asideId: string, height: number): void {
+  draftHeightByAside.set(asideId, Math.max(ASIDE_DRAFT_MIN_HEIGHT, Math.round(height)))
+  emit()
+}
+
+/** The drafts-half height for `asideId`, re-rendering the pane as it is dragged. */
+export function useAsideDraftHeight(asideId: string): number {
+  return useSyncExternalStore(
+    subscribe,
+    () => asideDraftHeight(asideId),
+    () => asideDraftHeight(asideId)
+  )
+}
+
+/** Whether this aside's tray of draft pills is unfolded. Folded by default: the
+ *  count is the resting state, the pills are what you ask for. */
+export function asideTrayExpanded(asideId: string): boolean {
+  return trayExpandedByAside.get(asideId) ?? false
+}
+
+export function setAsideTrayExpanded(asideId: string, expanded: boolean): void {
+  trayExpandedByAside.set(asideId, expanded)
+  emit()
+}
+
+export function useAsideTrayExpanded(asideId: string): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => asideTrayExpanded(asideId),
+    () => asideTrayExpanded(asideId)
   )
 }
 

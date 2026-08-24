@@ -5,8 +5,12 @@ interface UseResizeDragOptions {
   width: number
   /** Called at most once per animation frame with the live drag width */
   onWidthChange: (newWidth: number) => void
-  /** "right" = dragging right increases width (sidebar), "left" = dragging left increases width (right-side panel) */
-  direction?: "right" | "left"
+  /**
+   * Which way the pointer must travel to make the element bigger: "right"
+   * (sidebar), "left" (a right-edge panel), or "up" (a region growing from the
+   * bottom of its column, e.g. a stacked split). "up"/"down" read clientY.
+   */
+  direction?: "right" | "left" | "up" | "down"
   /** Called when drag starts */
   onResizeStart?: () => void
   /** Called once with the final width when the pointer is released or cancelled */
@@ -22,10 +26,21 @@ interface UseResizeDragReturn {
 
 interface ResizeState {
   pointerId: number
-  startX: number
+  startPos: number
   startWidth: number
   latestWidth: number
   emittedWidth: number
+}
+
+const isVertical = (direction: "right" | "left" | "up" | "down") => direction === "up" || direction === "down"
+
+function dragDelta(
+  event: React.PointerEvent,
+  resize: ResizeState,
+  direction: "right" | "left" | "up" | "down"
+): number {
+  const raw = (isVertical(direction) ? event.clientY : event.clientX) - resize.startPos
+  return direction === "right" || direction === "down" ? raw : -raw
 }
 
 export function useResizeDrag({
@@ -55,7 +70,7 @@ export function useResizeDrag({
       e.stopPropagation()
       resizeRef.current = {
         pointerId: e.pointerId,
-        startX: e.clientX,
+        startPos: isVertical(direction) ? e.clientY : e.clientX,
         startWidth: width,
         latestWidth: width,
         emittedWidth: width,
@@ -64,7 +79,7 @@ export function useResizeDrag({
       setIsResizing(true)
       onResizeStart?.()
     },
-    [width, onResizeStart]
+    [width, direction, onResizeStart]
   )
 
   const handleResizeMove = useCallback(
@@ -72,9 +87,7 @@ export function useResizeDrag({
       const resize = resizeRef.current
       if (!resize || resize.pointerId !== e.pointerId) return
 
-      const rawDelta = e.clientX - resize.startX
-      const delta = direction === "right" ? rawDelta : -rawDelta
-      resize.latestWidth = resize.startWidth + delta
+      resize.latestWidth = resize.startWidth + dragDelta(e, resize, direction)
       if (frameRef.current === null) frameRef.current = requestAnimationFrame(flushWidthChange)
     },
     [direction, flushWidthChange]
@@ -86,9 +99,7 @@ export function useResizeDrag({
       if (!resize || resize.pointerId !== e.pointerId) return
 
       if (e.type === "pointerup") {
-        const rawDelta = e.clientX - resize.startX
-        const delta = direction === "right" ? rawDelta : -rawDelta
-        resize.latestWidth = resize.startWidth + delta
+        resize.latestWidth = resize.startWidth + dragDelta(e, resize, direction)
       } else {
         resize.latestWidth = resize.startWidth
       }

@@ -147,6 +147,44 @@ describe("aside surfaces", () => {
     }).toEqual({ scope, pending: "persona_01ARIADNE" })
   })
 
+  it("folds the drafts to their count, and unfolds to the tray on the chevron", async () => {
+    spyOnExport(draftEditorModule, "AsideDraftEditor").mockReturnValue((() => <div />) as never)
+    renderPage()
+    openOnHost("dock")
+
+    // Resting state is the count, the way the composer's attachment tray rests.
+    const fold = await screen.findByRole("button", { name: /drafts?$/i })
+    expect(fold).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByRole("button", { name: "New draft" })).toBeNull()
+
+    fireEvent.click(fold)
+    expect(fold).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("button", { name: "New draft" })).toBeInTheDocument()
+  })
+
+  it("divides the aside between the draft and the conversation on a drag, keyboard included", async () => {
+    spyOnExport(draftEditorModule, "AsideDraftEditor").mockReturnValue((() => <div />) as never)
+    renderPage()
+    openOnHost("dock")
+
+    fireEvent.click(await screen.findByRole("button", { name: /drafts?$/i }))
+    fireEvent.click(screen.getByRole("button", { name: "New draft" }))
+
+    const drafts = await screen.findByTestId("aside-drafts")
+    expect(drafts).toHaveStyle({ height: "320px" })
+
+    const divider = screen.getByRole("separator", { name: "Resize draft" })
+    divider.setPointerCapture = vi.fn()
+    divider.releasePointerCapture = vi.fn()
+    fireEvent.pointerDown(divider, { pointerId: 1, clientY: 400, isPrimary: true, button: 0 })
+    fireEvent.pointerMove(divider, { pointerId: 1, clientY: 460 })
+    fireEvent.pointerUp(divider, { pointerId: 1, clientY: 460 })
+    await waitFor(() => expect(screen.getByTestId("aside-drafts")).toHaveStyle({ height: "380px" }))
+
+    fireEvent.keyDown(divider, { key: "ArrowUp", shiftKey: true })
+    await waitFor(() => expect(screen.getByTestId("aside-drafts")).toHaveStyle({ height: "316px" }))
+  })
+
   it("should render no aside chrome while nothing is open on this page", () => {
     renderPage()
     expect(screen.queryByTestId("aside-dock")).toBeNull()
