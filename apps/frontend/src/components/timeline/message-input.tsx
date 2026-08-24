@@ -990,6 +990,9 @@ function MessageInputComponent({
   let composerPlaceholder = offlinePlaceholder
   if (composer.decryptFailed) composerPlaceholder = "Couldn't decrypt your saved draft"
   else if (composer.isDecrypting) composerPlaceholder = "Decrypting your draft…"
+  // An aside's composer talks to Ariadne about the stream beside it, not to a
+  // room — the default "Type a message" invites the wrong thing.
+  else if (isAsideComposer) composerPlaceholder = "Ask about what you're reading"
 
   // Shared composer props used by both inline and expanded layouts
   const composerProps = {

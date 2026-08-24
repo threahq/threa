@@ -625,6 +625,13 @@ interface StreamContentProps {
   stream?: Stream
   /** Auto-focus the message input when mounted */
   autoFocus?: boolean
+  /**
+   * What an empty stream shows in place of the default "No messages yet".
+   * A surface whose emptiness means something specific says what it means —
+   * an aside's blank timeline is a private page, not a conversation nobody
+   * has started.
+   */
+  emptyState?: React.ReactNode
 }
 
 export function StreamContent({
@@ -634,6 +641,7 @@ export function StreamContent({
   isDraft = false,
   stream: streamFromProps,
   autoFocus,
+  emptyState,
 }: StreamContentProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
@@ -2988,6 +2996,7 @@ export function StreamContent({
                           isLoading={isLoading}
                           holdForDeepLink={holdForDeepLink}
                           isConfirmedEmpty={isConfirmedEmpty}
+                          emptyState={emptyState}
                           listRef={listRef}
                           scrollerRef={virtualScrollerRef}
                           registerScroller={registerVirtualScroller}
@@ -3251,6 +3260,7 @@ export function StreamContent({
 
 /** Virtuoso-powered message list for streams, channels, and scratchpads */
 function TimelineMessageList({
+  emptyState,
   visibleItems,
   cancelledFollowUpIds,
   delegationStatusPatches,
@@ -3307,6 +3317,8 @@ function TimelineMessageList({
    *  actually empty. During mid-switch transitions this is false, so we avoid
    *  flashing the "No messages yet" state before useLiveQuery catches up. */
   isConfirmedEmpty: boolean
+  /** Host-supplied empty state; the default names the absence of messages. */
+  emptyState?: React.ReactNode
   /** virtua imperative handle (scrollToIndex for deep-link rendering). */
   listRef: React.RefObject<VirtualizerHandle | null>
   /** The scroll container we own (read-only handle; attach via registerScroller). */
@@ -3646,10 +3658,12 @@ function TimelineMessageList({
   if (visibleItems.length === 0 && isConfirmedEmpty) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="text-center">
-          <p className="text-muted-foreground">No messages yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">Start the conversation by sending a message below</p>
-        </div>
+        {emptyState ?? (
+          <div className="text-center">
+            <p className="text-muted-foreground">No messages yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Start the conversation by sending a message below</p>
+          </div>
+        )}
       </div>
     )
   }

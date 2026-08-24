@@ -80,14 +80,14 @@ export function AsidePane({
       data-aside-id={asideId}
       data-surface={surface}
       data-editor-zone="aside"
-      className="flex h-full min-h-0 flex-col border-t-2 border-primary/70 bg-background"
+      className="flex h-full min-h-0 flex-col border-t-2 border-primary/70 bg-card"
     >
       <TooltipProvider delayDuration={300}>
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b pl-4 pr-2">
-          <h2 className="min-w-0 truncate text-sm font-semibold">{title}</h2>
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b pl-3 pr-1.5">
+          <h2 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
           {/* Nobody else can open this stream — the badge says so where the
               surface is read, not only where it was created. */}
-          <span className="flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <span className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-border/80 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
             <Eye className="h-2.5 w-2.5 text-primary" aria-hidden />
             Only you
           </span>
@@ -98,16 +98,22 @@ export function AsidePane({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-7 w-7 text-muted-foreground"
                 aria-label="Minimize aside"
                 onClick={() => setAsideSurface("minimized")}
               >
-                <Minus className="h-4 w-4" />
+                <Minus className="h-3.5 w-3.5" />
               </Button>
             </>
           )}
-          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Close aside" onClick={closeAside}>
-            <X className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground"
+            aria-label="Close aside"
+            onClick={closeAside}
+          >
+            <X className="h-3.5 w-3.5" />
           </Button>
         </header>
       </TooltipProvider>
@@ -132,7 +138,20 @@ export function AsidePane({
           <div className="relative min-h-0 flex-1">
             <StreamErrorBoundary streamId={asideId}>
               <AgentBlockProvider onInsert={insertAgentBlock}>
-                <StreamContent workspaceId={workspaceId} streamId={asideId} stream={aside} autoFocus={!takeover} />
+                <StreamContent
+                  workspaceId={workspaceId}
+                  streamId={asideId}
+                  stream={aside}
+                  autoFocus={!takeover}
+                  emptyState={
+                    <div className="max-w-[15rem] px-6 text-center">
+                      <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
+                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                        Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
+                      </p>
+                    </div>
+                  }
+                />
               </AgentBlockProvider>
             </StreamErrorBoundary>
           </div>
