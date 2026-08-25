@@ -105,6 +105,7 @@ describe("GitHubClient captureRateLimit is best-effort", () => {
     organizationName: "acme",
     accountType: "Organization" as const,
     repositorySelection: "all" as const,
+    configurationUrl: null,
     permissions: {},
     repositories: [],
     rateLimitRemaining: null,

@@ -31,6 +31,7 @@ function githubInstall(overrides: Partial<GitHubWorkspaceIntegration>): GitHubWo
     installationId: "111",
     accountType: "Organization",
     repositorySelection: "all",
+    configurationUrl: "https://github.com/organizations/acme/settings/installations/111",
     permissions: {},
     repositories: [],
     rateLimit: { remaining: null, resetAt: null },
@@ -150,6 +151,56 @@ describe("IntegrationsTab GitHub installations", () => {
     expect(within(brokenRow).getByRole("link", { name: /reconnect/i })).toBeInTheDocument()
     const healthyRow = screen.getByText("acme").closest("div.rounded-md") as HTMLElement
     expect(within(healthyRow).queryByRole("link", { name: /reconnect/i })).not.toBeInTheDocument()
+  })
+
+  it("links each installation to its own GitHub repository-access page", async () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])
+    vi.spyOn(integrationsApi, "getGithub").mockResolvedValue({
+      configured: true,
+      integrations: [
+        githubInstall({
+          id: "wsint_org",
+          accountLogin: "acme",
+          configurationUrl: "https://github.com/organizations/acme/settings/installations/111",
+        }),
+        githubInstall({
+          id: "wsint_user",
+          accountLogin: "kris",
+          accountType: "User",
+          configurationUrl: "https://github.com/settings/installations/222",
+        }),
+      ],
+    })
+    vi.spyOn(integrationsApi, "getLinear").mockResolvedValue({ configured: false, integration: null })
+
+    renderTab(queryClient)
+
+    const orgRow = (await screen.findByText("acme")).closest("div.rounded-md") as HTMLElement
+    const userRow = screen.getByText("kris").closest("div.rounded-md") as HTMLElement
+    expect(within(orgRow).getByRole("link", { name: /repository access on github/i })).toHaveAttribute(
+      "href",
+      "https://github.com/organizations/acme/settings/installations/111"
+    )
+    expect(within(userRow).getByRole("link", { name: /repository access on github/i })).toHaveAttribute(
+      "href",
+      "https://github.com/settings/installations/222"
+    )
+  })
+
+  it("omits the repository-access link when the installation has no known configuration page", async () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])
+    vi.spyOn(integrationsApi, "getGithub").mockResolvedValue({
+      configured: true,
+      integrations: [githubInstall({ id: "wsint_legacy", accountLogin: "acme", configurationUrl: null })],
+    })
+    vi.spyOn(integrationsApi, "getLinear").mockResolvedValue({ configured: false, integration: null })
+
+    renderTab(queryClient)
+
+    await screen.findByText("acme")
+    expect(screen.queryByRole("link", { name: /repository access on github/i })).not.toBeInTheDocument()
   })
 
   it("keeps a single Connect button in the empty state", async () => {

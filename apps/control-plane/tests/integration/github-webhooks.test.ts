@@ -130,6 +130,34 @@ describe("GithubWebhookService.receive", () => {
     expect(await dispatchRows(pool)).toEqual([])
   })
 
+  test("forwards installation_repositories so regions can reconcile a repository grant change", async () => {
+    await addRoute(pool, 42, "eu-north-1", "ws_a")
+
+    const body = JSON.stringify({
+      action: "added",
+      installation: { id: 42 },
+      repository_selection: "selected",
+      repositories_added: [{ full_name: "acme/widgets" }],
+    })
+    const result = await service.receive({
+      rawBody: Buffer.from(body, "utf8"),
+      signature: sign(body),
+      eventType: "installation_repositories",
+      deliveryGuid: "guid-repos-added",
+    })
+
+    expect(result).toEqual({ kind: "accepted", matchedRegions: ["eu-north-1"] })
+
+    const delivery = await pool.query<{ id: string; event_type: string; action: string }>(
+      "SELECT id, event_type, action FROM github_webhook_deliveries WHERE delivery_guid = 'guid-repos-added'"
+    )
+    expect({ eventType: delivery.rows[0].event_type, action: delivery.rows[0].action }).toEqual({
+      eventType: "installation_repositories",
+      action: "added",
+    })
+    expect(await dispatchRows(pool)).toEqual([{ deliveryId: delivery.rows[0].id, region: "eu-north-1" }])
+  })
+
   test("ignores a non-forwarded event type and records nothing", async () => {
     const body = prPayload(42, 7)
     const result = await service.receive({

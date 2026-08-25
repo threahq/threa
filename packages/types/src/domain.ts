@@ -1323,6 +1323,13 @@ export interface GitHubWorkspaceIntegration extends WorkspaceIntegration {
   installationId: string | null
   accountType: "Organization" | "User" | null
   repositorySelection: "all" | "selected" | null
+  /**
+   * GitHub's own settings page for this installation — where repository access is
+   * granted. The grant lives on GitHub (changing it needs a user-to-server token
+   * Threa never holds), so reconfiguring is a deep link, not an API call. Null
+   * when the installation id or account type is unknown.
+   */
+  configurationUrl: string | null
   permissions: Record<string, string>
   repositories: GitHubInstalledRepository[]
   rateLimit: WorkspaceIntegrationRateLimit

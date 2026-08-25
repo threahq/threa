@@ -65,9 +65,11 @@ function fakeWorkspaceIntegrationService(workspaceIds: string[]) {
   return {
     listActiveWorkspaceIdsForInstallation: mock(async () => workspaceIds),
     deactivateInstallation: mock(async () => ({ deactivatedWorkspaceIds: workspaceIds })),
+    refreshGithubInstallationRepositories: mock(async () => ({ refreshedWorkspaceIds: workspaceIds })),
   } as unknown as WorkspaceIntegrationService & {
     listActiveWorkspaceIdsForInstallation: ReturnType<typeof mock>
     deactivateInstallation: ReturnType<typeof mock>
+    refreshGithubInstallationRepositories: ReturnType<typeof mock>
   }
 }
 
@@ -245,5 +247,54 @@ describe("github webhook worker — installation lifecycle", () => {
     await worker(prJob({ eventType: "installation", action: "unsuspend", repositoryFullName: null, payload: {} }))
 
     expect(wis.deactivateInstallation).not.toHaveBeenCalled()
+  })
+})
+
+describe("github webhook worker — repository grant changes", () => {
+  test("installation_repositories → reconciles the installation snapshot, no preview refresh", async () => {
+    const pool = fakePool()
+    const wis = fakeWorkspaceIntegrationService([WORKSPACE_ID])
+    const prefixSpy = spyOn(LinkPreviewRepository, "findByNormalizedUrlPrefix")
+
+    const worker = createGithubWebhookWorker({
+      pool,
+      linkPreviewService: makeService(pool),
+      workspaceIntegrationService: wis,
+      jobQueue: fakeJobQueue(),
+    })
+
+    await worker(
+      prJob({
+        eventType: "installation_repositories",
+        action: "added",
+        repositoryFullName: null,
+        payload: { installation: { id: 42 }, repositories_added: [{ full_name: "acme/widgets" }] },
+      })
+    )
+
+    expect(wis.refreshGithubInstallationRepositories).toHaveBeenCalledWith("42")
+    expect(wis.deactivateInstallation).not.toHaveBeenCalled()
+    expect(prefixSpy).not.toHaveBeenCalled()
+  })
+
+  test("a refresh failure propagates so the delivery is retried", async () => {
+    const pool = fakePool()
+    const wis = fakeWorkspaceIntegrationService([WORKSPACE_ID])
+    wis.refreshGithubInstallationRepositories = mock(async () => {
+      throw new Error("GitHub unavailable")
+    })
+
+    const worker = createGithubWebhookWorker({
+      pool,
+      linkPreviewService: makeService(pool),
+      workspaceIntegrationService: wis,
+      jobQueue: fakeJobQueue(),
+    })
+
+    await expect(
+      worker(
+        prJob({ eventType: "installation_repositories", action: "removed", repositoryFullName: null, payload: {} })
+      )
+    ).rejects.toThrow("GitHub unavailable")
   })
 })

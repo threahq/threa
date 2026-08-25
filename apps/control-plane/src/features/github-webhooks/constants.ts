@@ -20,11 +20,20 @@ export type GithubWebhookDeliveryStatus =
   (typeof GITHUB_WEBHOOK_DELIVERY_STATUS)[keyof typeof GITHUB_WEBHOOK_DELIVERY_STATUS]
 
 /**
- * Events the app is subscribed to and that drive a live preview refresh. Any
- * other event type is acknowledged (202) but never fanned out. `ping` is
- * handled separately (200) as GitHub's endpoint health check.
+ * Events the app is subscribed to and that regions act on. Any other event type
+ * is acknowledged (202) but never fanned out. `ping` is handled separately (200)
+ * as GitHub's endpoint health check. The PR/issue types drive a live preview
+ * refresh; `installation` is a lifecycle signal; `installation_repositories`
+ * carries a repository-grant change made on GitHub, which the region reconciles
+ * into its cached installation snapshot.
  */
-export const FORWARDED_GITHUB_EVENT_TYPES = ["pull_request", "pull_request_review", "issues", "installation"] as const
+export const FORWARDED_GITHUB_EVENT_TYPES = [
+  "pull_request",
+  "pull_request_review",
+  "issues",
+  "installation",
+  "installation_repositories",
+] as const
 
 export interface GithubWebhookDispatchPayload {
   deliveryId: string

@@ -730,6 +730,231 @@ describe("syncGithubRepositories version-CAS retry (INV-66)", () => {
   })
 })
 
+describe("GitHub repository reconfiguration", () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  /**
+   * Stub both app-JWT routes distinctly: the installation read (identity +
+   * repository grant, what a reconfigure on GitHub changes) and the token mint.
+   * `fetch` serves the installation-token Octokit's repository listing.
+   */
+  function stubReconfiguredInstallation(
+    service: WorkspaceIntegrationService,
+    installation: Record<string, unknown>,
+    repositories: Array<{ full_name: string; private: boolean }>
+  ): void {
+    spyOn(service as unknown as { getAppOctokit: () => unknown }, "getAppOctokit").mockReturnValue({
+      request: async (route: string) => {
+        if (route.startsWith("GET /app/installations")) return { data: installation }
+        return {
+          data: { token: "fresh-tok", expires_at: FUTURE_ISO, permissions: installation.permissions ?? {} },
+        }
+      },
+    })
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ repositories }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch
+  }
+
+  function poolCapturingUpdate(selectRow: Record<string, unknown>): {
+    pool: Pool
+    updates: QueryCall[]
+  } {
+    const updates: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        if (text.includes("UPDATE workspace_integrations")) {
+          updates.push({ text, values })
+          return { rows: [{ ...selectRow, metadata: JSON.parse(String(values[5])) }], rowCount: 1 }
+        }
+        return { rows: [selectRow], rowCount: 1 }
+      },
+      release: () => {},
+    } as unknown as Pool
+    return { pool, updates }
+  }
+
+  function makeService(pool: Pool): WorkspaceIntegrationService {
+    return new WorkspaceIntegrationService({
+      pool,
+      github: githubEnabled,
+      linear: linearDisabled,
+      region: "eu-north-1",
+    })
+  }
+
+  it("re-reads the installation so a grant narrowed on GitHub replaces the cached snapshot", async () => {
+    const row = githubRow({
+      installation_id: "42",
+      credentials: encryptedGithubCredentials(42),
+      metadata: {
+        organizationName: "acme",
+        accountType: "Organization",
+        repositorySelection: "all",
+        permissions: {},
+        repositories: [{ fullName: "acme/old", private: false }],
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+      },
+      version: 5,
+    })
+    const { pool } = poolCapturingUpdate(row)
+    const service = makeService(pool)
+    stubReconfiguredInstallation(
+      service,
+      {
+        account: { type: "Organization", login: "acme" },
+        repository_selection: "selected",
+        permissions: { contents: "read" },
+        html_url: "https://github.com/organizations/acme/settings/installations/42",
+      },
+      [{ full_name: "acme/widgets", private: true }]
+    )
+
+    const result = await service.syncGithubRepositories("ws_1", "wsi_1")
+
+    expect({
+      repositorySelection: result.repositorySelection,
+      repositories: result.repositories,
+      configurationUrl: result.configurationUrl,
+      permissions: result.permissions,
+    }).toEqual({
+      repositorySelection: "selected",
+      repositories: [{ fullName: "acme/widgets", private: true }],
+      configurationUrl: "https://github.com/organizations/acme/settings/installations/42",
+      permissions: { contents: "read" },
+    })
+  })
+
+  it("parks the row in error and reports GITHUB_INSTALLATION_GONE when GitHub 404s the installation", async () => {
+    const row = githubRow({ installation_id: "42", credentials: encryptedGithubCredentials(42), version: 3 })
+    const updates: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        if (text.includes("UPDATE workspace_integrations")) {
+          updates.push({ text, values })
+          return { rows: [{ ...row, status: "error" }], rowCount: 1 }
+        }
+        return { rows: [row], rowCount: 1 }
+      },
+      release: () => {},
+    } as unknown as Pool
+    const service = makeService(pool)
+    spyOn(service as unknown as { getAppOctokit: () => unknown }, "getAppOctokit").mockReturnValue({
+      request: async () => {
+        throw Object.assign(new Error("Not Found"), { status: 404 })
+      },
+    })
+
+    let caught: unknown
+    try {
+      await service.syncGithubRepositories("ws_1", "wsi_1")
+    } catch (error) {
+      caught = error
+    }
+
+    expect((caught as { status?: number; code?: string }).code).toBe("GITHUB_INSTALLATION_GONE")
+    expect((caught as { status?: number }).status).toBe(409)
+    // status='error', scoped to installation 42, guarded on the row still being active
+    expect(updates).toHaveLength(1)
+    expect([updates[0].values[2], updates[0].values[3], updates[0].values[8]]).toEqual(["42", "error", "active"])
+  })
+
+  it("refreshes every workspace on the installation when GitHub reports a grant change", async () => {
+    const rows = [
+      githubRow({
+        id: "wsi_a",
+        workspace_id: "ws_a",
+        installation_id: "42",
+        credentials: encryptJson(
+          SECRET,
+          { installationId: 42, accessToken: "tok", tokenExpiresAt: FUTURE_ISO },
+          { workspaceId: "ws_a", provider: "github" }
+        ),
+      }),
+      githubRow({
+        id: "wsi_b",
+        workspace_id: "ws_b",
+        installation_id: "42",
+        credentials: encryptJson(
+          SECRET,
+          { installationId: 42, accessToken: "tok", tokenExpiresAt: FUTURE_ISO },
+          { workspaceId: "ws_b", provider: "github" }
+        ),
+      }),
+    ]
+    const updates: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        if (text.includes("UPDATE workspace_integrations")) {
+          updates.push({ text, values })
+          return { rows: [rows[updates.length - 1]], rowCount: 1 }
+        }
+        return { rows, rowCount: rows.length }
+      },
+      release: () => {},
+    } as unknown as Pool
+    const service = makeService(pool)
+    stubReconfiguredInstallation(
+      service,
+      { account: { type: "Organization", login: "acme" }, repository_selection: "selected", permissions: {} },
+      [{ full_name: "acme/widgets", private: true }]
+    )
+
+    const result = await service.refreshGithubInstallationRepositories("42")
+
+    expect(result.refreshedWorkspaceIds).toEqual(["ws_a", "ws_b"])
+    expect(updates.map((call) => call.values[0])).toEqual(["ws_a", "ws_b"])
+  })
+
+  it("rethrows so the delivery retries when the refresh fails on a transient GitHub error", async () => {
+    const row = githubRow({ installation_id: "42", credentials: encryptedGithubCredentials(42) })
+    const { pool } = recordingPool([row])
+    const service = makeService(pool)
+    spyOn(service as unknown as { getAppOctokit: () => unknown }, "getAppOctokit").mockReturnValue({
+      request: async () => {
+        throw Object.assign(new Error("Bad gateway"), { status: 502 })
+      },
+    })
+
+    await expect(service.refreshGithubInstallationRepositories("42")).rejects.toThrow(/retrying delivery/)
+  })
+
+  it("derives a configuration URL for installs that predate capturing GitHub's own", async () => {
+    const { pool } = recordingPool([
+      githubRow({
+        id: "wsi_org",
+        installation_id: "42",
+        metadata: { organizationName: "acme", accountType: "Organization" },
+      }),
+      githubRow({
+        id: "wsi_user",
+        installation_id: "77",
+        metadata: { organizationName: "kris", accountType: "User" },
+      }),
+      githubRow({ id: "wsi_unknown", installation_id: "99", metadata: {} }),
+    ])
+    const service = makeService(pool)
+
+    const installs = await service.listGithubInstallations("ws_1")
+
+    expect(installs.map((install) => install.configurationUrl)).toEqual([
+      "https://github.com/organizations/acme/settings/installations/42",
+      "https://github.com/settings/installations/77",
+      null,
+    ])
+  })
+})
+
 describe("listActiveWorkspaceIdsForInstallation", () => {
   it("returns every active workspace on the installation, scoped by (provider, installation_id, active)", async () => {
     const { pool, calls } = recordingPool([
@@ -833,6 +1058,7 @@ describe("GitHub metadata write guards", () => {
     organizationName: "acme",
     accountType: "Organization" as const,
     repositorySelection: "all" as const,
+    configurationUrl: null,
     permissions: {},
     repositories: [],
     rateLimitRemaining: null,

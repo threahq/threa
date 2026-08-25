@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Github, ExternalLink, RefreshCw, Plus } from "lucide-react"
+import { Github, ExternalLink, RefreshCw, Plus, Settings } from "lucide-react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { integrationsApi } from "@/api/integrations"
 import { Button } from "@/components/ui/button"
@@ -70,6 +70,9 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
         integrationId,
         message: error instanceof Error ? error.message : "Failed to sync GitHub repositories.",
       })
+      // A sync can itself change the row (an installation GitHub no longer knows
+      // is parked in `error`), so refetch rather than leave a stale Connected badge.
+      queryClient.invalidateQueries({ queryKey: ["workspace-integrations", workspaceId, "github"] })
     },
   })
 
@@ -197,7 +200,15 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
                     <p className="text-xs text-muted-foreground">{rateLimit.remaining} API requests remaining</p>
                   )}
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {installation.configurationUrl && (
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={installation.configurationUrl} target="_blank" rel="noopener noreferrer">
+                          <Settings className="h-3.5 w-3.5 mr-1.5" />
+                          Repository access on GitHub
+                        </a>
+                      </Button>
+                    )}
                     {isActive && (
                       <Button
                         variant="outline"
