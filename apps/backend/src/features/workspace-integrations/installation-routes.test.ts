@@ -868,6 +868,49 @@ describe("GitHub repository reconfiguration", () => {
     expect([updates[0].values[2], updates[0].values[3], updates[0].values[8]]).toEqual(["42", "error", "active"])
   })
 
+  it("keeps a 404 from the repository listing a retryable network failure, not a parked row", async () => {
+    const row = githubRow({ installation_id: "42", credentials: encryptedGithubCredentials(42), version: 3 })
+    const updates: QueryCall[] = []
+    const pool = {
+      query: async (query: unknown, values: unknown[] = []) => {
+        const text = typeof query === "string" ? query : ((query as { text?: string })?.text ?? "")
+        if (text.includes("UPDATE workspace_integrations")) {
+          updates.push({ text, values })
+          return { rows: [row], rowCount: 1 }
+        }
+        return { rows: [row], rowCount: 1 }
+      },
+      release: () => {},
+    } as unknown as Pool
+    const service = makeService(pool)
+    // Both app-JWT calls succeed — the installation demonstrably exists. Only the
+    // installation-token repository listing 404s, which must not park the row:
+    // parking is terminal until a user reconnects.
+    spyOn(service as unknown as { getAppOctokit: () => unknown }, "getAppOctokit").mockReturnValue({
+      request: async (route: string) => {
+        if (route.startsWith("GET /app/installations")) {
+          return { data: { account: { type: "Organization", login: "acme" }, repository_selection: "all" } }
+        }
+        return { data: { token: "fresh-tok", expires_at: FUTURE_ISO, permissions: {} } }
+      },
+    })
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ message: "Not Found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch
+
+    let caught: unknown
+    try {
+      await service.syncGithubRepositories("ws_1", "wsi_1")
+    } catch (error) {
+      caught = error
+    }
+
+    expect((caught as { status?: number; code?: string }).code).toBe("GITHUB_SYNC_FAILED")
+    expect(updates).toHaveLength(0)
+  })
+
   it("refreshes every workspace on the installation when GitHub reports a grant change", async () => {
     const rows = [
       githubRow({

@@ -608,18 +608,26 @@ export class WorkspaceIntegrationService {
       tokenExpiresAt = tokenResponse.data.expires_at
       tokenPermissions = normalizePermissions(tokenResponse.data.permissions)
       snapshot = await this.fetchGithubInstallationSnapshot(credentials.installationId)
-      repositories = await listInstallationRepositories(new Octokit({ auth: accessToken }))
     } catch (error) {
       const status = getErrorStatus(error)
       // A 404/410 against a valid app JWT is definitive: the app is not installed
       // there any more. Park the row in `error` (not inactive) so settings offers
-      // Reconnect and the CP routes survive a reinstall on the same id.
+      // Reconnect and the CP routes survive a reinstall on the same id. Only these
+      // two app-JWT calls prove it — parking is terminal until a user reconnects,
+      // so nothing weaker than the app's own view of the installation may trigger it.
       if (status === 404 || status === 410) {
         log.warn({ workspaceId, installationId: record.installationId }, "GitHub installation no longer exists")
         await this.markGithubInstallationError(workspaceId, record)
         return { ok: false, failure: "installation_gone" }
       }
       log.warn({ err: error, workspaceId }, "GitHub sync network call failed")
+      return { ok: false, failure: "network" }
+    }
+
+    try {
+      repositories = await listInstallationRepositories(new Octokit({ auth: accessToken }))
+    } catch (error) {
+      log.warn({ err: error, workspaceId }, "GitHub repository listing failed during sync")
       return { ok: false, failure: "network" }
     }
 
