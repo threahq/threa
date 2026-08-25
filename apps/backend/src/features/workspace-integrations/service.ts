@@ -67,10 +67,23 @@ interface GitHubIntegrationMetadata extends Record<string, unknown> {
   organizationName: string | null
   accountType: "Organization" | "User" | null
   repositorySelection: "all" | "selected" | null
+  // GitHub's `html_url` for the installation — its settings page, where the
+  // repository grant is edited. Absent on rows installed before it was captured;
+  // `mapGithubIntegration` derives a replacement so those still get a link.
+  configurationUrl: string | null
   permissions: Record<string, string>
   repositories: GitHubInstalledRepository[]
   rateLimitRemaining: number | null
   rateLimitResetAt: string | null
+}
+
+/** Installation identity + repository-grant mode as GitHub reports it. */
+interface GitHubInstallationSnapshot {
+  accountLogin: string | null
+  accountType: "Organization" | "User" | null
+  repositorySelection: "all" | "selected" | null
+  configurationUrl: string | null
+  permissions: Record<string, string>
 }
 
 interface RefreshResult {
@@ -293,6 +306,9 @@ export class WorkspaceIntegrationService {
       installationId: record.installationId,
       accountType: metadata.accountType,
       repositorySelection: metadata.repositorySelection,
+      configurationUrl:
+        metadata.configurationUrl ??
+        deriveInstallationConfigurationUrl(record.installationId, metadata.accountType, metadata.organizationName),
       permissions: metadata.permissions,
       repositories: metadata.repositories,
       rateLimit: {
@@ -467,6 +483,14 @@ export class WorkspaceIntegrationService {
     }
   }
 
+  /**
+   * Reconcile one installation's cached snapshot against GitHub: repository grant,
+   * selection mode, account identity, permissions, and a freshly minted token.
+   * The grant itself is edited on GitHub (Threa holds only an installation token,
+   * which cannot change repository access), so this is the read side of every
+   * reconfiguration — user-triggered from settings, or webhook-triggered when the
+   * user adds/removes repositories on GitHub.
+   */
   async syncGithubRepositories(workspaceId: string, integrationId: string): Promise<GitHubWorkspaceIntegration> {
     this.requireGitHubEnabled()
 
@@ -482,23 +506,98 @@ export class WorkspaceIntegrationService {
       })
     }
 
+    const result = await this.syncGithubInstallationRecord(workspaceId, record)
+    if (result.ok) {
+      return this.mapGithubIntegration(result.record)
+    }
+
+    switch (result.failure) {
+      case "decrypt":
+        throw new HttpError("GitHub integration credentials could not be decrypted", {
+          status: 500,
+          code: "GITHUB_CREDENTIALS_DECRYPT_FAILED",
+        })
+      case "installation_gone":
+        throw new HttpError("This GitHub installation no longer exists. Reconnect to restore access.", {
+          status: 409,
+          code: "GITHUB_INSTALLATION_GONE",
+        })
+      case "conflict":
+        throw new HttpError("GitHub integration was disconnected during sync", {
+          status: 409,
+          code: "GITHUB_INTEGRATION_NOT_ACTIVE",
+        })
+      default:
+        throw new HttpError("Failed to sync GitHub repositories", { status: 502, code: "GITHUB_SYNC_FAILED" })
+    }
+  }
+
+  /**
+   * Re-sync every workspace subscribed to an installation. Driven by the
+   * `installation_repositories` webhook, so a repository added or removed on
+   * GitHub lands in Threa without anyone opening settings. A network failure is
+   * rethrown so the queue retries the delivery; terminal per-row failures
+   * (undecryptable credentials, a lost CAS, an installation GitHub no longer
+   * knows) are logged and skipped — retrying them would never succeed.
+   */
+  async refreshGithubInstallationRepositories(installationId: string): Promise<{ refreshedWorkspaceIds: string[] }> {
+    if (!this.isGitHubEnabled()) return { refreshedWorkspaceIds: [] }
+
+    const records = await WorkspaceIntegrationRepository.listActiveByInstallationId(
+      this.deps.pool,
+      WorkspaceIntegrationProviders.GITHUB,
+      installationId
+    )
+    const refreshedWorkspaceIds: string[] = []
+    let retryable = false
+    for (const record of records) {
+      const result = await this.syncGithubInstallationRecord(record.workspaceId, record)
+      if (result.ok) {
+        refreshedWorkspaceIds.push(record.workspaceId)
+        continue
+      }
+      if (result.failure === "network") retryable = true
+      log.warn(
+        { workspaceId: record.workspaceId, installationId, failure: result.failure },
+        "GitHub installation repository refresh failed for a workspace"
+      )
+    }
+
+    if (retryable) {
+      throw new Error(`GitHub installation ${installationId} repository refresh failed; retrying delivery`)
+    }
+    return { refreshedWorkspaceIds }
+  }
+
+  /**
+   * The one snapshot-refresh path, shared by the settings Sync button and the
+   * webhook. All network work happens before any DB write so no connection is
+   * held across it (INV-41).
+   *
+   * The write is a CACHE WRITE — it replaces the whole metadata object — so it
+   * pins the active status and the installation observed before the round-trip
+   * (INV-20) plus the version read at the same point (INV-66), and re-reads and
+   * retries ONCE against the current version before giving up.
+   */
+  private async syncGithubInstallationRecord(
+    workspaceId: string,
+    record: WorkspaceIntegrationRecord
+  ): Promise<
+    | { ok: true; record: WorkspaceIntegrationRecord }
+    | { ok: false; failure: "decrypt" | "installation_gone" | "network" | "conflict" }
+  > {
     let credentials: GitHubIntegrationCredentials
     try {
       credentials = this.parseCredentials(workspaceId, record.credentials)
     } catch (error) {
       log.warn({ err: error, workspaceId }, "GitHub integration credentials could not be decrypted during sync")
-      throw new HttpError("GitHub integration credentials could not be decrypted", {
-        status: 500,
-        code: "GITHUB_CREDENTIALS_DECRYPT_FAILED",
-      })
+      return { ok: false, failure: "decrypt" }
     }
 
-    // Mint a fresh installation token and re-list repositories against
-    // GitHub. The network round-trip happens before any DB write so we
-    // don't hold a connection open during slow remote calls (INV-41).
     let accessToken: string
     let tokenExpiresAt: string
-    let nextPermissions: Record<string, string>
+    let tokenPermissions: Record<string, string>
+    let snapshot: GitHubInstallationSnapshot
     let repositories: GitHubInstalledRepository[]
     try {
       const tokenResponse = await this.getAppOctokit().request(
@@ -507,14 +606,29 @@ export class WorkspaceIntegrationService {
       )
       accessToken = tokenResponse.data.token
       tokenExpiresAt = tokenResponse.data.expires_at
-      nextPermissions = normalizePermissions(tokenResponse.data.permissions)
+      tokenPermissions = normalizePermissions(tokenResponse.data.permissions)
+      snapshot = await this.fetchGithubInstallationSnapshot(credentials.installationId)
+    } catch (error) {
+      const status = getErrorStatus(error)
+      // A 404/410 against a valid app JWT is definitive: the app is not installed
+      // there any more. Park the row in `error` (not inactive) so settings offers
+      // Reconnect and the CP routes survive a reinstall on the same id. Only these
+      // two app-JWT calls prove it — parking is terminal until a user reconnects,
+      // so nothing weaker than the app's own view of the installation may trigger it.
+      if (status === 404 || status === 410) {
+        log.warn({ workspaceId, installationId: record.installationId }, "GitHub installation no longer exists")
+        await this.markGithubInstallationError(workspaceId, record)
+        return { ok: false, failure: "installation_gone" }
+      }
+      log.warn({ err: error, workspaceId }, "GitHub sync network call failed")
+      return { ok: false, failure: "network" }
+    }
+
+    try {
       repositories = await listInstallationRepositories(new Octokit({ auth: accessToken }))
     } catch (error) {
-      log.warn({ err: error, workspaceId }, "GitHub sync network call failed")
-      throw new HttpError("Failed to sync GitHub repositories", {
-        status: 502,
-        code: "GITHUB_SYNC_FAILED",
-      })
+      log.warn({ err: error, workspaceId }, "GitHub repository listing failed during sync")
+      return { ok: false, failure: "network" }
     }
 
     const encryptedCredentials = encryptJson(
@@ -523,17 +637,15 @@ export class WorkspaceIntegrationService {
       { workspaceId, provider: WorkspaceIntegrationProviders.GITHUB }
     )
 
-    // CACHE WRITE — version-CAS. This replaces the whole metadata object (its
-    // `repositories` list especially), so a concurrent write must not be lost.
-    // Pin active status + the installation observed before the network calls
-    // (INV-20) AND the version read at the same point (INV-66). Because this is
-    // a user-facing sync (not a background telemetry write), a CAS miss re-reads
-    // and retries ONCE against the current version before surfacing the conflict.
     const persistSync = async (base: WorkspaceIntegrationRecord): Promise<WorkspaceIntegrationRecord | null> => {
       const baseMetadata = this.parseMetadata(base.metadata)
       const nextMetadata: GitHubIntegrationMetadata = {
         ...baseMetadata,
-        permissions: nextPermissions || baseMetadata.permissions,
+        organizationName: snapshot.accountLogin ?? baseMetadata.organizationName,
+        accountType: snapshot.accountType ?? baseMetadata.accountType,
+        repositorySelection: snapshot.repositorySelection ?? baseMetadata.repositorySelection,
+        configurationUrl: snapshot.configurationUrl ?? baseMetadata.configurationUrl,
+        permissions: Object.keys(tokenPermissions).length > 0 ? tokenPermissions : baseMetadata.permissions,
         repositories,
       }
       return WorkspaceIntegrationRepository.update(
@@ -551,23 +663,56 @@ export class WorkspaceIntegrationService {
 
     let updated = await persistSync(record)
     if (!updated) {
-      const reread = await WorkspaceIntegrationRepository.findByWorkspaceAndId(
-        this.deps.pool,
-        workspaceId,
-        integrationId
-      )
+      const reread = await WorkspaceIntegrationRepository.findByWorkspaceAndId(this.deps.pool, workspaceId, record.id)
       if (reread && reread.status === WorkspaceIntegrationStatuses.ACTIVE) {
         updated = await persistSync(reread)
       }
     }
     if (!updated) {
-      throw new HttpError("GitHub integration was disconnected during sync", {
-        status: 409,
-        code: "GITHUB_INTEGRATION_NOT_ACTIVE",
-      })
+      return { ok: false, failure: "conflict" }
     }
 
-    return this.mapGithubIntegration(updated)
+    return { ok: true, record: updated }
+  }
+
+  /**
+   * Park an installation GitHub no longer knows in `error`. Scoped to the
+   * installation observed at read and guarded on ACTIVE, so a row that
+   * disconnected or reconnected elsewhere in the meantime is left alone.
+   */
+  private async markGithubInstallationError(workspaceId: string, record: WorkspaceIntegrationRecord): Promise<void> {
+    await WorkspaceIntegrationRepository.update(
+      this.deps.pool,
+      workspaceId,
+      WorkspaceIntegrationProviders.GITHUB,
+      record.installationId,
+      { status: WorkspaceIntegrationStatuses.ERROR },
+      { expectedStatus: WorkspaceIntegrationStatuses.ACTIVE }
+    )
+  }
+
+  /**
+   * Installation identity and repository-grant mode, straight from GitHub. The
+   * `html_url` it returns is the page where that grant is edited — the target of
+   * the settings "Configure on GitHub" link.
+   */
+  private async fetchGithubInstallationSnapshot(installationId: number): Promise<GitHubInstallationSnapshot> {
+    const installation = await this.getAppOctokit().request("GET /app/installations/{installation_id}", {
+      installation_id: installationId,
+    })
+    const accountType = normalizeGithubAccountType(
+      getInstallationAccountType(installation.data.account) ?? installation.data.target_type ?? null
+    )
+    const accountLogin = getInstallationAccountLogin(installation.data.account)
+    return {
+      accountLogin,
+      accountType,
+      repositorySelection: normalizeRepositorySelection(installation.data.repository_selection),
+      configurationUrl:
+        normalizeGithubConfigurationUrl(installation.data.html_url) ??
+        deriveInstallationConfigurationUrl(String(installationId), accountType, accountLogin),
+      permissions: normalizePermissions(installation.data.permissions),
+    }
   }
 
   async handleGithubCallback(params: {
@@ -759,15 +904,9 @@ export class WorkspaceIntegrationService {
       throw new HttpError("Invalid GitHub installation ID", { status: 400, code: "INVALID_GITHUB_INSTALLATION" })
     }
 
-    const installation = await this.getAppOctokit().request("GET /app/installations/{installation_id}", {
-      installation_id: installationId,
-    })
-
     // Both organizations and personal accounts are accepted; the account type is
     // captured into metadata so the settings UI can badge each install.
-    const accountType = normalizeGithubAccountType(
-      getInstallationAccountType(installation.data.account) ?? installation.data.target_type ?? null
-    )
+    const snapshot = await this.fetchGithubInstallationSnapshot(installationId)
 
     // Base the write on the existing row for THIS installation (multi-install: a
     // workspace can hold several), else a fresh default record for a first install.
@@ -795,10 +934,11 @@ export class WorkspaceIntegrationService {
       baseRecord,
       installationId,
       {
-        organizationName: getInstallationAccountLogin(installation.data.account),
-        accountType,
-        repositorySelection: normalizeRepositorySelection(installation.data.repository_selection),
-        permissions: normalizePermissions(installation.data.permissions),
+        organizationName: snapshot.accountLogin,
+        accountType: snapshot.accountType,
+        repositorySelection: snapshot.repositorySelection,
+        configurationUrl: snapshot.configurationUrl,
+        permissions: snapshot.permissions,
         repositories: [],
         rateLimitRemaining: null,
         rateLimitResetAt: null,
@@ -984,6 +1124,7 @@ export class WorkspaceIntegrationService {
       organizationName: typeof payload.organizationName === "string" ? payload.organizationName : null,
       accountType: normalizeGithubAccountType(payload.accountType),
       repositorySelection: normalizeRepositorySelection(payload.repositorySelection),
+      configurationUrl: normalizeGithubConfigurationUrl(payload.configurationUrl),
       permissions: normalizePermissions(payload.permissions),
       repositories: normalizeRepositories(payload.repositories),
       rateLimitRemaining:
@@ -1544,6 +1685,37 @@ function normalizeRepositories(value: unknown): GitHubInstalledRepository[] {
 
 function normalizeRepositorySelection(value: unknown): "all" | "selected" | null {
   return value === "all" || value === "selected" ? value : null
+}
+
+/** Only github.com URLs are accepted, so a poisoned metadata blob can't become an outbound link. */
+function normalizeGithubConfigurationUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:" && url.hostname === "github.com" ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Where GitHub hosts an installation's repository-access settings. Preferred
+ * source is the installation's own `html_url`; this reproduces it for rows that
+ * predate capturing it, so an existing install gets a working link without first
+ * being synced. Both shapes are fixed by GitHub: personal installs live under the
+ * viewer's own settings, org installs under the org's.
+ */
+function deriveInstallationConfigurationUrl(
+  installationId: string | null,
+  accountType: "Organization" | "User" | null,
+  accountLogin: string | null
+): string | null {
+  if (!installationId) return null
+  if (accountType === "User") return `https://github.com/settings/installations/${installationId}`
+  if (accountType === "Organization" && accountLogin) {
+    return `https://github.com/organizations/${encodeURIComponent(accountLogin)}/settings/installations/${installationId}`
+  }
+  return null
 }
 
 function getInstallationAccountType(account: unknown): string | null {

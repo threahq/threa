@@ -4,7 +4,11 @@ import type { Job, JobHandler, QueueManager } from "../../lib/queue"
 import type { GithubWebhookProcessJobData } from "../../lib/queue/job-queue"
 import { findGithubPreviewMatches, type LinkPreviewService } from "../link-previews"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
-import { GITHUB_INSTALLATION_EVENT_TYPE, GITHUB_REFRESH_EVENT_TYPES } from "./config"
+import {
+  GITHUB_INSTALLATION_EVENT_TYPE,
+  GITHUB_INSTALLATION_REPOSITORIES_EVENT_TYPE,
+  GITHUB_REFRESH_EVENT_TYPES,
+} from "./config"
 import { deriveGithubTargetUrls } from "./derive"
 import { refreshGithubPreviewWithTrailing } from "./preview-refresh"
 
@@ -24,8 +28,9 @@ interface GithubWebhookWorkerDeps {
  * installation, derive the canonical PR/issue URL from the payload, and
  * force-refresh matching link previews (webhook = invalidation signal, not the
  * data source — the refresh re-fetches through the GitHub API). Lifecycle
- * `installation` events deactivate the integration instead. A delivery that
- * matches no workspace or no preview row is a clean no-op.
+ * `installation` events deactivate the integration instead, and
+ * `installation_repositories` re-syncs the cached repository grant. A delivery
+ * that matches no workspace or no preview row is a clean no-op.
  */
 export function createGithubWebhookWorker(deps: GithubWebhookWorkerDeps): JobHandler<GithubWebhookProcessJobData> {
   return async (job: Job<GithubWebhookProcessJobData>) => {
@@ -38,6 +43,16 @@ export function createGithubWebhookWorker(deps: GithubWebhookWorkerDeps): JobHan
 
     if (eventType === GITHUB_INSTALLATION_EVENT_TYPE) {
       await handleInstallationEvent(deps, installationId, action, deliveryGuid)
+      return
+    }
+
+    if (eventType === GITHUB_INSTALLATION_REPOSITORIES_EVENT_TYPE) {
+      const { refreshedWorkspaceIds } =
+        await deps.workspaceIntegrationService.refreshGithubInstallationRepositories(installationId)
+      log.info(
+        { deliveryGuid, installationId, action, refreshedWorkspaceIds },
+        "Reconciled GitHub repository grant change"
+      )
       return
     }
 
