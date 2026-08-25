@@ -8,6 +8,7 @@ import {
   type WorkspaceBootstrap,
   type WorkspacePermissionSlug,
 } from "@threa/types"
+import { ApiError } from "@/api/client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { integrationsApi } from "@/api/integrations"
 import { IntegrationsTab } from "./integrations-tab"
@@ -201,6 +202,42 @@ describe("IntegrationsTab GitHub installations", () => {
 
     await screen.findByText("acme")
     expect(screen.queryByRole("link", { name: /repository access on github/i })).not.toBeInTheDocument()
+  })
+
+  it("refetches after a gone installation, but leaves the row alone on a transient sync failure", async () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])
+    const getGithub = vi
+      .spyOn(integrationsApi, "getGithub")
+      .mockResolvedValue({ configured: true, integrations: [githubInstall({ id: "wsint_1", accountLogin: "acme" })] })
+    vi.spyOn(integrationsApi, "getLinear").mockResolvedValue({ configured: false, integration: null })
+    vi.spyOn(integrationsApi, "syncGithub").mockRejectedValue(
+      new ApiError(502, "GITHUB_SYNC_FAILED", "Failed to sync GitHub repositories")
+    )
+
+    renderTab(queryClient)
+    await screen.findByText("acme")
+    const fetchesBefore = getGithub.mock.calls.length
+
+    await userEvent.click(screen.getByRole("button", { name: /sync repos/i }))
+
+    // The message stands on its own; a refetch here would resolve back to
+    // Connected and strand it with nothing to clear it.
+    await waitFor(() => expect(screen.getByText("Failed to sync GitHub repositories")).toBeInTheDocument())
+    expect(getGithub.mock.calls.length).toBe(fetchesBefore)
+
+    vi.mocked(integrationsApi.syncGithub).mockRejectedValue(
+      new ApiError(409, "GITHUB_INSTALLATION_GONE", "This GitHub installation no longer exists.")
+    )
+    getGithub.mockResolvedValue({
+      configured: true,
+      integrations: [githubInstall({ id: "wsint_1", accountLogin: "acme", status: "error" })],
+    })
+
+    await userEvent.click(screen.getByRole("button", { name: /sync repos/i }))
+
+    expect(await screen.findByText("Error")).toBeInTheDocument()
+    expect(getGithub.mock.calls.length).toBeGreaterThan(fetchesBefore)
   })
 
   it("keeps a single Connect button in the empty state", async () => {

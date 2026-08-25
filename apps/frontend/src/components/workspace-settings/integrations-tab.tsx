@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Github, ExternalLink, RefreshCw, Plus, Settings } from "lucide-react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { ApiError } from "@/api/client"
 import { integrationsApi } from "@/api/integrations"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -70,9 +71,14 @@ export function IntegrationsTab({ workspaceId }: IntegrationsTabProps) {
         integrationId,
         message: error instanceof Error ? error.message : "Failed to sync GitHub repositories.",
       })
-      // A sync can itself change the row (an installation GitHub no longer knows
-      // is parked in `error`), so refetch rather than leave a stale Connected badge.
-      queryClient.invalidateQueries({ queryKey: ["workspace-integrations", workspaceId, "github"] })
+      // Exactly one sync failure changes the row: an installation GitHub no longer
+      // knows gets parked in `error` server-side, so refetch to replace the stale
+      // Connected badge. Refetching on the transient failures too would resolve
+      // back to Connected and leave this message sitting under it with nothing to
+      // clear it, so they leave the row alone.
+      if (ApiError.isApiError(error) && error.code === "GITHUB_INSTALLATION_GONE") {
+        queryClient.invalidateQueries({ queryKey: ["workspace-integrations", workspaceId, "github"] })
+      }
     },
   })
 
