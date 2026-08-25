@@ -116,6 +116,10 @@ export function AsideDraftEditor({
             a writing surface, not a one-line chat box. */}
         <MessageComposer
           expanded
+          // The pane is the ground. The composer's own `bg-background` is a
+          // shade under `--card` in dark (8% vs 11% lightness) and a hair over
+          // it in light, so painting it here read as a dark square in dark only.
+          className="bg-transparent"
           composerRef={controlRef}
           content={composer.content}
           onContentChange={composer.handleContentChange}
