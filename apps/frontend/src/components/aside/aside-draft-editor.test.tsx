@@ -41,6 +41,7 @@ describe("AsideDraftEditor — Insert into draft", () => {
       commandStreamId?: string | null
       includeStreamCommands?: boolean
       expanded?: boolean
+      className?: string
     }) => (
       <div
         data-testid="message-composer"
@@ -50,6 +51,7 @@ describe("AsideDraftEditor — Insert into draft", () => {
         data-stash={props.stashedDrafts ? "yes" : "no"}
         data-commands={props.includeStreamCommands === false ? "editor-only" : "stream"}
         data-expanded={props.expanded ? "yes" : "no"}
+        data-ground={props.className}
       />
     )) as never)
     const onConsumed = vi.fn()
@@ -95,6 +97,9 @@ describe("AsideDraftEditor — Insert into draft", () => {
       stash: card.getAttribute("data-stash"),
       commands: card.getAttribute("data-commands"),
       expanded: card.getAttribute("data-expanded"),
+      // The pane paints the ground; the composer's own `bg-background` reads as
+      // a darker square inside it in dark mode.
+      ground: card.getAttribute("data-ground"),
     }).toEqual({
       submit: "Send to composer",
       expand: "no",
@@ -102,6 +107,7 @@ describe("AsideDraftEditor — Insert into draft", () => {
       stash: "no",
       commands: "editor-only",
       expanded: "yes",
+      ground: "bg-transparent",
     })
   })
 
