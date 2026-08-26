@@ -19,7 +19,7 @@ Default mode: **minimal patch** — the smallest change that still fully solves 
 
 ## Search Before Asking
 
-Factual repo questions are yours to answer: Grep/Glob/Agent, starting from `docs/system-overview.md`, `docs/architecture.md`, `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder. Before claiming something absent, sweep `apps/*/src/{components,pages,features,stores,lib}` with contains-match globs (`*settings*`, not `settings*`). Ask only when the search came back empty, it's a preference code can't reveal, or the action is destructive — and name what you searched.
+Factual repo questions are yours to answer: Grep/Glob/Agent, starting from `docs/system-overview.md` and `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder. Before claiming something absent, sweep `apps/*/src/{components,pages,features,stores,lib}` with contains-match globs (`*settings*`, not `settings*`). Ask only when the search came back empty, it's a preference code can't reveal, or the action is destructive — and name what you searched.
 
 "Always X" / "never Y" rules (INV-*, skill rules) are binding — re-read them before acting in their domain. Read a module and its neighbors before editing; features colocate (INV-51), so the answer is usually one directory away. Apply an invariant's intent, not its surface shape: INV-20 means "write paths tolerate concurrent callers", not "sprinkle ON CONFLICT".
 
@@ -178,7 +178,6 @@ New invariant: document here with the next id, add enforcing tests, reference it
 
 - Handlers validate input, check auth, delegate, format responses; services orchestrate logic and transaction boundaries; repositories are pure data access — first arg a `Querier` (`Pool` | `PoolClient`), map snake_case ↔ camelCase.
 - Factory pattern for handler/middleware DI. Single query: `pool`; multiple related reads: `withClient`; multi-op writes: `withTransaction`. Two pools: main (30) + listen (12) so LISTEN can't starve transactions. Handlers throw `HttpError`; middleware formats.
-- Deeper guides: `docs/backend/`.
 
 ## Frontend Patterns
 

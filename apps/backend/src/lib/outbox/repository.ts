@@ -1084,7 +1084,7 @@ export interface BotUpdatedOutboxPayload extends WorkspaceScopedPayload {
 // Bot-runtime WebSocket pushes. All routed on the dedicated `/bot` namespace,
 // keyed by botId rather than streamId/userId. Carry metadata only — never
 // message content or anything the worker shouldn't see; the bot fetches the
-// authoritative row via HTTP. See docs/bot-runtime-websocket-plan.md.
+// authoritative row via HTTP.
 export interface BotInvocationAvailableOutboxPayload extends WorkspaceScopedPayload {
   botId: string
   invocationId: string

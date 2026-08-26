@@ -49,7 +49,7 @@ export function resolveRuntimeInvocationRouting(
   ) {
     // Pi advertises `active-scratchpad` while busy. The Claude Code channel
     // instead advertises only `session-control` while busy, so its interrupts
-    // route there. See docs/claude-channel-session-control.md.
+    // route there.
     return {
       trigger: BotInvocationTriggers.SESSION_CONTROL,
       requiredCapability:

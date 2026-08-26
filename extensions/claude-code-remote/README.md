@@ -4,7 +4,7 @@ A [Claude Code channel](https://code.claude.com/docs/en/channels) that links a r
 
 It is the Claude Code counterpart to `extensions/pi-remote/` and rides the same Threa bot-runtime API, so a linked Claude Code session shows up in Threa exactly like a linked Pi session: a presence pill on the scratchpad, an agent-session trace card, and a `BOT`-tagged reply.
 
-See [`docs/claude-code-channel.md`](../../docs/claude-code-channel.md) for how it works end to end.
+See [`CHANNEL.md`](CHANNEL.md) for how it works end to end.
 
 ## Requirements
 
