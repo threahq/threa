@@ -1566,8 +1566,8 @@ export function MessageComposer({
             // No transition on max/min-height: animating the shell's layout box
             // re-runs layout every frame, and the timeline scroller above resizes
             // with it — each frame fires its ResizeObserver, re-pins to bottom,
-            // and forces a virtua re-measure (~10fps on low-end Android, see
-            // docs/stream-timeline-perceived-performance.md). Snap instead, same
+            // and forces a virtua re-measure (~10fps on low-end Android).
+            // Snap instead, same
             // as the keyboard choreography.
             "flex flex-col",
             "max-h-[380px] min-h-0",
