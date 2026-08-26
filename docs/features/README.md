@@ -192,9 +192,10 @@ chore:
 
 > Migration status: committed branch plans (`.claude/plans/`) are removed and gitignored —
 > `sync-plan`, `create-pr`, `update-pr`, `code-review`, and `.coderabbit.yaml` now keep the
-> plan in the PR description. The deeper "feature doc is the durable record" rewiring
-> (`sync-plan` → feature-doc sync, retiring `docs/plans/`) is a separate, larger change and
-> is **not** done yet — see the pilot rollout note below.
+> plan in the PR description. New plans are not committed at all. `docs/plans/` has been
+> swept of plans whose work shipped; what remains is the set still cited from code, from
+> `AGENTS.md`, or from a feature doc — those stay until their citing side carries the
+> rationale itself. The `sync-plan` → feature-doc rewiring is still **not** done.
 
 ## Rollout
 
@@ -209,5 +210,6 @@ The shape is approved (PR #706). [`INVENTORY.md`](INVENTORY.md) catalogs everyth
 to document, bucket by bucket, with sweep-level one-liners and pointers; backfill works
 through it row by row, verifying each doc against the code as it's written. Remaining
 follow-on work beyond backfill: wire the Astro content collection in the public-site
-worktree, update the `create-pr` / `code-review` / `sync-plan` skills, and remove the
-committed plans.
+worktree, update the `create-pr` / `code-review` / `sync-plan` skills, and retire the
+last cited `docs/plans/` files by moving their rationale into the code or the feature doc
+that cites them.
