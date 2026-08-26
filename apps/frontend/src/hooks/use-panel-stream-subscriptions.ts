@@ -5,7 +5,7 @@ import { useSyncEngine } from "@/sync/sync-engine"
  * Keep an open conversation panel's streams live + offline-first. The panel body
  * reads message rows off the `db.events` rail (use-board-card-messages), so a
  * conversation is only fully reactive once each of its streams — its root and any
- * threads it spans (one root, board-view-design.md) — is caught up and its room
+ * threads it spans (one root) — is caught up and its room
  * joined. Declaring them drives the SyncEngine to do that for the ones not already
  * subscribed (a thread the viewer never opened), via its own panel slot so it
  * composes with the board feed's declaration rather than clobbering it.

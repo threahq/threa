@@ -103,7 +103,7 @@ function SubtopicDraftIndicator({
  *    sub-topic" send, kept until its thread materializes so the optimistic
  *    message doesn't blink out before the `conversation:created` echo.
  *
- * The send seams are the declared, determinable gestures (board-view-design.md):
+ * The send seams are the declared, determinable gestures:
  * a branch reply queues `{ intent: "existing", conversationId }` into the
  * branch's thread; a new sub-topic queues `streamCreation` + `{ intent:
  * "newSubtopic" }`. Nothing is created until the user sends.

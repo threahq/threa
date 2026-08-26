@@ -6,7 +6,7 @@ const EMPTY_OVERLAY: ReadonlySet<string> = new Set()
  * Per-stream read frontier for the open timeline: the read pointer's `sequence`
  * (bigint-as-string, or `null` when the read state isn't resolved or the pointer
  * sits outside the loaded window) plus the sparse read overlay — message ids read
- * individually *above* the watermark (docs/sparse-read-overlay-design.md). A row
+ * individually *above* the watermark. A row
  * is *effectively* read when its id is in the overlay even if its sequence sits
  * past the frontier. Provided by `stream-content`; message rows read it to gate
  * their read-state actions. The default (`{ sequence: null, overlay: ∅ }`) means

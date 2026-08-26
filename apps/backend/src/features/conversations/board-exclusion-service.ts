@@ -9,7 +9,7 @@ export interface BoardExclusions {
 }
 
 /**
- * Per-viewer board exclusions (board-view-design.md § "Hide & mute"): hide/unhide
+ * Per-viewer board exclusions: hide/unhide
  * a conversation card, mute/unmute a stream from the board. Each mutation writes
  * its row and emits a user-scoped outbox event in the same transaction (INV-7) so
  * the viewer's other devices reconcile; there is no stream delivery (these are

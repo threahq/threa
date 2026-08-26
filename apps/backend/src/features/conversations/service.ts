@@ -74,7 +74,7 @@ export interface ListWorkspaceConversationsOptions extends ListConversationsOpti
 export interface BoardPostMessage {
   id: string
   /** The stream this message lives in. A conversation can span its root + the
-   * root's threads (one root, board-view-design.md), so each message carries its
+   * root's threads (one root), so each message carries its
    * own origin — the client merges the rails of the streams its members span. */
   streamId: string
   authorId: string
@@ -102,7 +102,7 @@ export interface BoardPost {
   totalReplies: number
   /** Distinct streams this post's rendered messages span (opening + recent) — the
    * root and any threads the conversation reaches under it. The client subscribes
-   * to each one's rail so a cross-stream member draws live (board-view-design.md). */
+   * to each one's rail so a cross-stream member draws live. */
   streamIds: string[]
   /** Whether an active memo was captured from this conversation — the Decisions lens signal. */
   hasCapturedMemo: boolean
@@ -276,7 +276,7 @@ export class ConversationService {
   /**
    * The board post for a single conversation — the same projection
    * {@link listByWorkspace} builds per row, for the conversation panel
-   * (Mechanism B, board-view-design.md). Access is the caller's responsibility
+   * (Mechanism B). Access is the caller's responsibility
    * (the handler runs the single-root check, INV-62), matching
    * {@link getBoardMessages}. Returns `null` when the conversation is in another
    * workspace or has no messages (an emptied conversation is no longer a card,
@@ -293,7 +293,7 @@ export class ConversationService {
    * Project access-filtered conversations into board posts: resolve each one's
    * origin (a thread's opener lives in the parent stream, not the thread), pick
    * the recent reply window by `createdAt` (not `message_ids` insertion order — a
-   * cross-stream attach interleaves the array out of time, board-view-design.md),
+   * cross-stream attach interleaves the array out of time),
    * and hydrate the opening + window with attachments/link previews. Callers must
    * have already enforced access (SQL filter for the feed, single-root check for
    * the single fetch); this does no access work of its own.
@@ -328,8 +328,8 @@ export class ConversationService {
 
     // Fetch every member message row (opening + all replies) in one batch
     // (INV-56) so the recent window is chosen by `createdAt`, not by `message_ids`
-    // insertion order — a cross-stream attach interleaves the array out of time
-    // (board-view-design.md). The access filter already ran in the conversation
+    // insertion order — a cross-stream attach interleaves the array out of
+    // time. The access filter already ran in the conversation
     // query, so these ids are viewer-readable. Rich hydration (attachments / link
     // previews) below is then limited to the opening + the chosen window.
     const memberIdsToFetch = new Set<string>()
@@ -498,7 +498,7 @@ export class ConversationService {
     const ordered = conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => Boolean(m))
     const hydratedById = await this.hydrateBoardMessages(workspaceId, ordered)
     // Flattened-chronological across the root + its threads (the conversation can
-    // span streams under one root, board-view-design.md): `message_ids` is
+    // span streams under one root): `message_ids` is
     // insertion order, which a cross-stream attach interleaves out of time, so
     // sort by `createdAt` rather than trusting array position.
     return [...hydratedById.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
@@ -1666,7 +1666,7 @@ export class ConversationService {
 
   /**
    * Mark a conversation read through `throughMessageId` (inclusive). Read truth is
-   * message-granular and stream-anchored (docs/sparse-read-overlay-design.md):
+   * message-granular and stream-anchored:
    * the conversation's member messages are snapshotted to concrete ids at write
    * time (immune to later re-clustering), grouped by each message's own stream (a
    * conversation spans root + threads), and applied as a sparse-read overlay per

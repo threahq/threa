@@ -4,7 +4,7 @@ import { BoardViewRepository, type CreateBoardViewParams, type UpdateBoardViewPa
 import type { BoardView } from "@threa/types"
 
 /**
- * User-saved board lenses (board-view-design.md § "Lenses"). Low-frequency
+ * User-saved board lenses. Low-frequency
  * per-viewer config, so — like sidebar_configs — no outbox/transaction machinery;
  * each op is one race-safe query on the pool (INV-30/INV-20). Ownership is enforced
  * in the WHERE clause, so update/delete of another user's view 404s.

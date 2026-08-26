@@ -384,7 +384,7 @@ export {
   resolveEmojiShortcodes,
 } from "./markdown-strip"
 
-// Board lens predicate (shared FE filter / BE seed, board-view-design.md § "Lenses")
+// Board lens predicate (shared FE filter / BE seed)
 export { matchesBoardLens, degradeBoardLens } from "./board-lens"
 export { summarizeSdpMSections } from "./sdp"
 

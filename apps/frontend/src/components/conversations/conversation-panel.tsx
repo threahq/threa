@@ -261,8 +261,8 @@ function ConversationPanelHeader({
 }
 
 /**
- * A single conversation opened in the side panel (Mechanism B,
- * board-view-design.md) — a projection peer to a thread, keyed by `?panel=conv:<id>`.
+ * A single conversation opened in the side panel (Mechanism B) — a projection
+ * peer to a thread, keyed by `?panel=conv:<id>`.
  * Reads the conversation flattened-chronological across its root + threads (one
  * root), live off the same `db.events` rail the board card and timeline ride, and
  * replies scoped to it via the recency-biased board-reply path. No stream is
@@ -521,7 +521,7 @@ function ConversationPanelBody({
   const splitThread = useSplitThread(workspaceId)
   const { conversation } = post
   // Per-row read state + the mark-read/unread actions for this conversation's
-  // rows (docs/sparse-read-overlay-design.md). The panel has no unread dot, so
+  // rows. The panel has no unread dot, so
   // only the provider value is used.
   const {
     value: conversationReadValue,
@@ -911,7 +911,7 @@ function ConversationPanelBody({
   }
   // The conversation's most-recently-active stream — the latest reply's own stream
   // (a thread under the root), so a continuation follows the conversation there
-  // instead of re-interleaving the channel (board-view-design.md). Falls back to
+  // instead of re-interleaving the channel. Falls back to
   // the conversation's anchor, NOT the opening message's stream (a thread post's
   // opener lives in the parent stream).
   const lastActiveStreamId = displayedReplies.at(-1)?.streamId ?? conversation.streamId

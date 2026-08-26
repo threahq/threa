@@ -37,7 +37,7 @@ export interface UnreadCounterState {
    */
   latestOrdinals?: Record<string, number>
   /**
-   * Sparse read overlay per stream (docs/sparse-read-overlay-design.md): the
+   * Sparse read overlay per stream: the
    * message ids read individually ABOVE that stream's watermark via a
    * conversation surface. The effective unread invariant everywhere is
    * `unreadCounts[s] = max(0, latestOrdinals[s] − read(s) − |overlay(s)|)`, with

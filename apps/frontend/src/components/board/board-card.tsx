@@ -308,7 +308,7 @@ export function BoardCard({
   // Conversation read state: per-row gating + actions for the message rows, plus
   // the card's effectively-unread signal for the header dot. Both derive live
   // from the overlay + per-stream watermarks, so the dot clears the moment a
-  // read lands (docs/sparse-read-overlay-design.md).
+  // read lands.
   const {
     value: conversationReadValue,
     hasUnread,

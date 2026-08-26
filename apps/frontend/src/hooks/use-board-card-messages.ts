@@ -333,7 +333,7 @@ interface MergedRail extends StreamRail {
 }
 
 /** Union several stream rails into one. A conversation can span its root + the
- *  root's threads (one root — board-view-design.md), so the card reads every
+ *  root's threads (one root), so the card reads every
  *  member's stream and merges them by id. `gatingCount` is how many of the leading
  *  rails are server-known member streams that gate `resolved`; rails past it are
  *  opportunistically-discovered threads (and the optimistic draft panel) that
@@ -711,7 +711,7 @@ export function useBoardCardMessages(
   // The streams this conversation's members span — its anchor, the streams the
   // server projection's opening/recent messages live in, and the threads hanging
   // off its messages resolved live from `db.streams` (a conversation spans its
-  // root + the root's threads, one root — board-view-design.md). The live thread
+  // root + the root's threads, one root). The live thread
   // resolution closes the convert-to-thread gap: the thread stream exists at
   // promotion, ahead of the reply's message echo, so the card is already
   // subscribed to it when the optimistic row swaps onto it — no blink. The

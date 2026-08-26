@@ -161,8 +161,7 @@ export const conversationsApi = {
    * Mark the conversation read through `throughMessageId` (inclusive). The
    * server expands the cutoff to concrete member-message ids per spanned stream
    * (snapshot semantics — immune to re-clustering) and returns the absolute
-   * post-write read state for each touched stream. See
-   * docs/sparse-read-overlay-design.md.
+   * post-write read state for each touched stream.
    */
   async markRead(
     workspaceId: string,
@@ -275,7 +274,7 @@ export const conversationsApi = {
     return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/regenerate-title`)
   },
 
-  // Per-viewer board exclusions (board-view-design.md § "Hide & mute").
+  // Per-viewer board exclusions.
   async hideConversation(workspaceId: string, conversationId: string): Promise<{ hiddenAt: string }> {
     return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/hide`)
   },

@@ -27,7 +27,7 @@ interface UseUnreadDividerOptions {
    * Message ids read individually above the watermark (the sparse read overlay).
    * The divider anchors on the first *effectively* unread event — one whose
    * message id isn't in this set — so a row already read from a conversation
-   * surface is skipped. See docs/sparse-read-overlay-design.md.
+   * surface is skipped.
    */
   overlayReadIds?: ReadonlySet<string>
   /**

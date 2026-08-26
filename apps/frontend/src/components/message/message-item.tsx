@@ -81,7 +81,7 @@ export interface RenderableMessage {
    * comes from the live events rail. Gates conversation-surface read state
    * (a row is unread iff its sequence sits past its stream's read frontier and
    * it isn't in the overlay). Absent on projection/backfill rows, which fall
-   * back to a timestamp comparison. See docs/sparse-read-overlay-design.md. */
+   * back to a timestamp comparison. */
   sequence?: string
   authorId: string
   authorType: AuthorType

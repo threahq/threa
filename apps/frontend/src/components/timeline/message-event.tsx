@@ -274,9 +274,8 @@ function MessageLinkPreviews({
 }
 
 /**
- * On-message topic-provenance chip (board-view-design.md mechanism A). Rendered
- * in the message footer — under the body, mirroring `ThreadSlot`, which the
- * design doc names as the affordance to mirror — on a message that revives a
+ * On-message topic-provenance chip (mechanism A). Rendered in the message
+ * footer — under the body, mirroring `ThreadSlot` — on a message that revives a
  * scattered conversation (its previous member row is not the one directly
  * above), so a late "Pizza" reads as "continues Pizza · 3h ago" instead of a
  * non-sequitur. Tapping opens the conversation's side panel (`conv:<id>`); a

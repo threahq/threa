@@ -125,9 +125,8 @@ export interface MessageCreatedPayload {
   metadata?: Record<string, string>
   /**
    * The conversation this message declared at send time via an `existing`
-   * directive (a board/panel reply, or a future "reply in conversation" action)
-   * — board-view-design.md §"Conversations as soft threads", Mechanism C. Lets
-   * the flat-timeline provenance chip render membership the instant the message
+   * directive (a board/panel reply, or a future "reply in conversation" action).
+   * Lets the flat-timeline provenance chip render membership the instant the message
    * arrives, without waiting for the async conversation list to load. Only the
    * id is carried (messaging stays decoupled from conversation internals — no
    * topic read here); the frontend resolves the topic label from the same-root
@@ -884,7 +883,7 @@ export class EventService {
 
     // A message that declares an EXISTING conversation carries that id on its
     // event payload so the flat-timeline provenance chip renders membership the
-    // instant the message lands (board-view-design.md Mechanism C), instead of
+    // instant the message lands (Mechanism C), instead of
     // waiting for the async conversation list. The id is known here without any
     // conversation read; the assigner below still row-locks + validates it (a
     // cross-root/stale id rolls back the whole send). `new`/thread-from-message
@@ -1920,7 +1919,7 @@ export class EventService {
       })
       await MessageRepository.moveToStream(client, destinationThread.id, updates)
 
-      // Sparse-read follow-through (docs/sparse-read-overlay-design.md), run AFTER
+      // Sparse-read follow-through, run AFTER
       // the events are relocated so the destination sequences are readable:
       //  - rehome every member's overlay rows for the moved messages to the
       //    destination (stream_id/event_id/sequence refreshed), and

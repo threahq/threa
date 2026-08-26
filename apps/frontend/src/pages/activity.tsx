@@ -76,7 +76,7 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
   const sections = useActivitySections(workspaceId, activities)
   const showSections = filter === "all" && sections.unread.length > 0
 
-  // Fix A4 backstop (docs/sparse-read-overlay-design.md): when the unread feed
+  // Unread-feed backstop: when the unread feed
   // resolves, reconcile the held activity set to exactly the rows the server
   // shows unread, so the badge can never disagree with the open feed (mops up
   // residual drift like a move-rehomed row under an unvisited root). Folds

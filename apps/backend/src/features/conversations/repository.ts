@@ -144,7 +144,7 @@ function boardLabelExcludeCondSql(userId: string, labelIds: string[] | undefined
 }
 
 /**
- * Per-viewer hide exclusion (board-view-design.md § "Hide & mute"). A hidden
+ * Per-viewer hide exclusion. A hidden
  * conversation is suppressed UNLESS it revived — `last_activity_at` passing the
  * `hidden_at` watermark un-hides it (mirrored client-side in
  * `use-stable-board-view`; keep the `<=` boundary identical to avoid the SQL/JS

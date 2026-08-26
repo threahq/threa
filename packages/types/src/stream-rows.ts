@@ -88,7 +88,7 @@ export interface StreamRowSpec {
    * card in the board's activity order). Contract: only a member message bumps —
    * every render-only agent/memo/follow-up row is `false`, so it can appear on a
    * card without perturbing the board's activity sort or its frozen stable view
-   * ("Agents on the board — traces visible, never bumping", board-view-design.md).
+   * (agent traces are visible on the board, but never bump it).
    */
   bumps: boolean
   /**

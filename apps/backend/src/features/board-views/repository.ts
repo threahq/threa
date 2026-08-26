@@ -66,7 +66,7 @@ export interface UpdateBoardViewParams {
 }
 
 /**
- * User-saved board lenses (board-view-design.md § "Lenses"). Single-query paths,
+ * User-saved board lenses. Single-query paths,
  * so callers pass `pool` (INV-30); writes are ownership-scoped by
  * `workspace_id + user_id` (INV-8) so a cross-user id can't be read or mutated.
  */

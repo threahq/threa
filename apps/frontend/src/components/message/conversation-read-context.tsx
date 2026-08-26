@@ -10,7 +10,7 @@ import { isEffectivelyUnread } from "@/lib/board/ledger"
 /**
  * Per-row read state + the two read actions for a conversation surface (board
  * card, conversation panel). Read truth stays message-granular and
- * stream-anchored (docs/sparse-read-overlay-design.md) — the row gates the
+ * stream-anchored — the row gates the
  * "Mark as read" / "Mark as unread" menu entries by where it sits, and the
  * actions call the conversation read API and fold the returned snapshots into
  * the local read state. `null` (no provider — e.g. the label page) hides both

@@ -111,7 +111,7 @@ export interface MessageActionContext {
    */
   onReplyInConversation?: () => void
   /**
-   * The declared branch gesture (board-view-design.md): open a real thread under
+   * The declared branch gesture: open a real thread under
    * this message and mint a child conversation for it (the first reply carries a
    * `newSubtopic` directive; no reply = nothing created). Set ONLY by the
    * conversation surfaces (board card / conversation panel), and only when no

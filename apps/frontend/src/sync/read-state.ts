@@ -89,7 +89,7 @@ export function mergeReadStateIntoBootstrapCache(
  * write (`stream:read_messages` socket echo, or a conversation-surface optimistic
  * apply). `readMessageIds` is the ENTIRE overlay for that (stream, member) after
  * the write (post-compaction) — absolute, not a delta — so application is
- * idempotent and order-convergent. See docs/sparse-read-overlay-design.md.
+ * idempotent and order-convergent.
  */
 export interface ReadStateSnapshot {
   streamId: string

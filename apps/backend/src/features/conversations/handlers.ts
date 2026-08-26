@@ -303,7 +303,7 @@ export function createConversationHandlers({
 
     /**
      * The board post for a single conversation — backs the conversation side
-     * panel (Mechanism B, board-view-design.md), which renders the same projection
+     * panel (Mechanism B), which renders the same projection
      * a board card does but reachable by id (a board-card expand or an /s/:id
      * deep-link, where the board feed never seeded the post). Same access as
      * {@link getBoardMessages}.
@@ -547,7 +547,7 @@ export function createConversationHandlers({
     },
 
     /**
-     * Per-viewer board exclusions (board-view-design.md § "Hide & mute").
+     * Per-viewer board exclusions.
      * Hide/unhide gate on the conversation's root-stream access (INV-62);
      * mute/unmute on the target stream.
      */

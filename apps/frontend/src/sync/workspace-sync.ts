@@ -202,12 +202,12 @@ interface StreamReadPayload {
   lastReadOrdinal: number
   /** Post-write sparse overlay for this stream (usually shrunk by compaction).
    *  Absent = not carried (rollout) → leave the client set unchanged; `[]` =
-   *  overlay now empty. See docs/sparse-read-overlay-design.md. */
+   *  overlay now empty. */
   readMessageIds?: string[]
 }
 
 // The absolute post-write read-state snapshot for one stream from a
-// conversation-surface read (docs/sparse-read-overlay-design.md). readMessageIds
+// conversation-surface read. readMessageIds
 // is the ENTIRE overlay after the write (post-compaction), applied as a SET.
 interface StreamReadMessagesPayload {
   workspaceId: string
@@ -499,7 +499,7 @@ export function mergeReconnectWorkspaceBootstrap({
   // local unread state wins but that have no local ordinal lose their
   // baseline (handlers re-seed from the next absolute event).
   const messageCounts = { ...workspaceBootstrap.messageCounts }
-  // The sparse read overlay (docs/sparse-read-overlay-design.md) is the third
+  // The sparse read overlay is the third
   // leg of the per-stream triple: effective unread = latest − read − |overlay|,
   // so a stream's overlay must stay paired with whichever unread/ordinal source
   // wins for it, exactly as messageCounts does.
@@ -2037,7 +2037,7 @@ export function registerWorkspaceSocketHandlers(
   }
 
   // Board hide/mute changed on another device — patch the exclusion store so the
-  // reactive board re-filters with no refetch (board-view-design.md § "Hide & mute").
+  // reactive board re-filters with no refetch.
   const handleBoardHideChanged = (payload: BoardConversationHideChangedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     if (payload.active)
@@ -2263,8 +2263,8 @@ export function registerWorkspaceSocketHandlers(
     )
   }
 
-  // A conversation can span its root + the root's threads (one root —
-  // board-view-design.md). When a reply lands in a stream the card's snapshot
+  // A conversation can span its root + the root's threads (one root).
+  // When a reply lands in a stream the card's snapshot
   // didn't list (a convert-to-thread, or a cross-stream continuation), record
   // that stream on the board row so the card subscribes to its rail and draws the
   // member live — no board refetch. The aggregate `conversation:updated` re-sorts

@@ -162,7 +162,7 @@ function groupByRecency(posts: BoardViewPost[], activityById: Map<string, number
  *
  * Route is `/w/:workspaceId/board`; the whole view is query state (INV-59). The
  * lens rides `?lens=` (`all`, `mine`
- * — board-view-design.md § "Lenses"; absent or unknown degrades to `all`), the
+ * — absent or unknown degrades to `all`), the
  * stream scope rides `?in=`, and every rendered board URL carries an explicit
  * `?lens=`. The bare query-less `/board` is only an entry alias: it redirects
  * once to the viewer's home — the pinned saved view (`boardDefaultViewId`) or
@@ -454,7 +454,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       limit: 50,
     })
 
-  // Per-viewer hide/mute (board-view-design.md § "Hide & mute"): bootstrap the
+  // Per-viewer hide/mute: bootstrap the
   // exclusion sets into IDB, read them reactively, and fold them into the view.
   // Mute is skipped under an explicit `?in=` stream scope (the viewer named those
   // streams), matching the server's `applyMute` rule.

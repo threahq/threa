@@ -1662,7 +1662,7 @@ export interface WorkspaceBootstrap {
    * `unread = latest − read − |overlay|` as live events fold in, and lets the
    * timeline render overlay-read rows as read. Streams with an empty overlay
    * are omitted. Optional: snapshots cached before the field shipped lack it
-   * (absent reads as empty). See docs/sparse-read-overlay-design.md.
+   * (absent reads as empty).
    */
   readMessageIds?: Record<string, string[]>
   mentionCounts: Record<string, number>
@@ -1682,7 +1682,7 @@ export interface WorkspaceBootstrap {
   sidebarConfig: SidebarConfig
   /**
    * Viewer's saved board lenses, so the lens picker paints populated instead of
-   * fetching on board mount (board-view-design.md § "Lenses"). Seeds the
+   * fetching on board mount. Seeds the
    * `board-views` React-Query cache. Optional: snapshots cached before the field
    * shipped lack it (absent → the board falls back to its own fetch).
    */
@@ -2267,7 +2267,7 @@ export interface SavedUpsertedPayload {
   saved: SavedMessageView
 }
 
-/** Wire payload on `board:conversation_hide_changed` (board-view-design.md § "Hide & mute"). */
+/** Wire payload on `board:conversation_hide_changed`. */
 export interface BoardConversationHideChangedPayload {
   workspaceId: string
   targetUserId: string

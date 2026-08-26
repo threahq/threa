@@ -14,7 +14,7 @@ export interface SaveBoardViewInput {
 
 export type UpdateBoardViewInput = Partial<SaveBoardViewInput> & { sortOrder?: number }
 
-/** User-saved board lenses (board-view-design.md § "Lenses"). */
+/** User-saved board lenses. */
 export const boardViewsApi = {
   async list(workspaceId: string): Promise<BoardView[]> {
     const res = await api.get<{ boardViews: BoardView[] }>(`/api/workspaces/${workspaceId}/board/views`)

@@ -939,7 +939,7 @@ export interface DraftDeletedOutboxPayload extends WorkspaceScopedPayload {
   draftId: string
 }
 
-// Per-viewer board exclusions (board-view-design.md § "Hide & mute"). Both are
+// Per-viewer board exclusions. Both are
 // user-scoped — a hide/mute is one viewer's private board state, delivered only
 // to `user:{targetUserId}` for multi-device reconcile, never a timeline row.
 export interface BoardConversationHideChangedOutboxPayload extends WorkspaceScopedPayload {
