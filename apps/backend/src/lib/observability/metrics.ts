@@ -160,7 +160,7 @@ export const agentSessionDuration = new Histogram({
 })
 
 // ── Calls (voice/video) ──────────────────────────────────────────────────────
-// Day-1 operational health for the media plane (docs/features/calls.md §Observability).
+// Day-1 operational health for the media plane.
 // CF Realtime is a hard dependency (every call dies with a CF outage), so
 // session-create success/latency and connect-failure-by-code are the first
 // signals; time-to-join, end reasons, ring outcomes, and sweep counts cover the

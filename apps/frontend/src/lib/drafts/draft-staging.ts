@@ -20,7 +20,7 @@
  * recovers what genuinely differs, deferring cross-device conflicts to the
  * existing `version`/split machinery. Comparing wall-clock timestamps across
  * devices is unsafe (a roamed draft carries another device's clock), so we never
- * do — see the design notes in `docs/features/architecture/drafts.md`.
+ * do; `sync/draft-sync.test.ts` pins the recovery rules.
  *
  * **Plaintext only (E2EE-4).** An encrypted draft is sealed before it ever
  * touches disk; staging it would write plaintext at rest. So E2E scopes never
