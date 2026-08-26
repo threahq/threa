@@ -31,8 +31,11 @@ interface PollerStateRow {
  *
  * Atomic claim uses `UPDATE ... WHERE locked_until IS NULL OR locked_until < now()`
  * (with a small clock-drift pad) so multiple control-plane instances can compete
- * safely without `pg_advisory_lock` (which the repo explicitly avoids per
- * `apps/backend/docs/distributed-cron-design.md`).
+ * safely without `pg_advisory_lock`, which this repo avoids everywhere it
+ * coordinates: an advisory lock lives on its connection, so who holds it is
+ * invisible to any other query, and a dropped connection releases it silently. A
+ * time-based lease is a row anyone can read, and it expires on a clock rather
+ * than on a socket.
  */
 export class WorkosEventPollerLock {
   private readonly pool: Pool

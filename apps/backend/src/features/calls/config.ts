@@ -72,9 +72,9 @@ export const CALL_SWEEP_INTERVAL_MS = 15_000
 
 /**
  * How long a call sits in `empty_grace` after the last participant leaves before
- * it ends. Env-overridable for the same reason as the sweep cadence (SPIKE_FINDINGS
- * §1: worst-case crash-recovery latency is grace + sweep; a shorter calls-specific
- * grace was an explicit M1 option) — the e2e suite sets it low so an ended call's
+ * it ends. Env-overridable for the same reason as the sweep cadence (worst-case
+ * crash-recovery latency is grace + sweep, so a shorter calls-specific grace was
+ * an explicit M1 option) — the e2e suite sets it low so an ended call's
  * timeline card lands within the test window.
  */
 export const EMPTY_GRACE_MS = Number(process.env.CALL_EMPTY_GRACE_MS) || 45_000

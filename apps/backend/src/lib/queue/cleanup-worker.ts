@@ -15,7 +15,7 @@ const DEFAULT_CONFIG: CleanupWorkerConfig = {
 
 /**
  * Periodically deletes expired and orphaned cron ticks so the cron_ticks table
- * doesn't grow unbounded on failures. See docs/distributed-cron-design.md.
+ * doesn't grow unbounded on failures.
  */
 export class CleanupWorker {
   private readonly ticker: Ticker

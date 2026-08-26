@@ -19,8 +19,7 @@ const DEFAULT_CONFIG: ScheduleManagerConfig = {
  * Pre-generates tick tokens for schedules whose next execution falls inside the
  * lookahead window. Two-phase by design: this runs infrequently (10s) to create
  * future ticks, while QueueManager's ticker (100ms) discovers and executes due
- * ones — so we avoid polling every schedule every 100ms. See
- * docs/distributed-cron-design.md.
+ * ones — so we avoid polling every schedule every 100ms.
  */
 export class ScheduleManager {
   private readonly ticker: Ticker
