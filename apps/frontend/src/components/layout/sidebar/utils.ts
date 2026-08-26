@@ -21,8 +21,7 @@ interface VirtualDmUser {
 /**
  * Synthesize "virtual DM draft" rows for workspace members the viewer has no DM
  * stream with yet. Returns `[]` in board mode: a nonexistent DM has no
- * conversations, so the row would be dead weight on the board
- * (board-centered-sidebar-exploration.md § "Feature parity").
+ * conversations, so the row would be dead weight on the board.
  */
 export function buildVirtualDmDrafts(args: {
   isBoardMode: boolean

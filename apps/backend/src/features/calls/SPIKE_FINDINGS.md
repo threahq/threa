@@ -1,7 +1,6 @@
 # Calls M0 spike — hostile-matrix findings (PR 0.3)
 
-De-risk milestone for voice/video calls (`docs/plans/voice-video-calls.md` §Rollout
-M0). Goal: prove the 0.1/0.2 foundations (split-table schema, `CallService`
+De-risk milestone for voice/video calls (M0). Goal: prove the 0.1/0.2 foundations (split-table schema, `CallService`
 state machines, endpoint/lease/incarnation model, CF proxy, `/calls` gateway,
 sweeper) survive hostility, and pin Cloudflare's real API before any M1 client work.
 

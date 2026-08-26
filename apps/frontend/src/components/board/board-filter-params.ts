@@ -161,8 +161,7 @@ export function isSoleInclude(search: string, streamId: string): boolean {
 }
 
 /**
- * The board-mode row verb (board-centered-sidebar-exploration.md § "Click
- * model"): FOCUS the board on one stream. Replaces the `?in=` scope with just
+ * The board-mode row verb: FOCUS the board on one stream. Replaces the `?in=` scope with just
  * this id and drops it from `?not-in=`, leaving every other axis (types, labels,
  * archived, an open `?panel=`) untouched — only the stream axes change. Clicking
  * the stream that is already the sole include clears `?in=` instead (a second

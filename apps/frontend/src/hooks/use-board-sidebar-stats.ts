@@ -75,8 +75,7 @@ export function aggregateBoardSidebarStats(
  * `null` while disabled or before the first IDB read resolves; the row treats
  * `null` as "not loaded yet" and renders no stats line until the data lands.
  *
- * The perf contract (board-centered-sidebar-exploration.md § "Topic stats"): this
- * is the ONLY subscription — call it once at the sidebar level and thread the
+ * The perf contract: this is the ONLY subscription — call it once at the sidebar level and thread the
  * result to the rows via the board-mode descriptor, never a `liveQuery` per row.
  */
 export function useBoardSidebarStats(

@@ -17,7 +17,6 @@ import type { Activity, WorkspaceBootstrap } from "@threa/types"
  * `Activity.id`, so a replayed `activity:created` upserts in place rather than
  * duplicating; coupling (reading a stream) drops that stream's rows; bootstrap
  * replaces the set wholesale, so any transient drift converges to server truth.
- * See docs/plans/activity-counters-derive-from-data.md.
  */
 
 export interface UnreadCounterState {

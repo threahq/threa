@@ -126,9 +126,6 @@ gh pr view --json body -q '.body' 2>/dev/null | \
   awk '/<summary>📋 Full implementation plan<\/summary>/{f=1} f; /<\/details>/{if(f)exit}'
 ```
 
-Long-lived design docs under `docs/plans/` are a separate, intentional concern — check them
-only if the branch is implementing one of those designs.
-
 **3d. Find plan files written during sessions:**
 
 ```bash

@@ -13,7 +13,7 @@ export const commandKeys = {
 
 /**
  * A stream's effective command list REPLACES the workspace list — never merges
- * with it (docs/plans/stream-scoped-slash-commands.md). Absent stream commands
+ * with it. Absent stream commands
  * fall back to the workspace set.
  */
 export function resolveEffectiveCommandInfos(

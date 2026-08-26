@@ -239,7 +239,7 @@ export const SyncLogRepository = {
    * (highest sync id pruned, 0 when nothing pruned) in one round trip — the
    * two values catch-up needs alongside the entries page. A cursor strictly
    * below the floor cannot be healed from the log (its entries were pruned),
-   * so the caller signals a full bootstrap. See docs/plans/sync-v2-log-retention.md.
+   * so the caller signals a full bootstrap.
    *
    * Read this AFTER the entries query, never before: the floor is monotonic
    * and the pruner advances it in the same statement as the delete

@@ -32,9 +32,8 @@ Do not edit the installed copy first. Update the repo copy, verify it, then copy
    - `apps/backend/src/routes.ts` around `/bot-runtime/*` and `/bot-invocations/*`
    - `apps/backend/src/features/bot-runtimes/`
    - `packages/types/src/constants.ts` around bot runtime/invocation constants
-4. Compare against product intent:
-   - `docs/plans/pi-remote-protocol-implementation.md`
-   - `docs/plans/interactive-bot-scratchpads.md` only if behavior is unclear
+4. Compare against the adapter's own contract:
+   - `extensions/pi-remote/README.md` — sealed turns, trace detail, config keys
 
 ## Update checklist
 
