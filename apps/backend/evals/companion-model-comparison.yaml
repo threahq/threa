@@ -1,6 +1,21 @@
-# Companion model comparison: Sonnet 4.6 (production) vs Sonnet 5 vs GPT-5.6 Luna.
+# Ariadne model comparison: the production default vs a candidate.
 #
-# Uses per-component config so ONLY the companion persona's model varies —
+# Current pairing (August 2026): claude-sonnet-5 (production default since
+# 2026-07-11) vs gpt-5.6-luna. Both companion-backed suites run, because they
+# measure different halves of the persona:
+#   - `companion`     — the full turn: tools, retrieval, temporal grounding,
+#                       hallucination guards. Needs TAVILY_API_KEY (real
+#                       web_search) and has the widest case set.
+#   - `persona-style` — instruction following on the Tone/Brevity style slots,
+#                       send_message only, so no Tavily dependency. Its own
+#                       default model is a cheap chat model; overriding it here
+#                       is deliberate — the question is whether Ariadne's model
+#                       obeys the slots, not whether the fragments work.
+#   - `brief-correction` — tool selection and completion on a MUTATING tool:
+#                       records a decision, replaces a reversed fact, and (the
+#                       gate that matters) leaves the brief alone on chitchat.
+#
+# Per-component config so ONLY the companion persona's model varies —
 # ConfigResolver-backed sub-agents (workspace retrieval, researcher) stay on
 # production models. The `-m` flag would steamroll those too, which both skews
 # the comparison and breaks providers with stricter structured-output rules
@@ -8,24 +23,48 @@
 #
 # Run (needs OPENROUTER_API_KEY with credit headroom + TAVILY_API_KEY):
 #   bun run eval -- --config evals/companion-model-comparison.yaml -r 3 -p 4 \
-#     --min-pass-rate 0.67 --json /tmp/companion-comparison.json
+#     --min-pass-rate 0.67 --json /tmp/ariadne-model-comparison.json
+#
+# Without a Tavily key, run the style half alone:
+#   bun run eval -- --config evals/companion-model-comparison.yaml -s persona-style
 
 suites:
   - name: companion
-    title: claude-sonnet-4.6 (production)
-    components:
-      companion:
-        model: openrouter:anthropic/claude-sonnet-4.6
-        temperature: 0.7
-
-  - name: companion
-    title: claude-sonnet-5
+    title: claude-sonnet-5 (production)
     components:
       companion:
         model: openrouter:anthropic/claude-sonnet-5
         temperature: 0.7
 
   - name: companion
+    title: gpt-5.6-luna
+    components:
+      companion:
+        model: openrouter:openai/gpt-5.6-luna
+        temperature: 0.7
+
+  - name: persona-style
+    title: claude-sonnet-5 (production)
+    components:
+      companion:
+        model: openrouter:anthropic/claude-sonnet-5
+        temperature: 0.7
+
+  - name: persona-style
+    title: gpt-5.6-luna
+    components:
+      companion:
+        model: openrouter:openai/gpt-5.6-luna
+        temperature: 0.7
+
+  - name: brief-correction
+    title: claude-sonnet-5 (production)
+    components:
+      companion:
+        model: openrouter:anthropic/claude-sonnet-5
+        temperature: 0.7
+
+  - name: brief-correction
     title: gpt-5.6-luna
     components:
       companion:

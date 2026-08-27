@@ -2,6 +2,7 @@
  * Memorizer Evaluators
  */
 
+import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
 import { z } from "zod"
 import type { Evaluator, EvaluatorResult, RunEvaluator, CaseResult } from "../../framework/types"
 import type { MemorizerOutput, MemorizerExpected } from "./types"
@@ -126,7 +127,7 @@ export const conclusionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> 
       .map((m, i) => `${i + 1}. ${m.title}\n   ${m.abstract}\n   Key points: ${m.keyPoints.join("; ") || "—"}`)
       .join("\n")
     const { value } = await ctx.ai.generateObject({
-      model: "openrouter:openai/gpt-5.4-nano",
+      model: EVAL_JUDGE_MODEL,
       schema: conclusionJudgeSchema,
       messages: [
         {

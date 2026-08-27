@@ -21,7 +21,13 @@ import type {
 } from "./types"
 import { createUsageAccumulator } from "./types"
 import { setupEvalDatabase, setupEvalTemplate, type EvalDatabaseResult, type EvalTemplateResult } from "./database"
-import { createAI, type AI, type GenerateObjectOptions, type GenerateTextOptions } from "@threa/agent-runtime"
+import {
+  createAI,
+  type AI,
+  type GenerateObjectOptions,
+  type GenerateTextOptions,
+  type GenerateTextWithToolsOptions,
+} from "@threa/agent-runtime"
 import type { UsageAccumulator } from "./types"
 import { createWorkspaceFixture, type WorkspaceFixture } from "../fixtures/workspace"
 import { loadConfigFile } from "./config-loader"
@@ -88,7 +94,7 @@ function indent(str: string, spaces: number): string {
 /**
  * Create AI wrapper with eval configuration.
  */
-function createEvalAI(): AI {
+export function createEvalAI(): AI {
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY environment variable is required for evals")
@@ -103,19 +109,52 @@ function createEvalAI(): AI {
  * Wrap an AI instance to track usage in an accumulator.
  * Intercepts generateText and generateObject to record usage.
  */
-function createUsageTrackingAI(ai: AI, accumulator: UsageAccumulator): AI {
+/**
+ * A provider rejection for exhausted credit is indistinguishable, downstream,
+ * from a model that chose not to answer: the agent catches it, the case records
+ * "did not respond", and the report shows a quality failure. That silently
+ * invalidated a whole comparison arm in August 2026 — 1428 rejections read as
+ * 0.6s turns. Counted here at the only place that sees the raw provider error.
+ */
+function isCreditRejection(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /requires more credits|insufficient credit|exceeded your credit|quota exceeded/i.test(message)
+}
+
+export function createUsageTrackingAI(ai: AI, accumulator: UsageAccumulator, credit?: { rejections: number }): AI {
+  const watch = async <T>(call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call()
+    } catch (error) {
+      if (credit && isCreditRejection(error)) credit.rejections++
+      throw error
+    }
+  }
+
   return {
     ...ai,
     async generateText(options: GenerateTextOptions) {
       accumulator.recordModel(options.model)
-      const result = await ai.generateText(options)
+      const result = await watch(() => ai.generateText(options))
       accumulator.recordUsage(result.usage)
       return result
     },
     async generateObject<T extends import("zod").ZodType>(options: GenerateObjectOptions<T>) {
       accumulator.recordModel(options.model)
-      const result = await ai.generateObject(options)
+      const result = await watch(() => ai.generateObject(options))
       accumulator.recordUsage(result.usage)
+      return result
+    },
+    // The agent loop's own call, and the ONLY one that runs the persona's
+    // model. Left unwrapped, an Ariadne model comparison reported neither the
+    // tokens nor the cost of the model under test — just its sub-agents and
+    // judges — and the "override never executed" guard fired on every run
+    // because the model genuinely never appeared. `modelString` is the
+    // provider:model id (`options.model` here is a resolved LanguageModel).
+    async generateTextWithTools(options: GenerateTextWithToolsOptions) {
+      if (options.modelString) accumulator.recordModel(options.modelString)
+      const result = await watch(() => ai.generateTextWithTools(options))
+      if (result.usage) accumulator.recordUsage(result.usage)
       return result
     },
   }
@@ -203,6 +242,7 @@ async function runCase<TInput, TOutput, TExpected>(
  */
 interface PermutationRunOptions extends RunnerOptions {
   /** Component-specific overrides from config file */
+  judgeModel?: string
   componentOverrides?: ComponentOverrides
 }
 
@@ -227,7 +267,8 @@ async function runPermutation<TInput, TOutput, TExpected>(
   const usageAccumulator = createUsageAccumulator()
 
   // Wrap AI to track usage
-  const trackingAI = createUsageTrackingAI(ai, usageAccumulator)
+  const credit = { rejections: 0 }
+  const trackingAI = createUsageTrackingAI(ai, usageAccumulator, credit)
 
   // Create config resolver with eval overrides applied
   // Base resolver has production defaults; eval resolver applies componentOverrides
@@ -259,6 +300,7 @@ async function runPermutation<TInput, TOutput, TExpected>(
     credentials: {
       tavilyApiKey: process.env.TAVILY_API_KEY,
     },
+    judgeModel: options.judgeModel,
     componentOverrides: options.componentOverrides,
     configResolver,
   }
@@ -323,6 +365,16 @@ async function runPermutation<TInput, TOutput, TExpected>(
   // Get accumulated usage
   const totalUsage = usageAccumulator.getTotal()
   const executedModels = usageAccumulator.getModels()
+
+  // A run that hit the provider's credit ceiling did not measure the models, it
+  // measured the ceiling — and the cheaper model survives it, so the result
+  // even looks plausible. Refuse to report it (INV-11).
+  if (credit.rejections > 0) {
+    throw new Error(
+      `${credit.rejections} model call(s) were rejected for insufficient OpenRouter credit. This run did not ` +
+        `measure the models and its numbers must not be compared — top up the key's limit and re-run.`
+    )
+  }
 
   // A -m override that never executed is a silently-invalid comparison (the
   // exact bug this guard exists for) — fail loudly (INV-11). Suites whose
@@ -434,7 +486,7 @@ function printComparisonTable<TOutput, TExpected>(results: PermutationResult<TOu
 /**
  * Print summary of evaluation results.
  */
-function printSummary<TOutput, TExpected>(result: SuiteResult<TOutput, TExpected>): void {
+export function printSummary<TOutput, TExpected>(result: SuiteResult<TOutput, TExpected>): void {
   console.log("\n" + "=".repeat(60))
   console.log(`${colors.cyan}Suite: ${result.suiteName}${colors.reset}`)
   console.log("=".repeat(60))
@@ -717,20 +769,30 @@ export function getPrimaryComponentOverride(suiteName: string, components?: Comp
 export async function runFromConfigFile(
   configPath: string,
   allSuites: EvalSuite<unknown, unknown, unknown>[],
-  baseOptions: Omit<RunnerOptions, "suite" | "model" | "cases"> = {}
+  baseOptions: Omit<RunnerOptions, "model" | "cases"> = {}
 ): Promise<SuiteResult<unknown, unknown>[]> {
   console.log(`\n${colors.cyan}Loading config file: ${configPath}${colors.reset}`)
 
   // Load and validate config
   const config = loadConfigFile(configPath)
-  console.log(`${colors.dim}Found ${config.suites.length} suite run(s) in config${colors.reset}`)
+  // `-s` narrows a multi-suite config to one suite's runs. A comparison config
+  // pairs suites with different prerequisites (the companion half needs a
+  // Tavily key, the style half does not), so running one half has to be
+  // possible without editing the file that documents the comparison.
+  const suiteRuns = baseOptions.suite ? config.suites.filter((s) => s.name === baseOptions.suite) : config.suites
+  if (baseOptions.suite && suiteRuns.length === 0) {
+    throw new Error(
+      `Config ${configPath} has no runs for suite "${baseOptions.suite}" (it defines: ${[...new Set(config.suites.map((s) => s.name))].join(", ")})`
+    )
+  }
+  console.log(`${colors.dim}Found ${suiteRuns.length} suite run(s) in config${colors.reset}`)
 
   // Create AI wrapper
   const ai = createEvalAI()
 
   const results: SuiteResult<unknown, unknown>[] = []
 
-  for (const runConfig of config.suites) {
+  for (const runConfig of suiteRuns) {
     // Find the suite
     const suite = allSuites.find((s) => s.name === runConfig.name)
     if (!suite) {
@@ -787,6 +849,12 @@ export async function runFromConfigFile(
       // Print summary
       printSummary(result)
       results.push(result)
+      // Flush after every completed arm. A long comparison is a sequence of
+      // independent arms, and serializing only at the very end means an
+      // interruption — a SIGTERM, a killed shell — throws away every arm that
+      // already finished and paid for itself. With this, an interrupted run
+      // keeps what it completed and `--rescore` can still read it.
+      await baseOptions.onSuiteResult?.(results)
     } finally {
       await dbResult.cleanup()
     }

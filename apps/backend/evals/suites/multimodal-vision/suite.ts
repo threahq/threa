@@ -69,11 +69,11 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { AuthorTypes, StreamTypes, ExtractionContentTypes, ProcessingStatuses } from "@threa/types"
 import { ulid } from "ulid"
 import {
-  personaId as generatePersonaId,
   streamId as generateStreamId,
   attachmentId as generateAttachmentId,
   extractionId as generateExtractionId,
 } from "../../../src/lib/id"
+import { insertEvalPersona } from "../../framework/eval-persona"
 
 /** Default vision model for eval (must support image input) */
 const VISION_MODEL_ID = "openrouter:anthropic/claude-sonnet-4.5"
@@ -168,26 +168,12 @@ async function setupTestData(
   }
 
   // Copy resolved config into a throwaway row with the eval permutation model (vision-capable).
-  const testPersonaId = generatePersonaId()
-  await pool.query(
-    `
-    INSERT INTO personas (id, workspace_id, slug, name, description, avatar_emoji, system_prompt, model, enabled_tools, managed_by, status)
-    VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, 'system', 'active')
-    ON CONFLICT (slug, workspace_id) WHERE workspace_id IS NULL DO UPDATE SET
-      model = EXCLUDED.model,
-      system_prompt = EXCLUDED.system_prompt
-  `,
-    [
-      testPersonaId,
-      `eval-vision-${ulid().toLowerCase().slice(0, 8)}`,
-      "Ariadne (Vision Eval)",
-      templatePersona.description,
-      templatePersona.avatarEmoji,
-      templatePersona.systemPrompt,
-      modelConfig.model,
-      templatePersona.enabledTools ?? ["send_message"],
-    ]
-  )
+  const testPersonaId = await insertEvalPersona(pool, {
+    template: templatePersona,
+    model: modelConfig.model,
+    slugPrefix: "eval-vision",
+    name: "Ariadne (Vision Eval)",
+  })
 
   // Create a scratchpad stream (simplest context for vision testing)
   const testStreamId = generateStreamId()

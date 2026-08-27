@@ -92,6 +92,13 @@ export interface EvalContext {
     tavilyApiKey?: string
   }
   /** Component-specific overrides from config file */
+  /**
+   * Judge model for this run, overriding each evaluator's own default. Exists
+   * for the case the default judge cannot honestly serve: when a candidate
+   * under comparison shares the judge's model family, re-judging from another
+   * family is the only way to tell a real win from self-preference.
+   */
+  judgeModel?: string
   componentOverrides?: ComponentOverrides
   /**
    * Config resolver for AI components.
@@ -284,6 +291,14 @@ export interface EvalSuite<TInput, TOutput, TExpected> {
  * Options for the evaluation runner.
  */
 export interface RunnerOptions {
+  /** Judge model override for every LLM-as-judge evaluator (see EvalContext.judgeModel) */
+  judgeModel?: string
+  /**
+   * Called with everything completed so far after each suite run finishes, so a
+   * long multi-arm run can persist incrementally instead of losing finished
+   * arms to an interruption.
+   */
+  onSuiteResult?: (results: SuiteResult<unknown, unknown>[]) => Promise<void>
   /** Filter to specific suite by name */
   suite?: string
   /** Filter to specific case IDs */
