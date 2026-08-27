@@ -1,14 +1,7 @@
 /**
- * The eval suites' throwaway persona row, run against a real migrated schema.
- *
- * This exists because the statement was wrong for six weeks and nothing caught
- * it: three companion-backed suites upserted `ON CONFLICT (slug, workspace_id)
- * WHERE workspace_id IS NULL`, a constraint that migration
- * `20260713120000_persona_owner_user_id.sql` had already replaced with two
- * partial unique indexes. Postgres threw on every case, the suite reported it
- * as "agent did not respond", and a model comparison sitting in the repo could
- * never have produced a number. Only executing the statement finds that
- * (INV-68) — asserting on its text would have passed the whole time.
+ * The eval suites' throwaway persona row, executed against a real migrated
+ * schema. An `ON CONFLICT` target that names no existing index is valid
+ * TypeScript and valid-looking SQL; only running it finds that (INV-68).
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
@@ -61,9 +54,6 @@ describe("eval persona insert", () => {
   })
 
   test("the ON CONFLICT target matches a real index, so a repeated slug updates the model", async () => {
-    // Same slug twice is what the clause is for. Going through the helper twice
-    // cannot collide (it generates a fresh suffix), so the conflict is forced
-    // here with the statement's own conflict target.
     const slug = `eval-conflict-${personaId()}`
     const insert = (id: string, model: string) =>
       pool.query(
@@ -78,8 +68,7 @@ describe("eval persona insert", () => {
       )
 
     await insert(personaId(), "openrouter:anthropic/claude-sonnet-5")
-    // NULL workspace_id makes rows distinct in the index, so this inserts a
-    // second row rather than updating — the point is that the statement RUNS.
+    // NULL workspace_id makes rows distinct in this index, so both rows persist.
     await insert(personaId(), "openrouter:openai/gpt-5.6-luna")
 
     const rows = await pool.query(`SELECT model FROM personas WHERE slug = $1 ORDER BY model`, [slug])

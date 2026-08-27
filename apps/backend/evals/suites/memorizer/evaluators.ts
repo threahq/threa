@@ -127,7 +127,7 @@ export const conclusionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> 
       .map((m, i) => `${i + 1}. ${m.title}\n   ${m.abstract}\n   Key points: ${m.keyPoints.join("; ") || "—"}`)
       .join("\n")
     const { value } = await ctx.ai.generateObject({
-      model: EVAL_JUDGE_MODEL,
+      model: ctx.judgeModel ?? EVAL_JUDGE_MODEL,
       schema: conclusionJudgeSchema,
       messages: [
         {

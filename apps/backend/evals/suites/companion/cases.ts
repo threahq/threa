@@ -83,6 +83,14 @@ export interface CompanionExpected {
     shouldUseWebSearch?: boolean
     /** Web search query should include these terms */
     webSearchQueryShouldContain?: string[]
+    /**
+     * The language the reply must be written in, judged by a model rather than
+     * matched against word lists. Answering in the user's language is a
+     * semantic property, and deciding it from English substrings is the exact
+     * shape INV-54 forbids — it also cannot tell a Swedish reply from a
+     * Norwegian one, which is the failure that matters here.
+     */
+    responseLanguage?: string
   }
   /** Reason for this expected behavior */
   reason: string
@@ -828,10 +836,10 @@ const multilingualCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldNotContain: ["I think", "Let me know", "Would you like"],
+        responseLanguage: "Swedish",
       },
       reason:
-        "A Swedish message gets a Swedish reply. The guard is negative on purpose — asserting Swedish keywords would score vocabulary, while an English opener is the actual failure mode (a model that silently answers in English regardless of input).",
+        "A Swedish message gets a Swedish reply. The failure mode is a model that silently answers in English regardless of input.",
     }
   ),
 
@@ -860,7 +868,7 @@ const multilingualCases: EvalCase<CompanionInput, CompanionExpected>[] = [
       shouldRespond: true,
       responseCharacteristics: {
         shouldContain: ["5"],
-        shouldNotContain: ["I don't have", "no record"],
+        responseLanguage: "Swedish",
       },
       reason:
         "Retrieval must not be language-gated: the decision was written in English, the question is Swedish, and the answer has to carry the number across.",
@@ -880,6 +888,7 @@ const multilingualCases: EvalCase<CompanionInput, CompanionExpected>[] = [
       shouldRespond: true,
       responseCharacteristics: {
         brief: true,
+        responseLanguage: "Swedish",
       },
       reason:
         "Code is language-neutral; the explanation should follow the user's language without mangling the identifiers or refusing the mixed input.",
@@ -905,7 +914,6 @@ const sourceFidelityCases: EvalCase<CompanionInput, CompanionExpected>[] = [
       shouldRespond: true,
       responseCharacteristics: {
         shouldUseWebSearch: true,
-        shouldNotContain: ["I believe", "as of my knowledge", "may have changed"],
       },
       reason:
         "An explicit don't-guess instruction on a fact that moves is the case where answering from weights is a real product failure. Measures instruction following and tool selection together.",
@@ -924,11 +932,9 @@ const sourceFidelityCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     },
     {
       shouldRespond: true,
-      responseCharacteristics: {
-        shouldNotContain: ["ms", "milliseconds", "seconds"],
-      },
+      responseCharacteristics: {},
       reason:
-        "Nothing in the workspace or on the web can answer this. The failure mode is a confident fabricated latency figure, so the guard is on the units a fabricated answer would carry.",
+        "Nothing in the workspace or on the web can answer this, so the reply must say so rather than produce a latency figure. Graded by the judge: a unit word list cannot tell a fabricated number from a refusal that happens to mention milliseconds.",
     }
   ),
 ]

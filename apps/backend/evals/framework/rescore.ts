@@ -61,6 +61,10 @@ function forbiddenPool(): Pool {
   return new Proxy({} as Pool, { get: refuse, apply: refuse })
 }
 
+/**
+ * Re-run a suite's evaluators over the generations stored in a `--json` report.
+ * Returns one result per suite entry in the report.
+ */
 export async function rescoreReport(
   reportPath: string,
   allSuites: EvalSuite<unknown, unknown, unknown>[],
@@ -84,9 +88,12 @@ export async function rescoreReport(
       const usage = createUsageAccumulator()
       // Rescoring is not free — every judge call is billed. Handing the raw AI
       // through would report $0 and an empty executed-model list for a run that
-      // just spent money, which is the precise kind of quiet inaccuracy this
-      // whole exercise kept tripping over.
-      const trackedAi = createUsageTrackingAI(ai, usage)
+      // just spent money. The credit counter matters more: an evaluator's
+      // try/catch turns a rejected judge call into a failed evaluation, so
+      // without this a throttled rescore produces a full set of plausible,
+      // invalid scores.
+      const credit = { rejections: 0 }
+      const trackedAi = createUsageTrackingAI(ai, usage, credit)
       const ctx: EvalContext = {
         pool: forbiddenPool(),
         ai: trackedAi,
@@ -109,6 +116,16 @@ export async function rescoreReport(
           )
         }
         for (const [index, output] of stored.entries()) {
+          // A case that errored during the original run has no generation.
+          // Scoring that as if it were one produces a real-looking failure for
+          // a turn that never happened — the same confusion a credit rejection
+          // causes. Refuse it instead.
+          if (output === null || output === undefined) {
+            throw new Error(
+              `Case ${storedCase.caseId} run ${index + 1} has no generation (the original run errored on it). ` +
+                `Re-run that case live rather than rescoring a turn that never produced output.`
+            )
+          }
           const evaluations = await Promise.all(
             suite.evaluators.map(async (evaluator) => {
               try {
@@ -138,6 +155,13 @@ export async function rescoreReport(
       const runEvaluations = suite.runEvaluators
         ? await Promise.all(suite.runEvaluators.map((e) => e.evaluate(cases)))
         : []
+
+      if (credit.rejections > 0) {
+        throw new Error(
+          `${credit.rejections} judge call(s) were rejected for insufficient OpenRouter credit. Every evaluator ` +
+            `catches its own errors, so these would have been reported as quality failures — top up and re-run.`
+        )
+      }
 
       const total = usage.getTotal()
       permutations.push({

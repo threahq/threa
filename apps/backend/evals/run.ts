@@ -59,12 +59,16 @@ Options:
   -s, --suite <name>    Run specific suite (${suiteNames})
   -c, --case <id>       Run specific case(s), comma-separated
   -m, --model <ids>     Override model(s), comma-separated for comparison
+  --judge <id>          Judge model for every LLM-as-judge evaluator. Use when a
+                        candidate under comparison shares the default judge's family.
   -t, --temperature <n> Override temperature (0.0-1.0)
   -p, --parallel <n>    Number of parallel workers (default: 1)
   -r, --runs <n>        Repeat every case n times, report per-case pass rates (default: 1)
   --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (0.0-1.0, default: 1.0)
   --json <file>         Write machine-readable results JSON to <file>
-  --config <file>       Run from YAML config file (ignores -s, -m flags)
+  --config <file>       Run from YAML config file (ignores -m; -s narrows it to one suite)
+  --rescore <file>      Re-run evaluators over a previous --json report's stored
+                        generations. No model turns, so no generation cost.
   -v, --verbose         Verbose output
 
 Examples:
@@ -381,7 +385,13 @@ export function toJsonReport(results: Array<any>) {
           // scoring change; re-running the models for it costs real money and
           // answers a question the stored text already answers.
           expectedOutput: p.cases.find((item: any) => item.caseId === c.caseId)?.expectedOutput ?? null,
-          outputs: p.cases.filter((item: any) => item.caseId === c.caseId).map((item: any) => item.output ?? null),
+          // `?? null` here would hand rescoring a placeholder it cannot tell
+          // apart from a real generation. A case that errored has no output, so
+          // it is omitted rather than nulled.
+          outputs: p.cases
+            .filter((item: any) => item.caseId === c.caseId)
+            .map((item: any) => item.output)
+            .filter((output: unknown) => output !== undefined && output !== null),
         })),
       })),
     })),

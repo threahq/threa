@@ -38,6 +38,7 @@ import {
   webSearchQueryEvaluator,
   createResponseQualityEvaluator,
   createToneEvaluator,
+  createLanguageEvaluator,
   accuracyEvaluator,
   responseDecisionAccuracyEvaluator,
   averageQualityEvaluator,
@@ -549,7 +550,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       runResult.sessionId == null ? [] : await AgentSessionRepository.findStepsBySession(ctx.pool, runResult.sessionId)
 
     const toolCalls = steps
-      .filter((step) => step.stepType === "web_search")
+      .filter((step) => step.stepType === "web_search" && step.completedAt !== null)
       .map((step) => ({
         name: "web_search",
         args: { query: typeof step.content === "string" ? step.content : undefined },
@@ -605,6 +606,7 @@ export const companionSuite: EvalSuite<CompanionInput, CompanionOutput, Companio
     webSearchQueryEvaluator,
     createResponseQualityEvaluator(),
     createToneEvaluator(),
+    createLanguageEvaluator(),
   ],
 
   runEvaluators: [accuracyEvaluator, responseDecisionAccuracyEvaluator, averageQualityEvaluator],

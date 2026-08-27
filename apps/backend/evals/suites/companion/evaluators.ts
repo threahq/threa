@@ -166,11 +166,10 @@ export const asksQuestionEvaluator: Evaluator<CompanionOutput, CompanionExpected
 
     const fullContent = output.messages.map((m) => m.content).join(" ")
 
-    // A question mark, and nothing else. The English interrogative list that
-    // used to sit here made a semantic judgement out of English literals
-    // (INV-54): it read "how" inside "show me how it works" as a question, and
-    // scored a perfectly formed Swedish or Japanese question as none at all.
-    const hasQuestion = fullContent.includes("?")
+    // Punctuation, not vocabulary — an English interrogative list here made a
+    // semantic call out of English literals (INV-54). Arabic and full-width
+    // question marks count; matching only U+003F repeats the mistake smaller.
+    const hasQuestion = /[?？؟]/u.test(fullContent)
 
     return {
       name: "asks-question",
@@ -275,6 +274,42 @@ The response should clearly match the ${expectedTone} tone definition.`,
 }
 
 /**
+ * Judge whether the reply is written in the expected language. Model-based on
+ * purpose (INV-54): the alternative is a word list, which cannot separate
+ * Swedish from Norwegian, marks a correct reply containing an English technical
+ * term as English, and has to be rewritten for every language a user might use.
+ */
+export function createLanguageEvaluator(): Evaluator<CompanionOutput, CompanionExpected> {
+  return {
+    name: "response-language",
+    evaluate: async (output, expected, ctx): Promise<EvaluatorResult> => {
+      const language = expected.responseCharacteristics?.responseLanguage
+      if (!language) {
+        return { name: "response-language", score: 1, passed: true, details: "No language requirement" }
+      }
+
+      const fullContent = output.messages.map((m) => m.content).join("\n")
+      if (!fullContent.trim()) {
+        return { name: "response-language", score: 0, passed: false, details: "No response content" }
+      }
+
+      const judge = llmJudgeEvaluator<CompanionOutput, CompanionExpected>({
+        name: "response-language",
+        criteria: `The reply is written in ${language}.
+
+Judge the prose only. Code, identifiers, product names, and established technical
+terms commonly used untranslated do not make the reply another language. A reply
+that is mostly English is a fail even if it contains a few ${language} words.`,
+        passThreshold: 0.7,
+        context: JUDGE_SHAPE_CONTEXT,
+      })
+
+      return judge.evaluate(judgedOutput(output), expected, ctx)
+    },
+  }
+}
+
+/**
  * Evaluates whether web search was used when expected.
  */
 export const webSearchUsageEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {
@@ -294,13 +329,15 @@ export const webSearchUsageEvaluator: Evaluator<CompanionOutput, CompanionExpect
     // The route difference is real and worth reporting, but it is a cost and
     // latency question, not a correctness one.
     const WEB_REACHING_STEPS = new Set(["web_search", "research", "visit_page"])
+    // `completed` is load-bearing: a step that started and died reached nothing,
+    // and crediting the attempt scores intent instead of grounding.
+    const completedWebSteps = (output.trajectory ?? []).filter(
+      (step) => WEB_REACHING_STEPS.has(step.stepType) && step.completed
+    )
     const reachedWeb =
-      (output.toolCalls?.some((tc) => tc.name === "web_search") ?? false) ||
-      (output.trajectory?.some((step) => WEB_REACHING_STEPS.has(step.stepType)) ?? false)
+      (output.toolCalls?.some((tc) => tc.name === "web_search") ?? false) || completedWebSteps.length > 0
 
-    const route = [
-      ...new Set((output.trajectory ?? []).map((s) => s.stepType).filter((t) => WEB_REACHING_STEPS.has(t))),
-    ]
+    const route = [...new Set(completedWebSteps.map((step) => step.stepType))]
 
     return {
       name: "web-search-usage",

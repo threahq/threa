@@ -9,7 +9,7 @@
  * 5. Clean up
  */
 
-import { NoObjectGeneratedError } from "ai"
+import { APICallError, NoObjectGeneratedError } from "ai"
 import type {
   EvalSuite,
   EvalContext,
@@ -94,6 +94,7 @@ function indent(str: string, spaces: number): string {
 /**
  * Create AI wrapper with eval configuration.
  */
+/** The AI wrapper every eval run generates and judges through. */
 export function createEvalAI(): AI {
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) {
@@ -116,11 +117,24 @@ export function createEvalAI(): AI {
  * invalidated a whole comparison arm in August 2026 — 1428 rejections read as
  * 0.6s turns. Counted here at the only place that sees the raw provider error.
  */
-function isCreditRejection(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /requires more credits|insufficient credit|exceeded your credit|quota exceeded/i.test(message)
+export function isCreditRejection(error: unknown): boolean {
+  // 402 is the provider's own answer, so it is checked first; the message match
+  // is the fallback for transports that flatten the status away. Relying on
+  // wording alone would let a reworded provider message silently disable the
+  // guard, which is the failure this guard exists to catch.
+  if (APICallError.isInstance(error) && error.statusCode === 402) return true
+  const parts = [
+    error instanceof Error ? error.message : String(error),
+    APICallError.isInstance(error) && typeof error.responseBody === "string" ? error.responseBody : "",
+  ]
+  return /requires more credits|insufficient credit|exceeded your credit|quota exceeded/i.test(parts.join(" "))
 }
 
+/**
+ * Wrap an AI so every call records its model and usage, and so provider credit
+ * rejections are counted rather than swallowed. Pass `credit` wherever a
+ * rejection must invalidate the run.
+ */
 export function createUsageTrackingAI(ai: AI, accumulator: UsageAccumulator, credit?: { rejections: number }): AI {
   const watch = async <T>(call: () => Promise<T>): Promise<T> => {
     try {
@@ -486,6 +500,7 @@ function printComparisonTable<TOutput, TExpected>(results: PermutationResult<TOu
 /**
  * Print summary of evaluation results.
  */
+/** Render one suite's per-case and run-level results to the terminal. */
 export function printSummary<TOutput, TExpected>(result: SuiteResult<TOutput, TExpected>): void {
   console.log("\n" + "=".repeat(60))
   console.log(`${colors.cyan}Suite: ${result.suiteName}${colors.reset}`)

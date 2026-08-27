@@ -6,12 +6,11 @@ import type { Persona } from "../../src/features/agents"
 /**
  * Insert the throwaway persona row a companion-backed suite runs its turn as:
  * the built-in Ariadne's resolved prompt and toolset, with the permutation's
- * model swapped in. Three suites need exactly this row, and until August 2026
- * each carried its own copy of the statement — all three naming a constraint
- * that migration `20260713120000_persona_owner_user_id.sql` had replaced with
- * two partial unique indexes. Every case in all three suites had been failing
- * in ~10ms since, on an error the runner reported only as "did not respond".
- * One copy, verified against a migrated schema in
+ * model swapped in.
+ *
+ * The `ON CONFLICT` target must name a real partial unique index on `personas`;
+ * a target that matches no index throws at runtime and never at build time, so
+ * this statement is executed against a migrated schema in
  * `tests/integration/eval-persona.test.ts` (INV-68).
  */
 export async function insertEvalPersona(

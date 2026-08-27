@@ -5,8 +5,13 @@ import type { EvalSuite, EvaluatorResult } from "./types"
 
 const stubAi = {} as AI
 
-type Out = { text: string }
-type Expected = { must: string }
+interface Out {
+  text: string
+}
+
+interface Expected {
+  must: string
+}
 
 function suiteWith(evaluate: (o: Out, e: Expected) => EvaluatorResult): EvalSuite<unknown, Out, Expected> {
   return {
@@ -148,5 +153,37 @@ describe("rescore", () => {
       onSuite: () => {},
     })
     expect(result!.permutations[0]!.cases[0]!.evaluations[0]!.details).toMatch(/tried to query the database/)
+  })
+  test("refuses to report scores when a judge call was rejected for credit", async () => {
+    const path = await writeReport([
+      { caseId: "c1", caseName: "Case one", expectedOutput: { must: "yes" }, outputs: [{ text: "yes" }] },
+    ])
+
+    // A judge call that dies on credit is caught by the evaluator's own
+    // try/catch and becomes a plausible-looking quality failure. The whole
+    // report would then be wrong in a way nothing on its face reveals.
+    const rejectingAi = {
+      generateObject: async () => {
+        throw new Error("This request requires more credits, or fewer max_tokens.")
+      },
+    } as unknown as AI
+
+    const judged = (_o: Out, _e: Expected, ctx?: unknown): Promise<EvaluatorResult> =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (ctx as any).ai.generateObject({})
+
+    await expect(
+      rescoreReport(path, [suiteWith(judged as never) as never], { ai: rejectingAi, onSuite: () => {} })
+    ).rejects.toThrow(/rejected for insufficient OpenRouter credit/)
+  })
+
+  test("refuses a run whose generation is missing rather than scoring a turn that never happened", async () => {
+    const path = await writeReport([
+      { caseId: "c1", caseName: "Case one", expectedOutput: { must: "yes" }, outputs: [{ text: "yes" }, null] },
+    ])
+
+    await expect(
+      rescoreReport(path, [suiteWith(containsMust) as never], { ai: stubAi, onSuite: () => {} })
+    ).rejects.toThrow(/no generation/)
   })
 })
