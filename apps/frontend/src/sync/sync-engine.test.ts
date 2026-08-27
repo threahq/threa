@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { SyncEngine, isSyncEngineCurrent, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
 import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/stores/apply-window"
+import { __resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
@@ -2070,6 +2071,7 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
 describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
   beforeEach(async () => {
     resetRevealGate()
+    __resetAgentActivityStore()
     await Promise.all([
       db.workspaces.clear(),
       db.syncCursors.clear(),
@@ -2142,6 +2144,54 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
         true
       )
     )
+    engine.destroy()
+  })
+
+  it("reconciles sidebar agent activity from the visible stream on a slim reconnect", async () => {
+    const deps = makeReconnectDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    engine.setVisibleStreamIds(["stream_dm"])
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_dm", undefined))
+    deps.streamService.bootstrap.mockClear()
+
+    upsertAgentSession("ws_1", {
+      sessionId: "session_settled",
+      streamId: "stream_dm",
+      rootStreamId: "stream_dm",
+      personaName: "Ariadne",
+      startedAt: "2026-08-27T11:24:59.119Z",
+    })
+    const terminalBootstrap = makeStreamBootstrap("stream_dm", "3")
+    terminalBootstrap.events = [
+      {
+        id: "evt_completed",
+        streamId: "stream_dm",
+        sequence: "3",
+        eventType: "agent_session:completed",
+        payload: {
+          sessionId: "session_settled",
+          stepCount: 2,
+          messageCount: 1,
+          duration: 10_000,
+          completedAt: "2026-08-27T11:25:37.971Z",
+        },
+        actorId: "persona_ariadne",
+        actorType: "persona",
+        createdAt: "2026-08-27T11:25:37.971Z",
+      },
+    ]
+    deps.streamService.bootstrap.mockResolvedValueOnce(terminalBootstrap)
+
+    await engine.onConnect(asSocket(socket))
+
+    expect(getAgentActivityForStream("ws_1", "stream_dm")).toEqual([])
+    expect(await db.events.get("evt_completed")).toMatchObject({
+      eventType: "agent_session:completed",
+      payload: { sessionId: "session_settled" },
+    })
     engine.destroy()
   })
 

@@ -1,17 +1,16 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
-import type { ActiveAgentSession } from "@threa/types"
+import type { ActiveAgentSession, StreamEvent } from "@threa/types"
+import { deriveAgentSessionLifecycle, type AgentSessionLifecycle } from "@/lib/agent-session-lifecycle"
 
 /**
  * Ephemeral, non-persisted store of the agent sessions running RIGHT NOW,
  * keyed by their exact stream so a stream row can paint an "agent working"
- * state without inheriting activity from a parent or child. Seeded from the
- * workspace bootstrap (`activeAgentSessions`) and, on
- * reconnect, re-seeded as the authoritative running set (INV-53) — the seed
- * REPLACES the workspace's entries, so any entry whose end signal was missed is
- * dropped at the next reconnect. Live starts/ends fold in from the
- * `agent_session:*` room events (see workspace-sync). Removal is by session id
- * (stream-agnostic) so a terminal event always clears reliably regardless of
- * which room delivered it.
+ * state without inheriting activity from a parent or child. A full workspace
+ * bootstrap seeds `activeAgentSessions`. Stream bootstraps reconcile the same
+ * cached lifecycle events that drive the open timeline, while live starts/ends
+ * fold in from the `agent_session:*` room events (INV-53). Removal is by session
+ * id (stream-agnostic) so a terminal event clears every surface regardless of
+ * which path observed it.
  *
  * Not in IDB: this is transient presence, not durable state — a cold reload
  * re-derives it from the fresh bootstrap.
@@ -19,6 +18,10 @@ import type { ActiveAgentSession } from "@threa/types"
 
 // workspaceId -> sessionId -> session
 const workspaces = new Map<string, Map<string, ActiveAgentSession>>()
+// Terminal events are final for a session id. Keep enough recent ids to fence
+// in-flight snapshots and duplicate delivery without retaining page-lifetime history.
+const TERMINAL_FENCE_LIMIT = 1024
+const terminalSessions = new Map<string, Set<string>>()
 
 // `${workspaceId}:${streamId}` -> listeners subscribed to that row
 const keyListeners = new Map<string, Set<() => void>>()
@@ -81,6 +84,23 @@ function notifySession(workspaceId: string, sessionId: string): void {
   for (const listener of sessionListeners.get(subKey(workspaceId, sessionId)) ?? []) listener()
 }
 
+function isTerminalSession(workspaceId: string, sessionId: string): boolean {
+  return terminalSessions.get(workspaceId)?.has(sessionId) ?? false
+}
+
+function markTerminalSession(workspaceId: string, sessionId: string): void {
+  let sessions = terminalSessions.get(workspaceId)
+  if (!sessions) {
+    sessions = new Set()
+    terminalSessions.set(workspaceId, sessions)
+  }
+  sessions.delete(sessionId)
+  sessions.add(sessionId)
+  if (sessions.size <= TERMINAL_FENCE_LIMIT) return
+  const oldest = sessions.values().next().value
+  if (oldest !== undefined) sessions.delete(oldest)
+}
+
 /** Recompute the cached snapshot for one stream key and notify iff its content changed. */
 function recomputeKey(workspaceId: string, streamId: string): void {
   const key = subKey(workspaceId, streamId)
@@ -115,6 +135,7 @@ export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSess
   const next = new Map<string, ActiveAgentSession>()
   const affectedSessions = new Set<string>(previous?.keys() ?? [])
   for (const session of sessions) {
+    if (isTerminalSession(workspaceId, session.sessionId)) continue
     const existing = previous?.get(session.sessionId)
     next.set(session.sessionId, {
       ...session,
@@ -139,6 +160,7 @@ export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSess
  * already delivered.
  */
 export function upsertAgentSession(workspaceId: string, session: ActiveAgentSession): void {
+  if (isTerminalSession(workspaceId, session.sessionId)) return
   let ws = workspaces.get(workspaceId)
   if (!ws) {
     ws = new Map()
@@ -147,8 +169,14 @@ export function upsertAgentSession(workspaceId: string, session: ActiveAgentSess
   const existing = ws.get(session.sessionId)
   const next: ActiveAgentSession = {
     ...session,
-    stepCount: session.stepCount ?? existing?.stepCount,
-    messageCount: session.messageCount ?? existing?.messageCount,
+    stepCount:
+      session.stepCount === undefined || existing?.stepCount === undefined
+        ? (session.stepCount ?? existing?.stepCount)
+        : Math.max(session.stepCount, existing.stepCount),
+    messageCount:
+      session.messageCount === undefined || existing?.messageCount === undefined
+        ? (session.messageCount ?? existing?.messageCount)
+        : Math.max(session.messageCount, existing.messageCount),
     substep: session.substep ?? existing?.substep,
   }
   if (existing && sameSession(existing, next)) return
@@ -191,14 +219,53 @@ export function updateAgentSessionProgress(
   notifySession(workspaceId, sessionId)
 }
 
-/** Remove a session by id on any terminal signal. */
-export function removeAgentSession(workspaceId: string, sessionId: string): void {
+/** Stop the live indicator without fencing a retry that reuses the session id. */
+export function clearAgentSession(workspaceId: string, sessionId: string): void {
   const ws = workspaces.get(workspaceId)
   const existing = ws?.get(sessionId)
   if (!ws || !existing) return
   ws.delete(sessionId)
   recomputeKey(workspaceId, existing.streamId)
   notifySession(workspaceId, sessionId)
+}
+
+/** Remove a session by id on any terminal signal. */
+export function removeAgentSession(workspaceId: string, sessionId: string): void {
+  markTerminalSession(workspaceId, sessionId)
+  clearAgentSession(workspaceId, sessionId)
+}
+
+export function reconcileAgentActivityFromStreamEvents(
+  workspaceId: string,
+  streamId: string,
+  rootStreamId: string,
+  events: readonly StreamEvent[]
+): void {
+  reconcileAgentActivityFromStreamLifecycle(workspaceId, streamId, rootStreamId, deriveAgentSessionLifecycle(events))
+}
+
+export function removeTerminatedAgentActivity(workspaceId: string, lifecycle: AgentSessionLifecycle): void {
+  for (const sessionId of lifecycle.terminated) removeAgentSession(workspaceId, sessionId)
+}
+
+export function reconcileAgentActivityFromStreamLifecycle(
+  workspaceId: string,
+  streamId: string,
+  rootStreamId: string,
+  lifecycle: AgentSessionLifecycle
+): void {
+  removeTerminatedAgentActivity(workspaceId, lifecycle)
+  for (const session of lifecycle.running.values()) {
+    upsertAgentSession(workspaceId, {
+      sessionId: session.sessionId,
+      streamId,
+      rootStreamId,
+      personaName: session.personaName,
+      startedAt: session.startedAt,
+      stepCount: session.stepCount,
+      messageCount: session.messageCount,
+    })
+  }
 }
 
 /** True if a session with this id is already tracked in the workspace. */
@@ -325,6 +392,7 @@ export function useAgentSessionActivities(
 /** Test-only: wipe all state between cases. */
 export function __resetAgentActivityStore(): void {
   workspaces.clear()
+  terminalSessions.clear()
   keyListeners.clear()
   keySnapshots.clear()
   sessionListeners.clear()

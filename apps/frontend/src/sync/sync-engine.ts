@@ -937,8 +937,8 @@ export class SyncEngine {
    *
    * - Per-stream message deltas for the visible streams. Timeline events ride a
    *   per-stream sequence (INV-61), not the workspace sync-log, so they heal
-   *   through `bootstrap?after=` (cursor-before-join), never catch-up. Same
-   *   mechanism the full path and post-navigation refresh use.
+   *   through `bootstrap?after=` (cursor-before-join), never catch-up. Applying
+   *   those events also reconciles the sidebar's agent-session projection.
    * - Re-subscribing member rooms from the cached membership list, so
    *   `stream:activity` keeps flowing onto the sidebar. Membership added/removed
    *   while offline is replayed by catch-up (`stream:member_*` → subscribe).

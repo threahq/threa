@@ -27,9 +27,11 @@ import { getCachedWorkspaceTables, seedWorkspaceCache, upsertWorkspaceUserInCach
 import {
   seedAgentActivity,
   upsertAgentSession,
+  clearAgentSession,
   removeAgentSession,
   hasAgentSession,
   updateAgentSessionProgress,
+  reconcileAgentActivityFromStreamEvents,
 } from "@/stores/agent-activity-store"
 import { seedActiveCalls, upsertActiveCall, removeActiveCall } from "@/stores/active-calls-store"
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
@@ -1457,7 +1459,7 @@ export function registerWorkspaceSocketHandlers(
   const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) =>
     enqueueAgentActivity(() => {
       appliedSubstepAt.delete(payload.sessionId)
-      removeAgentSession(workspaceId, payload.sessionId)
+      clearAgentSession(workspaceId, payload.sessionId)
     })
 
   // agent_session:completed/failed reach this socket in two shapes: the
@@ -3519,6 +3521,14 @@ export async function applyReconnectBootstrapBatch(
   // Re-seed the sidebar agent-activity store with the reconnect's running set —
   // the authority that drops any entry whose end signal was missed (INV-53).
   seedAgentActivity(workspaceId, finalBootstrap.activeAgentSessions ?? [])
+  for (const [streamId, bootstrap] of streamBootstraps) {
+    reconcileAgentActivityFromStreamEvents(
+      workspaceId,
+      streamId,
+      bootstrap.stream.rootStreamId ?? streamId,
+      bootstrap.events
+    )
+  }
   // Same authoritative re-seed for the sidebar live-call dot (INV-53).
   seedActiveCalls(workspaceId, finalBootstrap.activeCalls ?? [])
 
