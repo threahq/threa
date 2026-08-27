@@ -3411,10 +3411,6 @@ export async function applyReconnectBootstrapBatch(
     }
   )
 
-  await Promise.all(
-    [...streamBootstraps.keys()].map((streamId) => reconcileCachedStreamAgentActivity(workspaceId, streamId))
-  )
-
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
 
@@ -3523,6 +3519,9 @@ export async function applyReconnectBootstrapBatch(
   // Re-seed the sidebar agent-activity store with the reconnect's running set —
   // the authority that drops any entry whose end signal was missed (INV-53).
   seedAgentActivity(workspaceId, finalBootstrap.activeAgentSessions ?? [])
+  await Promise.all(
+    [...streamBootstraps.keys()].map((streamId) => reconcileCachedStreamAgentActivity(workspaceId, streamId))
+  )
   // Same authoritative re-seed for the sidebar live-call dot (INV-53).
   seedActiveCalls(workspaceId, finalBootstrap.activeCalls ?? [])
 

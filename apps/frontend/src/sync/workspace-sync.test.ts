@@ -664,6 +664,54 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect((await db.streams.get(streamId))?.id).toBe(streamId)
   })
 
+  it("applies stream terminal events after seeding the reconnect running set", async () => {
+    const streamId = "stream_reconnect_agent"
+    const completedAt = "2026-08-27T11:25:37.971Z"
+    const streamBootstrap = makeStreamBootstrap(streamId, {
+      events: [
+        {
+          id: "evt_agent_completed",
+          streamId,
+          sequence: "2",
+          eventType: "agent_session:completed",
+          payload: {
+            sessionId: "session_settled",
+            stepCount: 2,
+            messageCount: 1,
+            duration: 10_000,
+            completedAt,
+          },
+          actorId: "persona_ariadne",
+          actorType: "persona",
+          createdAt: completedAt,
+        },
+      ],
+      latestSequence: "2",
+    })
+
+    await applyReconnectBootstrapBatch(
+      "ws_1",
+      makeBootstrap({
+        streams: [{ ...streamBootstrap.stream, lastMessagePreview: null }],
+        activeAgentSessions: [
+          {
+            sessionId: "session_settled",
+            streamId,
+            rootStreamId: streamId,
+            personaName: "Ariadne",
+            startedAt: "2026-08-27T11:24:59.119Z",
+          },
+        ],
+      }),
+      new Map([[streamId, streamBootstrap]]),
+      new Set([streamId]),
+      new Set(),
+      Date.now()
+    )
+
+    expect(getAgentActivityForStream("ws_1", streamId)).toEqual([])
+  })
+
   it("persists feature-flag layers on the reconnect apply path too", async () => {
     await applyReconnectBootstrapBatch(
       "ws_1",

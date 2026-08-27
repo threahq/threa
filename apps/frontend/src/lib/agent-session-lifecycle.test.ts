@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { StreamEvent } from "@threa/types"
-import { deriveAgentSessionLifecycle } from "./agent-session-lifecycle"
+import { deriveAgentSessionLifecycle, isAgentSessionLifecycleEvent } from "./agent-session-lifecycle"
 
 function event(eventType: StreamEvent["eventType"], payload: StreamEvent["payload"], sequence: string): StreamEvent {
   return {
@@ -46,6 +46,36 @@ describe("deriveAgentSessionLifecycle", () => {
       running: [],
       terminated: ["session_1"],
     })
+  })
+
+  it("treats failure and deletion as terminal", () => {
+    const result = deriveAgentSessionLifecycle([
+      event(
+        "agent_session:failed",
+        {
+          sessionId: "session_failed",
+          stepCount: 1,
+          error: "failed",
+          traceId: "trace_1",
+          failedAt: "2026-08-27T11:25:02.000Z",
+        },
+        "2"
+      ),
+      event("agent_session:deleted", { sessionId: "session_deleted", deletedAt: "2026-08-27T11:25:03.000Z" }, "3"),
+    ])
+
+    expect([...result.terminated]).toEqual(["session_failed", "session_deleted"])
+  })
+
+  it("identifies only events that change lifecycle state", () => {
+    expect([
+      isAgentSessionLifecycleEvent(event("agent_session:started", {}, "1")),
+      isAgentSessionLifecycleEvent(event("agent_session:completed", {}, "2")),
+      isAgentSessionLifecycleEvent(event("agent_session:failed", {}, "3")),
+      isAgentSessionLifecycleEvent(event("agent_session:deleted", {}, "4")),
+      isAgentSessionLifecycleEvent(event("agent_session:interrupted", {}, "5")),
+      isAgentSessionLifecycleEvent(event("message_created", {}, "6")),
+    ]).toEqual([true, true, true, true, false, false])
   })
 
   it("keeps an interrupted session running while it waits to retry", () => {
