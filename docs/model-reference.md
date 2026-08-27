@@ -98,8 +98,8 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 
 **When to use:**
 
-- Default Ariadne companion persona model (since 2026-07-11; won the July 2026 companion eval vs 4.6 — 51/84 vs 46/84 case-runs, best judge quality — at ~34% higher per-conversation cost and ~30% higher latency)
 - Complex reasoning and multi-turn agent conversations
+- Was the default Ariadne persona model from 2026-07-11 to 2026-08-27, on the July 2026 companion eval against 4.6 (51/84 vs 46/84 case-runs, best judge quality) at ~34% higher per-conversation cost and ~30% higher latency. Replaced by Luna as a product decision, not an eval result — see the Luna entry.
 
 **Use instead of:** `claude-sonnet-4.6`
 
@@ -169,9 +169,35 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 **When to use:**
 
+- Default Ariadne companion persona model (since 2026-08-27)
+- Default LLM-as-judge model for the eval suites (`EVAL_JUDGE_MODEL`)
 - Classification, extraction, ranking, naming, transcript polish, and summarization
 - Memo memorization and tool-call guarding
 - Over-budget model degradation
+
+**On the Ariadne default — read this before citing it as an eval win.** It is
+Kristoffer's product call, taken on Luna's cost and his own use of it, and the
+August 2026 comparison did NOT establish quality parity with `claude-sonnet-5`.
+What that attempt produced:
+
+- The one credit-clean head-to-head ran on a harness with four defects since
+  fixed, and had sonnet-5 marginally AHEAD: 52/105 vs 48/105 case-runs, judge
+  quality 0.661 vs 0.659 — a dead heat.
+- The run that showed Luna far ahead (84/117 vs 43/117) is void: the OpenRouter
+  key hit its weekly cap and rejected 1428 sonnet-5 calls. Luna survived that
+  run _because_ its requests reserve fewer tokens. That number measures the
+  credit ceiling, not the models, and it is the single most misleading artifact
+  of the exercise.
+- The clean rerun was killed by SIGTERM at 126/324 case-runs and never finished.
+
+So the honest status is _unmeasured_, not _equal_. `evals/companion-model-comparison.yaml`
+runs the comparison; finish it before this entry claims anything about quality.
+
+**Consequence of the switch:** over-budget degradation is now a no-op for the
+default persona. Every `MODEL_DEGRADATION_MAP` target is Luna because it is the
+cheapest current-generation model that still holds up on agentic tool use, so a
+workspace whose default persona is already Luna has no cheaper tier to fall back
+to at the soft limit.
 
 **Eval history (July 2026, 6-run tallies vs `gpt-5.4-mini`):** memorizer 10/10 cases perfect against mini's 8/10 — Luna never leaked the anti-gossip residuals and never inverted a decision direction; boundary-extraction effectively tied (0.996 vs 0.992); memo-classifier tied (11/11 both). Luna was ~40% slower per call, but the price cut makes it cheaper than both 5.4 tiers, so every production task previously on a GPT-5.4 tier now uses Luna.
 
