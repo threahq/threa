@@ -75,6 +75,33 @@ export const contentContainsEvaluator: Evaluator<CompanionOutput, CompanionExpec
 }
 
 /**
+ * At least one of `shouldContainAny` appears. Separate from `content-contains`
+ * because the two ask different questions: one is "these exact strings are
+ * required", the other is "the answer engaged with the topic at all". Collapsing
+ * them into a single ratio scored breadth of enumeration, which is a style, not
+ * a quality — and a style Ariadne's prompt tells her not to have.
+ */
+export const contentContainsAnyEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {
+  name: "content-contains-any",
+  evaluate: (output: CompanionOutput, expected: CompanionExpected): EvaluatorResult => {
+    const anyOf = expected.responseCharacteristics?.shouldContainAny
+    if (!anyOf || anyOf.length === 0) {
+      return { name: "content-contains-any", score: 1, passed: true, details: "No alternatives required" }
+    }
+
+    const fullContent = output.messages.map((m) => m.content.toLowerCase()).join(" ")
+    const hit = anyOf.some((phrase) => fullContent.includes(phrase.toLowerCase()))
+
+    return {
+      name: "content-contains-any",
+      score: hit ? 1 : 0,
+      passed: hit,
+      details: hit ? undefined : `None of ${anyOf.map((s) => `"${s}"`).join(", ")} appeared`,
+    }
+  },
+}
+
+/**
  * Evaluates whether the response avoids unwanted content.
  */
 export const contentNotContainsEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {
@@ -139,10 +166,10 @@ export const asksQuestionEvaluator: Evaluator<CompanionOutput, CompanionExpected
 
     const fullContent = output.messages.map((m) => m.content).join(" ")
 
-    // Check for question marks or question phrases
-    const hasQuestion =
-      fullContent.includes("?") ||
-      /\b(what|which|how|why|when|where|could you|can you|would you|do you)\b/i.test(fullContent)
+    // Punctuation, not vocabulary — an English interrogative list here made a
+    // semantic call out of English literals (INV-54). Arabic and full-width
+    // question marks count; matching only U+003F repeats the mistake smaller.
+    const hasQuestion = /[?？؟]/u.test(fullContent)
 
     return {
       name: "asks-question",
@@ -157,6 +184,18 @@ export const asksQuestionEvaluator: Evaluator<CompanionOutput, CompanionExpected
  * LLM-as-judge evaluator for overall response quality.
  * Uses the framework's llmJudgeEvaluator for consistency.
  */
+/**
+ * What the judge sees. The trace is recorded for the model comparison, not for
+ * grading: a judge shown the trajectory starts scoring the route the agent took
+ * instead of the reply the user got, and the tool evaluators already own that
+ * question. Keeping it out also keeps judge scores comparable across runs made
+ * before and after the trace was captured.
+ */
+function judgedOutput(output: CompanionOutput): CompanionOutput {
+  const { trajectory: _trajectory, ...rest } = output
+  return rest
+}
+
 export function createResponseQualityEvaluator(): Evaluator<CompanionOutput, CompanionExpected> {
   // Create base judge evaluator
   const baseJudge = llmJudgeEvaluator<CompanionOutput, CompanionExpected>({
@@ -189,7 +228,7 @@ export function createResponseQualityEvaluator(): Evaluator<CompanionOutput, Com
       }
 
       // Use the base judge
-      return baseJudge.evaluate(output, expected, ctx)
+      return baseJudge.evaluate(judgedOutput(output), expected, ctx)
     },
   }
 }
@@ -229,7 +268,43 @@ The response should clearly match the ${expectedTone} tone definition.`,
         context: JUDGE_SHAPE_CONTEXT,
       })
 
-      return toneJudge.evaluate(output, expected, ctx)
+      return toneJudge.evaluate(judgedOutput(output), expected, ctx)
+    },
+  }
+}
+
+/**
+ * Judge whether the reply is written in the expected language. Model-based on
+ * purpose (INV-54): the alternative is a word list, which cannot separate
+ * Swedish from Norwegian, marks a correct reply containing an English technical
+ * term as English, and has to be rewritten for every language a user might use.
+ */
+export function createLanguageEvaluator(): Evaluator<CompanionOutput, CompanionExpected> {
+  return {
+    name: "response-language",
+    evaluate: async (output, expected, ctx): Promise<EvaluatorResult> => {
+      const language = expected.responseCharacteristics?.responseLanguage
+      if (!language) {
+        return { name: "response-language", score: 1, passed: true, details: "No language requirement" }
+      }
+
+      const fullContent = output.messages.map((m) => m.content).join("\n")
+      if (!fullContent.trim()) {
+        return { name: "response-language", score: 0, passed: false, details: "No response content" }
+      }
+
+      const judge = llmJudgeEvaluator<CompanionOutput, CompanionExpected>({
+        name: "response-language",
+        criteria: `The reply is written in ${language}.
+
+Judge the prose only. Code, identifiers, product names, and established technical
+terms commonly used untranslated do not make the reply another language. A reply
+that is mostly English is a fail even if it contains a few ${language} words.`,
+        passThreshold: 0.7,
+        context: JUDGE_SHAPE_CONTEXT,
+      })
+
+      return judge.evaluate(judgedOutput(output), expected, ctx)
     },
   }
 }
@@ -245,14 +320,32 @@ export const webSearchUsageEvaluator: Evaluator<CompanionOutput, CompanionExpect
       return { name: "web-search-usage", score: 1, passed: true, details: "No web search requirement" }
     }
 
-    // Check if web_search was called in toolCalls
-    const usedWebSearch = output.toolCalls?.some((tc) => tc.name === "web_search") ?? false
+    // The requirement is that the answer came off the web instead of out of the
+    // weights, and Ariadne has more than one way to get there: `web_search`
+    // queries directly, `general_research` delegates to the researcher, and
+    // `read_url` fetches a page. Matching only the `web_search` step name
+    // scored the ROUTE rather than the grounding, and marked a
+    // research-delegating turn — sources attached and all — as ungrounded.
+    // The route difference is real and worth reporting, but it is a cost and
+    // latency question, not a correctness one.
+    const WEB_REACHING_STEPS = new Set(["web_search", "research", "visit_page"])
+    // `completed` is load-bearing: a step that started and died reached nothing,
+    // and crediting the attempt scores intent instead of grounding.
+    const completedWebSteps = (output.trajectory ?? []).filter(
+      (step) => WEB_REACHING_STEPS.has(step.stepType) && step.completed
+    )
+    const reachedWeb =
+      (output.toolCalls?.some((tc) => tc.name === "web_search") ?? false) || completedWebSteps.length > 0
+
+    const route = [...new Set(completedWebSteps.map((step) => step.stepType))]
 
     return {
       name: "web-search-usage",
-      score: usedWebSearch ? 1 : 0,
-      passed: usedWebSearch,
-      details: usedWebSearch ? undefined : "Expected web search but it was not used",
+      score: reachedWeb ? 1 : 0,
+      passed: reachedWeb,
+      details: reachedWeb
+        ? `via ${route.join(", ") || "web_search"}`
+        : "Expected the web to be consulted, but no web-reaching tool ran",
     }
   },
 }

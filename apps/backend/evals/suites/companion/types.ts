@@ -3,7 +3,7 @@
  */
 
 import type { CompanionInput, CompanionExpected } from "./cases"
-import type { SourceItem } from "@threa/types"
+import type { AgentStepType, SourceItem } from "@threa/types"
 
 /**
  * A message sent by the companion agent.
@@ -13,6 +13,19 @@ export interface CompanionMessage {
   content: string
   /** Optional sources (from web search, workspace search) */
   sources?: SourceItem[]
+}
+
+/**
+ * One step of the turn's trace, as the model comparison reads it: which tool
+ * the agent reached for, whether the step finished, and what it cited.
+ */
+export interface CompanionTrajectoryStep {
+  stepType: AgentStepType
+  completed: boolean
+  /** URLs the step attached as sources — the citation trail behind the reply. */
+  sourceUrls: string[]
+  /** Truncated step content, kept only for tool_call/tool_error steps. */
+  content?: string | null
 }
 
 /**
@@ -30,6 +43,8 @@ export interface CompanionOutput {
     name: string
     args: Record<string, unknown>
   }>
+  /** Every trace step the turn produced, in order. */
+  trajectory?: CompanionTrajectoryStep[]
   /** Error if the task failed */
   error?: string
 }

@@ -16,11 +16,13 @@
  * `-s persona-style`) and in `persona-style.yaml` (for `--config`).
  */
 
+import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
+
 export const PERSONA_STYLE_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
 export const PERSONA_STYLE_TEMPERATURE = 0.7
 
 /** Judge model for tone adherence — the shared cheap judge the other suites use. */
-export const PERSONA_STYLE_JUDGE_MODEL = "openrouter:openai/gpt-5.4-nano"
+export const PERSONA_STYLE_JUDGE_MODEL = EVAL_JUDGE_MODEL
 
 /**
  * Word-count guards for the brevity cases. The AUTHORITATIVE brevity signal is

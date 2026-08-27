@@ -62,8 +62,17 @@ export interface CompanionExpected {
   responseCharacteristics?: {
     /** Should be brief (< 100 words) */
     brief?: boolean
-    /** Should include specific content */
+    /** Every one of these must appear — use only when each string is literally required (a date, a number, a name). */
     shouldContain?: string[]
+    /**
+     * At least one of these must appear. This is the right field for a set of
+     * CONCEPTS a good answer might cover, and `shouldContain` is not: at the
+     * 0.7 pass bar a three-item list silently means all three (2/3 = 0.67),
+     * so concept lists were scoring enumeration rather than correctness —
+     * against a persona whose own prompt says "keep responses short and
+     * direct". A terse-but-right answer failed; a padded one passed.
+     */
+    shouldContainAny?: string[]
     /** Should NOT include specific content */
     shouldNotContain?: string[]
     /** Expected tone (friendly, professional, casual) */
@@ -74,6 +83,14 @@ export interface CompanionExpected {
     shouldUseWebSearch?: boolean
     /** Web search query should include these terms */
     webSearchQueryShouldContain?: string[]
+    /**
+     * The language the reply must be written in, judged by a model rather than
+     * matched against word lists. Answering in the user's language is a
+     * semantic property, and deciding it from English substrings is the exact
+     * shape INV-54 forbids — it also cannot tell a Swedish reply from a
+     * Norwegian one, which is the failure that matters here.
+     */
+    responseLanguage?: string
   }
   /** Reason for this expected behavior */
   reason: string
@@ -131,7 +148,8 @@ const scratchpadCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["flex", "grid", "center"],
+        shouldContain: ["center"],
+        shouldContainAny: ["flex", "grid"],
         tone: "friendly",
       },
       reason: "Technical question should receive a helpful, accurate answer with code examples",
@@ -167,7 +185,8 @@ const scratchpadCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["feat:", "auth"],
+        shouldContain: ["auth"],
+        shouldContainAny: ["feat:", "feat("],
         tone: "professional",
       },
       reason: "Task request should result in actual help with the task",
@@ -363,7 +382,7 @@ const channelCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["reconnect", "heartbeat", "timeout"],
+        shouldContainAny: ["reconnect", "heartbeat", "timeout"],
       },
       reason: "Help request should receive thorough troubleshooting guidance",
     }
@@ -381,7 +400,7 @@ const channelCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["depends", "consider", "trade"],
+        shouldContainAny: ["depends", "consider", "trade"],
         tone: "professional",
       },
       reason: "Opinion request should provide balanced view of trade-offs, not a single answer",
@@ -433,7 +452,7 @@ const threadCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["function", "window", "time"],
+        shouldContainAny: ["function", "window", "time"],
       },
       reason: "Code example request should include actual code",
     }
@@ -479,7 +498,7 @@ const dmCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["token", "storage"],
+        shouldContainAny: ["token", "storage", "cookie"],
         tone: "friendly",
       },
       reason: "DM question should feel personal and direct",
@@ -641,7 +660,7 @@ const edgeCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["index", "query", "cache"],
+        shouldContainAny: ["index", "query", "cache"],
         tone: "professional",
       },
       reason: "Long, detailed message should get a focused, structured response",
@@ -722,7 +741,7 @@ const consistencyCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldContain: ["don't have", "no record", "not sure"],
+        shouldContainAny: ["don't have", "no record", "not sure", "no memory", "nothing in"],
         shouldNotContain: ["we discussed", "you mentioned"],
       },
       reason: "Should acknowledge lack of context rather than inventing information",
@@ -801,6 +820,206 @@ const asideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ),
 ]
 
+// =============================================================================
+// Multilingual Cases (INV-54: no English-only semantic behaviour)
+// =============================================================================
+
+const multilingualCases: EvalCase<CompanionInput, CompanionExpected>[] = [
+  createCase(
+    "multilingual-swedish-001",
+    "Swedish: answers in the language the user wrote in",
+    {
+      message: "Vi har fastnat på om vi ska köra migreringen före eller efter releasen. Vad tänker du?",
+      streamType: "scratchpad",
+      trigger: "companion",
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        responseLanguage: "Swedish",
+      },
+      reason:
+        "A Swedish message gets a Swedish reply. The failure mode is a model that silently answers in English regardless of input.",
+    }
+  ),
+
+  createCase(
+    "multilingual-swedish-context-001",
+    "Swedish: recalls a decision recorded in English and answers in Swedish",
+    {
+      message: "Vad bestämde vi om retry-gränsen?",
+      streamType: "scratchpad",
+      trigger: "companion",
+      workspaceContext: [
+        {
+          streamType: "channel",
+          name: "backend",
+          conversationHistory: [
+            {
+              role: "user",
+              content:
+                "Decision on the payment worker: we cap retries at 5 with exponential backoff, then dead-letter. Anything beyond 5 was just amplifying the outage.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldContain: ["5"],
+        responseLanguage: "Swedish",
+      },
+      reason:
+        "Retrieval must not be language-gated: the decision was written in English, the question is Swedish, and the answer has to carry the number across.",
+    }
+  ),
+
+  createCase(
+    "multilingual-mixed-001",
+    "Mixed: a Swedish question about an English code snippet stays technical",
+    {
+      message:
+        "Kan du förklara vad den här gör?\n\n```ts\nconst debounced = (fn: () => void, ms: number) => {\n  let t: ReturnType<typeof setTimeout> | undefined\n  return () => {\n    clearTimeout(t)\n    t = setTimeout(fn, ms)\n  }\n}\n```",
+      streamType: "scratchpad",
+      trigger: "companion",
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        brief: true,
+        responseLanguage: "Swedish",
+      },
+      reason:
+        "Code is language-neutral; the explanation should follow the user's language without mangling the identifiers or refusing the mixed input.",
+    }
+  ),
+]
+
+// =============================================================================
+// Source Fidelity Cases (what the agent cites, and whether it cites at all)
+// =============================================================================
+
+const sourceFidelityCases: EvalCase<CompanionInput, CompanionExpected>[] = [
+  createCase(
+    "sources-current-fact-001",
+    "Sources: a checkable current fact is looked up, not recalled",
+    {
+      message:
+        "What's the current stable Node.js LTS version? I need the exact number for our Dockerfile, so don't guess.",
+      streamType: "scratchpad",
+      trigger: "companion",
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldUseWebSearch: true,
+      },
+      reason:
+        "An explicit don't-guess instruction on a fact that moves is the case where answering from weights is a real product failure. Measures instruction following and tool selection together.",
+    }
+  ),
+
+  createCase(
+    "sources-unknowable-001",
+    "Sources: declines to invent a number nothing in the workspace supports",
+    {
+      message: "What was our p99 checkout latency last week?",
+      streamType: "channel",
+      trigger: "companion",
+      streamContext: { name: "platform", description: "Platform team channel" },
+      conversationHistory: [],
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {},
+      reason:
+        "Nothing in the workspace or on the web can answer this, so the reply must say so rather than produce a latency figure. Graded by the judge: a unit word list cannot tell a fabricated number from a refusal that happens to mention milliseconds.",
+    }
+  ),
+]
+
+// =============================================================================
+// Restraint Cases (the companion failure mode users actually complain about)
+// =============================================================================
+//
+// Before these, exactly ONE of 36 cases expected silence, so
+// `response-decision-accuracy` could sit at 0.86 while telling us almost
+// nothing: a model that answers everything scores nearly as well as one with
+// judgement. Over-eagerness is the behaviour that makes a companion in a
+// scratchpad tiresome, and it is where models differ most.
+
+const restraintCases: EvalCase<CompanionInput, CompanionExpected>[] = [
+  createCase(
+    "restraint-thinking-aloud-001",
+    "Restraint: thinking aloud mid-task is not a request for help",
+    {
+      message: "ok so the migration runs, index is there... right, it was the connection pool all along.",
+      streamType: "scratchpad",
+      trigger: "companion",
+      conversationHistory: [
+        { role: "user", content: "Checkout is slow again. Going to look at the query plan." },
+        { role: "user", content: "Seq scan on orders. Adding the index now." },
+      ],
+    },
+    {
+      shouldRespond: false,
+      reason:
+        "The user is narrating their own debugging and just answered their own question. A reply here interrupts a working train of thought — the scratchpad equivalent of someone talking over you.",
+    }
+  ),
+
+  createCase(
+    "restraint-note-to-self-001",
+    "Restraint: a note to self is storage, not conversation",
+    {
+      message: "todo tomorrow: rotate the staging creds, chase the invoice, book the offsite room",
+      streamType: "scratchpad",
+      trigger: "companion",
+    },
+    {
+      shouldRespond: false,
+      reason:
+        "A scratchpad is where people park things. Acknowledging a todo list adds a message the user has to read and gains them nothing.",
+    }
+  ),
+
+  createCase(
+    "restraint-channel-chatter-001",
+    "Restraint: unaddressed channel chatter is not hers to answer",
+    {
+      message: "did anyone else get logged out of staging this morning?",
+      streamType: "channel",
+      trigger: "companion",
+      streamContext: { name: "platform", description: "Platform team channel", participants: ["Ana", "Bo"] },
+      conversationHistory: [
+        { role: "user", content: "morning" },
+        { role: "user", content: "coffee machine is broken again" },
+      ],
+    },
+    {
+      shouldRespond: false,
+      reason:
+        "A question to the room in a team channel, with no mention. Answering makes the companion a participant in every thread she can see.",
+    }
+  ),
+
+  createCase(
+    "restraint-still-typing-001",
+    "Restraint: an unfinished thought waits for the rest of it",
+    {
+      message: "so the plan for the rewrite is",
+      streamType: "scratchpad",
+      trigger: "companion",
+    },
+    {
+      shouldRespond: false,
+      reason:
+        "The message is cut off mid-sentence. Responding to a fragment either guesses at the rest or asks a question the user was already answering.",
+    }
+  ),
+]
+
 export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...scratchpadCases,
   ...temporalGroundingCases,
@@ -810,6 +1029,9 @@ export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...workspaceMemoryCases,
   ...edgeCases,
   ...consistencyCases,
+  ...multilingualCases,
+  ...sourceFidelityCases,
+  ...restraintCases,
   ...asideCases,
 ]
 
@@ -823,4 +1045,7 @@ export {
   workspaceMemoryCases,
   edgeCases,
   consistencyCases,
+  multilingualCases,
+  sourceFidelityCases,
+  restraintCases,
 }

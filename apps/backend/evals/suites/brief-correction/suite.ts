@@ -63,7 +63,8 @@ import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import type { Server } from "socket.io"
 import { parseMarkdown } from "@threa/prosemirror"
 import { AuthorTypes, StreamTypes } from "@threa/types"
-import { personaId as generatePersonaId, streamId as generateStreamId } from "../../../src/lib/id"
+import { streamId as generateStreamId } from "../../../src/lib/id"
+import { insertEvalPersona } from "../../framework/eval-persona"
 
 /** Fixed clock for the agent's temporal grounding so a run is reproducible. */
 const EVAL_CLOCK = new Date("2026-07-01T12:00:00Z")
@@ -102,26 +103,12 @@ async function setupTestData(
     throw new Error(`Could not resolve built-in companion persona ${ARIADNE_AGENT_ID} (see built-in-agents.ts)`)
   }
 
-  const testPersonaId = generatePersonaId()
-  await pool.query(
-    `
-    INSERT INTO personas (id, workspace_id, slug, name, description, avatar_emoji, system_prompt, model, enabled_tools, managed_by, status)
-    VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, 'system', 'active')
-    ON CONFLICT (slug, workspace_id) WHERE workspace_id IS NULL DO UPDATE SET
-      model = EXCLUDED.model,
-      system_prompt = EXCLUDED.system_prompt
-  `,
-    [
-      testPersonaId,
-      `eval-ariadne-${ulid().toLowerCase().slice(0, 8)}`,
-      "Ariadne (Eval)",
-      templatePersona.description,
-      templatePersona.avatarEmoji,
-      templatePersona.systemPrompt,
-      modelConfig.model,
-      templatePersona.enabledTools ?? ["send_message"],
-    ]
-  )
+  const testPersonaId = await insertEvalPersona(pool, {
+    template: templatePersona,
+    model: modelConfig.model,
+    slugPrefix: "eval-ariadne",
+    name: "Ariadne (Eval)",
+  })
 
   const testStreamId = generateStreamId()
   await StreamRepository.insert(pool, {

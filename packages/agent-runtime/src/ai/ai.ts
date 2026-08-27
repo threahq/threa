@@ -254,6 +254,15 @@ export interface GenerateTextWithToolsResult {
   text: string
   toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>
   response: { messages: ModelMessage[] }
+  /**
+   * What the call cost, when the caller passed `modelString` (the cost recorder
+   * needs it to parse the provider). Production accounts for this through
+   * `maybeRecordUsage` and never reads it here; it is returned so a caller that
+   * is NOT writing `ai_usage_records` — the eval runner — can still attribute
+   * tokens and cost to the model that ran. Absent on implementations that do
+   * not compute usage (the enclave AI).
+   */
+  usage?: UsageWithCost
 }
 
 export interface GenerateObjectOptions<T extends z.ZodType> {
@@ -1032,8 +1041,9 @@ export function createAI(config: AIConfig): AI {
       // LanguageModel instance does not carry the provider:model prefix the cost
       // recorder expects. Callers that want tracked usage must pass `modelString`
       // alongside `context` (agent loops do this via AgentRuntime).
+      let usage: UsageWithCost | undefined
       if (options.modelString) {
-        const usage = extractUsageWithCost(response)
+        usage = extractUsageWithCost(response)
         logger.debug(
           { usage, model: options.modelString, functionId: options.telemetry?.functionId },
           "AI generateTextWithTools completed with usage"
@@ -1056,6 +1066,7 @@ export function createAI(config: AIConfig): AI {
           input: tc.input,
         })),
         response: { messages: response.response.messages },
+        usage,
       }
     },
 

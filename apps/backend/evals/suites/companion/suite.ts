@@ -26,10 +26,11 @@
 
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { companionCases, type CompanionInput, type CompanionExpected } from "./cases"
-import type { CompanionOutput, CompanionMessage } from "./types"
+import type { CompanionOutput, CompanionMessage, CompanionTrajectoryStep } from "./types"
 import {
   shouldRespondEvaluator,
   contentContainsEvaluator,
+  contentContainsAnyEvaluator,
   contentNotContainsEvaluator,
   brevityEvaluator,
   asksQuestionEvaluator,
@@ -37,6 +38,7 @@ import {
   webSearchQueryEvaluator,
   createResponseQualityEvaluator,
   createToneEvaluator,
+  createLanguageEvaluator,
   accuracyEvaluator,
   responseDecisionAccuracyEvaluator,
   averageQualityEvaluator,
@@ -64,6 +66,7 @@ import { SearchService } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
 import { EmbeddingService, MemoExplorerService, MemoReranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
+import { UserRepository } from "../../../src/features/workspaces"
 import { MessageRepository } from "../../../src/features/messaging"
 import { createModelRegistry } from "@threa/agent-runtime"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
@@ -72,7 +75,8 @@ import type { Server } from "socket.io"
 import { parseMarkdown } from "@threa/prosemirror"
 import { AuthorTypes, ContextIntents, ContextRefKinds, StreamTypes } from "@threa/types"
 import { ulid } from "ulid"
-import { personaId as generatePersonaId, streamId as generateStreamId } from "../../../src/lib/id"
+import { streamId as generateStreamId, userId as generateUserId } from "../../../src/lib/id"
+import { insertEvalPersona } from "../../framework/eval-persona"
 
 /**
  * Get model configuration from context.
@@ -131,26 +135,12 @@ async function setupTestData(
   }
 
   // Create a test persona row with the resolved prompt and tools but the eval permutation model.
-  const testPersonaId = generatePersonaId()
-  await pool.query(
-    `
-    INSERT INTO personas (id, workspace_id, slug, name, description, avatar_emoji, system_prompt, model, enabled_tools, managed_by, status)
-    VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, 'system', 'active')
-    ON CONFLICT (slug, workspace_id) WHERE workspace_id IS NULL DO UPDATE SET
-      model = EXCLUDED.model,
-      system_prompt = EXCLUDED.system_prompt
-  `,
-    [
-      testPersonaId,
-      `eval-ariadne-${ulid().toLowerCase().slice(0, 8)}`,
-      "Ariadne (Eval)",
-      templatePersona.description,
-      templatePersona.avatarEmoji,
-      templatePersona.systemPrompt,
-      modelConfig.model,
-      templatePersona.enabledTools ?? ["send_message"],
-    ]
-  )
+  const testPersonaId = await insertEvalPersona(pool, {
+    template: templatePersona,
+    model: modelConfig.model,
+    slugPrefix: "eval-ariadne",
+    name: "Ariadne (Eval)",
+  })
 
   // Map stream type from eval input to database type
   const dbStreamType = mapStreamTypeToDbStreamType(input.streamType)
@@ -191,6 +181,26 @@ async function setupTestData(
 
   // Add user as stream member
   await StreamMemberRepository.insert(pool, testStreamId, ctx.userId)
+
+  // A DM is a two-party stream, and the agent's retrieval scope for one is the
+  // INTERSECTION of both participants' access (`computeAgentAccessSpec`), which
+  // throws on any other member count. A one-member DM is not a thin fixture, it
+  // is a stream production cannot serve — every DM case died there, before the
+  // model ran, and the suite reported it as "agent did not respond".
+  if (dbStreamType === StreamTypes.DM) {
+    const counterpartId = generateUserId()
+    const suffix = ulid().toLowerCase().slice(0, 8)
+    await UserRepository.insert(pool, {
+      id: counterpartId,
+      workspaceId: ctx.workspaceId,
+      workosUserId: `workos_eval_dm_${suffix}`,
+      email: `eval-dm-${suffix}@test.local`,
+      slug: `eval-dm-${suffix}`,
+      name: "Eval Counterpart",
+      role: "member",
+    })
+    await StreamMemberRepository.insert(pool, testStreamId, counterpartId)
+  }
 
   // Create event service for message creation
   const eventService = new EventService(pool)
@@ -428,8 +438,14 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     }
 
     const createThread: PersonaAgentDeps["createThread"] = async (params) => {
-      // For evals, we don't actually need threads - return a mock
       const threadId = generateStreamId()
+      // A thread carries no access of its own — it resolves through
+      // `root_stream_id` to the nearest non-thread ancestor (INV-62), exactly
+      // as StreamService does. Omitting it leaves the row rootless, and the
+      // turn's own write-authority check then reads the thread as
+      // inaccessible: every @mention case failed with "Stream not found"
+      // before the model was ever asked anything.
+      const parent = await StreamRepository.findByIdForWorkspace(ctx.pool, params.parentStreamId, params.workspaceId)
       await StreamRepository.insert(ctx.pool, {
         id: threadId,
         workspaceId: params.workspaceId,
@@ -438,8 +454,10 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
         companionMode: "off",
         createdBy: params.createdBy,
         parentStreamId: params.parentStreamId,
+        rootStreamId: parent?.rootStreamId ?? params.parentStreamId,
         parentAnchorId: params.parentAnchorId,
       })
+      await StreamMemberRepository.insert(ctx.pool, threadId, ctx.userId)
       createdThreadId = threadId
       return { id: threadId }
     }
@@ -523,21 +541,38 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       // Sources are stored in contentJson but we just need content for evals
     }))
 
-    const toolCalls =
-      runResult.sessionId == null
-        ? []
-        : (await AgentSessionRepository.findStepsBySession(ctx.pool, runResult.sessionId))
-            .filter((step) => step.stepType === "web_search")
-            .map((step) => ({
-              name: "web_search",
-              args: { query: typeof step.content === "string" ? step.content : undefined },
-            }))
+    // The session's steps are the turn's trajectory. Reading them once serves
+    // both the web-search evaluators (which need `toolCalls`) and the model
+    // comparison, which needs to see WHICH tools a model reached for and
+    // whether they completed — a provider that rejects a tool schema shows up
+    // here as `tool_error`, and nowhere else.
+    const steps =
+      runResult.sessionId == null ? [] : await AgentSessionRepository.findStepsBySession(ctx.pool, runResult.sessionId)
+
+    const toolCalls = steps
+      .filter((step) => step.stepType === "web_search" && step.completedAt !== null)
+      .map((step) => ({
+        name: "web_search",
+        args: { query: typeof step.content === "string" ? step.content : undefined },
+      }))
+
+    const trajectory: CompanionTrajectoryStep[] = steps.map((step) => ({
+      stepType: step.stepType,
+      completed: step.completedAt !== null,
+      sourceUrls: (step.sources ?? [])
+        .map((source) => source.url)
+        .filter((url): url is string => typeof url === "string"),
+      ...(step.stepType === "tool_error" || step.stepType === "tool_call"
+        ? { content: typeof step.content === "string" ? step.content.slice(0, 500) : null }
+        : {}),
+    }))
 
     return {
       input,
       messages,
       responded: messages.length > 0,
       toolCalls,
+      trajectory,
     }
   } catch (error) {
     return {
@@ -563,6 +598,7 @@ export const companionSuite: EvalSuite<CompanionInput, CompanionOutput, Companio
   evaluators: [
     shouldRespondEvaluator,
     contentContainsEvaluator,
+    contentContainsAnyEvaluator,
     contentNotContainsEvaluator,
     brevityEvaluator,
     asksQuestionEvaluator,
@@ -570,6 +606,7 @@ export const companionSuite: EvalSuite<CompanionInput, CompanionOutput, Companio
     webSearchQueryEvaluator,
     createResponseQualityEvaluator(),
     createToneEvaluator(),
+    createLanguageEvaluator(),
   ],
 
   runEvaluators: [accuracyEvaluator, responseDecisionAccuracyEvaluator, averageQualityEvaluator],

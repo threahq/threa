@@ -11,6 +11,7 @@
 
 import { parseArgs } from "util"
 import { runSuites, runFromConfigFile } from "./framework/runner"
+import { rescoreReport } from "./framework/rescore"
 import type { RunnerOptions } from "./framework/types"
 import { companionSuite } from "./suites/companion/suite"
 import { streamNamingSuite } from "./suites/stream-naming/suite"
@@ -58,12 +59,16 @@ Options:
   -s, --suite <name>    Run specific suite (${suiteNames})
   -c, --case <id>       Run specific case(s), comma-separated
   -m, --model <ids>     Override model(s), comma-separated for comparison
+  --judge <id>          Judge model for every LLM-as-judge evaluator. Use when a
+                        candidate under comparison shares the default judge's family.
   -t, --temperature <n> Override temperature (0.0-1.0)
   -p, --parallel <n>    Number of parallel workers (default: 1)
   -r, --runs <n>        Repeat every case n times, report per-case pass rates (default: 1)
   --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (0.0-1.0, default: 1.0)
   --json <file>         Write machine-readable results JSON to <file>
-  --config <file>       Run from YAML config file (ignores -s, -m flags)
+  --config <file>       Run from YAML config file (ignores -m; -s narrows it to one suite)
+  --rescore <file>      Re-run evaluators over a previous --json report's stored
+                        generations. No model turns, so no generation cost.
   -v, --verbose         Verbose output
 
 Examples:
@@ -113,6 +118,8 @@ async function main(): Promise<void> {
       suite: { type: "string", short: "s" },
       case: { type: "string", short: "c" },
       model: { type: "string", short: "m" },
+      judge: { type: "string" },
+      rescore: { type: "string" },
       temperature: { type: "string", short: "t" },
       parallel: { type: "string", short: "p" },
       runs: { type: "string", short: "r" },
@@ -141,6 +148,7 @@ async function main(): Promise<void> {
     suite: values.suite,
     cases: values.case?.split(",").map((c) => c.trim()),
     model: values.model,
+    judgeModel: values.judge,
     temperature: values.temperature ? parseFloat(values.temperature) : undefined,
     parallel: values.parallel ? parseInt(values.parallel, 10) : undefined,
     runs: values.runs ? parseInt(values.runs, 10) : undefined,
@@ -182,6 +190,18 @@ async function main(): Promise<void> {
   console.log("║              AI Evaluation Framework                      ║")
   console.log("╚══════════════════════════════════════════════════════════╝")
 
+  // Rescore mode: replay evaluators over a previous run's stored generations.
+  if (values.rescore) {
+    console.log(`\nRescoring stored generations from: ${values.rescore}`)
+    const results = await rescoreReport(values.rescore, allSuites as any, { judgeModel: options.judgeModel })
+    if (options.jsonOutput) {
+      await Bun.write(options.jsonOutput, JSON.stringify(toJsonReport(results), null, 2))
+      console.log(`\nResults written to ${options.jsonOutput}`)
+    }
+    const minPassRate = options.minPassRate ?? 1
+    process.exit(hasCaseRateFailures(results as any, minPassRate) ? 1 : 0)
+  }
+
   // Config file mode: run from YAML config
   if (values.config) {
     console.log(`\nRunning from config file: ${values.config}`)
@@ -190,6 +210,13 @@ async function main(): Promise<void> {
         verbose: options.verbose,
         parallel: options.parallel,
         runs: options.runs,
+        suite: options.suite,
+        judgeModel: options.judgeModel,
+        onSuiteResult: options.jsonOutput
+          ? async (partial) => {
+              await Bun.write(options.jsonOutput!, JSON.stringify(toJsonReport(partial), null, 2))
+            }
+          : undefined,
       })
 
       if (options.jsonOutput) {
@@ -290,19 +317,28 @@ interface CaseAggregate {
   caseName: string
   passes: number
   total: number
+  /** Per-run wall-clock for this case, one entry per run, in run order. */
+  durationsMs: number[]
   /** Failing evaluator details from the most recent failing run, for the JSON report. */
   lastFailure?: { name: string; details?: string }[]
 }
 
 function aggregateCases(p: {
-  cases: Array<{ caseId: string; caseName: string; error?: Error; evaluations: Array<any> }>
+  cases: Array<{ caseId: string; caseName: string; error?: Error; evaluations: Array<any>; durationMs?: number }>
 }): CaseAggregate[] {
   const byCase = new Map<string, CaseAggregate>()
   for (const c of p.cases) {
     const passed = !c.error && c.evaluations.every((e) => e.passed)
-    const agg = byCase.get(c.caseId) ?? { caseId: c.caseId, caseName: c.caseName, passes: 0, total: 0 }
+    const agg = byCase.get(c.caseId) ?? {
+      caseId: c.caseId,
+      caseName: c.caseName,
+      passes: 0,
+      total: 0,
+      durationsMs: [],
+    }
     agg.passes += passed ? 1 : 0
     agg.total += 1
+    if (typeof c.durationMs === "number") agg.durationsMs.push(c.durationMs)
     if (!passed) {
       agg.lastFailure = c.error
         ? [{ name: "error", details: c.error.message }]
@@ -338,8 +374,24 @@ export function toJsonReport(results: Array<any>) {
           passes: c.passes,
           runs: c.total,
           passRate: c.passes / c.total,
+          durationsMs: c.durationsMs,
           lastFailure: c.lastFailure ?? null,
           evaluations: p.cases.filter((item: any) => item.caseId === c.caseId).map((item: any) => item.evaluations),
+          trajectories: p.cases
+            .filter((item: any) => item.caseId === c.caseId)
+            .map((item: any) => item.output?.trajectory ?? null),
+          // The raw generations, kept so scoring can be replayed without
+          // paying to generate again. Changing an evaluator or a judge is a
+          // scoring change; re-running the models for it costs real money and
+          // answers a question the stored text already answers.
+          expectedOutput: p.cases.find((item: any) => item.caseId === c.caseId)?.expectedOutput ?? null,
+          // `?? null` here would hand rescoring a placeholder it cannot tell
+          // apart from a real generation. A case that errored has no output, so
+          // it is omitted rather than nulled.
+          outputs: p.cases
+            .filter((item: any) => item.caseId === c.caseId)
+            .map((item: any) => item.output)
+            .filter((output: unknown) => output !== undefined && output !== null),
         })),
       })),
     })),

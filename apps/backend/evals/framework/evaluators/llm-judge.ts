@@ -4,6 +4,7 @@
  * Uses an LLM to evaluate output quality against specified criteria.
  */
 
+import { EVAL_JUDGE_MODEL } from "../judge-config"
 import { z } from "zod"
 import type { Evaluator, EvalContext, EvaluatorResult } from "../types"
 
@@ -24,7 +25,7 @@ export interface LLMJudgeOptions {
   name?: string
   /** Criteria to evaluate against */
   criteria: string
-  /** Model to use for judging (default: "openrouter:openai/gpt-5.4-nano") */
+  /** Model to use for judging (default: {@link EVAL_JUDGE_MODEL}) */
   model?: string
   /** Pass threshold (default: 0.7) */
   passThreshold?: number
@@ -38,15 +39,14 @@ export interface LLMJudgeOptions {
  * @example
  * llmJudgeEvaluator({
  *   criteria: "The output preserves all factual information from the input",
- *   model: "openrouter:openai/gpt-5.4-nano",
+ *   model: EVAL_JUDGE_MODEL,
  * })
  */
 export function llmJudgeEvaluator<TOutput, TExpected>(options: LLMJudgeOptions): Evaluator<TOutput, TExpected> {
   const {
     name = "llm-judge",
     criteria,
-    // Use GPT-5.4-nano for reliable structured output through OpenRouter
-    model = "openrouter:openai/gpt-5.4-nano",
+    model = EVAL_JUDGE_MODEL,
     passThreshold = 0.7,
     context: additionalContext,
   } = options
@@ -82,7 +82,7 @@ Evaluate the actual output against the expected output and criteria.`
 
       try {
         const { value } = await ctx.ai.generateObject({
-          model,
+          model: ctx.judgeModel ?? model,
           schema: judgeResponseSchema,
           messages: [
             { role: "system", content: systemPrompt },

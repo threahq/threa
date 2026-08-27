@@ -25,6 +25,9 @@ bun run eval -- -s memo-classifier -r 3 --json results.json
 
 # Run from config file
 bun run eval -- --config evals/example-config.yaml
+
+# Run one suite's runs out of a multi-suite config
+bun run eval -- --config evals/companion-model-comparison.yaml -s persona-style
 ```
 
 ## Available Suites
@@ -78,6 +81,31 @@ Accepted flags mirror the CLI: `-s/--suite`, `-c/--case`, `-m/--model` (≤4),
 `-r/--runs` (≤12), `-p/--parallel` (≤8), `-t/--temperature`, `--min-pass-rate`.
 Values are allowlist-validated (`evals/slash/parse-args.ts`) and cost/latency
 are capped. Needs the `OPENROUTER_API_KEY` repo secret.
+
+## Rescore: scoring changes must not pay for generation again
+
+A `--json` report stores each case's raw generations, so changing an evaluator
+or swapping the judge — both _scoring_ changes — replays over stored text
+instead of re-running live agent turns:
+
+```bash
+bun run eval -- --config evals/companion-model-comparison.yaml -r 3 --json run.json
+bun run eval -- --rescore run.json --json rescored.json                  # same judge, new evaluators
+bun run eval -- --rescore run.json --judge openrouter:google/gemini-3.5-flash-lite --json cross.json
+```
+
+This exists because the August 2026 Ariadne comparison re-ran 200+ live turns
+twice to re-grade text it already had, and then hit the OpenRouter key's weekly
+limit mid-run — which silently invalidated a whole arm, since a rejected call
+looks exactly like a model that chose not to answer.
+
+Rescore reports only what _rescoring_ cost (judge calls); the generation cost
+stays attributed to the original run. It refuses a report with no stored
+outputs, and an evaluator that reaches for the database fails loudly rather
+than scoring against nothing.
+
+**It cannot replace a live run** when the prompt, model, temperature, case set
+or task code changed. Those are new generations.
 
 ## Variance: tune against tallies, not single runs
 
@@ -154,6 +182,15 @@ suites:
       companion:
         model: openrouter:openai/gpt-5.4-nano
 ```
+
+### Narrowing a config run
+
+`-s` filters a config file's runs to one suite (`-r`, `--min-pass-rate` and
+`--json` already applied in config mode). A comparison config often pairs suites
+with different prerequisites — the `companion` half needs `TAVILY_API_KEY`, the
+`persona-style` half does not — so running one half must not mean editing the
+file that documents the comparison. An `-s` naming a suite the config has no
+runs for is an error, not an empty run.
 
 ### Component Keys by Suite
 

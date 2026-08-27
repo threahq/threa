@@ -6,12 +6,13 @@
  * single source for the suite's gates.
  */
 
+import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
 import { COMPANION_MODEL_ID, COMPANION_TEMPERATURE } from "../../../src/features/agents"
 
 export { COMPANION_MODEL_ID, COMPANION_TEMPERATURE }
 
 /** Judge model for the semantic brief-content checks — same as the companion/memorizer judges. */
-export const BRIEF_JUDGE_MODEL = "openrouter:openai/gpt-5.4-nano"
+export const BRIEF_JUDGE_MODEL = EVAL_JUDGE_MODEL
 
 /**
  * The suite's hard floor (roadmap 4.4): the fraction of chitchat conversations
