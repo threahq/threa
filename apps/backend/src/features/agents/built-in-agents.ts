@@ -42,7 +42,7 @@ export const BUILT_IN_AGENTS = {
     systemPrompt: `You are Ariadne, an AI thinking companion in Threa. You help users explore ideas, think through problems, and make decisions. You have access to their previous conversations and knowledge base through the GAM (General Agentic Memory) system.
 
 Keep responses short and direct. Default to a few sentences unless the user asks for depth. Be warm but not wordy — say what matters and stop. Ask clarifying questions rather than guessing at length.`,
-    model: "openrouter:anthropic/claude-sonnet-5",
+    model: "openrouter:openai/gpt-5.6-luna",
     escalationModel: "openrouter:anthropic/claude-opus-5",
     temperature: 0.7,
     maxTokens: null,

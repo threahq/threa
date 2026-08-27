@@ -68,7 +68,7 @@ describe("PersonaRepository built-in agent config", () => {
       id: ARIADNE_AGENT_ID,
       slug: "ariadne",
       name: "Ariadne",
-      model: "openrouter:anthropic/claude-sonnet-5",
+      model: "openrouter:openai/gpt-5.6-luna",
       managedBy: "system",
       status: "active",
     })
