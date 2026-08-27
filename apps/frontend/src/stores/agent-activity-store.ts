@@ -18,6 +18,10 @@ import { deriveAgentSessionLifecycle, type AgentSessionLifecycle } from "@/lib/a
 
 // workspaceId -> sessionId -> session
 const workspaces = new Map<string, Map<string, ActiveAgentSession>>()
+// Terminal events are final for a session id. Keep enough recent ids to fence
+// in-flight snapshots and duplicate delivery without retaining page-lifetime history.
+const TERMINAL_FENCE_LIMIT = 1024
+const terminalSessions = new Map<string, Set<string>>()
 
 // `${workspaceId}:${streamId}` -> listeners subscribed to that row
 const keyListeners = new Map<string, Set<() => void>>()
@@ -80,6 +84,23 @@ function notifySession(workspaceId: string, sessionId: string): void {
   for (const listener of sessionListeners.get(subKey(workspaceId, sessionId)) ?? []) listener()
 }
 
+function isTerminalSession(workspaceId: string, sessionId: string): boolean {
+  return terminalSessions.get(workspaceId)?.has(sessionId) ?? false
+}
+
+function markTerminalSession(workspaceId: string, sessionId: string): void {
+  let sessions = terminalSessions.get(workspaceId)
+  if (!sessions) {
+    sessions = new Set()
+    terminalSessions.set(workspaceId, sessions)
+  }
+  sessions.delete(sessionId)
+  sessions.add(sessionId)
+  if (sessions.size <= TERMINAL_FENCE_LIMIT) return
+  const oldest = sessions.values().next().value
+  if (oldest !== undefined) sessions.delete(oldest)
+}
+
 /** Recompute the cached snapshot for one stream key and notify iff its content changed. */
 function recomputeKey(workspaceId: string, streamId: string): void {
   const key = subKey(workspaceId, streamId)
@@ -114,6 +135,7 @@ export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSess
   const next = new Map<string, ActiveAgentSession>()
   const affectedSessions = new Set<string>(previous?.keys() ?? [])
   for (const session of sessions) {
+    if (isTerminalSession(workspaceId, session.sessionId)) continue
     const existing = previous?.get(session.sessionId)
     next.set(session.sessionId, {
       ...session,
@@ -138,6 +160,7 @@ export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSess
  * already delivered.
  */
 export function upsertAgentSession(workspaceId: string, session: ActiveAgentSession): void {
+  if (isTerminalSession(workspaceId, session.sessionId)) return
   let ws = workspaces.get(workspaceId)
   if (!ws) {
     ws = new Map()
@@ -198,6 +221,7 @@ export function updateAgentSessionProgress(
 
 /** Remove a session by id on any terminal signal. */
 export function removeAgentSession(workspaceId: string, sessionId: string): void {
+  markTerminalSession(workspaceId, sessionId)
   const ws = workspaces.get(workspaceId)
   const existing = ws?.get(sessionId)
   if (!ws || !existing) return
@@ -363,6 +387,7 @@ export function useAgentSessionActivities(
 /** Test-only: wipe all state between cases. */
 export function __resetAgentActivityStore(): void {
   workspaces.clear()
+  terminalSessions.clear()
   keyListeners.clear()
   keySnapshots.clear()
   sessionListeners.clear()

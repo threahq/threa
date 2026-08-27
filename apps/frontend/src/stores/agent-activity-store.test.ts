@@ -8,6 +8,7 @@ import {
   getAgentActivityForStream,
   getAgentSession,
   updateAgentSessionProgress,
+  reconcileAgentActivityFromStreamEvents,
   useAgentSessionActivities,
   useAgentSessionActivity,
   __resetAgentActivityStore,
@@ -80,6 +81,33 @@ describe("agent-activity-store", () => {
   it("removes by session id regardless of root (terminal signal)", () => {
     seedAgentActivity(WS, [session({ sessionId: "s1", rootStreamId: "stream_a" })])
     removeAgentSession(WS, "s1")
+    expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
+  })
+
+  it("does not resurrect a terminal session from a stale started event or seed", () => {
+    upsertAgentSession(WS, session({ sessionId: "s1" }))
+    removeAgentSession(WS, "s1")
+
+    reconcileAgentActivityFromStreamEvents(WS, "stream_a", "stream_a", [
+      {
+        id: "evt_started",
+        streamId: "stream_a",
+        sequence: "1",
+        eventType: "agent_session:started",
+        payload: {
+          sessionId: "s1",
+          personaId: "persona_1",
+          personaName: "Ada",
+          triggerMessageId: "msg_1",
+          startedAt: "2026-06-10T10:00:00.000Z",
+        },
+        actorId: "persona_1",
+        actorType: "persona",
+        createdAt: "2026-06-10T10:00:00.000Z",
+      },
+    ])
+    seedAgentActivity(WS, [session({ sessionId: "s1" })])
+
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
   })
 
