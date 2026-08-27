@@ -18,6 +18,7 @@ export interface WorkspaceService {
   listRegions: typeof workspacesApi.listRegions
   get: typeof workspacesApi.get
   bootstrap: typeof workspacesApi.bootstrap
+  activeAgentSessions: typeof workspacesApi.activeAgentSessions
   create: typeof workspacesApi.create
   markAllAsRead: typeof workspacesApi.markAllAsRead
   acceptInvitation: typeof workspacesApi.acceptInvitation

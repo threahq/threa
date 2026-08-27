@@ -642,6 +642,7 @@ export type {
   MarkAllAsReadResponse,
   MarkAsReadResponse,
   ActiveAgentSession,
+  ActiveAgentSessionsResponse,
   ActiveCall,
   StreamActiveCall,
   // Invitations

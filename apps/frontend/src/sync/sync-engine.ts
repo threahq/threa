@@ -36,7 +36,7 @@ import { scheduledKeys } from "@/hooks/use-scheduled"
 import { activityKeys } from "@/hooks/use-activity"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { ActiveAgentSessionsResponse, WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
   workspaceId: string
@@ -44,6 +44,7 @@ interface SyncEngineDeps {
   queryClient: QueryClient
   workspaceService: {
     bootstrap: (workspaceId: string, opts?: { fresh?: boolean }) => Promise<WorkspaceBootstrap>
+    activeAgentSessions: (workspaceId: string) => Promise<ActiveAgentSessionsResponse>
   }
   streamService: {
     bootstrap: (
@@ -688,10 +689,10 @@ export class SyncEngine {
 
   private async bootstrapWorkspace(_isReconnect: boolean, forceFull = false): Promise<void> {
     // Reconnect slimming: catch-up replay (which runs right after this)
-    // re-seeds every workspace-scoped projection through the gate-registered
+    // re-seeds durable workspace projections through the gate-registered
     // handlers, so re-fetching the full workspace snapshot on every reconnect
-    // is redundant. Skip it and instead do only what catch-up can't: the
-    // per-stream message deltas (the per-stream cursor mechanism, unchanged).
+    // is redundant. Skip it and instead do only what catch-up can't: per-stream
+    // message deltas and the current agent-presence snapshot.
     // `forceFull` (below-floor fallback) and the first connect / no-syncService
     // cases keep the full snapshot. `eventGate` is present iff a sync service is
     // wired, so it stands in for "catch-up will run".
@@ -943,19 +944,17 @@ export class SyncEngine {
    * - Re-subscribing member rooms from the cached membership list, so
    *   `stream:activity` keeps flowing onto the sidebar. Membership added/removed
    *   while offline is replayed by catch-up (`stream:member_*` → subscribe).
+   * - Replacing ephemeral agent presence from an access-filtered server read.
+   *   The sync cursor cannot prove a session absent when its terminal event was
+   *   already applied before this connection.
    *
    * The workspace gate is paused (begun in `onConnect`) for the whole window,
    * so the IDB writes here land before catch-up applies its delta and before
    * buffered live events splice in on top — newest state wins, no regression.
    */
   private async slimReconnectBootstrap(): Promise<void> {
-    const { workspaceId, syncStatus } = this.deps
+    const { workspaceId, syncStatus, workspaceService } = this.deps
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
-
-    // Presence is not durable client state. Drop the previous connection's set;
-    // each member/visible stream join below emits DB-derived progress for sessions
-    // that are still running.
-    seedAgentActivity(workspaceId, [])
 
     // Mirror the full path's swallow-everything discipline. This runs inside
     // the awaited `runBootstrap` in onConnect; if it rejected, the await would
@@ -977,6 +976,10 @@ export class SyncEngine {
 
       await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
       if (this.isDestroyed) return
+
+      const { activeAgentSessions } = await workspaceService.activeAgentSessions(workspaceId)
+      if (this.isDestroyed) return
+      seedAgentActivity(workspaceId, activeAgentSessions)
 
       this.lastWorkspaceError = null
       syncStatus.set(`workspace:${workspaceId}`, "synced")

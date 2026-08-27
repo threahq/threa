@@ -491,6 +491,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("workspace.bootstrap", "read"),
     workspace.bootstrap
   )
+  app.get(
+    "/api/workspaces/:workspaceId/agent-activity",
+    ...authed,
+    audit("workspace.active_agent_sessions", "read"),
+    workspace.activeAgentSessions
+  )
   app.get("/api/workspaces/:workspaceId/users", ...authed, audit("workspace.list_users", "read"), workspace.getUsers)
   app.get("/api/workspaces/:workspaceId/emojis", ...authed, audit("emoji.list", "read"), emoji.list)
 

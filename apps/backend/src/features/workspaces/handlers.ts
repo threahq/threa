@@ -18,10 +18,10 @@ import type { CommandAvailabilityService } from "../commands"
 import type { AvatarService } from "./avatar-service"
 import type { LabelService, LabelAssignmentService } from "../labels"
 import { getEmojiList } from "../emoji"
-import { getEffectiveLevel } from "../streams"
+import { getEffectiveLevel, listAccessibleStreamIds, StreamRepository } from "../streams"
 import { SyncLogRepository } from "../sync"
 import { BotRepository, serializeBot } from "../public-api"
-import { AgentSessionRepository } from "../agents"
+import { AgentSessionRepository, PersonaRepository } from "../agents"
 import { projectActiveAgentSessions } from "./active-agent-sessions"
 import { displayNameFromWorkos, type WorkosOrgService } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
@@ -150,6 +150,31 @@ export function createWorkspaceHandlers({
       const workspaceId = req.workspaceId!
       const users = await workspaceService.getUsers(workspaceId)
       res.json({ users })
+    },
+
+    async activeAgentSessions(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const runningSessions = await AgentSessionRepository.listRunningByWorkspace(pool, workspaceId)
+      const rootIds = [...new Set(runningSessions.map((session) => session.rootStreamId))]
+      const agentIds = [...new Set(runningSessions.map((session) => session.personaId))]
+
+      const [accessibleRootIds, roots, personas, bots] = await Promise.all([
+        listAccessibleStreamIds(pool, workspaceId, userId, rootIds),
+        StreamRepository.findByIdsInWorkspace(pool, workspaceId, rootIds),
+        PersonaRepository.findByIds(pool, agentIds, workspaceId),
+        BotRepository.findByIds(pool, workspaceId, agentIds),
+      ])
+      const sidebarRootIds = new Set(
+        roots
+          .filter((root) => root.archivedAt === null && root.purpose === null && accessibleRootIds.has(root.id))
+          .map((root) => root.id)
+      )
+      const agentNameById = new Map<string, string>()
+      for (const persona of personas) agentNameById.set(persona.id, persona.name)
+      for (const bot of bots) agentNameById.set(bot.id, bot.name)
+
+      res.json({ activeAgentSessions: projectActiveAgentSessions(runningSessions, sidebarRootIds, agentNameById) })
     },
 
     async bootstrap(req: Request, res: Response) {

@@ -5,10 +5,9 @@ import type { ActiveAgentSession } from "@threa/types"
  * Ephemeral, non-persisted store of the agent sessions running RIGHT NOW,
  * keyed by their exact stream so a stream row can paint an "agent working"
  * state without inheriting activity from a parent or child. A full workspace
- * bootstrap seeds `activeAgentSessions`. A normal slim reconnect first clears
- * the old connection's set, then each rejoined stream emits DB-derived progress
- * for sessions that are still running (INV-53). Live starts/ends fold in from
- * the `agent_session:*` room events (see workspace-sync). Removal is by session id
+ * bootstrap seeds `activeAgentSessions`. A normal slim reconnect replaces the
+ * set from the access-filtered agent-activity endpoint (INV-53). Live starts/ends
+ * fold in from the `agent_session:*` room events (see workspace-sync). Removal is by session id
  * (stream-agnostic) so a terminal event always clears reliably regardless of
  * which room delivered it.
  *

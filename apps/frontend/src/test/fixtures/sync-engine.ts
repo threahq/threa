@@ -8,6 +8,7 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
+  type ActiveAgentSessionsResponse,
 } from "@threa/types"
 
 type EventHandler = (...args: unknown[]) => void
@@ -208,12 +209,13 @@ export function makeStreamBootstrap(streamId = "stream_1", sequence = "2"): Stre
 
 export function makeDeps() {
   const workspaceBootstrap = vi.fn(async () => makeWorkspaceBootstrap())
+  const activeAgentSessions = vi.fn(async (): Promise<ActiveAgentSessionsResponse> => ({ activeAgentSessions: [] }))
   const streamBootstrap = vi.fn(async (_workspaceId: string, streamId: string) => makeStreamBootstrap(streamId))
   return {
     workspaceId: "ws_1",
     syncStatus: new SyncStatusStore(),
     queryClient: new QueryClient(),
-    workspaceService: { bootstrap: workspaceBootstrap },
+    workspaceService: { bootstrap: workspaceBootstrap, activeAgentSessions },
     streamService: { bootstrap: streamBootstrap },
   }
 }
