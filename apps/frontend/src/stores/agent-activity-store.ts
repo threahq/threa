@@ -219,15 +219,20 @@ export function updateAgentSessionProgress(
   notifySession(workspaceId, sessionId)
 }
 
-/** Remove a session by id on any terminal signal. */
-export function removeAgentSession(workspaceId: string, sessionId: string): void {
-  markTerminalSession(workspaceId, sessionId)
+/** Stop the live indicator without fencing a retry that reuses the session id. */
+export function clearAgentSession(workspaceId: string, sessionId: string): void {
   const ws = workspaces.get(workspaceId)
   const existing = ws?.get(sessionId)
   if (!ws || !existing) return
   ws.delete(sessionId)
   recomputeKey(workspaceId, existing.streamId)
   notifySession(workspaceId, sessionId)
+}
+
+/** Remove a session by id on any terminal signal. */
+export function removeAgentSession(workspaceId: string, sessionId: string): void {
+  markTerminalSession(workspaceId, sessionId)
+  clearAgentSession(workspaceId, sessionId)
 }
 
 export function reconcileAgentActivityFromStreamEvents(

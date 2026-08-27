@@ -4274,6 +4274,32 @@ describe("agent-activity sidebar socket handlers", () => {
     cleanup()
   })
 
+  it("allows a retry to resume after its live activity ends", async () => {
+    await putStream("stream_ch", null)
+    await putStream("stream_thr", "stream_ch")
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_thr",
+      event: { payload: { sessionId: "sess_retry", personaName: "Ariadne", startedAt: "2026-07-16T00:00:00.000Z" } },
+    })
+    await emitAsync("agent_session:activity_ended", { sessionId: "sess_retry", triggerMessageId: "msg_1" })
+    expect(getAgentActivityForStream("ws_1", "stream_thr")).toEqual([])
+
+    await emitAsync("agent_session:activity_started", {
+      sessionId: "sess_retry",
+      triggerMessageId: "msg_1",
+      personaName: "Ariadne",
+      threadStreamId: "stream_thr",
+    })
+    expect(getAgentActivityForStream("ws_1", "stream_thr").map((session) => session.sessionId)).toEqual(["sess_retry"])
+
+    cleanup()
+  })
+
   it("keeps a thread session on the thread and honors the cross-workspace guard", async () => {
     await putStream("stream_ch", null)
     await putStream("stream_thr", "stream_ch")

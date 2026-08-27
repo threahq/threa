@@ -4,6 +4,7 @@ import type { ActiveAgentSession } from "@threa/types"
 import {
   seedAgentActivity,
   upsertAgentSession,
+  clearAgentSession,
   removeAgentSession,
   getAgentActivityForStream,
   getAgentSession,
@@ -82,6 +83,14 @@ describe("agent-activity-store", () => {
     seedAgentActivity(WS, [session({ sessionId: "s1", rootStreamId: "stream_a" })])
     removeAgentSession(WS, "s1")
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
+  })
+
+  it("allows a retry to resume after its non-terminal activity ends", () => {
+    upsertAgentSession(WS, session({ sessionId: "s1" }))
+    clearAgentSession(WS, "s1")
+    upsertAgentSession(WS, session({ sessionId: "s1", stepCount: 2 }))
+
+    expect(getAgentSession(WS, "s1")).toMatchObject({ sessionId: "s1", stepCount: 2 })
   })
 
   it("does not resurrect a terminal session from a stale started event or seed", () => {

@@ -27,6 +27,7 @@ import { getCachedWorkspaceTables, seedWorkspaceCache, upsertWorkspaceUserInCach
 import {
   seedAgentActivity,
   upsertAgentSession,
+  clearAgentSession,
   removeAgentSession,
   hasAgentSession,
   updateAgentSessionProgress,
@@ -1458,7 +1459,7 @@ export function registerWorkspaceSocketHandlers(
   const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) =>
     enqueueAgentActivity(() => {
       appliedSubstepAt.delete(payload.sessionId)
-      removeAgentSession(workspaceId, payload.sessionId)
+      clearAgentSession(workspaceId, payload.sessionId)
     })
 
   // agent_session:completed/failed reach this socket in two shapes: the
