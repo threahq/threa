@@ -224,9 +224,8 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
 
 /**
  * Stamp message rows that switch conversation with a {@link ConversationRevival}
- * for the always-on provenance chip (board-view-design.md §"Conversations as
- * soft threads", mechanism A) — no dependence on the conversation overlay being
- * painted.
+ * for the always-on provenance chip (mechanism A) — no dependence on the
+ * conversation overlay being painted.
  *
  * Two different trigger rules for two different mechanisms (Kris's call,
  * superseding an earlier server-timestamped design):
@@ -280,14 +279,14 @@ export function annotateConversationRevivals(
     const messageId = payload?.messageId
     if (!messageId) return item
     // A message that DECLARED its conversation at send time carries the id on its
-    // payload (board-view-design.md Mechanism C) — prefer it so the chip renders
+    // payload (Mechanism C) — prefer it so the chip renders
     // the instant the message lands, without waiting for the async membership
     // list. Falls back to the async `membership` map for classifier-assigned
     // messages (Mechanism A). The topic label still resolves from
     // `conversationsById` (loaded per-stream); a declared-but-not-yet-listed
     // conversation shows the generic label until the list catches up.
     //
-    // Fallback exception (resolved decision 3, board-view-design.md): a later
+    // Fallback exception: a later
     // extraction pass can merge/retire the declared conversation into an empty
     // `resolved` shell — still present in `conversationsById` (the read query
     // returns it) but holding no messages. Deep-linking that shell points at a

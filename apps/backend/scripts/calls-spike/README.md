@@ -1,10 +1,9 @@
 # calls-spike — M0 hostile matrix (PR 0.3, throwaway harness)
 
 De-risk harness for voice/video calls. Proves the 0.1/0.2 control-plane
-foundations survive hostility, and pins Cloudflare's API. **Findings live in
-`apps/backend/src/features/calls/SPIKE_FINDINGS.md`** — that doc is the deliverable;
-this code is throwaway-quality by design (harness + scripts only, nothing under
-`src/`).
+foundations survive hostility, and pins Cloudflare's API. **The answers live in
+`apps/backend/src/features/calls/CLOUDFLARE_API.md`**, per question; this code is
+throwaway-quality by design (harness + scripts only, nothing under `src/`).
 
 ## Two halves
 
@@ -15,6 +14,10 @@ this code is throwaway-quality by design (harness + scripts only, nothing under
 - **Half B — live CF** (`live-cf/cf-*.ts`). Answers `CLOUDFLARE_API.md`'s 7
   questions against the real CF API. Gated on `CLOUDFLARE_REALTIME_APP_ID/SECRET`
   (shared `cf-env.ts`); fails fast with a clear message when absent.
+
+Both halves have run: Half A 5/5 green, Half B against a real CF dev app on
+2026-07-19 (CF-2 confirmed two-way media through our own proxy). What Half B
+settled, and what it left open, is recorded per question in `CLOUDFLARE_API.md`.
 
 ## Matrices
 

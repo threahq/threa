@@ -15,11 +15,12 @@ Default mode: **minimal patch** — the smallest change that still fully solves 
 
 - **PR descriptions:** why, material changes/decisions, verification, residual risk. Target 150–300 words; exceed only for facts needed to review safely. No file inventory. Collapse tests/reviews into one verification line unless a failure or caveat needs detail.
 - **Copy tasks:** when the task's deliverable creates, revises, or audits user-facing product, marketing, documentation, UI, or PR copy, apply the `deslopify` skill. Preserve the writer's voice; remove rhetorical templates, hype, vague importance claims, decorative formatting, and robotic symmetry. Never infer AI authorship from style patterns.
-- **Comments:** default none (INV-25). A comment earns its place only by stating what the code cannot — an ordering/concurrency constraint, a load-bearing "looks wrong but isn't", why a bound is that value — and only if still true six months from now. Comments never dwarf the code: a long explanation of a 2-line fix belongs in the PR description, not the file. Delete on sight: change narration, restatement, section headers, speculative TODOs (INV-36).
+- **Written artifacts:** the repo holds code, tests, and the few `docs/` files carrying what code cannot — the service map, the vocabulary, external facts, runbooks. Everything else a task produces — plan, spec, design note, exploration, audit, postmortem — lives in the PR description or on Seer, and what it decided lands in the code that implements it. Commit a document only when the developer asks for one.
+- **Comments:** default none (INV-25). A comment earns its place only by stating what the code cannot — an ordering/concurrency constraint, a load-bearing "looks wrong but isn't", why a bound is that value — and only if still true six months from now. Comments never dwarf the code: a long explanation of a 2-line fix belongs in the PR description, not the file. A comment states its rule outright — deferring to a document (`see X.md § Y`) leaves a claim nobody can check against the code it sits in. Delete on sight: change narration, restatement, section headers, speculative TODOs (INV-36).
 
 ## Search Before Asking
 
-Factual repo questions are yours to answer: Grep/Glob/Agent, starting from `docs/system-overview.md`, `docs/architecture.md`, `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder. Before claiming something absent, sweep `apps/*/src/{components,pages,features,stores,lib}` with contains-match globs (`*settings*`, not `settings*`). Ask only when the search came back empty, it's a preference code can't reveal, or the action is destructive — and name what you searched.
+Factual repo questions are yours to answer: Grep/Glob/Agent, starting from `docs/system-overview.md` and `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder. Before claiming something absent, sweep `apps/*/src/{components,pages,features,stores,lib}` with contains-match globs (`*settings*`, not `settings*`). Ask only when the search came back empty, it's a preference code can't reveal, or the action is destructive — and name what you searched.
 
 "Always X" / "never Y" rules (INV-*, skill rules) are binding — re-read them before acting in their domain. Read a module and its neighbors before editing; features colocate (INV-51), so the answer is usually one directory away. Apply an invariant's intent, not its surface shape: INV-20 means "write paths tolerate concurrent callers", not "sprinkle ON CONFLICT".
 
@@ -135,7 +136,7 @@ Race-safe writes:
 - Only current-gen models from `docs/model-reference.md` (INV-16). All AI calls through `createAI`, never raw SDK (INV-28), always with telemetry metadata (INV-19).
 - AI component config lives beside the component in `config.ts`, shared by prod and evals (INV-44); evals call production entry points (INV-45).
 - No language-specific heuristics or English-only literals/regexes for semantic decisions — model-based decisions for language-dependent behavior (INV-54).
-- Companion sessions are minutes-bounded (INV-65). No long-horizon in-session agent work — anything longer becomes a scheduled follow-up (`agent_follow_ups`, `schedule_follow_up` tool) or a delegation to the user's local agent (`delegated_tasks`, `delegate_task` tool, `features/delegations/`): Threa compiles the hand-off brief, the local agent executes with the user's credentials, completion posts back and GAM memorizes it. No tools/prompts that encourage hours-long in-session work; see `docs/plans/ariadne-collaborator-roadmap.md` Phase 5.
+- Companion sessions are minutes-bounded (INV-65). No long-horizon in-session agent work — anything longer becomes a scheduled follow-up (`agent_follow_ups`, `schedule_follow_up` tool) or a delegation to the user's local agent (`delegated_tasks`, `delegate_task` tool, `features/delegations/`): Threa compiles the hand-off brief, the local agent executes with the user's credentials, completion posts back and GAM memorizes it. No tools/prompts that encourage hours-long in-session work.
 - Memory capture is visible in situ (INV-69). The transaction inserting GAM memo rows also appends a `memos:captured` broadcast timeline event to the source stream with per-memo provenance (`memoId`, `title`, `knowledgeType`, `sourceMessageIds`), rendering and deep-linking to the memory explorer (`?memo=`) without extra fetches. Never silent. Extraction is debounced per stream — the payload's source ids, not event position, are the authoritative link. Event type is in `TIMELINE_BROADCAST_EVENT_TYPES`, so it takes a dense broadcast slot and contiguity (INV-61) covers it.
 
 ### Frontend & UX
@@ -178,7 +179,6 @@ New invariant: document here with the next id, add enforcing tests, reference it
 
 - Handlers validate input, check auth, delegate, format responses; services orchestrate logic and transaction boundaries; repositories are pure data access — first arg a `Querier` (`Pool` | `PoolClient`), map snake_case ↔ camelCase.
 - Factory pattern for handler/middleware DI. Single query: `pool`; multiple related reads: `withClient`; multi-op writes: `withTransaction`. Two pools: main (30) + listen (12) so LISTEN can't starve transactions. Handlers throw `HttpError`; middleware formats.
-- Deeper guides: `docs/backend/`.
 
 ## Frontend Patterns
 

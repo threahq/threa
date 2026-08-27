@@ -20,8 +20,8 @@ export const CONVERSATION_WINDOW_TOTAL = 50
 
 /**
  * Conversation resolver: materializes a conversation's PRIMARY member messages
- * — flattened-chronological across its root stream and any threads (one root,
- * see board-view-design.md) — into the inputs manifest + renderable messages.
+ * — flattened-chronological across its root stream and any threads (one root)
+ * — into the inputs manifest + renderable messages.
  *
  * Unlike the thread resolver (which windows a whole stream), this resolves the
  * conversation's specific `message_ids`, so Ariadne sees the topic and none of

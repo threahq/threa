@@ -256,7 +256,7 @@ export function createWorkspaceHandlers({
         messageCounts[streamId] = counts.totalCount
       }
 
-      // Sparse read overlay (docs/sparse-read-overlay-design.md): the per-stream
+      // Sparse read overlay: the per-stream
       // set of individually-read messages above each watermark. `unreadCounts`
       // above is already net of the overlay; the client also needs the raw ids
       // (to render row read state) and each watermark's sequence (to place the

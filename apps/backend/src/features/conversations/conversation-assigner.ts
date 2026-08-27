@@ -28,7 +28,7 @@ export const PROVISIONAL_ATTACH_WINDOW_MINUTES = 30
  *    An authored post is a new topic boundary even inside a scratchpad, so this
  *    always creates rather than joining the stream's existing conversation.
  *  - `existing`: attach the message to the named conversation. A conversation is
- *    confined to ONE root stream (board-view-design.md), so the target must share
+ *    confined to ONE root stream, so the target must share
  *    the message's effective root — a reply may join it from the root or any of
  *    its threads, never across roots. A stale/foreign/cross-root id is rejected
  *    (400) rather than silently mis-assigned.
@@ -81,7 +81,7 @@ export const conversationAssigner: ConversationAssigner = {
     // One-root invariant: the target conversation's effective root must equal the
     // message's. Same stream (the common case) trivially passes; a cross-stream
     // attach from the root or one of its threads passes; a cross-root attach is
-    // rejected (board-view-design.md "Boundary extraction needs no tightening").
+    // rejected.
     if (target.streamId !== message.streamId) {
       const [targetRoot, messageRoot] = await Promise.all([
         effectiveRootId(client, target.streamId),
@@ -237,7 +237,7 @@ async function mintOrAttachSubtopicConversation(
 }
 
 /**
- * Convert-to-thread, corrected (board-view-design.md): attach the board reply
+ * Convert-to-thread, corrected: attach the board reply
  * (now in the thread stream) to its SOURCE conversation as a cross-stream member
  * rather than minting a new conversation and retiring the source. Keeps one
  * conversation spanning the root + thread (one root), so the board card renders
@@ -286,7 +286,7 @@ async function attachThreadReplyToSource(
 
 /**
  * The stream's effective access root: a top-level stream is its own root, a
- * thread defers to `root_stream_id` (board-view-design.md / INV-62). Falls back
+ * thread defers to `root_stream_id` (INV-62). Falls back
  * to the stream's own id when the row is missing (FK-less schema, INV-1).
  * Shared with the reassign path (`ConversationService.reassignMessage`), whose
  * one-root rule must match the assigner's `existing` directive exactly.

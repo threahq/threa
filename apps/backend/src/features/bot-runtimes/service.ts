@@ -413,8 +413,8 @@ export class BotRuntimeService {
       acceptingInvocations: true,
       // Bootstrap capabilities until the runtime's own heartbeat lands. Pi gets a
       // default session-control set here. The Claude Code channel advertises its
-      // own set in `bot:hello` (gated on running inside tmux — see
-      // docs/claude-channel-session-control.md), so we don't presume one for it;
+      // own set in `bot:hello` (gated on running inside tmux), so we don't
+      // presume one for it;
       // its real capabilities land within a frame of connecting.
       capabilities: {
         runtimeSessionId: params.runtimeSessionId,

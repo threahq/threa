@@ -233,8 +233,8 @@ function nearestOccupiedAncestor(
  * A branch conversation nested inside a parent card: the child conversation's own
  * messages rendered under a "↳ topic" header at its fork point, recursively —
  * grandchildren indent one level deeper, capped at 2; deeper collapses to a
- * "continue in panel" link (Kris dogfood ruling 2026-07-05, board-view-design.md,
- * replacing the old between-cards stub).
+ * "continue in panel" link (Kris dogfood ruling 2026-07-05, replacing the old
+ * between-cards stub).
  */
 export interface BranchConversationView {
   conversationId: string

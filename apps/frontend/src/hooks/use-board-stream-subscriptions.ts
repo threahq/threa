@@ -35,7 +35,7 @@ export function useBoardStreamSubscriptions(posts: BoardViewPost[]): void {
       // A conversation spans its root + the root's threads (one root); declare
       // every stream the card reads so the SyncEngine catches up + joins each
       // thread's room, not just the anchor — otherwise a cross-stream reply never
-      // syncs into the rail (board-view-design.md).
+      // syncs into the rail.
       add(post.conversation.streamId)
       for (const streamId of post.streamIds ?? []) add(streamId)
     }

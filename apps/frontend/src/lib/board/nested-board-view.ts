@@ -2,8 +2,7 @@ import type { CachedBoardPost } from "@/db"
 
 /**
  * Fold a lens/scope-filtered board feed into one card per root discussion
- * (board-view-design.md § "Nested threads × conversations", corrected
- * 2026-07-05). A conversation whose anchor thread forks off a member message of
+ * (corrected 2026-07-05). A conversation whose anchor thread forks off a member message of
  * another conversation is a **branch** rendered inside that parent's card, so it
  * is suppressed from the top-level list — but only when its parent is itself
  * present in the same filtered list. A child whose parent is filtered out or

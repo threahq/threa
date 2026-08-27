@@ -233,7 +233,7 @@ function hasDeeperBranch(
 
 /**
  * The branch conversations nested inside a parent card, discovered recursively
- * from the stream graph (Kris dogfood ruling 2026-07-05, board-view-design.md):
+ * from the stream graph (Kris dogfood ruling 2026-07-05):
  * for each of the parent's member messages, the thread forking off it that
  * anchors another non-empty conversation becomes a branch; that child's own
  * member messages are walked for grandchildren, capped at `maxDepth` (deeper

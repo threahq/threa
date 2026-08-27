@@ -817,8 +817,6 @@ The strip is a 6px column that scrolls with the sidebar content. Each stream ite
 
 ### Sidebar Organization: Smart Auto-Sections
 
-**Reference:** `docs/references/mockups/sidebar-organization-exploration.html`
-
 The sidebar uses **Smart Auto-Sections** to surface important information at scale without requiring user-defined labels. This pattern works for 10 streams or 100+ streams.
 
 **Core Principle:** Automatic organization that surfaces what matters, with manual override.
@@ -1123,8 +1121,6 @@ Active streams show a subtle multi-color glow at the bottom of their label:
 Each active persona gets a color stripe in the glow, creating a visual "thread" of who's active.
 
 ### Agent Trace
-
-**Reference:** `docs/references/mockups/agent-trace-with-sources.html`
 
 Agent trace provides full transparency into AI agent reasoning and sources. It uses **bidirectional navigation** - users can access the trace from either the session event or by clicking on the AI message itself.
 
@@ -2518,22 +2514,6 @@ The kitchen sink includes:
 - Working animations and transitions
 
 **When to update:** Add new sections to the kitchen sink when implementing new UI patterns, components, or significant style changes. Keep it in sync with this document.
-
-### Exploration Mockups
-
-Historical explorations in `docs/references/mockups/sidebar-exploration/`:
-
-| File                                     | Purpose                               |
-| ---------------------------------------- | ------------------------------------- |
-| `nav-19-hybrid-resizable.html`           | Thread panel system (final)           |
-| `input-exploration-01.html`              | 8 input designs (Premium Glow chosen) |
-| `input-exploration-02-interactions.html` | Popovers, toolbar, attachments        |
-| `input-exploration-03-growth.html`       | Growth behavior, document editor      |
-| `conversations-overview-01.html`         | Stream list redesign                  |
-| `typography-exploration-01.html`         | Font comparison                       |
-| `quick-switcher-01.html`                 | Quick switcher redesign               |
-
-See `docs/references/mockups/sidebar-exploration/CLAUDE.md` for detailed decision logs.
 
 ---
 

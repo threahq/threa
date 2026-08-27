@@ -29,8 +29,7 @@ const DEFAULT_CONFIG = {
  *
  * Pruning advances a per-workspace `retained_from` floor; catch-up compares a
  * client's cursor against it and signals `requiresBootstrap` when the cursor
- * predates the pruned span (SyncService.catchUp). Design:
- * docs/plans/sync-v2-log-retention.md.
+ * predates the pruned span (SyncService.catchUp).
  *
  * No leader election: the prune is a single set-based, idempotent DELETE and
  * the floor advances with GREATEST, so running on every backend instance is

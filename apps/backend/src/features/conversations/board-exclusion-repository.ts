@@ -9,7 +9,7 @@ export interface HiddenConversation {
 
 /**
  * Per-viewer board exclusions: hidden conversation cards and muted streams
- * (board-view-design.md § "Hide & mute"). Every write is a race-safe upsert/delete
+ *. Every write is a race-safe upsert/delete
  * (INV-20); reads are single-query, so callers pass `pool` (INV-30).
  */
 export const BoardExclusionRepository = {

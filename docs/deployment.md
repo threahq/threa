@@ -299,7 +299,7 @@ Calls media routes through a separate **Cloudflare Realtime (SFU) app** for deve
 
 - **Per-workspace kill switch**: the `calls` feature flag (workspace scope) is **on by default**. A workspace opts out with a `subject_type='workspace'` override of `"off"`, written from the backoffice (control-plane only). Off makes every calls surface answer as if the feature does not exist — the way to stop calls in one workspace without a deploy, which matters because the media plane is a third-party dependency.
 
-- **Outstanding GDPR item**: the SFU is a content-level media processor from the first real call. Calls were released pre-launch by an explicit product decision (2026-07-20); Cloudflare's DPA / processor-register entry is still **not** in place and must land before the product carries external users. See the plan's `GDPR (v1)` section (`docs/plans/voice-video-calls.md`).
+- **Outstanding GDPR item**: the SFU is a content-level media processor from the first real call. Calls were released pre-launch by an explicit product decision (2026-07-20); Cloudflare's DPA / processor-register entry is still **not** in place and must land before the product carries external users. What the register entry has to say: the SFU decrypts to route, so it is a content-level processor for media; the media path is transit-only (the SFU forwards, it does not store, and that claim needs a Cloudflare source); there is no recording and no server-side audio path in v1, so Threa itself stores only call metadata — rows, events, chat messages — under normal message-data rules.
 
 ### Control-Plane
 

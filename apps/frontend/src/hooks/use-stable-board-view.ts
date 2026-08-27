@@ -19,8 +19,7 @@ export type BoardViewPost = CachedBoardPost
  * the viewer is currently looking at, deliberately held still so a card never
  * jumps out from under the eye. Cards still read their *content* reactively from
  * IDB — a reply body fills in place — but their *position* is this snapshot's,
- * not the live order's, until the viewer commits a fresh one. See
- * `docs/board-view-design.md` § "Stable view + pending updates".
+ * not the live order's, until the viewer commits a fresh one.
  */
 export interface CommittedView {
   /** Conversation ids in frozen display order (activity-desc at commit time). */
@@ -151,7 +150,7 @@ export interface BoardViewFilter {
 }
 
 /**
- * The viewer's per-board exclusions (board-view-design.md § "Hide & mute"),
+ * The viewer's per-board exclusions,
  * mirrored client-side so a hide/mute drops the card the instant it's written —
  * the read-side twin of the server's `boardHiddenExcludeSql`/`boardMutedExcludeSql`
  * (keep the boundaries identical to avoid SQL/JS drift). Both maps carry stable
@@ -288,8 +287,7 @@ function sameIds(a: string[], b: string[]): boolean {
  *    card must surface as soon as it lands, whether that's inline (existing-stream)
  *    or at composer-clear (a new scratchpad, keyed by the client-minted id).
  *    Revealing ONLY the pending card leaves unrelated arrivals still buffered, so
- *    posting never reorders the cards the viewer was reading (board-view-design.md
- *    "don't move shit on me").
+ *    posting never reorders the cards the viewer was reading.
  *  - **Any other at-or-above-floor NEW conversation** — waits in the buffer so
  *    revealing it cannot reorder the view under the reader. Activity on a
  *    committed card updates that card in place and never contributes to the pill;
@@ -402,8 +400,7 @@ export interface StableBoardView {
  * committed card.
  *
  * The `filter` narrows the shared IDB feed to the cards that belong on the
- * active view: the structural lens (board-view-design.md § "Lenses" —
- * `matchesBoardLens`, the read-side authority matching the backend's
+ * active view: the structural lens (`matchesBoardLens`, the read-side authority matching the backend's
  * seed/pagination filter) and the root-stream scope. One IDB table holds every
  * seeded conversation regardless of filter, so filtering here is what makes each
  * view show its own subset live; changing lens or scope resets the frozen view so

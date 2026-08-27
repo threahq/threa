@@ -35,7 +35,7 @@ Only when the harness is Pi, not Claude. Planner and verifier: GPT-5.6 Sol `high
 ## Plan first
 
 - Build only from a plan with an explicit PR-stack breakdown: each chunk is one PR with deliverables, enumerated tests, exclusions, and its base branch. A chat message is not a plan.
-- No plan → dispatch one planner to investigate and draft it. Publish the plan to Seer and share the URL; embed it in each PR body with `/sync-plan`. Files under `docs/plans/` are desired-design context, never implementation truth.
+- No plan → dispatch one planner to investigate and draft it. Publish the plan to Seer and share the URL; embed it in each PR body with `/sync-plan`.
 - Start building as soon as the plan is published. No ratification round-trip: the user asked for a plan and a stack, not for a quiz. Wait only if the user asked for a checkpoint, or the plan requires a decision that cannot be undone by reverting the PRs — dropping or rewriting production data, a breaking public API change, deleting a user-facing surface. Append-only migrations, new tables, new endpoints, and feature-flagged rollouts are routine here (INV-17, INV-67): build them.
 - Deferred items in the plan are binding: do not build them.
 

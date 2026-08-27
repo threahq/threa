@@ -617,7 +617,7 @@ export interface CachedUnreadState {
    */
   latestOrdinals?: Record<string, number>
   /**
-   * Sparse read overlay per stream (docs/sparse-read-overlay-design.md): message
+   * Sparse read overlay per stream: message
    * ids read individually above each stream's watermark. Rides this singleton
    * row (no index). Effective unread stays `latestOrdinals[s] − read(s) −
    * |readMessageIds[s]|`. Absent for rows cached before the field shipped;
@@ -1017,7 +1017,7 @@ export interface CachedConversationMessage extends BoardPostMessage {
   _cachedAt: number
 }
 
-/** A conversation the viewer hid from the board (board-view-design.md § "Hide & mute").
+/** A conversation the viewer hid from the board.
  *  `id` is the conversation id; `hiddenAt` (ms) is the snooze watermark. */
 export interface CachedBoardHiddenConversation {
   id: string
@@ -1503,13 +1503,13 @@ export class ThreaDatabase extends Dexie {
       conversations: "id, workspaceId, [workspaceId+_lastActivityMs], _cachedAt",
     })
 
-    // v37: sparse read overlay (docs/sparse-read-overlay-design.md). The overlay
+    // v37: sparse read overlay. The overlay
     // (`unreadState.readMessageIds`) and the membership watermark sequence
     // (`streamMemberships.lastReadSequence`) are unindexed value fields on
     // existing rows, so the bump only guards the added shape — no schema delta.
     this.version(37).stores({})
 
-    // v38: per-viewer board exclusions (board-view-design.md § "Hide & mute").
+    // v38: per-viewer board exclusions.
     // Keyed by the excluded id (conversationId / root streamId) so a reactive
     // read is a single get; `[workspaceId+hiddenAt]` lets the snooze-revival
     // check scan a viewer's hidden set without loading rows one by one.

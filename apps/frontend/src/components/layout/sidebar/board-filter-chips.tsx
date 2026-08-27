@@ -28,8 +28,7 @@ interface BoardFilterChipsProps {
 }
 
 /**
- * The board-mode "Filtering the board" block (board-centered-sidebar-exploration.md
- * § V1). One chip per active include/exclude across the stream, type, and label
+ * The board-mode "Filtering the board" block. One chip per active include/exclude across the stream, type, and label
  * axes; each chip's X removes just that entry through the URL-vocabulary SSOT.
  * "Clear" shows everything (`?lens=all`, no axes) and "Save view" bookmarks the live selection
  * via the shared save dialog. The whole block only mounts when something is

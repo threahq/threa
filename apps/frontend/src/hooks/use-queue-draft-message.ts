@@ -107,8 +107,7 @@ export function useQueueDraftMessage(workspaceId: string) {
           // server puts on the real payload). The row is swapped for the real event
           // on echo. `existing` names the conversation directly; `threadFromMessage`
           // (a lone post converting to a thread) joins its source conversation, so
-          // the reply renders in place under the same card — no card swap
-          // (board-view-design.md "Convert-to-thread, corrected").
+          // the reply renders in place under the same card — no card swap.
           ...conversationTag(params.conversation),
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         },

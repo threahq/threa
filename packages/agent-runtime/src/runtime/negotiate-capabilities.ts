@@ -13,8 +13,8 @@ import type { AgentTool } from "./agent-tool"
  * attested": session callbacks are token-bound (Phase 2.4b, E2EE-21) and
  * registration runs on a dedicated credential distinct from the shared
  * internal key (Phase 2.4c, E2EE-22), so the tier rests on
- * ENCLAVE_INTERNAL_API_KEY secrecy. Real TEE evidence is a documented
- * upgrade path — see docs/features/architecture/e2e-enclave.md.
+ * ENCLAVE_INTERNAL_API_KEY secrecy. Real TEE evidence would strengthen the
+ * tier; nothing here assumes it yet.
  */
 export const TrustTiers = {
   /** First-party persona constructed in-process (the companion). */

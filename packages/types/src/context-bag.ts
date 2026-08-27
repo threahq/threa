@@ -50,7 +50,7 @@ export type ThreadContextRef = {
 
 /**
  * A reference to a conversation — the AI-clustered topic that spans a root
- * stream and its threads (one root; see board-view-design.md). Unlike a
+ * stream and its threads (one root). Unlike a
  * `thread` ref (a whole stream), this resolves to the conversation's specific
  * member messages across streams, so Ariadne sees the topic and nothing else
  * from the surrounding channel.

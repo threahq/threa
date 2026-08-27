@@ -499,7 +499,7 @@ export const MemoRepository = {
   /**
    * Of the given conversation ids, which have produced at least one active
    * captured memo — the Decisions/Knowledge lens signal for the board
-   * (board-view-design.md § "Lenses"). Batch (INV-56): one `SELECT DISTINCT` over
+   *. Batch (INV-56): one `SELECT DISTINCT` over
    * `= ANY($ids)`, not a presence check per card. Workspace-scoped (INV-8) and
    * `status = 'active'` (matching `findActiveBySourceConversation`), so an
    * archived/superseded memo stops counting as captured knowledge. Empty input

@@ -545,7 +545,7 @@ export const MAX_CONVERSATION_TOPIC_LENGTH = 120
 export const MAX_BOARD_VIEW_NAME_LENGTH = 60
 
 /**
- * Structural lenses over the workspace board (board-view-design.md § "Lenses").
+ * Structural lenses over the workspace board.
  * Each is a true filter over signals Threa already computes — the board gives
  * the dials, it doesn't decide what matters. `all` is the default and always
  * available: the board's job is to SURFACE, so the home view shows everything

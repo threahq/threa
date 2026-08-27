@@ -234,7 +234,7 @@ export async function deleteOptimisticBoardPost(conversationId: string): Promise
 /**
  * Record a stream a conversation now reaches, from a `conversation:message_assigned`
  * event, onto its board row's `streamIds`. A conversation can span its root + the
- * root's threads (one root — board-view-design.md); the card subscribes to each
+ * root's threads (one root); the card subscribes to each
  * stream's rail, and a convert-to-thread / cross-stream reply lands in a stream
  * the snapshot didn't list yet. Adding it here lets the card draw that member live
  * without a board refetch. No-op when the card isn't cached or already lists the

@@ -352,7 +352,7 @@ export class BoundaryExtractionService {
     let decision: ConversationDecision
 
     if (!isClusteredStreamType(stream.type)) {
-      // Scratchpad/aside = one conversation, by decision (board-view-design.md).
+      // Scratchpad/aside = one conversation, by decision.
       // The staleness sweep may have faded it to stalled/resolved, so fall back
       // to the most-recently-active conversation and let the assignment
       // reactivation flip it — never mint a second same-named conversation.

@@ -8,8 +8,7 @@ export interface CatchUpResult {
   head: bigint
   /**
    * The cursor is below the retained sync-log floor (its entries were pruned
-   * by retention). `entries` is empty; the client must full-bootstrap. See
-   * docs/plans/sync-v2-log-retention.md.
+   * by retention). `entries` is empty; the client must full-bootstrap.
    */
   requiresBootstrap?: boolean
 }

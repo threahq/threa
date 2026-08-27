@@ -3,7 +3,7 @@
  * tmux pane it runs in. Claude Code exposes no programmatic control to an MCP
  * server, so the pane is the only actuator: `Escape` interrupts the current turn;
  * literal text + `Enter` submits a prompt or a slash command (`/model`, `/compact`,
- * `/remote-control`, …). See docs/claude-channel-session-control.md.
+ * `/remote-control`, …).
  *
  * The target pane is discovered from `$TMUX_PANE`, which tmux sets inside the pane
  * and Claude Code inherits and passes to this MCP child. `THREA_TMUX_TARGET` is an

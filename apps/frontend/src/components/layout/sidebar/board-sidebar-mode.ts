@@ -22,7 +22,7 @@ export function isBoardPath(pathname: string): boolean {
 
 /**
  * Board-mode descriptor threaded from the sidebar orchestrator into every stream
- * row (board-centered-sidebar-exploration.md § "Click model"). Present only on
+ * row. Present only on
  * `/board` with the flag on; `null` everywhere else, and every board branch in a
  * row is gated on it so chats mode renders byte-identically. Built once at the
  * list level (not per row) so the mute mutations, muted set, URL callbacks, and

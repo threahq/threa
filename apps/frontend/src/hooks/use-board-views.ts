@@ -10,7 +10,7 @@ export const boardViewKeys = {
 }
 
 /**
- * The viewer's saved board lenses (board-view-design.md § "Lenses"). Low-frequency
+ * The viewer's saved board lenses. Low-frequency
  * per-viewer config, so it rides React-Query with cache invalidation (the
  * sidebar_configs house style), not the IDB sync engine. `refetchOnReconnect`
  * closes the multi-device gap (INV-53).

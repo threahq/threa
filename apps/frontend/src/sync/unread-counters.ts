@@ -17,7 +17,6 @@ import type { Activity, WorkspaceBootstrap } from "@threa/types"
  * `Activity.id`, so a replayed `activity:created` upserts in place rather than
  * duplicating; coupling (reading a stream) drops that stream's rows; bootstrap
  * replaces the set wholesale, so any transient drift converges to server truth.
- * See docs/plans/activity-counters-derive-from-data.md.
  */
 
 export interface UnreadCounterState {
@@ -38,7 +37,7 @@ export interface UnreadCounterState {
    */
   latestOrdinals?: Record<string, number>
   /**
-   * Sparse read overlay per stream (docs/sparse-read-overlay-design.md): the
+   * Sparse read overlay per stream: the
    * message ids read individually ABOVE that stream's watermark via a
    * conversation surface. The effective unread invariant everywhere is
    * `unreadCounts[s] = max(0, latestOrdinals[s] − read(s) − |overlay(s)|)`, with

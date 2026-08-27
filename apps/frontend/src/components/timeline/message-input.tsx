@@ -565,7 +565,7 @@ function MessageInputComponent({
   // A conversation live in THIS stream keeps the inline strip and
   // focuses the composer to type; one that has moved into a thread hands off to
   // the panel — a flat send there would re-interleave the channel, the mess
-  // recency-biased continuation avoids (board-view-design.md).
+  // recency-biased continuation avoids.
   //
   // The route is latched per arm (`routedArmIdRef`): `conversationReplyLastActive-
   // StreamId` is a live Dexie value, so without the latch a background reply that

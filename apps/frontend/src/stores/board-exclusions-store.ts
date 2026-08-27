@@ -3,8 +3,8 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/db"
 
 /**
- * The viewer's per-stream board mutes and per-conversation hides (board-view-design.md
- * § "Hide & mute"), read reactively from IDB so the board re-filters the instant a
+ * The viewer's per-stream board mutes and per-conversation hides, read
+ * reactively from IDB so the board re-filters the instant a
  * hide/mute lands — locally (optimistic) or from another device (socket). Mirrors
  * `board-store`'s IDB-observer pattern.
  */

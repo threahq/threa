@@ -832,10 +832,10 @@ interface MessagesMovedPayload {
   parentReplyCount: number
   /** Recomputed thread summary for the drop-target — same shape as `thread:updated` ships. */
   parentThreadSummary: ThreadSummary | null
-  /** Source stream's post-move `message_created` count. Fix A1: SET onto the
+  /** Source stream's post-move `message_created` count. SET onto the
    *  source `latestOrdinals` so the count that dropped when rows relocated heals
    *  (max-merge alone never corrects it). Optional during rollout → absent keeps
-   *  today's behavior. See docs/sparse-read-overlay-design.md. */
+   *  today's behavior. */
   sourceMessageOrdinal?: number
 }
 

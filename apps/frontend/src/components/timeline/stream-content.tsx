@@ -1052,7 +1052,7 @@ export function StreamContent({
         if (conversationOverlayModel && conversationOverlayModel.conversations.length > 0) {
           items = annotateConversationRows(items, conversationOverlayModel)
         }
-        // On-message provenance chips (board-view-design.md mechanism A): a late
+        // On-message provenance chips (mechanism A): a late
         // reply that revives a scattered topic gets a "↪ continues X · 3h ago" chip
         // linking to the conversation panel. Always-on for the flat channel/DM
         // timeline (never threads — thread replies are contiguous by construction,
@@ -2337,7 +2337,7 @@ export function StreamContent({
   // The stream's sparse read overlay — message ids read individually above the
   // watermark (from a conversation-surface read). Threads through the read
   // frontier so the divider, the "new" flash, and per-row gating all treat an
-  // overlay-read row as effectively read (docs/sparse-read-overlay-design.md).
+  // overlay-read row as effectively read.
   const readOverlay = useReadMessageIds(workspaceId, streamId)
 
   // Track live-arriving messages from other users for brief "new" indicator.

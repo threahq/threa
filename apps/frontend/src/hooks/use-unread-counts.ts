@@ -64,7 +64,7 @@ function localCounterPatch(
 /**
  * The sparse read overlay for one stream as a referentially-stable set: the
  * message ids read individually above the stream's watermark
- * (docs/sparse-read-overlay-design.md). Reads IDB via `useLiveQuery`; the
+ * Reads IDB via `useLiveQuery`; the
  * returned set keeps its identity while the overlay's contents are unchanged, so
  * consumers can use it as a stable dependency.
  */

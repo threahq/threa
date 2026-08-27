@@ -335,7 +335,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   )
 
   // Board mode re-aims the stream rows: their verb changes from "open timeline"
-  // to "scope the board" (board-centered-sidebar-exploration.md § "Click model").
+  // to "scope the board".
   // Built once here — the muted set + URL/mute callbacks are shared, not per-row.
   const boardSearch = location.search
   const boardIncludedStreamIds = useMemo(

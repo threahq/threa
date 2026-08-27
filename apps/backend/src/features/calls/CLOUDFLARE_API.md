@@ -58,7 +58,7 @@ handlers before M1 starts.
 
 The 0.3 hostile matrix has two halves. **Half A** (control-plane matrix,
 `apps/backend/scripts/calls-spike/`) ran fully against real backend instances + a
-local fake-CF recorder and is GREEN (see `SPIKE_FINDINGS.md`). **Half B**
+local fake-CF recorder and is GREEN. **Half B**
 (`scripts/calls-spike/live-cf/`) EXECUTED 2026-07-19 against the real CF API (dev
 app, dashboard-provisioned). Headline: **CF-2 confirmed real two-way media through
 our production proxy** — publisher 159KB sent / puller 197KB received, both ICE

@@ -238,8 +238,8 @@ async function resolveRuntimeCommandTarget(
   if (!presence) return null
   // Session-control is for runtimes that drive a long-lived linked session. Pi
   // controls its session natively; the Claude Code channel drives the host via
-  // tmux key injection (see docs/claude-channel-session-control.md). Both gate
-  // the surfaced command set on what they advertise in `sessionControlCommands`.
+  // tmux key injection. Both gate the surfaced command set on what they
+  // advertise in `sessionControlCommands`.
   if (
     presence.runtimeKind !== BotRuntimeKinds.PI_LOCAL &&
     presence.runtimeKind !== BotRuntimeKinds.CLAUDE_CODE_CHANNEL

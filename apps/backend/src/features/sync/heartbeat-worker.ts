@@ -20,8 +20,7 @@ const WORKSPACE_ROOM_PATTERN = /^ws:([^:]+)$/
  * Periodically broadcasts each workspace's sync-log head to its workspace
  * room (`sync:heartbeat`), so active-mode clients can detect a dropped emit
  * by comparing the head against their cursor position and trigger catch-up —
- * without waiting for a reconnect/resume. Design:
- * docs/plans/sync-v2-heartbeat.md.
+ * without waiting for a reconnect/resume.
  *
  * Deliberately NOT an outbox event (INV-4 governs domain state changes): the
  * heartbeat carries no state — it is a derived `MAX` over the very log whose

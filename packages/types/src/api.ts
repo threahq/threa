@@ -344,8 +344,8 @@ export interface SyncCatchUpResponse {
   head: string
   /**
    * Set when the client's `after` cursor is below the workspace's retained
-   * sync-log floor (entries it would need have been pruned by retention, see
-   * docs/plans/sync-v2-log-retention.md). The log can no longer heal the gap;
+   * sync-log floor (entries it would need have been pruned by retention).
+   * The log can no longer heal the gap;
    * `entries` is empty and the client must fall back to a full bootstrap (the
    * authority for everything <= `head`). Absent/false on every in-window
    * request, so older clients that ignore the field simply never see it.
@@ -358,7 +358,7 @@ export interface SyncCatchUpResponse {
  * head, broadcast to the workspace room so clients can detect a dropped emit
  * without waiting for a reconnect/resume trigger. Same head semantics as the
  * catch-up response: a freshness hint to compare against, never a cursor
- * target. See docs/plans/sync-v2-heartbeat.md.
+ * target.
  */
 export interface SyncHeartbeatPayload {
   workspaceId: string
@@ -1662,7 +1662,7 @@ export interface WorkspaceBootstrap {
    * `unread = latest − read − |overlay|` as live events fold in, and lets the
    * timeline render overlay-read rows as read. Streams with an empty overlay
    * are omitted. Optional: snapshots cached before the field shipped lack it
-   * (absent reads as empty). See docs/sparse-read-overlay-design.md.
+   * (absent reads as empty).
    */
   readMessageIds?: Record<string, string[]>
   mentionCounts: Record<string, number>
@@ -1682,7 +1682,7 @@ export interface WorkspaceBootstrap {
   sidebarConfig: SidebarConfig
   /**
    * Viewer's saved board lenses, so the lens picker paints populated instead of
-   * fetching on board mount (board-view-design.md § "Lenses"). Seeds the
+   * fetching on board mount. Seeds the
    * `board-views` React-Query cache. Optional: snapshots cached before the field
    * shipped lack it (absent → the board falls back to its own fetch).
    */
@@ -2267,7 +2267,7 @@ export interface SavedUpsertedPayload {
   saved: SavedMessageView
 }
 
-/** Wire payload on `board:conversation_hide_changed` (board-view-design.md § "Hide & mute"). */
+/** Wire payload on `board:conversation_hide_changed`. */
 export interface BoardConversationHideChangedPayload {
   workspaceId: string
   targetUserId: string

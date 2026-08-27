@@ -130,7 +130,7 @@ interface BranchGroupProps {
 
 /**
  * A branch conversation nested inside a parent card (Kris dogfood ruling
- * 2026-07-05, board-view-design.md): a "↳ <child topic>" header linking to the
+ * 2026-07-05): a "↳ <child topic>" header linking to the
  * child conversation panel (INV-40), with the child's own messages rendered
  * indented under it and grandchildren nested one level deeper (each adds a
  * left rail). Reddit/Facebook-style nested comments — the nesting lives INSIDE

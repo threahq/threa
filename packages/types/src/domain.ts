@@ -780,7 +780,7 @@ export interface BoardPostMessage {
   id: string
   /**
    * The stream this message lives in. A conversation can span its root and the
-   * root's threads (one root — board-view-design.md), so each rendered message
+   * root's threads (one root), so each rendered message
    * carries its own origin; the client merges the rails of the streams a post's
    * members span and opens each message in its own stream.
    */
@@ -843,8 +843,8 @@ export interface BoardPost {
   totalReplies: number
   /**
    * Distinct streams this post's rendered messages span — the conversation's root
-   * and any threads an opening/recent message reaches under it (one root —
-   * board-view-design.md). The client subscribes to each stream's rail so a
+   * and any threads an opening/recent message reaches under it (one root).
+   * The client subscribes to each stream's rail so a
    * cross-stream member draws live; threads added after this snapshot arrive via
    * `conversation:message_assigned`.
    */
@@ -909,7 +909,7 @@ export interface BoardPost {
 }
 
 /**
- * A user-saved board lens (board-view-design.md § "Lenses"): a named bookmark of
+ * A user-saved board lens: a named bookmark of
  * the board's filter state — a base lens plus stream (`?in=`/`?not-in=`),
  * stream-type (`?is=`/`?not-is=`), and label (`?label=`/`?not-label=`) filters.
  * It expands losslessly to the board URL, so a saved view reuses the existing

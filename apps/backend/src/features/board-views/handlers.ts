@@ -52,7 +52,7 @@ interface Dependencies {
 }
 
 /**
- * User-saved board lenses (board-view-design.md § "Lenses"). No stream-access
+ * User-saved board lenses. No stream-access
  * check: a saved view is just filter state (names of streams the viewer already
  * sees), and the feed it expands to is itself access-filtered (INV-62) — a
  * muted/inaccessible stream in a saved scope simply returns nothing.
