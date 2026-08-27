@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { SyncEngine, isSyncEngineCurrent, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
 import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/stores/apply-window"
+import { __resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
@@ -2070,6 +2071,7 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
 describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
   beforeEach(async () => {
     resetRevealGate()
+    __resetAgentActivityStore()
     await Promise.all([
       db.workspaces.clear(),
       db.syncCursors.clear(),
@@ -2141,6 +2143,63 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
       expect(socket.emittedEvents.some((e) => e.event === "join" && e.args[0] === "ws:ws_1:stream:stream_member")).toBe(
         true
       )
+    )
+    engine.destroy()
+  })
+
+  it("reconciles sidebar agent activity from running sessions on a slim reconnect", async () => {
+    const deps = makeReconnectDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await db.streams.put({
+      id: "stream_dm",
+      workspaceId: "ws_1",
+      type: "dm",
+      displayName: "DM",
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: null,
+      rootStreamId: null,
+      companionMode: "on",
+      companionPersonaId: "persona_ariadne",
+      createdBy: "user_1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      archivedAt: null,
+      _cachedAt: Date.now(),
+    })
+    upsertAgentSession("ws_1", {
+      sessionId: "session_settled",
+      streamId: "stream_dm",
+      rootStreamId: "stream_dm",
+      personaName: "Ariadne",
+      startedAt: "2026-08-27T11:24:59.119Z",
+    })
+    expect(getAgentActivityForStream("ws_1", "stream_dm").map((session) => session.sessionId)).toEqual([
+      "session_settled",
+    ])
+
+    await engine.onConnect(asSocket(socket))
+
+    expect(getAgentActivityForStream("ws_1", "stream_dm")).toEqual([])
+
+    socket.trigger("agent_session:progress", {
+      workspaceId: "ws_1",
+      streamId: "stream_dm",
+      sessionId: "session_running",
+      triggerMessageId: "msg_1",
+      personaName: "Ariadne",
+      stepCount: 2,
+      messageCount: 0,
+      currentStepType: "thinking",
+    })
+    await vi.waitFor(() =>
+      expect(getAgentActivityForStream("ws_1", "stream_dm").map((session) => session.sessionId)).toEqual([
+        "session_running",
+      ])
     )
     engine.destroy()
   })

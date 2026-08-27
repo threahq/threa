@@ -25,6 +25,7 @@ import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
 import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
+import { seedAgentActivity } from "@/stores/agent-activity-store"
 import { requestStreamEventReadRefresh } from "@/stores/stream-event-read-refresh"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { SyncStatusStore } from "./sync-status"
@@ -950,6 +951,11 @@ export class SyncEngine {
   private async slimReconnectBootstrap(): Promise<void> {
     const { workspaceId, syncStatus } = this.deps
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
+
+    // Presence is not durable client state. Drop the previous connection's set;
+    // each member/visible stream join below emits DB-derived progress for sessions
+    // that are still running.
+    seedAgentActivity(workspaceId, [])
 
     // Mirror the full path's swallow-everything discipline. This runs inside
     // the awaited `runBootstrap` in onConnect; if it rejected, the await would
