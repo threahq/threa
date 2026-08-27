@@ -110,7 +110,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
+import { applyStreamBootstrapInCurrentTransaction, reconcileCachedStreamAgentActivity } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
@@ -3409,6 +3409,10 @@ export async function applyReconnectBootstrapBatch(
         removeRowConfirmations(workspaceId, "streamReadState", terminalRowIds)
       }
     }
+  )
+
+  await Promise.all(
+    [...streamBootstraps.keys()].map((streamId) => reconcileCachedStreamAgentActivity(workspaceId, streamId))
   )
 
   capture.mark("bootstrap.rowsWritten", rowsWritten)

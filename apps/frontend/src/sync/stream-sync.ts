@@ -40,6 +40,8 @@ import {
   rehomeActivities,
 } from "./unread-counters"
 import { upsertActiveCall, updateCallParticipants } from "@/stores/active-calls-store"
+import { reconcileAgentActivityFromStreamEvents } from "@/stores/agent-activity-store"
+import { isAgentSessionLifecycleEvent } from "@/lib/agent-session-lifecycle"
 import { contextItemsFromEvent, type ContextRowsContext } from "@/lib/stream-context/rows"
 import {
   deleteContextRowsForMessage,
@@ -750,6 +752,16 @@ export async function applyStreamBootstrap(
     }
   }
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
+  await reconcileCachedStreamAgentActivity(workspaceId, streamId)
+}
+
+export async function reconcileCachedStreamAgentActivity(workspaceId: string, streamId: string): Promise<void> {
+  const [stream, events] = await Promise.all([
+    db.streams.get(streamId),
+    db.events.where("streamId").equals(streamId).toArray(),
+  ])
+  if (!stream || stream.workspaceId !== workspaceId) return
+  reconcileAgentActivityFromStreamEvents(workspaceId, streamId, stream.rootStreamId ?? stream.id, events)
 }
 
 /**
@@ -1780,6 +1792,9 @@ function bindStreamSocketHandlers(
         _sequenceNum: sequenceToNum(payload.event.sequence),
         _cachedAt: now,
       })
+    }
+    if (isAgentSessionLifecycleEvent(payload.event)) {
+      await reconcileCachedStreamAgentActivity(workspaceId, streamId)
     }
   }
 

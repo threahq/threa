@@ -23,6 +23,12 @@ import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cac
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { applyStreamReadOrdinal } from "./unread-counters"
 import { sharedMessageSlotKey } from "@threa/types"
+import {
+  __resetAgentActivityStore,
+  getAgentActivityForStream,
+  getAgentSession,
+  upsertAgentSession,
+} from "@/stores/agent-activity-store"
 import type {
   AttachmentSummary,
   BotRuntimePresenceSummary,
@@ -85,6 +91,7 @@ function makeBootstrap(events: StreamEvent[], streamId: string): StreamBootstrap
 
 describe("applyStreamBootstrap (real IndexedDB)", () => {
   beforeEach(async () => {
+    __resetAgentActivityStore()
     await db.events.clear()
     await db.streams.clear()
     await db.pendingMessages.clear()
@@ -110,6 +117,65 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     const allEvents = await db.events.where("streamId").equals(streamId).toArray()
     const ids = allEvents.map((e) => e.id).sort()
     expect(ids).toEqual(["evt_A", "evt_B", "evt_X"])
+  })
+
+  it("clears sidebar activity from the same terminal event applied to the stream", async () => {
+    const streamId = "stream_agent"
+    upsertAgentSession("ws_1", {
+      sessionId: "session_settled",
+      streamId,
+      rootStreamId: streamId,
+      personaName: "Ariadne",
+      startedAt: "2026-08-27T11:24:59.119Z",
+    })
+    const completed = makeEvent({
+      id: "evt_completed",
+      streamId,
+      sequence: "2",
+      eventType: "agent_session:completed",
+      payload: {
+        sessionId: "session_settled",
+        stepCount: 2,
+        messageCount: 1,
+        duration: 10_000,
+        completedAt: "2026-08-27T11:25:37.971Z",
+      },
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([completed], streamId))
+
+    expect(await db.events.get(completed.id)).toMatchObject(completed)
+    expect(getAgentActivityForStream("ws_1", streamId)).toEqual([])
+  })
+
+  it("preserves live progress when a cached start event has no counts", async () => {
+    const streamId = "stream_running_agent"
+    upsertAgentSession("ws_1", {
+      sessionId: "session_running",
+      streamId,
+      rootStreamId: streamId,
+      personaName: "Ariadne",
+      startedAt: "2026-08-27T11:24:59.119Z",
+      stepCount: 4,
+      messageCount: 1,
+    })
+    const started = makeEvent({
+      id: "evt_started",
+      streamId,
+      sequence: "1",
+      eventType: "agent_session:started",
+      payload: {
+        sessionId: "session_running",
+        personaId: "persona_ariadne",
+        personaName: "Ariadne",
+        triggerMessageId: "msg_trigger",
+        startedAt: "2026-08-27T11:24:59.119Z",
+      },
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([started], streamId))
+
+    expect(getAgentSession("ws_1", "session_running")).toMatchObject({ stepCount: 4, messageCount: 1 })
   })
 
   it("preserves events from previous sessions (IDB is append-only)", async () => {

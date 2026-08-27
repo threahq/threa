@@ -2147,12 +2147,16 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 
-  it("atomically replaces stale agent activity from the slim reconnect snapshot", async () => {
+  it("reconciles sidebar agent activity from the visible stream on a slim reconnect", async () => {
     const deps = makeReconnectDeps()
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 
     await engine.onConnect(asSocket(socket))
+    engine.setVisibleStreamIds(["stream_dm"])
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_dm", undefined))
+    deps.streamService.bootstrap.mockClear()
+
     upsertAgentSession("ws_1", {
       sessionId: "session_settled",
       streamId: "stream_dm",
@@ -2160,63 +2164,34 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
       personaName: "Ariadne",
       startedAt: "2026-08-27T11:24:59.119Z",
     })
-
-    let resolvePresence: (
-      value: Awaited<ReturnType<typeof deps.workspaceService.activeAgentSessions>>
-    ) => void = () => {}
-    deps.workspaceService.activeAgentSessions.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolvePresence = resolve
-      })
-    )
-    const reconnect = engine.onConnect(asSocket(socket))
-    await vi.waitFor(() => expect(deps.workspaceService.activeAgentSessions).toHaveBeenCalledWith("ws_1"))
-
-    expect(getAgentActivityForStream("ws_1", "stream_dm").map((session) => session.sessionId)).toEqual([
-      "session_settled",
-    ])
-
-    resolvePresence({
-      activeAgentSessions: [
-        {
-          sessionId: "session_running",
-          streamId: "stream_nonmember_thread",
-          rootStreamId: "stream_public",
-          personaName: "Ariadne",
-          startedAt: "2026-08-27T11:26:00.000Z",
+    const terminalBootstrap = makeStreamBootstrap("stream_dm", "3")
+    terminalBootstrap.events = [
+      {
+        id: "evt_completed",
+        streamId: "stream_dm",
+        sequence: "3",
+        eventType: "agent_session:completed",
+        payload: {
+          sessionId: "session_settled",
+          stepCount: 2,
+          messageCount: 1,
+          duration: 10_000,
+          completedAt: "2026-08-27T11:25:37.971Z",
         },
-      ],
-    })
-    await reconnect
+        actorId: "persona_ariadne",
+        actorType: "persona",
+        createdAt: "2026-08-27T11:25:37.971Z",
+      },
+    ]
+    deps.streamService.bootstrap.mockResolvedValueOnce(terminalBootstrap)
+
+    await engine.onConnect(asSocket(socket))
 
     expect(getAgentActivityForStream("ws_1", "stream_dm")).toEqual([])
-    expect(getAgentActivityForStream("ws_1", "stream_nonmember_thread").map((session) => session.sessionId)).toEqual([
-      "session_running",
-    ])
-    engine.destroy()
-  })
-
-  it("keeps the previous agent activity when slim reconnect presence fails", async () => {
-    const deps = makeReconnectDeps()
-    const engine = new SyncEngine(deps)
-    const socket = new MockSocket()
-
-    await engine.onConnect(asSocket(socket))
-    upsertAgentSession("ws_1", {
-      sessionId: "session_unknown",
-      streamId: "stream_dm",
-      rootStreamId: "stream_dm",
-      personaName: "Ariadne",
-      startedAt: "2026-08-27T11:24:59.119Z",
+    expect(await db.events.get("evt_completed")).toMatchObject({
+      eventType: "agent_session:completed",
+      payload: { sessionId: "session_settled" },
     })
-    deps.workspaceService.activeAgentSessions.mockRejectedValueOnce(new Error("presence unavailable"))
-
-    await engine.onConnect(asSocket(socket))
-
-    expect(getAgentActivityForStream("ws_1", "stream_dm").map((session) => session.sessionId)).toEqual([
-      "session_unknown",
-    ])
-    expect(deps.syncStatus.get("workspace:ws_1")).toBe("stale")
     engine.destroy()
   })
 

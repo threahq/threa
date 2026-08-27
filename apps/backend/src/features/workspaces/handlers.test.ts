@@ -3,8 +3,7 @@ import type { Request, Response } from "express"
 import { createWorkspaceHandlers } from "./handlers"
 import { SyncLogRepository } from "../sync"
 import { BotRepository } from "../public-api"
-import { AgentSessionRepository, PersonaRepository } from "../agents"
-import * as Streams from "../streams"
+import { AgentSessionRepository } from "../agents"
 
 // Bootstrap pulls from ~17 injected services plus three module-static repos.
 // Following INV-48 the statics are stubbed via `spyOn` against the namespace
@@ -74,10 +73,6 @@ function makeReqRes() {
       jsonBody = JSON.parse(body)
       return res
     },
-    json: (body: unknown) => {
-      jsonBody = body
-      return res
-    },
     status: () => res,
   } as unknown as Response
 
@@ -87,58 +82,6 @@ function makeReqRes() {
 describe("workspace bootstrap handler", () => {
   afterEach(() => {
     // Bun restores spies at file teardown; nothing per-test to reset here.
-  })
-
-  it("returns the viewer's accessible running agent sessions without archived or internal roots", async () => {
-    spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([
-      {
-        sessionId: "session_persona",
-        streamId: "stream_thread",
-        rootStreamId: "stream_public",
-        personaId: "persona_1",
-        startedAt: new Date("2026-08-27T11:00:00.000Z"),
-      },
-      {
-        sessionId: "session_archived",
-        streamId: "stream_archived",
-        rootStreamId: "stream_archived",
-        personaId: "bot_1",
-        startedAt: new Date("2026-08-27T11:01:00.000Z"),
-      },
-      {
-        sessionId: "session_internal",
-        streamId: "stream_internal",
-        rootStreamId: "stream_internal",
-        personaId: "persona_1",
-        startedAt: new Date("2026-08-27T11:02:00.000Z"),
-      },
-    ] as never)
-    spyOn(Streams, "listAccessibleStreamIds").mockResolvedValue(
-      new Set(["stream_public", "stream_archived", "stream_internal"])
-    )
-    spyOn(Streams.StreamRepository, "findByIdsInWorkspace").mockResolvedValue([
-      { id: "stream_public", archivedAt: null, purpose: null },
-      { id: "stream_archived", archivedAt: new Date(), purpose: null },
-      { id: "stream_internal", archivedAt: null, purpose: "persona_test" },
-    ] as never)
-    spyOn(PersonaRepository, "findByIds").mockResolvedValue([{ id: "persona_1", name: "Ariadne" }] as never)
-    spyOn(BotRepository, "findByIds").mockResolvedValue([{ id: "bot_1", name: "Remote" }] as never)
-
-    const handlers = createWorkspaceHandlers(makeDeps([]))
-    const { req, res, getJson } = makeReqRes()
-    await handlers.activeAgentSessions(req, res)
-
-    expect(getJson()).toEqual({
-      activeAgentSessions: [
-        {
-          sessionId: "session_persona",
-          streamId: "stream_thread",
-          rootStreamId: "stream_public",
-          personaName: "Ariadne",
-          startedAt: "2026-08-27T11:00:00.000Z",
-        },
-      ],
-    })
   })
 
   it("includes archived roots from the service in the bootstrap payload", async () => {

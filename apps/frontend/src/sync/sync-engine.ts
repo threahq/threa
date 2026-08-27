@@ -25,7 +25,6 @@ import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
 import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
-import { seedAgentActivity } from "@/stores/agent-activity-store"
 import { requestStreamEventReadRefresh } from "@/stores/stream-event-read-refresh"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { SyncStatusStore } from "./sync-status"
@@ -36,7 +35,7 @@ import { scheduledKeys } from "@/hooks/use-scheduled"
 import { activityKeys } from "@/hooks/use-activity"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
-import type { ActiveAgentSessionsResponse, WorkspaceBootstrap } from "@threa/types"
+import type { WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
   workspaceId: string
@@ -44,7 +43,6 @@ interface SyncEngineDeps {
   queryClient: QueryClient
   workspaceService: {
     bootstrap: (workspaceId: string, opts?: { fresh?: boolean }) => Promise<WorkspaceBootstrap>
-    activeAgentSessions: (workspaceId: string) => Promise<ActiveAgentSessionsResponse>
   }
   streamService: {
     bootstrap: (
@@ -689,10 +687,10 @@ export class SyncEngine {
 
   private async bootstrapWorkspace(_isReconnect: boolean, forceFull = false): Promise<void> {
     // Reconnect slimming: catch-up replay (which runs right after this)
-    // re-seeds durable workspace projections through the gate-registered
+    // re-seeds every workspace-scoped projection through the gate-registered
     // handlers, so re-fetching the full workspace snapshot on every reconnect
-    // is redundant. Skip it and instead do only what catch-up can't: per-stream
-    // message deltas and the current agent-presence snapshot.
+    // is redundant. Skip it and instead do only what catch-up can't: the
+    // per-stream message deltas (the per-stream cursor mechanism, unchanged).
     // `forceFull` (below-floor fallback) and the first connect / no-syncService
     // cases keep the full snapshot. `eventGate` is present iff a sync service is
     // wired, so it stands in for "catch-up will run".
@@ -939,21 +937,18 @@ export class SyncEngine {
    *
    * - Per-stream message deltas for the visible streams. Timeline events ride a
    *   per-stream sequence (INV-61), not the workspace sync-log, so they heal
-   *   through `bootstrap?after=` (cursor-before-join), never catch-up. Same
-   *   mechanism the full path and post-navigation refresh use.
+   *   through `bootstrap?after=` (cursor-before-join), never catch-up. Applying
+   *   those events also reconciles the sidebar's agent-session projection.
    * - Re-subscribing member rooms from the cached membership list, so
    *   `stream:activity` keeps flowing onto the sidebar. Membership added/removed
    *   while offline is replayed by catch-up (`stream:member_*` → subscribe).
-   * - Replacing ephemeral agent presence from an access-filtered server read.
-   *   The sync cursor cannot prove a session absent when its terminal event was
-   *   already applied before this connection.
    *
    * The workspace gate is paused (begun in `onConnect`) for the whole window,
    * so the IDB writes here land before catch-up applies its delta and before
    * buffered live events splice in on top — newest state wins, no regression.
    */
   private async slimReconnectBootstrap(): Promise<void> {
-    const { workspaceId, syncStatus, workspaceService } = this.deps
+    const { workspaceId, syncStatus } = this.deps
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
 
     // Mirror the full path's swallow-everything discipline. This runs inside
@@ -976,10 +971,6 @@ export class SyncEngine {
 
       await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
       if (this.isDestroyed) return
-
-      const { activeAgentSessions } = await workspaceService.activeAgentSessions(workspaceId)
-      if (this.isDestroyed) return
-      seedAgentActivity(workspaceId, activeAgentSessions)
 
       this.lastWorkspaceError = null
       syncStatus.set(`workspace:${workspaceId}`, "synced")

@@ -1792,10 +1792,6 @@ export interface ActiveAgentSession {
   substep?: string | null
 }
 
-export interface ActiveAgentSessionsResponse {
-  activeAgentSessions: ActiveAgentSession[]
-}
-
 /**
  * One live call, projected for the sidebar dot (roadmap 1.4). Seeded from the
  * workspace bootstrap (`activeCalls`) and kept fresh by the `stream:call_started`

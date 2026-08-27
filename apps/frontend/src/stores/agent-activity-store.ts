@@ -1,15 +1,16 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
-import type { ActiveAgentSession } from "@threa/types"
+import type { ActiveAgentSession, StreamEvent } from "@threa/types"
+import { deriveAgentSessionLifecycle, type AgentSessionLifecycle } from "@/lib/agent-session-lifecycle"
 
 /**
  * Ephemeral, non-persisted store of the agent sessions running RIGHT NOW,
  * keyed by their exact stream so a stream row can paint an "agent working"
  * state without inheriting activity from a parent or child. A full workspace
- * bootstrap seeds `activeAgentSessions`. A normal slim reconnect replaces the
- * set from the access-filtered agent-activity endpoint (INV-53). Live starts/ends
- * fold in from the `agent_session:*` room events (see workspace-sync). Removal is by session id
- * (stream-agnostic) so a terminal event always clears reliably regardless of
- * which room delivered it.
+ * bootstrap seeds `activeAgentSessions`. Stream bootstraps reconcile the same
+ * cached lifecycle events that drive the open timeline, while live starts/ends
+ * fold in from the `agent_session:*` room events (INV-53). Removal is by session
+ * id (stream-agnostic) so a terminal event clears every surface regardless of
+ * which path observed it.
  *
  * Not in IDB: this is transient presence, not durable state — a cold reload
  * re-derives it from the fresh bootstrap.
@@ -197,6 +198,35 @@ export function removeAgentSession(workspaceId: string, sessionId: string): void
   ws.delete(sessionId)
   recomputeKey(workspaceId, existing.streamId)
   notifySession(workspaceId, sessionId)
+}
+
+export function reconcileAgentActivityFromStreamEvents(
+  workspaceId: string,
+  streamId: string,
+  rootStreamId: string,
+  events: readonly StreamEvent[]
+): void {
+  reconcileAgentActivityFromStreamLifecycle(workspaceId, streamId, rootStreamId, deriveAgentSessionLifecycle(events))
+}
+
+export function reconcileAgentActivityFromStreamLifecycle(
+  workspaceId: string,
+  streamId: string,
+  rootStreamId: string,
+  lifecycle: AgentSessionLifecycle
+): void {
+  for (const sessionId of lifecycle.terminated) removeAgentSession(workspaceId, sessionId)
+  for (const session of lifecycle.running.values()) {
+    upsertAgentSession(workspaceId, {
+      sessionId: session.sessionId,
+      streamId,
+      rootStreamId,
+      personaName: session.personaName,
+      startedAt: session.startedAt,
+      stepCount: session.stepCount,
+      messageCount: session.messageCount,
+    })
+  }
 }
 
 /** True if a session with this id is already tracked in the workspace. */

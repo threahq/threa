@@ -11,7 +11,6 @@ import type {
   CreateUserApiKeyResponse,
   WorkspacePermissionSlug,
   MarkAllAsReadResponse,
-  ActiveAgentSessionsResponse,
 } from "@threa/types"
 
 export type { WorkspaceBootstrap, CreateWorkspaceInput }
@@ -54,10 +53,6 @@ export const workspacesApi = {
     const path = `/api/workspaces/${workspaceId}/bootstrap${opts?.fresh ? `?${BOOTSTRAP_FRESH_PARAM}=1` : ""}`
     const res = await api.get<{ data: WorkspaceBootstrap }>(path, opts?.fresh ? { cache: "no-store" } : undefined)
     return res.data
-  },
-
-  async activeAgentSessions(workspaceId: string): Promise<ActiveAgentSessionsResponse> {
-    return api.get<ActiveAgentSessionsResponse>(`/api/workspaces/${workspaceId}/agent-activity`, { cache: "no-store" })
   },
 
   async create(data: CreateWorkspaceInput): Promise<Workspace> {

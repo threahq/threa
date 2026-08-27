@@ -4,10 +4,6 @@ import { useSocketReconnectCount } from "@/contexts"
 import type {
   StreamEvent,
   AgentStepType,
-  AgentSessionStartedPayload,
-  AgentSessionCompletedPayload,
-  AgentSessionFailedPayload,
-  AgentSessionDeletedPayload,
   AgentSessionProgressPayload,
   AgentSessionSubstepPayload,
   AgentActivityStartedPayload,
@@ -16,6 +12,8 @@ import type {
 import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
 import { getStepInlineLabel } from "@/lib/step-config"
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
+import { deriveAgentSessionLifecycle } from "@/lib/agent-session-lifecycle"
+import { reconcileAgentActivityFromStreamLifecycle } from "@/stores/agent-activity-store"
 
 export interface MessageAgentActivity {
   sessionId: string
@@ -74,7 +72,8 @@ export function useAgentActivity(
   socket: Socket | null,
   workspaceId: string,
   userId: string | null,
-  streamId?: string
+  streamId?: string,
+  rootStreamId?: string
 ): Map<string, MessageAgentActivity> {
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
   const reconnectCount = useSocketReconnectCount()
@@ -141,58 +140,15 @@ export function useAgentActivity(
     setProgressBySession((prev) => (prev.size === 0 ? prev : new Map()))
   }, [reconnectCount])
 
-  // Derive running sessions from events array (bootstrap source of truth for streams
-  // that contain session lifecycle events, e.g. threads and scratchpads)
-  const runningSessions = useMemo(() => {
-    const started = new Map<
-      string,
-      {
-        triggerMessageId: string
-        personaName: string
-        currentStepType: AgentStepType | null
-        stepCount: number
-        messageCount: number
-      }
-    >()
-    const terminated = new Set<string>()
+  // Stream and sidebar activity share this lifecycle projection, so observing a
+  // terminal event in the timeline clears both surfaces.
+  const lifecycle = useMemo(() => deriveAgentSessionLifecycle(events), [events])
+  const runningSessions = lifecycle.running
 
-    for (const event of events) {
-      switch (event.eventType) {
-        case "agent_session:started": {
-          const payload = event.payload as AgentSessionStartedPayload
-          started.set(payload.sessionId, {
-            triggerMessageId: payload.triggerMessageId,
-            personaName: payload.personaName,
-            currentStepType: payload.currentStepType ?? null,
-            stepCount: payload.stepCount ?? 0,
-            messageCount: payload.messageCount ?? 0,
-          })
-          break
-        }
-        case "agent_session:completed": {
-          const payload = event.payload as AgentSessionCompletedPayload
-          terminated.add(payload.sessionId)
-          break
-        }
-        case "agent_session:failed": {
-          const payload = event.payload as AgentSessionFailedPayload
-          terminated.add(payload.sessionId)
-          break
-        }
-        case "agent_session:deleted": {
-          const payload = event.payload as AgentSessionDeletedPayload
-          terminated.add(payload.sessionId)
-          break
-        }
-      }
-    }
-
-    for (const id of terminated) {
-      started.delete(id)
-    }
-
-    return started
-  }, [events])
+  useEffect(() => {
+    if (!streamId) return
+    reconcileAgentActivityFromStreamLifecycle(workspaceId, streamId, rootStreamId ?? streamId, lifecycle)
+  }, [lifecycle, rootStreamId, streamId, workspaceId])
 
   // When a session terminates in the events array (e.g. thread view), clean up its progress entry
   useEffect(() => {
@@ -200,16 +156,16 @@ export function useAgentActivity(
       let changed = false
       const next = new Map(prev)
       for (const sessionId of next.keys()) {
-        // Only remove if we have BOTH started AND terminated in events (i.e. not in runningSessions).
-        // Don't remove progress-only sessions (channel view) — those are cleaned up by activity_ended.
-        if (!runningSessions.has(sessionId) && hasTerminatedInEvents(events, sessionId)) {
+        // Progress-only sessions belong to a parent view and have no lifecycle
+        // rows here; activity_ended owns their cleanup.
+        if (lifecycle.terminated.has(sessionId)) {
           next.delete(sessionId)
           changed = true
         }
       }
       return changed ? next : prev
     })
-  }, [runningSessions, events])
+  }, [lifecycle])
 
   // Activity started: session just began, no step yet (renders "Working...")
   const handleActivityStarted = useCallback(
@@ -355,8 +311,8 @@ export function useAgentActivity(
         sessionId,
         personaName: progress?.personaName ?? session.personaName,
         currentStepType: progress ? progress.currentStepType : session.currentStepType,
-        stepCount: progress ? progress.stepCount : session.stepCount,
-        messageCount: progress ? progress.messageCount : session.messageCount,
+        stepCount: progress ? progress.stepCount : (session.stepCount ?? 0),
+        messageCount: progress ? progress.messageCount : (session.messageCount ?? 0),
         substep: progress?.substep ?? null,
         threadStreamId: progress?.threadStreamId,
       }
@@ -382,16 +338,4 @@ export function useAgentActivity(
 
     return result
   }, [runningSessions, progressBySession])
-}
-
-/** Check if a session has a terminal event (completed/failed) in the events array */
-function hasTerminatedInEvents(events: StreamEvent[], sessionId: string): boolean {
-  return events.some(
-    (e) =>
-      (e.eventType === "agent_session:completed" ||
-        e.eventType === "agent_session:failed" ||
-        e.eventType === "agent_session:deleted") &&
-      (e.payload as AgentSessionCompletedPayload | AgentSessionFailedPayload | AgentSessionDeletedPayload).sessionId ===
-        sessionId
-  )
 }

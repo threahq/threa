@@ -35,7 +35,6 @@ export const ACCESS_LOG_OPERATIONS = [
   "workspace.create",
   "workspace.get",
   "workspace.bootstrap",
-  "workspace.active_agent_sessions",
   "workspace.list_users",
   "workspace.slug_available",
   "workspace.complete_setup",

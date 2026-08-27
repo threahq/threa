@@ -3,12 +3,14 @@ import { act, renderHook } from "@testing-library/react"
 import type { Socket } from "socket.io-client"
 import { AuthorTypes, type StreamEvent } from "@threa/types"
 import * as contextsModule from "@/contexts"
+import { __resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { useAgentActivity } from "./use-agent-activity"
 
 let reconnectCount = 0
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  __resetAgentActivityStore()
   reconnectCount = 0
   vi.spyOn(contextsModule, "useSocketReconnectCount").mockImplementation(() => reconnectCount)
 })
@@ -70,6 +72,30 @@ describe("useAgentActivity", () => {
       messageCount: 1,
       currentStepType: "tool_call",
     })
+  })
+
+  test("clears sidebar activity when the cached stream has a terminal event", () => {
+    upsertAgentSession("ws_test", {
+      sessionId: "asess_1",
+      streamId: "stream_1",
+      rootStreamId: "stream_1",
+      personaName: "Pi Remote",
+      startedAt: "2026-05-25T00:00:00.000Z",
+    })
+    const terminal = {
+      ...streamEvent({
+        sessionId: "asess_1",
+        stepCount: 2,
+        messageCount: 1,
+        duration: 10_000,
+        completedAt: "2026-05-25T00:00:10.000Z",
+      }),
+      eventType: "agent_session:completed" as const,
+    }
+
+    renderHook(() => useAgentActivity([terminal], null, "ws_test", "usr_test", "stream_1", "stream_1"))
+
+    expect(getAgentActivityForStream("ws_test", "stream_1")).toEqual([])
   })
 
   test("live activity_started clears bootstrapped currentStepType", () => {
