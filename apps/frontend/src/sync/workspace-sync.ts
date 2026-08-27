@@ -30,6 +30,7 @@ import {
   removeAgentSession,
   hasAgentSession,
   updateAgentSessionProgress,
+  reconcileAgentActivityFromStreamEvents,
 } from "@/stores/agent-activity-store"
 import { seedActiveCalls, upsertActiveCall, removeActiveCall } from "@/stores/active-calls-store"
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
@@ -110,7 +111,7 @@ import {
   Visibilities,
   normalizeSidebarConfig,
 } from "@threa/types"
-import { applyStreamBootstrapInCurrentTransaction, reconcileCachedStreamAgentActivity } from "./stream-sync"
+import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
@@ -3519,9 +3520,14 @@ export async function applyReconnectBootstrapBatch(
   // Re-seed the sidebar agent-activity store with the reconnect's running set —
   // the authority that drops any entry whose end signal was missed (INV-53).
   seedAgentActivity(workspaceId, finalBootstrap.activeAgentSessions ?? [])
-  await Promise.all(
-    [...streamBootstraps.keys()].map((streamId) => reconcileCachedStreamAgentActivity(workspaceId, streamId))
-  )
+  for (const [streamId, bootstrap] of streamBootstraps) {
+    reconcileAgentActivityFromStreamEvents(
+      workspaceId,
+      streamId,
+      bootstrap.stream.rootStreamId ?? streamId,
+      bootstrap.events
+    )
+  }
   // Same authoritative re-seed for the sidebar live-call dot (INV-53).
   seedActiveCalls(workspaceId, finalBootstrap.activeCalls ?? [])
 

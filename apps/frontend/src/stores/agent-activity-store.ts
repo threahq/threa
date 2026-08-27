@@ -146,8 +146,14 @@ export function upsertAgentSession(workspaceId: string, session: ActiveAgentSess
   const existing = ws.get(session.sessionId)
   const next: ActiveAgentSession = {
     ...session,
-    stepCount: session.stepCount ?? existing?.stepCount,
-    messageCount: session.messageCount ?? existing?.messageCount,
+    stepCount:
+      session.stepCount === undefined || existing?.stepCount === undefined
+        ? (session.stepCount ?? existing?.stepCount)
+        : Math.max(session.stepCount, existing.stepCount),
+    messageCount:
+      session.messageCount === undefined || existing?.messageCount === undefined
+        ? (session.messageCount ?? existing?.messageCount)
+        : Math.max(session.messageCount, existing.messageCount),
     substep: session.substep ?? existing?.substep,
   }
   if (existing && sameSession(existing, next)) return
@@ -209,13 +215,17 @@ export function reconcileAgentActivityFromStreamEvents(
   reconcileAgentActivityFromStreamLifecycle(workspaceId, streamId, rootStreamId, deriveAgentSessionLifecycle(events))
 }
 
+export function removeTerminatedAgentActivity(workspaceId: string, lifecycle: AgentSessionLifecycle): void {
+  for (const sessionId of lifecycle.terminated) removeAgentSession(workspaceId, sessionId)
+}
+
 export function reconcileAgentActivityFromStreamLifecycle(
   workspaceId: string,
   streamId: string,
   rootStreamId: string,
   lifecycle: AgentSessionLifecycle
 ): void {
-  for (const sessionId of lifecycle.terminated) removeAgentSession(workspaceId, sessionId)
+  removeTerminatedAgentActivity(workspaceId, lifecycle)
   for (const session of lifecycle.running.values()) {
     upsertAgentSession(workspaceId, {
       sessionId: session.sessionId,

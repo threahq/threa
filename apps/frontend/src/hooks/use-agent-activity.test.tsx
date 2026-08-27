@@ -93,7 +93,7 @@ describe("useAgentActivity", () => {
       eventType: "agent_session:completed" as const,
     }
 
-    renderHook(() => useAgentActivity([terminal], null, "ws_test", "usr_test", "stream_1", "stream_1"))
+    renderHook(() => useAgentActivity([terminal], null, "ws_test", "usr_test", "stream_1"))
 
     expect(getAgentActivityForStream("ws_test", "stream_1")).toEqual([])
   })

@@ -752,16 +752,23 @@ export async function applyStreamBootstrap(
     }
   }
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
-  await reconcileCachedStreamAgentActivity(workspaceId, streamId)
+  reconcileStreamBootstrapAgentActivity(workspaceId, bootstrap)
 }
 
-export async function reconcileCachedStreamAgentActivity(workspaceId: string, streamId: string): Promise<void> {
-  const [stream, events] = await Promise.all([
-    db.streams.get(streamId),
-    db.events.where("streamId").equals(streamId).toArray(),
-  ])
+export function reconcileStreamBootstrapAgentActivity(workspaceId: string, bootstrap: StreamBootstrap): void {
+  const { stream } = bootstrap
+  if (stream.workspaceId !== workspaceId) return
+  reconcileAgentActivityFromStreamEvents(workspaceId, stream.id, stream.rootStreamId ?? stream.id, bootstrap.events)
+}
+
+async function reconcileAppendedAgentActivity(
+  workspaceId: string,
+  streamId: string,
+  event: StreamEvent
+): Promise<void> {
+  const stream = await db.streams.get(streamId)
   if (!stream || stream.workspaceId !== workspaceId) return
-  reconcileAgentActivityFromStreamEvents(workspaceId, streamId, stream.rootStreamId ?? stream.id, events)
+  reconcileAgentActivityFromStreamEvents(workspaceId, streamId, stream.rootStreamId ?? stream.id, [event])
 }
 
 /**
@@ -1794,7 +1801,7 @@ function bindStreamSocketHandlers(
       })
     }
     if (isAgentSessionLifecycleEvent(payload.event)) {
-      await reconcileCachedStreamAgentActivity(workspaceId, streamId)
+      await reconcileAppendedAgentActivity(workspaceId, streamId, payload.event)
     }
   }
 

@@ -148,7 +148,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect(getAgentActivityForStream("ws_1", streamId)).toEqual([])
   })
 
-  it("preserves live progress when a cached start event has no counts", async () => {
+  it("does not regress live progress from a bootstrap start snapshot", async () => {
     const streamId = "stream_running_agent"
     upsertAgentSession("ws_1", {
       sessionId: "session_running",
@@ -169,6 +169,8 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
         personaId: "persona_ariadne",
         personaName: "Ariadne",
         triggerMessageId: "msg_trigger",
+        stepCount: 2,
+        messageCount: 0,
         startedAt: "2026-08-27T11:24:59.119Z",
       },
     })
@@ -176,6 +178,35 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([started], streamId))
 
     expect(getAgentSession("ws_1", "session_running")).toMatchObject({ stepCount: 4, messageCount: 1 })
+  })
+
+  it("does not restore a cached start outside the trusted replace window", async () => {
+    const streamId = "stream_old_agent"
+    const oldStarted = makeEvent({
+      id: "evt_old_started",
+      streamId,
+      sequence: "1",
+      eventType: "agent_session:started",
+      payload: {
+        sessionId: "session_settled",
+        personaId: "persona_ariadne",
+        personaName: "Ariadne",
+        triggerMessageId: "msg_old_trigger",
+        startedAt: "2026-08-27T11:24:59.119Z",
+      },
+    })
+    await db.events.put({
+      ...oldStarted,
+      workspaceId: "ws_1",
+      _sequenceNum: 1,
+      _cachedAt: Date.now() - 60_000,
+    })
+    const current = makeEvent({ id: "evt_current", streamId, sequence: "100" })
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([current], streamId))
+
+    expect(await db.events.get(oldStarted.id)).toBeDefined()
+    expect(getAgentActivityForStream("ws_1", streamId)).toEqual([])
   })
 
   it("preserves events from previous sessions (IDB is append-only)", async () => {

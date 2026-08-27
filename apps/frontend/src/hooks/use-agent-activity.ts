@@ -13,7 +13,7 @@ import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
 import { getStepInlineLabel } from "@/lib/step-config"
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
 import { deriveAgentSessionLifecycle } from "@/lib/agent-session-lifecycle"
-import { reconcileAgentActivityFromStreamLifecycle } from "@/stores/agent-activity-store"
+import { removeTerminatedAgentActivity } from "@/stores/agent-activity-store"
 
 export interface MessageAgentActivity {
   sessionId: string
@@ -72,8 +72,7 @@ export function useAgentActivity(
   socket: Socket | null,
   workspaceId: string,
   userId: string | null,
-  streamId?: string,
-  rootStreamId?: string
+  streamId?: string
 ): Map<string, MessageAgentActivity> {
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
   const reconnectCount = useSocketReconnectCount()
@@ -147,8 +146,8 @@ export function useAgentActivity(
 
   useEffect(() => {
     if (!streamId) return
-    reconcileAgentActivityFromStreamLifecycle(workspaceId, streamId, rootStreamId ?? streamId, lifecycle)
-  }, [lifecycle, rootStreamId, streamId, workspaceId])
+    removeTerminatedAgentActivity(workspaceId, lifecycle)
+  }, [lifecycle, streamId, workspaceId])
 
   // When a session terminates in the events array (e.g. thread view), clean up its progress entry
   useEffect(() => {

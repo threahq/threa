@@ -922,14 +922,7 @@ export function StreamContent({
   // Track live agent session progress for all stream types (step/message counts on session cards).
   // In channels, session cards are hidden (responses go to threads) and inline activity shows on trigger messages instead.
   const isChannel = stream?.type === StreamTypes.CHANNEL
-  const agentActivity = useAgentActivity(
-    events,
-    socket,
-    workspaceId,
-    currentWorkspaceUserId,
-    streamId,
-    stream?.rootStreamId ?? streamId
-  )
+  const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId, streamId)
 
   // Publish a running-session summary up to the header chip. No-ops for a
   // thread-panel StreamContent (mounted outside the open stream's provider).
