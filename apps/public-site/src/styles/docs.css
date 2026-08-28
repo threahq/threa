@@ -471,10 +471,6 @@ a {
   letter-spacing: -0.02em;
   margin: 0 0 16px;
 }
-.docs-article h1 .accent {
-  color: hsl(var(--gold));
-  font-weight: 500;
-}
 .docs-article h2 {
   font-family: var(--font-display);
   font-weight: 500;
