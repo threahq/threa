@@ -10,8 +10,7 @@
 import { hostname } from "node:os"
 import { RemoteSession, ThreaClient, loadConfig, wireLifecycle } from "@threahq/remote-session"
 
-// Session links are limited to these runtime kinds server-side today.
-const runtimeKind = process.env.THREA_RUNTIME_KIND ?? "claude-code-channel"
+const runtimeKind = process.env.THREA_RUNTIME_KIND ?? "custom"
 const echoDelayMs = Number(process.env.ECHO_DELAY_MS ?? 0)
 
 const loaded = loadConfig(

@@ -56,7 +56,7 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
 
   it("rejects link-free kinds that have no business creating a session", () => {
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "openclaw" }).success).toBe(false)
-    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "custom" }).success).toBe(false)
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "custom" }).success).toBe(true)
   })
 
   it("accepts an optional memoryMode and rejects unknown values", () => {

@@ -22,6 +22,7 @@ import {
   StreamActiveActorRepository,
   type BotRuntimeInstance,
   type BotRuntimeSessionLink,
+  resolveRuntimeKindConfig,
 } from "../bot-runtimes"
 import type { CommandRegistry } from "./registry"
 import {
@@ -236,16 +237,11 @@ async function resolveRuntimeCommandTarget(
     instanceId: link.instanceId,
   })
   if (!presence) return null
-  // Session-control is for runtimes that drive a long-lived linked session. Pi
-  // controls its session natively; the Claude Code channel drives the host via
-  // tmux key injection. Both gate the surfaced command set on what they
-  // advertise in `sessionControlCommands`.
-  if (
-    presence.runtimeKind !== BotRuntimeKinds.PI_LOCAL &&
-    presence.runtimeKind !== BotRuntimeKinds.CLAUDE_CODE_CHANNEL
-  ) {
-    return null
-  }
+  // Session-control is for runtimes that drive a long-lived linked session
+  // (Pi natively, the Claude Code channel via tmux, an SDK-built custom
+  // runtime through its actuator). Each gates the surfaced command set on what
+  // it advertises in `sessionControlCommands`.
+  if (resolveRuntimeKindConfig(presence.runtimeKind).sessionLinking === "none") return null
   if (presence.status !== BotRuntimeStatuses.AVAILABLE && presence.status !== BotRuntimeStatuses.BUSY) return null
 
   const runtimeSessionId =

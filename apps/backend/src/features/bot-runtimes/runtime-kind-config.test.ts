@@ -17,7 +17,7 @@ describe("resolveRuntimeKindConfig", () => {
   it("leaves untargeted kinds link-free", () => {
     expect(resolveRuntimeKindConfig("hermes").sessionLinking).toBe("none")
     expect(resolveRuntimeKindConfig("openclaw").sessionLinking).toBe("none")
-    expect(resolveRuntimeKindConfig("custom").sessionLinking).toBe("none")
+    expect(resolveRuntimeKindConfig("custom").sessionLinking).toBe("optional")
   })
 
   it("defaults a bot with no runtime instance to the pi-local policy", () => {

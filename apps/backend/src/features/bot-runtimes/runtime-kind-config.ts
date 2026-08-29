@@ -4,9 +4,11 @@
  * Pi and the Claude Code channel drive long-lived local sessions, so their
  * active-scratchpad turns must be pinned to an explicit session link (created
  * via Pi's `/remote-control` flow or the Claude Code channel's startup) —
- * without one we post a notice telling the user how to link. Other kinds never
- * create session links; their invocations dispatch untargeted and any live
- * instance of the bot may claim them.
+ * without one we post a notice telling the user how to link. A `custom`
+ * runtime (anything built on the public SDK) may link a scratchpad and then
+ * gets targeted turns and session control; without a link its invocations
+ * dispatch untargeted, like the kinds that never link at all, so an external
+ * bot that only answers mentions keeps working unchanged.
  */
 
 import type { BotRuntimeKind } from "@threa/types"
@@ -17,6 +19,7 @@ export type BotRuntimeKindConfig =
       /** Markdown for the system notice posted when no active session link exists. */
       missingSessionLinkNotice: (botName: string) => string
     }
+  | { sessionLinking: "optional" }
   | { sessionLinking: "none" }
 
 const BOT_RUNTIME_KIND_CONFIGS: Record<BotRuntimeKind, BotRuntimeKindConfig> = {
@@ -32,7 +35,7 @@ const BOT_RUNTIME_KIND_CONFIGS: Record<BotRuntimeKind, BotRuntimeKindConfig> = {
     missingSessionLinkNotice: (botName) =>
       `**${botName} is not linked to this scratchpad.** Start Claude Code with the Threa channel (\`claude --channels …\`) to link a session.`,
   },
-  custom: { sessionLinking: "none" },
+  custom: { sessionLinking: "optional" },
 }
 
 /**

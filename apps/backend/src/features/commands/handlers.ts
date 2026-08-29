@@ -47,15 +47,15 @@ export function resolveRuntimeInvocationRouting(
     ((commandName === "reconnect" || commandName === "clear" || commandName === "key") &&
       runtimeKind === BotRuntimeKinds.PI_LOCAL)
   ) {
-    // Pi advertises `active-scratchpad` while busy. The Claude Code channel
-    // instead advertises only `session-control` while busy, so its interrupts
-    // route there.
+    // Pi advertises `active-scratchpad` while busy. Every other linkable
+    // runtime (the Claude Code channel, SDK-built `custom` runtimes) advertises
+    // only `session-control` while busy, so its interrupts route there.
     return {
       trigger: BotInvocationTriggers.SESSION_CONTROL,
       requiredCapability:
-        runtimeKind === BotRuntimeKinds.CLAUDE_CODE_CHANNEL
-          ? BotInvocationCapabilities.SESSION_CONTROL
-          : BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
+        runtimeKind === BotRuntimeKinds.PI_LOCAL
+          ? BotInvocationCapabilities.ACTIVE_SCRATCHPAD
+          : BotInvocationCapabilities.SESSION_CONTROL,
     }
   }
   if (commandName === "reconnect" && runtimeKind === BotRuntimeKinds.CLAUDE_CODE_CHANNEL) {

@@ -195,11 +195,13 @@ describe("published bot-runtime packages", () => {
     connector = spawn(process.execPath, ["echo-connector.ts"], {
       cwd: consumerDir,
       env: {
-        ...process.env,
+        // A developer shell may carry its own THREA_* (display name, key);
+        // none of it belongs to this connector.
+        ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("THREA_"))),
         THREA_BASE_URL: edge.url.origin,
         THREA_WORKSPACE_ID: workspace.id,
         THREA_API_KEY: apiKey,
-        THREA_RUNTIME_KIND: "claude-code-channel",
+        THREA_RUNTIME_KIND: "custom",
         THREA_BIK_PATH: join(consumerDir, "bik.json"),
         ECHO_DELAY_MS: String(ECHO_DELAY_MS),
       },
@@ -214,7 +216,7 @@ describe("published bot-runtime packages", () => {
     const scratchpad = await waitFor("the scratchpad in the owner's list", async () =>
       (await listStreams(client, workspace.id)).find((stream) => stream.id === streamId)
     )
-    expect(scratchpad.displayName).toEndWith(` - ${basename(consumerDir)}`)
+    expect(scratchpad.displayName).toBe(`Echo - ${basename(consumerDir)}`)
 
     // The SDK stamps every message it posts, so count by metadata rather than
     // text: an echo reply embeds the scratchpad history, which would otherwise
