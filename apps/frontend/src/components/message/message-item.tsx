@@ -730,7 +730,11 @@ export function MessageItem({
     enabled: touchCapable && !!quoteReplyCtx && !isEditing,
   })
   const hasSwipe = swipe.offset !== 0
-  const swipeStyle = hasSwipe ? { transform: `translate(${swipe.offset}px, ${swipe.offsetY}px)` } : undefined
+  const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
+  const swipePulled = hasSwipe && swipe.offsetY > 0
+  // The L's downward leg moves the whole row (clip box included) so the pulled
+  // message rides over the next one rather than out of its own clip.
+  const swipePullStyle = swipePulled ? { transform: `translateY(${swipe.offsetY}px)` } : undefined
 
   // Long-press (→ action drawer) and swipe (→ quote) share the touch surface, so
   // their handlers are fanned out to both. `onContextMenu` comes from long-press.
@@ -805,8 +809,10 @@ export function MessageItem({
           // native selection on mobile — matches the timeline row (message-event).
           // Desktop keeps it selectable for the quote-on-selection affordance.
           isTouchInput && !isEditing && "select-none",
+          swipePulled && "z-10",
           rowInsetClassName
         )}
+        style={swipePullStyle}
         {...touchHandlers}
       >
         {swipeReveal}
@@ -872,8 +878,10 @@ export function MessageItem({
         // native selection on mobile — matches the timeline row (message-event).
         // Desktop keeps it selectable for the quote-on-selection affordance.
         isTouchInput && !isEditing && "select-none",
+        swipePulled && "z-10",
         rowInsetClassName
       )}
+      style={swipePullStyle}
       {...touchHandlers}
     >
       {swipeReveal}

@@ -565,6 +565,7 @@ function MessageLayout({
   const renderAsContinuation = isGroupContinuation && !isEditing
 
   const hasSwipe = swipeOffset !== undefined && swipeOffset !== 0
+  const swipePulled = hasSwipe && !!swipeOffsetY && swipeOffsetY > 0
   // Make a whole-message native copy lossless: scope the listener to the
   // rendered markdown body only. A `select-all + Ctrl+C` over the markdown
   // text writes `contentMarkdown` instead of the rendered text (which has
@@ -729,7 +730,10 @@ function MessageLayout({
       // — clipping there would cut the toolbar in half (it has nowhere else to
       // sit on tight continuations). `sm:overflow-visible` releases the clip
       // at the desktop breakpoint.
-      className={cn("relative overflow-hidden sm:overflow-visible", containerClassName)}
+      className={cn("relative overflow-hidden sm:overflow-visible", swipePulled && "z-10", containerClassName)}
+      // The L's downward leg moves the whole row (clip box included) so the
+      // pulled message rides over the next one rather than out of its own clip.
+      style={swipePulled ? { transform: `translateY(${swipeOffsetY}px)` } : undefined}
       aria-label={rowAriaLabel}
       // Batch mode turns the whole row into a toggle. Keyboard users get
       // role="button" + tabIndex so they can Tab to messages, and Enter/Space
@@ -776,7 +780,7 @@ function MessageLayout({
           batchEnabled && isInvalidTarget && "opacity-40 grayscale",
           batchEnabled && isHoveredTarget && "ring-2 ring-primary/60 ring-inset"
         )}
-        style={hasSwipe ? { transform: `translate(${swipeOffset}px, ${swipeOffsetY ?? 0}px)` } : undefined}
+        style={hasSwipe ? { transform: `translateX(${swipeOffset}px)` } : undefined}
       >
         {renderBatchLeading(batchEnabled, !!renderAsContinuation, {
           selected: isSelected,
