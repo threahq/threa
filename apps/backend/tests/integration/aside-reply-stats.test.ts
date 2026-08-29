@@ -82,8 +82,9 @@ describe("Aside reply stats", () => {
     })
 
     const outboxEvents = await OutboxRepository.fetchAfterId(pool, baselineId)
-    expect(outboxEvents.map((event) => event.eventType)).not.toContain("thread:updated")
-    expect(outboxEvents.some((event) => event.eventType === "message:created")).toBe(true)
+    const eventTypes = outboxEvents.map((event) => event.eventType)
+    expect(eventTypes).not.toContain("thread:updated")
+    expect(eventTypes).toEqual(expect.arrayContaining(["message:created", "message:edited"]))
 
     const asideRow = await StreamRepository.findById(pool, aside.id)
     expect(asideRow?.replyCount ?? 0).toBe(0)
