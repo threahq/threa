@@ -236,6 +236,10 @@ interface MessageLayoutProps {
   swipeLocked?: boolean
   /** Which action the locked swipe releases into: quote, or (after the L's downward leg) an aside. */
   swipeArm?: SwipeArm
+  /** How far the row follows the finger down the L's leg (px). */
+  swipeOffsetY?: number
+  /** Whether the L can pay off on this row (the reveal shows the pull hint). */
+  swipeCanPullDown?: boolean
   batch?: BatchTimelineState
 }
 
@@ -542,6 +546,8 @@ function MessageLayout({
   swipeOffset,
   swipeLocked,
   swipeArm,
+  swipeOffsetY,
+  swipeCanPullDown,
   batch,
 }: MessageLayoutProps) {
   const theme = actorRowTheme(event.actorType)
@@ -738,7 +744,7 @@ function MessageLayout({
     >
       {/* Swipe reveal (behind the message): quote, or the aside once the L's
           downward leg arms it. */}
-      {hasSwipe && <SwipeReveal locked={!!swipeLocked} arm={swipeArm ?? "primary"} />}
+      {hasSwipe && <SwipeReveal locked={!!swipeLocked} arm={swipeArm ?? "primary"} canPullDown={!!swipeCanPullDown} />}
       <div
         className={cn(
           // Opaque background so swipe-to-quote icon shows behind the message.
@@ -770,7 +776,7 @@ function MessageLayout({
           batchEnabled && isInvalidTarget && "opacity-40 grayscale",
           batchEnabled && isHoveredTarget && "ring-2 ring-primary/60 ring-inset"
         )}
-        style={hasSwipe ? { transform: `translateX(${swipeOffset}px)` } : undefined}
+        style={hasSwipe ? { transform: `translate(${swipeOffset}px, ${swipeOffsetY ?? 0}px)` } : undefined}
       >
         {renderBatchLeading(batchEnabled, !!renderAsContinuation, {
           selected: isSelected,
@@ -1540,6 +1546,8 @@ function SentMessageEvent({
         swipeOffset={touchCapable ? swipe.offset : undefined}
         swipeLocked={touchCapable ? swipe.isLocked : undefined}
         swipeArm={touchCapable ? swipe.arm : undefined}
+        swipeOffsetY={touchCapable ? swipe.offsetY : undefined}
+        swipeCanPullDown={touchCapable && canOpenAside}
         touchHandlers={
           touchCapable && !batch?.enabled
             ? {

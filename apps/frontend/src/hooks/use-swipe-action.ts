@@ -30,6 +30,8 @@ interface UseSwipeActionReturn {
   handlers: SwipeHandlers
   /** Current horizontal offset (negative = swiped left) */
   offset: number
+  /** How far the row follows the finger down the L's leg (px, ≥ 0). */
+  offsetY: number
   /** Whether the user has passed the threshold */
   isLocked: boolean
   /** Which action a release fires while locked: the swipe's own, or the L's. */
@@ -42,6 +44,19 @@ interface UseSwipeActionReturn {
  * consume the horizontal gesture for scrolling, so the swipe-to-quote action
  * must stay out of the way.
  */
+/** The nearest ancestor that scrolls vertically — the timeline the row lives in. */
+function findVerticalScroller(el: Element | null): HTMLElement | null {
+  let node = el
+  while (node && node !== document.documentElement) {
+    if (node instanceof HTMLElement && node.scrollHeight > node.clientHeight) {
+      const { overflowY } = getComputedStyle(node)
+      if (overflowY === "auto" || overflowY === "scroll") return node
+    }
+    node = node.parentElement
+  }
+  return null
+}
+
 function startedInHorizontalScroller(target: EventTarget | null): boolean {
   let node = target instanceof Element ? target : null
   while (node) {
@@ -74,24 +89,52 @@ export function useSwipeAction({
   // horizontal stroke never counts as the downward one.
   const lockYRef = useRef(0)
   const armRef = useRef<SwipeArm>("primary")
+  // The row's own non-passive touchmove and the timeline it froze. React's
+  // touch listeners are passive, so once the swipe is half-way to its
+  // threshold the row claims the gesture here: `preventDefault` on every
+  // move keeps the browser from turning the L's downward leg into a scroll,
+  // and the scroller's overflow is pinned for the compositor's sake, the way
+  // the sidebar swipe does it. Both are undone on end, cancel and reset.
+  const elementRef = useRef<HTMLElement | null>(null)
+  const frozenRef = useRef<{ scroller: HTMLElement; overflowY: string } | null>(null)
+  const claimedRef = useRef(false)
   const [offset, setOffset] = useState(0)
+  const [offsetY, setOffsetY] = useState(0)
   const [isLocked, setIsLocked] = useState(false)
   const [arm, setArm] = useState<SwipeArm>("primary")
 
   const onSwipeRef = useRef(onSwipe)
   onSwipeRef.current = onSwipe
+  const claimTouchMoveRef = useRef((e: TouchEvent) => {
+    if (claimedRef.current && e.cancelable) e.preventDefault()
+  })
+  const claimTouchMove = claimTouchMoveRef.current
   const onSwipeDownRef = useRef(onSwipeDown)
   onSwipeDownRef.current = onSwipeDown
 
+  const releaseGesture = useCallback(() => {
+    if (elementRef.current) {
+      elementRef.current.removeEventListener("touchmove", claimTouchMove)
+      elementRef.current = null
+    }
+    if (frozenRef.current) {
+      frozenRef.current.scroller.style.overflowY = frozenRef.current.overflowY
+      frozenRef.current = null
+    }
+    claimedRef.current = false
+  }, [])
+
   const reset = useCallback(() => {
+    releaseGesture()
     startPos.current = null
     isHorizontalRef.current = null
     lockedRef.current = false
     armRef.current = "primary"
     setOffset(0)
+    setOffsetY(0)
     setIsLocked(false)
     setArm("primary")
-  }, [])
+  }, [releaseGesture])
 
   const onTouchStart = useCallback(
     (e: React.TouchEvent) => {
@@ -101,8 +144,13 @@ export function useSwipeAction({
       startPos.current = { x: touch.clientX, y: touch.clientY }
       isHorizontalRef.current = null
       lockedRef.current = false
+      releaseGesture()
+      if (e.currentTarget instanceof HTMLElement) {
+        elementRef.current = e.currentTarget
+        e.currentTarget.addEventListener("touchmove", claimTouchMove, { passive: false })
+      }
     },
-    [enabled]
+    [enabled, releaseGesture]
   )
 
   const onTouchMove = useCallback(
@@ -134,6 +182,17 @@ export function useSwipeAction({
       const clampedOffset = Math.max(dx, -(threshold * 1.2))
       setOffset(clampedOffset)
 
+      // Half-way to the threshold the row owns the touch: from here the
+      // timeline stays still whatever the finger does next.
+      if (!claimedRef.current && Math.abs(clampedOffset) >= threshold / 2) {
+        claimedRef.current = true
+        const scroller = findVerticalScroller(e.target instanceof Element ? e.target : null)
+        if (scroller) {
+          frozenRef.current = { scroller, overflowY: scroller.style.overflowY }
+          scroller.style.overflowY = "hidden"
+        }
+      }
+
       // Lock in when past threshold
       if (Math.abs(clampedOffset) >= threshold && !lockedRef.current) {
         lockedRef.current = true
@@ -149,12 +208,16 @@ export function useSwipeAction({
         armRef.current = "primary"
         setIsLocked(false)
         setArm("primary")
+        setOffsetY(0)
       }
 
       // The L's leg: down from the lock point arms the second action, back up
       // disarms it. One buzz per arming so the switch is felt, not just seen.
       if (lockedRef.current && onSwipeDownRef.current) {
-        const nextArm: SwipeArm = touch.clientY - lockYRef.current >= downThreshold ? "down" : "primary"
+        const leg = touch.clientY - lockYRef.current
+        // The row follows the finger down, a little past the arming point.
+        setOffsetY(Math.min(Math.max(leg, 0), downThreshold * 1.5))
+        const nextArm: SwipeArm = leg >= downThreshold ? "down" : "primary"
         if (nextArm !== armRef.current) {
           armRef.current = nextArm
           setArm(nextArm)
@@ -193,6 +256,7 @@ export function useSwipeAction({
   return {
     handlers: { onTouchStart, onTouchEnd, onTouchMove, onTouchCancel },
     offset,
+    offsetY,
     isLocked,
     arm,
   }

@@ -1,25 +1,36 @@
-import { Quote, MessageSquareDashed } from "lucide-react"
+import { Quote, MessageSquareDashed, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { SwipeArm } from "@/hooks/use-swipe-action"
 
-/**
- * What a swiped row reveals behind itself: the quote glyph, gold once the
- * swipe is locked; the aside glyph, gold, once the L's downward leg arms it.
- * The two glyphs share one slot so the swap never moves the row.
- */
 interface SwipeRevealProps {
   locked: boolean
   arm: SwipeArm
+  /** Whether the L is wired on this row (the hint only shows where it can pay off). */
+  canPullDown: boolean
 }
 
-export function SwipeReveal({ locked, arm }: SwipeRevealProps) {
+/**
+ * What a swiped row reveals behind itself: the quote glyph, gold once the
+ * swipe is locked, and under it the aside glyph with a down-arrow — the hint
+ * that the finger can keep going. Once the L's leg arms it, the aside glyph
+ * is the gold one. Both glyphs sit in one slot so the swap never moves the row.
+ */
+export function SwipeReveal({ locked, arm, canPullDown }: SwipeRevealProps) {
   const down = arm === "down"
   return (
-    <div className="absolute inset-y-0 right-0 flex items-center pr-4" data-swipe-arm={arm}>
-      {down ? (
-        <MessageSquareDashed className="h-5 w-5 text-primary" />
-      ) : (
-        <Quote className={cn("h-5 w-5 transition-colors", locked ? "text-primary" : "text-muted-foreground")} />
+    <div className="absolute inset-y-0 right-0 flex flex-col items-center justify-center pr-4" data-swipe-arm={arm}>
+      <Quote className={cn("h-5 w-5 transition-colors", locked && !down ? "text-primary" : "text-muted-foreground")} />
+      {canPullDown && (
+        <span
+          className={cn(
+            "mt-0.5 flex items-center gap-0.5 transition-opacity",
+            down ? "text-primary" : "text-muted-foreground",
+            locked ? "opacity-100" : "opacity-40"
+          )}
+        >
+          <ChevronDown className="h-3 w-3" />
+          <MessageSquareDashed className="h-4 w-4" />
+        </span>
       )}
     </div>
   )

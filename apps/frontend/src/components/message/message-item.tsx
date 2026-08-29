@@ -730,7 +730,7 @@ export function MessageItem({
     enabled: touchCapable && !!quoteReplyCtx && !isEditing,
   })
   const hasSwipe = swipe.offset !== 0
-  const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
+  const swipeStyle = hasSwipe ? { transform: `translate(${swipe.offset}px, ${swipe.offsetY}px)` } : undefined
 
   // Long-press (→ action drawer) and swipe (→ quote) share the touch surface, so
   // their handlers are fanned out to both. `onContextMenu` comes from long-press.
@@ -782,7 +782,9 @@ export function MessageItem({
     settling && "opacity-70"
   )
 
-  const swipeReveal = hasSwipe ? <SwipeReveal locked={swipe.isLocked} arm={swipe.arm} /> : null
+  const swipeReveal = hasSwipe ? (
+    <SwipeReveal locked={swipe.isLocked} arm={swipe.arm} canPullDown={canOpenAside} />
+  ) : null
 
   if (continuation) {
     const sentAt = new Date(message.createdAt)

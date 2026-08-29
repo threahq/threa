@@ -169,4 +169,62 @@ describe("useSwipeAction", () => {
       expect(onSwipe).toHaveBeenCalledTimes(2)
     })
   })
+
+  describe("claiming the touch", () => {
+    function scrollerWithRow() {
+      const scroller = document.createElement("div")
+      scroller.style.overflowY = "auto"
+      Object.defineProperty(scroller, "scrollHeight", { value: 2000, configurable: true })
+      Object.defineProperty(scroller, "clientHeight", { value: 500, configurable: true })
+      const row = document.createElement("div")
+      scroller.appendChild(row)
+      document.body.appendChild(scroller)
+      const listeners: Array<(e: TouchEvent) => void> = []
+      vi.spyOn(row, "addEventListener").mockImplementation((type, listener) => {
+        if (type === "touchmove") listeners.push(listener as (e: TouchEvent) => void)
+      })
+      const nativeMove = () => {
+        const event = { cancelable: true, preventDefault: vi.fn() } as unknown as TouchEvent
+        for (const listener of listeners) listener(event)
+        return event.preventDefault as ReturnType<typeof vi.fn>
+      }
+      return { scroller, row, nativeMove }
+    }
+    const withCurrentTarget = (row: HTMLElement, x: number, y: number) =>
+      ({ ...touchEvent(row, x, y), currentTarget: row }) as React.TouchEvent
+
+    it("takes the touch half-way to the threshold: moves are prevented and the timeline is pinned until release", () => {
+      const onSwipeDown = vi.fn()
+      const { result } = renderHook(() => useSwipeAction({ onSwipe: vi.fn(), onSwipeDown, threshold: 80 }))
+      const { scroller, row, nativeMove } = scrollerWithRow()
+
+      act(() => {
+        result.current.handlers.onTouchStart(withCurrentTarget(row, 200, 100))
+        result.current.handlers.onTouchMove(touchEvent(row, 170, 100))
+      })
+      expect(nativeMove()).not.toHaveBeenCalled()
+      expect(scroller.style.overflowY).toBe("auto")
+
+      act(() => result.current.handlers.onTouchMove(touchEvent(row, 155, 100)))
+      expect(nativeMove()).toHaveBeenCalled()
+      expect(scroller.style.overflowY).toBe("hidden")
+
+      // The row follows the finger down the leg, a little past the arming point.
+      act(() => {
+        result.current.handlers.onTouchMove(touchEvent(row, 100, 100))
+        result.current.handlers.onTouchMove(touchEvent(row, 100, 120))
+      })
+      expect(result.current.offsetY).toBe(20)
+      act(() => result.current.handlers.onTouchMove(touchEvent(row, 100, 200)))
+      expect(result.current.offsetY).toBe(36)
+      expect(result.current.arm).toBe("down")
+
+      act(() => result.current.handlers.onTouchEnd())
+      expect(onSwipeDown).toHaveBeenCalledTimes(1)
+      expect(scroller.style.overflowY).toBe("auto")
+      expect(result.current.offsetY).toBe(0)
+      expect(nativeMove()).not.toHaveBeenCalled()
+      scroller.remove()
+    })
+  })
 })
