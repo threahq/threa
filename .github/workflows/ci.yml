@@ -229,6 +229,7 @@ jobs:
           bun install --cwd extensions/remote-session
           bun install --cwd extensions/claude-code-remote
           bun install --cwd extensions/harness-daemon
+          bun install --cwd extensions/threa-bot
 
       - name: Typecheck extensions
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
@@ -238,6 +239,7 @@ jobs:
           bun run --cwd extensions/remote-session typecheck
           bun run --cwd extensions/claude-code-remote typecheck
           bun run --cwd extensions/harness-daemon typecheck
+          bun run --cwd extensions/threa-bot typecheck
 
       - name: Run extension tests
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
@@ -248,6 +250,7 @@ jobs:
           bun run --cwd extensions/remote-session test
           bun run --cwd extensions/claude-code-remote test
           bun run --cwd extensions/harness-daemon test
+          bun run --cwd extensions/threa-bot test
 
   public-site-build:
     name: Public Site Build
