@@ -1,13 +1,5 @@
 export { BotRuntimeTransport } from "./transport"
 export {
-  parseAllowedTmuxKey,
-  sendAllowedTmuxKey,
-  TMUX_KEY_TOKENS,
-  TmuxKeyError,
-  type AllowedTmuxKey,
-  type TmuxKeyFailureCode,
-} from "./tmux-key"
-export {
   ARCHIVE_RESTORE_GRACE_MS,
   ARCHIVE_RESTORE_PROBE_MS,
   ArchiveGraceController,
@@ -15,30 +7,7 @@ export {
   type ArchiveGraceHooks,
   type ArchiveGraceOptions,
 } from "./archive-grace"
-export { killOwnWindow } from "./tmux-window"
-export {
-  clearHarnessLink,
-  harnessLinksDir,
-  isSafeSessionFileName,
-  markHarnessLinkWoundDown,
-  readHarnessLinks,
-  recordHarnessLink,
-  type HarnessLink,
-} from "./harness-links"
 export { attachmentLocalPath, safeAttachmentFilename } from "./attachment-files"
-export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from "./harness-kick"
-export {
-  harnessReconnectAvailable,
-  prepareHarnessClear,
-  prepareHarnessReconnect,
-  type PrepareHarnessClearOptions,
-  type PrepareHarnessReconnectOptions,
-} from "./harness-reconnect"
-export {
-  BotSupervisorTransport,
-  type BotSessionRestoredPayload,
-  type BotSupervisorTransportOptions,
-} from "./supervisor"
 export { parseWsHint, buildBotSocketUrl, isObject, type WsHint } from "./ws-hint"
 export type {
   BotWriteAck,

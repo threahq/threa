@@ -15,9 +15,10 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@threa/bot-runtime-client": "file:../bot-runtime-client",
+    "@threa/harness-client": "file:../harness-client",
+    "@threa/remote-session": "file:../remote-session",
     "socket.io-client": "^4.8.1",
-    "zod": "^3.23.0",
-    "@threa/remote-session": "file:../remote-session"
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

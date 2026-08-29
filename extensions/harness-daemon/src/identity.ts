@@ -1,5 +1,5 @@
 import { hostname } from "node:os"
-import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
+import { readHarnessLinks, type HarnessLink } from "@threa/harness-client"
 import {
   attestedRuntimes,
   ledgerRuntimeSessionId,

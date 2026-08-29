@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@threa/bot-runtime-client": "file:../bot-runtime-client"
+    "@threa/bot-runtime-client": "file:../bot-runtime-client",
+    "@threa/harness-client": "file:../harness-client"
   },
   "devDependencies": {
     "@types/bun": "latest",

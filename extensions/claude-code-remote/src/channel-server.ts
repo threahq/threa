@@ -1,16 +1,18 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
+import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
 import {
   harnessReconnectAvailable,
+  markHarnessLinkWoundDown,
   prepareHarnessClear,
   prepareHarnessReconnect,
+  recordHarnessLink,
   runHarnessKick,
   killOwnWindow,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
-  type BotRuntimeTransport,
-} from "@threa/bot-runtime-client"
+} from "@threa/harness-client"
 import {
   DelegationClient,
   DelegationRunner,
@@ -525,6 +527,16 @@ export class ChannelServer {
           },
           () => !this.shuttingDown
         ),
+        // Record what this window owns so harnessd can reap it later: an archive
+        // that lands while this process is dead has nothing else to go on.
+        onLinked: (link) =>
+          recordHarnessLink({
+            runtimeKind: RUNTIME_KIND,
+            runtimeSessionId: config.runtimeSessionId,
+            instanceId: config.instanceId,
+            rootStreamId: link.rootStreamId,
+            worktree: process.cwd(),
+          }),
         onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay
           ? { interceptClaimed: (invocation: ClaimedInvocation) => this.interceptVerdict(invocation) }
@@ -630,6 +642,12 @@ export class ChannelServer {
    */
   private windDownForArchive(): void {
     log("scratchpad archived — handing the worktree to harnessd and shutting down")
+    // Marked, not cleared: harnessd preserves the branch and removes the
+    // worktree under `resume-active.lock`, and it can only find this worktree
+    // while the record is still there. Clearing it would strand the worktree
+    // exactly as an ordinary shutdown-then-archive does — the other case the
+    // reaper exists for.
+    markHarnessLinkWoundDown(this.config.runtimeSessionId)
     if (!killOwnWindow()) process.exit(0)
   }
 

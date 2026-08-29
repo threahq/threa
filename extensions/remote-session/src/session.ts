@@ -4,8 +4,6 @@ import {
   ArchiveGraceController,
   BikKeystore,
   WS_BACKSTOP_POLL_MS,
-  markHarnessLinkWoundDown,
-  recordHarnessLink,
   BotRuntimeTransport,
   mintStreamKeyWraps,
   openSealedAck,
@@ -146,6 +144,13 @@ export interface RemoteSessionDelegate {
    * consumed; the SDK then closes it silently and moves on.
    */
   interceptClaimed?(invocation: ClaimedInvocation): Promise<boolean>
+  /**
+   * The scratchpad link was created or resumed (also after an unarchive
+   * reattach). Runs before presence is synced, so a connector can record what
+   * this process now owns; a throw here fails the link attempt and retries on
+   * the next poll tick.
+   */
+  onLinked?(link: RuntimeSessionLink): Promise<void> | void
   /** Present iff the connector can drive the runtime. Gates advertising session control (fail-safe). */
   sessionControl?: SessionControlActuator
   /**
@@ -493,17 +498,9 @@ export class RemoteSession {
       this.log("link response raced an archive state change — dropped; the next probe decides")
       return false
     }
+    await this.delegate.onLinked?.(link)
     this.link = link
     this.linkGeneration += 1
-    // Record what this window owns so harnessd can reap it later: an archive
-    // that lands while this process is dead has nothing else to go on.
-    recordHarnessLink({
-      runtimeKind: this.runtime.kind,
-      runtimeSessionId: this.config.runtimeSessionId,
-      instanceId: this.config.instanceId,
-      rootStreamId: link.rootStreamId,
-      worktree: process.cwd(),
-    })
     this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
     await this.syncPresence()
     return true
@@ -1660,12 +1657,6 @@ export class RemoteSession {
   /** The grace expired with the scratchpad still archived: hand the connector its terminal wind-down. */
   private async windDownForArchive(rootStreamId: string): Promise<void> {
     await this.shutdown()
-    // Marked, not cleared, and only here: harnessd preserves the branch and
-    // removes the worktree under `resume-active.lock`, and it can only find
-    // this worktree while the record is still there. Clearing it would strand
-    // the worktree exactly as an ordinary shutdown-then-archive does — which
-    // is the other case the reaper exists for.
-    markHarnessLinkWoundDown(this.config.runtimeSessionId)
     await this.delegate.onArchived?.({ rootStreamId })
   }
 

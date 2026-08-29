@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 // Build a self-contained standalone install of the Threa Claude Code channel.
 //
-// Inside the monorepo, `@threa/remote-session` and `@threa/bot-runtime-client`
-// resolve via sibling `file:` deps. Running the channel from outside a monorepo
-// checkout (registering `bun <abs path>/src/index.ts` from a box that has no
-// threa clone) has no siblings and the packages are private (not on npm), so a
-// plain copy + `bun install` can't resolve them. We vendor both packages'
-// runtime source into the copy and drop the deps. Their only runtime
-// dependency, socket.io-client, is already a direct dependency here.
+// Inside the monorepo, `@threa/remote-session`, `@threa/bot-runtime-client` and
+// `@threa/harness-client` resolve via sibling `file:` deps. Running the channel
+// from outside a monorepo checkout (registering `bun <abs path>/src/index.ts`
+// from a box that has no threa clone) has no siblings, and harness-client is
+// private (not on npm), so a plain copy + `bun install` can't resolve them. We
+// vendor the packages' runtime source into the copy and drop the deps. Their
+// only runtime dependency, socket.io-client, is already a direct dependency here.
 //
 // Usage: bun run extensions/claude-code-remote/install-local.ts [destDir]
 
@@ -33,16 +33,24 @@ const VENDORED = [
       "ws-hint.ts",
       "crypto.ts",
       "sealed.ts",
+      "archive-grace.ts",
+      "attachment-files.ts",
+    ],
+    dir: "bot-runtime-client",
+  },
+  {
+    dep: "@threa/harness-client",
+    src: resolve(here, "../harness-client"),
+    files: [
+      "index.ts",
       "supervisor.ts",
       "harness-kick.ts",
       "harness-reconnect.ts",
       "tmux-key.ts",
       "tmux-window.ts",
-      "archive-grace.ts",
       "harness-links.ts",
-      "attachment-files.ts",
     ],
-    dir: "bot-runtime-client",
+    dir: "harness-client",
   },
   {
     dep: "@threa/remote-session",
@@ -101,7 +109,7 @@ if (missingImports.length > 0) {
 
 // 4. Repoint every import of the vendored deps at the vendored copies — in the
 //    channel sources AND between the vendored packages themselves
-//    (remote-session imports bot-runtime-client). The specifier is computed per
+//    (remote-session and harness-client import bot-runtime-client). The specifier is computed per
 //    file so nested files resolve correctly.
 let rewrites = 0
 const walk = (dir: string) => {

@@ -34,6 +34,7 @@ import {
   serializeSealedPayload,
   unwrapStreamKey,
   wrapStreamKey,
+  type WebCryptoKey,
   type AttachmentRef,
   type SealedPayloadExtras,
   type StreamEnvelope,
@@ -49,7 +50,7 @@ export const THREA_CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 export interface BotIdentityKey {
   publicKeyId: string
   publicKeyBase64: string
-  privateKey: CryptoKey
+  privateKey: WebCryptoKey
 }
 
 interface PersistedBik {
@@ -227,7 +228,7 @@ export class BikKeystore {
   }
 
   private async create(): Promise<BotIdentityKey | undefined> {
-    let keyPair: CryptoKeyPair
+    let keyPair: { publicKey: WebCryptoKey; privateKey: WebCryptoKey }
     let publicKeyBase64: string
     let privateKeyBase64: string
     try {

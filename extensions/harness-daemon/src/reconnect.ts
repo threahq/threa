@@ -1,7 +1,7 @@
 import { statSync } from "node:fs"
 import { hostname } from "node:os"
 import { basename, resolve } from "node:path"
-import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
+import { readHarnessLinks, type HarnessLink } from "@threa/harness-client"
 import { acceptClaudeBootPrompts, defaultClaudeBootDeps, warnIfBlocked, type ClaudeBootDeps } from "./claude-boot"
 import {
   defaultClaudeRegistryDeps,

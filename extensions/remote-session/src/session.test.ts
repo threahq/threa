@@ -15,14 +15,7 @@ import {
   type SessionControlActuator,
 } from "./session"
 import type { RemoteSessionConfig } from "./identity"
-import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
-
-// Harness links are written to a real path under $HOME; point them at a temp
-// dir so a test run can never litter (or reap from) the developer's machine.
-process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-test-"))
 
 function makeConfig(overrides?: Partial<RemoteSessionConfig>): RemoteSessionConfig {
   return {
@@ -605,6 +598,30 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     // scratchpad the user archived must mint a fresh one, not wedge on 409s.
     expect(created).toHaveLength(1)
     expect((created[0] as Record<string, unknown>).ifArchived).toBe("replace")
+    await session.shutdown()
+  })
+
+  test("hands the connector every link it establishes, before presence is synced", async () => {
+    const link = {
+      linkId: "brsl_1",
+      rootStreamId: "stream_root",
+      activeStreamId: "stream_root",
+      runtimeSessionId: "rts-test",
+      streamUrlPath: "/w/ws_1/s/stream_root",
+    }
+    const client = { createSession: async () => link } as unknown as ThreaClient
+    const { transport, presence } = makeFakeTransport()
+    const seen: Array<{ link: unknown; presenceWrites: number }> = []
+    const session = makeSession(client, transport, {
+      onLinked: (received) => {
+        seen.push({ link: received, presenceWrites: presence.length })
+      },
+    })
+
+    await (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+
+    expect(seen).toEqual([{ link, presenceWrites: 0 }])
+    expect(session.statusSnapshot.rootStreamId).toBe("stream_root")
     await session.shutdown()
   })
 

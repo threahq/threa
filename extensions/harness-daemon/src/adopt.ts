@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
+import { readHarnessLinks, type HarnessLink } from "@threa/harness-client"
 import { existsSync, statSync } from "node:fs"
 import { hostname } from "node:os"
 import { basename, join } from "node:path"

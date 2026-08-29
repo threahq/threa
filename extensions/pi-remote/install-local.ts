@@ -1,41 +1,57 @@
 #!/usr/bin/env bun
 // Build a self-contained standalone install of the Threa Pi remote extension.
 //
-// Inside the monorepo, `@threa/bot-runtime-client` resolves via the sibling
-// `file:../bot-runtime-client`. The install target (~/.pi/agent/extensions/threa-remote)
-// has no sibling and the package is private (not on npm), so a plain copy + `bun install`
-// can't resolve it. We vendor bot-runtime-client's source into the copy and drop the dep.
-// Its only runtime dependency, socket.io-client, is already a direct dependency here.
+// Inside the monorepo, `@threa/bot-runtime-client` and `@threa/harness-client`
+// resolve via sibling `file:` deps. The install target
+// (~/.pi/agent/extensions/threa-remote) has no siblings and harness-client is
+// private (not on npm), so a plain copy + `bun install` can't resolve them. We
+// vendor both packages' runtime source into the copy and drop the deps. Their
+// only runtime dependency, socket.io-client, is already a direct dependency here.
 //
 // Usage: bun run extensions/pi-remote/install-local.ts [destDir]
 
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { homedir } from "node:os"
 import { spawnSync } from "node:child_process"
 
 const here = dirname(fileURLToPath(import.meta.url)) // extensions/pi-remote
-const botRuntime = resolve(here, "../bot-runtime-client")
 const extensionsDir = join(homedir(), ".pi", "agent", "extensions")
 const dest = process.argv[2] ?? join(extensionsDir, "threa-remote")
 
-// The runtime files of bot-runtime-client (its tests are not needed at runtime).
-const VENDOR_FILES = [
-  "index.ts",
-  "transport.ts",
-  "types.ts",
-  "ws-hint.ts",
-  "crypto.ts",
-  "sealed.ts",
-  "supervisor.ts",
-  "harness-kick.ts",
-  "harness-reconnect.ts",
-  "tmux-key.ts",
-  "tmux-window.ts",
-  "archive-grace.ts",
-  "harness-links.ts",
-  "attachment-files.ts",
+// Vendored sibling packages: dep specifier → source dir + runtime files (tests
+// are not needed at runtime).
+const VENDORED = [
+  {
+    dep: "@threa/bot-runtime-client",
+    src: resolve(here, "../bot-runtime-client"),
+    files: [
+      "index.ts",
+      "transport.ts",
+      "types.ts",
+      "ws-hint.ts",
+      "crypto.ts",
+      "sealed.ts",
+      "archive-grace.ts",
+      "attachment-files.ts",
+    ],
+    dir: "bot-runtime-client",
+  },
+  {
+    dep: "@threa/harness-client",
+    src: resolve(here, "../harness-client"),
+    files: [
+      "index.ts",
+      "supervisor.ts",
+      "harness-kick.ts",
+      "harness-reconnect.ts",
+      "tmux-key.ts",
+      "tmux-window.ts",
+      "harness-links.ts",
+    ],
+    dir: "harness-client",
+  },
 ]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
@@ -50,44 +66,81 @@ cpSync(here, dest, {
   filter: (src) => !/\/(node_modules|bun\.lock|install-local\.ts)$/.test(src),
 })
 
-// 3. Vendor bot-runtime-client's runtime source.
-const vendor = join(dest, "src", "vendor", "bot-runtime-client")
-mkdirSync(vendor, { recursive: true })
-for (const f of VENDOR_FILES) cpSync(join(botRuntime, "src", f), join(vendor, f))
-
-// 4. Point the import at the vendored copy.
-const entry = join(dest, "src", "threa-remote.ts")
-const code = readFileSync(entry, "utf8")
-const rewritten = code.replace(/from ["']@threa\/bot-runtime-client["']/, 'from "./vendor/bot-runtime-client/index"')
-if (rewritten === code) {
-  throw new Error("import rewrite failed: '@threa/bot-runtime-client' specifier not found in src/threa-remote.ts")
+// 3. Vendor each package's runtime source, then check every relative import in
+//    the vendored copies resolves inside the copy: a file added to a package and
+//    re-exported from its index but missing from `files` produces an install
+//    that cannot even be imported, and nothing notices until someone reloads Pi.
+const vendorRoot = join(dest, "src", "vendor")
+for (const pkg of VENDORED) {
+  const vendorDir = join(vendorRoot, pkg.dir)
+  mkdirSync(vendorDir, { recursive: true })
+  for (const f of pkg.files) cpSync(join(pkg.src, "src", f), join(vendorDir, f))
 }
-writeFileSync(entry, rewritten)
 
-// 4b. A file added to bot-runtime-client and re-exported from its index but
-//     missing from VENDOR_FILES produces an install that cannot even be
-//     imported — and nothing notices until someone reloads Pi. Resolve every
-//     relative import in the vendored copy against the copy itself.
-const missing: string[] = []
-for (const file of VENDOR_FILES) {
-  const source = readFileSync(join(vendor, file), "utf8")
-  for (const [, specifier] of source.matchAll(/\bfrom\s+["'](\.\/[^"']+)["']/g)) {
-    const target = `${specifier.slice(2)}.ts`
-    if (!VENDOR_FILES.includes(target)) missing.push(`${file} imports ${specifier}`)
+const missingImports: string[] = []
+const relativeImportPattern = /(?:\bfrom\s+|\bimport\s*(?:\(\s*)?)["'](\.\.?\/[^"']+)["']/g
+for (const pkg of VENDORED) {
+  const vendorDir = join(vendorRoot, pkg.dir)
+  for (const file of pkg.files) {
+    const source = readFileSync(join(vendorDir, file), "utf8")
+    for (const [, specifier] of source.matchAll(relativeImportPattern)) {
+      const target = resolve(dirname(join(vendorDir, file)), specifier)
+      if (![target, `${target}.ts`, join(target, "index.ts")].some(existsSync)) {
+        missingImports.push(`${pkg.dep}/${file} imports ${specifier}`)
+      }
+    }
   }
 }
-if (missing.length > 0) {
-  throw new Error(`vendored bot-runtime-client is incomplete — add these to VENDOR_FILES:\n  ${missing.join("\n  ")}`)
+if (missingImports.length > 0) {
+  throw new Error(`vendored packages are incomplete:\n  ${missingImports.join("\n  ")}`)
 }
 
-// 5. Drop the now-vendored dep from the copied package.json, and inherit the
-//    vendored source's own runtime deps (@hpke/*, ulid for the sealed path) so
+// 4. Repoint every import of the vendored deps at the vendored copies — in the
+//    extension source AND between the vendored packages themselves
+//    (harness-client imports bot-runtime-client).
+let rewrites = 0
+const walk = (dir: string) => {
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, ent.name)
+    if (ent.isDirectory()) {
+      walk(p)
+      continue
+    }
+    if (!ent.name.endsWith(".ts")) continue
+    let code = readFileSync(p, "utf8")
+    let changed = false
+    for (const pkg of VENDORED) {
+      if (!code.includes(pkg.dep)) continue
+      const entry = join(vendorRoot, pkg.dir, "index.ts")
+      let spec = relative(dirname(p), entry).replace(/\.ts$/, "")
+      if (!spec.startsWith(".")) spec = `./${spec}`
+      code = code.replaceAll(`"${pkg.dep}"`, `"${spec}"`).replaceAll(`'${pkg.dep}'`, `'${spec}'`)
+      changed = true
+    }
+    if (changed) {
+      writeFileSync(p, code)
+      rewrites++
+    }
+  }
+}
+walk(join(dest, "src"))
+if (rewrites === 0) {
+  throw new Error("import rewrite failed: no vendored dep specifiers found under src/")
+}
+
+// 5. Drop the now-vendored deps from the copied package.json, and inherit the
+//    vendored packages' own runtime deps (@hpke/*, ulid for the sealed path) so
 //    the standalone install can resolve them without the workspace.
 const pkgPath = join(dest, "package.json")
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
-delete pkg.dependencies?.["@threa/bot-runtime-client"]
-const botRuntimePkg = JSON.parse(readFileSync(join(botRuntime, "package.json"), "utf8"))
-pkg.dependencies = { ...(botRuntimePkg.dependencies ?? {}), ...pkg.dependencies }
+for (const vendored of VENDORED) {
+  delete pkg.dependencies?.[vendored.dep]
+  const vendoredPkg = JSON.parse(readFileSync(join(vendored.src, "package.json"), "utf8"))
+  for (const [dep, version] of Object.entries(vendoredPkg.dependencies ?? {})) {
+    if (VENDORED.some((entry) => entry.dep === dep)) continue
+    pkg.dependencies[dep] ??= version
+  }
+}
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
 
 // 6. Install the remaining deps in the standalone copy.

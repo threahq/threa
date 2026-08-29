@@ -1,10 +1,5 @@
-import {
-  ARCHIVE_RESTORE_GRACE_MS,
-  WS_BACKSTOP_POLL_MS,
-  clearHarnessLink,
-  readHarnessLinks,
-  type HarnessLink,
-} from "@threa/bot-runtime-client"
+import { ARCHIVE_RESTORE_GRACE_MS, WS_BACKSTOP_POLL_MS } from "@threa/bot-runtime-client"
+import { clearHarnessLink, readHarnessLinks, type HarnessLink } from "@threa/harness-client"
 import { existsSync } from "node:fs"
 import { pushBranchAndRemoveWorktree } from "./archive-wind-down"
 import { liveClaudePidsIn } from "./claude-registry"

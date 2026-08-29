@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import type { HarnessLink } from "@threa/bot-runtime-client"
+import type { HarnessLink } from "@threa/harness-client"
 import {
   buildIdentityRows,
   identityConsistency,
