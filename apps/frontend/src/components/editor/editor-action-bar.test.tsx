@@ -165,6 +165,13 @@ describe("action side", () => {
       editorEl.remove()
     })
 
+    it("disables the popover rows along with the bar", () => {
+      renderBar({ formatPopover: folded({ onSchedule: vi.fn() }), formatOpen: true, disabled: true, showAttach: false })
+      for (const name of ["Emoji", "Mention", "Expand editor", "Schedule"]) {
+        expect(screen.getByRole("button", { name })).toBeDisabled()
+      }
+    })
+
     it("shows the aside button after Attach, keeping the editor focused", async () => {
       const user = userEvent.setup()
       const editorEl = document.createElement("div")

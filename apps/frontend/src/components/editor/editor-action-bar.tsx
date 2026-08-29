@@ -334,6 +334,7 @@ function FormatPopover({
       type="button"
       variant="ghost"
       size="sm"
+      disabled={disabled}
       className="h-9 w-full justify-start gap-2 px-2 text-sm"
       onPointerDown={(e) => e.preventDefault()}
       onClick={() => {
