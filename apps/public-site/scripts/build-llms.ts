@@ -258,7 +258,7 @@ function createConverter(): TurndownService {
     replacement: (_content, node) => {
       const el = node as DomNode
       const scopes = qsa(el, "code.api-scope").map((c) => `\`${c.textContent?.trim()}\``)
-      return `\n\nRequired scope: ${scopes.length ? scopes.join(", ") : "none — any valid key"}\n\n`
+      return `\n\nRequired scope: ${scopes.length ? scopes.join(", ") : "none · any valid key"}\n\n`
     },
   })
 
