@@ -840,14 +840,19 @@ export function MessageComposer({
       const root = e.currentTarget
       // Focus hopping to another control *inside* the composer (a toolbar button,
       // the link popover) must keep the mobile chrome open — never collapse.
+      // The phone's Aa popover is portaled to <body>, so its link editor's URL
+      // input is outside the root in the DOM while being the composer's own
+      // chrome; `data-composer-chrome` marks it as inside.
+      const within = (node: Node | null) =>
+        !!node && (root.contains(node) || !!(node as Element).parentElement?.closest("[data-composer-chrome]"))
       const related = e.relatedTarget as Node | null
-      if (related && root.contains(related)) return
+      if (within(related)) return
 
       const collapse = () => {
         blurTimeoutRef.current = null
         // A within-composer refocus that landed a tick later (mobile toolbar taps
         // where relatedTarget is null) cancels the collapse.
-        if (root.contains(document.activeElement)) return
+        if (within(document.activeElement)) return
         cancelPendingChromeOpen()
         setMobileFocused(false)
         setMobileExpanded(false)

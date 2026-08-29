@@ -368,6 +368,7 @@ function FormatPopover({
         collisionPadding={8}
         className="w-[min(22rem,calc(100vw-1rem))] p-1"
         data-testid="composer-format-popover"
+        data-composer-chrome
         {...keepEditorFocusProps(true)}
       >
         <div data-testid="composer-format-toolbar">

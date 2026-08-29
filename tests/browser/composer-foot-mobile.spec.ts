@@ -73,6 +73,22 @@ test.describe("Composer foot — phone", () => {
     await expect(popover).toBeVisible()
     expect(await activeIsEditor(page)).toBe(true)
 
+    // The link editor's URL input is the one thing in the popover that must
+    // take focus; taking it must not read as "focus left the composer" (the
+    // chrome would collapse under the popover). Enter applies and hands the
+    // caret back.
+    await page.keyboard.press("Shift+Home")
+    await popover.getByRole("button", { name: "Link" }).tap()
+    const url = popover.getByPlaceholder("https://example.com")
+    await expect(url).toBeFocused()
+    await expect(popover).toBeVisible()
+    await expect(foot.getByRole("button", { name: "Attach files" })).toBeVisible()
+    await page.keyboard.type("https://threa.dev")
+    await page.keyboard.press("Enter")
+    await expect(editor.locator("a[href='https://threa.dev']")).toHaveCount(1)
+    expect(await activeIsEditor(page)).toBe(true)
+    await expect(popover).toBeVisible()
+
     // A row hands over to its own surface and closes the popover: Emoji opens
     // the emoji picker inline, still without moving focus.
     await popover.getByRole("button", { name: "Emoji" }).tap()
