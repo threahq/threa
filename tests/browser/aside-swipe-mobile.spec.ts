@@ -12,7 +12,10 @@ test.describe.configure({ timeout: 150_000 })
 
 const PHONE = { width: 390, height: 780 }
 
-type Point = { x: number; y: number }
+interface Point {
+  x: number
+  y: number
+}
 
 async function touchGesture(page: Page, selector: string, path: Point[]): Promise<void> {
   const dispatch = (type: string, point: Point | null) =>

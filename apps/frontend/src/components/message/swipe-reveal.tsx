@@ -7,7 +7,12 @@ import type { SwipeArm } from "@/hooks/use-swipe-action"
  * swipe is locked; the aside glyph, gold, once the L's downward leg arms it.
  * The two glyphs share one slot so the swap never moves the row.
  */
-export function SwipeReveal({ locked, arm }: { locked: boolean; arm: SwipeArm }) {
+interface SwipeRevealProps {
+  locked: boolean
+  arm: SwipeArm
+}
+
+export function SwipeReveal({ locked, arm }: SwipeRevealProps) {
   const down = arm === "down"
   return (
     <div className="absolute inset-y-0 right-0 flex items-center pr-4" data-swipe-arm={arm}>
