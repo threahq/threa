@@ -57,6 +57,18 @@ function findVerticalScroller(el: Element | null): HTMLElement | null {
   return null
 }
 
+/** The row's positioned cell inside the vertical scroller (the virtualizer's), if any. */
+function findAbsoluteCell(row: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = row
+  while (node && node !== document.documentElement) {
+    const { position, overflowY } = getComputedStyle(node)
+    if (overflowY === "auto" || overflowY === "scroll") return null
+    if (position === "absolute") return node
+    node = node.parentElement
+  }
+  return null
+}
+
 function startedInHorizontalScroller(target: EventTarget | null): boolean {
   let node = target instanceof Element ? target : null
   while (node) {
@@ -97,6 +109,11 @@ export function useSwipeAction({
   // the sidebar swipe does it. Both are undone on end, cancel and reset.
   const elementRef = useRef<HTMLElement | null>(null)
   const frozenRef = useRef<{ scroller: HTMLElement; overflowY: string } | null>(null)
+  // The virtualizer's cell around the row is `position: absolute` with
+  // `contain: layout`, its own stacking context: a z-index inside it can never
+  // paint over the next cell. While the row is pulled down the leg, the cell
+  // itself is raised, and put back on release.
+  const raisedRef = useRef<{ cell: HTMLElement; zIndex: string } | null>(null)
   const claimedRef = useRef(false)
   const [offset, setOffset] = useState(0)
   const [offsetY, setOffsetY] = useState(0)
@@ -120,6 +137,10 @@ export function useSwipeAction({
     if (frozenRef.current) {
       frozenRef.current.scroller.style.overflowY = frozenRef.current.overflowY
       frozenRef.current = null
+    }
+    if (raisedRef.current) {
+      raisedRef.current.cell.style.zIndex = raisedRef.current.zIndex
+      raisedRef.current = null
     }
     claimedRef.current = false
   }, [])
@@ -217,6 +238,13 @@ export function useSwipeAction({
         const leg = touch.clientY - lockYRef.current
         // The row follows the finger down, a little past the arming point.
         setOffsetY(Math.min(Math.max(leg, 0), downThreshold * 1.5))
+        if (leg > 0 && !raisedRef.current && elementRef.current) {
+          const cell = findAbsoluteCell(elementRef.current)
+          if (cell) {
+            raisedRef.current = { cell, zIndex: cell.style.zIndex }
+            cell.style.zIndex = "1"
+          }
+        }
         const nextArm: SwipeArm = leg >= downThreshold ? "down" : "primary"
         if (nextArm !== armRef.current) {
           armRef.current = nextArm

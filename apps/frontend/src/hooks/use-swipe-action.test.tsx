@@ -176,8 +176,11 @@ describe("useSwipeAction", () => {
       scroller.style.overflowY = "auto"
       Object.defineProperty(scroller, "scrollHeight", { value: 2000, configurable: true })
       Object.defineProperty(scroller, "clientHeight", { value: 500, configurable: true })
+      const cell = document.createElement("div")
+      cell.style.position = "absolute"
       const row = document.createElement("div")
-      scroller.appendChild(row)
+      cell.appendChild(row)
+      scroller.appendChild(cell)
       document.body.appendChild(scroller)
       const listeners: Array<(e: TouchEvent) => void> = []
       vi.spyOn(row, "addEventListener").mockImplementation((type, listener) => {
@@ -188,7 +191,7 @@ describe("useSwipeAction", () => {
         for (const listener of listeners) listener(event)
         return event.preventDefault as ReturnType<typeof vi.fn>
       }
-      return { scroller, row, nativeMove }
+      return { scroller, cell, row, nativeMove }
     }
     const withCurrentTarget = (row: HTMLElement, x: number, y: number) =>
       ({ ...touchEvent(row, x, y), currentTarget: row }) as React.TouchEvent
@@ -196,7 +199,7 @@ describe("useSwipeAction", () => {
     it("takes the touch half-way to the threshold: moves are prevented and the timeline is pinned until release", () => {
       const onSwipeDown = vi.fn()
       const { result } = renderHook(() => useSwipeAction({ onSwipe: vi.fn(), onSwipeDown, threshold: 80 }))
-      const { scroller, row, nativeMove } = scrollerWithRow()
+      const { scroller, cell, row, nativeMove } = scrollerWithRow()
 
       act(() => {
         result.current.handlers.onTouchStart(withCurrentTarget(row, 200, 100))
@@ -215,6 +218,8 @@ describe("useSwipeAction", () => {
         result.current.handlers.onTouchMove(touchEvent(row, 100, 120))
       })
       expect(result.current.offsetY).toBe(20)
+      // The virtualizer's cell is raised so the pulled row paints over the next one.
+      expect(cell.style.zIndex).toBe("1")
       act(() => result.current.handlers.onTouchMove(touchEvent(row, 100, 200)))
       expect(result.current.offsetY).toBe(36)
       expect(result.current.arm).toBe("down")
@@ -223,6 +228,7 @@ describe("useSwipeAction", () => {
       expect(onSwipeDown).toHaveBeenCalledTimes(1)
       expect(scroller.style.overflowY).toBe("auto")
       expect(result.current.offsetY).toBe(0)
+      expect(cell.style.zIndex).toBe("")
       expect(nativeMove()).not.toHaveBeenCalled()
       scroller.remove()
     })
