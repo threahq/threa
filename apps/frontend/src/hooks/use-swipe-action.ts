@@ -5,6 +5,14 @@ interface UseSwipeActionOptions {
   threshold?: number
   /** Called when the user swipes past the threshold and releases */
   onSwipe: () => void
+  /**
+   * The L: once the swipe is locked, dragging the finger down by
+   * `downThreshold` switches the release to this action instead. Absent, the
+   * gesture is a plain swipe and vertical drift after the lock is ignored.
+   */
+  onSwipeDown?: () => void
+  /** Vertical distance (px) after the lock that switches to `onSwipeDown` (default: 24) */
+  downThreshold?: number
   /** Disable the hook */
   enabled?: boolean
 }
@@ -16,12 +24,16 @@ interface SwipeHandlers {
   onTouchCancel: () => void
 }
 
+export type SwipeArm = "primary" | "down"
+
 interface UseSwipeActionReturn {
   handlers: SwipeHandlers
   /** Current horizontal offset (negative = swiped left) */
   offset: number
   /** Whether the user has passed the threshold */
   isLocked: boolean
+  /** Which action a release fires while locked: the swipe's own, or the L's. */
+  arm: SwipeArm
 }
 
 /**
@@ -50,23 +62,35 @@ function startedInHorizontalScroller(target: EventTarget | null): boolean {
 export function useSwipeAction({
   threshold = 80,
   onSwipe,
+  onSwipeDown,
+  downThreshold = 24,
   enabled = true,
 }: UseSwipeActionOptions): UseSwipeActionReturn {
   const startPos = useRef<{ x: number; y: number } | null>(null)
   const isHorizontalRef = useRef<boolean | null>(null)
   const lockedRef = useRef(false)
+  // The finger's y at the moment of the lock: the L's leg is measured from
+  // there, not from the touch start, so the drift that happens during the
+  // horizontal stroke never counts as the downward one.
+  const lockYRef = useRef(0)
+  const armRef = useRef<SwipeArm>("primary")
   const [offset, setOffset] = useState(0)
   const [isLocked, setIsLocked] = useState(false)
+  const [arm, setArm] = useState<SwipeArm>("primary")
 
   const onSwipeRef = useRef(onSwipe)
   onSwipeRef.current = onSwipe
+  const onSwipeDownRef = useRef(onSwipeDown)
+  onSwipeDownRef.current = onSwipeDown
 
   const reset = useCallback(() => {
     startPos.current = null
     isHorizontalRef.current = null
     lockedRef.current = false
+    armRef.current = "primary"
     setOffset(0)
     setIsLocked(false)
+    setArm("primary")
   }, [])
 
   const onTouchStart = useCallback(
@@ -113,6 +137,7 @@ export function useSwipeAction({
       // Lock in when past threshold
       if (Math.abs(clampedOffset) >= threshold && !lockedRef.current) {
         lockedRef.current = true
+        lockYRef.current = touch.clientY
         setIsLocked(true)
         try {
           navigator.vibrate?.(10)
@@ -121,15 +146,35 @@ export function useSwipeAction({
         }
       } else if (Math.abs(clampedOffset) < threshold && lockedRef.current) {
         lockedRef.current = false
+        armRef.current = "primary"
         setIsLocked(false)
+        setArm("primary")
+      }
+
+      // The L's leg: down from the lock point arms the second action, back up
+      // disarms it. One buzz per arming so the switch is felt, not just seen.
+      if (lockedRef.current && onSwipeDownRef.current) {
+        const nextArm: SwipeArm = touch.clientY - lockYRef.current >= downThreshold ? "down" : "primary"
+        if (nextArm !== armRef.current) {
+          armRef.current = nextArm
+          setArm(nextArm)
+          if (nextArm === "down") {
+            try {
+              navigator.vibrate?.(10)
+            } catch {
+              // Ignore
+            }
+          }
+        }
       }
     },
-    [enabled, threshold, reset]
+    [enabled, threshold, downThreshold, reset]
   )
 
   const onTouchEnd = useCallback(() => {
     if (lockedRef.current) {
-      onSwipeRef.current()
+      if (armRef.current === "down" && onSwipeDownRef.current) onSwipeDownRef.current()
+      else onSwipeRef.current()
     }
     reset()
   }, [reset])
@@ -149,5 +194,6 @@ export function useSwipeAction({
     handlers: { onTouchStart, onTouchEnd, onTouchMove, onTouchCancel },
     offset,
     isLocked,
+    arm,
   }
 }

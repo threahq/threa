@@ -89,7 +89,8 @@ import { resolveQuoteSelection, resolveShareSelection, type QuoteSelection } fro
 import { registerReferenceSource } from "@/stores/reference-source-store"
 import { useQuoteReply } from "./quote-reply-context"
 import { useConversationReply } from "./conversation-reply-context"
-import { useSwipeAction } from "@/hooks/use-swipe-action"
+import { useSwipeAction, type SwipeArm } from "@/hooks/use-swipe-action"
+import { SwipeReveal } from "@/components/message/swipe-reveal"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { queueShareHandoff } from "@/stores/composer-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
@@ -233,6 +234,8 @@ interface MessageLayoutProps {
   swipeOffset?: number
   /** Whether swipe has passed the threshold */
   swipeLocked?: boolean
+  /** Which action the locked swipe releases into: quote, or (after the L's downward leg) an aside. */
+  swipeArm?: SwipeArm
   batch?: BatchTimelineState
 }
 
@@ -538,6 +541,7 @@ function MessageLayout({
   touchHandlers,
   swipeOffset,
   swipeLocked,
+  swipeArm,
   batch,
 }: MessageLayoutProps) {
   const theme = actorRowTheme(event.actorType)
@@ -732,12 +736,9 @@ function MessageLayout({
       {...touchHandlers}
       onClick={batchEnabled ? handleBatchToggle : undefined}
     >
-      {/* Swipe-to-quote reveal icon (behind the message) */}
-      {hasSwipe && (
-        <div className="absolute inset-y-0 right-0 flex items-center pr-4">
-          <Quote className={cn("h-5 w-5 transition-colors", swipeLocked ? "text-primary" : "text-muted-foreground")} />
-        </div>
-      )}
+      {/* Swipe reveal (behind the message): quote, or the aside once the L's
+          downward leg arms it. */}
+      {hasSwipe && <SwipeReveal locked={!!swipeLocked} arm={swipeArm ?? "primary"} />}
       <div
         className={cn(
           // Opaque background so swipe-to-quote icon shows behind the message.
@@ -1006,10 +1007,6 @@ function SentMessageEvent({
     event.actorId,
     event.actorType,
   ])
-  const swipe = useSwipeAction({
-    onSwipe: handleSwipeQuote,
-    enabled: touchCapable && !isEditing && !!quoteReplyCtx && !batch?.enabled,
-  })
 
   const startEditing = useCallback(() => {
     setEditingSurfaceTouch(isTouchInput)
@@ -1172,6 +1169,13 @@ function SentMessageEvent({
       /* toast already surfaced inside the hook */
     })
   }, [openAside, streamId, payload.messageId])
+  // Touch: swipe left to quote; keep the finger down and drag it down (the L)
+  // to open an aside on this message instead.
+  const swipe = useSwipeAction({
+    onSwipe: handleSwipeQuote,
+    onSwipeDown: canOpenAside ? handleOpenAside : undefined,
+    enabled: touchCapable && !isEditing && !!quoteReplyCtx && !batch?.enabled,
+  })
 
   // "Insert into draft": carry an agent's message from an aside into the
   // composer as an attributed block. Only agent-authored rows, only inside an
@@ -1535,6 +1539,7 @@ function SentMessageEvent({
         )}
         swipeOffset={touchCapable ? swipe.offset : undefined}
         swipeLocked={touchCapable ? swipe.isLocked : undefined}
+        swipeArm={touchCapable ? swipe.arm : undefined}
         touchHandlers={
           touchCapable && !batch?.enabled
             ? {

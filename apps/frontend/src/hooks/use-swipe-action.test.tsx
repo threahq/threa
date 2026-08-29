@@ -107,4 +107,66 @@ describe("useSwipeAction", () => {
 
     target.remove()
   })
+
+  describe("the L (swipe, then down)", () => {
+    function gesture(onSwipe: () => void, onSwipeDown: (() => void) | undefined, moves: Array<[number, number]>) {
+      const { result } = renderHook(() => useSwipeAction({ onSwipe, onSwipeDown, threshold: 80, downThreshold: 24 }))
+      const target = document.createElement("div")
+      document.body.appendChild(target)
+      act(() => {
+        result.current.handlers.onTouchStart(touchEvent(target, 200, 100))
+        for (const [x, y] of moves) result.current.handlers.onTouchMove(touchEvent(target, x, y))
+      })
+      const armBeforeRelease = result.current.arm
+      act(() => result.current.handlers.onTouchEnd())
+      target.remove()
+      return { result, armBeforeRelease }
+    }
+
+    it("fires the down action when the finger drags down past the leg after locking", () => {
+      const onSwipe = vi.fn()
+      const onSwipeDown = vi.fn()
+      const { armBeforeRelease } = gesture(onSwipe, onSwipeDown, [
+        [100, 100],
+        [100, 130],
+      ])
+      expect(armBeforeRelease).toBe("down")
+      expect(onSwipeDown).toHaveBeenCalledTimes(1)
+      expect(onSwipe).not.toHaveBeenCalled()
+    })
+
+    it("measures the leg from the lock point, so drift during the stroke does not arm it", () => {
+      const onSwipe = vi.fn()
+      const onSwipeDown = vi.fn()
+      // 20px of drift before the lock, then 15px after: neither leg alone reaches 24.
+      const { armBeforeRelease } = gesture(onSwipe, onSwipeDown, [
+        [150, 120],
+        [100, 120],
+        [100, 135],
+      ])
+      expect(armBeforeRelease).toBe("primary")
+      expect(onSwipe).toHaveBeenCalledTimes(1)
+      expect(onSwipeDown).not.toHaveBeenCalled()
+    })
+
+    it("disarms when the finger comes back up, and stays a plain swipe with no down action wired", () => {
+      const onSwipe = vi.fn()
+      const onSwipeDown = vi.fn()
+      const back = gesture(onSwipe, onSwipeDown, [
+        [100, 100],
+        [100, 140],
+        [100, 105],
+      ])
+      expect(back.armBeforeRelease).toBe("primary")
+      expect(onSwipe).toHaveBeenCalledTimes(1)
+      expect(onSwipeDown).not.toHaveBeenCalled()
+
+      const plain = gesture(onSwipe, undefined, [
+        [100, 100],
+        [100, 160],
+      ])
+      expect(plain.armBeforeRelease).toBe("primary")
+      expect(onSwipe).toHaveBeenCalledTimes(2)
+    })
+  })
 })

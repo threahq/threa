@@ -53,6 +53,7 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
+import { SwipeReveal } from "./swipe-reveal"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
@@ -723,7 +724,11 @@ export function MessageItem({
   // supply the provider; the label page doesn't → gesture off). The reveal icon
   // sits behind the row and the row slides left over it, so it needs an opaque
   // `surfaceClassName` fill during the swipe.
-  const swipe = useSwipeAction({ onSwipe: triggerQuote, enabled: touchCapable && !!quoteReplyCtx && !isEditing })
+  const swipe = useSwipeAction({
+    onSwipe: triggerQuote,
+    onSwipeDown: canOpenAside ? handleOpenAside : undefined,
+    enabled: touchCapable && !!quoteReplyCtx && !isEditing,
+  })
   const hasSwipe = swipe.offset !== 0
   const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
 
@@ -777,11 +782,7 @@ export function MessageItem({
     settling && "opacity-70"
   )
 
-  const swipeReveal = hasSwipe ? (
-    <div className="absolute inset-y-0 right-0 flex items-center pr-4">
-      <Quote className={cn("h-5 w-5 transition-colors", swipe.isLocked ? "text-primary" : "text-muted-foreground")} />
-    </div>
-  ) : null
+  const swipeReveal = hasSwipe ? <SwipeReveal locked={swipe.isLocked} arm={swipe.arm} /> : null
 
   if (continuation) {
     const sentAt = new Date(message.createdAt)
