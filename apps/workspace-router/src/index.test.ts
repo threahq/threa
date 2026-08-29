@@ -445,6 +445,25 @@ describe("workspace-router", () => {
       }
     })
 
+    test("proxies the threa-bot connect flow to control-plane", async () => {
+      const originalFetch = globalThis.fetch
+      try {
+        for (const [path, method] of [
+          ["/api/bot-connect", "POST"],
+          ["/api/bot-connect/poll?deviceCode=abc", "GET"],
+          ["/api/bot-connect/lookup?code=ABCD-EFGH", "GET"],
+          ["/api/bot-connect/approve", "POST"],
+          ["/api/bot-connect/deny", "POST"],
+        ] as const) {
+          const fn = mockFetchFn()
+          await worker.fetch(makeRequest(path, method), makeEnv({ CONTROL_PLANE_URL: CP_URL }))
+          expect(getProxiedUrl(fn)).toBe(`http://localhost:3003${path}`)
+        }
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test("proxies POST /api/workspaces to control-plane", async () => {
       const originalFetch = globalThis.fetch
       const fn = mockFetchFn()

@@ -17,6 +17,7 @@ import { createGithubWebhookHandlers, GithubWebhookService, GITHUB_WEBHOOK_PATH 
 import { createWorkspaceHandlers, type ControlPlaneWorkspaceService } from "./features/workspaces"
 import { createInvitationShadowHandlers, type InvitationShadowService } from "./features/invitation-shadows"
 import { createWaitlistHandlers, type WaitlistService } from "./features/waitlist"
+import { createBotConnectHandlers, type BotConnectService } from "./features/bot-connect"
 import { createBackofficeHandlers, createPlatformAdminMiddleware, type BackofficeService } from "./features/backoffice"
 import { createFeatureFlagHandlers, type ControlPlaneFeatureFlagService } from "./features/feature-flags"
 import {
@@ -41,6 +42,7 @@ interface Dependencies {
   workspaceService: ControlPlaneWorkspaceService
   shadowService: InvitationShadowService
   waitlistService: WaitlistService
+  botConnectService: BotConnectService
   backofficeService: BackofficeService
   workosAuthzAdminService: WorkosAuthzAdminService
   featureFlagService: ControlPlaneFeatureFlagService
@@ -62,6 +64,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceService,
     shadowService,
     waitlistService,
+    botConnectService,
     backofficeService,
     workosAuthzAdminService,
     featureFlagService,
@@ -124,6 +127,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const workspace = createWorkspaceHandlers({ workspaceService, shadowService })
   const shadow = createInvitationShadowHandlers({ shadowService })
   const waitlist = createWaitlistHandlers({ waitlistService })
+  const botConnect = createBotConnectHandlers({ botConnectService })
+  // A connecting device polls every 3s; several behind one NAT must not trip
+  // the auth limiter, and the secret device code is what gates the data.
+  const botConnectLimit = createRateLimit({ name: "cp-bot-connect", windowMs: 60_000, max: 120, key: ipKey })
   const integrations = createIntegrationHandlers({ workspaceService, regions: deps.regions })
   const integrationRoutes = createIntegrationRouteHandlers({ pool })
   const backoffice = createBackofficeHandlers({ backofficeService })
@@ -148,6 +155,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Public waitlist signup from the marketing site (threa.io). Unauthenticated;
   // its own IP rate limit guards against spam.
   app.post("/api/waitlist", waitlistLimit, waitlist.signUp)
+
+  // `threa-bot connect`: unauthenticated start + poll for the device, session-authenticated approval in the browser.
+  app.post("/api/bot-connect", botConnectLimit, botConnect.start)
+  app.get("/api/bot-connect/poll", botConnectLimit, botConnect.poll)
+  app.get("/api/bot-connect/lookup", auth, botConnectLimit, botConnect.lookup)
+  app.post("/api/bot-connect/approve", auth, botConnectLimit, botConnect.approve)
+  app.post("/api/bot-connect/deny", auth, botConnectLimit, botConnect.deny)
 
   if (authService instanceof StubAuthService) {
     if (!allowDevAuthRoutes) {

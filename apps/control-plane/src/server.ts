@@ -33,6 +33,7 @@ import {
 } from "./features/workspaces"
 import { InvitationShadowService } from "./features/invitation-shadows"
 import { WaitlistService, ResendWaitlistEmailSender, StubWaitlistEmailSender } from "./features/waitlist"
+import { BotConnectService } from "./features/bot-connect"
 import { BackofficeService, seedPlatformAdmins } from "./features/backoffice"
 import {
   WorkosAuthzService,
@@ -108,6 +109,11 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     ? new ResendWaitlistEmailSender({ apiKey: config.waitlist.resendApiKey, from: config.waitlist.fromEmail })
     : new StubWaitlistEmailSender()
   const waitlistService = new WaitlistService({ pool, emailSender: waitlistEmailSender })
+  const botConnectService = new BotConnectService({
+    pool,
+    membership: workspaceService,
+    frontendUrl: config.frontendUrl,
+  })
   const workosAuthzAdminService = new WorkosAuthzAdminService({ pool, workosOrgService })
   const authLogService = new AuthLogService({ pool })
   await seedPlatformAdmins(pool, config.platformAdminWorkosUserIds)
@@ -269,6 +275,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       workspaceService,
       shadowService,
       waitlistService,
+      botConnectService,
       backofficeService,
       workosAuthzAdminService,
       featureFlagService,

@@ -40,6 +40,13 @@ const INVITATION_CLAIM_RE = /^\/api\/invitations\/claim$/
  * preflight that must reach control-plane's cors() middleware to be answered.
  */
 const WAITLIST_ROUTE_RE = /^\/api\/waitlist\/?$/
+/**
+ * `threa-bot connect` device-code flow (handled by control-plane): the device
+ * starts and polls unauthenticated, the browser looks up/approves/denies with
+ * its session. Global because the device has no workspace, hence no region,
+ * until approval.
+ */
+const BOT_CONNECT_ROUTE_RE = /^\/api\/bot-connect(?:\/(?:poll|lookup|approve|deny))?$/
 
 /** Matches /api/workspaces/:workspaceId with optional trailing path */
 const WORKSPACE_ROUTE_RE = /^\/api\/workspaces\/([^/]+)(?:\/.+)?$/
@@ -100,7 +107,8 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       (INVITATION_ACCEPT_RE.test(path) && method === "POST") ||
       (INVITATION_LOOKUP_RE.test(path) && method === "GET") ||
       (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
-      (WAITLIST_ROUTE_RE.test(path) && (method === "POST" || method === "OPTIONS"))
+      (WAITLIST_ROUTE_RE.test(path) && (method === "POST" || method === "OPTIONS")) ||
+      (BOT_CONNECT_ROUTE_RE.test(path) && (method === "GET" || method === "POST"))
     ) {
       try {
         return await proxyRequest(request, env.CONTROL_PLANE_URL)

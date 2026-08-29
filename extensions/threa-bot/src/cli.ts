@@ -1,5 +1,6 @@
 import { createRequire } from "node:module"
 import { parseCliArgs, USAGE } from "./args"
+import { defaultConfigPath, runConnect } from "./connect"
 import { runMentions, runScratchpad } from "./run"
 
 const log = (line: string) => process.stderr.write(`[threa-bot] ${line}\n`)
@@ -36,6 +37,17 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   const deps = { env: process.env, cwd: process.cwd(), log }
   try {
+    if (args.kind === "connect") {
+      await runConnect(args, {
+        fetch,
+        log,
+        print: (line) => process.stdout.write(`${line}\n`),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        configPath: defaultConfigPath(process.env),
+        env: process.env,
+      })
+      return 0
+    }
     if (args.mode === "mention") await runMentions(args, deps)
     else await runScratchpad(args, deps)
   } catch (error) {

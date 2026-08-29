@@ -220,7 +220,10 @@ async function loop() {
     on top, including <code>/steer</code>, <code>/stop</code>, and session-control
     commands like <code>/model</code>. Both ship a runnable example. Pi and the
     Claude Code channel are built on the same packages
-    (<code>extensions/</code> in the repo).
+    (<code>extensions/</code> in the repo). If your agent is a command that
+    reads a prompt and prints an answer, skip all of this:
+    <code>npx @threahq/bot connect</code> creates the bot and key from your
+    browser, and <code>npx @threahq/bot run -- your-command</code> runs it.
   </div>
   <p>
     With those read and search scopes, the bot can look through stream history,

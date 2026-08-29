@@ -45,6 +45,16 @@ describe("parseCliArgs", () => {
     })
   })
 
+  test("connect takes a base url and a name, and no command", () => {
+    expect(parseCliArgs(["connect"])).toEqual({ kind: "connect" })
+    expect(parseCliArgs(["connect", "--base-url", "http://localhost:3000", "--name", "Ops"])).toEqual({
+      kind: "connect",
+      baseUrl: "http://localhost:3000",
+      name: "Ops",
+    })
+    expect(() => parseCliArgs(["connect", "--", "x"])).toThrow("connect takes no command")
+  })
+
   test("help and version short-circuit", () => {
     expect(parseCliArgs(["--help"])).toEqual({ kind: "help" })
     expect(parseCliArgs(["-v"])).toEqual({ kind: "version" })
