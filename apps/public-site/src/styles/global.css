@@ -289,10 +289,6 @@ body::after {
   letter-spacing: -0.02em;
   margin: 0;
 }
-.h-display .accent {
-  color: hsl(var(--gold));
-  font-weight: 500;
-}
 .lede {
   font-size: 16px;
   line-height: 1.55;
@@ -1415,10 +1411,6 @@ body::after {
   margin: 0 0 14px;
   max-width: 720px;
 }
-.memo-shell h2 .accent {
-  color: hsl(var(--gold));
-  font-weight: 500;
-}
 .memo-shell .lede {
   max-width: 580px;
   margin-bottom: 56px;
@@ -1985,11 +1977,6 @@ body::after {
   color: hsl(var(--ink));
   max-width: 720px;
 }
-.byo-quote .accent {
-  color: hsl(var(--gold));
-  font-weight: 500;
-  font-style: normal;
-}
 /* "Bring your own ___" with the agent name rotating through a vertical
      reel. One clip window shows a single word; the track slides up by one
      line each beat. The trailing word duplicates the first so the loop can
@@ -2059,10 +2046,6 @@ body::after {
   letter-spacing: -0.015em;
   margin: 0;
 }
-.cta-shell h3 .accent {
-  color: hsl(var(--gold));
-  font-weight: 500;
-}
 .cta-shell .form-row {
   display: flex;
   gap: 10px;
@@ -2087,12 +2070,9 @@ body::after {
   display: block;
 }
 /* Night variant — the closing band. Gold becomes the button color (ink-on-ink
-   would vanish), the input sinks into the dark, the accent word stays gold. */
+   would vanish) and the input sinks into the dark. */
 .frame.night .cta-shell h3 {
   color: hsl(38 16% 94%);
-}
-.frame.night .cta-shell h3 .accent {
-  color: hsl(var(--gold-soft));
 }
 .frame.night .cta {
   background: hsl(var(--gold));
