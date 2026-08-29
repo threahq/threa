@@ -58,6 +58,7 @@ import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
 import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
+import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -739,6 +740,7 @@ export function StreamPage() {
               // A workspace that has switched calls off shows no calls surface at all.
               <CallStartMenu workspaceId={workspaceId!} streamId={streamId!} startLabel="Start a call" />
             )}
+            {stream && !isDraft && <AsideHeaderChip workspaceId={workspaceId!} stream={stream} compact={isMobile} />}
             {!isThread && !isDraft && (
               <Button
                 variant="ghost"

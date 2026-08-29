@@ -24,13 +24,13 @@ interface AsideAnchorEventProps {
  */
 export type AsideAnchorAttention = "open" | "working" | "new" | "quiet"
 
-function resolveAttention(isOpen: boolean, working: boolean, unread: number): AsideAnchorAttention {
+export function resolveAttention(isOpen: boolean, working: boolean, unread: number): AsideAnchorAttention {
   if (isOpen) return "open"
   if (working) return "working"
   return unread > 0 ? "new" : "quiet"
 }
 
-const ATTENTION_LABEL: Record<AsideAnchorAttention, string> = {
+export const ATTENTION_LABEL: Record<AsideAnchorAttention, string> = {
   open: "",
   working: " (Ariadne is working)",
   new: " (new reply)",
