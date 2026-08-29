@@ -63,7 +63,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
   // Gold only when there is something here for the reader: an answer not yet
   // read, or the aside itself on screen. Waiting on Ariadne is grey too — the
   // spinner says she is working, the colour would say "come and look".
-  const lit = attention === "new" || attention === "open"
+  const highlighted = attention === "new" || attention === "open"
   const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
   const age = formatRelativeTime(new Date(event.createdAt), new Date(), undefined, { terse: true })
 
@@ -95,7 +95,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
         <AsideGlyph
           className={cn(
             "h-3 w-3 shrink-0 transition-colors",
-            lit ? "text-primary" : "text-muted-foreground/70 group-hover:text-primary"
+            highlighted ? "text-primary" : "text-muted-foreground/70 group-hover:text-primary"
           )}
           aria-hidden
         />
@@ -103,7 +103,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
       <span
         className={cn(
           "min-w-0 shrink truncate transition-colors",
-          lit ? "text-primary" : "text-muted-foreground group-hover:text-primary"
+          highlighted ? "text-primary" : "text-muted-foreground group-hover:text-primary"
         )}
       >
         {title}
@@ -112,7 +112,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
         aria-hidden
         className={cn(
           "h-px min-w-4 flex-1 bg-gradient-to-r transition-opacity",
-          lit
+          highlighted
             ? "from-primary/70 to-primary/10"
             : "from-border to-border/20 group-hover:from-primary/50 group-hover:to-primary/10",
           !isOpen && "opacity-70 group-hover:opacity-100"
@@ -122,7 +122,7 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
         aria-hidden
         className={cn(
           "shrink-0 rounded-full px-2 py-px font-medium opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
-          lit
+          highlighted
             ? "bg-primary/10 text-primary"
             : "bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary"
         )}
