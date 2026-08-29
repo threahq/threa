@@ -268,6 +268,9 @@ export interface MessageComposerProps {
 
   /** Separate scheduled-messages slot sized for the expanded FAB drawer. */
   scheduledMessagesTriggerFab?: ReactNode
+
+  /** Phone foot only: the aside button beside Attach (the `/aside` command by another handle). */
+  onOpenAside?: () => void
 }
 
 export function MessageComposer({
@@ -313,6 +316,7 @@ export function MessageComposer({
   stashedDrafts,
   scheduledMessagesTrigger,
   scheduledMessagesTriggerFab,
+  onOpenAside,
 }: MessageComposerProps) {
   // Controls (buttons, file input) are disabled during both external disable and sending.
   // The editor itself stays editable during sending so mobile keyboards don't close/reopen.
@@ -350,11 +354,7 @@ export function MessageComposer({
   const mobileKeyboardOpenRef = useRef(false)
   const expandedShellRef = useRef<HTMLDivElement>(null)
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)
-  const mobileFormatToolbarRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
-  const [mobileFormatToolbarHeight, setMobileFormatToolbarHeight] = useState(0)
-  const mobileFormatToolbarHeightRef = useRef(mobileFormatToolbarHeight)
-  mobileFormatToolbarHeightRef.current = mobileFormatToolbarHeight
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
   // User-chosen composer height from the drag handle (mobile, chrome open).
@@ -415,7 +415,7 @@ export function MessageComposer({
       return
     }
     setMobileExpanded(false)
-    const nextPreference = Math.max(drag.minPx, next - mobileFormatToolbarHeightRef.current)
+    const nextPreference = Math.max(drag.minPx, next)
     mobileDragHeightRef.current = nextPreference
     setMobileDragHeightState(nextPreference)
   }, [])
@@ -484,19 +484,6 @@ export function MessageComposer({
   // chips), so without this the card takes the whole deficit and its action bar
   // spills below the viewport.
   const [mobileExtrasHeight, setMobileExtrasHeight] = useState(0)
-  useLayoutEffect(() => {
-    if (!isMobile || !formatOpen) {
-      setMobileFormatToolbarHeight(0)
-      return
-    }
-    const toolbar = mobileFormatToolbarRef.current
-    if (!toolbar) return
-    const measure = () => setMobileFormatToolbarHeight(Math.round(toolbar.getBoundingClientRect().height))
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(toolbar)
-    return () => observer.disconnect()
-  }, [formatOpen, isMobile])
 
   useLayoutEffect(() => {
     const root = mobileRootRef.current
@@ -1072,9 +1059,11 @@ export function MessageComposer({
   // Cmd/Ctrl+S with nothing to stash flips to "show me my drafts": open the
   // hosted picker (registered via context — the picker is a slot node).
   const stashedDraftsOpenRef = useRef<(() => void) | null>(null)
+  const scheduledMessagesOpenRef = useRef<(() => void) | null>(null)
   const stashedDraftsBridge = useMemo<StashedDraftsComposerBridge>(
     () => ({
       openRef: stashedDraftsOpenRef,
+      openScheduledRef: scheduledMessagesOpenRef,
       focusComposer: () => richEditorRef.current?.focus(),
     }),
     []
@@ -1528,7 +1517,7 @@ export function MessageComposer({
   }
 
   const mobileComposerBaseFloor = MOBILE_COMPOSER_DRAG_MIN_PX + mobileExtrasHeight
-  const mobileComposerFloor = mobileComposerBaseFloor + mobileFormatToolbarHeight
+  const mobileComposerFloor = mobileComposerBaseFloor
   const mobileNaturalCap = Math.max(
     mobileComposerBaseFloor,
     mobileKeyboardOpen
@@ -1541,15 +1530,12 @@ export function MessageComposer({
     if (!isMobile || !mobileChromeOpen) return undefined
     if (mobileExpanded) return { minHeight: mobileFullscreenCap, maxHeight: mobileFullscreenCap }
     if (mobileDragHeight !== null) {
-      const requestedHeight = Math.max(mobileDragHeight, mobileComposerBaseFloor) + mobileFormatToolbarHeight
+      const requestedHeight = Math.max(mobileDragHeight, mobileComposerBaseFloor)
       const explicitHeight = Math.min(requestedHeight, mobileFullscreenCap)
       return { minHeight: explicitHeight, maxHeight: explicitHeight }
     }
-    if (mobileKeyboardOpen || mobileFormatToolbarHeight > 0) {
-      const naturalCap = Math.min(
-        Math.max(mobileComposerFloor, mobileNaturalCap + mobileFormatToolbarHeight),
-        mobileFullscreenCap
-      )
+    if (mobileKeyboardOpen) {
+      const naturalCap = Math.min(Math.max(mobileComposerFloor, mobileNaturalCap), mobileFullscreenCap)
       return { maxHeight: naturalCap }
     }
     return undefined
@@ -1730,6 +1716,13 @@ export function MessageComposer({
                         onFormatOpenChange={setFormatOpen}
                         mobileExpanded={mobileExpanded}
                         onMobileExpandedChange={handleMobileExpandedChange}
+                        formatPopover={{
+                          editor: mobileToolbarEditor,
+                          linkPopoverOpen: mobileLinkPopoverOpen,
+                          onLinkPopoverOpenChange: setMobileLinkPopoverOpen,
+                          onSchedule: scheduledMessagesTrigger ? () => scheduledMessagesOpenRef.current?.() : undefined,
+                        }}
+                        onOpenAside={onOpenAside}
                         showAttach
                         onAttachClick={handleAttachClick}
                         side={actionSide}
@@ -1740,7 +1733,10 @@ export function MessageComposer({
                             <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
                               {micButton}
                               {stashedDraftsTrigger}
-                              {scheduledMessagesTrigger}
+                              {/* Schedule lives in the Aa popover on a phone; the picker
+                                  stays mounted (hidden) so its popover and open bridge
+                                  survive, the same way the desktop overflow keeps it. */}
+                              {scheduledMessagesTrigger && <div hidden>{scheduledMessagesTrigger}</div>}
                               {sendButton}
                             </div>
                           ) : (
@@ -1765,21 +1761,6 @@ export function MessageComposer({
                         sendButton={sendButton}
                       />
                     )}
-                  </div>
-                )}
-
-                {/* Mobile formatting toolbar — rendered below action bar, above keyboard */}
-                {isMobile && formatOpen && (
-                  <div ref={mobileFormatToolbarRef} data-testid="composer-format-toolbar">
-                    <EditorToolbar
-                      editor={mobileToolbarEditor}
-                      isVisible
-                      inline
-                      inlinePosition="below"
-                      linkPopoverOpen={mobileLinkPopoverOpen}
-                      onLinkPopoverOpenChange={setMobileLinkPopoverOpen}
-                      showSpecialInputControls
-                    />
                   </div>
                 )}
               </div>

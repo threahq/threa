@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { ArrowLeft, CalendarClock, ChevronDown, ChevronRight } from "lucide-react"
 import type { ScheduledMessageView } from "@threa/types"
@@ -25,6 +25,7 @@ import { ScheduledActionDrawer } from "@/components/scheduled/scheduled-action-d
 import { ScheduledActions } from "@/components/scheduled/scheduled-actions"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
+import { useRegisterScheduledMessagesOpen } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
 
 interface ScheduledMessagesPickerProps {
@@ -126,6 +127,11 @@ export function ScheduledMessagesPicker({
     setCustomDate("")
     setCustomTime("")
   }
+
+  const openFromFoot = useCallback(() => {
+    if (!controlsDisabled) setOpen(true)
+  }, [controlsDisabled])
+  useRegisterScheduledMessagesOpen(openFromFoot)
 
   const handleOpenChange = (next: boolean) => {
     // Block opens while controls are disabled (sending in flight), but

@@ -154,6 +154,17 @@ const MockEditorActionBar = (props: Record<string, unknown>) => (
     >
       Aa
     </button>
+    {/* The folded foot hosts the marks toolbar inside the Aa popover; mirror
+        that so the toolbar assertions read through the same contract. */}
+    {props.formatPopover && props.formatOpen ? (
+      <div data-testid="composer-format-popover">
+        <MockEditorToolbar
+          editor={(props.formatPopover as { editor: { id: string } | null }).editor}
+          isVisible
+          showSpecialInputControls
+        />
+      </div>
+    ) : null}
     <button
       type="button"
       aria-label={props.mobileExpanded ? "Minimize composer" : "Expand composer"}
@@ -1043,28 +1054,15 @@ describe("MessageComposer", () => {
       expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
     })
 
-    it.each([
-      { savedHeight: 104, openHeight: 144, label: "minimum" },
-      { savedHeight: 200, openHeight: 240, label: "intermediate height with fullscreen headroom" },
-    ])("grows from $label before the formatting toolbar consumes editor space", ({ savedHeight, openHeight }) => {
-      localStorage.setItem("threa:composer-drag-height", String(savedHeight))
-      const originalRect = HTMLElement.prototype.getBoundingClientRect
-      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-        if (this.getAttribute("data-testid") === "composer-format-toolbar") {
-          return { ...originalRect.call(this), height: 40, bottom: 40 }
-        }
-        return originalRect.call(this)
-      })
+    it("keeps its dragged height when the formatting popover opens (nothing in flow to make room for)", () => {
+      localStorage.setItem("threa:composer-drag-height", "200")
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const root = container.firstElementChild as HTMLElement
-      expect(root.style.minHeight).toBe(`${savedHeight}px`)
+      expect(root.style.minHeight).toBe("200px")
 
       fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
-      expect(screen.getByTestId("composer-format-toolbar")).toBeInTheDocument()
-      expect(root.style.minHeight).toBe(`${openHeight}px`)
-
-      fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
-      expect(root.style.minHeight).toBe(`${savedHeight}px`)
+      expect(screen.getByTestId("mobile-editor-toolbar")).toBeInTheDocument()
+      expect(root.style.minHeight).toBe("200px")
     })
 
     it("keeps the floor when 75% of a short viewport would dip below it", () => {

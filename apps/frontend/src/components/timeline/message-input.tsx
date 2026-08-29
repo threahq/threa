@@ -274,7 +274,7 @@ function MessageInputComponent({
   // Send-time command routing (raw-text `/model ` included, even when the editor
   // never materialized a `slashCommand` node), over the same effective command
   // list the `/` palette reads.
-  const { planSend, dispatchCommand } = useComposerCommandSend(workspaceId, streamId)
+  const { planSend, dispatchCommand, canOpenAside, openAsideHere } = useComposerCommandSend(workspaceId, streamId)
 
   // Broadcast/mention filtering, member/bot allow-lists, and the admin gate
   // for bot invites all live in `useMentionStreamContext`. Threads route
@@ -1074,6 +1074,7 @@ function MessageInputComponent({
         controlsDisabled={composer.isSending}
       />
     ),
+    onOpenAside: !isAsideComposer && canOpenAside ? openAsideHere : undefined,
     scheduledMessagesTriggerFab: isAsideComposer ? undefined : (
       <ScheduledMessagesPicker
         workspaceId={workspaceId}
