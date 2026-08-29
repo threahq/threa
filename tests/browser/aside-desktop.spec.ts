@@ -194,8 +194,10 @@ test.describe("Aside — desktop surface", () => {
         .locator(".message-item")
         .filter({ hasText: /stub response from the companion/ })
     ).toBeVisible({ timeout: AGENT_REPLY_TIMEOUT })
-    // The host timeline never receives the aside's turns.
+    // The host timeline never receives the aside's turns, and the anchored
+    // message never adopts the aside as its thread (no card linking into it).
     await expect(hostScroller(page, streamId).getByText("What is this about?")).toHaveCount(0)
+    await expect(hostScroller(page, streamId).locator(`a[href*="${asideId}"]`)).toHaveCount(0)
     await expectSilent(page, asideId!)
 
     // The anchor row is the aside's one attention surface (no badge, no

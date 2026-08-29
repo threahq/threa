@@ -496,6 +496,18 @@ interface ThreadStreamStats {
  */
 export type GetComposeTraceMode = (workspaceId: string) => Promise<FeatureFlagValue<"composeTraces">>
 
+/**
+ * Only a thread's messages are replies on its anchor. An aside is anchored the
+ * same way (`parentStreamId` + `parentAnchorId`) but is private to its creator:
+ * bumping the anchor's reply stats or emitting `thread:updated` for it would
+ * hand the host message the aside as its thread.
+ */
+function isThreadReplyStream(
+  stream: { type: string; parentStreamId: string | null; parentAnchorId?: string | null } | null | undefined
+): stream is { type: string; parentStreamId: string; parentAnchorId: string } {
+  return stream?.type === StreamTypes.THREAD && !!stream.parentStreamId && !!stream.parentAnchorId
+}
+
 export class EventService {
   constructor(
     private pool: Pool,
@@ -1090,7 +1102,7 @@ export class EventService {
       },
     })
 
-    if (stream?.parentStreamId && stream.parentAnchorId) {
+    if (isThreadReplyStream(stream)) {
       const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, 1)
       await this.emitThreadUpdate(client, updatedThread ?? stream)
     }
@@ -1454,7 +1466,7 @@ export class EventService {
             })
           )
 
-          if (stream?.parentStreamId && stream.parentAnchorId) {
+          if (isThreadReplyStream(stream)) {
             // No count change on edit — refresh only the thread summary; omit
             // replyCount so a stale unlocked read can't clobber a concurrent
             // create/delete's authoritative count (INV-20).
@@ -1664,7 +1676,7 @@ export class EventService {
           })
 
           const stream = await StreamRepository.findById(client, params.streamId)
-          if (stream?.parentStreamId && stream.parentAnchorId) {
+          if (isThreadReplyStream(stream)) {
             const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
             await this.emitThreadUpdate(client, updatedThread ?? stream)
           }
@@ -2034,7 +2046,7 @@ export class EventService {
         params.targetMessageId
       )
 
-      if (sourceStream.parentStreamId && sourceStream.parentAnchorId) {
+      if (isThreadReplyStream(sourceStream)) {
         const updatedSourceThread = await StreamRepository.bumpThreadReplyCount(
           client,
           sourceStream.id,
