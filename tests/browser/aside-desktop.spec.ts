@@ -197,6 +197,24 @@ test.describe("Aside — desktop surface", () => {
     // The host timeline never receives the aside's turns.
     await expect(hostScroller(page, streamId).getByText("What is this about?")).toHaveCount(0)
     await expectSilent(page, asideId!)
+
+    // The anchor row is the aside's one attention surface (no badge, no
+    // sidebar). Read and closed, it rests grey; an answer that lands while it
+    // is closed lights it gold; opening it reads it.
+    await page.getByRole("button", { name: "Close aside" }).click()
+    await expectNoAsideChrome(page)
+    await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "quiet")
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+        data: { streamId: asideId, content: "And what comes next?" },
+      }),
+      "Ask in the closed aside"
+    )
+    await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "new", { timeout: AGENT_REPLY_TIMEOUT })
+    await anchorRow(page, streamId).click()
+    await expect(stage(page)).toBeVisible({ timeout: 10000 })
+    await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "open")
+    await expectSilent(page, asideId!)
   })
 
   test("folds away on navigation, leaves the next stream clean, and resumes silently from the anchor row", async ({

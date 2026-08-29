@@ -21,6 +21,8 @@ interface AsidePaneProps {
   hostStreamId: string
   /** The draft scope a hand-off files into (`OpenAsideState.originScope`). */
   originScope: string
+  /** Whether the conversation's composer takes focus on mount. */
+  autoFocus: boolean
 }
 
 /**
@@ -32,7 +34,7 @@ interface AsidePaneProps {
  * a few lines and a keyboard takes what is left, so neither is usable. The
  * stage stacks them side by side because it has the room to; this doesn't.
  */
-export function AsidePane({ workspaceId, asideId, hostStreamId, originScope }: AsidePaneProps) {
+export function AsidePane({ workspaceId, asideId, hostStreamId, originScope, autoFocus }: AsidePaneProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
   const streams = useWorkspaceStreams(workspaceId)
   const drafts = useAsideDrafts(workspaceId, asideId)
@@ -86,7 +88,7 @@ export function AsidePane({ workspaceId, asideId, hostStreamId, originScope }: A
               workspaceId={workspaceId}
               asideId={asideId}
               aside={aside}
-              autoFocus={false}
+              autoFocus={autoFocus}
               onInsertAgentBlock={draftSurface.insertAgentBlock}
             />
           </div>

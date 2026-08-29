@@ -80,8 +80,12 @@ beforeEach(() => {
   // The chat pane is the real companion timeline; its data plumbing is out of
   // scope here, so the barrel export renders a marker carrying the stream it
   // was mounted against.
-  spyOnExport(timelineModule, "StreamContent").mockReturnValue(((props: { streamId: string }) => (
-    <div data-testid="stream-content" data-stream-id={props.streamId} />
+  spyOnExport(timelineModule, "StreamContent").mockReturnValue(((props: { streamId: string; autoFocus?: boolean }) => (
+    <div
+      data-testid="stream-content"
+      data-stream-id={props.streamId}
+      data-auto-focus={props.autoFocus ? "true" : undefined}
+    />
   )) as never)
   spyOnExport(boundaryModule, "StreamErrorBoundary").mockReturnValue(((props: { children: React.ReactNode }) => (
     <>{props.children}</>
@@ -278,6 +282,32 @@ describe("aside surfaces", () => {
       expect(screen.getByTestId("aside-sheet-handle")).toBeInTheDocument()
       expect(screen.queryByTestId("aside-stage")).toBeNull()
       expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
+    })
+
+    it("takes the typing with it when opened from a composer, and rests at the peek otherwise", () => {
+      // Opened from a row or the palette: nothing held focus, the host stays
+      // readable above the peek, and no keyboard rises on its own.
+      openOnHost()
+      const { unmount } = renderPage()
+      expect(screen.getByTestId("stream-content")).not.toHaveAttribute("data-auto-focus")
+      unmount()
+      resetAsideStoreCache()
+
+      // Opened from the host composer (`/aside`): that composer is now under
+      // the sheet, so its focus — and the keyboard — move to the aside's own.
+      const hostEditor = document.createElement("div")
+      hostEditor.setAttribute("contenteditable", "true")
+      hostEditor.tabIndex = 0
+      Object.defineProperty(hostEditor, "isContentEditable", { value: true })
+      document.body.appendChild(hostEditor)
+      act(() => hostEditor.focus())
+      try {
+        openOnHost()
+        renderPage()
+        expect(screen.getByTestId("stream-content")).toHaveAttribute("data-auto-focus", "true")
+      } finally {
+        hostEditor.remove()
+      }
     })
 
     it("gives an open draft the whole sheet, and comes back to the conversation behind it", () => {

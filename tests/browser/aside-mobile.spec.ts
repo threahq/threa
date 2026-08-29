@@ -140,6 +140,53 @@ test.describe("Aside — mobile surface", () => {
     await expect(sheet(page)).toHaveAttribute("data-detent", "peek", { timeout: 10000 })
   })
 
+  test("takes the typing with it when opened from the composer, and rests at the peek from the anchor row", async ({
+    page,
+  }) => {
+    await createChannel(page, `aside-mf-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    await seedMessages(page, workspaceId, streamId, `[${testId}-focus]`)
+    await page.setViewportSize(PHONE)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostScroller(page, streamId)).toBeVisible({ timeout: 20000 })
+
+    // `/aside` from the host composer, the keyboard already up. The composer
+    // card is the tap target: its editor is a hairline at rest.
+    const card = page.locator("[data-composer-card]").last()
+    const box = await card.boundingBox()
+    expect(box).not.toBeNull()
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + 18)
+    const hostEditor = page.locator("[data-editor-zone='main'] [contenteditable='true']").first()
+    await expect(hostEditor).toBeFocused()
+    await page.keyboard.type("/aside")
+    await expect(page.locator("[aria-label='Slash command suggestions']")).toBeVisible({ timeout: 5000 })
+    await page.keyboard.press("Enter")
+    await page.getByRole("button", { name: /^send$/i }).click()
+
+    // The sheet took the focus with it: the host composer is under the sheet
+    // now, so typing lands in the aside's own composer, in view, and the sheet
+    // rose to meet the keyboard.
+    await expect(sheet(page)).toBeVisible({ timeout: 15000 })
+    const asideEditor = sheet(page).getByTestId("aside-conversation").locator("[contenteditable='true']")
+    await expect(asideEditor).toBeFocused({ timeout: 10000 })
+    await expect(sheet(page)).toHaveAttribute("data-detent", "full")
+    await page.keyboard.type("is this about widgets?")
+    await expect(asideEditor).toHaveText("is this about widgets?")
+    await expect(hostEditor).toHaveText("")
+
+    // Closed and resumed from its row: nothing held focus this time, so the
+    // sheet rests at the peek with the host readable above it and no keyboard
+    // of its own.
+    await sheet(page).getByRole("button", { name: "Close aside" }).click()
+    await expect(sheet(page)).toHaveCount(0)
+    const row = hostScroller(page, streamId).locator("[data-aside-id]").first()
+    await row.scrollIntoViewIfNeeded()
+    await row.click()
+    await expect(sheet(page)).toBeVisible({ timeout: 10000 })
+    await expect(sheet(page)).toHaveAttribute("data-detent", "peek")
+    await expect(asideEditor).not.toBeFocused()
+  })
+
   test("gives an open draft the whole sheet, and comes back to the conversation behind it", async ({ page }) => {
     await createChannel(page, `aside-md-${testId}`)
     const { workspaceId, streamId } = extractIds(page)
