@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
+import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   RECONNECT_HANDOFF_FALLBACK_MS,
   RemoteSession,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "node:fs"
 import { hostname } from "node:os"
-import { ThreaClient, parseConfigFile, wireLifecycle, type RawConfig } from "@threa/remote-session"
+import { ThreaClient, parseConfigFile, wireLifecycle, type RawConfig } from "@threahq/remote-session"
 import { channelActivation, readParentCommand } from "./channel-detect"
 import { ChannelServer } from "./channel-server"
 import { CONFIG_PATH, loadChannelConfig } from "./config"

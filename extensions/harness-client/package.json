@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Internal helpers for the Threa harness daemon and the tmux-driven runtimes it supervises: harness link records, harnessd kick/reconnect, allowlisted tmux keys, and the supervisor socket. Not published; the public protocol lives in @threa/bot-runtime-client.",
+  "description": "Internal helpers for the Threa harness daemon and the tmux-driven runtimes it supervises: harness link records, harnessd kick/reconnect, allowlisted tmux keys, and the supervisor socket. Not published; the public protocol lives in @threahq/bot-runtime-client.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@threa/bot-runtime-client": "file:../bot-runtime-client"
+    "@threahq/bot-runtime-client": "file:../bot-runtime-client"
   },
   "peerDependencies": {
     "socket.io-client": "^4.8.1"

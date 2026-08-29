@@ -1,7 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
+import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   harnessReconnectAvailable,
   markHarnessLinkWoundDown,
@@ -28,7 +28,7 @@ import {
   type SendResult,
   type SessionControlActuator,
   type SessionControlInvocationContext,
-} from "@threa/remote-session"
+} from "@threahq/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"

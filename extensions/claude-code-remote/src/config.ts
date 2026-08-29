@@ -1,6 +1,11 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { loadConfig, type ConnectorIdentity, type LoadConfigInput, type LoadConfigResult } from "@threa/remote-session"
+import {
+  loadConfig,
+  type ConnectorIdentity,
+  type LoadConfigInput,
+  type LoadConfigResult,
+} from "@threahq/remote-session"
 
 export const CONFIG_DIR = join(homedir(), ".claude", "threa-channel")
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json")
@@ -21,4 +26,4 @@ export function loadChannelConfig(input: LoadConfigInput): LoadConfigResult {
   return { config: { ...result.config, bikPath: result.config.bikPath ?? join(CONFIG_DIR, "bik.json") } }
 }
 
-export { parseConfigFile, type RawConfig, type RemoteSessionConfig } from "@threa/remote-session"
+export { parseConfigFile, type RawConfig, type RemoteSessionConfig } from "@threahq/remote-session"

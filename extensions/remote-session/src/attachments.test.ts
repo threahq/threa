@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { decryptAttachmentBytes, encryptAttachmentBytes, type AttachmentRef } from "@threa/bot-runtime-client"
+import { decryptAttachmentBytes, encryptAttachmentBytes, type AttachmentRef } from "@threahq/bot-runtime-client"
 import {
   buildReplyAttachmentSection,
   downloadInboundAttachments,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Build a self-contained standalone install of the Threa Claude Code channel.
 //
-// Inside the monorepo, `@threa/remote-session`, `@threa/bot-runtime-client` and
+// Inside the monorepo, `@threahq/remote-session`, `@threahq/bot-runtime-client` and
 // `@threa/harness-client` resolve via sibling `file:` deps. Running the channel
 // from outside a monorepo checkout (registering `bun <abs path>/src/index.ts`
 // from a box that has no threa clone) has no siblings, and harness-client is
@@ -24,7 +24,7 @@ const dest = process.argv[2] ?? join(homedir(), ".threa", "claude-code-remote")
 // are not needed at runtime).
 const VENDORED = [
   {
-    dep: "@threa/bot-runtime-client",
+    dep: "@threahq/bot-runtime-client",
     src: resolve(here, "../bot-runtime-client"),
     files: [
       "index.ts",
@@ -53,7 +53,7 @@ const VENDORED = [
     dir: "harness-client",
   },
   {
-    dep: "@threa/remote-session",
+    dep: "@threahq/remote-session",
     src: resolve(here, "../remote-session"),
     files: [
       "index.ts",

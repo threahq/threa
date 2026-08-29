@@ -6,8 +6,8 @@
 // The socket delivers "work is claimable" nudges and carries presence and claim
 // renewals; the claim, the reply, and the poll backstop are plain HTTP.
 
-import { BotRuntimeTransport } from "@threa/bot-runtime-client"
-import { ThreaClient } from "@threa/remote-session"
+import { BotRuntimeTransport } from "@threahq/bot-runtime-client"
+import { ThreaClient } from "@threahq/remote-session"
 
 const baseUrl = process.env.THREA_BASE_URL ?? "https://app.threa.io"
 const workspaceId = process.env.THREA_WORKSPACE_ID!

@@ -18,7 +18,7 @@ import {
   type DelegationAvailableNudge,
   type SealedReplyBody,
   type StepFrame,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 import {
   downloadInboundAttachments,
   downloadSealedInboundAttachments,

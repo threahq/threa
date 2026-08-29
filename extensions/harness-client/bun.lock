@@ -5,7 +5,7 @@
     "": {
       "name": "@threa/harness-client",
       "dependencies": {
-        "@threa/bot-runtime-client": "file:../bot-runtime-client",
+        "@threahq/bot-runtime-client": "file:../bot-runtime-client",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -26,7 +26,7 @@
 
     "@socket.io/component-emitter": ["@socket.io/component-emitter@3.1.2", "", {}, "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA=="],
 
-    "@threa/bot-runtime-client": ["@threa/bot-runtime-client@file:../bot-runtime-client", { "dependencies": { "@hpke/core": "^1.9.0", "@hpke/dhkem-x25519": "^1.6.0", "ulid": "^2.3.0" }, "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
+    "@threahq/bot-runtime-client": ["@threahq/bot-runtime-client@file:../bot-runtime-client", { "dependencies": { "@hpke/core": "^1.9.0", "@hpke/dhkem-x25519": "^1.6.0", "ulid": "^2.3.0" }, "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
 
     "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
 

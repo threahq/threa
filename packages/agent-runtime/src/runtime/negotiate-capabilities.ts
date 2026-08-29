@@ -31,7 +31,7 @@ export type TrustTier = (typeof TrustTiers)[keyof typeof TrustTiers]
  * Sealed delivery to third-party actors is a deliberate policy switch, kept
  * inside this gate (§2.6 rule 2) so enabling it is one line plus consent UX.
  * ON since the sealed external wire shipped end-to-end: the harness SDK
- * (@threa/bot-runtime-client sealed module) serves sealed claims for pi-remote
+ * (@threahq/bot-runtime-client sealed module) serves sealed claims for pi-remote
  * and the Claude channel, and the consent surface is the owner's explicit
  * bot invite on the encrypted scratchpad (InviteBotButton → e2e_stream_actors
  * grant + SSK wrap to the bot's BIK). Without that owner-minted grant the

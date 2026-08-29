@@ -1,5 +1,5 @@
 {
-  "name": "@threa/remote-session",
+  "name": "@threahq/remote-session",
   "version": "0.1.0",
   "description": "SDK for connecting an interactive agent runtime to a Threa scratchpad: session linking, claiming work, presence and claim renewal, /steer and /stop, attachments, and interim or final replies. A connector implements deliverTurn; the SDK runs the loop.",
   "keywords": [
@@ -36,7 +36,7 @@
     "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
-    "@threa/bot-runtime-client": "file:../bot-runtime-client",
+    "@threahq/bot-runtime-client": "file:../bot-runtime-client",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {

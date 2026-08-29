@@ -1,7 +1,7 @@
 /**
  * The published bot-runtime packages, consumed from outside the repo.
  *
- * `@threa/bot-runtime-client` and `@threa/remote-session` are packed exactly as
+ * `@threahq/bot-runtime-client` and `@threahq/remote-session` are packed exactly as
  * they would be published, installed with npm into a temporary project that has
  * no path to this checkout, typechecked under `node16` resolution, and then the
  * shipped `echo-connector` example is run from that project against the test
@@ -102,7 +102,7 @@ beforeAll(() => {
     const tarball = readdirSync(dir).find((file) => file.endsWith(".tgz"))
     if (!tarball) throw new Error(`no tarball packed for ${name}`)
     cpSync(join(dir, tarball), join(consumerDir, tarball))
-    dependencies[`@threa/${name}`] = `file:./${tarball}`
+    dependencies[`@threahq/${name}`] = `file:./${tarball}`
   }
   writeFileSync(
     join(consumerDir, "package.json"),
@@ -155,8 +155,8 @@ describe("published bot-runtime packages", () => {
     writeFileSync(
       join(consumerDir, "probe.ts"),
       [
-        'import type { BotRuntimeHello } from "@threa/bot-runtime-client"',
-        'import type { ClaimedInvocation, RemoteSessionDelegate } from "@threa/remote-session"',
+        'import type { BotRuntimeHello } from "@threahq/bot-runtime-client"',
+        'import type { ClaimedInvocation, RemoteSessionDelegate } from "@threahq/remote-session"',
         "export const delegate: RemoteSessionDelegate = { deliverTurn: async (turn) => void (turn.invocationId satisfies string) }",
         'export const hello: BotRuntimeHello = { instanceId: "x", runtimeKind: "custom", supportedCapabilities: ["mentionable"] }',
         "export const claimed: ClaimedInvocation | null = null",

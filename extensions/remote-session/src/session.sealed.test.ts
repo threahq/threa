@@ -21,7 +21,7 @@ import {
   type SealedReplyBody,
   type SealedStepFrame,
   type StreamEnvelope,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 import { RemoteSession, type RemoteSessionDelegate, type RuntimeDescriptor } from "./session"
 import type { RemoteSessionConfig } from "./identity"
 import type { ClaimedInvocation, ThreaClient } from "./client"

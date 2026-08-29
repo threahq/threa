@@ -1,4 +1,4 @@
-# @threa/bot-runtime-client
+# @threahq/bot-runtime-client
 
 Protocol client for Threa's bot runtime. It owns the `/bot` Socket.IO
 connection a runtime keeps open to Threa and routes the high-volume writes
@@ -6,7 +6,7 @@ connection a runtime keeps open to Threa and routes the high-volume writes
 endpoints when the socket is down. It also carries the sealed-turn crypto an
 end-to-end-encrypted bot needs.
 
-Most connectors should use [`@threa/remote-session`](https://www.npmjs.com/package/@threa/remote-session),
+Most connectors should use [`@threahq/remote-session`](https://www.npmjs.com/package/@threahq/remote-session),
 which builds the whole session loop on top of this package. Use this package
 directly when you want the socket and the write routing without the loop, for
 example a mention-driven bot that claims work with plain HTTP.
@@ -19,7 +19,7 @@ agent" recipe.
 ## Install
 
 ```sh
-npm install @threa/bot-runtime-client socket.io-client
+npm install @threahq/bot-runtime-client socket.io-client
 ```
 
 `socket.io-client` is a peer dependency. Node 20+ or Bun.
@@ -27,7 +27,7 @@ npm install @threa/bot-runtime-client socket.io-client
 ## Transport
 
 ```ts
-import { BotRuntimeTransport } from "@threa/bot-runtime-client"
+import { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 
 const transport = new BotRuntimeTransport({
   baseUrl: "https://app.threa.io",
@@ -72,7 +72,7 @@ Three writes are routed:
 | `recordSteps(id, token, steps)` | `bot:invocation:steps` | `POST /bot-invocations/:id/steps` | best effort; a frame in flight is not re-sent                                    |
 
 Claiming, completing and failing an invocation are low-frequency writes and
-stay on HTTP; `@threa/remote-session` exposes them as `ThreaClient`.
+stay on HTTP; `@threahq/remote-session` exposes them as `ThreaClient`.
 
 Server-side rejections arrive as an ack with `ok: false` and a `code`
 (`NOT_FOUND`, `FORBIDDEN`, `INVALID_PAYLOAD`, ...). The transport logs them

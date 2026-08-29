@@ -1,4 +1,4 @@
-# @threa/remote-session
+# @threahq/remote-session
 
 SDK for connecting an agent runtime to a Threa scratchpad. A connector
 implements one hook, `deliverTurn`, and optionally a session-control actuator.
@@ -15,10 +15,10 @@ recipe). This package is a client for it; nothing here needs a special server.
 ## Install
 
 ```sh
-npm install @threa/remote-session
+npm install @threahq/remote-session
 ```
 
-Node 20+ or Bun. Pulls in `@threa/bot-runtime-client` (the socket transport)
+Node 20+ or Bun. Pulls in `@threahq/bot-runtime-client` (the socket transport)
 and `socket.io-client`.
 
 ## Which flow you need
@@ -60,7 +60,7 @@ import {
   loadConfig,
   wireLifecycle,
   type SessionControlActuator,
-} from "@threa/remote-session"
+} from "@threahq/remote-session"
 
 const identity = { idPrefix: "oc", sessionIdPrefix: "ocs", displayNamePrefix: "OpenClaw" }
 const result = loadConfig({ env: process.env, cwd: process.cwd(), hostname: hostname() }, identity)

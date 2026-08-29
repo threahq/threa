@@ -1,12 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test"
-import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
+import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   ThreaClient,
   type ClaimedDelegation,
   type ClaimedInvocation,
   type DelegationClient,
   type RemoteSessionConfig,
-} from "@threa/remote-session"
+} from "@threahq/remote-session"
 import {
   ChannelServer,
   buildInstructions,

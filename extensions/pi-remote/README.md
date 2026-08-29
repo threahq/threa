@@ -4,7 +4,7 @@ Pi package for linking a local Pi session to a Threa scratchpad.
 
 ## End-to-end encrypted scratchpads
 
-The extension serves sealed (E2EE) turns via `@threa/bot-runtime-client`'s sealed
+The extension serves sealed (E2EE) turns via `@threahq/bot-runtime-client`'s sealed
 module. On first presence write it mints a BIK (Bot Identity Key, an X25519
 keypair persisted `0600` at `~/.pi/agent/threa-remote-bik.json`) and registers
 the public half on every hello/presence. Once the scratchpad owner invites this
@@ -50,7 +50,7 @@ The script rebuilds `~/.pi/agent/extensions/threa-remote` from scratch each time
 
 ### Why a script and not `cp -R` + `bun install`
 
-`@threa/bot-runtime-client` is a private sibling package referenced via
+`@threahq/bot-runtime-client` is a private sibling package referenced via
 `file:../bot-runtime-client`. That resolves inside the monorepo, but a standalone copy
 has no sibling and the package isn't on npm, so a plain copy + install can't resolve it.
 The script vendors bot-runtime-client's source into `src/vendor/bot-runtime-client/`,

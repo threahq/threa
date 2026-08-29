@@ -37,7 +37,7 @@ import {
   type DecryptedHistoryItem,
   type SealedReplyBody,
   type SealingState,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 import {
   harnessReconnectAvailable,
   prepareHarnessClear,
