@@ -844,7 +844,7 @@ export function MessageComposer({
       // input is outside the root in the DOM while being the composer's own
       // chrome; `data-composer-chrome` marks it as inside.
       const within = (node: Node | null) =>
-        !!node && (root.contains(node) || !!(node as Element).parentElement?.closest("[data-composer-chrome]"))
+        !!node && (root.contains(node) || !!node.parentElement?.closest("[data-composer-chrome]"))
       const related = e.relatedTarget as Node | null
       if (within(related)) return
 
