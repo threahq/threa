@@ -161,7 +161,9 @@ const schema = [
             <!-- Composer — types @ariadne, fires send, then waits. Mirrors the
                  real MessageComposer (apps/frontend/src/components/composer):
                  hint on the left, icon action row + gold send on the right,
-                 keyboard shortcut hint sits OUTSIDE below. -->
+                 keyboard shortcut hint sits OUTSIDE below. At phone width the
+                 row folds like the real one: + and mic left, Aa and send right
+                 (the "More" button only exists there). -->
             <div class="composer" aria-label="Message composer">
               <div class="composer-editor">
                 <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@ariadne</span></span>
@@ -181,6 +183,7 @@ const schema = [
               <div class="composer-bar">
                 <span class="composer-hint">Select text to format</span>
                 <div class="composer-actions">
+                  <button type="button" class="cb cb-more" aria-label="More" data-tip="More"><svg><use href="#icon-plus"/></svg></button>
                   <button type="button" class="cb cb-maximize" aria-label="Expand editor" data-tip="Expand editor"><svg><use href="#icon-maximize"/></svg></button>
                   <button type="button" class="cb cb-aa" aria-label="Formatting" data-tip="Format text">Aa</button>
                   <button type="button" class="cb cb-emoji" aria-label="Insert emoji" data-tip="Emoji"><span>😊</span></button>
@@ -799,6 +802,13 @@ const schema = [
         <div>
           <h4>Stash a message</h4>
           <p>Save a half-written message without sending it and pick it back up later.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Asides</h4>
+          <p>A private side thread with Ariadne next to the message you're writing. Ask what the conversation actually decided, think out loud, then go back to the draft. Nobody else sees it.</p>
         </div>
       </li>
       <li class="missing-item">

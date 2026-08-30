@@ -718,6 +718,10 @@ body::after {
   font-size: 14px;
   line-height: 1;
 }
+/* "More" is the phone foot's menu; desktop has no such button. */
+.cb-more {
+  display: none;
+}
 
 /* Hover tooltips on composer controls. Absolutely positioned above the
      button (no layout shift, INV-21), fading in on hover. Mirrors the
@@ -2330,13 +2334,33 @@ body::after {
     font-size: 13px;
   }
 
-  /* The chat demo's composer mirrors the real one with a full action row. At
-     phone width nine icons plus send overflow the card, so we keep the
-     essential controls (format, emoji, mention, attach) and the send button,
-     and drop the secondary ones — the demo still reads as the real composer. */
+  /* The chat demo's composer folds the way the real phone foot does
+     (`EditorActionBar` folded mode): + and mic on the left, a larger Aa and
+     send on the right, every other action behind +. The hint has no room. */
+  .composer-hint {
+    display: none;
+  }
+  .composer-actions {
+    flex: 1;
+  }
+  .composer-actions .cb-more {
+    display: inline-flex;
+    order: -2;
+  }
+  .composer-actions .cb[aria-label="Dictate a message"] {
+    order: -1;
+    margin-right: auto;
+  }
+  .composer-actions .cb-aa {
+    width: 36px;
+    height: 30px;
+    font-size: 15px;
+  }
   .composer-actions .cb[aria-label="Expand editor"],
+  .composer-actions .cb[aria-label="Insert emoji"],
+  .composer-actions .cb[aria-label="Insert mention"],
   .composer-actions .cb[aria-label="Insert command"],
-  .composer-actions .cb[aria-label="Dictate a message"],
+  .composer-actions .cb[aria-label="Attach files"],
   .composer-actions .cb[aria-label="Drafts"],
   .composer-actions .cb[aria-label="Scheduled"] {
     display: none;
