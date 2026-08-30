@@ -51,7 +51,7 @@ describe("OAuth device authorization grant (threa-bot connect)", () => {
     expect(auth.expires_in).toBe(15 * 60)
   })
 
-  test("token is authorization_pending until a member approves, then issues the key exactly once", async () => {
+  test("token is authorization_pending until a member approves, then issues the key, replayable for a minute", async () => {
     const device = new TestClient()
     const auth = await authorize(device, { name: "my-agent" })
     const pending = await token(device, auth.device_code)
@@ -97,11 +97,33 @@ describe("OAuth device authorization grant (threa-bot connect)", () => {
       bot_id: "bot_01TEST",
       bot_slug: "my-agent",
     })
-    const again = await token(device, auth.device_code)
-    expect(again.status).toBe(400)
-    expect(again.data).toEqual({ error: "invalid_grant" })
-    // Once approved the user code is spent.
+    // A poll whose response was lost gets the same token back within the replay window.
+    const replay = await token(device, auth.device_code)
+    expect(replay.status).toBe(200)
+    expect(replay.data).toEqual(issued.data)
+    // Once approved the user code is spent for lookups; the same provisioning
+    // may re-approve (a retry after a lost response), a different one may not.
     expect((await browser.get(`/api/bot-connect/lookup?code=${auth.user_code}`)).status).toBe(404)
+    const sameAgain = await browser.post("/api/bot-connect/approve", {
+      code: auth.user_code,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      botId: "bot_01TEST",
+      botSlug: "my-agent",
+      scope: "bot-runtime:write bot-invocations:write",
+      apiKey: "threa_bk_test_value",
+    })
+    expect(sameAgain.status).toBe(200)
+    const other = await browser.post("/api/bot-connect/approve", {
+      code: auth.user_code,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      botId: "bot_02OTHER",
+      botSlug: "other",
+      scope: "bot-runtime:write",
+      apiKey: "threa_bk_other",
+    })
+    expect(other.status).toBe(404)
   })
 
   test("approval needs a session and membership of the named workspace", async () => {
@@ -146,9 +168,13 @@ describe("OAuth device authorization grant (threa-bot connect)", () => {
     const wrongGrant = await client.post<{ error: string }>("/api/oauth/token", {
       grant_type: "authorization_code",
       device_code: "x".repeat(43),
+      client_id: "threa-bot",
     })
     expect(wrongGrant.status).toBe(400)
     expect(wrongGrant.data).toEqual({ error: "unsupported_grant_type" })
+    expect(wrongGrant.headers.get("cache-control")).toBe("no-store")
+    const noGrant = await client.post<{ error: string }>("/api/oauth/token", { device_code: "x".repeat(43) })
+    expect(noGrant.data).toEqual({ error: "invalid_request" })
     const unknown = await token(client, "x".repeat(43))
     expect(unknown.status).toBe(400)
     expect(unknown.data).toEqual({ error: "invalid_grant" })

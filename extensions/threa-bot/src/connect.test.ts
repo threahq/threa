@@ -26,6 +26,8 @@ function fakeThrea(tokenResults: Array<Record<string, unknown>>) {
     if (url.endsWith("/api/oauth/token")) {
       const next = tokenResults.shift() ?? { error: "authorization_pending" }
       if (next.rateLimited) return new Response("Too Many Requests", { status: 429 })
+      if (next.networkError) throw new TypeError("fetch failed")
+      if (next.serverError) return new Response("bad gateway", { status: 502 })
       return Response.json(next, { status: "error" in next ? 400 : 200 })
     }
     return new Response("not found", { status: 404 })
@@ -51,6 +53,8 @@ describe("threa-bot connect", () => {
       { error: "authorization_pending" },
       { error: "slow_down" },
       { rateLimited: true },
+      { networkError: true },
+      { serverError: true },
       issued,
     ])
     const printed: string[] = []
@@ -76,11 +80,11 @@ describe("threa-bot connect", () => {
     })
     expect(printed[0]).toBe("Open https://app.example/connect?code=BCDF-GHJK")
     expect(printed[1]).toContain("BCDF-GHJK")
-    // slow_down (and an edge 429, read the same way) pushes the interval out by 5s each time.
-    expect(slept).toEqual([3000, 3000, 8000, 13000])
+    // slow_down, an edge 429, a dropped connection and a 5xx all push the interval out by 5s.
+    expect(slept).toEqual([3000, 3000, 8000, 13000, 18000, 23000])
     expect(calls[0]).toBe("POST https://app.example/api/oauth/device_authorization")
     expect(bodies[0]).toContain("client_id=threa-bot")
-    expect(calls.filter((c) => c.endsWith("/api/oauth/token"))).toHaveLength(4)
+    expect(calls.filter((c) => c.endsWith("/api/oauth/token"))).toHaveLength(6)
     expect(bodies[1]).toBe(
       "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=device-secret-1234567890abcdefghijklmnopqrstuv&client_id=threa-bot"
     )

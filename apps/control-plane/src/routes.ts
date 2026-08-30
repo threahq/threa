@@ -131,6 +131,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // A connecting device polls the token endpoint every 3s; several behind one
   // NAT must not trip the auth limiter, and the device code is what gates the data.
   const botConnectLimit = createRateLimit({ name: "cp-bot-connect", windowMs: 60_000, max: 120, key: ipKey })
+  // The user code is the short, human one; its lookup/approve/deny budget is
+  // its own and far smaller than the device's polling budget.
+  const botConnectCodeLimit = createRateLimit({ name: "cp-bot-connect-code", windowMs: 60_000, max: 20, key: ipKey })
   const integrations = createIntegrationHandlers({ workspaceService, regions: deps.regions })
   const integrationRoutes = createIntegrationRouteHandlers({ pool })
   const backoffice = createBackofficeHandlers({ backofficeService })
@@ -161,9 +164,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // looks the code up and approves or denies it with a session.
   app.post("/api/oauth/device_authorization", botConnectLimit, botConnect.authorize)
   app.post("/api/oauth/token", botConnectLimit, botConnect.token)
-  app.get("/api/bot-connect/lookup", auth, botConnectLimit, botConnect.lookup)
-  app.post("/api/bot-connect/approve", auth, botConnectLimit, botConnect.approve)
-  app.post("/api/bot-connect/deny", auth, botConnectLimit, botConnect.deny)
+  app.get("/api/bot-connect/lookup", auth, botConnectCodeLimit, botConnect.lookup)
+  app.post("/api/bot-connect/approve", auth, botConnectCodeLimit, botConnect.approve)
+  app.post("/api/bot-connect/deny", auth, botConnectCodeLimit, botConnect.deny)
 
   if (authService instanceof StubAuthService) {
     if (!allowDevAuthRoutes) {

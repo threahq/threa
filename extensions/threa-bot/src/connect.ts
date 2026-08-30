@@ -89,13 +89,17 @@ export interface ConnectDeps {
   env: NodeJS.ProcessEnv
 }
 
+const REQUEST_TIMEOUT_MS = 30_000
+
 async function postForm<T>(fetchImpl: typeof fetch, url: string, fields: Record<string, string>): Promise<T> {
   const response = await fetchImpl(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: new URLSearchParams(fields).toString(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
   if (response.status === 429) throw new RateLimited()
+  if (response.status >= 500) throw new Transient(`Threa answered ${response.status}`)
   let body: unknown
   try {
     body = await response.json()
@@ -115,10 +119,22 @@ class RateLimited extends Error {
   }
 }
 
+/** A network failure or 5xx during polling: back off and keep polling until the code expires (RFC 8628 §3.5). */
+class Transient extends Error {}
+
 const ERROR_MESSAGES: Record<string, string> = {
   access_denied: "The request was denied in Threa.",
   expired_token: "The code expired before it was approved.",
   invalid_grant: "The request is no longer valid.",
+}
+
+function isNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return (
+    error.name === "TimeoutError" ||
+    error.name === "AbortError" ||
+    /fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|socket/i.test(error.message)
+  )
 }
 
 /**
@@ -151,8 +167,12 @@ export async function runConnect(
       })
     } catch (error) {
       // The edge rate limiter answers 429 before the grant does; RFC 8628 §3.5
-      // spells the same instruction as `slow_down`.
-      if (!(error instanceof RateLimited)) throw error
+      // spells the same instruction as `slow_down`. A dropped connection, a
+      // timeout or a 5xx gets the same back-off; the token is replayable for a
+      // minute after issue, so a lost response is recovered by the next poll.
+      const transient = error instanceof RateLimited || error instanceof Transient || isNetworkError(error)
+      if (!transient) throw error
+      deps.log(`token poll failed (${error instanceof Error ? error.message : error}); retrying`)
       result = { error: "slow_down" }
     }
     if ("error" in result) {

@@ -118,30 +118,43 @@ export const BotConnectRepository = {
   },
 
   /**
-   * approved → claimed, returning the key exactly once: the RETURNING row
-   * carries it, the stored column is nulled in the same statement.
+   * approved → claimed (INV-20: the status predicate is the guard). The key
+   * stays on the row for a short replay window so a device whose token
+   * response was lost in flight can poll once more with the same device code;
+   * `clearClaimedKeys` and the observing poll null it after that.
    */
   async claim(db: Querier, id: string): Promise<BotConnectRequestRow | null> {
     const result = await db.query<BotConnectRequestRow>(
-      `UPDATE bot_connect_requests AS r
-       SET status = 'claimed', claimed_at = NOW(), api_key = NULL
-       FROM (SELECT id, api_key FROM bot_connect_requests WHERE id = $1 AND status = 'approved' AND expires_at > NOW() FOR UPDATE) AS prior
-       WHERE r.id = prior.id
-       RETURNING r.id, r.device_code_hash, r.user_code, r.client_id, r.status, r.requested_name, r.requested_host,
-         r.approved_workspace_id, r.approved_workspace_name, r.approved_bot_id, r.approved_bot_slug, r.approved_scope,
-         r.approved_by_workos_user_id, prior.api_key AS api_key, r.created_at, r.expires_at, r.approved_at, r.claimed_at`,
+      `UPDATE bot_connect_requests
+       SET status = 'claimed', claimed_at = NOW()
+       WHERE id = $1 AND status = 'approved' AND expires_at > NOW()
+       RETURNING ${SELECT_FIELDS}`,
       [id]
     )
     return result.rows[0] ?? null
   },
 
-  /** An expired request keeps nothing: the key it may hold is dropped the moment expiry is observed. */
+  /** Most recent request for a user code, whatever its status (approval idempotency). */
+  async findLatestByUserCode(db: Querier, userCode: string): Promise<BotConnectRequestRow | null> {
+    const result = await db.query<BotConnectRequestRow>(
+      `SELECT ${SELECT_FIELDS} FROM bot_connect_requests WHERE user_code = $1 ORDER BY created_at DESC LIMIT 1`,
+      [userCode]
+    )
+    return result.rows[0] ?? null
+  },
+
+  /** A request past its use keeps nothing: the key it may hold is dropped the moment that is observed. */
   async clearKey(db: Querier, id: string): Promise<void> {
     await db.query(`UPDATE bot_connect_requests SET api_key = NULL WHERE id = $1`, [id])
   },
 
-  /** Drop expired rows (and any key they still hold). Runs on every authorization and on the sweeper. */
-  async purgeExpired(db: Querier): Promise<void> {
+  /** Sweeper: drop expired rows, and the keys of claimed rows whose replay window has passed. */
+  async purgeExpired(db: Querier, replayWindowMs: number): Promise<void> {
     await db.query(`DELETE FROM bot_connect_requests WHERE expires_at < NOW()`)
+    await db.query(
+      `UPDATE bot_connect_requests SET api_key = NULL
+       WHERE status = 'claimed' AND api_key IS NOT NULL AND claimed_at < NOW() - ($1::int * INTERVAL '1 millisecond')`,
+      [replayWindowMs]
+    )
   },
 }

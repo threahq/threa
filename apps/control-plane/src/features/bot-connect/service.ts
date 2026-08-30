@@ -9,6 +9,10 @@ export const BOT_CONNECT_POLL_INTERVAL_SECONDS = 3
 // quiet deployment where the last approved-but-unclaimed row would otherwise
 // keep its key until the next device shows up.
 export const BOT_CONNECT_SWEEP_INTERVAL_MS = 5 * 60 * 1000
+// After issuing the token the same device code can fetch it again for this
+// long: a response lost between the control plane and the device would
+// otherwise consume a key that was never stored anywhere.
+export const BOT_CONNECT_TOKEN_REPLAY_WINDOW_MS = 60 * 1000
 // No vowels or look-alikes (0/O, 1/I/L), so a code read aloud or typed from a
 // phone screen survives. 8 characters from 28 symbols: ~3.8e11 combinations,
 // only meaningful while a request is pending (15 minutes) and only reachable
@@ -93,7 +97,7 @@ export class BotConnectService {
 
   startSweeper(intervalMs = BOT_CONNECT_SWEEP_INTERVAL_MS): void {
     this.sweeper ??= setInterval(() => {
-      BotConnectRepository.purgeExpired(this.deps.pool).catch((error) => {
+      BotConnectRepository.purgeExpired(this.deps.pool, BOT_CONNECT_TOKEN_REPLAY_WINDOW_MS).catch((error) => {
         logger.warn({ err: error }, "bot-connect sweep failed")
       })
     }, intervalMs)
@@ -110,7 +114,7 @@ export class BotConnectService {
     requestedName: string | null
     requestedHost: string | null
   }): Promise<DeviceAuthorization> {
-    await BotConnectRepository.purgeExpired(this.deps.pool)
+    await BotConnectRepository.purgeExpired(this.deps.pool, BOT_CONNECT_TOKEN_REPLAY_WINDOW_MS)
     const deviceCode = randomBytes(32).toString("base64url")
     const expiresAt = new Date(Date.now() + BOT_CONNECT_REQUEST_TTL_MS)
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -143,7 +147,16 @@ export class BotConnectService {
     // An unknown code, an already-redeemed one, and a grant redeemed by a
     // different client than the one that asked all read the same to the
     // caller: the grant is not valid (RFC 8628 §3.4 binds the grant to the client).
-    if (!row || row.status === "claimed" || row.client_id !== clientId) return { error: "invalid_grant" }
+    if (!row || row.client_id !== clientId) return { error: "invalid_grant" }
+    if (row.status === "claimed") {
+      const replayable =
+        row.api_key !== null &&
+        row.claimed_at !== null &&
+        Date.now() - row.claimed_at.getTime() < BOT_CONNECT_TOKEN_REPLAY_WINDOW_MS
+      if (replayable) return this.issue(row)
+      if (row.api_key) await BotConnectRepository.clearKey(this.deps.pool, row.id)
+      return { error: "invalid_grant" }
+    }
     if (row.status === "denied") return { error: "access_denied" }
     if (row.expires_at.getTime() <= Date.now()) {
       if (row.api_key) await BotConnectRepository.clearKey(this.deps.pool, row.id)
@@ -151,17 +164,21 @@ export class BotConnectService {
     }
     if (row.status === "pending") return { error: "authorization_pending" }
     const claimed = await BotConnectRepository.claim(this.deps.pool, row.id)
-    // Lost the race with a concurrent poll, or expired between the reads.
+    // Lost the race with a concurrent poll (it will replay), or expired between the reads.
     if (!claimed) return { error: "invalid_grant" }
+    return this.issue(claimed)
+  }
+
+  private issue(row: BotConnectRequestRow): DeviceTokenResult {
     return {
-      access_token: claimed.api_key!,
+      access_token: row.api_key!,
       token_type: "Bearer",
-      scope: claimed.approved_scope ?? "",
+      scope: row.approved_scope ?? "",
       base_url: this.deps.frontendUrl.replace(/\/$/, ""),
-      workspace_id: claimed.approved_workspace_id!,
-      workspace_name: claimed.approved_workspace_name!,
-      bot_id: claimed.approved_bot_id!,
-      bot_slug: claimed.approved_bot_slug!,
+      workspace_id: row.approved_workspace_id!,
+      workspace_name: row.approved_workspace_name!,
+      bot_id: row.approved_bot_id!,
+      bot_slug: row.approved_bot_slug!,
     }
   }
 
@@ -195,7 +212,24 @@ export class BotConnectService {
     scope: string
     apiKey: string
   }): Promise<void> {
-    const row = await this.pendingByUserCode(input.rawCode)
+    let row: BotConnectRequestRow
+    try {
+      row = await this.pendingByUserCode(input.rawCode)
+    } catch (error) {
+      // A retry after a lost response: the same provisioning already
+      // approved this code, so answer as it did the first time instead of
+      // making the browser revoke a key the device may already hold.
+      const code = normalizeUserCode(input.rawCode)
+      const latest =
+        code.length === USER_CODE_LENGTH ? await BotConnectRepository.findLatestByUserCode(this.deps.pool, code) : null
+      const sameApproval =
+        latest !== null &&
+        (latest.status === "approved" || latest.status === "claimed") &&
+        latest.approved_bot_id === input.botId &&
+        latest.approved_workspace_id === input.workspaceId
+      if (sameApproval) return
+      throw error
+    }
     if (!(await this.deps.membership.isMember(input.workspaceId, input.workosUserId))) {
       throw new HttpError("Not a member of that workspace", { status: 403, code: "FORBIDDEN" })
     }

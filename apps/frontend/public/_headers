@@ -5,6 +5,7 @@
 /*
   Cache-Control: no-cache
   X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
 
 # Hashed assets (Vite output): immutable because filenames change on
 # every build. Let browsers and Cloudflare cache indefinitely.

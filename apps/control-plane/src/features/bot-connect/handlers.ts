@@ -58,12 +58,12 @@ function requireUser(req: Request): string {
 export function createBotConnectHandlers({ botConnectService }: Dependencies) {
   return {
     async authorize(req: Request, res: Response) {
+      noStore(res)
       const parsed = authorizeSchema.safeParse(req.body ?? {})
       if (!parsed.success) {
         res.status(400).json({ error: "invalid_request" })
         return
       }
-      noStore(res)
       res.json(
         await botConnectService.authorize({
           clientId: parsed.data.client_id,
@@ -76,14 +76,15 @@ export function createBotConnectHandlers({ botConnectService }: Dependencies) {
     // RFC 8628 §3.5: errors are 400 with `{ error }`, so they are written here
     // rather than thrown through the `{ error, code }` HttpError formatter.
     async token(req: Request, res: Response) {
+      noStore(res)
       const parsed = tokenSchema.safeParse(req.body ?? {})
       if (!parsed.success) {
         const grant = (req.body as { grant_type?: unknown } | undefined)?.grant_type
-        res.status(400).json({ error: grant === DEVICE_CODE_GRANT ? "invalid_request" : "unsupported_grant_type" })
+        const knownGrant = grant === undefined || grant === DEVICE_CODE_GRANT
+        res.status(400).json({ error: knownGrant ? "invalid_request" : "unsupported_grant_type" })
         return
       }
       const result = await botConnectService.token(parsed.data.device_code, parsed.data.client_id)
-      noStore(res)
       if ("error" in result) res.status(400).json(result)
       else res.json(result)
     },
