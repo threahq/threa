@@ -2,14 +2,29 @@ import { describe, expect, test } from "bun:test"
 import { StepBatcher, resolveConfig } from "./run"
 
 describe("StepBatcher", () => {
-  test("coalesces lines into one flush and chunks at the frame cap", async () => {
+  test("coalesces lines into serialized flushes, chunked at the frame cap, and reports send failures", async () => {
     const sent: number[] = []
-    const batcher = new StepBatcher(async (frames) => void sent.push(frames.length), 10)
+    let inFlight = 0
+    let peak = 0
+    const errors: unknown[] = []
+    const batcher = new StepBatcher(
+      async (frames) => {
+        inFlight += 1
+        peak = Math.max(peak, inFlight)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        inFlight -= 1
+        sent.push(frames.length)
+        if (sent.length === 2) throw new Error("socket hiccup")
+      },
+      { flushMs: 10, onError: (error) => errors.push(error) }
+    )
     for (let i = 0; i < 120; i++) batcher.push(`line ${i}`)
     await new Promise((resolve) => setTimeout(resolve, 50))
     await batcher.flush()
     expect(sent.reduce((a, b) => a + b, 0)).toBe(120)
     expect(Math.max(...sent)).toBeLessThanOrEqual(50)
+    expect(peak).toBe(1)
+    expect(errors).toHaveLength(1)
   })
 })
 

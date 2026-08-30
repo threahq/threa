@@ -17,7 +17,14 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0
   }
   if (args.kind === "version") {
-    const pkg = createRequire(import.meta.url)("../package.json") as { version: string }
+    // Beside this file in the published layout (dist/cli.js + dist/package.json), one up in the repo.
+    const require = createRequire(import.meta.url)
+    let pkg: { version: string }
+    try {
+      pkg = require("./package.json")
+    } catch {
+      pkg = require("../package.json")
+    }
     process.stdout.write(`${pkg.version}\n`)
     return 0
   }

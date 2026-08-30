@@ -39,8 +39,9 @@ reply lands in the same stream.
   history after the message, formatted the way the SDK hands it to any
   connector.
 - `THREA_INVOCATION_ID`, `THREA_STREAM_ID`, `THREA_SOURCE_MESSAGE_ID` in the
-  environment, for a command that wants to call the API itself with the same
-  key.
+  environment. The bot key is not passed on: everything the command writes to
+  stderr becomes trace visible to the stream, so a command that needs the API
+  gets its own key.
 - Output over 48 000 characters is cut with a note; a non-zero exit posts the
   exit code and the last lines of stderr as the reply; `--timeout <ms>` kills a
   turn that runs too long.

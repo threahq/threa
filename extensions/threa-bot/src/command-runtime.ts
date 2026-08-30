@@ -4,6 +4,9 @@ import { spawn, type ChildProcess } from "node:child_process"
 // room for the truncation note.
 export const MAX_OUTPUT_CHARS = 48_000
 const KILL_GRACE_MS = 2_000
+// A stderr "line" that never ends (a \r progress bar, a dump without newlines)
+// is cut into lines of this length rather than buffered without bound.
+const MAX_STDERR_LINE_CHARS = 4_000
 
 export type CommandOutcome =
   | { ok: true; stdout: string; truncated: boolean }
@@ -96,6 +99,10 @@ export class CommandRuntime {
         stderrLine += chunk
         const lines = stderrLine.split("\n")
         stderrLine = lines.pop() ?? ""
+        while (stderrLine.length > MAX_STDERR_LINE_CHARS) {
+          lines.push(stderrLine.slice(0, MAX_STDERR_LINE_CHARS))
+          stderrLine = stderrLine.slice(MAX_STDERR_LINE_CHARS)
+        }
         for (const line of lines) if (line.trim()) this.onStderrLine?.(line)
       })
       child.on("error", (error) => {
@@ -126,6 +133,14 @@ export class CommandRuntime {
     active.interrupted = true
     this.kill(active.child)
     return true
+  }
+
+  /** Interrupt and wait for the process group to be gone (bounded by the SIGKILL grace). */
+  async shutdown(): Promise<void> {
+    const active = this.active
+    if (!active) return
+    this.interrupt()
+    await Promise.race([active.closed, new Promise((resolve) => setTimeout(resolve, KILL_GRACE_MS + 1_000))])
   }
 
   private kill(child: ChildProcess): void {

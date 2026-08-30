@@ -45,31 +45,48 @@ export function resolveConfig(args: RunArgs, deps: RunDeps): RemoteSessionConfig
 export class StepBatcher {
   private pending: StepFrame[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
+  // Flushes run one at a time: a chatty command must not fan out into a socket
+  // frame per 50 lines. Anything queued while one is in flight goes next.
+  private inFlight: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly send: (frames: StepFrame[]) => Promise<unknown>,
-    private readonly flushMs = STEP_FLUSH_MS
+    private readonly options: { flushMs?: number; onError?: (error: unknown) => void } = {}
   ) {}
 
   push(line: string): void {
     this.pending.push({ stepType: "thinking", content: line.slice(0, 10_000) })
     if (this.pending.length >= MAX_STEPS_PER_FLUSH) void this.flush()
-    else this.timer ??= setTimeout(() => void this.flush(), this.flushMs)
+    else this.timer ??= setTimeout(() => void this.flush(), this.options.flushMs ?? STEP_FLUSH_MS)
   }
 
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
-    const frames = this.pending.splice(0, MAX_STEPS_PER_FLUSH)
-    if (frames.length > 0) await this.send(frames).catch(() => undefined)
-    if (this.pending.length > 0) await this.flush()
+    this.inFlight = this.inFlight.then(async () => {
+      while (this.pending.length > 0) {
+        const frames = this.pending.splice(0, MAX_STEPS_PER_FLUSH)
+        await this.send(frames).catch((error) => this.options.onError?.(error))
+      }
+    })
+    return this.inFlight
   }
+}
+
+/** The agent runs with the operator's environment minus the bot key: its stderr becomes visible trace. */
+function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => key !== "THREA_API_KEY"))
 }
 
 /** Own a scratchpad: every message there is a turn for the command; /stop kills it, /steer restarts it with the steer text. */
 export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void> {
   const config = resolveConfig(args, deps)
-  const runtime = new CommandRuntime({ command: args.command, cwd: deps.cwd, env: deps.env, timeoutMs: args.timeoutMs })
+  const runtime = new CommandRuntime({
+    command: args.command,
+    cwd: deps.cwd,
+    env: agentEnv(deps.env),
+    timeoutMs: args.timeoutMs,
+  })
   const client = new ThreaClient(config)
   const name = basename(args.command[0]!)
   const session = new RemoteSession({
@@ -104,7 +121,9 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
   })
 
   async function execute(invocationId: string, content: string, env: Record<string, string>): Promise<void> {
-    const steps = new StepBatcher((frames) => session.recordSteps(invocationId, frames))
+    const steps = new StepBatcher((frames) => session.recordSteps(invocationId, frames), {
+      onError: (error) => deps.log(`trace steps dropped: ${error instanceof Error ? error.message : error}`),
+    })
     runtime.onStderrLine = (line) => {
       steps.push(line)
       deps.log(`${name}: ${line}`)
@@ -122,7 +141,7 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
   wireLifecycle(
     {
       shutdown: async () => {
-        runtime.interrupt()
+        await runtime.shutdown()
         await session.shutdown()
       },
     },
@@ -135,7 +154,12 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
 /** Answer @mentions anywhere: claim, run the command, complete. No scratchpad, no session control. */
 export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
   const config = resolveConfig(args, deps)
-  const runtime = new CommandRuntime({ command: args.command, cwd: deps.cwd, env: deps.env, timeoutMs: args.timeoutMs })
+  const runtime = new CommandRuntime({
+    command: args.command,
+    cwd: deps.cwd,
+    env: agentEnv(deps.env),
+    timeoutMs: args.timeoutMs,
+  })
   const client = new ThreaClient(config)
   const { instanceId } = config
   let draining = false
@@ -178,18 +202,30 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
         })
         if (!invocation) return
         await presence("busy")
+        // A claim the server no longer knows has nowhere to reply; stop the work.
+        let claimLost = false
         const renew = setInterval(
-          () => void transport.renewClaim(invocation.id, invocation.claimToken, CLAIM_TTL_SECONDS),
+          async () => {
+            const { notFound } = await transport.renewClaim(invocation.id, invocation.claimToken, CLAIM_TTL_SECONDS)
+            if (notFound && !claimLost) {
+              claimLost = true
+              clearInterval(renew)
+              deps.log(`claim ${invocation.id} lost (expired or reassigned); stopping the command`)
+              runtime.interrupt()
+            }
+          },
           Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
         )
         try {
-          const steps = new StepBatcher((frames) =>
-            transport.recordSteps(
-              invocation.id,
-              invocation.claimToken,
-              frames,
-              `Running ${basename(args.command[0]!)}…`
-            )
+          const steps = new StepBatcher(
+            (frames) =>
+              transport.recordSteps(
+                invocation.id,
+                invocation.claimToken,
+                frames,
+                `Running ${basename(args.command[0]!)}…`
+              ),
+            { onError: (error) => deps.log(`trace steps dropped: ${error instanceof Error ? error.message : error}`) }
           )
           runtime.onStderrLine = (line) => {
             steps.push(line)
@@ -201,6 +237,7 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
             THREA_SOURCE_MESSAGE_ID: invocation.sourceMessageId,
           })
           await steps.flush()
+          if (claimLost) continue
           const reply = describeOutcome(outcome, args.command) ?? "Stopped."
           await client.complete(invocation.id, {
             instanceId,
@@ -231,7 +268,7 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
     stopped = true
     clearInterval(backstop)
     clearInterval(heartbeat)
-    runtime.interrupt()
+    await runtime.shutdown()
     transport.disconnect()
     await presence("offline").catch(() => undefined)
   }

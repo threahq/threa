@@ -50,6 +50,25 @@ describe("CommandRuntime", () => {
     await third
   })
 
+  test("shutdown kills a running process tree and waits for it", async () => {
+    const runtime = new CommandRuntime({ command: ["sh", "-c", "sleep 30 & wait"] })
+    const pending = runtime.run("x")
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const started = Date.now()
+    await runtime.shutdown()
+    expect(Date.now() - started).toBeLessThan(2_500)
+    expect(runtime.busy).toBe(false)
+    await expect(pending).resolves.toEqual({ ok: false, reason: "interrupted" })
+  })
+
+  test("stderr without newlines is cut into bounded lines instead of buffered forever", async () => {
+    const lines: string[] = []
+    const runtime = new CommandRuntime({ command: ["sh", "-c", "head -c 9000 /dev/zero | tr '\\0' x >&2"] })
+    runtime.onStderrLine = (line) => lines.push(line)
+    await runtime.run("x")
+    expect(lines.map((l) => l.length)).toEqual([4000, 4000, 1000])
+  })
+
   test("a turn timeout kills the command and says so", async () => {
     const runtime = new CommandRuntime({ command: ["sh", "-c", "sleep 30"], timeoutMs: 100 })
     const outcome = await runtime.run("x")

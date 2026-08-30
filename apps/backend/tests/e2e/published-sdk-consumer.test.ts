@@ -180,6 +180,12 @@ describe("published bot-runtime packages", () => {
     run(join(consumerDir, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], consumerDir)
   })
 
+  test("the installed threa-bot bin reports its version from the published layout", () => {
+    const result = spawnSync(join(consumerDir, "node_modules/.bin/threa-bot"), ["--version"], { encoding: "utf8" })
+    expect(result.status).toBe(0)
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/)
+  })
+
   test("the echo connector links a scratchpad and serves a turn, a /steer, and a /stop", async () => {
     const client = new TestClient()
     await loginAs(client, `sdk-consumer-${testRunId}@test.com`, "SDK Consumer")
