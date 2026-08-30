@@ -59,6 +59,15 @@ export class ConnectCodeGoneError extends Error {
   }
 }
 
+/** The code is gone but the bot could not be archived; the identifiers are kept so the user can try again. */
+export class ConnectCleanupFailedError extends Error {
+  constructor(botSlug: string) {
+    super(
+      `This code is no longer valid, and removing the bot @${botSlug} failed. Try again, or archive it under workspace settings.`
+    )
+  }
+}
+
 /**
  * Create the bot and mint its key in the workspace's region, then hand the
  * key to the control plane for the waiting device. The three writes are not
@@ -116,10 +125,13 @@ export async function approveConnect(input: {
     })
   } catch (error) {
     if (!(ApiError.isApiError(error) && (error.status === 404 || error.status === 409))) throw error
-    await Promise.allSettled([
-      botsApi.revokeKey(provisioned.workspaceId, provisioned.botId, provisioned.keyId),
-      botsApi.archive(provisioned.workspaceId, provisioned.botId),
-    ])
+    // Archiving revokes every key of the bot in one transaction, so it is the
+    // cleanup; a failure keeps the identifiers for another try.
+    try {
+      await botsApi.archive(provisioned.workspaceId, provisioned.botId)
+    } catch {
+      throw new ConnectCleanupFailedError(provisioned.botSlug)
+    }
     throw new ConnectCodeGoneError()
   }
   return { slug: provisioned.botSlug, provisioned }

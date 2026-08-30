@@ -131,22 +131,30 @@ describe("ConnectPage", () => {
     const approve = vi
       .spyOn(botConnectApi, "approve")
       .mockRejectedValueOnce(new ApiError(502, "BAD_GATEWAY", "upstream hiccup"))
-      .mockRejectedValueOnce(new ApiError(409, "BOT_CONNECT_NOT_PENDING", "gone"))
-    const revokeKey = vi.spyOn(botsApi, "revokeKey").mockResolvedValue()
-    const archive = vi.spyOn(botsApi, "archive").mockResolvedValue({} as never)
+      .mockRejectedValue(new ApiError(409, "BOT_CONNECT_NOT_PENDING", "gone"))
+    const archive = vi
+      .spyOn(botsApi, "archive")
+      .mockRejectedValueOnce(new ApiError(503, "UNAVAILABLE", "region down"))
+      .mockResolvedValueOnce({} as never)
 
     renderPage()
     await userEvent.click(await screen.findByRole("button", { name: "Connect" }))
     expect(await screen.findByText("upstream hiccup")).toBeInTheDocument()
-    expect(revokeKey).not.toHaveBeenCalled()
+    expect(archive).not.toHaveBeenCalled()
 
+    // The code is gone and the cleanup fails: the identifiers are kept, the user is told.
     await userEvent.click(screen.getByRole("button", { name: "Connect" }))
-    expect(await screen.findByText(/no longer valid/)).toBeInTheDocument()
+    expect(await screen.findByText(/removing the bot @my-agent failed/)).toBeInTheDocument()
+    expect(archive).toHaveBeenCalledTimes(1)
+
+    // Another try archives without minting anything again.
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }))
+    expect(await screen.findByText(/no longer valid \(expired/)).toBeInTheDocument()
     expect(create).toHaveBeenCalledTimes(1)
     expect(createKey).toHaveBeenCalledTimes(1)
-    expect(approve).toHaveBeenCalledTimes(2)
-    expect(revokeKey).toHaveBeenCalledWith("ws_1", "bot_1", "key_1")
-    expect(archive).toHaveBeenCalledWith("ws_1", "bot_1")
+    expect(approve).toHaveBeenCalledTimes(3)
+    expect(archive).toHaveBeenCalledTimes(2)
+    expect(archive).toHaveBeenLastCalledWith("ws_1", "bot_1")
   })
 
   it("does not fetch workspaces before sign-in", () => {
