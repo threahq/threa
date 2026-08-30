@@ -54,6 +54,17 @@ interface EditorToolbarProps {
   showSpecialInputControls?: boolean
 }
 
+function linkHrefInRange(editor: Editor, range: { from: number; to: number }): string | null {
+  const linkType = editor.schema.marks.link
+  let href: string | null = null
+  editor.state.doc.nodesBetween(range.from, range.to, (node) => {
+    if (href !== null) return false
+    const mark = linkType.isInSet(node.marks)
+    if (mark) href = mark.attrs.href
+  })
+  return href
+}
+
 interface LinkEditorSnapshot {
   initialUrl: string
   isActive: boolean
@@ -184,13 +195,18 @@ export function EditorToolbar({
     held ? editor.state.doc.rangeHasMark(held.from, held.to, editor.schema.marks[name]) : editor.isActive(name)
   const handleLinkButtonAction = () => {
     const { from, to } = held ?? editor.state.selection
-    const initialUrl = editor.getAttributes("link").href || ""
+    // The held caret sits at the range's end, past a (non-inclusive) link, so
+    // the URL comes from the range itself.
+    const initialUrl = (held ? linkHrefInRange(editor, held) : editor.getAttributes("link").href) || ""
     const nextSnapshot = {
       initialUrl,
       isActive: markActive("link") || !!initialUrl,
       selectionRange: { from, to },
     }
-    const action = handleLinkToolbarAction(editor, !!linkPopoverOpen, onLinkPopoverOpenChange)
+    // A held range is a selection, never a caret to step out of a link with.
+    const opensOnHeld = held !== null && !linkPopoverOpen
+    if (opensOnHeld) onLinkPopoverOpenChange?.(true)
+    const action = opensOnHeld ? "opened" : handleLinkToolbarAction(editor, !!linkPopoverOpen, onLinkPopoverOpenChange)
 
     if (action === "opened") {
       setLinkEditorSnapshot(nextSnapshot)
@@ -212,7 +228,7 @@ export function EditorToolbar({
       />
       <Separator orientation="vertical" className={separatorClassName} />
       <ToolbarButton
-        onAction={() => run((c) => c.toggleBold())}
+        onAction={() => run((chain) => chain.toggleBold())}
         icon={Bold}
         label="Bold"
         shortcut={shortcutHint("formatBold")}
@@ -222,7 +238,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => run((c) => c.toggleItalic())}
+        onAction={() => run((chain) => chain.toggleItalic())}
         icon={Italic}
         label="Italic"
         shortcut={shortcutHint("formatItalic")}
@@ -232,7 +248,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => run((c) => c.toggleStrike())}
+        onAction={() => run((chain) => chain.toggleStrike())}
         icon={Strikethrough}
         label="Strikethrough"
         shortcut={shortcutHint("formatStrike")}
@@ -242,7 +258,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => run((c) => c.toggleCode())}
+        onAction={() => run((chain) => chain.toggleCode())}
         icon={Code}
         label="Inline code"
         shortcut={shortcutHint("formatCode")}
@@ -272,7 +288,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => run((c) => c.toggleBulletList())}
+        onAction={() => run((chain) => chain.toggleBulletList())}
         icon={List}
         label="Bullet list"
         isActive={editor.isActive("bulletList")}
@@ -281,7 +297,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => run((c) => c.toggleOrderedList())}
+        onAction={() => run((chain) => chain.toggleOrderedList())}
         icon={ListOrdered}
         label="Numbered list"
         isActive={editor.isActive("orderedList")}
