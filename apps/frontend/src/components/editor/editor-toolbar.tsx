@@ -68,6 +68,7 @@ function linkHrefInRange(editor: Editor, range: { from: number; to: number }): s
 interface LinkEditorSnapshot {
   initialUrl: string
   isActive: boolean
+  held: boolean
   selectionRange: {
     from: number
     to: number
@@ -201,6 +202,7 @@ export function EditorToolbar({
     const nextSnapshot = {
       initialUrl,
       isActive: markActive("link") || !!initialUrl,
+      held: held !== null,
       selectionRange: { from, to },
     }
     // A held range is a selection, never a caret to step out of a link with.
@@ -353,7 +355,9 @@ export function EditorToolbar({
             selectionRange={linkEditorSnapshot?.selectionRange}
             onClose={() => {
               onLinkPopoverOpenChange?.(false)
-              editor.commands.collapseToHeld()
+              // The link editor restores the range as a real selection on its
+              // way out, which the plugin reads as the user's; hold it again.
+              if (linkEditorSnapshot?.held) editor.commands.holdSelection()
             }}
             className="rounded-md border bg-popover p-2 shadow-md mb-1"
           />

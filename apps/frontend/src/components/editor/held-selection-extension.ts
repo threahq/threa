@@ -8,7 +8,7 @@ export interface HeldRange {
   to: number
 }
 
-type HeldMeta = { hold: HeldRange } | { release: true }
+type HeldMeta = { hold: HeldRange } | { release: true } | { keep: true }
 
 export const HeldSelectionPluginKey = new PluginKey<HeldRange | null>("heldSelection")
 
@@ -45,7 +45,10 @@ function mapHeld(held: HeldRange, tr: Transaction): HeldRange | null {
  * (which would drop the keyboard); the held range is painted as a decoration
  * and the toolbar's commands wrap themselves in `selectHeld` /
  * `collapseToHeld` so the marks land on it. The range follows edits through
- * the transaction mapping and clears itself once it collapses.
+ * the transaction mapping and clears itself once it collapses, or when the
+ * user moves the selection themselves (a tap places the caret, a long-press
+ * selects new text): the visible selection is the target again. Our own
+ * commands stamp their selection changes so they never count as the user's.
  */
 export const HeldSelectionExtension = Extension.create({
   name: "heldSelection",
@@ -68,7 +71,10 @@ export const HeldSelectionExtension = Extension.create({
         ({ state, tr, dispatch }) => {
           const held = heldRange(state)
           if (!held) return true
-          if (dispatch) tr.setSelection(TextSelection.create(tr.doc, held.from, held.to))
+          if (dispatch) {
+            tr.setMeta(HeldSelectionPluginKey, { keep: true } satisfies HeldMeta)
+            tr.setSelection(TextSelection.create(tr.doc, held.from, held.to))
+          }
           return true
         },
       collapseToHeld:
@@ -78,6 +84,7 @@ export const HeldSelectionExtension = Extension.create({
           if (!held) return true
           if (dispatch) {
             const mapped = mapHeld(held, tr)
+            tr.setMeta(HeldSelectionPluginKey, { keep: true } satisfies HeldMeta)
             tr.setSelection(TextSelection.create(tr.doc, mapped ? mapped.to : tr.selection.to))
           }
           return true
@@ -102,8 +109,10 @@ export const HeldSelectionExtension = Extension.create({
             const meta = tr.getMeta(HeldSelectionPluginKey) as HeldMeta | undefined
             if (meta && "hold" in meta) return meta.hold
             if (meta && "release" in meta) return null
-            if (!held || !tr.docChanged) return held
-            return mapHeld(held, tr)
+            if (!held) return null
+            if (tr.docChanged) return mapHeld(held, tr)
+            const userMoved = tr.selectionSet && !meta && (!tr.selection.empty || tr.getMeta("pointer") === true)
+            return userMoved ? null : held
           },
         },
         props: {

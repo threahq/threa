@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { Editor } from "@tiptap/core"
+import { TextSelection } from "@tiptap/pm/state"
 import { createEditorExtensions } from "./editor-extensions"
 import { heldRange } from "./held-selection-extension"
 
@@ -77,6 +78,37 @@ describe("held selection", () => {
     expect(heldRange(editor.state)).toBeNull()
     expect(editor.state.selection.toJSON()).toEqual({ type: "text", anchor: 6, head: 6 })
     expect(editor.view.dom.querySelector(".held-selection")).toBeNull()
+  })
+
+  it("should drop the range when the user selects new text or taps a caret, but not for its own commands", () => {
+    editor = createEditor("hello world")
+    editor.commands.setTextSelection({ from: 1, to: 6 })
+    editor.commands.holdSelection()
+
+    editor.chain().selectHeld().collapseToHeld().run()
+    expect(heldRange(editor.state)).toEqual({ from: 1, to: 6 })
+
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 3)).setMeta("pointer", true)
+    )
+    expect(heldRange(editor.state)).toBeNull()
+
+    editor.commands.setTextSelection({ from: 1, to: 6 })
+    editor.commands.holdSelection()
+    editor.commands.setTextSelection({ from: 7, to: 12 })
+    expect(heldRange(editor.state)).toBeNull()
+    expect(editor.view.dom.querySelector(".held-selection")).toBeNull()
+  })
+
+  it("should hand the range back as the selection when released through selectHeld", () => {
+    editor = createEditor("hello world")
+    editor.commands.setTextSelection({ from: 1, to: 6 })
+    editor.commands.holdSelection()
+
+    editor.chain().selectHeld().releaseHeld().run()
+
+    expect(heldRange(editor.state)).toBeNull()
+    expect(editor.state.selection.toJSON()).toEqual({ type: "text", anchor: 1, head: 6 })
   })
 
   it("should treat selectHeld and collapseToHeld as no-ops when nothing is held", () => {

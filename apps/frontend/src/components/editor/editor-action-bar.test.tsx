@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { useEffect, useState } from "react"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { EditorActionBar, type EditorFormatFoot } from "./editor-action-bar"
@@ -31,7 +31,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> 
   const onMobileExpandedChange = vi.fn()
   const onDesktopExpandClick = vi.fn()
 
-  render(
+  const bar = (override: Partial<React.ComponentProps<typeof EditorActionBar>>) => (
     <TooltipProvider>
       <EditorActionBar
         editorHandle={editorHandle}
@@ -41,11 +41,19 @@ function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> 
         onDesktopExpandClick={onDesktopExpandClick}
         trailingContent={<button type="button">Send</button>}
         {...props}
+        {...override}
       />
     </TooltipProvider>
   )
+  const { rerender } = render(bar({}))
 
-  return { editorHandle, onFormatOpenChange, onMobileExpandedChange, onDesktopExpandClick }
+  return {
+    editorHandle,
+    onFormatOpenChange,
+    onMobileExpandedChange,
+    onDesktopExpandClick,
+    rerender: (override: Partial<React.ComponentProps<typeof EditorActionBar>>) => rerender(bar(override)),
+  }
 }
 
 describe("EditorActionBar", () => {
@@ -185,6 +193,24 @@ describe("action side", () => {
       expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument()
     })
 
+    it("slides the marks out before the rest of the foot returns", () => {
+      vi.useFakeTimers()
+      try {
+        const { rerender } = renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn() }, formatOpen: true })
+        rerender({ formatOpen: false })
+
+        expect(screen.getByRole("button", { name: "Formatting" })).toHaveAttribute("aria-pressed", "false")
+        expect(screen.queryByRole("button", { name: "More" })).toBeNull()
+        expect(document.querySelector(".animate-out")).not.toBeNull()
+
+        act(() => vi.advanceTimersByTime(200))
+        expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument()
+        expect(document.querySelector(".animate-out")).toBeNull()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it("stamps the + menu with the owning composer's id", async () => {
       const user = userEvent.setup()
       renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn() } })
@@ -194,7 +220,7 @@ describe("action side", () => {
       expect(screen.getByTestId("composer-foot-menu")).toHaveAttribute("data-composer-chrome", "composer-a")
     })
 
-    it("keeps the trailing slot mounted (hidden) while formatting, so a mic take survives Aa", () => {
+    it("keeps the trailing slot mounted (hidden) while formatting, so a mic take survives Aa", async () => {
       const mounts = vi.fn()
       function Mic() {
         const [takes, setTakes] = useState(0)
@@ -226,7 +252,9 @@ describe("action side", () => {
           <EditorActionBar editorHandle={null} formatOpen={false} onFormatOpenChange={vi.fn()} {...props} />
         </TooltipProvider>
       )
-      expect(screen.getByRole("button", { name: "Dictate" })).toBeVisible()
+      // Still hidden behind the marks' slide-out, then back, never remounted.
+      expect(screen.getByRole("button", { name: "Dictate", hidden: true })).not.toBeVisible()
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dictate" })).toBeVisible())
       expect(mounts).toHaveBeenCalledTimes(1)
     })
   })

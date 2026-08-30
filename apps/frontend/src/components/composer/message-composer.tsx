@@ -479,7 +479,8 @@ export function MessageComposer({
   // Aa on a phone holds the selection (HeldSelectionExtension): the native
   // selection collapses, which dismisses the OS text toolbar, while the range
   // stays the marks' target. Aa again with a fresh selection re-holds instead
-  // of closing; otherwise it releases and folds the row.
+  // of closing; otherwise it hands the held range back as the selection and
+  // folds the row.
   const handleMobileFormatOpenChange = useCallback(
     (open: boolean) => {
       const editor = mobileToolbarEditor
@@ -489,6 +490,7 @@ export function MessageComposer({
         return
       }
       if (editor && !editor.state.selection.empty && editor.chain().focus().holdSelection().run()) return
+      editor?.chain().focus().selectHeld().releaseHeld().run()
       setFormatOpen(false)
     },
     [mobileToolbarEditor]

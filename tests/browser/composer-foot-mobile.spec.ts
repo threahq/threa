@@ -116,11 +116,24 @@ test.describe("Composer foot — phone", () => {
     expect(await activeIsEditor(page)).toBe(true)
     expect(await nativeSelection(page)).toEqual({ collapsed: true, text: "" })
 
-    // Aa again releases: the paint goes, the row folds back, typing continues
-    // after the word rather than replacing it.
+    // Selecting text again while the row is open takes over from the hold: the
+    // paint goes and the live selection is the target. Aa re-holds it (the row
+    // stays) instead of closing.
+    await page.keyboard.press("Shift+Home")
+    await expect(editor.locator(".held-selection")).toHaveCount(0)
+    expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
+    await foot.getByRole("button", { name: "Formatting" }).tap()
+    await expect(editor.locator(".held-selection")).toHaveText("hold me")
+    await expect(foot.getByRole("button", { name: "Bold" })).toBeVisible()
+    expect(await nativeSelection(page)).toEqual({ collapsed: true, text: "" })
+
+    // Aa again hands the word back as the real selection (the OS toolbar may
+    // return; that's the user's selection again), and the row folds back.
     await foot.getByRole("button", { name: "Formatting" }).tap()
     await expect(foot.getByRole("button", { name: "More" })).toBeVisible()
     await expect(editor.locator(".held-selection")).toHaveCount(0)
+    expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
+    await page.keyboard.press("End")
     await page.keyboard.type(" on")
     await expect(editor).toHaveText("hold me on")
     expect(await activeIsEditor(page)).toBe(true)

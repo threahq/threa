@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import type { Editor } from "@tiptap/react"
 import {
   AtSign,
@@ -57,6 +57,8 @@ export interface EditorFootMenu {
   onOpenDrafts?: () => void
 }
 
+const MARKS_SLIDE_MS = 200
+
 export interface EditorActionBarProps {
   editorHandle: RichEditorHandle | null
   formatFoot?: EditorFormatFoot
@@ -109,10 +111,24 @@ export function EditorActionBar({
   side = "right",
 }: EditorActionBarProps) {
   const folded = formatFoot !== undefined
+  // The marks row slides out the way it slid in, so it stays mounted for one
+  // animation after `formatOpen` drops; the rest of the foot returns after.
+  const [lastFormatOpen, setLastFormatOpen] = useState(formatOpen)
+  const [closingMarks, setClosingMarks] = useState(false)
+  if (lastFormatOpen !== formatOpen) {
+    setLastFormatOpen(formatOpen)
+    setClosingMarks(folded && !formatOpen)
+  }
+  useEffect(() => {
+    if (!closingMarks) return
+    const timer = setTimeout(() => setClosingMarks(false), MARKS_SLIDE_MS)
+    return () => clearTimeout(timer)
+  }, [closingMarks])
   if (folded) {
+    const marksShown = formatOpen || closingMarks
     return (
       <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
-        {!formatOpen && (
+        {!marksShown && (
           <FootMenu
             chromeId={formatFoot.chromeId}
             disabled={disabled}
@@ -123,12 +139,19 @@ export function EditorActionBar({
         )}
         {/* One wrapper either way: swapping elements would remount the mic
             mid-take and the hidden pickers with their open bridges. */}
-        <div hidden={formatOpen} className={formatOpen ? undefined : "contents"}>
+        <div hidden={marksShown} className={marksShown ? undefined : "contents"}>
           {trailingContent}
         </div>
         <div className="min-w-0 flex-1">
-          {formatOpen && (
-            <div className="animate-in fade-in-0 slide-in-from-right-8 duration-200">
+          {marksShown && (
+            <div
+              className={cn(
+                "duration-200 fill-mode-forwards",
+                formatOpen
+                  ? "animate-in fade-in-0 slide-in-from-right-8"
+                  : "pointer-events-none animate-out fade-out-0 slide-out-to-right-8"
+              )}
+            >
               <EditorToolbar
                 editor={formatFoot.editor}
                 isVisible
