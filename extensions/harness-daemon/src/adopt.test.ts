@@ -720,6 +720,37 @@ describe("takeover launch command", () => {
     expect(parseClaudeLaunch(COMMAND)).toBeUndefined()
   })
 
+  test("every launch shape carries exactly one compaction guardrail", () => {
+    const fresh = claudeLaunchArgs({
+      claudeBin: "/opt/claude",
+      name: "slopenv",
+      channel: "threa-channel",
+      mcpConfig: "/tmp/threa.json",
+    })
+    const resumed = claudeLaunchArgs({
+      claudeBin: "/opt/claude",
+      name: "slopenv",
+      channel: "threa-channel",
+      mcpConfig: "/tmp/threa.json",
+      resumeSessionId: NATIVE,
+    })
+
+    for (const args of [fresh, resumed]) {
+      expect(args.filter((word) => word === "--autocompact")).toEqual(["--autocompact"])
+      expect(args[args.indexOf("--autocompact") + 1]).toBe("200k")
+      expect(args).not.toContain("--model")
+    }
+    expect(resumed).toEqual(["/opt/claude", "--resume", NATIVE, ...fresh.slice(1)])
+    expect(parseClaudeLaunch(claudeLaunchCommand(resumed, IDENTITY, {}, "wait", "error", ROOT))).toMatchObject({
+      name: "threa.slopenv",
+      resumeSessionId: NATIVE,
+      channel: "threa-channel",
+      mcpConfig: "/tmp/threa.json",
+      autocompact: "200k",
+      skipPermissions: true,
+    })
+  })
+
   test("--no-yolo drops the permission bypass", () => {
     const args = claudeLaunchArgs({
       claudeBin: "/opt/claude",

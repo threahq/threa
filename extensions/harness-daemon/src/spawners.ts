@@ -67,6 +67,9 @@ export function piResumeCommand(piBin: string, runtimeSessionId: string, expecte
     .join(" ")
 }
 
+/** Keep 1M models from postponing ordinary-session compaction past Claude's standard 200k window. */
+export const CLAUDE_AUTOCOMPACT_WINDOW = "200k"
+
 export function claudeLaunchArgs(params: {
   claudeBin: string
   name: string
@@ -78,7 +81,7 @@ export function claudeLaunchArgs(params: {
 }): string[] {
   const args = [params.claudeBin]
   if (params.resumeSessionId) args.push("--resume", params.resumeSessionId)
-  args.push("--name", `threa.${params.name}`)
+  args.push("--name", `threa.${params.name}`, "--autocompact", CLAUDE_AUTOCOMPACT_WINDOW)
   if (params.mcpConfig) {
     args.push("--mcp-config", params.mcpConfig, "--dangerously-load-development-channels", `server:${params.channel}`)
   }

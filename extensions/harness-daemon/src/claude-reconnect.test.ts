@@ -116,6 +116,11 @@ describe("parseClaudeLaunch", () => {
     ).toMatchObject({ resumeSessionId: NATIVE, channel: "threa-channel" })
   })
 
+  test("round-trips the compaction guardrail", () => {
+    expect(parseClaudeLaunch(`${COMMAND} --autocompact 200k`)).toMatchObject({ autocompact: "200k" })
+    expect(parseClaudeLaunch(COMMAND)).toMatchObject({ autocompact: undefined })
+  })
+
   test("rejects unsupported policy and shell forms", () => {
     for (const command of [
       "claude --dangerously-load-development-channels server:x --unknown",
@@ -128,6 +133,9 @@ describe("parseClaudeLaunch", () => {
       "claude prompt --dangerously-load-development-channels server:x",
       "claude --resume invalid --dangerously-load-development-channels server:x",
       `claude --resume ${NATIVE} --resume ${NATIVE} --dangerously-load-development-channels server:x`,
+      "claude --autocompact --dangerously-load-development-channels server:x",
+      "claude --autocompact huge --dangerously-load-development-channels server:x",
+      "claude --autocompact 200k --autocompact auto --dangerously-load-development-channels server:x",
       `claude ${NATIVE} --dangerously-load-development-channels server:x`,
       "claude --dangerously-load-development-channels server:x -- tail",
     ])
@@ -206,7 +214,7 @@ describe("reconnectClaude", () => {
     expect(d.calls[0]).toEqual([
       "%8",
       CWD,
-      `'env' 'THREA_DISPLAY_NAME=Claude' 'THREA_INSTANCE_ID=cc-one' 'THREA_RUNTIME_SESSION_ID=${RUNTIME}' 'THREA_COLD_START_IF_ARCHIVED=wait' 'THREA_COLD_START_IF_MISSING=error' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/claude' '--resume' '${NATIVE}' '--name' 'threa.feature' '--mcp-config' '/tmp/threa.json' '--dangerously-load-development-channels' 'server:threa-channel' '--dangerously-skip-permissions'`,
+      `'env' 'THREA_DISPLAY_NAME=Claude' 'THREA_INSTANCE_ID=cc-one' 'THREA_RUNTIME_SESSION_ID=${RUNTIME}' 'THREA_COLD_START_IF_ARCHIVED=wait' 'THREA_COLD_START_IF_MISSING=error' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/claude' '--resume' '${NATIVE}' '--name' 'threa.feature' '--mcp-config' '/tmp/threa.json' '--autocompact' '200k' '--dangerously-load-development-channels' 'server:threa-channel' '--dangerously-skip-permissions'`,
     ])
   })
 
@@ -284,6 +292,7 @@ describe("reconnectClaude", () => {
     expect(calls).toHaveLength(2)
     for (const [, , command] of calls) {
       expect(command.match(/'--resume'/g)).toHaveLength(1)
+      expect(command.match(/'--autocompact' '200k'/g)).toHaveLength(1)
       expect(parseClaudeLaunch(command)?.resumeSessionId).toBe(NATIVE)
     }
   })
