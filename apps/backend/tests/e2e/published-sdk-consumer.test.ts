@@ -416,10 +416,12 @@ describe("published bot-runtime packages", () => {
     )
 
     await sendMessage(client, workspace.id, channel.id, `@${slug} shout this please`)
+    // The reply is the bot's own message, whatever the shouted mention looks like.
     const reply = await waitFor("the shouted reply", async () =>
       (await listEvents(client, workspace.id, channel.id))
+        .filter((event) => event.actorType === "bot" && event.actorId === bot.id)
         .map((event) => (event.payload as { contentMarkdown?: string }).contentMarkdown ?? "")
-        .find((text) => text.startsWith("@") === false && text.includes("SHOUT THIS PLEASE"))
+        .find((text) => text.includes("SHOUT THIS PLEASE"))
     )
     expect(reply).toContain("SHOUT THIS PLEASE")
 

@@ -312,11 +312,20 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
         const renew = setInterval(
           async () => {
             const startedAt = Date.now()
-            const { notFound, renewed } = await transport.renewClaim(
-              invocation.id,
-              invocation.claimToken,
-              CLAIM_TTL_SECONDS
-            )
+            let notFound = false
+            let renewed = false
+            try {
+              ;({ notFound, renewed } = await transport.renewClaim(
+                invocation.id,
+                invocation.claimToken,
+                CLAIM_TTL_SECONDS
+              ))
+            } catch (error) {
+              // The transport contains its own failures; this is the boundary
+              // that keeps a surprise from becoming an unhandled rejection. An
+              // unconfirmed lease is what the watchdog is for.
+              deps.log(`renew ${invocation.id} failed: ${error instanceof Error ? error.message : error}`)
+            }
             if (turn !== turnGeneration) return
             if (notFound) loseClaim("lost (expired or reassigned)")
             else if (renewed) leaseDeadline = startedAt + CLAIM_TTL_SECONDS * 1000 - LEASE_SAFETY_MS
@@ -326,7 +335,7 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
         const watchdog = setInterval(() => {
           if (Date.now() > leaseDeadline) loseClaim("lease unconfirmed too long")
         }, 5_000)
-        await presence("busy")
+        await presence("busy").catch(() => undefined)
         try {
           steps.begin(invocation.id, (frames) =>
             transport.recordSteps(
@@ -387,6 +396,10 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
     }
   }
 
+  // Declared before the lifecycle wiring: a signal during start-up must find
+  // them, even if still unset.
+  let backstop: ReturnType<typeof setInterval> | undefined
+  let heartbeat: ReturnType<typeof setInterval> | undefined
   const shutdown = async (): Promise<void> => {
     stopped = true
     clearInterval(backstop)
@@ -404,7 +417,7 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
   await presence("available")
   await transport.connect()
   deps.log(`answering @mentions as ${config.displayName} (${instanceId})`)
-  const backstop = setInterval(() => void drain(), MENTION_POLL_MS)
-  const heartbeat = setInterval(() => void presence(runtime.busy ? "busy" : "available"), MENTION_PRESENCE_MS)
+  backstop = setInterval(() => void drain(), MENTION_POLL_MS)
+  heartbeat = setInterval(() => void presence(runtime.busy ? "busy" : "available"), MENTION_PRESENCE_MS)
   await drain()
 }

@@ -132,7 +132,10 @@ export class CommandRuntime {
     })
   }
 
-  /** Kill the running command. True when there was one to kill (the SDK reads false as "control lost"). */
+  /**
+   * Kill the running command, if any. Always true: the SDK reads `false` as
+   * "control over the runtime is lost", and an idle runtime is under control.
+   */
   interrupt(): boolean {
     const active = this.active
     if (!active) return true
@@ -171,23 +174,21 @@ export class CommandRuntime {
 /** The reply text for a finished command: its output, or a plain account of why there is none. */
 export function describeOutcome(outcome: CommandOutcome, command: readonly string[]): string | undefined {
   const name = command[0] ?? "command"
-  switch (outcome.ok ? "ok" : outcome.reason) {
-    case "ok": {
-      const done = outcome as Extract<CommandOutcome, { ok: true }>
-      const body = done.stdout.trim() || "(no output)"
-      return done.truncated ? `${body}\n\n_Output truncated at ${MAX_OUTPUT_CHARS} characters._` : body
-    }
+  if (outcome.ok) {
+    const body = outcome.stdout.trim() || "(no output)"
+    return outcome.truncated ? `${body}\n\n_Output truncated at ${MAX_OUTPUT_CHARS} characters._` : body
+  }
+  switch (outcome.reason) {
     case "interrupted":
       return undefined
     case "timeout":
-      return `\`${name}\` was stopped after the turn timeout.${tail((outcome as { stderr: string }).stderr)}`
+      return `\`${name}\` was stopped after the turn timeout.${tail(outcome.stderr)}`
     case "exit": {
-      const failed = outcome as Extract<CommandOutcome, { reason: "exit" }>
-      const how = failed.signal ? `was killed by ${failed.signal}` : `exited with code ${failed.code}`
-      return `\`${name}\` ${how}.${tail(failed.stderr)}`
+      const how = outcome.signal ? `was killed by ${outcome.signal}` : `exited with code ${outcome.code}`
+      return `\`${name}\` ${how}.${tail(outcome.stderr)}`
     }
     case "spawn":
-      return `Could not start \`${name}\`: ${(outcome as { message: string }).message}`
+      return `Could not start \`${name}\`: ${outcome.message}`
   }
 }
 

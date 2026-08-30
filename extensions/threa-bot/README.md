@@ -49,7 +49,7 @@ reply lands in the same stream.
 
 ## Options
 
-```
+```text
 --mention          answer @mentions instead of owning a scratchpad
 --name <prefix>    scratchpad name prefix (default: the command's basename)
 --config <file>    JSON config; environment variables win over it
