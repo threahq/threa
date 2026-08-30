@@ -1746,7 +1746,7 @@ export function MessageComposer({
                           editor: mobileToolbarEditor,
                           linkPopoverOpen: mobileLinkPopoverOpen,
                           onLinkPopoverOpenChange: setMobileLinkPopoverOpen,
-                          trailingContent: sendButton,
+                          sendButton,
                         }}
                         footMenu={{
                           onAttach: handleAttachClick,
@@ -1756,21 +1756,14 @@ export function MessageComposer({
                         }}
                         side={actionSide}
                         trailingContent={
-                          micButton || stashedDraftsTrigger || scheduledMessagesTrigger ? (
-                            // Mirrored too, so Send stays the outermost control
-                            // rather than sitting behind the triggers.
-                            <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
-                              {micButton}
-                              {/* Drafts and Schedule are rows in the + menu on a phone; the
-                                  pickers stay mounted (hidden) so their popovers and open
-                                  bridges survive, the same way the desktop overflow keeps them. */}
-                              {stashedDraftsTrigger && <div hidden>{stashedDraftsTrigger}</div>}
-                              {scheduledMessagesTrigger && <div hidden>{scheduledMessagesTrigger}</div>}
-                              {sendButton}
-                            </div>
-                          ) : (
-                            sendButton
-                          )
+                          <>
+                            {micButton}
+                            {/* Drafts and Schedule are rows in the + menu on a phone; the
+                                pickers stay mounted (hidden) so their popovers and open
+                                bridges survive, the same way the desktop overflow keeps them. */}
+                            {stashedDraftsTrigger && <div hidden>{stashedDraftsTrigger}</div>}
+                            {scheduledMessagesTrigger && <div hidden>{scheduledMessagesTrigger}</div>}
+                          </>
                         }
                       />
                     ) : (

@@ -361,7 +361,11 @@ export function EditorToolbar({
               className={cn(
                 "flex min-w-0 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                 "overscroll-x-contain touch-pan-x",
-                isMobileInlineToolbar ? "grow pb-1 -mb-1 pr-3" : "shrink"
+                isMobileInlineToolbar ? "grow pb-1 -mb-1 pr-3" : "shrink",
+                // The foot row's controls are Send-sized (30px); the roomy 36px
+                // buttons would grow the row on open and shift the timeline.
+                inlinePosition === "foot" &&
+                  "[&_button]:h-[30px] [&_button[aria-pressed]]:w-[30px] [&_button[aria-pressed]]:min-w-[30px]"
               )}
             >
               {buttons}

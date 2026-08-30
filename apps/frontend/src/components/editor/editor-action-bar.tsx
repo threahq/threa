@@ -34,16 +34,17 @@ function handleKeyboardClick(action: () => void) {
 }
 
 /**
- * The phone foot: Aa · + · trailing. Aa swaps the row for the marks
- * (`EditorToolbar` in its foot position, with `trailingContent` after it);
- * everything else lives behind the + menu.
+ * The phone foot: + · `trailingContent` on the left, Aa · Send on the right.
+ * Aa stays put and slides the marks (`EditorToolbar` in its foot position) out
+ * to its left, hiding + and `trailingContent` (kept mounted, off-screen: the
+ * pickers in it keep their popovers and open bridges). Everything else lives
+ * behind the + menu.
  */
 export interface EditorFormatFoot {
   editor: Editor | null
   linkPopoverOpen: boolean
   onLinkPopoverOpenChange: (open: boolean) => void
-  /** What follows the marks while formatting (Send); the rest of the foot's trailing content is off-screen then. */
-  trailingContent: ReactNode
+  sendButton: ReactNode
 }
 
 export interface EditorFootMenu {
@@ -105,22 +106,35 @@ export function EditorActionBar({
   side = "right",
 }: EditorActionBarProps) {
   const folded = formatFoot !== undefined
-  if (folded && formatOpen) {
+  if (folded) {
     return (
-      <div className="flex items-center gap-1">
-        <FormatToggle open onOpenChange={onFormatOpenChange} disabled={disabled} />
-        <div className="min-w-0 flex-1">
-          <EditorToolbar
-            editor={formatFoot.editor}
-            isVisible
-            inline
-            inlinePosition="foot"
-            linkPopoverOpen={formatFoot.linkPopoverOpen}
-            onLinkPopoverOpenChange={formatFoot.onLinkPopoverOpenChange}
-            showSpecialInputControls
+      <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
+        {!formatOpen && (
+          <FootMenu
+            disabled={disabled}
+            mobileExpanded={mobileExpanded}
+            onMobileExpandedChange={showExpand ? onMobileExpandedChange : undefined}
+            {...footMenu}
           />
+        )}
+        {formatOpen ? <div hidden>{trailingContent}</div> : trailingContent}
+        <div className="min-w-0 flex-1">
+          {formatOpen && (
+            <div className="animate-in fade-in-0 slide-in-from-right-8 duration-200">
+              <EditorToolbar
+                editor={formatFoot.editor}
+                isVisible
+                inline
+                inlinePosition="foot"
+                linkPopoverOpen={formatFoot.linkPopoverOpen}
+                onLinkPopoverOpenChange={formatFoot.onLinkPopoverOpenChange}
+                showSpecialInputControls
+              />
+            </div>
+          )}
         </div>
-        {formatFoot.trailingContent}
+        <FormatToggle open={formatOpen} onOpenChange={onFormatOpenChange} disabled={disabled} large />
+        {formatFoot.sendButton}
       </div>
     )
   }
@@ -130,7 +144,7 @@ export function EditorActionBar({
       <span className="flex-1" />
 
       {/* Expand/collapse toggle — mobile inline expansion */}
-      {showExpand && onMobileExpandedChange && !folded && (
+      {showExpand && onMobileExpandedChange && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -181,16 +195,7 @@ export function EditorActionBar({
          to receive the subsequent pointerup/click, inadvertently activating a mark. */}
       <FormatToggle open={formatOpen} onOpenChange={onFormatOpenChange} disabled={disabled} />
 
-      {folded && (
-        <FootMenu
-          disabled={disabled}
-          mobileExpanded={mobileExpanded}
-          onMobileExpandedChange={showExpand ? onMobileExpandedChange : undefined}
-          {...footMenu}
-        />
-      )}
-
-      {showEmoji && !folded && (
+      {showEmoji && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -212,7 +217,7 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {showMention && !folded && (
+      {showMention && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -256,7 +261,7 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {showAttach && onAttachClick && !folded && (
+      {showAttach && onAttachClick && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -286,10 +291,13 @@ function FormatToggle({
   open,
   onOpenChange,
   disabled,
+  large = false,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   disabled: boolean
+  /** The phone foot's Aa: Send-sized, beside Send. */
+  large?: boolean
 }) {
   // Split: pointerdown only prevents blur, click toggles. Toggling on
   // pointerdown would hand the trailing pointerup/click to whatever control
@@ -303,12 +311,12 @@ function FormatToggle({
           size="icon"
           aria-label="Formatting"
           aria-pressed={open}
-          className={cn("h-7 w-7 shrink-0", open && "bg-accent text-accent-foreground")}
+          className={cn("shrink-0", large ? "h-[30px] w-9" : "h-7 w-7", open && "bg-accent text-accent-foreground")}
           onPointerDown={(e) => e.preventDefault()}
           onClick={() => onOpenChange(!open)}
           disabled={disabled}
         >
-          <span className="text-[13px] font-bold leading-none tracking-tight">Aa</span>
+          <span className={cn("font-bold leading-none tracking-tight", large ? "text-[15px]" : "text-[13px]")}>Aa</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">

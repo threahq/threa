@@ -186,6 +186,7 @@ const MockEditorActionBar = (props: Record<string, unknown>) => (
       {props.mobileExpanded ? "Minimize" : "Expand"}
     </button>
     {props.trailingContent as any}
+    {(props.formatFoot as { sendButton?: React.ReactNode } | undefined)?.sendButton}
   </div>
 )
 

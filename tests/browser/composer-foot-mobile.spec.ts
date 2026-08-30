@@ -82,9 +82,16 @@ test.describe("Composer foot — phone", () => {
     await page.keyboard.type("hold me")
     await page.keyboard.press("Shift+Home")
     expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
+    const restBox = (await card.boundingBox())!
+    const aaBox = (await foot.getByRole("button", { name: "Formatting" }).boundingBox())!
     await foot.getByRole("button", { name: "Formatting" }).tap()
     await expect(foot.getByRole("button", { name: "Bold" })).toBeVisible()
     await expect(foot.getByRole("button", { name: "More" })).toHaveCount(0)
+    // The marks row is the same height as the foot, and Aa stays where it was:
+    // nothing above it moves when it opens.
+    expect((await card.boundingBox())!.height).toBe(restBox.height)
+    expect((await card.boundingBox())!.y).toBe(restBox.y)
+    expect((await foot.getByRole("button", { name: "Formatting" }).boundingBox())!.x).toBe(aaBox.x)
     expect(await nativeSelection(page)).toEqual({ collapsed: true, text: "" })
     await expect(editor.locator(".held-selection")).toHaveText("hold me")
     expect(await activeIsEditor(page)).toBe(true)

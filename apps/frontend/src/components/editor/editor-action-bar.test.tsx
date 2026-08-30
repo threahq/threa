@@ -119,7 +119,7 @@ describe("action side", () => {
       editor: null,
       linkPopoverOpen: false,
       onLinkPopoverOpenChange: vi.fn(),
-      trailingContent: <button type="button">Send</button>,
+      sendButton: <button type="button">Send</button>,
     })
 
     it("rests as Aa · + · trailing, with everything else behind the + menu", async () => {
