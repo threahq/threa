@@ -88,7 +88,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
   }
   if (subcommand === "connect") {
     if (rest.length > 0 || command.length > 0) throw new Error("connect takes no command")
-    rejectOptions(["mention", "config", "timeout"])
+    rejectOptions(["mention", "config", "timeout", "session"])
     return {
       kind: "connect",
       ...(values["base-url"] ? { baseUrl: values["base-url"] } : {}),

@@ -55,6 +55,7 @@ describe("parseCliArgs", () => {
     expect(() => parseCliArgs(["connect", "--", "x"])).toThrow("connect takes no command")
     expect(() => parseCliArgs(["connect", "--timeout", "soon"])).toThrow("--timeout does not apply to connect")
     expect(() => parseCliArgs(["connect", "--mention"])).toThrow("--mention does not apply to connect")
+    expect(() => parseCliArgs(["connect", "--session", "red"])).toThrow("--session does not apply to connect")
     expect(() => parseCliArgs(["run", "--base-url", "https://x", "--", "cmd"])).toThrow(
       "--base-url does not apply to run"
     )
