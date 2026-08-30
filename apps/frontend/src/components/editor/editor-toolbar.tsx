@@ -1,5 +1,5 @@
 import { useLayoutEffect, useEffect, useState, useCallback, useReducer, useRef, useMemo } from "react"
-import type { Editor } from "@tiptap/react"
+import type { ChainedCommands, Editor } from "@tiptap/react"
 import { useFloating, offset, flip, shift, autoUpdate } from "@floating-ui/react"
 import {
   Bold,
@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { LinkEditor } from "./link-editor"
+import { heldRange } from "./held-selection-extension"
 import { indentSelection, dedentSelection, handleLinkToolbarAction, isSuggestionActive } from "./editor-behaviors"
 import { toggleMultilineBlock } from "./multiline-blocks"
 import { cn } from "@/lib/utils"
@@ -43,13 +44,25 @@ interface EditorToolbarProps {
    *  is pinned inside the input box via the format button. */
   inline?: boolean
   /** Where the inline toolbar sits relative to the editor content.
-   *  "above" = border-bottom divider (default), "below" = border-top divider. */
-  inlinePosition?: "above" | "below"
+   *  "above" = border-bottom divider (default), "below" = border-top divider,
+   *  "foot" = the composer's own foot row, no divider or margin of its own. */
+  inlinePosition?: "above" | "below" | "foot"
   /** Extra content rendered after the formatting buttons (e.g. action buttons, close X).
    *  Only applies when `inline` is true. */
   trailingContent?: React.ReactNode
   /** Show mobile-only editing controls like indent/dedent in a separate section. */
   showSpecialInputControls?: boolean
+}
+
+function linkHrefInRange(editor: Editor, range: { from: number; to: number }): string | null {
+  const linkType = editor.schema.marks.link
+  let href: string | null = null
+  editor.state.doc.nodesBetween(range.from, range.to, (node) => {
+    if (href !== null) return false
+    const mark = linkType.isInSet(node.marks)
+    if (mark) href = mark.attrs.href
+  })
+  return href
 }
 
 interface LinkEditorSnapshot {
@@ -165,17 +178,35 @@ export function EditorToolbar({
   if (!editor || !isVisible) return null
 
   const isLinkActive = editor.isActive("link")
-  const isMobileInlineToolbar = inline && inlinePosition === "below"
+  const isMobileInlineToolbar = inline && inlinePosition !== "above"
   const separatorClassName = cn("mx-1 h-6 shrink-0", isMobileInlineToolbar && "mx-1.5")
+  // While a range is held (see HeldSelectionExtension) the selection is a
+  // collapsed caret, so every command selects the held range first and
+  // collapses again after; both are no-ops when nothing is held.
+  const held = heldRange(editor.state)
+  const run = (build: (chain: ChainedCommands) => ChainedCommands) =>
+    build(editor.chain().focus().selectHeld()).collapseToHeld().run()
+  const runOnHeld = (action: () => void) => {
+    editor.commands.selectHeld()
+    action()
+    editor.commands.collapseToHeld()
+  }
+  const markActive = (name: string) =>
+    held ? editor.state.doc.rangeHasMark(held.from, held.to, editor.schema.marks[name]) : editor.isActive(name)
   const handleLinkButtonAction = () => {
-    const { from, to } = editor.state.selection
-    const initialUrl = editor.getAttributes("link").href || ""
+    const { from, to } = held ?? editor.state.selection
+    // The held caret sits at the range's end, past a (non-inclusive) link, so
+    // the URL comes from the range itself.
+    const initialUrl = (held ? linkHrefInRange(editor, held) : editor.getAttributes("link").href) || ""
     const nextSnapshot = {
       initialUrl,
-      isActive: isLinkActive || !!initialUrl,
+      isActive: markActive("link") || !!initialUrl,
       selectionRange: { from, to },
     }
-    const action = handleLinkToolbarAction(editor, !!linkPopoverOpen, onLinkPopoverOpenChange)
+    // A held range is a selection, never a caret to step out of a link with.
+    const opensOnHeld = held !== null && !linkPopoverOpen
+    if (opensOnHeld) onLinkPopoverOpenChange?.(true)
+    const action = opensOnHeld ? "opened" : handleLinkToolbarAction(editor, !!linkPopoverOpen, onLinkPopoverOpenChange)
 
     if (action === "opened") {
       setLinkEditorSnapshot(nextSnapshot)
@@ -191,47 +222,47 @@ export function EditorToolbar({
       <StylePicker
         editor={editor}
         onOpenChange={onDropdownOpenChange}
-        keepEditorFocus={inline && inlinePosition === "below"}
+        keepEditorFocus={isMobileInlineToolbar}
         roomy={isMobileInlineToolbar}
         keyboardAccessible={inline}
       />
       <Separator orientation="vertical" className={separatorClassName} />
       <ToolbarButton
-        onAction={() => editor.chain().focus().toggleBold().run()}
+        onAction={() => run((chain) => chain.toggleBold())}
         icon={Bold}
         label="Bold"
         shortcut={shortcutHint("formatBold")}
-        isActive={editor.isActive("bold")}
+        isActive={markActive("bold")}
         roomy={isMobileInlineToolbar}
         showTooltip={!isMobileInlineToolbar}
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => editor.chain().focus().toggleItalic().run()}
+        onAction={() => run((chain) => chain.toggleItalic())}
         icon={Italic}
         label="Italic"
         shortcut={shortcutHint("formatItalic")}
-        isActive={editor.isActive("italic")}
+        isActive={markActive("italic")}
         roomy={isMobileInlineToolbar}
         showTooltip={!isMobileInlineToolbar}
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => editor.chain().focus().toggleStrike().run()}
+        onAction={() => run((chain) => chain.toggleStrike())}
         icon={Strikethrough}
         label="Strikethrough"
         shortcut={shortcutHint("formatStrike")}
-        isActive={editor.isActive("strike")}
+        isActive={markActive("strike")}
         roomy={isMobileInlineToolbar}
         showTooltip={!isMobileInlineToolbar}
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => editor.chain().focus().toggleCode().run()}
+        onAction={() => run((chain) => chain.toggleCode())}
         icon={Code}
         label="Inline code"
         shortcut={shortcutHint("formatCode")}
-        isActive={editor.isActive("code")}
+        isActive={markActive("code")}
         roomy={isMobileInlineToolbar}
         showTooltip={!isMobileInlineToolbar}
         keyboardAccessible={inline}
@@ -240,7 +271,7 @@ export function EditorToolbar({
         onAction={handleLinkButtonAction}
         icon={Link2}
         label="Link"
-        isActive={isLinkActive || !!linkPopoverOpen}
+        isActive={markActive("link") || !!linkPopoverOpen}
         deferActionUntilClick
         roomy={isMobileInlineToolbar}
         showTooltip={!isMobileInlineToolbar}
@@ -248,7 +279,7 @@ export function EditorToolbar({
       />
       <Separator orientation="vertical" className={separatorClassName} />
       <ToolbarButton
-        onAction={() => toggleMultilineBlock(editor, "blockquote")}
+        onAction={() => runOnHeld(() => toggleMultilineBlock(editor, "blockquote"))}
         icon={Quote}
         label="Quote"
         isActive={editor.isActive("blockquote")}
@@ -257,7 +288,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => editor.chain().focus().toggleBulletList().run()}
+        onAction={() => run((chain) => chain.toggleBulletList())}
         icon={List}
         label="Bullet list"
         isActive={editor.isActive("bulletList")}
@@ -266,7 +297,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => editor.chain().focus().toggleOrderedList().run()}
+        onAction={() => run((chain) => chain.toggleOrderedList())}
         icon={ListOrdered}
         label="Numbered list"
         isActive={editor.isActive("orderedList")}
@@ -275,7 +306,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => toggleMultilineBlock(editor, "codeBlock")}
+        onAction={() => runOnHeld(() => toggleMultilineBlock(editor, "codeBlock"))}
         icon={Braces}
         label="Code block"
         shortcut={shortcutHint("formatCodeBlock")}
@@ -290,7 +321,7 @@ export function EditorToolbar({
           <Separator orientation="vertical" className={separatorClassName} />
           <ToolbarButton
             onAction={() => {
-              if (!isSuggestionActive(editor)) indentSelection(editor)
+              if (!isSuggestionActive(editor)) runOnHeld(() => indentSelection(editor))
             }}
             icon={ListIndentIncrease}
             label="Indent"
@@ -299,7 +330,7 @@ export function EditorToolbar({
           />
           <ToolbarButton
             onAction={() => {
-              if (!isSuggestionActive(editor)) dedentSelection(editor)
+              if (!isSuggestionActive(editor)) runOnHeld(() => dedentSelection(editor))
             }}
             icon={ListIndentDecrease}
             label="Dedent"
@@ -320,23 +351,37 @@ export function EditorToolbar({
             isActive={linkEditorSnapshot?.isActive ?? isLinkActive}
             initialUrl={linkEditorSnapshot?.initialUrl}
             selectionRange={linkEditorSnapshot?.selectionRange}
-            onClose={() => onLinkPopoverOpenChange?.(false)}
+            onClose={() => {
+              onLinkPopoverOpenChange?.(false)
+              editor.commands.collapseToHeld()
+            }}
             className="rounded-md border bg-popover p-2 shadow-md mb-1"
           />
         )}
         <div
           className={cn(
             "relative",
-            inlinePosition === "above" ? "border-b border-border/50 mb-1" : "border-t border-border/50 mt-1"
+            inlinePosition === "above" && "border-b border-border/50 mb-1",
+            inlinePosition === "below" && "border-t border-border/50 mt-1"
           )}
         >
-          <div className={cn("flex items-center gap-0.5", inlinePosition === "below" ? "pt-1" : "py-1")}>
+          <div
+            className={cn(
+              "flex items-center gap-0.5",
+              inlinePosition === "above" && "py-1",
+              inlinePosition === "below" && "pt-1"
+            )}
+          >
             <div
               data-testid={isMobileInlineToolbar ? "mobile-inline-toolbar-scroll" : undefined}
               className={cn(
                 "flex min-w-0 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                 "overscroll-x-contain touch-pan-x",
-                isMobileInlineToolbar ? "grow pb-1 -mb-1 pr-3" : "shrink"
+                isMobileInlineToolbar ? "grow pb-1 -mb-1 pr-3" : "shrink",
+                // The foot row's controls are Send-sized (30px); the roomy 36px
+                // buttons would grow the row on open and shift the timeline.
+                inlinePosition === "foot" &&
+                  "[&_button]:h-[30px] [&_button[aria-pressed]]:w-[30px] [&_button[aria-pressed]]:min-w-[30px]"
               )}
             >
               {buttons}
@@ -416,11 +461,11 @@ function StylePicker({
 
   if (keepEditorFocus) {
     const selectParagraph = () => {
-      editor.chain().focus().setParagraph().run()
+      editor.chain().focus().selectHeld().setParagraph().collapseToHeld().run()
       handleOpenChange(false)
     }
     const selectHeading = (level: 1 | 2 | 3) => {
-      editor.chain().focus().toggleHeading({ level }).run()
+      editor.chain().focus().selectHeld().toggleHeading({ level }).collapseToHeld().run()
       handleOpenChange(false)
     }
     const handleOptionPointerDown = (action: () => void) => (e: React.PointerEvent) => {

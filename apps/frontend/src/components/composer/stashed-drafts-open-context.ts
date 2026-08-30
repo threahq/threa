@@ -17,6 +17,9 @@ import { createContext, useContext, useEffect, type MutableRefObject } from "rea
  */
 export interface StashedDraftsComposerBridge {
   openRef: MutableRefObject<(() => void) | null>
+  /** The scheduled-messages picker's `open`, for the folded phone foot whose
+   *  Schedule row lives in the Aa popover while the picker stays a slot node. */
+  openScheduledRef: MutableRefObject<(() => void) | null>
   focusComposer: () => void
 }
 
@@ -33,6 +36,17 @@ export function useRegisterStashedDraftsOpen(open: () => void) {
     bridge.openRef.current = open
     return () => {
       if (bridge.openRef.current === open) bridge.openRef.current = null
+    }
+  }, [bridge, open])
+}
+
+export function useRegisterScheduledMessagesOpen(open: () => void) {
+  const bridge = useStashedDraftsBridge()
+  useEffect(() => {
+    if (!bridge) return
+    bridge.openScheduledRef.current = open
+    return () => {
+      if (bridge.openScheduledRef.current === open) bridge.openScheduledRef.current = null
     }
   }, [bridge, open])
 }

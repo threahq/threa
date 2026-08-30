@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, createEvent, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { Editor } from "@tiptap/react"
+import { Editor as TiptapEditor } from "@tiptap/core"
 import { EditorToolbar } from "./editor-toolbar"
+import { createEditorExtensions } from "./editor-extensions"
 import * as editorBehaviors from "./editor-behaviors"
 import * as contextsModule from "@/contexts"
 
@@ -32,6 +34,8 @@ function createEditorStub() {
     deleteColumn: vi.fn(() => chain),
     deleteTable: vi.fn(() => chain),
     insertTable: vi.fn(() => chain),
+    selectHeld: vi.fn(() => chain),
+    collapseToHeld: vi.fn(() => chain),
     run: vi.fn(() => true),
   }
 
@@ -47,6 +51,8 @@ function createEditorStub() {
     chain: vi.fn(() => chain),
     commands: {
       focus: vi.fn(),
+      selectHeld: vi.fn(() => true),
+      collapseToHeld: vi.fn(() => true),
     },
     on: vi.fn(),
     off: vi.fn(),
@@ -55,7 +61,10 @@ function createEditorStub() {
   } as unknown as Editor
 }
 
-function ToolbarHarness({ editor }: { editor: Editor }) {
+function ToolbarHarness({
+  editor,
+  ...props
+}: { editor: Editor } & Pick<React.ComponentProps<typeof EditorToolbar>, "inline" | "inlinePosition">) {
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
 
   return (
@@ -64,6 +73,7 @@ function ToolbarHarness({ editor }: { editor: Editor }) {
       isVisible
       linkPopoverOpen={linkPopoverOpen}
       onLinkPopoverOpenChange={setLinkPopoverOpen}
+      {...props}
     />
   )
 }
@@ -204,6 +214,68 @@ describe("EditorToolbar", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  describe("with a held range (phone foot)", () => {
+    const linked = (text: string, rest: string) => ({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text, marks: [{ type: "link", attrs: { href: "https://held.example" } }] },
+            { type: "text", text: rest },
+          ],
+        },
+      ],
+    })
+    function createHeldEditor(range: { from: number; to: number }) {
+      const element = document.createElement("div")
+      document.body.append(element)
+      const editor = new TiptapEditor({
+        element,
+        extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+        content: linked("hello", " world"),
+      })
+      editor.view.hasFocus = () => true
+      editor.on("destroy", () => element.remove())
+      editor.commands.setTextSelection(range)
+      editor.commands.holdSelection()
+      return editor
+    }
+
+    it("opens the link editor on the held word's URL, though the caret sits past the link", async () => {
+      vi.mocked(editorBehaviors.handleLinkToolbarAction).mockRestore()
+      const user = userEvent.setup()
+      const editor = createHeldEditor({ from: 1, to: 6 })
+      try {
+        expect(editor.getAttributes("link")).toEqual({})
+        render(<ToolbarHarness editor={editor} inline inlinePosition="foot" />)
+
+        await user.click(screen.getByRole("button", { name: "Link" }))
+
+        expect(screen.getByDisplayValue("https://held.example")).toBeInTheDocument()
+        expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument()
+      } finally {
+        editor.destroy()
+      }
+    })
+
+    it("opens the link editor for a held range inside a link instead of stepping the caret out of it", async () => {
+      vi.mocked(editorBehaviors.handleLinkToolbarAction).mockRestore()
+      const user = userEvent.setup()
+      const editor = createHeldEditor({ from: 2, to: 4 })
+      try {
+        render(<ToolbarHarness editor={editor} inline inlinePosition="foot" />)
+
+        await user.click(screen.getByRole("button", { name: "Link" }))
+
+        expect(screen.getByDisplayValue("https://held.example")).toBeInTheDocument()
+        expect(editor.state.storedMarks).toBeNull()
+      } finally {
+        editor.destroy()
+      }
+    })
   })
 
   it("closes the floating link editor on outside pointer interaction", () => {

@@ -120,5 +120,21 @@ export function useComposerCommandSend(
     [conversationId, queueCommand, openAside, streamId]
   )
 
-  return { availableCommands, planSend, dispatchCommand }
+  // The foot's aside button is the `/aside` command by another handle: it
+  // shows exactly when the palette would offer the command for this stream.
+  const canOpenAside = !!streamId && availableCommands.some((cmd) => cmd.clientActionId === ASIDE_COMMAND)
+  const openAsideHere = useCallback(async () => {
+    if (!streamId) return
+    try {
+      await openAside(
+        conversationId
+          ? { kind: "conversation", hostStreamId: streamId, conversationId }
+          : { kind: "stream", hostStreamId: streamId }
+      )
+    } catch {
+      /* hook already toasted */
+    }
+  }, [conversationId, openAside, streamId])
+
+  return { availableCommands, planSend, dispatchCommand, canOpenAside, openAsideHere }
 }

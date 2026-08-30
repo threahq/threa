@@ -1,9 +1,23 @@
-import type { ReactNode } from "react"
-import { AtSign, Slash, Paperclip, Maximize2, Minimize2 } from "lucide-react"
+import { useState, type ReactNode } from "react"
+import type { Editor } from "@tiptap/react"
+import {
+  AtSign,
+  Slash,
+  Paperclip,
+  Maximize2,
+  Minimize2,
+  CalendarClock,
+  FileEdit,
+  MessageSquareDashed,
+  Plus,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { cn } from "@/lib/utils"
 import type { ComposerActionSide } from "@threa/types"
+import { EditorToolbar } from "./editor-toolbar"
 import type { RichEditorHandle } from "./rich-editor"
 
 function handlePointerAction(action: () => void) {
@@ -19,8 +33,35 @@ function handleKeyboardClick(action: () => void) {
   }
 }
 
+/**
+ * The phone foot: + · `trailingContent` on the left, Aa · Send on the right.
+ * Aa stays put and slides the marks (`EditorToolbar` in its foot position) out
+ * to its left, hiding + and `trailingContent` (kept mounted, off-screen: the
+ * pickers in it keep their popovers and open bridges). Everything else lives
+ * behind the + menu.
+ */
+export interface EditorFormatFoot {
+  /** The owning composer's id, stamped on portaled chrome (`data-composer-chrome`)
+   *  so its blur handling can tell this composer's menu from another's. */
+  chromeId: string
+  editor: Editor | null
+  linkPopoverOpen: boolean
+  onLinkPopoverOpenChange: (open: boolean) => void
+  sendButton: ReactNode
+}
+
+export interface EditorFootMenu {
+  onAttach?: () => void
+  onOpenAside?: () => void
+  onSchedule?: () => void
+  onOpenDrafts?: () => void
+}
+
 export interface EditorActionBarProps {
   editorHandle: RichEditorHandle | null
+  formatFoot?: EditorFormatFoot
+  /** With `formatFoot`: the + menu's rows. */
+  footMenu?: EditorFootMenu
   disabled?: boolean
   // Toggle state
   formatOpen: boolean
@@ -62,9 +103,49 @@ export function EditorActionBar({
   onAttachClick,
   showDesktopExpand = false,
   onDesktopExpandClick,
+  formatFoot,
+  footMenu,
   trailingContent,
   side = "right",
 }: EditorActionBarProps) {
+  const folded = formatFoot !== undefined
+  if (folded) {
+    return (
+      <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
+        {!formatOpen && (
+          <FootMenu
+            chromeId={formatFoot.chromeId}
+            disabled={disabled}
+            mobileExpanded={mobileExpanded}
+            onMobileExpandedChange={showExpand ? onMobileExpandedChange : undefined}
+            {...footMenu}
+          />
+        )}
+        {/* One wrapper either way: swapping elements would remount the mic
+            mid-take and the hidden pickers with their open bridges. */}
+        <div hidden={formatOpen} className={formatOpen ? undefined : "contents"}>
+          {trailingContent}
+        </div>
+        <div className="min-w-0 flex-1">
+          {formatOpen && (
+            <div className="animate-in fade-in-0 slide-in-from-right-8 duration-200">
+              <EditorToolbar
+                editor={formatFoot.editor}
+                isVisible
+                inline
+                inlinePosition="foot"
+                linkPopoverOpen={formatFoot.linkPopoverOpen}
+                onLinkPopoverOpenChange={formatFoot.onLinkPopoverOpenChange}
+                showSpecialInputControls
+              />
+            </div>
+          )}
+        </div>
+        <FormatToggle open={formatOpen} onOpenChange={onFormatOpenChange} disabled={disabled} large />
+        {formatFoot.sendButton}
+      </div>
+    )
+  }
   return (
     <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
       {/* Spacer — pushes buttons to whichever edge `side` names */}
@@ -120,26 +201,7 @@ export function EditorActionBar({
       {/* Format toggle — split: pointerdown only prevents blur, click toggles toolbar.
          Firing the toggle on pointerdown would cause the newly-appeared toolbar buttons
          to receive the subsequent pointerup/click, inadvertently activating a mark. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Formatting"
-            aria-pressed={formatOpen}
-            className={cn("h-7 w-7 shrink-0", formatOpen && "bg-accent text-accent-foreground")}
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => onFormatOpenChange(!formatOpen)}
-            disabled={disabled}
-          >
-            <span className="text-[13px] font-bold leading-none tracking-tight">Aa</span>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          Formatting
-        </TooltipContent>
-      </Tooltip>
+      <FormatToggle open={formatOpen} onOpenChange={onFormatOpenChange} disabled={disabled} />
 
       {showEmoji && (
         <Tooltip>
@@ -230,5 +292,127 @@ export function EditorActionBar({
 
       {trailingContent}
     </div>
+  )
+}
+
+function FormatToggle({
+  open,
+  onOpenChange,
+  disabled,
+  large = false,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  disabled: boolean
+  /** The phone foot's Aa: Send-sized, beside Send. */
+  large?: boolean
+}) {
+  // Split: pointerdown only prevents blur, click toggles. Toggling on
+  // pointerdown would hand the trailing pointerup/click to whatever control
+  // appears under the finger.
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Formatting"
+          aria-pressed={open}
+          className={cn("shrink-0", large ? "h-[30px] w-9" : "h-7 w-7", open && "bg-accent text-accent-foreground")}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => onOpenChange(!open)}
+          disabled={disabled}
+        >
+          <span className={cn("font-bold leading-none tracking-tight", large ? "text-[15px]" : "text-[13px]")}>Aa</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        Formatting
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+interface FootMenuProps extends EditorFootMenu {
+  chromeId: string
+  disabled: boolean
+  mobileExpanded: boolean
+  onMobileExpandedChange?: (expanded: boolean) => void
+}
+
+/**
+ * The + menu. Nothing in it may take focus: the editor keeps the caret and the
+ * soft keyboard the whole time (`keepEditorFocusProps` on the content,
+ * pointerdown prevented on every row). Rows act on click, never on pointerdown
+ * (acting early closes the menu under a finger still down and the trailing
+ * click lands on whatever is beneath), and each closes the menu, since it
+ * hands over to a surface of its own.
+ */
+function FootMenu({
+  chromeId,
+  disabled,
+  mobileExpanded,
+  onMobileExpandedChange,
+  onAttach,
+  onOpenAside,
+  onSchedule,
+  onOpenDrafts,
+}: FootMenuProps) {
+  const [open, setOpen] = useState(false)
+  const row = (label: string, icon: ReactNode, action: () => void) => (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled={disabled}
+      className="h-9 w-full justify-start gap-2 px-2 text-sm"
+      onPointerDown={(e) => e.preventDefault()}
+      onClick={() => {
+        setOpen(false)
+        action()
+      }}
+    >
+      {icon}
+      {label}
+    </Button>
+  )
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="More"
+          className={cn("h-7 w-7 shrink-0", open && "bg-accent text-accent-foreground")}
+          onPointerDown={(e) => e.preventDefault()}
+          disabled={disabled}
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        collisionPadding={8}
+        className="flex w-48 flex-col p-1"
+        data-testid="composer-foot-menu"
+        data-composer-chrome={chromeId}
+        {...keepEditorFocusProps(true)}
+      >
+        {onAttach && row("Attach files", <Paperclip className="h-4 w-4" />, onAttach)}
+        {onOpenAside && row("Open an aside", <MessageSquareDashed className="h-4 w-4" />, onOpenAside)}
+        {onSchedule && row("Schedule", <CalendarClock className="h-4 w-4" />, onSchedule)}
+        {onOpenDrafts && row("Drafts", <FileEdit className="h-4 w-4" />, onOpenDrafts)}
+        {onMobileExpandedChange &&
+          row(
+            mobileExpanded ? "Minimize editor" : "Expand editor",
+            mobileExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />,
+            () => onMobileExpandedChange(!mobileExpanded)
+          )}
+      </PopoverContent>
+    </Popover>
   )
 }

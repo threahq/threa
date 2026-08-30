@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { spyOnExport } from "@/test/spy"
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { forwardRef, useEffect, useImperativeHandle, useState, type ForwardedRef } from "react"
 import { MessageComposer } from "./message-composer"
@@ -17,6 +17,7 @@ import * as pendingAttachmentsModule from "@/components/timeline/pending-attachm
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let isMobileMockValue = false
+let actionBarSpy: ReturnType<typeof spyOnExport<typeof editorModule, "EditorActionBar">>
 const mockRichEditorFocus = vi.fn()
 const mockInsertFiles = vi.fn(() => true)
 const mockInsertTranscribedText = vi.fn()
@@ -31,6 +32,16 @@ type MockEditorInstance = {
   isActive: () => boolean
   on: () => void
   off: () => void
+  state: { selection: { empty: boolean } }
+  chain: () => MockChain
+  commands: { releaseHeld: () => boolean }
+}
+
+type MockChain = { focus: () => MockChain; holdSelection: () => MockChain; run: () => boolean }
+const mockChain: MockChain = {
+  focus: () => mockChain,
+  holdSelection: () => mockChain,
+  run: () => false,
 }
 
 const MockRichEditor = forwardRef<
@@ -73,6 +84,9 @@ const MockRichEditor = forwardRef<
           isActive: () => false,
           on: () => undefined,
           off: () => undefined,
+          state: { selection: { empty: true } },
+          chain: () => mockChain,
+          commands: { releaseHeld: () => true },
         }),
       0
     )
@@ -154,6 +168,17 @@ const MockEditorActionBar = (props: Record<string, unknown>) => (
     >
       Aa
     </button>
+    {/* The folded foot swaps its row for the marks toolbar while formatting;
+        mirror that so the toolbar assertions read through the same contract. */}
+    {props.formatFoot && props.formatOpen ? (
+      <div data-testid="composer-format-toolbar">
+        <MockEditorToolbar
+          editor={(props.formatFoot as { editor: { id: string } | null }).editor}
+          isVisible
+          showSpecialInputControls
+        />
+      </div>
+    ) : null}
     <button
       type="button"
       aria-label={props.mobileExpanded ? "Minimize composer" : "Expand composer"}
@@ -162,6 +187,7 @@ const MockEditorActionBar = (props: Record<string, unknown>) => (
       {props.mobileExpanded ? "Minimize" : "Expand"}
     </button>
     {props.trailingContent as any}
+    {(props.formatFoot as { sendButton?: React.ReactNode } | undefined)?.sendButton}
   </div>
 )
 
@@ -184,7 +210,7 @@ describe("MessageComposer", () => {
     spyOnExport(editorModule, "EditorToolbar").mockReturnValue(
       MockEditorToolbar as unknown as typeof editorModule.EditorToolbar
     )
-    spyOnExport(editorModule, "EditorActionBar").mockReturnValue(
+    actionBarSpy = spyOnExport(editorModule, "EditorActionBar").mockReturnValue(
       MockEditorActionBar as unknown as typeof editorModule.EditorActionBar
     )
   })
@@ -783,6 +809,41 @@ describe("MessageComposer", () => {
       expect(screen.queryByTestId("mobile-editor-toolbar")).not.toBeInTheDocument()
     })
 
+    it("collapses when focus lands in another composer's + menu, and stays for its own", () => {
+      isMobileMockValue = true
+      vi.useFakeTimers()
+      // The real foot: its + menu is portaled to <body>, so only the chrome
+      // marker can tell whose menu focus landed in.
+      actionBarSpy.mockRestore()
+
+      render(
+        <>
+          <div data-testid="composer-a">
+            <MessageComposer {...defaultProps} scopeId="stream_a" />
+          </div>
+          <div data-testid="composer-b">
+            <MessageComposer {...defaultProps} scopeId="stream_b" />
+          </div>
+        </>
+      )
+      const rootA = screen.getByTestId("composer-a")
+      const rootB = screen.getByTestId("composer-b")
+      for (const root of [rootA, rootB]) fireEvent.click(within(root).getByTestId("rich-editor-wrapper"))
+      expect(within(rootA).getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+      expect(within(rootB).getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+
+      fireEvent.click(within(rootB).getByRole("button", { name: "More" }))
+      const rowInB = within(screen.getByTestId("composer-foot-menu")).getByRole("button", { name: "Expand editor" })
+
+      fireEvent.blur(within(rootA).getByTestId("rich-editor"), { relatedTarget: rowInB })
+      act(() => vi.advanceTimersByTime(200))
+      expect(within(rootA).queryByRole("button", { name: "Formatting" })).not.toBeInTheDocument()
+
+      fireEvent.blur(within(rootB).getByTestId("rich-editor"), { relatedTarget: rowInB })
+      act(() => vi.advanceTimersByTime(200))
+      expect(within(rootB).getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+    })
+
     it("updates mobile toolbar editor when editor instance becomes available asynchronously", () => {
       isMobileMockValue = true
       vi.useFakeTimers()
@@ -1043,28 +1104,15 @@ describe("MessageComposer", () => {
       expect((container.firstElementChild as HTMLElement).style.maxHeight).toBe("104px")
     })
 
-    it.each([
-      { savedHeight: 104, openHeight: 144, label: "minimum" },
-      { savedHeight: 200, openHeight: 240, label: "intermediate height with fullscreen headroom" },
-    ])("grows from $label before the formatting toolbar consumes editor space", ({ savedHeight, openHeight }) => {
-      localStorage.setItem("threa:composer-drag-height", String(savedHeight))
-      const originalRect = HTMLElement.prototype.getBoundingClientRect
-      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-        if (this.getAttribute("data-testid") === "composer-format-toolbar") {
-          return { ...originalRect.call(this), height: 40, bottom: 40 }
-        }
-        return originalRect.call(this)
-      })
+    it("keeps its dragged height when the formatting popover opens (nothing in flow to make room for)", () => {
+      localStorage.setItem("threa:composer-drag-height", "200")
       const { container } = render(<MessageComposer {...defaultProps} workspaceId="ws_1" initialMobileChromeOpen />)
       const root = container.firstElementChild as HTMLElement
-      expect(root.style.minHeight).toBe(`${savedHeight}px`)
+      expect(root.style.minHeight).toBe("200px")
 
       fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
-      expect(screen.getByTestId("composer-format-toolbar")).toBeInTheDocument()
-      expect(root.style.minHeight).toBe(`${openHeight}px`)
-
-      fireEvent.click(screen.getByRole("button", { name: "Formatting" }))
-      expect(root.style.minHeight).toBe(`${savedHeight}px`)
+      expect(screen.getByTestId("mobile-editor-toolbar")).toBeInTheDocument()
+      expect(root.style.minHeight).toBe("200px")
     })
 
     it("keeps the floor when 75% of a short viewport would dip below it", () => {
