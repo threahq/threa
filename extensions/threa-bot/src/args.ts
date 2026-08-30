@@ -65,7 +65,10 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
   let timeoutMs: number | undefined
   if (values.timeout !== undefined) {
     timeoutMs = Number(values.timeout)
-    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error("--timeout must be a positive integer (ms)")
+    // Above 2^31-1 ms Node's timers fire immediately.
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+      throw new Error("--timeout must be a positive integer of milliseconds up to 2147483647")
+    }
   }
   return {
     kind: "run",

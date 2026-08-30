@@ -23,6 +23,9 @@
   "engines": {
     "node": ">=20"
   },
+  "os": [
+    "!win32"
+  ],
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

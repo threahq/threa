@@ -20,7 +20,8 @@ program, or an agent CLI all qualify.
 2. Export `THREA_WORKSPACE_ID` and `THREA_API_KEY` (or put them in a JSON file
    and pass `--config`). `THREA_BASE_URL` defaults to `https://app.threa.io`.
 
-Node 20+ or Bun.
+Node 20+ or Bun, on macOS or Linux (the agent runs in its own process group and
+is stopped with POSIX signals; Windows is not supported yet).
 
 ## Two modes
 

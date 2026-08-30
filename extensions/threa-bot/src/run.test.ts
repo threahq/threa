@@ -28,6 +28,27 @@ describe("StepBatcher", () => {
   })
 })
 
+describe("StepBatcher bounds", () => {
+  test("drops the oldest lines past the queue cap and reports it once, and the final flush has a deadline", async () => {
+    const errors: string[] = []
+    let calls = 0
+    const batcher = new StepBatcher(
+      async () => {
+        calls += 1
+        await new Promise((resolve) => setTimeout(resolve, 60_000))
+      },
+      { flushMs: 60_000, onError: (error) => errors.push(error instanceof Error ? error.message : String(error)) }
+    )
+    for (let i = 0; i < 620; i++) batcher.push(`line ${i}`)
+    expect(batcher.dropped).toBe(120)
+    const started = Date.now()
+    await batcher.finish(50)
+    expect(Date.now() - started).toBeLessThan(1_000)
+    expect(calls).toBeGreaterThanOrEqual(1)
+    expect(errors).toEqual(["120 trace lines dropped (queue full)"])
+  })
+})
+
 describe("resolveConfig", () => {
   const deps = { cwd: "/tmp/project", log: () => undefined }
   test("names the scratchpad after the command unless --name is given", () => {

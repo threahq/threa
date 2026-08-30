@@ -19,6 +19,11 @@ const MENTION_PRESENCE_MS = 20_000
 const CLAIM_TTL_SECONDS = 120
 const STEP_FLUSH_MS = 1_000
 const MAX_STEPS_PER_FLUSH = 50
+// Trace is best effort: with the socket down every frame is an HTTP request,
+// so the queue is bounded (oldest lines drop) and the end-of-turn flush gets a
+// deadline rather than holding the reply.
+const MAX_PENDING_STEPS = 500
+const FINAL_FLUSH_DEADLINE_MS = 5_000
 
 export interface RunDeps {
   env: NodeJS.ProcessEnv
@@ -54,7 +59,14 @@ export class StepBatcher {
     private readonly options: { flushMs?: number; onError?: (error: unknown) => void } = {}
   ) {}
 
+  /** Lines dropped because the queue was full; reported once through `onError` at the final flush. */
+  dropped = 0
+
   push(line: string): void {
+    if (this.pending.length >= MAX_PENDING_STEPS) {
+      this.pending.shift()
+      this.dropped += 1
+    }
     this.pending.push({ stepType: "thinking", content: line.slice(0, 10_000) })
     if (this.pending.length >= MAX_STEPS_PER_FLUSH) void this.flush()
     else this.timer ??= setTimeout(() => void this.flush(), this.options.flushMs ?? STEP_FLUSH_MS)
@@ -70,6 +82,19 @@ export class StepBatcher {
       }
     })
     return this.inFlight
+  }
+
+  /** The end-of-turn flush: whatever has not landed by the deadline is left to finish in the background. */
+  async finish(deadlineMs = FINAL_FLUSH_DEADLINE_MS): Promise<void> {
+    if (this.dropped > 0) this.options.onError?.(new Error(`${this.dropped} trace lines dropped (queue full)`))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      this.flush(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, deadlineMs)
+      }),
+    ])
+    if (timer) clearTimeout(timer)
   }
 }
 
@@ -129,7 +154,7 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
       deps.log(`${name}: ${line}`)
     }
     const outcome = await runtime.run(content, env)
-    await steps.flush()
+    await steps.finish()
     const reply = describeOutcome(outcome, args.command)
     if (reply === undefined) return
     const result = await session.reply(invocationId, reply)
@@ -164,6 +189,7 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
   const { instanceId } = config
   let draining = false
   let stopped = false
+  let activeDrain: Promise<void> | undefined
 
   const transport = new BotRuntimeTransport({
     baseUrl: config.baseUrl,
@@ -189,8 +215,15 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
       capabilities: {},
     })
 
-  async function drain(): Promise<void> {
-    if (draining || stopped) return
+  function drain(): Promise<void> {
+    if (draining || stopped) return Promise.resolve()
+    activeDrain = drainOnce().finally(() => {
+      activeDrain = undefined
+    })
+    return activeDrain
+  }
+
+  async function drainOnce(): Promise<void> {
     draining = true
     try {
       while (!stopped) {
@@ -203,16 +236,28 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
         if (!invocation) return
         await presence("busy")
         // A claim the server no longer knows has nowhere to reply; stop the work.
+        // The same goes for a lease that has gone unconfirmed for a whole TTL:
+        // another runtime may hold the invocation by then.
         let claimLost = false
+        let leaseConfirmedAt = Date.now()
+        const loseClaim = (why: string) => {
+          if (claimLost) return
+          claimLost = true
+          clearInterval(renew)
+          deps.log(`claim ${invocation.id} ${why}; stopping the command`)
+          runtime.interrupt()
+        }
         const renew = setInterval(
           async () => {
-            const { notFound } = await transport.renewClaim(invocation.id, invocation.claimToken, CLAIM_TTL_SECONDS)
-            if (notFound && !claimLost) {
-              claimLost = true
-              clearInterval(renew)
-              deps.log(`claim ${invocation.id} lost (expired or reassigned); stopping the command`)
-              runtime.interrupt()
-            }
+            const { notFound, renewed } = await transport.renewClaim(
+              invocation.id,
+              invocation.claimToken,
+              CLAIM_TTL_SECONDS
+            )
+            if (notFound) loseClaim("lost (expired or reassigned)")
+            else if (renewed) leaseConfirmedAt = Date.now()
+            else if (Date.now() - leaseConfirmedAt > CLAIM_TTL_SECONDS * 1000)
+              loseClaim("lease unconfirmed for a full TTL")
           },
           Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
         )
@@ -236,8 +281,17 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
             THREA_STREAM_ID: invocation.responseStreamId,
             THREA_SOURCE_MESSAGE_ID: invocation.sourceMessageId,
           })
-          await steps.flush()
+          await steps.finish()
           if (claimLost) continue
+          if (stopped && !outcome.ok && outcome.reason === "interrupted") {
+            // Shutdown cut the command; the mention is not answered, say so.
+            await client.fail(invocation.id, {
+              instanceId,
+              claimToken: invocation.claimToken,
+              errorMessage: "threa-bot shut down before the command finished",
+            })
+            return
+          }
           const reply = describeOutcome(outcome, args.command) ?? "Stopped."
           await client.complete(invocation.id, {
             instanceId,
@@ -269,6 +323,10 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
     clearInterval(backstop)
     clearInterval(heartbeat)
     await runtime.shutdown()
+    // Let the drain report the interrupted claim before the transport goes.
+    if (activeDrain) {
+      await Promise.race([activeDrain, new Promise((resolve) => setTimeout(resolve, FINAL_FLUSH_DEADLINE_MS))])
+    }
     transport.disconnect()
     await presence("offline").catch(() => undefined)
   }

@@ -45,5 +45,6 @@ describe("parseCliArgs", () => {
     expect(() => parseCliArgs(["run"])).toThrow("after `--`")
     expect(() => parseCliArgs(["serve", "--", "x"])).toThrow("Unknown command: serve")
     expect(() => parseCliArgs(["run", "--timeout", "soon", "--", "x"])).toThrow("--timeout")
+    expect(() => parseCliArgs(["run", "--timeout", "2147483648", "--", "x"])).toThrow("--timeout")
   })
 })
