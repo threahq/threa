@@ -58,6 +58,12 @@ function isEditorTarget(target: EventTarget | null): boolean {
 export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope }: AsideMobileSheetProps) {
   const detent = useAsideSheetDetent()
   const sheetRef = useRef<HTMLDivElement>(null)
+  // An aside opened from a composer (the `/aside` command, mostly) takes the
+  // typing with it: the keyboard is already up, and the host composer the sheet
+  // now covers would otherwise keep every keystroke out of sight. Opened from
+  // a row or the palette, nothing held focus, and the sheet rests at the peek
+  // with the host still readable above it.
+  const [takeFocus] = useState(() => isEditorTarget(document.activeElement))
   const [dragging, setDragging] = useState(false)
   // The height eases only on the way from a gesture to its detent. Viewport
   // changes — the keyboard, mostly — must land instantly: the host resizes in
@@ -101,7 +107,8 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
     // it started. It also keeps focus — and the keyboard — in an editor that
     // has it: a drag never closes the keyboard.
     event.preventDefault()
-    const startHeight = sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, hostHeight(sheetRef.current))
+    const startHeight =
+      sheetRef.current?.getBoundingClientRect().height ?? asideMobileHeight(detent, hostHeight(sheetRef.current))
     drag.current = {
       startY: event.clientY,
       startHeight,
@@ -220,6 +227,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
             asideId={asideId}
             hostStreamId={hostStreamId}
             originScope={originScope}
+            autoFocus={takeFocus}
           />
         </div>
       </div>

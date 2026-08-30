@@ -194,8 +194,28 @@ test.describe("Aside — desktop surface", () => {
         .locator(".message-item")
         .filter({ hasText: /stub response from the companion/ })
     ).toBeVisible({ timeout: AGENT_REPLY_TIMEOUT })
-    // The host timeline never receives the aside's turns.
+    // The host timeline never receives the aside's turns, and the anchored
+    // message never adopts the aside as its thread (no card linking into it).
     await expect(hostScroller(page, streamId).getByText("What is this about?")).toHaveCount(0)
+    await expect(hostScroller(page, streamId).locator(`a[href*="${asideId}"]`)).toHaveCount(0)
+    await expectSilent(page, asideId!)
+
+    // The anchor row is the aside's one attention surface (no badge, no
+    // sidebar). Read and closed, it rests grey; an answer that lands while it
+    // is closed lights it gold; opening it reads it.
+    await page.getByRole("button", { name: "Close aside" }).click()
+    await expectNoAsideChrome(page)
+    await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "quiet")
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+        data: { streamId: asideId, content: "And what comes next?" },
+      }),
+      "Ask in the closed aside"
+    )
+    await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "new", { timeout: AGENT_REPLY_TIMEOUT })
+    await anchorRow(page, streamId).click()
+    await expect(stage(page)).toBeVisible({ timeout: 10000 })
+    await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "open")
     await expectSilent(page, asideId!)
   })
 

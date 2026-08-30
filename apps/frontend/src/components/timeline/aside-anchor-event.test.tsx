@@ -6,6 +6,7 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
 import { getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
+import { __resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
 import { createMockStream } from "@/test/fixtures"
 import { groupTimelineItems, TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 
@@ -81,12 +82,21 @@ function cardEvent(id: string, sequence: string): StreamEvent {
   }
 }
 
+function unreadOnAside(count: number) {
+  vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
+    unreadCounts: { [ASIDE]: count },
+  } as never)
+}
+
 beforeEach(() => {
   resetAsideStoreCache()
+  __resetAgentActivityStore()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([aside] as never)
 })
 
 afterEach(() => vi.restoreAllMocks())
+
+const row = () => document.querySelector("[data-aside-id]")
 
 describe("AsideAnchorEvent", () => {
   it("renders the creator's row: title joined from the aside stream, age, and the resume control", () => {
@@ -105,6 +115,45 @@ describe("AsideAnchorEvent", () => {
     // The label is present in the row at rest — reserved space, revealed on
     // hover — so the row can never change height when it lights up (INV-21).
     expect(control).toHaveTextContent("Resume")
+  })
+
+  it("rests grey when the aside has nothing new, and lights gold once Ariadne answers in it", () => {
+    unreadOnAside(0)
+    const { unmount } = renderTimeline([anchorEvent()], CREATOR)
+    expect(row()).toHaveAttribute("data-attention", "quiet")
+    expect(screen.getByRole("button", { name: "Resume aside: churn number sanity-check" })).toBe(row())
+    unmount()
+
+    // The aside's unread is the answer: its creator is its only member, and
+    // own sends never raise it, so any count is a companion reply not yet read.
+    unreadOnAside(1)
+    renderTimeline([anchorEvent()], CREATOR)
+    expect(row()).toHaveAttribute("data-attention", "new")
+    expect(screen.getByRole("button", { name: "Resume aside: churn number sanity-check (new reply)" })).toBe(row())
+  })
+
+  it("shows Ariadne working in the aside while a session runs there, ahead of any unread", () => {
+    unreadOnAside(1)
+    upsertAgentSession("ws_1", {
+      sessionId: "asess_1",
+      streamId: ASIDE,
+      rootStreamId: ASIDE,
+      personaName: "Ariadne",
+      startedAt: new Date().toISOString(),
+    })
+    renderTimeline([anchorEvent()], CREATOR)
+
+    expect(row()).toHaveAttribute("data-attention", "working")
+    expect(screen.getByRole("button", { name: /\(Ariadne is working\)$/ })).toBe(row())
+  })
+
+  it("reads as open while the aside is on screen, whatever its unread says", () => {
+    unreadOnAside(3)
+    openAside({ hostKey: HOST_PATH, hostStreamId: "stream_host", asideId: ASIDE, originScope: "stream:stream_host" })
+    renderTimeline([anchorEvent()], CREATOR)
+
+    expect(row()).toHaveAttribute("data-attention", "open")
+    expect(row()).toHaveAttribute("data-state", "open")
   })
 
   it("renders nothing for another viewer of the same host stream", () => {
