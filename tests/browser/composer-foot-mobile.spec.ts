@@ -3,11 +3,9 @@ import { loginAndCreateWorkspace, expectApiOk } from "./helpers"
 
 /**
  * The phone composer foot: Aa · + | mic · send, with attach, aside, schedule,
- * drafts and the size toggle behind +. Aa holds the selection (the native
- * selection collapses, which is what dismisses the OS text toolbar) and swaps
- * the row for the marks. The contract this proves is focus: every tap leaves
- * the caret in the editor, so the keyboard never drops, and the marks land on
- * the held range.
+ * drafts and the size toggle behind +. Aa swaps the row for the marks. The
+ * contract this proves is focus: every tap leaves the caret in the editor, so
+ * the keyboard never drops, and the marks land on the native selection.
  */
 
 test.describe.configure({ timeout: 150_000 })
@@ -36,7 +34,7 @@ test.describe("Composer foot — phone", () => {
   // Real taps: the foot's focus contract keys off the active input being touch.
   test.use({ hasTouch: true })
 
-  test("holds the selection behind Aa, keeps the caret through the + menu, and opens an aside from it", async ({
+  test("formats the selection from Aa, keeps the caret through the + menu, and opens an aside from it", async ({
     page,
   }) => {
     const { testId } = await loginAndCreateWorkspace(page, "composer-foot")
@@ -76,9 +74,9 @@ test.describe("Composer foot — phone", () => {
       await expect(foot.getByRole("button", { name })).toHaveCount(0)
     }
 
-    // Select a word, then Aa: the native selection collapses (the OS toolbar
-    // goes with it), the word stays held and painted, the caret stays put, and
-    // the foot row is now the marks.
+    // Select a word, then Aa: the row becomes the marks, the selection stays
+    // the native one (the OS toolbar is the OS's), the caret stays in the
+    // editor, and Aa doesn't move.
     await page.keyboard.type("hold me")
     await page.keyboard.press("Shift+Home")
     expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
@@ -92,21 +90,19 @@ test.describe("Composer foot — phone", () => {
     expect((await card.boundingBox())!.height).toBe(restBox.height)
     expect((await card.boundingBox())!.y).toBe(restBox.y)
     expect((await foot.getByRole("button", { name: "Formatting" }).boundingBox())!.x).toBe(aaBox.x)
-    expect(await nativeSelection(page)).toEqual({ collapsed: true, text: "" })
-    await expect(editor.locator(".held-selection")).toHaveText("hold me")
+    expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
     expect(await activeIsEditor(page)).toBe(true)
 
-    // A mark lands on the held range, not at the caret; the row stays (marks
-    // come in bunches), the hold stays, and so does the caret.
+    // A mark lands on the selection; the row stays (marks come in bunches)
+    // and so does the selection.
     await foot.getByRole("button", { name: "Bold" }).tap()
     await expect(editor.locator("strong")).toHaveText("hold me")
     await expect(foot.getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "true")
-    expect(await nativeSelection(page)).toEqual({ collapsed: true, text: "" })
-    await expect(editor.locator(".held-selection")).toHaveText("hold me")
+    expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
     expect(await activeIsEditor(page)).toBe(true)
 
     // The link editor's URL input is the one thing that must take focus; Enter
-    // applies to the held range and hands the caret back, still collapsed.
+    // applies to the selection and hands the caret back.
     await foot.getByRole("button", { name: "Link" }).tap()
     const url = foot.getByPlaceholder("https://example.com")
     await expect(url).toBeFocused()
@@ -114,24 +110,10 @@ test.describe("Composer foot — phone", () => {
     await page.keyboard.press("Enter")
     await expect(editor.locator("a[href='https://threa.dev']")).toHaveText("hold me")
     expect(await activeIsEditor(page)).toBe(true)
-    expect(await nativeSelection(page)).toEqual({ collapsed: true, text: "" })
 
-    // Selecting text again while the row is open takes over from the hold: the
-    // paint goes and the live selection is the target. Aa re-holds it (the row
-    // stays) instead of closing.
-    await page.keyboard.press("Shift+Home")
-    await expect(editor.locator(".held-selection")).toHaveCount(0)
-    expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
-    await foot.getByRole("button", { name: "Formatting" }).tap()
-    await expect(editor.locator(".held-selection")).toHaveText("hold me")
-    await expect(foot.getByRole("button", { name: "Bold" })).toBeVisible()
-    expect(await nativeSelection(page)).toEqual({ collapsed: true, text: "" })
-
-    // Aa again hands the word back as the real selection (the OS toolbar may
-    // return; that's the user's selection again), and the row folds back.
+    // Aa again folds the row back and the selection is untouched.
     await foot.getByRole("button", { name: "Formatting" }).tap()
     await expect(foot.getByRole("button", { name: "More" })).toBeVisible()
-    await expect(editor.locator(".held-selection")).toHaveCount(0)
     expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
     await page.keyboard.press("End")
     await page.keyboard.type(" on")

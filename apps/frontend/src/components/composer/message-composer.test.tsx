@@ -32,16 +32,6 @@ type MockEditorInstance = {
   isActive: () => boolean
   on: () => void
   off: () => void
-  state: { selection: { empty: boolean } }
-  chain: () => MockChain
-  commands: { releaseHeld: () => boolean }
-}
-
-type MockChain = { focus: () => MockChain; holdSelection: () => MockChain; run: () => boolean }
-const mockChain: MockChain = {
-  focus: () => mockChain,
-  holdSelection: () => mockChain,
-  run: () => false,
 }
 
 const MockRichEditor = forwardRef<
@@ -84,9 +74,6 @@ const MockRichEditor = forwardRef<
           isActive: () => false,
           on: () => undefined,
           off: () => undefined,
-          state: { selection: { empty: true } },
-          chain: () => mockChain,
-          commands: { releaseHeld: () => true },
         }),
       0
     )
