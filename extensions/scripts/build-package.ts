@@ -103,5 +103,7 @@ for (const [key, value] of Object.entries(manifest)) {
 writeFileSync(join(dist, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
 cpSync(join(pkgDir, "README.md"), join(dist, "README.md"))
 cpSync(join(repoRoot, "LICENSE"), join(dist, "LICENSE"))
+// The README links to examples/; ship them so the links hold in node_modules.
+if (existsSync(join(pkgDir, "examples"))) cpSync(join(pkgDir, "examples"), join(dist, "examples"), { recursive: true })
 
 console.log(`built ${pkg.name}@${pkg.version} → ${basename(pkgDir)}/dist`)

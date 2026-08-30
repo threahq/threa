@@ -12,6 +12,12 @@ export interface RemoteSessionConfig {
   displayName: string
   /** Sent as `labelName` on session create; the backend applies it only to a newly created scratchpad. Unset = no label. */
   defaultLabel?: string
+  /**
+   * Recorded on the session link as the runtime's working directory, for a
+   * supervisor (harnessd) that reaps worktrees. Unset = not sent; a public
+   * connector has no reason to upload a local path.
+   */
+  localCwd?: string
   /** Cold-start behavior when this identity still points at an archived scratchpad. Default: replace. */
   coldStartIfArchived?: "wait" | "replace"
   /** Cold-start behavior when this identity has no session link. Default: create. */

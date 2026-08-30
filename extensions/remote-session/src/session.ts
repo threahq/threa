@@ -353,6 +353,11 @@ export class RemoteSession {
   /** Consecutive empty poll ticks while the socket is down; drives the poll backoff. */
   private emptyNoSocketPolls = 0
   private readonly inflight = new Map<string, Inflight>()
+  // When the server last confirmed each in-flight claim's lease. Renewals that
+  // fail to reach the server look like success to a caller that only checks
+  // `notFound`; after a lease has gone unconfirmed long enough to have expired
+  // (another runtime may hold the invocation by then) the turn is dropped.
+  private readonly leaseConfirmedAt = new Map<string, number>()
   // The invocation whose turn is executing — the stream a relayed permission
   // prompt belongs in. Set when a non-intercepted invocation is pushed to the
   // runtime. Tracking it beats guessing from the in-flight map, where a
@@ -573,7 +578,7 @@ export class RemoteSession {
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
-      localCwd: process.cwd(),
+      ...(this.config.localCwd ? { localCwd: this.config.localCwd } : {}),
       // Detached-pending-restore probes always wait. Cold starts replace by
       // default, but supervisors reviving a known stream can force wait so an
       // archive between their preflight and process launch cannot mint another
@@ -1578,6 +1583,7 @@ export class RemoteSession {
   }
 
   private clearInflight(invocationId: string): void {
+    this.leaseConfirmedAt.delete(invocationId)
     const entry = this.inflight.get(invocationId)
     if (!entry) return
     clearTimeout(entry.deadline)
@@ -1672,13 +1678,18 @@ export class RemoteSession {
   private startRenewTimer(): void {
     this.renewTimer = setInterval(() => {
       for (const [id, entry] of [...this.inflight]) {
+        if (!this.leaseConfirmedAt.has(id)) this.leaseConfirmedAt.set(id, Date.now())
         // The .catch is fire-and-forget hygiene: a discarded promise in a
         // setInterval must never surface as an unhandled rejection (it's the
         // safety boundary if the .then body throws).
         void this.transport
           .renewClaim(id, entry.invocation.claimToken, CLAIM_TTL_SECONDS)
           .then((result) => {
-            if (result.notFound) {
+            if (result.renewed) this.leaseConfirmedAt.set(id, Date.now())
+            const unconfirmedMs = Date.now() - (this.leaseConfirmedAt.get(id) ?? Date.now())
+            const lapsed = !result.renewed && unconfirmedMs > CLAIM_TTL_SECONDS * 1000 - RENEW_INTERVAL_MS
+            if (lapsed) this.log(`claim ${id} lease unconfirmed for ${Math.round(unconfirmedMs / 1000)}s; dropping it`)
+            if (result.notFound || lapsed) {
               // The claim's gone server-side; drop it and resync presence so a
               // last-in-flight loss doesn't strand the runtime as busy. Clear the
               // active-turn pointer too if this was it, so a relayed permission

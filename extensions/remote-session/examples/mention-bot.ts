@@ -48,15 +48,18 @@ async function drain(): Promise<void> {
       })
       if (!invocation) return
       await presence("busy")
-      // Renew while working so a slow answer never loses the claim; if the
-      // server says the claim is gone, the reply has nowhere to land.
+      // Renew while working so a slow answer never loses the claim. If the
+      // server says the claim is gone, or has not confirmed the lease for long
+      // enough that it may have expired, the reply has nowhere to land.
       let claimLost = false
+      let leaseConfirmedAt = Date.now()
       const renew = setInterval(async () => {
-        const { notFound } = await transport.renewClaim(invocation.id, invocation.claimToken, 120)
-        if (notFound) {
+        const { notFound, renewed } = await transport.renewClaim(invocation.id, invocation.claimToken, 120)
+        if (renewed) leaseConfirmedAt = Date.now()
+        if (notFound || (!renewed && Date.now() - leaseConfirmedAt > 80_000)) {
           claimLost = true
           clearInterval(renew)
-          console.error(`[bot] claim ${invocation.id} lost (expired or reassigned); dropping the reply`)
+          console.error(`[bot] claim ${invocation.id} lost or unconfirmed; dropping the reply`)
         }
       }, 40_000)
       try {

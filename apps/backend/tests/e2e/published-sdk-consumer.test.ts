@@ -119,8 +119,10 @@ beforeAll(() => {
     )
   )
   run("npm", ["install", "--no-audit", "--no-fund", "--silent"], consumerDir)
+  // The examples come out of the installed package, not the repo: the README
+  // links to them, so they have to be in the tarball.
   for (const example of ["echo-connector.ts", "mention-bot.ts"]) {
-    cpSync(join(repoRoot, "extensions/remote-session/examples", example), join(consumerDir, example))
+    cpSync(join(consumerDir, "node_modules/@threahq/remote-session/examples", example), join(consumerDir, example))
   }
 })
 

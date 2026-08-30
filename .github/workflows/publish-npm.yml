@@ -67,6 +67,7 @@ jobs:
           tar -tzf extensions/${{ inputs.package }}/*.tgz
 
       - name: Refuse to republish an existing version
+        if: ${{ !inputs.dry_run }}
         run: |
           name=$(node -p "require('./extensions/${{ inputs.package }}/dist/package.json').name")
           version=$(node -p "require('./extensions/${{ inputs.package }}/dist/package.json').version")
@@ -78,6 +79,7 @@ jobs:
       # npm does not check that a dependency version exists at publish time; a
       # package published before its sibling would install for nobody.
       - name: Require sibling packages on npm
+        if: ${{ !inputs.dry_run }}
         run: |
           node -e '
             const deps = require("./extensions/${{ inputs.package }}/dist/package.json").dependencies ?? {}

@@ -762,6 +762,12 @@ export async function startServer(): Promise<ServerInstance> {
   const isProduction = process.env.NODE_ENV === "production"
   const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction })
   const server = createServer(app)
+  // Node closes idle keep-alive connections after 5s by default; a client that
+  // pools connections (Bun's fetch, an upstream proxy) and reuses one after a
+  // longer pause gets ECONNRESET on the next request. 65s outlasts common
+  // proxy idle timeouts (Cloudflare, ALB) and the pauses in the e2e suites.
+  server.keepAliveTimeout = 65_000
+  server.headersTimeout = 66_000
   const io = new SocketIOServer(server, {
     path: "/socket.io/",
     cors: {
