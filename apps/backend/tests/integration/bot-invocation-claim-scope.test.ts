@@ -77,6 +77,99 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
       ...(responseStreamId ? { responseStreamId } : {}),
     })
 
+  test("should persist the actual runtime session on every successful claim", async () => {
+    await seed("binv_runtime_identity", rootStream, "msg_runtime_identity")
+
+    const first = await BotInvocationRepository.claimOne(pool, {
+      workspaceId: ws,
+      botId,
+      instanceId,
+      runtimeSessionId: "rts_first",
+      runtimeKind: "claude-code-channel",
+      claimToken: "tok_first",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+      maxAttempts: 5,
+    })
+    await pool.query("UPDATE bot_invocations SET claim_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1", [
+      "binv_runtime_identity",
+    ])
+    const reclaimed = await BotInvocationRepository.claimOne(pool, {
+      workspaceId: ws,
+      botId,
+      instanceId,
+      runtimeSessionId: "rts_replacement",
+      runtimeKind: "claude-code-channel",
+      claimToken: "tok_replacement",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+      maxAttempts: 5,
+    })
+    const persisted = await pool.query<{
+      claimed_runtime_session_id: string | null
+      claimed_runtime_session_claim_token: string | null
+    }>("SELECT claimed_runtime_session_id, claimed_runtime_session_claim_token FROM bot_invocations WHERE id = $1", [
+      "binv_runtime_identity",
+    ])
+
+    expect({
+      first: {
+        runtimeSessionId: first?.claimedRuntimeSessionId,
+        claimToken: first?.claimedRuntimeSessionClaimToken,
+      },
+      reclaimed: {
+        runtimeSessionId: reclaimed?.claimedRuntimeSessionId,
+        claimToken: reclaimed?.claimedRuntimeSessionClaimToken,
+      },
+      persisted: {
+        runtimeSessionId: persisted.rows[0]?.claimed_runtime_session_id,
+        claimToken: persisted.rows[0]?.claimed_runtime_session_claim_token,
+      },
+    }).toEqual({
+      first: { runtimeSessionId: "rts_first", claimToken: "tok_first" },
+      reclaimed: { runtimeSessionId: "rts_replacement", claimToken: "tok_replacement" },
+      persisted: { runtimeSessionId: "rts_replacement", claimToken: "tok_replacement" },
+    })
+  })
+
+  test("should leave the new runtime binding stale when an old writer reclaims the row", async () => {
+    await seed("binv_old_writer", rootStream, "msg_old_writer")
+    await BotInvocationRepository.claimOne(pool, {
+      workspaceId: ws,
+      botId,
+      instanceId,
+      runtimeSessionId: "rts_new_writer",
+      runtimeKind: "claude-code-channel",
+      claimToken: "tok_new_writer",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+      maxAttempts: 5,
+    })
+
+    await pool.query(
+      `UPDATE bot_invocations
+       SET status='claimed', claimed_by_instance_id=$2, claim_token=$3,
+           claim_expires_at=NOW()+INTERVAL '60 seconds'
+       WHERE id=$1`,
+      ["binv_old_writer", instanceId, "tok_old_writer"]
+    )
+    const row = await pool.query<{
+      claim_token: string
+      claimed_runtime_session_id: string | null
+      claimed_runtime_session_claim_token: string | null
+    }>(
+      `SELECT claim_token, claimed_runtime_session_id, claimed_runtime_session_claim_token
+       FROM bot_invocations WHERE id=$1`,
+      ["binv_old_writer"]
+    )
+
+    expect(row.rows[0]).toEqual({
+      claim_token: "tok_old_writer",
+      claimed_runtime_session_id: "rts_new_writer",
+      claimed_runtime_session_claim_token: "tok_new_writer",
+    })
+  })
+
   test("a scoped claim skips a FIFO-earlier invocation belonging to another stream", async () => {
     await seed("binv_thread_first", threadStream, "msg_thread")
     await seed("binv_root_second", rootStream, "msg_root")

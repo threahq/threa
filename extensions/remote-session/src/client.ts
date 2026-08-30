@@ -210,7 +210,13 @@ export class ThreaClient {
     })
   }
 
-  /** Post one sealed interim message from an in-flight sealed claim (callback-token auth). */
+  async sendInvocationMessage(invocationId: string, body: Record<string, unknown>): Promise<void> {
+    await this.request(this.workspacePath(`/bot-invocations/${invocationId}/messages`), {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+  }
+
   async sendSealedMessage(invocationId: string, callbackToken: string, body: SealedWireReply): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-messages`), {
       method: "POST",

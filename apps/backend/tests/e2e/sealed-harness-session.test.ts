@@ -235,7 +235,7 @@ describe("sealed harness session (full E2EE round trip)", () => {
       payload: serializeSealedPayload(triggerText, { attachmentRefs: [inboundRef] }),
       aad: buildMessageAad({ streamId: rootStreamId, messageId: triggerId, senderId: user.id }),
     })
-    const sent = await client.post(`/api/workspaces/${workspace.id}/messages`, {
+    const sent = await client.post<{ message: { id: string } }>(`/api/workspaces/${workspace.id}/messages`, {
       streamId: rootStreamId,
       ciphertext: bytesToBase64(sealedTrigger.ciphertext),
       envelope: sealedTrigger.envelope,
@@ -243,6 +243,7 @@ describe("sealed harness session (full E2EE round trip)", () => {
       attachmentIds: [inboundRef.attachmentId],
     })
     expect(sent.status).toBe(201)
+    const triggerMessageId = sent.data.message.id
 
     // The dispatch resolves a SEALED verdict (gate on + the bot's grant + BIK
     // wrap coverage) and the harness's claim carries the sealed context.
@@ -378,6 +379,24 @@ describe("sealed harness session (full E2EE round trip)", () => {
     )
     expect(completeRes.status).toBe(200)
     expect(completeRes.data.data.messageId).toBe(reply.messageId)
+    const lateText = "sealed-follow-up after the turn closed"
+    const late = await sealReply(opened.sealing, lateText)
+    const lateRes = await client.request<{ data: { messageId: string } }>(
+      "POST",
+      `/api/v1/workspaces/${workspace.id}/bot-invocations/${claimed!.id}/sealed-messages`,
+      late,
+      { Authorization: `Bearer ${apiKey}`, [THREA_CALLBACK_TOKEN_HEADER]: opened.sealing.callbackToken }
+    )
+    expect(lateRes.status).toBe(200)
+    expect(lateRes.data.data.messageId).toBe(late.messageId)
+    const lateRetryRes = await client.request<{ data: { messageId: string } }>(
+      "POST",
+      `/api/v1/workspaces/${workspace.id}/bot-invocations/${claimed!.id}/sealed-messages`,
+      late,
+      { Authorization: `Bearer ${apiKey}`, [THREA_CALLBACK_TOKEN_HEADER]: opened.sealing.callbackToken }
+    )
+    expect(lateRetryRes.status).toBe(200)
+    expect(lateRetryRes.data.data.messageId).toBe(late.messageId)
 
     // The owner reads the stream: every row is placeholder + ciphertext, and
     // the owner's SSK opens each of the harness's messages to the plaintext.
@@ -388,6 +407,7 @@ describe("sealed harness session (full E2EE round trip)", () => {
     const messageEvents = eventsRes.data.events.filter((event) => event.eventType === "message_created")
     const wire = JSON.stringify(eventsRes.data.events)
     expect(wire).not.toContain("sealed-forty-two")
+    expect(wire).not.toContain("sealed-follow-up")
     expect(wire).not.toContain("Interim: working")
     expect(wire).not.toContain("/etc/hosts")
     // Real attachment names never touch the wire — only placeholder summaries do.
@@ -411,6 +431,8 @@ describe("sealed harness session (full E2EE round trip)", () => {
     expect(interimOpened.payload.contentMarkdown).toBe(interimText)
     const replyOpened = await openWireMessage(reply.messageId)
     expect(replyOpened.payload.contentMarkdown).toBe(replyText)
+    expect(messageEvents.filter((event) => event.payload.messageId === late.messageId)).toHaveLength(1)
+    expect((await openWireMessage(late.messageId)).payload.contentMarkdown).toBe(lateText)
 
     // The bound rows ride the events as placeholder summaries; the sealed refs
     // carry the truth, and the owner's fetch + decrypt recovers the exact bytes.
@@ -428,5 +450,25 @@ describe("sealed harness session (full E2EE round trip)", () => {
       iv: replyRef.iv,
     })
     expect(new TextDecoder().decode(ownerDecrypted)).toBe(`--- a/auth.ts\n+++ b/auth.ts ${testRunId}\n`)
+
+    const deleteRes = await client.delete(`/api/workspaces/${workspace.id}/messages/${triggerMessageId}`)
+    expect(deleteRes.status).toBe(204)
+    let deletedEvent: WireEvent | undefined
+    for (let i = 0; i < 100 && !deletedEvent; i++) {
+      const res = await client.get<{ events: WireEvent[] }>(
+        `/api/workspaces/${workspace.id}/streams/${rootStreamId}/events`
+      )
+      deletedEvent = res.data.events.find((event) => event.eventType === "agent_session:deleted")
+      if (!deletedEvent) await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    expect(deletedEvent).toBeDefined()
+    const revokedRes = await client.request<{ code?: string }>(
+      "POST",
+      `/api/v1/workspaces/${workspace.id}/bot-invocations/${claimed!.id}/sealed-messages`,
+      await sealReply(opened.sealing, "posted after the session was deleted"),
+      { Authorization: `Bearer ${apiKey}`, [THREA_CALLBACK_TOKEN_HEADER]: opened.sealing.callbackToken }
+    )
+    expect(revokedRes.status).toBe(409)
+    expect(revokedRes.data.code).toBe("SESSION_NOT_RUNNING")
   })
 })

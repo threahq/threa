@@ -165,7 +165,14 @@ export type {
 } from "./persona-config-revision-repository"
 
 export { hashCallbackToken } from "./callback-token"
-export { assertSessionRunning, verifyCallbackToken, assertReplyKeyGeneration } from "./sealed-session-guards"
+export {
+  assertSessionRunning,
+  assertSessionRunningOrCompleted,
+  assertSessionRunningOrFailed,
+  assertSessionRunningOrCompletedOrFailed,
+  verifyCallbackToken,
+  assertReplyKeyGeneration,
+} from "./sealed-session-guards"
 
 export { AgentSessionRepository, SessionStatuses } from "./session-repository"
 export type {

@@ -58,6 +58,7 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  sendInvocationMessageSchema,
   sendSealedInvocationMessageSchema,
   completeSealedInvocationSchema,
   createLabelSchema,
@@ -652,7 +653,8 @@ const sealedCompletedInvocationSchema = z.object({
   sessionId: z.string(),
   messageId: z.string().nullable(),
 })
-const sealedInterimMessageSchema = z.object({ messageId: z.string() })
+const sealedMessageResultSchema = z.object({ messageId: z.string() })
+const invocationMessageSchema = z.object({ invocationId: z.string(), sessionId: z.string(), messageId: z.string() })
 
 const errorSchema = z.object({
   error: z.string(),
@@ -775,6 +777,7 @@ export type OperationId =
   | "recordBotInvocationStep"
   | "startBotInvocationSealedStep"
   | "recordBotInvocationSealedStep"
+  | "sendBotInvocationMessage"
   | "sendBotInvocationSealedMessage"
   | "completeBotInvocationSealed"
   | "completeBotInvocation"
@@ -1058,6 +1061,25 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
   },
   {
     method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/messages",
+    operationId: "sendBotInvocationMessage",
+    summary: "Post a message from a bot invocation",
+    description:
+      "Posts one plaintext message into the invocation's own response stream — progress notes and permission prompts mid-turn, follow-ups after the turn completed (a callback-bound completed invocation may still post; completion itself stays terminal and is never reopened). The claim decides the stream and the session the message is attributed to, so a harness never has to name either. Rejects end-to-end encrypted streams (use sealed-messages). Authenticated with the bot API key plus the claim's instanceId and claimToken; clientMessageId dedupes a retried post.",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+    ],
+    requestSchema: sendInvocationMessageSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(invocationMessageSchema),
+    canReturn404: true,
+    canReturn409: true,
+  },
+  {
+    method: "post",
     path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-steps/started",
     operationId: "startBotInvocationSealedStep",
     summary: "Open an in-flight sealed bot invocation trace step",
@@ -1098,9 +1120,9 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-messages",
     operationId: "sendBotInvocationSealedMessage",
-    summary: "Post a sealed interim message from an in-flight sealed bot invocation",
+    summary: "Post a sealed message from a sealed bot invocation",
     description:
-      "Sealed variant of a mid-turn bot message, for an owner-granted E2E bot harness: posts one sealed interim message (ciphertext the server never decrypts) into the claim's stream before the turn completes: progress notes, permission prompts, early acks. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+      "Sealed variant of a bot message, for an owner-granted E2E bot harness: posts one sealed message (ciphertext the server never decrypts) into the claim's stream. Mid-turn that is a progress note, permission prompt, or early ack; after the turn completed it is a follow-up, which a callback-token-bound completed invocation may still post — completion itself stays terminal and is never reopened. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
     tags: ["Bot invocations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
     parameters: [
@@ -1110,8 +1132,9 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     ],
     requestSchema: sendSealedInvocationMessageSchema,
     requestIn: "body",
-    responseSchema: dataEnvelope(sealedInterimMessageSchema),
+    responseSchema: dataEnvelope(sealedMessageResultSchema),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",
@@ -1119,7 +1142,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "completeBotInvocationSealed",
     summary: "Complete a sealed bot invocation",
     description:
-      "Sealed variant of the completion, for an owner-granted E2E bot harness: persists the turn's final sealed reply (ciphertext the server never decrypts) or noResponse, flips the claim, and finalizes the agent session. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+      "Sealed variant of the completion, for an owner-granted E2E bot harness: persists the turn's final sealed reply (ciphertext the server never decrypts) or noResponse, flips the claim, and finalizes the agent session. A still-active claim may recover a session marked failed by orphan cleanup. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
     tags: ["Bot invocations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
     parameters: [
@@ -1131,6 +1154,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(sealedCompletedInvocationSchema),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",

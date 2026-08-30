@@ -296,6 +296,17 @@ export const failInvocationSchema = z.object({
   errorMessage: z.string().min(1).max(1000),
 })
 
+// One plaintext message posted into a turn's own response stream: the claim, not
+// a caller-chosen stream id, decides where it lands and which session it belongs
+// to. `clientMessageId` is the idempotency key an ambiguous retry re-sends under.
+export const sendInvocationMessageSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  claimToken: z.string().min(1).max(256),
+  content: z.string().min(1).max(50_000),
+  clientMessageId: z.string().min(1).max(128).optional(),
+  metadata: messageMetadataSchema.optional(),
+})
+
 export const recordInvocationStepSchema = z.object({
   instanceId: z.string().min(1).max(128),
   claimToken: z.string().min(1).max(256),
@@ -338,11 +349,12 @@ export const startSealedInvocationStepSchema = z.object({
 // and real filenames ride only inside the sealed payload's `attachmentRefs`.
 const sealedAttachmentIdsSchema = z.array(z.string().min(1).max(128)).max(16).optional()
 
-// One sealed *interim* message posted by an in-flight sealed turn (the external
-// sibling of the enclave streaming replies to its session `/messages` callback).
-// `messageId` is client-minted — it binds the seal AAD and doubles as the
-// idempotency key — while the content is ciphertext the server can't read
-// (INV-E7). Auth is the bot API key + the neutral callback token header.
+// One sealed message posted by a sealed turn — mid-turn, or as a follow-up after
+// it completed (the external sibling of the enclave streaming replies to its
+// session `/messages` callback). `messageId` is client-minted — it binds the
+// seal AAD and doubles as the idempotency key — while the content is ciphertext
+// the server can't read (INV-E7). Auth is the bot API key + the neutral callback
+// token header.
 export const sendSealedInvocationMessageSchema = z.object({
   messageId: z.string().min(1).max(128),
   ciphertext: z.base64().min(1),

@@ -86,13 +86,24 @@ function createEmitSpy() {
   return { io, emitted }
 }
 
-function arrange(sessionOverride?: Partial<AgentSession>, deps?: { eventService?: PublicApiDeps["eventService"] }) {
+function arrange(
+  sessionOverride?: Partial<AgentSession>,
+  deps?: {
+    eventService?: PublicApiDeps["eventService"]
+    lockedSession?: Partial<AgentSession> | null
+  }
+) {
   spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
   const resolveAuthority = spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
     { state: { readOnly: false, readOnlyReason: null } },
   ] as never)
   const findExistingMessage = spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
   spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...session, ...sessionOverride } as never)
+  const lockedSession =
+    deps?.lockedSession === null ? null : { ...session, ...sessionOverride, ...(deps?.lockedSession ?? {}) }
+  const findSessionForUpdate = spyOn(AgentSessionRepository, "findByIdForUpdate").mockResolvedValue(
+    lockedSession as never
+  )
   spyOn(StreamRepository, "findById").mockResolvedValue({
     id: "stream_thread",
     workspaceId: "ws_1",
@@ -104,6 +115,7 @@ function arrange(sessionOverride?: Partial<AgentSession>, deps?: { eventService?
   const heartbeat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined as never)
 
   const activeClaim = { id: "binv_1", responseStreamId: session.streamId, status: "claimed" }
+  const findActiveClaim = mock(async () => activeClaim)
   const { io, emitted } = createEmitSpy()
   const handlers = createPublicApiHandlers({
     eventService:
@@ -118,14 +130,23 @@ function arrange(sessionOverride?: Partial<AgentSession>, deps?: { eventService?
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService: {
       findInvocationForCallback: mock(async () => activeClaim),
-      findActiveClaimForUpdateByToken: mock(async () => activeClaim),
+      findActiveClaimForUpdateByToken: findActiveClaim,
+      findCompletedInvocationForReplay: mock(async () => null),
     } as unknown as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
     labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io,
   })
-  return { handlers, emitted, heartbeat, resolveAuthority, findExistingMessage }
+  return {
+    handlers,
+    emitted,
+    heartbeat,
+    resolveAuthority,
+    findExistingMessage,
+    findSessionForUpdate,
+    findActiveClaim,
+  }
 }
 
 function req(
@@ -300,7 +321,10 @@ describe("sendBotInvocationSealedMessage", () => {
 
   const sealedBody = { messageId: "msg_interim", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE }
 
-  function arrangeWithEventService() {
+  function arrangeWithEventService(
+    sessionOverride?: Partial<AgentSession>,
+    lockedSession?: Partial<AgentSession> | null
+  ) {
     const createMessage = mock(
       async (_tx: unknown, _principal: unknown, params: Record<string, unknown>) =>
         ({
@@ -308,10 +332,11 @@ describe("sendBotInvocationSealedMessage", () => {
           created: true,
         }) as never
     )
-    const arranged = arrange(undefined, {
+    const arranged = arrange(sessionOverride, {
       eventService: {
         createMessageForPrincipalInTransaction: createMessage,
       } as unknown as PublicApiDeps["eventService"],
+      ...(lockedSession !== undefined ? { lockedSession } : {}),
     })
     return { ...arranged, createMessage }
   }
@@ -332,7 +357,6 @@ describe("sendBotInvocationSealedMessage", () => {
       envelope: REPLY_ENVELOPE,
       e2eVersion: 2,
       accessibleStreamIds: ["stream_thread"],
-      // The client-minted id doubles as the idempotency key: a retried post dedupes.
       clientMessageId: "msg_interim",
     })
     expect(Buffer.isBuffer(params.ciphertext)).toBe(true)
@@ -340,7 +364,8 @@ describe("sendBotInvocationSealedMessage", () => {
   })
 
   it("returns its committed interim message after archive without requiring fresh writability", async () => {
-    const { handlers, createMessage, resolveAuthority, findExistingMessage } = arrangeWithEventService()
+    const { handlers, createMessage, resolveAuthority, findExistingMessage, findSessionForUpdate } =
+      arrangeWithEventService()
     resolveAuthority.mockResolvedValue([{ state: { readOnly: true, readOnlyReason: "archived" } }] as never)
     findExistingMessage.mockResolvedValue({
       id: "msg_interim",
@@ -359,6 +384,7 @@ describe("sendBotInvocationSealedMessage", () => {
 
     expect(createMessage).not.toHaveBeenCalled()
     expect((payloads[0] as { data: { messageId: string } }).data.messageId).toBe("msg_interim")
+    expect(findSessionForUpdate).not.toHaveBeenCalled()
   })
 
   it("binds the interim's E2E attachment rows via attachmentIds", async () => {
@@ -393,12 +419,33 @@ describe("sendBotInvocationSealedMessage", () => {
     expect(createMessage).not.toHaveBeenCalled()
   })
 
-  it("rejects a non-running session (409)", async () => {
-    const { handlers } = arrange({ status: "completed" })
+  // Pin the session after callback authorization so delete or supersede cannot race the write.
+  it.each(["superseded", "deleted"] as const)(
+    "rejects a session that went %s after the callback was authorized (409)",
+    async (status) => {
+      const { handlers, createMessage } = arrangeWithEventService(undefined, { status })
+      const { res } = createResponse()
+
+      await expect(handlers.sendBotInvocationSealedMessage(req(sealedBody), res)).rejects.toMatchObject({
+        status: 409,
+        code: "SESSION_NOT_RUNNING",
+      })
+      expect(createMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  // Keep invocation before session to match completion and avoid ABBA deadlocks.
+  it("pins the session row inside the write transaction, after the invocation lock", async () => {
+    const { handlers, createMessage, findActiveClaim, findSessionForUpdate } = arrangeWithEventService()
     const { res } = createResponse()
-    await expect(handlers.sendBotInvocationSealedMessage(req(sealedBody), res)).rejects.toMatchObject({
-      status: 409,
-      code: "SESSION_NOT_RUNNING",
-    })
+
+    await handlers.sendBotInvocationSealedMessage(req(sealedBody), res)
+
+    expect(findSessionForUpdate).toHaveBeenCalledWith(expect.anything(), "binv_1")
+    const claimOrder = findActiveClaim.mock.invocationCallOrder[0]!
+    const sessionOrder = findSessionForUpdate.mock.invocationCallOrder[0]!
+    const insertOrder = createMessage.mock.invocationCallOrder[0]!
+    expect(claimOrder).toBeLessThan(sessionOrder)
+    expect(sessionOrder).toBeLessThan(insertOrder)
   })
 })

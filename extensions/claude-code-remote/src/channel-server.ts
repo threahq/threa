@@ -78,9 +78,6 @@ const EMBEDDED_STEER_RE = /(^|[^\p{L}\p{N}_/])\/steer(?=$|[^\p{L}\p{N}_/-])/giu
 // dropped push — every tick is a billed edge request.
 const DELEGATION_BACKSTOP_POLL_MS = 15 * 60 * 1000
 
-// Recent ids cover the model's late calls without treating this cache as Threa state.
-export const CLOSED_INVOCATION_MEMORY = 8
-
 /**
  * The delegation brief as delivered into the Claude session. The event carries
  * its own send/reply protocol note because the server's static instructions
@@ -498,10 +495,9 @@ export class ChannelServer {
       clear: () => void
     }
   >()
-  /** Successfully replied invocation ids, newest last for bounded eviction. */
-  private readonly closedInvocations = new Set<string>()
   private started = false
   private shuttingDown = false
+  private currentRuntimeInvocationId: string | undefined
 
   constructor(
     private readonly config: RemoteSessionConfig,
@@ -595,6 +591,7 @@ export class ChannelServer {
           postNotice: (streamId, text) => this.session.postToStream(streamId, { content: text }),
           closeTurn: async (invocationId, text) => {
             const result = await this.session.reply(invocationId, text)
+            this.applyTurnClose(invocationId, result)
             if (!result.ok) throw new Error(result.message)
           },
           inject: (text) => steerText(text),
@@ -752,6 +749,7 @@ export class ChannelServer {
   // --- Turn delivery ----------------------------------------------------------
 
   private async deliverToClaude(turn: DeliveredTurn): Promise<void> {
+    this.currentRuntimeInvocationId = turn.invocationId
     // Window the transcript tail BEFORE the content is pushed, so the tracer's
     // start offset precedes the prompt echo it binds on.
     // A sealed turn's steps are ciphertext to the server, so the tracer may
@@ -796,11 +794,12 @@ export class ChannelServer {
     }
   }
 
-  /**
-   * Delegation ids route to their executor. Scratchpad invocations successfully
-   * closed through this tool answer later calls terminally; unknown ids still
-   * reach the session and fail there.
-   */
+  private applyTurnClose(invocationId: string, result: SendResult): void {
+    if (!result.closedTurn) return
+    this.tracer.endTurn(invocationId)
+    this.carryOn?.onTurnClosed(invocationId)
+  }
+
   async handleToolCall(name: "send" | "reply", invocationId: string, text: string): Promise<SendResult> {
     const delegation = this.openDelegations.get(invocationId)
     if (delegation) {
@@ -812,31 +811,12 @@ export class ChannelServer {
       delegation.resolve(text)
       return { ok: true, message: "Delegation result posted to the Threa stream; the request is closed." }
     }
-    if (this.closedInvocations.has(invocationId)) {
-      return {
-        ok: true,
-        message: `Request ${invocationId} is already closed — this ${name} was not posted, and nothing further is needed for it.`,
-      }
-    }
     const result =
       name === "send"
         ? await this.session.sendInterim(invocationId, text)
         : await this.session.reply(invocationId, text)
-    if (name === "reply" && result.ok) {
-      this.tracer.endTurn(invocationId)
-      this.carryOn?.onTurnClosed(invocationId)
-      this.noteInvocationClosed(invocationId)
-    }
+    this.applyTurnClose(invocationId, result)
     return result
-  }
-
-  private noteInvocationClosed(invocationId: string): void {
-    this.closedInvocations.delete(invocationId)
-    this.closedInvocations.add(invocationId)
-    for (const oldest of this.closedInvocations) {
-      if (this.closedInvocations.size <= CLOSED_INVOCATION_MEMORY) break
-      this.closedInvocations.delete(oldest)
-    }
   }
 
   // --- Permission relay -----------------------------------------------------
@@ -865,15 +845,11 @@ export class ChannelServer {
   }
 
   private async handlePermissionRequest(params: z.infer<typeof PermissionRequestSchema>["params"]): Promise<void> {
-    // Post into the executing turn's stream (where the user is reading and will
-    // reply), falling back to the scratchpad root.
-    const targetStreamId = this.session.activeTurnStreamId ?? this.session.rootStreamId
-    if (!targetStreamId) return
-    // A pending tool approval is a sign of life: keep the turn it belongs to from
-    // being reaped for inactivity while it waits on the user's verdict.
-    this.session.keepAlive(targetStreamId)
-    // Drop the open request after the same idle window we give a turn, so an
-    // abandoned/cancelled prompt the user never answers doesn't leak forever.
+    const invocationId = this.currentRuntimeInvocationId
+    const rootStreamId = this.session.rootStreamId
+    if (!invocationId && !rootStreamId) return
+    const activeStreamId = this.session.activeTurnStreamId
+    if (activeStreamId) this.session.keepAlive(activeStreamId)
     const existing = this.openPermissions.get(params.request_id)
     if (existing) clearTimeout(existing.cleanup)
     const cleanup = setTimeout(() => {
@@ -883,22 +859,25 @@ export class ChannelServer {
     this.openPermissions.set(params.request_id, { cleanup })
     this.syncInterceptHold()
     const preview = params.input_preview ? `\n\n\`${params.input_preview.slice(0, 200)}\`` : ""
-    const content = [
-      `**Claude Code wants to run \`${params.tool_name}\`**`,
-      params.description,
-      preview,
-      "",
-      `Reply \`yes ${params.request_id}\` to allow or \`no ${params.request_id}\` to deny.`,
-    ]
-      .filter(Boolean)
-      .join("\n")
-    await this.session
-      .postToStream(targetStreamId, {
-        content,
-        clientMessageId: `ccperm-${params.request_id}`,
-        metadata: { "cc.channel.permissionRequest": params.request_id },
-      })
-      .catch((error) => log(`permission relay send failed: ${error instanceof Error ? error.message : String(error)}`))
+    const body = {
+      content: [
+        `**Claude Code wants to run \`${params.tool_name}\`**`,
+        params.description,
+        preview,
+        "",
+        `Reply \`yes ${params.request_id}\` to allow or \`no ${params.request_id}\` to deny.`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      clientMessageId: `ccperm-${params.request_id}`,
+      metadata: { "cc.channel.permissionRequest": params.request_id },
+    }
+    const posting = invocationId
+      ? this.session.postToInvocation(invocationId, body)
+      : this.session.postToStream(rootStreamId!, body)
+    await posting.catch((error) =>
+      log(`permission relay send failed: ${error instanceof Error ? error.message : String(error)}`)
+    )
   }
 
   /**

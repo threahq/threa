@@ -2199,6 +2199,141 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/messages": {
+      "post": {
+        "operationId": "sendBotInvocationMessage",
+        "summary": "Post a message from a bot invocation",
+        "tags": ["Bot invocations"],
+        "description": "Posts one plaintext message into the invocation's own response stream — progress notes and permission prompts mid-turn, follow-ups after the turn completed (a callback-bound completed invocation may still post; completion itself stays terminal and is never reopened). The claim decides the stream and the session the message is attributed to, so a harness never has to name either. Rejects end-to-end encrypted streams (use sealed-messages). Authenticated with the bot API key plus the claim's instanceId and claimToken; clientMessageId dedupes a retried post.",
+        "security": [{ "apiKey": ["bot-invocations:write"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "invocationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Invocation ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "content": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "clientMessageId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-zA-Z0-9_.\\-:]+$"
+                    },
+                    "additionalProperties": { "type": "string", "maxLength": 256 }
+                  }
+                },
+                "required": ["instanceId", "claimToken", "content"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "invocationId": { "type": "string" },
+                        "sessionId": { "type": "string" },
+                        "messageId": { "type": "string" }
+                      },
+                      "required": ["invocationId", "sessionId", "messageId"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" },
+          "409": {
+            "description": "Conflict: the resource is not in the state the operation requires",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-steps/started": {
       "post": {
         "operationId": "startBotInvocationSealedStep",
@@ -2521,9 +2656,9 @@
     "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-messages": {
       "post": {
         "operationId": "sendBotInvocationSealedMessage",
-        "summary": "Post a sealed interim message from an in-flight sealed bot invocation",
+        "summary": "Post a sealed message from a sealed bot invocation",
         "tags": ["Bot invocations"],
-        "description": "Sealed variant of a mid-turn bot message, for an owner-granted E2E bot harness: posts one sealed interim message (ciphertext the server never decrypts) into the claim's stream before the turn completes: progress notes, permission prompts, early acks. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+        "description": "Sealed variant of a bot message, for an owner-granted E2E bot harness: posts one sealed message (ciphertext the server never decrypts) into the claim's stream. Mid-turn that is a progress note, permission prompt, or early ack; after the turn completed it is a follow-up, which a callback-token-bound completed invocation may still post — completion itself stays terminal and is never reopened. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -2649,7 +2784,32 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
+          "404": { "description": "Resource not found" },
+          "409": {
+            "description": "Conflict: the resource is not in the state the operation requires",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -2658,7 +2818,7 @@
         "operationId": "completeBotInvocationSealed",
         "summary": "Complete a sealed bot invocation",
         "tags": ["Bot invocations"],
-        "description": "Sealed variant of the completion, for an owner-granted E2E bot harness: persists the turn's final sealed reply (ciphertext the server never decrypts) or noResponse, flips the claim, and finalizes the agent session. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+        "description": "Sealed variant of the completion, for an owner-granted E2E bot harness: persists the turn's final sealed reply (ciphertext the server never decrypts) or noResponse, flips the claim, and finalizes the agent session. A still-active claim may recover a session marked failed by orphan cleanup. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
         "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -2795,7 +2955,32 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
+          "404": { "description": "Resource not found" },
+          "409": {
+            "description": "Conflict: the resource is not in the state the operation requires",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
         }
       }
     },

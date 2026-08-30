@@ -298,6 +298,52 @@ describe("deferred generated output authority", () => {
     return payloads[0] as { data: { invocationId: string; message: { id: string } | null } }
   }
 
+  async function sendPlaintextCallback(
+    handlers: ReturnType<typeof createPublicApiHandlers>,
+    fixture: BotCallbackFixture,
+    content = "interim bot message"
+  ) {
+    const { res, payloads } = responseRecorder()
+    await handlers.sendBotInvocationMessage(
+      {
+        workspaceId: workspace,
+        params: { invocationId: fixture.invocationId },
+        botApiKey: { botId: fixture.botId },
+        body: {
+          instanceId: fixture.instanceId,
+          claimToken: fixture.claimToken,
+          content,
+          clientMessageId: `remote-send-${fixture.invocationId}-1`,
+        },
+      } as unknown as Request,
+      res
+    )
+    return payloads[0] as { data: { invocationId: string; sessionId: string; messageId: string } }
+  }
+
+  async function sendSealedCallback(
+    handlers: ReturnType<typeof createPublicApiHandlers>,
+    fixture: BotCallbackFixture,
+    suffix = "interim"
+  ) {
+    const { res, payloads } = responseRecorder()
+    await handlers.sendBotInvocationSealedMessage(
+      {
+        workspaceId: workspace,
+        params: { invocationId: fixture.invocationId },
+        botApiKey: { botId: fixture.botId },
+        header: () => fixture.claimToken,
+        body: {
+          messageId: `msg_sealed_${suffix}_${fixture.invocationId}`,
+          ciphertext: Buffer.from(`sealed ${suffix}`).toString("base64"),
+          envelope: { v: 2, keyGeneration: 3, iv: "aXY=", aad: "YWFk" },
+        },
+      } as unknown as Request,
+      res
+    )
+    return payloads[0] as { data: { messageId: string } }
+  }
+
   async function completeSealedCallback(
     handlers: ReturnType<typeof createPublicApiHandlers>,
     fixture: BotCallbackFixture,
@@ -1246,6 +1292,79 @@ describe("deferred generated output authority", () => {
     expect(terminal.rows[0]).toEqual({ status: "failed", error_message: "STREAM_READ_ONLY:not_a_member" })
   })
 
+  test("active FAILED bot sessions accept an invocation message and recover on final completion", async () => {
+    const fixture = await seedBotCallback({ visibility: "public" })
+    const handlers = buildBotCallbackHandlers()
+    await pool.query("UPDATE agent_sessions SET status='failed', error='orphan false-positive' WHERE id=$1", [
+      fixture.invocationId,
+    ])
+
+    const interim = await sendPlaintextCallback(handlers, fixture, "Still working after the stale cleanup.")
+    expect(interim.data).toMatchObject({
+      invocationId: fixture.invocationId,
+      sessionId: fixture.invocationId,
+    })
+    await completePlaintextCallback(handlers, fixture)
+
+    const rows = await pool.query(
+      `SELECT
+         (SELECT status FROM bot_invocations WHERE id=$1) invocation_status,
+         (SELECT status FROM agent_sessions WHERE id=$1) session_status,
+         (SELECT error FROM agent_sessions WHERE id=$1) session_error,
+         (SELECT count(*) FROM messages WHERE stream_id=$2 AND author_id=$3) bot_messages,
+         (SELECT count(*) FROM stream_events WHERE stream_id=$2 AND event_type='agent_session:completed' AND payload->>'sessionId'=$1) completed_events`,
+      [fixture.invocationId, fixture.target, fixture.botId]
+    )
+    expect(rows.rows[0]).toEqual({
+      invocation_status: "completed",
+      session_status: "completed",
+      session_error: null,
+      bot_messages: "2",
+      completed_events: "1",
+    })
+  })
+
+  test("active FAILED sealed sessions accept messages, recover on completion, and deny writes after the claim closes", async () => {
+    const fixture = await seedBotCallback({ visibility: "public", sealed: true })
+    const handlers = buildBotCallbackHandlers()
+    await pool.query("UPDATE agent_sessions SET status='failed', error='orphan false-positive' WHERE id=$1", [
+      fixture.invocationId,
+    ])
+
+    await sendSealedCallback(handlers, fixture)
+    await completeSealedCallback(handlers, fixture)
+
+    const recovered = await pool.query(
+      `SELECT
+         (SELECT status FROM bot_invocations WHERE id=$1) invocation_status,
+         (SELECT status FROM agent_sessions WHERE id=$1) session_status,
+         (SELECT error FROM agent_sessions WHERE id=$1) session_error,
+         (SELECT count(*) FROM messages WHERE stream_id=$2 AND author_id=$3) bot_messages,
+         (SELECT count(*) FROM stream_events WHERE stream_id=$2 AND event_type='agent_session:completed' AND payload->>'sessionId'=$1) completed_events`,
+      [fixture.invocationId, fixture.target, fixture.botId]
+    )
+    expect(recovered.rows[0]).toEqual({
+      invocation_status: "completed",
+      session_status: "completed",
+      session_error: null,
+      bot_messages: "2",
+      completed_events: "1",
+    })
+
+    await pool.query("UPDATE agent_sessions SET status='failed', error='late stale state' WHERE id=$1", [
+      fixture.invocationId,
+    ])
+    await expect(sendSealedCallback(handlers, fixture, "after-close")).rejects.toMatchObject({
+      status: 409,
+      code: "SESSION_NOT_RUNNING",
+    })
+    const messages = await pool.query("SELECT count(*) FROM messages WHERE stream_id=$1 AND author_id=$2", [
+      fixture.target,
+      fixture.botId,
+    ])
+    expect(messages.rows[0]).toEqual({ count: "2" })
+  })
+
   test("bot callback authority denial terminalizes invocation/session once without output", async () => {
     for (const scenario of ["archived", "public_revoked", "system"] as const) {
       const fixture = await seedBotCallback({ visibility: scenario === "public_revoked" ? "public" : "private" })
@@ -1360,8 +1479,17 @@ describe("deferred generated output authority", () => {
   })
 
   test("plaintext/sealed trace and interim bot callbacks deny revoked grants without sink rows", async () => {
-    for (const callback of ["plaintext_step", "sealed_step", "sealed_message"] as const) {
-      const fixture = await seedBotCallback({ visibility: "public", sealed: callback !== "plaintext_step" })
+    for (const callback of [
+      "plaintext_step",
+      "plaintext_message",
+      "plaintext_message_hidden",
+      "sealed_step",
+      "sealed_message",
+    ] as const) {
+      const fixture = await seedBotCallback({
+        visibility: callback === "plaintext_message_hidden" ? "private" : "public",
+        sealed: callback === "sealed_step" || callback === "sealed_message",
+      })
       const handlers = buildBotCallbackHandlers()
       await BotChannelAccessRepository.revokeAccess(pool, workspace, fixture.botId, fixture.target)
       const { res } = responseRecorder()
@@ -1382,6 +1510,10 @@ describe("deferred generated output authority", () => {
             res
           )
         ).rejects.toMatchObject(rejection("not_a_member"))
+      } else if (callback === "plaintext_message" || callback === "plaintext_message_hidden") {
+        await expect(sendPlaintextCallback(handlers, fixture, "must not land")).rejects.toMatchObject(
+          callback === "plaintext_message_hidden" ? { code: "STREAM_NOT_FOUND" } : rejection("not_a_member")
+        )
       } else if (callback === "sealed_step") {
         await expect(
           handlers.recordBotInvocationSealedStep(

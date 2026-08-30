@@ -1934,6 +1934,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     recordBotInvocationStep: publicApi.recordBotInvocationStep,
     startBotInvocationSealedStep: publicApi.startBotInvocationSealedStep,
     recordBotInvocationSealedStep: publicApi.recordBotInvocationSealedStep,
+    sendBotInvocationMessage: publicApi.sendBotInvocationMessage,
     sendBotInvocationSealedMessage: publicApi.sendBotInvocationSealedMessage,
     completeBotInvocationSealed: publicApi.completeBotInvocationSealed,
     completeBotInvocation: publicApi.completeBotInvocation,

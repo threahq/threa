@@ -9,6 +9,7 @@ export {
   runtimeCapabilitiesFor,
   SESSION_CONTROL_CAPABILITY,
   STEER_SETTLE_MS,
+  COMPLETED_TURN_MEMORY,
   type DeliveredTurn,
   type ModelSuggestionInfo,
   type RemoteSessionDelegate,

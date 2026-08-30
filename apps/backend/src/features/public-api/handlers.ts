@@ -94,6 +94,8 @@ import {
   AgentSessionRepository,
   hashCallbackToken,
   assertSessionRunning,
+  assertSessionRunningOrCompleted,
+  assertSessionRunningOrFailed,
   verifyCallbackToken,
   assertReplyKeyGeneration,
   type AgentSession,
@@ -150,6 +152,7 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  sendInvocationMessageSchema,
   sendSealedInvocationMessageSchema,
   completeSealedInvocationSchema,
   provisionSessionKeyWrapsSchema,
@@ -810,14 +813,79 @@ export function createPublicApiHandlers({
    * `/sealed-complete` claim flip scopes by it without re-reading the header,
    * keeping that security dependency explicit rather than an implicit `!`.
    */
-  async function authorizeSealedInvocationCallback(req: Request) {
+  async function authorizeSealedInvocationCallback(
+    req: Request,
+    opts: { acceptCompletedSession?: boolean; acceptFailedSession?: boolean } = {}
+  ) {
     if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-    return authorizeSealedCallback(pool, {
-      workspaceId: req.workspaceId!,
-      botId: req.botApiKey.botId,
-      invocationId: req.params.invocationId,
-      callbackToken: req.header(THREA_CALLBACK_TOKEN_HEADER),
+    return authorizeSealedCallback(
+      pool,
+      {
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        callbackToken: req.header(THREA_CALLBACK_TOKEN_HEADER),
+      },
+      opts
+    )
+  }
+
+  /** Bind completed writes to the runtime identity from the current claim generation (INV-20). */
+  async function assertCompletedClaimStillLinked(
+    tx: PoolClient,
+    params: { workspaceId: string; botId: string; invocation: BotInvocation }
+  ): Promise<void> {
+    const { invocation } = params
+    let runtimeSessionId: string | null = null
+    if (
+      invocation.claimedRuntimeSessionId !== null &&
+      invocation.claimedRuntimeSessionClaimToken !== null &&
+      invocation.claimToken !== null &&
+      invocation.claimedRuntimeSessionClaimToken === invocation.claimToken
+    ) {
+      runtimeSessionId = invocation.claimedRuntimeSessionId
+    } else if (invocation.claimedRuntimeSessionId === null && invocation.claimedRuntimeSessionClaimToken === null) {
+      runtimeSessionId = invocation.targetRuntimeSessionId
+    }
+    if (!invocation.claimedByInstanceId || !runtimeSessionId) {
+      throw new HttpError("The runtime session that claimed this invocation is no longer linked", {
+        status: 404,
+        code: "RUNTIME_LINK_ENDED",
+      })
+    }
+    const link = await botRuntimeService.findActiveSessionLinkForCompletedClaim(tx, {
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      instanceId: invocation.claimedByInstanceId,
+      runtimeSessionId,
     })
+    if (!link || link.instanceId !== invocation.claimedByInstanceId || link.runtimeSessionId !== runtimeSessionId) {
+      throw new HttpError("The runtime session that claimed this invocation is no longer linked", {
+        status: 404,
+        code: "RUNTIME_LINK_ENDED",
+      })
+    }
+  }
+
+  /** Bind idempotent replay to the bot, create-event actor, and session that made the request. */
+  async function findOwnTurnMessageByClientId(
+    tx: PoolClient,
+    params: { streamId: string; clientMessageId: string; botId: string; sessionId: string; expectedId?: string }
+  ): Promise<Message | null> {
+    const existing = await MessageRepository.findByClientMessageId(tx, params.streamId, params.clientMessageId)
+    if (!existing) return null
+    const createdEvent = await StreamEventRepository.findByMessageId(tx, params.streamId, existing.id)
+    if (
+      (params.expectedId !== undefined && existing.id !== params.expectedId) ||
+      existing.authorId !== params.botId ||
+      existing.authorType !== AuthorTypes.BOT ||
+      createdEvent?.actorId !== params.botId ||
+      createdEvent.actorType !== AuthorTypes.BOT ||
+      (createdEvent.payload as { sessionId?: string }).sessionId !== params.sessionId
+    ) {
+      throw invocationClaimNotFound()
+    }
+    return existing
   }
 
   async function terminalizeBotDenial(params: {
@@ -1530,6 +1598,126 @@ export function createPublicApiHandlers({
       })
     },
 
+    async sendBotInvocationMessage(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(sendInvocationMessageSchema, req.body)
+      const workspaceId = req.workspaceId!
+      const botId = req.botApiKey.botId
+      const bot = await BotRepository.findById(pool, workspaceId, botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+
+      const contentMarkdown = normalizeMessage(data.content)
+      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+      const attachmentIds = collectAttachmentReferenceIds(contentJson)
+
+      let denialSession: AgentSession | null = null
+      const message = await withTransaction(pool, async (tx) => {
+        denialSession = null
+        const callbackParams = {
+          workspaceId,
+          botId,
+          invocationId: req.params.invocationId,
+          instanceId: data.instanceId,
+          claimToken: data.claimToken,
+        }
+        const snapshot = await botRuntimeService.findInvocationForCallback(tx, callbackParams)
+        if (!snapshot) throw invocationClaimNotFound()
+        if (snapshot.trigger === BotInvocationTriggers.SESSION_CONTROL) {
+          throw new HttpError("Session-control invocations post no turn messages", {
+            status: 409,
+            code: "SESSION_CONTROL_MESSAGE_UNSUPPORTED",
+          })
+        }
+        const callbackSession = await AgentSessionRepository.findById(tx, snapshot.id)
+        if (
+          snapshot.status === "claimed" &&
+          callbackSession &&
+          (callbackSession.status === AgentSessionStatuses.RUNNING ||
+            callbackSession.status === AgentSessionStatuses.FAILED) &&
+          callbackSession.personaId === botId &&
+          callbackSession.streamId === snapshot.responseStreamId
+        ) {
+          denialSession = callbackSession
+        }
+        // Keep stream, invocation, and session lock order aligned with completion to avoid ABBA deadlocks.
+        await resolveLockedStreamAuthorities(tx, {
+          workspaceId,
+          streamIds: [snapshot.responseStreamId],
+          principal: { kind: "bot", botId },
+        })
+        // A committed idempotent retry performs no new authorized write.
+        if (data.clientMessageId) {
+          const existing = await findOwnTurnMessageByClientId(tx, {
+            streamId: snapshot.responseStreamId,
+            clientMessageId: data.clientMessageId,
+            botId,
+            sessionId: snapshot.id,
+          })
+          if (existing) return existing
+        }
+        const activeClaim = await botRuntimeService.findActiveClaimForUpdate(tx, callbackParams)
+        const invocation = activeClaim ?? (await botRuntimeService.findCompletedInvocationForReplay(tx, callbackParams))
+        if (!invocation || invocation.responseStreamId !== snapshot.responseStreamId) {
+          throw invocationClaimNotFound()
+        }
+        // INV-E1/INV-E7: cleartext must never land in an E2E stream — a sealed
+        // harness posts through `/sealed-messages` instead.
+        if (await E2eStreamsRepository.isE2eStream(tx, workspaceId, invocation.responseStreamId)) {
+          throw new HttpError("Stream is end-to-end encrypted; use the sealed-messages endpoint", {
+            status: 400,
+            code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+          })
+        }
+        const session = await AgentSessionRepository.findByIdForUpdate(tx, invocation.id)
+        if (activeClaim) assertSessionRunningOrFailed(session)
+        else assertSessionRunningOrCompleted(session)
+        if (session.personaId !== botId) {
+          throw new HttpError("Session does not belong to this bot", { status: 403, code: "FORBIDDEN" })
+        }
+        if (session.streamId !== invocation.responseStreamId) throw invocationClaimNotFound()
+        if (activeClaim) denialSession = session
+        if (!activeClaim) await assertCompletedClaimStillLinked(tx, { workspaceId, botId, invocation })
+        return (
+          await eventService.createMessageForPrincipalInTransaction(
+            tx,
+            { kind: "bot", botId },
+            {
+              workspaceId,
+              streamId: invocation.responseStreamId,
+              sessionId: session.id,
+              authorId: botId,
+              authorType: AuthorTypes.BOT,
+              contentJson,
+              contentMarkdown,
+              ...(attachmentIds.length > 0 && { attachmentIds }),
+              ...(data.clientMessageId && { clientMessageId: data.clientMessageId }),
+              ...(data.metadata && { metadata: data.metadata }),
+            }
+          )
+        ).message
+      }).catch(async (error) => {
+        const denial = error as { code?: string }
+        if (denialSession && (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND")) {
+          const responseStream = await StreamRepository.findById(pool, denialSession.streamId)
+          if (responseStream?.workspaceId === workspaceId) {
+            await terminalizeBotDenial({
+              error,
+              session: denialSession,
+              stream: responseStream,
+              botId,
+              callbackToken: data.claimToken,
+              instanceId: data.instanceId,
+            })
+          }
+        }
+        throw error
+      })
+
+      res.json({
+        data: { invocationId: req.params.invocationId, sessionId: req.params.invocationId, messageId: message.id },
+      })
+    },
+
     /**
      * Open one in-flight sealed trace step the moment the bot's loop starts it —
      * the external sibling of the enclave's `/steps/started`. Content is sealed
@@ -1621,22 +1809,12 @@ export function createPublicApiHandlers({
       })
     },
 
-    /**
-     * Post one sealed *interim* message from an in-flight sealed turn — the
-     * external sibling of the enclave streaming replies to its session
-     * `/messages` callback, and the sealed counterpart of a plaintext bot's
-     * mid-turn `POST /streams/:id/messages`. A channel-style harness (Claude
-     * Code's `send` tool, the permission-prompt relay) posts progress messages
-     * before its final reply; on an E2E stream those must be ciphertext, so the
-     * plaintext message API correctly rejects them and this route carries them
-     * instead. Auth is the per-claim callback token; the sealed grant scopes the
-     * write to the claim's own stream. `messageId` is client-minted (it binds
-     * the seal AAD) and doubles as the idempotency key, so a retried post can't
-     * double-insert. Dark until `externalSealedDelivery` flips.
-     */
     async sendBotInvocationSealedMessage(req: Request, res: Response) {
       const data = validateRequest(sendSealedInvocationMessageSchema, req.body)
-      const { session, stream, bot, callbackToken } = await authorizeSealedInvocationCallback(req)
+      const { session, stream, bot, callbackToken } = await authorizeSealedInvocationCallback(req, {
+        acceptCompletedSession: true,
+        acceptFailedSession: true,
+      })
       assertReplyKeyGeneration(session, data.envelope)
 
       let message: Message
@@ -1657,28 +1835,37 @@ export function createPublicApiHandlers({
             streamIds: [snapshot.responseStreamId],
             principal: { kind: "bot", botId: bot.id },
           })
-          const existing = await MessageRepository.findByClientMessageId(tx, snapshot.responseStreamId, data.messageId)
-          if (existing) {
-            const createdEvent = await StreamEventRepository.findByMessageId(tx, snapshot.responseStreamId, existing.id)
-            if (
-              existing.id !== data.messageId ||
-              existing.authorId !== bot.id ||
-              existing.authorType !== AuthorTypes.BOT ||
-              createdEvent?.actorId !== bot.id ||
-              createdEvent.actorType !== AuthorTypes.BOT ||
-              (createdEvent.payload as { sessionId?: string }).sessionId !== session.id
-            ) {
-              throw invocationClaimNotFound()
-            }
-            return existing
-          }
-          if (snapshot.status !== "claimed") {
+          const existing = await findOwnTurnMessageByClientId(tx, {
+            streamId: snapshot.responseStreamId,
+            clientMessageId: data.messageId,
+            botId: bot.id,
+            sessionId: session.id,
+            expectedId: data.messageId,
+          })
+          if (existing) return existing
+          if (snapshot.status !== "claimed" && snapshot.status !== "completed") {
             throw invocationClaimNotFound()
           }
           assertViewerStreamWritable(authority.state)
-          const claim = await botRuntimeService.findActiveClaimForUpdateByToken(tx, callbackParams)
+          // Keep stream, invocation, and session lock order aligned with completion.
+          const activeClaim = await botRuntimeService.findActiveClaimForUpdateByToken(tx, callbackParams)
+          const claim = activeClaim ?? (await botRuntimeService.findCompletedInvocationForReplay(tx, callbackParams))
           if (!claim || claim.responseStreamId !== snapshot.responseStreamId) {
             throw invocationClaimNotFound()
+          }
+          const locked = await AgentSessionRepository.findByIdForUpdate(tx, session.id)
+          if (activeClaim) assertSessionRunningOrFailed(locked)
+          else assertSessionRunningOrCompleted(locked)
+          if (locked.personaId !== bot.id) {
+            throw new HttpError("Session does not belong to this bot", { status: 403, code: "FORBIDDEN" })
+          }
+          if (locked.streamId !== claim.responseStreamId) throw invocationClaimNotFound()
+          if (!activeClaim) {
+            await assertCompletedClaimStillLinked(tx, {
+              workspaceId: stream.workspaceId,
+              botId: bot.id,
+              invocation: claim,
+            })
           }
           return (
             await eventService.createMessageForPrincipalInTransaction(
@@ -1687,8 +1874,8 @@ export function createPublicApiHandlers({
               {
                 id: data.messageId,
                 workspaceId: stream.workspaceId,
-                streamId: session.streamId,
-                sessionId: session.id,
+                streamId: locked.streamId,
+                sessionId: locked.id,
                 authorId: bot.id,
                 authorType: AuthorTypes.BOT,
                 contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
@@ -1698,7 +1885,7 @@ export function createPublicApiHandlers({
                 e2eVersion: 2,
                 // Restrict the bot's reach to this scratchpad, mirroring the sealed
                 // completion reply; the client-minted id dedupes a redelivered post.
-                accessibleStreamIds: [session.streamId],
+                accessibleStreamIds: [locked.streamId],
                 clientMessageId: data.messageId,
                 ...(data.attachmentIds && data.attachmentIds.length > 0 && { attachmentIds: data.attachmentIds }),
               }
@@ -1739,7 +1926,7 @@ export function createPublicApiHandlers({
       const data = validateRequest(completeSealedInvocationSchema, req.body)
       let callbackContext: Awaited<ReturnType<typeof authorizeSealedInvocationCallback>>
       try {
-        callbackContext = await authorizeSealedInvocationCallback(req)
+        callbackContext = await authorizeSealedInvocationCallback(req, { acceptFailedSession: true })
       } catch (error) {
         if (!req.botApiKey) throw error
         const callbackToken = req.header(THREA_CALLBACK_TOKEN_HEADER) ?? ""
@@ -1780,6 +1967,7 @@ export function createPublicApiHandlers({
           const snapshot = await botRuntimeService.findInvocationForCallback(client, callbackParams)
           if (!snapshot) throw invocationClaimNotFound()
           if (snapshot.status === "completed") {
+            assertSessionRunningOrCompleted(session)
             const replay = await resolveCompletedInvocationReplay(client, callbackParams)
             if (!replay || (data.reply ? replay.message?.id !== data.reply.messageId : replay.message !== null)) {
               throw invocationClaimNotFound()
@@ -1796,6 +1984,7 @@ export function createPublicApiHandlers({
             })
             const completedInvocation = await botRuntimeService.findCompletedInvocationForReplay(client, callbackParams)
             if (completedInvocation) {
+              assertSessionRunningOrCompleted(session)
               const replay = await loadCompletedInvocationReplay(client, completedInvocation, bot.id, callbackToken)
               if (!replay || replay.message?.id !== data.reply.messageId) {
                 throw invocationClaimNotFound()
@@ -1806,8 +1995,10 @@ export function createPublicApiHandlers({
             authorityLocked = true
           }
 
+          // FAILED reaches the write path only after this active claim lock succeeds.
           const claim = await botRuntimeService.findActiveClaimForUpdateByToken(client, callbackParams)
           if (!claim) {
+            assertSessionRunningOrCompleted(session)
             const replay = authorityLocked
               ? await botRuntimeService
                   .findCompletedInvocationForReplay(client, callbackParams)
@@ -1866,6 +2057,7 @@ export function createPublicApiHandlers({
             lastSeenSequence: latestSequence ?? 0n,
             responseMessageId: message?.id ?? null,
             sentMessageIds: message ? [message.id] : [],
+            recoverFromFailed: true,
           })
           if (!finalized) return { kind: "completed", message, sessionFinalized: false }
 

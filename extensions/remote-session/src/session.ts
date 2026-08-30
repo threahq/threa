@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import {
@@ -13,7 +14,6 @@ import {
   scrubSealedError,
   sealReply,
   sealStep,
-  type AttachmentRef,
   type BotRuntimeHello,
   type DelegationAvailableNudge,
   type SealedReplyBody,
@@ -65,6 +65,10 @@ const MAX_MESSAGE_CHARS = 2_000
 // Recent messages to scan for inbound attachments. The trigger message is always
 // the newest, so this comfortably covers it plus the history the agent is shown.
 const ATTACHMENT_SCAN_LIMIT = 30
+// Bounds retained stream keys and callback tokens while covering several hours of typical channel use.
+export const COMPLETED_TURN_MEMORY = 64
+// These 4xx responses can clear on retry; other 4xx responses permanently revoke the route.
+const RETRYABLE_POST_STATUSES = new Set([408, 425, 429])
 
 export interface ModelSuggestionInfo {
   value: string
@@ -184,6 +188,7 @@ export interface SendResult {
   message: string
   /** Set when the failure leaves the request open so the caller may retry. */
   retryable?: boolean
+  closedTurn?: true
 }
 
 export interface RemoteSessionStatusSnapshot {
@@ -282,28 +287,83 @@ export function runtimeCapabilitiesFor(
   }
 }
 
-interface Inflight {
-  invocation: ClaimedInvocation
-  // Idle-timeout timer; reset on every sign of life (an interim send, a
-  // permission request) so an actively-working turn is never reaped, only a
-  // silent one.
-  deadline: ReturnType<typeof setTimeout>
-  // Count of interim sends posted during this turn. When the idle timeout
-  // fires after at least one send, the turn closes silently instead of
-  // posting the "ended without a reply" notice — the user already heard from it.
-  sentCount: number
-  // The reply after attachment uploads, cached when a complete() fails so the
-  // retry reuses the same uploads instead of orphaning a fresh copy each time.
-  // On a sealed turn `attachmentRefs` carries the per-file keys to re-seal with.
-  prepared?: { markdown: string; attachmentIds: string[]; attachmentRefs?: AttachmentRef[] }
-  // A sealed interim whose POST failed, cached so the retry re-sends the SAME
-  // sealed body (same message id, same uploaded attachments) and the server's
-  // idempotency key dedupes it — a fresh seal per attempt would double-post on
-  // retry. `text` guards the reuse: the caller may abandon a failed send and
-  // post different content at the same seq, which must build a fresh body
-  // rather than silently replay the stale one.
-  pendingSealedInterim?: { seq: number; text: string; body: SealedReplyBody; attachmentIds: string[] }
+/** Exact failed POST bytes and id, retained because an ambiguous failure may have committed. */
+type PreparedPost =
+  | {
+      kind: "plaintext"
+      seq: number
+      text: string
+      retryKey?: string
+      body: {
+        instanceId: string
+        claimToken: string
+        content: string
+        clientMessageId: string
+        metadata: Record<string, unknown>
+      }
+    }
+  | {
+      kind: "sealed"
+      seq: number
+      text: string
+      retryKey?: string
+      body: SealedReplyBody
+      attachmentIds: string[]
+    }
+
+interface PostIntent {
+  text: string
+  retryKey?: string
+  retry?: PreparedPost
 }
+
+type PlaintextCompletionBody = {
+  instanceId: string
+  claimToken: string
+  metadata: Record<string, unknown>
+} & ({ finalMessageMarkdown: string } | { noResponse: true })
+
+type SealedCompletionBody = { reply: SealedReplyBody & { attachmentIds?: string[] } } | { noResponse: true }
+
+type PreparedCompletionWire =
+  | { kind: "plaintext"; body: PlaintextCompletionBody }
+  | { kind: "sealed"; callbackToken: string; body: SealedCompletionBody }
+
+type PreparedClose =
+  | { reason: "reply"; sourceText: string; wire: PreparedCompletionWire }
+  | { reason: "timeout"; wire: PreparedCompletionWire }
+
+type CloseRequest = { kind: "reply"; text: string } | { kind: "timeout" }
+
+type RouteState = "open" | "closing" | "closed"
+
+/** Maps and queued posts share this object so reserved ids survive state transitions. */
+interface TurnRoute {
+  invocation: ClaimedInvocation
+  state: RouteState
+  /** Registration order distinguishes an older route from a newer owner of the same stream. */
+  order: number
+  sentCount: number
+  /** Highest sequence handed out. Reserved before the write, so a failure spends it. */
+  reservedSeq: number
+  /** FIFO tail: every post on this route runs behind it, in call order. */
+  tail: Promise<unknown>
+  pending: Map<number, PreparedPost>
+  replyText?: string
+  deadline?: ReturnType<typeof setTimeout>
+  /** Bumped on every (re-)arm, so a fired timeout queued behind a post can tell it is stale. */
+  deadlineGeneration: number
+  /** Exact close body retained after an ambiguous completion. */
+  prepared?: PreparedClose
+  /** The completion currently on the wire, so shutdown can settle it instead of racing it. */
+  closing?: Promise<unknown>
+  /** The session lifecycle this route belongs to; a bump fences it out for good. */
+  generation: number
+  revoked: boolean
+  terminal: boolean
+}
+
+class RouteRevokedError extends Error {}
 
 export interface RemoteSessionOptions {
   config: RemoteSessionConfig
@@ -343,6 +403,8 @@ export class RemoteSession {
   private link: RuntimeSessionLink | undefined
   private linkGeneration = 0
   private claiming = false
+  /** Claim HTTP mutates server presence outside presenceTail, so teardown waits for its drain. */
+  private claimDrainTask: Promise<boolean> | undefined
   private reconnectHandoff = false
   private onHandoffReset: (() => unknown | Promise<unknown>) | undefined
   private reconnectResetTimer: ReturnType<typeof setTimeout> | undefined
@@ -353,7 +415,13 @@ export class RemoteSession {
   private renewTimer: ReturnType<typeof setInterval> | undefined
   /** Consecutive empty poll ticks while the socket is down; drives the poll backoff. */
   private emptyNoSocketPolls = 0
-  private readonly inflight = new Map<string, Inflight>()
+  private readonly inflight = new Map<string, TurnRoute>()
+  private readonly completed = new Map<string, TurnRoute>()
+  private readonly terminalReplies = new Map<string, { replyDigest?: string }>()
+  private nextRouteOrder = 0
+  /** Teardown generation fences stale routes from writes, reinsertion, and presence changes. */
+  private lifecycle = 0
+  private presenceTail: Promise<void> = Promise.resolve()
   // When the server last confirmed each in-flight claim's lease. Renewals that
   // fail to reach the server look like success to a caller that only checks
   // `notFound`; after a lease has gone unconfirmed long enough to have expired
@@ -377,7 +445,10 @@ export class RemoteSession {
         isArchived: async (rootStreamId) => Boolean(await this.client.getStreamArchivedAt(rootStreamId)),
         reattach: () => this.relinkAfterRestore(),
         onDetached: (rootStreamId) => this.detachForArchive(rootStreamId),
-        onReattached: () => this.claimDrain().then(() => undefined),
+        onReattached: async () => {
+          await this.syncPresence()
+          await this.claimDrain()
+        },
         onWindDown: (rootStreamId) => this.windDownForArchive(rootStreamId),
         log: this.log,
       },
@@ -426,7 +497,10 @@ export class RemoteSession {
   }
 
   private refreshHelloCapabilities(): void {
-    Object.assign(this.hello, this.presenceBody(this.reconnectHandoff || this.inflight.size > 0 ? "busy" : "available"))
+    let status: "available" | "busy" | "offline" = "available"
+    if (this.stopped || this.archive.detached || !this.link) status = "offline"
+    else if (this.reconnectHandoff || this.inflight.size > 0) status = "busy"
+    Object.assign(this.hello, this.presenceBody(status))
     this.hello.supportedCapabilities = supportedCapabilitiesFor(this.sessionControlEnabled)
   }
 
@@ -515,7 +589,7 @@ export class RemoteSession {
     this.link = link
     this.linkGeneration += 1
     this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
-    await this.syncPresence()
+    if (!this.archive.detached) await this.syncPresence()
     return true
   }
 
@@ -544,19 +618,38 @@ export class RemoteSession {
     // before the offline push means updatePresence falls straight to HTTP rather
     // than waiting on an ack from a connection that's already going away.
     this.transport.disconnect()
-    const inflight = [...this.inflight]
-    for (const [, entry] of inflight) clearTimeout(entry.deadline)
+    // Fence before awaits so an in-flight completion cannot resurrect the route or presence.
+    const routes = this.revokeAllRoutes()
+    await this.waitForClaimDrain()
+    await this.enqueueOfflinePresence(() => this.stopped)
+    await this.failUnansweredRoutes(routes)
+  }
+
+  private revokeAllRoutes(): TurnRoute[] {
+    this.lifecycle += 1
+    const inflight = [...this.inflight.values()]
+    for (const route of inflight) this.revokeRoute(route)
+    for (const route of this.completed.values()) this.revokeRoute(route)
     this.inflight.clear()
-    await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
+    this.completed.clear()
+    this.terminalReplies.clear()
+    return inflight
+  }
+
+  private async failUnansweredRoutes(routes: TurnRoute[]): Promise<void> {
     await Promise.allSettled(
-      inflight.map(([id, entry]) =>
-        this.client.fail(id, {
-          instanceId: this.config.instanceId,
-          claimToken: entry.invocation.claimToken,
-          // The shutdown message is a fixed string (never turn content), so it
-          // is safe on sealed turns too.
-          errorMessage: this.runtime.shutdownErrorMessage,
-        })
+      routes.map((route) =>
+        // Let /complete settle before /fail so an acknowledged answer cannot be overwritten.
+        Promise.resolve(route.closing)
+          .catch(() => undefined)
+          .then(() => {
+            if (route.state === "closed") return undefined
+            return this.client.fail(route.invocation.id, {
+              instanceId: this.config.instanceId,
+              claimToken: route.invocation.claimToken,
+              errorMessage: this.runtime.shutdownErrorMessage,
+            })
+          })
       )
     )
   }
@@ -670,13 +763,25 @@ export class RemoteSession {
   // --- Claiming -------------------------------------------------------------
 
   /** Returns whether at least one invocation was claimed (feeds the poll backoff reset). */
-  private async claimDrain(): Promise<boolean> {
+  private claimDrain(): Promise<boolean> {
     // No claims while detached-pending-restore: the scratchpad is archived, so
     // any claimable work predates the archive and would reply into a closed
     // stream. Restore re-runs the drain.
-    if (this.stopped || this.claiming || this.archive.detached || this.reconnectHandoff) return false
-    let claimedAny = false
+    if (this.stopped || this.claiming || this.claimDrainTask || this.archive.detached || this.reconnectHandoff) {
+      return Promise.resolve(false)
+    }
     this.claiming = true
+    const task = this.runClaimDrain()
+    this.claimDrainTask = task
+    const clear = () => {
+      if (this.claimDrainTask === task) this.claimDrainTask = undefined
+    }
+    void task.then(clear, clear)
+    return task
+  }
+
+  private async runClaimDrain(): Promise<boolean> {
+    let claimedAny = false
     try {
       for (let i = 0; i < MAX_CLAIMS_PER_DRAIN; i++) {
         // One normal turn at a time: once a turn is in flight we claim with
@@ -722,6 +827,10 @@ export class RemoteSession {
       this.claiming = false
     }
     return claimedAny
+  }
+
+  private async waitForClaimDrain(): Promise<void> {
+    await this.claimDrainTask
   }
 
   /**
@@ -874,11 +983,7 @@ export class RemoteSession {
   private async deliverTurn(invocation: ClaimedInvocation, content: string): Promise<void> {
     // The lease clock starts at the claim, not at the first renewal tick.
     this.leaseConfirmedAt.set(invocation.id, Date.now())
-    this.inflight.set(invocation.id, {
-      invocation,
-      deadline: this.scheduleIdleTimeout(invocation.id),
-      sentCount: 0,
-    })
+    this.registerTurn(invocation)
     // This is the turn the runtime is now executing; a permission prompt it
     // triggers belongs in this invocation's stream.
     this.activeTurnStream = invocation.responseStreamId
@@ -915,35 +1020,18 @@ export class RemoteSession {
   }
 
   /**
-   * Close one turn — the single chokepoint that routes a completion to the
-   * plaintext `/complete` or, for a sealed turn, seals the markdown under the
-   * stream key and posts `/sealed-complete` (which carries no metadata; the
-   * sealed grant is the context). Every close path (reply, no-response,
-   * interrupt notes, idle timeout, intercepted-claim ack) funnels through here
-   * so none can leak plaintext into an E2E stream.
+   * Close a control invocation with session-authored text or no response. Final
+   * replies and idle timeouts use the prepared-close path so ambiguous retries
+   * retain their exact wire body.
    */
   private async completeTurn(
     invocation: ClaimedInvocation,
-    body: {
-      markdown?: string
-      noResponse?: true
-      metadata?: Record<string, unknown>
-      /** Sealed turns only: refs seal into the payload, ids bind the rows on the wire. */
-      attachmentRefs?: AttachmentRef[]
-      attachmentIds?: string[]
-    }
+    body: { markdown?: string; noResponse?: true; metadata?: Record<string, unknown> }
   ): Promise<void> {
     if (invocation.sealing) {
       if (body.markdown) {
-        const extras =
-          body.attachmentRefs && body.attachmentRefs.length > 0 ? { attachmentRefs: body.attachmentRefs } : undefined
-        const reply = await sealReply(invocation.sealing, body.markdown, extras)
-        await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, {
-          reply: {
-            ...reply,
-            ...(body.attachmentIds && body.attachmentIds.length > 0 && { attachmentIds: body.attachmentIds }),
-          },
-        })
+        const reply = await sealReply(invocation.sealing, body.markdown)
+        await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, { reply })
       } else {
         await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, { noResponse: true })
       }
@@ -1082,9 +1170,9 @@ export class RemoteSession {
     const combined = buildSteerContent(parts)
     // Step before actuation so it sits ahead of the continuation's frames in
     // the trace; a steer is also a sign of life for the turn it redirects.
-    for (const [id] of this.inflight) {
-      await this.recordSteps(id, [{ stepType: "steer", content: combined }])
-      this.touchIdleTimeout(id)
+    for (const route of [...this.inflight.values()]) {
+      await this.recordSteps(route.invocation.id, [{ stepType: "steer", content: combined }])
+      this.touchIdleTimeout(route)
     }
     if (!(await steer(combined))) {
       // Nothing was injected: the swept messages were claimed but not
@@ -1291,24 +1379,35 @@ export class RemoteSession {
    * the note regardless — steers use it so delivery is always visible.
    */
   private async completeInterruptedTurns(note: string, opts: { alwaysNote?: boolean } = {}): Promise<void> {
-    // Clear every entry's timer and drop it from the map BEFORE the first await.
-    // If we cleared-and-completed one at a time, a sibling's idle-timeout could
-    // fire at a `complete()` yield point, find itself still in the map, and
-    // complete itself — then this loop double-completes it.
-    const entries = [...this.inflight]
-    for (const [id, entry] of entries) {
-      this.clearInflight(id)
-      if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
-    }
-    await Promise.all(
-      entries.map(([id, entry]) => {
-        const silent = entry.sentCount > 0 && !opts.alwaysNote
-        return this.completeTurn(entry.invocation, {
-          ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
-          metadata: { "remote.invocationId": id, "remote.interrupted": "true" },
-        }).catch((error) => this.log(`interrupted-turn close failed: ${this.summarize(error)}`))
+    const routes = [...this.inflight.values()]
+    const closes = routes.map((route) => {
+      this.revokeRoute(route)
+      if (route.state === "open") route.state = "closing"
+      if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
+      const generation = route.generation
+      const task = this.enqueue(route, async () => {
+        if (this.stopped || generation !== this.lifecycle || route.state === "closed") return
+        const silent = route.sentCount > 0 && !opts.alwaysNote
+        try {
+          await this.completeTurn(route.invocation, {
+            ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
+            metadata: { "remote.invocationId": route.invocation.id, "remote.interrupted": "true" },
+          })
+          route.state = "closed"
+        } catch (error) {
+          this.log(`interrupted-turn close failed: ${this.summarize(error)}`)
+        } finally {
+          if (generation === this.lifecycle && this.inflight.get(route.invocation.id) === route) {
+            this.inflight.delete(route.invocation.id)
+          }
+        }
       })
-    )
+      route.closing = task
+      return task.finally(() => {
+        if (route.closing === task) route.closing = undefined
+      })
+    })
+    await Promise.all(closes)
   }
 
   /** The prompt + history the runtime reads, with any downloaded attachments appended as a manifest. */
@@ -1357,149 +1456,493 @@ export class RemoteSession {
 
   // --- Interim + final output ------------------------------------------------
 
-  /** Post a progress message into the turn's stream without closing the request. */
+  /** FIFO allocation keeps concurrent posts on distinct ids and orders them against completion. */
+  private enqueue<T>(route: TurnRoute, task: () => Promise<T>): Promise<T> {
+    // `.then(task, task)` so one rejected post never wedges the queue behind it.
+    const run = route.tail.then(task, task)
+    route.tail = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  private route(invocationId: string): TurnRoute | undefined {
+    return this.inflight.get(invocationId) ?? this.completed.get(invocationId)
+  }
+
+  private registerTurn(invocation: ClaimedInvocation): TurnRoute {
+    const route: TurnRoute = {
+      invocation,
+      state: "open",
+      order: (this.nextRouteOrder += 1),
+      sentCount: 0,
+      reservedSeq: 0,
+      tail: Promise.resolve(),
+      pending: new Map(),
+      deadlineGeneration: 0,
+      generation: this.lifecycle,
+      revoked: false,
+      terminal: false,
+    }
+    route.deadline = this.scheduleIdleTimeout(route)
+    this.inflight.set(invocation.id, route)
+    return route
+  }
+
+  private revokeRoute(route: TurnRoute): void {
+    route.revoked = true
+    route.pending.clear()
+    route.prepared = undefined
+    clearTimeout(route.deadline)
+    route.deadline = undefined
+  }
+
+  private revokedResult(route: TurnRoute): SendResult {
+    return {
+      ok: false,
+      retryable: false,
+      message: `Request ${route.invocation.id} is no longer routable — this session stopped speaking for its stream.`,
+    }
+  }
+
+  private findPending(route: TurnRoute, text: string, retryKey?: string): PreparedPost | undefined {
+    let match: PreparedPost | undefined
+    for (const pending of route.pending.values()) {
+      if (pending.text === text && pending.retryKey === retryKey && (!match || pending.seq < match.seq)) {
+        match = pending
+      }
+    }
+    return match
+  }
+
+  /** Snapshot retry intent before queueing so concurrent callers cannot adopt each other's failure. */
+  private postIntent(route: TurnRoute, text: string, retryKey?: string): PostIntent {
+    const retry = this.findPending(route, text, retryKey)
+    return {
+      text,
+      ...(retryKey === undefined ? {} : { retryKey }),
+      ...(retry ? { retry } : {}),
+    }
+  }
+
+  /** An ambiguous failure reserves its id and exact bytes; changed text takes the next id. */
+  private async postTurnMessage(
+    route: TurnRoute,
+    intent: PostIntent,
+    metadata: Record<string, unknown>
+  ): Promise<void> {
+    const seq = intent.retry?.seq ?? (route.reservedSeq += 1)
+    const sealing = route.invocation.sealing
+    let prepared = intent.retry
+    if (!prepared) {
+      if (sealing) {
+        const uploaded = await uploadSealedReplyAttachments(this.client, intent.text, process.cwd())
+        const fallback = uploaded.refs.length > 0 ? "" : "(empty message)"
+        const body = await sealReply(
+          sealing,
+          uploaded.markdown.trim() || fallback,
+          uploaded.refs.length > 0 ? { attachmentRefs: uploaded.refs } : undefined
+        )
+        prepared = {
+          kind: "sealed",
+          seq,
+          text: intent.text,
+          ...(intent.retryKey === undefined ? {} : { retryKey: intent.retryKey }),
+          body,
+          attachmentIds: uploaded.attachmentIds,
+        }
+      } else {
+        const { markdown } = await uploadReplyAttachments(this.client, intent.text, process.cwd())
+        prepared = {
+          kind: "plaintext",
+          seq,
+          text: intent.text,
+          ...(intent.retryKey === undefined ? {} : { retryKey: intent.retryKey }),
+          body: {
+            instanceId: this.config.instanceId,
+            claimToken: route.invocation.claimToken,
+            content: markdown,
+            clientMessageId: intent.retryKey ?? `remote-send-${route.invocation.id}-${seq}`,
+            metadata,
+          },
+        }
+      }
+    }
+    if (!prepared) throw new Error("post preparation produced no body")
+    if (route.revoked || route.generation !== this.lifecycle) {
+      throw new RouteRevokedError(this.revokedResult(route).message)
+    }
+    try {
+      if (prepared.kind === "sealed") {
+        await this.client.sendSealedMessage(route.invocation.id, sealing!.callbackToken, {
+          ...prepared.body,
+          ...(prepared.attachmentIds.length > 0 && { attachmentIds: prepared.attachmentIds }),
+        })
+      } else {
+        await this.client.sendInvocationMessage(route.invocation.id, prepared.body)
+      }
+    } catch (error) {
+      if (!route.revoked && route.generation === this.lifecycle) route.pending.set(seq, prepared)
+      throw error
+    }
+    if (route.pending.get(seq) === prepared) route.pending.delete(seq)
+    route.sentCount += 1
+  }
+
+  private async writeRouteMessage(
+    route: TurnRoute,
+    intent: PostIntent,
+    metadata: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      await this.postTurnMessage(route, intent, metadata)
+    } catch (error) {
+      await this.terminalizeRouteWrite(route, error)
+      throw error
+    }
+  }
+
+  private async prepareReply(route: TurnRoute, text: string): Promise<PreparedClose> {
+    const sealing = route.invocation.sealing
+    if (sealing) {
+      const { markdown, refs, attachmentIds } = await uploadSealedReplyAttachments(this.client, text, process.cwd())
+      const reply = await sealReply(
+        sealing,
+        markdown.trim() || "Done.",
+        refs.length > 0 ? { attachmentRefs: refs } : undefined
+      )
+      return {
+        reason: "reply",
+        sourceText: text,
+        wire: {
+          kind: "sealed",
+          callbackToken: sealing.callbackToken,
+          body: { reply: { ...reply, ...(attachmentIds.length > 0 && { attachmentIds }) } },
+        },
+      }
+    }
+    const { markdown, uploaded } = await uploadReplyAttachments(this.client, text, process.cwd())
+    const attachmentIds = uploaded.map((attachment) => attachment.id)
+    return {
+      reason: "reply",
+      sourceText: text,
+      wire: {
+        kind: "plaintext",
+        body: {
+          instanceId: this.config.instanceId,
+          claimToken: route.invocation.claimToken,
+          finalMessageMarkdown: markdown,
+          metadata: {
+            "remote.invocationId": route.invocation.id,
+            "remote.instanceId": this.config.instanceId,
+            ...(attachmentIds.length > 0 && { "remote.attachmentIds": attachmentIds.join(",") }),
+          },
+        },
+      },
+    }
+  }
+
+  private async prepareTimeout(route: TurnRoute): Promise<PreparedClose> {
+    const note = "_The session ended the turn without sending a reply._"
+    const noResponse = route.sentCount > 0
+    const sealing = route.invocation.sealing
+    if (sealing) {
+      return {
+        reason: "timeout",
+        wire: {
+          kind: "sealed",
+          callbackToken: sealing.callbackToken,
+          body: noResponse ? { noResponse: true } : { reply: await sealReply(sealing, note) },
+        },
+      }
+    }
+    return {
+      reason: "timeout",
+      wire: {
+        kind: "plaintext",
+        body: {
+          instanceId: this.config.instanceId,
+          claimToken: route.invocation.claimToken,
+          ...(noResponse ? { noResponse: true as const } : { finalMessageMarkdown: note }),
+          metadata: { "remote.invocationId": route.invocation.id, "remote.timedOut": "true" },
+        },
+      },
+    }
+  }
+
+  private async postPreparedClose(route: TurnRoute, prepared: PreparedClose): Promise<void> {
+    if (route.revoked || route.generation !== this.lifecycle) throw new RouteRevokedError("route revoked")
+    if (prepared.wire.kind === "sealed") {
+      await this.client.completeSealed(route.invocation.id, prepared.wire.callbackToken, prepared.wire.body)
+      return
+    }
+    await this.client.complete(route.invocation.id, prepared.wire.body)
+  }
+
+  private async settleClosed(route: TurnRoute, replyText?: string): Promise<void> {
+    const invocationId = route.invocation.id
+    route.state = "closed"
+    route.prepared = undefined
+    if (replyText === undefined) delete route.replyText
+    else route.replyText = replyText
+    this.inflight.delete(invocationId)
+    // Teardown owns reinsertion and presence if it advanced the route generation.
+    if (route.revoked || route.generation !== this.lifecycle) return
+    // Keep the same object so ids reserved by posts queued behind this close remain visible.
+    this.completed.delete(invocationId)
+    this.completed.set(invocationId, route)
+    for (const oldest of this.completed.keys()) {
+      if (this.completed.size <= COMPLETED_TURN_MEMORY) break
+      this.completed.delete(oldest)
+    }
+    if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
+    await this.syncPresence()
+  }
+
+  private async reopenAfterFailedCompletion(route: TurnRoute, prepared: PreparedClose | undefined): Promise<void> {
+    route.state = "open"
+    if (route.revoked || route.generation !== this.lifecycle) {
+      route.prepared = undefined
+      return
+    }
+    route.prepared = prepared
+    route.deadline = this.scheduleIdleTimeout(route)
+    this.inflight.set(route.invocation.id, route)
+    await this.syncPresence()
+  }
+
+  private touchCompleted(invocationId: string, record: TurnRoute): void {
+    if (!this.completed.delete(invocationId)) return
+    this.completed.set(invocationId, record)
+  }
+
+  private isTerminalPostError(error: unknown): boolean {
+    return (
+      error instanceof ThreaApiError &&
+      error.status >= 400 &&
+      error.status < 500 &&
+      !RETRYABLE_POST_STATUSES.has(error.status)
+    )
+  }
+
+  private async terminalizeRouteWrite(route: TurnRoute, error: unknown): Promise<boolean> {
+    if (!this.isTerminalPostError(error)) return false
+    if (!route.terminal) await this.evictTerminalRoute(route)
+    return true
+  }
+
+  private terminalWriteResult(invocationId: string, kind: "message" | "reply", error: unknown): SendResult {
+    return {
+      ok: false,
+      retryable: false,
+      message: `Threa rejected the ${kind} for request ${invocationId}: ${this.summarize(error)}.`,
+    }
+  }
+
+  private terminalResult(invocationId: string, kind: "send" | "reply", text: string): SendResult {
+    const tombstone = this.terminalReplies.get(invocationId)
+    if (kind === "reply" && tombstone?.replyDigest === this.replyDigest(text)) return { ok: true, message: "sent" }
+    return {
+      ok: false,
+      retryable: false,
+      message: `Threa refused further messages for request ${invocationId} — it is closed and no longer accepts follow-ups.`,
+    }
+  }
+
+  /** Drop write credentials but retain a digest for exact final-reply idempotency. */
+  private async evictTerminalRoute(route: TurnRoute): Promise<void> {
+    const invocationId = route.invocation.id
+    route.state = "closed"
+    route.terminal = true
+    route.revoked = true
+    clearTimeout(route.deadline)
+    route.deadline = undefined
+    route.deadlineGeneration += 1
+    route.closing = undefined
+    route.pending.clear()
+    route.prepared = undefined
+    route.invocation.claimToken = ""
+    route.invocation.sealing = undefined
+    route.invocation.sealedAttachments = undefined
+    route.invocation.sealedAck = undefined
+    this.inflight.delete(invocationId)
+    this.completed.delete(invocationId)
+    const newerRouteOwnsStream = [...this.inflight.values()].some(
+      (candidate) =>
+        candidate.order > route.order &&
+        !candidate.revoked &&
+        candidate.invocation.responseStreamId === route.invocation.responseStreamId
+    )
+    if (this.activeTurnStream === route.invocation.responseStreamId && !newerRouteOwnsStream) {
+      this.activeTurnStream = undefined
+    }
+    this.terminalReplies.delete(invocationId)
+    this.terminalReplies.set(invocationId, {
+      ...(route.replyText === undefined ? {} : { replyDigest: this.replyDigest(route.replyText) }),
+    })
+    for (const oldest of this.terminalReplies.keys()) {
+      if (this.terminalReplies.size <= COMPLETED_TURN_MEMORY) break
+      this.terminalReplies.delete(oldest)
+    }
+    await this.syncPresence()
+  }
+
+  private async postThroughClosed(route: TurnRoute, kind: "send" | "reply", intent: PostIntent): Promise<SendResult> {
+    const invocationId = route.invocation.id
+    if (kind === "reply" && route.replyText === intent.text) {
+      this.touchCompleted(invocationId, route)
+      return { ok: true, message: "sent" }
+    }
+    if (route.terminal) return this.terminalResult(invocationId, kind, intent.text)
+    try {
+      await this.writeRouteMessage(route, intent, {
+        "remote.invocationId": invocationId,
+        "remote.followUp": "true",
+      })
+    } catch (error) {
+      if (error instanceof RouteRevokedError) return this.revokedResult(route)
+      if (this.isTerminalPostError(error)) return this.terminalWriteResult(invocationId, "message", error)
+      return { ok: false, message: `Failed to post message to Threa: ${this.summarize(error)}`, retryable: true }
+    }
+    if (kind === "reply") route.replyText = intent.text
+    this.touchCompleted(invocationId, route)
+    return {
+      ok: true,
+      message: `Posted as a follow-up message — request ${invocationId} had already closed, and stays closed.`,
+    }
+  }
+
   async sendInterim(invocationId: string, text: string): Promise<SendResult> {
-    const entry = this.inflight.get(invocationId)
-    if (!entry) {
+    const route = this.route(invocationId)
+    if (!route) {
+      if (this.terminalReplies.has(invocationId)) return this.terminalResult(invocationId, "send", text)
       return {
         ok: false,
+        retryable: false,
         message: `No open request with invocation_id ${invocationId} — interim messages need an open request (it may have been answered or closed).`,
       }
     }
-    // Stable per-send client id so a retry after a network failure dedupes
-    // instead of double-posting; commit the counter only once the post lands.
-    const seq = entry.sentCount + 1
+    const intent = this.postIntent(route, text)
+    return this.enqueue(route, () => this.runSend(route, intent))
+  }
+
+  private async runSend(route: TurnRoute, intent: PostIntent): Promise<SendResult> {
+    if (route.terminal) return this.terminalResult(route.invocation.id, "send", intent.text)
+    if (route.revoked) return this.revokedResult(route)
+    if (route.state === "closed") return this.postThroughClosed(route, "send", intent)
     try {
-      if (entry.invocation.sealing) {
-        // Sealed turn: encrypt + upload any THREA_ATTACH files (ciphertext only;
-        // the per-file keys seal into the payload's attachmentRefs), then seal
-        // the interim under the stream key and post it via the claim-bound
-        // sealed-messages callback. A retry after a failed POST reuses the
-        // cached sealed body so the same message id (and the same uploaded
-        // attachments) dedupe server-side.
-        let pending =
-          entry.pendingSealedInterim?.seq === seq && entry.pendingSealedInterim.text === text
-            ? entry.pendingSealedInterim
-            : undefined
-        if (!pending) {
-          const uploaded = await uploadSealedReplyAttachments(this.client, text, process.cwd())
-          // An attachment-only interim keeps an empty body — the refs render as
-          // the message, exactly like a user's attachment-only sealed send.
-          const fallback = uploaded.refs.length > 0 ? "" : "(empty message)"
-          const body = await sealReply(
-            entry.invocation.sealing,
-            uploaded.markdown.trim() || fallback,
-            uploaded.refs.length > 0 ? { attachmentRefs: uploaded.refs } : undefined
-          )
-          pending = { seq, text, body, attachmentIds: uploaded.attachmentIds }
-        }
-        entry.pendingSealedInterim = pending
-        await this.client.sendSealedMessage(invocationId, entry.invocation.sealing.callbackToken, {
-          ...pending.body,
-          ...(pending.attachmentIds.length > 0 && { attachmentIds: pending.attachmentIds }),
-        })
-        entry.pendingSealedInterim = undefined
-      } else {
-        const { markdown } = await uploadReplyAttachments(this.client, text, process.cwd())
-        await this.client.sendMessage(entry.invocation.responseStreamId, {
-          content: markdown,
-          clientMessageId: `remote-send-${invocationId}-${seq}`,
-          metadata: { "remote.invocationId": invocationId, "remote.interim": "true" },
-        })
-      }
+      await this.writeRouteMessage(route, intent, {
+        "remote.invocationId": route.invocation.id,
+        "remote.interim": "true",
+      })
     } catch (error) {
+      if (error instanceof RouteRevokedError) return this.revokedResult(route)
+      if (this.isTerminalPostError(error)) return this.terminalWriteResult(route.invocation.id, "message", error)
       return { ok: false, message: `Failed to post message to Threa: ${this.summarize(error)}`, retryable: true }
     }
-    // The idle timer can fire during the awaits above — unlike reply(), which
-    // clears its deadline up front, this path must keep the turn open and can't.
-    // If it fired, onReplyTimeout already removed this entry and completed the
-    // turn, so the message we just posted landed on a closed turn. Report that
-    // instead of a clean "sent", so the runtime doesn't then try to reply to a
-    // request that's gone.
-    const live = this.inflight.get(invocationId)
-    if (!live) {
-      return {
-        ok: false,
-        message: `Message posted, but request ${invocationId} had already closed for inactivity — it is complete; do not reply to it.`,
-      }
-    }
-    live.sentCount = seq
     // A send is a sign of life: push the idle timeout out so a turn that keeps
     // posting progress is never force-closed.
-    this.touchIdleTimeout(invocationId)
+    this.touchIdleTimeout(route)
     return { ok: true, message: "sent" }
   }
 
-  /** Post the final answer and close the request. */
   async reply(invocationId: string, text: string): Promise<SendResult> {
-    const entry = this.inflight.get(invocationId)
-    if (!entry) {
+    const route = this.route(invocationId)
+    if (!route) {
+      if (this.terminalReplies.has(invocationId)) return this.terminalResult(invocationId, "reply", text)
       return {
         ok: false,
+        retryable: false,
         message: `No open request with invocation_id ${invocationId} (already answered, expired, or unknown).`,
       }
     }
-    // Clear the entry (and its deadline) before awaiting complete(), so the
-    // reply-timeout can't fire mid-await and double-complete the invocation.
-    this.clearInflight(invocationId)
-    // Reuse a prior attempt's uploads (cached on a complete() failure) so a
-    // retry doesn't re-upload every attachment and orphan the first copy.
-    let prepared = entry.prepared
-    try {
-      if (!prepared) {
-        if (entry.invocation.sealing) {
-          // Encrypt + upload THREA_ATTACH files as opaque ciphertext; the refs
-          // (key/iv/real filename) seal into the reply payload below.
-          const { markdown, refs, attachmentIds } = await uploadSealedReplyAttachments(this.client, text, process.cwd())
-          prepared = { markdown: markdown.trim() || "Done.", attachmentIds, attachmentRefs: refs }
-        } else {
-          const { markdown, uploaded } = await uploadReplyAttachments(this.client, text, process.cwd())
-          prepared = { markdown, attachmentIds: uploaded.map((a) => a.id) }
+    const intent = this.postIntent(route, text)
+    return this.enqueue(route, () => this.runReply(route, intent))
+  }
+
+  private async runReply(route: TurnRoute, intent: PostIntent): Promise<SendResult> {
+    if (route.state === "closed" && route.replyText === intent.text) return { ok: true, message: "sent" }
+    if (route.terminal) return this.terminalResult(route.invocation.id, "reply", intent.text)
+    if (route.revoked) return this.revokedResult(route)
+    if (route.state === "closed") return this.postThroughClosed(route, "reply", intent)
+    // Resolve an ambiguous earlier close before posting changed text under a new id.
+    if (route.prepared && (route.prepared.reason === "timeout" || route.prepared.sourceText !== intent.text)) {
+      const resolved = await this.closeWith(route, route.prepared)
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          retryable: resolved.retryable ?? false,
+          message: `The earlier close for request ${route.invocation.id} has not landed yet, so it still owns the close: ${resolved.message}`,
         }
       }
-      await this.completeTurn(entry.invocation, {
-        markdown: prepared.markdown,
-        attachmentIds: prepared.attachmentIds,
-        ...(prepared.attachmentRefs && { attachmentRefs: prepared.attachmentRefs }),
-        metadata: {
-          "remote.invocationId": invocationId,
-          "remote.instanceId": this.config.instanceId,
-          ...(prepared.attachmentIds.length > 0 && { "remote.attachmentIds": prepared.attachmentIds.join(",") }),
-        },
-      })
+      const followUp = await this.postThroughClosed(route, "reply", intent)
+      return resolved.closedTurn ? { ...followUp, closedTurn: true } : followUp
+    }
+    return this.closeWith(route, route.prepared ?? { kind: "reply", text: intent.text })
+  }
+
+  private closeWith(route: TurnRoute, source: PreparedClose | CloseRequest): Promise<SendResult> {
+    route.state = "closing"
+    clearTimeout(route.deadline)
+    route.deadline = undefined
+    const task = this.runCompletion(route, source)
+    route.closing = task
+    return task.finally(() => {
+      if (route.closing === task) route.closing = undefined
+    })
+  }
+
+  private async runCompletion(route: TurnRoute, source: PreparedClose | CloseRequest): Promise<SendResult> {
+    let prepared: PreparedClose
+    if ("wire" in source) {
+      prepared = source
+    } else {
+      try {
+        prepared =
+          source.kind === "reply" ? await this.prepareReply(route, source.text) : await this.prepareTimeout(route)
+      } catch (error) {
+        await this.reopenAfterFailedCompletion(route, undefined)
+        if (route.revoked) return this.revokedResult(route)
+        return {
+          ok: false,
+          message: `Failed to post reply to Threa (will stay open for retry): ${this.summarize(error)}`,
+          retryable: true,
+        }
+      }
+    }
+    route.prepared = prepared
+    try {
+      await this.postPreparedClose(route, prepared)
     } catch (error) {
-      // Re-arm (with a fresh deadline) so the runtime can retry the reply. Safe
-      // from double-complete because the original deadline was already cleared.
-      this.inflight.set(invocationId, {
-        invocation: entry.invocation,
-        deadline: this.scheduleIdleTimeout(invocationId),
-        sentCount: entry.sentCount,
-        prepared,
-      })
-      await this.syncPresence()
+      if (await this.terminalizeRouteWrite(route, error)) {
+        return this.terminalWriteResult(route.invocation.id, "reply", error)
+      }
+      await this.reopenAfterFailedCompletion(route, prepared)
+      if (error instanceof RouteRevokedError || route.revoked) return this.revokedResult(route)
       return {
         ok: false,
         message: `Failed to post reply to Threa (will stay open for retry): ${this.summarize(error)}`,
         retryable: true,
       }
     }
-    if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
-    await this.syncPresence()
-    return { ok: true, message: "sent" }
+    await this.settleClosed(route, prepared.reason === "reply" ? prepared.sourceText : undefined)
+    return { ok: true, message: "sent", closedTurn: true }
   }
 
   /**
    * Record trace steps against an in-flight turn. Fire-and-forget: a failed
    * frame is logged and dropped, not retried — steps are ephemeral progress,
-   * not state. Returns false when the invocation is no longer in flight
-   * (answered, expired, superseded), which a transcript tailer uses as its
-   * stop signal. Frames must arrive already redacted (or full, on a sealed
-   * turn — the tailer decides); this method ships them verbatim, sealing each
-   * one under the stream key when the turn is sealed so plaintext step
-   * content never leaves the machine on an E2E scratchpad.
+   * not state. Returns false when the invocation is no longer taking work
+   * (answered, expired, superseded, or its completion is already on the wire),
+   * which a transcript tailer uses as its stop signal. Frames must arrive
+   * already redacted (or full, on a sealed turn — the tailer decides); this
+   * method ships them verbatim, sealing each one under the stream key when the
+   * turn is sealed so plaintext step content never leaves the machine on an E2E
+   * scratchpad.
    */
   async recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean> {
-    const entry = this.inflight.get(invocationId)
+    const entry = this.openRoute(invocationId)
     if (!entry) return false
     // The server rejects >50 frames per steps call (plaintext and sealed alike),
     // so a large batch (e.g. a transcript replay after late binding) ships in chunks.
@@ -1524,85 +1967,112 @@ export class RemoteSession {
       // The turn can close during an awaited send (reply, /stop, idle timeout)
       // — exactly the long multi-chunk replays this loop exists for. Recheck so
       // the returned boolean stays an honest stop signal for the tailer.
-      if (!this.inflight.has(invocationId)) return false
+      if (!this.openRoute(invocationId)) return false
     }
     return true
   }
 
-  /**
-   * Post a message into a stream outside the turn flow (e.g. a relayed approval
-   * prompt). On a sealed stream the plaintext message API would rightly reject
-   * it, so when an in-flight SEALED turn is executing in that stream the text is
-   * sealed under its stream key and posted via the claim-bound sealed-messages
-   * callback instead — which is exactly the permission-relay case (the prompt
-   * fires mid-turn).
-   */
+  async postToInvocation(
+    invocationId: string,
+    body: { content: string; clientMessageId?: string; metadata?: Record<string, unknown> }
+  ): Promise<void> {
+    const route = this.route(invocationId)
+    if (!route) throw this.routeUnavailableError(invocationId)
+    await this.postRouteOwnedMessage(route, body)
+  }
+
   async postToStream(
     streamId: string,
     body: { content: string; clientMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<void> {
-    const sealedEntry = [...this.inflight.values()].find(
-      (entry) => entry.invocation.responseStreamId === streamId && entry.invocation.sealing
-    )
-    if (sealedEntry?.invocation.sealing) {
-      const sealed = await sealReply(sealedEntry.invocation.sealing, body.content)
-      await this.client.sendSealedMessage(
-        sealedEntry.invocation.id,
-        sealedEntry.invocation.sealing.callbackToken,
-        sealed
-      )
+    const route = this.routeForStream(streamId)
+    if (route) {
+      await this.postRouteOwnedMessage(route, body)
       return
     }
     await this.client.sendMessage(streamId, body)
   }
 
+  private async postRouteOwnedMessage(
+    route: TurnRoute,
+    body: { content: string; clientMessageId?: string; metadata?: Record<string, unknown> }
+  ): Promise<void> {
+    const intent = this.postIntent(route, body.content, body.clientMessageId)
+    await this.enqueue(route, async () => {
+      if (route.terminal) throw this.routeUnavailableError(route.invocation.id)
+      if (route.revoked) throw new RouteRevokedError(this.revokedResult(route).message)
+      await this.writeRouteMessage(route, intent, {
+        "remote.invocationId": route.invocation.id,
+        ...body.metadata,
+      })
+      if (route.state === "closed") this.touchCompleted(route.invocation.id, route)
+    })
+  }
+
+  private routeUnavailableError(invocationId: string): Error {
+    if (this.terminalReplies.has(invocationId)) {
+      return new Error(`Threa refused further messages for request ${invocationId}; its route is terminal.`)
+    }
+    return new Error(`No routable request with invocation_id ${invocationId} exists in this session.`)
+  }
+
+  private routeForStream(streamId: string): TurnRoute | undefined {
+    let closing: TurnRoute | undefined
+    for (const route of this.inflight.values()) {
+      if (route.invocation.responseStreamId !== streamId) continue
+      if (route.state === "open") return route
+      closing ??= route
+    }
+    return closing
+  }
+
+  private openRoute(invocationId: string): TurnRoute | undefined {
+    const route = this.inflight.get(invocationId)
+    return route?.state === "open" && !route.revoked ? route : undefined
+  }
+
   /** Whether this session still holds the invocation open (not yet replied, timed out, or superseded). */
   isInflight(invocationId: string): boolean {
-    return this.inflight.has(invocationId)
+    return this.openRoute(invocationId) !== undefined
   }
 
   /** Reset idle timeouts for every in-flight turn in a stream (a pending approval is a sign of life). */
   keepAlive(streamId: string): void {
-    for (const [id, entry] of this.inflight) {
-      if (entry.invocation.responseStreamId === streamId) this.touchIdleTimeout(id)
+    for (const entry of this.inflight.values()) {
+      if (entry.state === "open" && entry.invocation.responseStreamId === streamId) this.touchIdleTimeout(entry)
     }
   }
 
-  /** Fired when a turn goes idle (no reply/send/keep-alive) for the whole idle window. */
-  private async onReplyTimeout(invocationId: string): Promise<void> {
-    const entry = this.inflight.get(invocationId)
-    if (!entry) return
-    this.clearInflight(invocationId)
-    // If the turn already posted interim messages, the user has heard from it —
-    // close silently rather than posting a misleading "no reply" notice.
-    await this.completeTurn(entry.invocation, {
-      ...(entry.sentCount > 0
-        ? { noResponse: true as const }
-        : { markdown: "_The session ended the turn without sending a reply._" }),
-      metadata: { "remote.invocationId": invocationId, "remote.timedOut": "true" },
-    }).catch((error) => this.log(`timeout completion failed: ${this.summarize(error)}`))
-    if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
-    await this.syncPresence()
+  /** Queue timeout closure behind posts so in-flight output cannot be overtaken. */
+  private async onReplyTimeout(route: TurnRoute, generation: number): Promise<void> {
+    if (route.deadlineGeneration !== generation || route.state !== "open") return
+    await this.enqueue(route, () => this.runIdleTimeout(route, generation))
+  }
+
+  private async runIdleTimeout(route: TurnRoute, generation: number): Promise<void> {
+    if (route.deadlineGeneration !== generation || route.state !== "open" || route.revoked) return
+    const result = await this.closeWith(route, route.prepared ?? { kind: "timeout" })
+    if (!result.ok) this.log(`timeout close failed: ${result.message}`)
   }
 
   private clearInflight(invocationId: string): void {
     this.leaseConfirmedAt.delete(invocationId)
     const entry = this.inflight.get(invocationId)
     if (!entry) return
-    clearTimeout(entry.deadline)
+    this.revokeRoute(entry)
     this.inflight.delete(invocationId)
   }
 
-  private scheduleIdleTimeout(invocationId: string): ReturnType<typeof setTimeout> {
-    return setTimeout(() => void this.onReplyTimeout(invocationId), this.config.idleTimeoutMs)
+  private scheduleIdleTimeout(route: TurnRoute): ReturnType<typeof setTimeout> {
+    const generation = (route.deadlineGeneration += 1)
+    return setTimeout(() => void this.onReplyTimeout(route, generation), this.config.idleTimeoutMs)
   }
 
   /** Reset an in-flight turn's idle timeout after a sign of life. */
-  private touchIdleTimeout(invocationId: string): void {
-    const entry = this.inflight.get(invocationId)
-    if (!entry) return
-    clearTimeout(entry.deadline)
-    entry.deadline = this.scheduleIdleTimeout(invocationId)
+  private touchIdleTimeout(route: TurnRoute): void {
+    if (route.state !== "open" || route.revoked) return
+    clearTimeout(route.deadline)
+    route.deadline = this.scheduleIdleTimeout(route)
   }
 
   /**
@@ -1643,9 +2113,7 @@ export class RemoteSession {
    * worktree survives until the grace expires.
    */
   private async detachForArchive(rootStreamId: string): Promise<void> {
-    const inflight = [...this.inflight]
-    for (const [, entry] of inflight) clearTimeout(entry.deadline)
-    this.inflight.clear()
+    const inflight = this.revokeAllRoutes()
     this.activeTurnStream = undefined
     this.link = undefined
     this.linkGeneration += 1
@@ -1655,19 +2123,12 @@ export class RemoteSession {
     // scheduled with the slow socket-backstop delay (15 min), which would land
     // zero probes inside the grace window if the restore push is then missed.
     this.reschedulePoll(this.archive.probeDelayMs)
-    await Promise.allSettled(
-      inflight.map(([id, entry]) =>
-        this.client.fail(id, {
-          instanceId: this.config.instanceId,
-          claimToken: entry.invocation.claimToken,
-          errorMessage: this.runtime.shutdownErrorMessage,
-        })
-      )
+    await this.waitForClaimDrain()
+    const offline = this.enqueueOfflinePresence(
+      () => !this.stopped && this.archive.pendingRootStreamId === rootStreamId
     )
-    // A restore can reattach and publish 'available' during the awaits above —
-    // don't overwrite it with a stale 'offline'.
-    if (this.stopped || this.archive.pendingRootStreamId !== rootStreamId) return
-    await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
+    await this.failUnansweredRoutes(inflight)
+    await offline
   }
 
   /** The grace expired with the scratchpad still archived: hand the connector its terminal wind-down. */
@@ -1795,12 +2256,30 @@ export class RemoteSession {
     this.reconnectFallbackTask = task
   }
 
-  /** Push presence derived from the current in-flight count, so rapid transitions converge on the truth. */
-  private async syncPresence(): Promise<void> {
-    const busy = this.reconnectHandoff || this.inflight.size > 0
-    await this.transport
-      .updatePresence(this.presenceBody(busy ? "busy" : "available", busy ? this.runtime.busyStatusText : undefined))
-      .catch(() => undefined)
+  private enqueuePresence(write: () => Promise<void>): Promise<void> {
+    const queued = this.presenceTail.then(write)
+    this.presenceTail = queued.catch(() => undefined)
+    return this.presenceTail
+  }
+
+  /** Derive presence when this generation's queued write runs, not when queued. */
+  private syncPresence(): Promise<void> {
+    const lifecycle = this.lifecycle
+    return this.enqueuePresence(async () => {
+      if (lifecycle !== this.lifecycle || this.stopped || this.archive.detached) return
+      const busy = this.reconnectHandoff || this.inflight.size > 0
+      await this.transport.updatePresence(
+        this.presenceBody(busy ? "busy" : "available", busy ? this.runtime.busyStatusText : undefined)
+      )
+    })
+  }
+
+  private enqueueOfflinePresence(isCurrent: () => boolean): Promise<void> {
+    const lifecycle = this.lifecycle
+    return this.enqueuePresence(async () => {
+      if (lifecycle !== this.lifecycle || !isCurrent()) return
+      await this.transport.updatePresence(this.presenceBody("offline"))
+    })
   }
 
   private presenceBody(status: "available" | "busy" | "offline", statusText?: string) {
@@ -1830,6 +2309,10 @@ export class RemoteSession {
       supportedCapabilities: claimCapabilitiesFor(busy, this.sessionControlEnabled),
       claimTtlSeconds: CLAIM_TTL_SECONDS,
     }
+  }
+
+  private replyDigest(text: string): string {
+    return createHash("sha256").update(text).digest("hex")
   }
 
   private summarize(error: unknown): string {

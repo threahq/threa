@@ -7,6 +7,9 @@ import {
   AgentSessionRepository,
   assertReplyKeyGeneration,
   assertSessionRunning,
+  assertSessionRunningOrCompleted,
+  assertSessionRunningOrFailed,
+  assertSessionRunningOrCompletedOrFailed,
   verifyCallbackToken,
   type AgentSession,
   type AgentSessionStep,
@@ -16,8 +19,8 @@ import { BotRepository, type Bot } from "./bot-repository"
 import { serializeTraceStep } from "./trace-steps"
 
 /**
- * The resolved identity of one sealed bot-session callback: the running
- * session, its stream, and the bot the API key belongs to, all cross-checked.
+ * The resolved identity of one sealed bot-session callback: the session, its
+ * stream, and the bot the API key belongs to, all cross-checked.
  */
 export interface SealedCallbackContext {
   session: AgentSession
@@ -39,10 +42,14 @@ export interface SealedCallbackContext {
  */
 export async function authorizeSealedCallback(
   pool: Pool | PoolClient,
-  params: { workspaceId: string; botId: string; invocationId: string; callbackToken: string | undefined }
+  params: { workspaceId: string; botId: string; invocationId: string; callbackToken: string | undefined },
+  opts: { acceptCompletedSession?: boolean; acceptFailedSession?: boolean } = {}
 ): Promise<SealedCallbackContext> {
   const session = await AgentSessionRepository.findById(pool, params.invocationId)
-  assertSessionRunning(session)
+  if (opts.acceptCompletedSession && opts.acceptFailedSession) assertSessionRunningOrCompletedOrFailed(session)
+  else if (opts.acceptCompletedSession) assertSessionRunningOrCompleted(session)
+  else if (opts.acceptFailedSession) assertSessionRunningOrFailed(session)
+  else assertSessionRunning(session)
   verifyCallbackToken(session, params.callbackToken)
   const stream = await StreamRepository.findById(pool, session.streamId)
   if (!stream || stream.workspaceId !== params.workspaceId) {

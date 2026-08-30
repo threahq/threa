@@ -398,6 +398,8 @@ export interface BotInvocation {
   targetInstanceId: string | null
   targetRuntimeSessionId: string | null
   claimedByInstanceId: string | null
+  claimedRuntimeSessionId: string | null
+  claimedRuntimeSessionClaimToken: string | null
   claimToken: string | null
   claimExpiresAt: string | null
   attempts: number
