@@ -193,19 +193,22 @@ export class BikKeystore {
   }
 
   private async load(): Promise<BotIdentityKey | undefined> {
+    return (await this.importPersisted()) ?? this.create()
+  }
+
+  private async importPersisted(): Promise<BotIdentityKey | undefined> {
     const persisted = this.readPersisted()
-    if (persisted) {
-      try {
-        return {
-          publicKeyId: persisted.publicKeyId,
-          publicKeyBase64: persisted.publicKey,
-          privateKey: await importRecipientPrivateKey(base64ToBytes(persisted.privateKey)),
-        }
-      } catch (error) {
-        this.log(`Threa sealed: failed to import BIK from ${this.path}; generating a fresh one: ${String(error)}`)
+    if (!persisted) return undefined
+    try {
+      return {
+        publicKeyId: persisted.publicKeyId,
+        publicKeyBase64: persisted.publicKey,
+        privateKey: await importRecipientPrivateKey(base64ToBytes(persisted.privateKey)),
       }
+    } catch (error) {
+      this.log(`Threa sealed: failed to import BIK from ${this.path}; generating a fresh one: ${String(error)}`)
+      return undefined
     }
-    return this.create()
   }
 
   private readPersisted(): PersistedBik | undefined {
@@ -244,12 +247,23 @@ export class BikKeystore {
       publicKey: publicKeyBase64,
       privateKey: privateKeyBase64,
     }
-    // A persist failure is survivable (in-memory key serves sealed turns this
-    // session); only restart-stability suffers, so log rather than fail.
+    // Exclusive create: two connectors sharing the path (two `threa-bot run`s
+    // on one machine) can both find no file at first start. Only one key may
+    // survive on disk, and the other process must adopt it — a key that lives
+    // only in memory strands every scratchpad wrapped to it after a restart.
+    // Any other persist failure is survivable (the in-memory key serves sealed
+    // turns this session); only restart-stability suffers, so log rather than fail.
     try {
       mkdirSync(dirname(this.path), { recursive: true })
-      writeFileSync(this.path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+      writeFileSync(this.path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: "wx" })
     } catch (error) {
+      if ((error as { code?: string }).code === "EEXIST") {
+        const winner = await this.importPersisted()
+        if (winner) {
+          this.log(`Threa sealed: another process created ${this.path} first; using its key`)
+          return winner
+        }
+      }
       this.log(
         `Threa sealed: failed to persist BIK to ${this.path}; using an in-memory key this session: ${String(error)}`
       )

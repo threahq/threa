@@ -75,6 +75,26 @@ jobs:
             exit 1
           fi
 
+      # npm does not check that a dependency version exists at publish time; a
+      # package published before its sibling would install for nobody.
+      - name: Require sibling packages on npm
+        run: |
+          node -e '
+            const deps = require("./extensions/${{ inputs.package }}/dist/package.json").dependencies ?? {}
+            const { execFileSync } = require("node:child_process")
+            for (const [name, range] of Object.entries(deps)) {
+              if (!name.startsWith("@threahq/")) continue
+              try {
+                const found = execFileSync("npm", ["view", `${name}@${range}`, "version"], { encoding: "utf8" }).trim()
+                if (!found) throw new Error("no version")
+                console.log(`${name}@${range}: ${found}`)
+              } catch {
+                console.error(`${name}@${range} is not on npm yet; publish it first`)
+                process.exit(1)
+              }
+            }
+          '
+
       - name: Publish
         if: ${{ !inputs.dry_run }}
         run: npm publish extensions/${{ inputs.package }}/dist --access public --provenance

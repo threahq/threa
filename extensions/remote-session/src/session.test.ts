@@ -625,6 +625,29 @@ describe("RemoteSession session-archived handling (grace window)", () => {
     await session.shutdown()
   })
 
+  test("a shutdown during onLinked leaves the link uncommitted and presence untouched", async () => {
+    const link = {
+      linkId: "brsl_1",
+      rootStreamId: "stream_root",
+      activeStreamId: "stream_root",
+      runtimeSessionId: "rts-test",
+      streamUrlPath: "/w/ws_1/s/stream_root",
+    }
+    const client = { createSession: async () => link } as unknown as ThreaClient
+    const { transport, presence } = makeFakeTransport()
+    let session!: RemoteSession
+    session = makeSession(client, transport, {
+      onLinked: async () => {
+        await session.shutdown()
+      },
+    })
+
+    await (session as unknown as { ensureLink: () => Promise<void> }).ensureLink()
+
+    expect(session.statusSnapshot.linkState).toBe("unlinked")
+    expect(presence.map((p) => p.status)).toEqual(["offline"])
+  })
+
   test("a supervised cold start can wait instead of replacing an archived scratchpad", async () => {
     const created: unknown[] = []
     const client = {

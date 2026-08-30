@@ -499,6 +499,13 @@ export class RemoteSession {
       return false
     }
     await this.delegate.onLinked?.(link)
+    // The callback can take real time (it may write files); a shutdown or
+    // archive that landed meanwhile must win, same as above.
+    if (this.stopped) return false
+    if (this.archive.generation !== generation) {
+      this.log("link response raced an archive state change — dropped; the next probe decides")
+      return false
+    }
     this.link = link
     this.linkGeneration += 1
     this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)

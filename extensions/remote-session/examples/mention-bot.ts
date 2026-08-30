@@ -48,29 +48,45 @@ async function drain(): Promise<void> {
       })
       if (!invocation) return
       await presence("busy")
-      // Renew while working so a slow answer never loses the claim.
-      const renew = setInterval(() => void transport.renewClaim(invocation.id, invocation.claimToken, 120), 40_000)
+      // Renew while working so a slow answer never loses the claim; if the
+      // server says the claim is gone, the reply has nowhere to land.
+      let claimLost = false
+      const renew = setInterval(async () => {
+        const { notFound } = await transport.renewClaim(invocation.id, invocation.claimToken, 120)
+        if (notFound) {
+          claimLost = true
+          clearInterval(renew)
+          console.error(`[bot] claim ${invocation.id} lost (expired or reassigned); dropping the reply`)
+        }
+      }, 40_000)
       try {
         await transport.recordSteps(invocation.id, invocation.claimToken, [
           { stepType: "thinking", content: "Composing a reply" },
         ])
         const reply = await answer(invocation.promptMarkdown)
+        if (claimLost) continue
         await client.complete(invocation.id, {
           instanceId,
           claimToken: invocation.claimToken,
           finalMessageMarkdown: reply,
         })
       } catch (error) {
-        await client.fail(invocation.id, {
-          instanceId,
-          claimToken: invocation.claimToken,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        })
+        await client
+          .fail(invocation.id, {
+            instanceId,
+            claimToken: invocation.claimToken,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          })
+          .catch((failure) => console.error(`[bot] could not fail ${invocation.id}: ${failure}`))
       } finally {
         clearInterval(renew)
         await presence("available")
       }
     }
+  } catch (error) {
+    // A transient claim failure is logged; the socket nudge or the backstop
+    // poll runs the loop again. Nothing here should end the process.
+    console.error(`[bot] claim loop: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
     draining = false
   }

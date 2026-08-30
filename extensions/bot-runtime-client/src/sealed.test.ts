@@ -107,6 +107,17 @@ describe("BikKeystore", () => {
     expect(persisted.publicKeyId).toBe(a!.publicKeyId)
   })
 
+  test("two stores racing on the same path end up with the one key that reached disk", async () => {
+    const path = join(tempDir(), "bik.json")
+    const [a, b] = await Promise.all([
+      new BikKeystore({ path, log: () => {} }).ensure(),
+      new BikKeystore({ path, log: () => {} }).ensure(),
+    ])
+    const persisted = JSON.parse(readFileSync(path, "utf8")) as { publicKeyId: string }
+    expect(a!.publicKeyId).toBe(persisted.publicKeyId)
+    expect(b!.publicKeyId).toBe(persisted.publicKeyId)
+  })
+
   test("a malformed file is replaced with a fresh key, loudly", async () => {
     const path = join(tempDir(), "bik.json")
     await Bun.write(path, "not json")
