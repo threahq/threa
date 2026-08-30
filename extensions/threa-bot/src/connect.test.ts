@@ -176,6 +176,30 @@ describe("threa-bot connect", () => {
     expect(readStoredConfig(configPath)?.apiKey).toBe("threa_bk_new")
   })
 
+  test("a damaged stored config is ignored when the environment carries credentials", () => {
+    const home = mkdtempSync(join(tmpdir(), "threa-bot-home-"))
+    mkdirSync(join(home, ".threa"), { recursive: true })
+    writeFileSync(join(home, ".threa", "bot.json"), "{ not json")
+    const logs: string[] = []
+    const config = resolveConfig(
+      { kind: "run", command: ["x"], mode: "scratchpad" },
+      {
+        env: { HOME: home, THREA_WORKSPACE_ID: "ws_env", THREA_API_KEY: "threa_bk_env" },
+        cwd: "/p",
+        log: (l) => logs.push(l),
+      }
+    )
+    expect(config.workspaceId).toBe("ws_env")
+    expect(logs).toEqual([])
+    expect(() =>
+      resolveConfig(
+        { kind: "run", command: ["x"], mode: "scratchpad" },
+        { env: { HOME: home }, cwd: "/p", log: (l) => logs.push(l) }
+      )
+    ).toThrow("threa-bot connect")
+    expect(logs[0]).toContain("ignoring")
+  })
+
   test("run without credentials or a stored config points at connect", () => {
     const home = mkdtempSync(join(tmpdir(), "threa-bot-home-"))
     expect(() =>

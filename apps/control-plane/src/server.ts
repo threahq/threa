@@ -321,6 +321,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   const startedAuthLogRetention = authLogRetention
 
   const stop = async () => {
+    botConnectService.stopSweeper()
     if (config.fastShutdown) {
       logger.info("Fast shutdown - skipping graceful shutdown")
       startedServer.close()

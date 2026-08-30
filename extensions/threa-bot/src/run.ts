@@ -43,7 +43,18 @@ export interface RunDeps {
  */
 export function resolveConfig(args: RunArgs, deps: RunDeps): RemoteSessionConfig {
   const storedPath = defaultConfigPath(deps.env)
-  const file = args.config ? parseConfigFile(readFileSync(args.config, "utf8")) : readStoredConfig(storedPath)
+  let file: ReturnType<typeof readStoredConfig> | ReturnType<typeof parseConfigFile> | undefined
+  if (args.config) {
+    file = parseConfigFile(readFileSync(args.config, "utf8"))
+  } else if (!(deps.env.THREA_API_KEY && deps.env.THREA_WORKSPACE_ID)) {
+    // Only consulted when the environment does not carry credentials, and a
+    // damaged file is reported rather than fatal: `connect` rewrites it.
+    try {
+      file = readStoredConfig(storedPath)
+    } catch (error) {
+      deps.log(`ignoring ${storedPath}: ${error instanceof Error ? error.message : error}`)
+    }
+  }
   const prefix = args.name ?? basename(args.command[0] ?? "bot")
   // `--session` widens the identity seed so several sessions share a directory,
   // each with its own scratchpad; the same name resumes the same one. These are

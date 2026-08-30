@@ -84,6 +84,11 @@ export async function approveConnect(input: {
   onProvisioned?: (provisioned: ProvisionedBot) => void
 }): Promise<{ slug: string; provisioned: ProvisionedBot }> {
   let provisioned = input.provisioned?.workspaceId === input.workspace.id ? input.provisioned : undefined
+  if (input.provisioned && !provisioned) {
+    // The user picked another workspace after a failed attempt: the bot minted
+    // in the first one would otherwise stay behind with a live key.
+    await botsApi.archive(input.provisioned.workspaceId, input.provisioned.botId).catch(() => undefined)
+  }
   if (!provisioned) {
     const baseSlug = slugForBot(input.botName) || "bot"
     const create = (slug: string) =>
