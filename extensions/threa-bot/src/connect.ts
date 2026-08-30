@@ -72,6 +72,9 @@ async function postForm<T>(fetchImpl: typeof fetch, url: string, fields: Record<
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: new URLSearchParams(fields).toString(),
   })
+  // The edge rate limiter answers 429 before the grant does; RFC 8628 §3.5
+  // spells the same instruction as `slow_down`.
+  if (response.status === 429) return { error: "slow_down" } as T
   let body: unknown
   try {
     body = await response.json()
