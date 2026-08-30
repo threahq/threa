@@ -32,6 +32,24 @@ describe("CommandRuntime", () => {
     expect(describeOutcome(outcome, ["sh"])).toBeUndefined()
   })
 
+  test("a run issued right after an interrupt waits for the old process to die instead of throwing", async () => {
+    const runtime = new CommandRuntime({ command: ["sh", "-c", 'read -r line; sleep 30; echo "late $line"'] })
+    const first = runtime.run("one")
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    runtime.interrupt()
+    const second = runtime.run("two")
+    await expect(first).resolves.toEqual({ ok: false, reason: "interrupted" })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    runtime.interrupt()
+    await expect(second).resolves.toEqual({ ok: false, reason: "interrupted" })
+    // A run against a live, un-interrupted command is still a caller bug.
+    const third = runtime.run("three")
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await expect(runtime.run("four")).rejects.toThrow("already running")
+    runtime.interrupt()
+    await third
+  })
+
   test("a turn timeout kills the command and says so", async () => {
     const runtime = new CommandRuntime({ command: ["sh", "-c", "sleep 30"], timeoutMs: 100 })
     const outcome = await runtime.run("x")

@@ -89,7 +89,9 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
           THREA_INVOCATION_ID: turn.invocationId,
           THREA_STREAM_ID: turn.streamId,
           THREA_SOURCE_MESSAGE_ID: turn.sourceMessageId,
-        })
+        }).catch((error) =>
+          deps.log(`turn ${turn.invocationId} failed: ${error instanceof Error ? error.message : error}`)
+        )
       },
       sessionControl: {
         commands: ["stop", "steer"],
@@ -115,7 +117,18 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
     if (!result.ok) deps.log(`reply failed: ${result.message}`)
   }
 
-  wireLifecycle(session, process, { logPrefix: "[threa-bot]" })
+  // Kill the agent command before the session closes its turns: the child is
+  // in its own process group, so the signal that stops threa-bot never reaches it.
+  wireLifecycle(
+    {
+      shutdown: async () => {
+        runtime.interrupt()
+        await session.shutdown()
+      },
+    },
+    process,
+    { logPrefix: "[threa-bot]" }
+  )
   await session.start()
 }
 

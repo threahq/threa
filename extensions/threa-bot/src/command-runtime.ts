@@ -24,10 +24,12 @@ export interface CommandRuntimeOptions {
  * collected as the reply, stderr streams out line by line. `interrupt()`
  * kills the running command, which is how `/stop` (and the interrupt half of
  * `/steer`) reach it. One command at a time: the SDK delivers one normal turn
- * at a time, so a second `run` while one is active is a caller bug.
+ * at a time, so a second `run` while one is active is a caller bug — except
+ * right after an interrupt, when the next turn is delivered before the killed
+ * process has finished dying; that `run` waits for the exit instead.
  */
 export class CommandRuntime {
-  private active: { child: ChildProcess; interrupted: boolean } | undefined
+  private active: { child: ChildProcess; interrupted: boolean; closed: Promise<void> } | undefined
   /** One stderr line at a time, as the command emits them; rebound per turn by the caller. */
   onStderrLine: ((line: string) => void) | undefined
 
@@ -37,8 +39,11 @@ export class CommandRuntime {
     return this.active !== undefined
   }
 
-  run(input: string, extraEnv: Record<string, string> = {}): Promise<CommandOutcome> {
-    if (this.active) throw new Error("a command is already running")
+  async run(input: string, extraEnv: Record<string, string> = {}): Promise<CommandOutcome> {
+    if (this.active) {
+      if (!this.active.interrupted) throw new Error("a command is already running")
+      await this.active.closed
+    }
     const [file, ...args] = this.options.command
     if (!file) throw new Error("empty command")
     return new Promise((resolve) => {
@@ -57,7 +62,8 @@ export class CommandRuntime {
         resolve({ ok: false, reason: "spawn", message: error instanceof Error ? error.message : String(error) })
         return
       }
-      const state = { child, interrupted: false }
+      let markClosed = () => {}
+      const state = { child, interrupted: false, closed: new Promise<void>((done) => (markClosed = done)) }
       this.active = state
       let stdout = ""
       let truncated = false
@@ -95,12 +101,14 @@ export class CommandRuntime {
       child.on("error", (error) => {
         if (timer) clearTimeout(timer)
         this.active = undefined
+        markClosed()
         resolve({ ok: false, reason: "spawn", message: error.message })
       })
       child.on("close", (code, signal) => {
         if (timer) clearTimeout(timer)
         if (stderrLine.trim()) this.onStderrLine?.(stderrLine)
         this.active = undefined
+        markClosed()
         if (state.interrupted) resolve({ ok: false, reason: "interrupted" })
         else if (timedOut) resolve({ ok: false, reason: "timeout", stderr })
         else if (code === 0) resolve({ ok: true, stdout, truncated })
