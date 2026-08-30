@@ -356,8 +356,11 @@ export function EditorToolbar({
             onClose={() => {
               onLinkPopoverOpenChange?.(false)
               // The link editor restores the range as a real selection on its
-              // way out, which the plugin reads as the user's; hold it again.
-              if (linkEditorSnapshot?.held) editor.commands.holdSelection()
+              // way out, which the plugin reads as the user's; hold the range
+              // it opened on again (setLink widens the selection to the whole
+              // link, which is not what the user picked).
+              if (linkEditorSnapshot?.held)
+                editor.chain().setTextSelection(linkEditorSnapshot.selectionRange).holdSelection().run()
             }}
             className="rounded-md border bg-popover p-2 shadow-md mb-1"
           />

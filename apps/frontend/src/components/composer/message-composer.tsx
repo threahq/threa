@@ -496,7 +496,9 @@ export function MessageComposer({
     [mobileToolbarEditor]
   )
   useEffect(() => {
-    if (!formatOpen) mobileToolbarEditor?.commands.releaseHeld()
+    if (formatOpen) return
+    mobileToolbarEditor?.commands.releaseHeld()
+    setMobileLinkPopoverOpen(false)
   }, [formatOpen, mobileToolbarEditor])
 
   // Height of everything above the editor card (attachment tray, link previews)
