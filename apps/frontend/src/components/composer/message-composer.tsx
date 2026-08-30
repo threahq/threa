@@ -476,26 +476,6 @@ export function MessageComposer({
   // app — `Aa` opens it — so a phone's writing surface doesn't hand two rows of
   // chrome to a keyboard that is about to take half the screen.
   const [formatOpen, setFormatOpen] = useState(expanded && !isMobile)
-  // Aa on a phone holds the selection (HeldSelectionExtension): the native
-  // selection collapses, which dismisses the OS text toolbar, while the range
-  // stays the marks' target. Aa again with a fresh selection re-holds instead
-  // of closing; otherwise it releases and folds the row.
-  const handleMobileFormatOpenChange = useCallback(
-    (open: boolean) => {
-      const editor = mobileToolbarEditor
-      if (open) {
-        editor?.chain().focus().holdSelection().run()
-        setFormatOpen(true)
-        return
-      }
-      if (editor && !editor.state.selection.empty && editor.chain().focus().holdSelection().run()) return
-      setFormatOpen(false)
-    },
-    [mobileToolbarEditor]
-  )
-  useEffect(() => {
-    if (!formatOpen) mobileToolbarEditor?.commands.releaseHeld()
-  }, [formatOpen, mobileToolbarEditor])
 
   // Height of everything above the editor card (attachment tray, link previews)
   // — the same "extras" the drag floor reserves, measured live because a
@@ -1744,7 +1724,7 @@ export function MessageComposer({
                         editorHandle={richEditorRef.current}
                         disabled={controlsDisabled}
                         formatOpen={formatOpen}
-                        onFormatOpenChange={handleMobileFormatOpenChange}
+                        onFormatOpenChange={setFormatOpen}
                         mobileExpanded={mobileExpanded}
                         onMobileExpandedChange={handleMobileExpandedChange}
                         formatFoot={{
