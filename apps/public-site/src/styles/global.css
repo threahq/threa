@@ -2335,13 +2335,14 @@ body::after {
   }
 
   /* The chat demo's composer folds the way the real phone foot does
-     (`EditorActionBar` folded mode): + and mic on the left, a larger Aa and
-     send on the right, every other action behind +. The hint has no room. */
+     (`EditorActionBar` folded mode): + · mic · a larger Aa · send clustered
+     on the thumb's side, every other action behind +. The hint has no room. */
   .composer-hint {
     display: none;
   }
   .composer-actions {
     flex: 1;
+    justify-content: flex-end;
   }
   .composer-actions .cb-more {
     display: inline-flex;
@@ -2349,7 +2350,6 @@ body::after {
   }
   .composer-actions .cb[aria-label="Dictate a message"] {
     order: -1;
-    margin-right: auto;
   }
   .composer-actions .cb-aa {
     width: 36px;
