@@ -413,6 +413,8 @@ test("reconstructs the current Claude channel launch with stable runtime identit
     "claude",
     "--name",
     "threa.repair",
+    "--autocompact",
+    "200k",
     "--mcp-config",
     "/tmp/repair.json",
     "--dangerously-load-development-channels",

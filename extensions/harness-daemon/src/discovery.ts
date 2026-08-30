@@ -31,6 +31,7 @@ export interface ClaudeLaunch {
   resumeSessionId?: string
   channel: string
   mcpConfig?: string
+  autocompact?: string
   skipPermissions: boolean
   environment: Array<{ name: string; value: string }>
 }
@@ -252,6 +253,7 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
   let resumeSessionId: string | undefined
   let channel: string | undefined
   let mcpConfig: string | undefined
+  let autocompact: string | undefined
   let skipPermissions = false
   while (index < words.length) {
     const option = words[index++]!
@@ -275,9 +277,15 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
       const value = words[index++]
       if (mcpConfig || !value || value.startsWith("-") || /^[{[]/.test(value.trim())) return undefined
       mcpConfig = value
+    } else if (option === "--autocompact") {
+      const value = words[index++]
+      if (autocompact || !value?.match(/^(auto|\d+[km]?)$/i)) return undefined
+      autocompact = value
     } else return undefined
   }
-  return channel ? { executable, name, resumeSessionId, channel, mcpConfig, skipPermissions, environment } : undefined
+  return channel
+    ? { executable, name, resumeSessionId, channel, mcpConfig, autocompact, skipPermissions, environment }
+    : undefined
 }
 
 export function findLocalPiPane(
