@@ -53,6 +53,7 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
+import { SwipeReveal } from "./swipe-reveal"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
@@ -723,9 +724,17 @@ export function MessageItem({
   // supply the provider; the label page doesn't → gesture off). The reveal icon
   // sits behind the row and the row slides left over it, so it needs an opaque
   // `surfaceClassName` fill during the swipe.
-  const swipe = useSwipeAction({ onSwipe: triggerQuote, enabled: touchCapable && !!quoteReplyCtx && !isEditing })
+  const swipe = useSwipeAction({
+    onSwipe: triggerQuote,
+    onSwipeDown: canOpenAside ? handleOpenAside : undefined,
+    enabled: touchCapable && !!quoteReplyCtx && !isEditing,
+  })
   const hasSwipe = swipe.offset !== 0
   const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
+  const swipePulled = hasSwipe && swipe.offsetY > 0
+  // The L's downward leg moves the whole row (clip box included) so the pulled
+  // message rides over the next one rather than out of its own clip.
+  const swipePullStyle = swipePulled ? { transform: `translateY(${swipe.offsetY}px)` } : undefined
 
   // Long-press (→ action drawer) and swipe (→ quote) share the touch surface, so
   // their handlers are fanned out to both. `onContextMenu` comes from long-press.
@@ -778,9 +787,7 @@ export function MessageItem({
   )
 
   const swipeReveal = hasSwipe ? (
-    <div className="absolute inset-y-0 right-0 flex items-center pr-4">
-      <Quote className={cn("h-5 w-5 transition-colors", swipe.isLocked ? "text-primary" : "text-muted-foreground")} />
-    </div>
+    <SwipeReveal locked={swipe.isLocked} arm={swipe.arm} canPullDown={canOpenAside} />
   ) : null
 
   if (continuation) {
@@ -802,8 +809,10 @@ export function MessageItem({
           // native selection on mobile — matches the timeline row (message-event).
           // Desktop keeps it selectable for the quote-on-selection affordance.
           isTouchInput && !isEditing && "select-none",
+          swipePulled && "z-10",
           rowInsetClassName
         )}
+        style={swipePullStyle}
         {...touchHandlers}
       >
         {swipeReveal}
@@ -869,8 +878,10 @@ export function MessageItem({
         // native selection on mobile — matches the timeline row (message-event).
         // Desktop keeps it selectable for the quote-on-selection affordance.
         isTouchInput && !isEditing && "select-none",
+        swipePulled && "z-10",
         rowInsetClassName
       )}
+      style={swipePullStyle}
       {...touchHandlers}
     >
       {swipeReveal}
