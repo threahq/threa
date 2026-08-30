@@ -84,7 +84,9 @@ return value (`renewClaim`) or checks `socketConnected`.
 An owner can invite a bot into an end-to-end-encrypted scratchpad. The server
 then delivers the claim with a `sealedContext` instead of plaintext, and every
 reply and trace step must be ciphertext under the stream key. `BikKeystore`
-persists the bot identity key, `openSealedTurnContext` decrypts a claim,
+persists the bot identity key (if the file cannot be read or written, the
+session runs on an in-memory key and logs it; scratchpads sealed to that key
+are unreadable after a restart), `openSealedTurnContext` decrypts a claim,
 `sealReply` and `sealStep` encrypt what goes back, and `recordSealedSteps`
 sends sealed frames over the same socket. The wire format is the one the
 "Connect an encrypted agent" recipe describes; the SDK handles all of it for

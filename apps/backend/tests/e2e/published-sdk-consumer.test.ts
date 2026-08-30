@@ -89,11 +89,10 @@ async function waitFor<T>(what: string, probe: () => Promise<T | undefined>, tim
 }
 
 beforeAll(() => {
-  // Pack from the in-repo sources exactly as a release would.
+  // Pack from the in-repo sources exactly as a release would, in dependency
+  // order: each declaration build resolves its siblings through their dist/.
   for (const name of packages) {
-    const dir = join(repoRoot, "extensions", name)
-    run("bun", ["install"], dir)
-    run("bun", ["run", "pack"], dir)
+    run("bun", ["run", "pack"], join(repoRoot, "extensions", name))
   }
   consumerDir = mkdtempSync(join(tmpdir(), "threa-sdk-consumer-"))
   const dependencies: Record<string, string> = {}

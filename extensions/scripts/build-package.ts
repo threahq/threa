@@ -9,6 +9,11 @@
 // LICENSE) and `npm pack`/`npm publish` run against dist/ — the tarball is the
 // product, and nothing in-repo has to change shape to produce it.
 //
+// Sibling packages resolve through `paths` in tsconfig.build.json to the
+// sibling's built dist/, so a build needs no per-package `bun install` (Bun 1.4
+// refuses the transitive relative `file:` chain) — only the root node_modules
+// and the siblings built first, in dependency order.
+//
 // Usage (from the package directory): bun ../scripts/build-package.ts
 
 import { spawnSync } from "node:child_process"

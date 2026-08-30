@@ -146,9 +146,10 @@ export interface RemoteSessionDelegate {
   interceptClaimed?(invocation: ClaimedInvocation): Promise<boolean>
   /**
    * The scratchpad link was created or resumed (also after an unarchive
-   * reattach). Runs before presence is synced, so a connector can record what
-   * this process now owns; a throw here fails the link attempt and retries on
-   * the next poll tick.
+   * reattach). Runs before the link is committed locally and before presence
+   * is synced, so a connector can record what this process now owns. A throw
+   * leaves the session unlinked for this tick (the next poll links again); it
+   * does not stop the session from connecting or claiming meanwhile.
    */
   onLinked?(link: RuntimeSessionLink): Promise<void> | void
   /** Present iff the connector can drive the runtime. Gates advertising session control (fail-safe). */
