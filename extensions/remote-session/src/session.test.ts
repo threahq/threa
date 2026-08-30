@@ -80,7 +80,7 @@ function makeFakeTransport() {
     ) => {
       steps.push({ invocationId, frames })
     },
-    renewClaim: async () => ({ notFound: false }),
+    renewClaim: async () => ({ notFound: false, renewed: true }),
     updatePresence: async (body: Record<string, unknown>) => {
       presence.push(body)
     },

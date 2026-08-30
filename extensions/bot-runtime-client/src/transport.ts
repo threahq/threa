@@ -325,13 +325,16 @@ export class BotRuntimeTransport {
    * mandatory: a missing ack, a dead socket, or any non-`NOT_FOUND` server error
    * all retry over HTTP. Returns `{ notFound: true }` when the claim is gone
    * (the caller should drop it); the caller never lets it silently lapse.
+   * `renewed` is true only when the server confirmed the extension — a caller
+   * with side effects can stop work once a lease has gone unconfirmed for a
+   * full TTL rather than run on after another runtime may have claimed it.
    */
   async renewClaim(
     invocationId: string,
     claimToken: string,
     claimTtlSeconds: number,
     instanceId: string = this.hello.instanceId
-  ): Promise<{ notFound: boolean }> {
+  ): Promise<{ notFound: boolean; renewed: boolean }> {
     const { ack } = await this.emitWrite("bot:invocation:renew", {
       invocationId,
       instanceId,
@@ -339,8 +342,8 @@ export class BotRuntimeTransport {
       claimTtlSeconds,
     })
     if (ack) {
-      if (ack.ok) return { notFound: false }
-      if (ack.code === "NOT_FOUND") return { notFound: true }
+      if (ack.ok) return { notFound: false, renewed: true }
+      if (ack.code === "NOT_FOUND") return { notFound: true, renewed: false }
       this.logFn(`renew rejected (${ack.code ?? "?"}); retrying over HTTP`)
     }
     // Renew is an idempotent CAS (re-setting claim_expires_at is harmless), so —
@@ -481,18 +484,18 @@ export class BotRuntimeTransport {
     claimToken: string,
     claimTtlSeconds: number,
     instanceId: string
-  ): Promise<{ notFound: boolean }> {
+  ): Promise<{ notFound: boolean; renewed: boolean }> {
     try {
       const res = await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/renew`), {
         method: "POST",
         body: JSON.stringify({ instanceId, claimToken, claimTtlSeconds }),
       })
-      if (res.status === 404) return { notFound: true }
+      if (res.status === 404) return { notFound: true, renewed: false }
       if (!res.ok) this.logFn(`renew HTTP fallback ${res.status}`)
-      return { notFound: false }
+      return { notFound: false, renewed: res.ok }
     } catch (error) {
       this.logFn(`renew HTTP fallback failed: ${summarize(error)}`)
-      return { notFound: false }
+      return { notFound: false, renewed: false }
     }
   }
 

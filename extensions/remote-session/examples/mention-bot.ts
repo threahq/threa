@@ -97,14 +97,13 @@ async function answer(prompt: string): Promise<string> {
   return `You said: ${prompt}`
 }
 
-await presence("available")
-await transport.connect()
 const backstop = setInterval(() => void drain(), 30_000)
 const heartbeat = setInterval(() => void presence(draining ? "busy" : "available"), 20_000)
-await drain()
-
+let stopping = false
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, async () => {
+    if (stopping) return
+    stopping = true
     clearInterval(backstop)
     clearInterval(heartbeat)
     transport.disconnect()
@@ -112,3 +111,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.exit(0)
   })
 }
+
+await presence("available")
+await transport.connect()
+await drain()

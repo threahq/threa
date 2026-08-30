@@ -47,9 +47,10 @@ self-contained copy instead:
 bun run extensions/claude-code-remote/install-local.ts [destDir]   # default: ~/.threa/claude-code-remote
 ```
 
-`@threahq/bot-runtime-client` is a private sibling package referenced via `file:../bot-runtime-client`,
-which only resolves inside the monorepo. The script vendors its source into the copy, repoints the
-imports, drops the dependency, and runs `bun install` for the rest. It prints the exact
+The channel depends on sibling packages via `file:../…` links that only resolve inside the
+monorepo; `@threa/harness-client` is private (never on npm), so a standalone copy cannot install
+it. The script vendors the siblings' source into the copy, repoints the imports, drops the
+dependencies, and runs `bun install` for the rest. It prints the exact
 `claude mcp add …` command (with the installed absolute path) to use in step 4.
 
 ### 3. Configure credentials

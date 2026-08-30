@@ -122,7 +122,7 @@ describe("HTTP fallback (no socket connected)", () => {
 
     const result = await transport.renewClaim("binv_gone", "tok_1", 120)
 
-    expect(result).toEqual({ notFound: true })
+    expect(result).toEqual({ notFound: true, renewed: false })
     expect(calls[0]!.url).toBe("https://app.example.test/api/v1/workspaces/ws_1/bot-invocations/binv_gone/renew")
     expect(calls[0]!.body).toEqual({ instanceId: "inst_42", claimToken: "tok_1", claimTtlSeconds: 120 })
   })
@@ -130,7 +130,7 @@ describe("HTTP fallback (no socket connected)", () => {
   it("renews over HTTP and reports found on a 200", async () => {
     stubFetch(() => new Response(JSON.stringify({ data: {} }), { status: 200 }))
     const transport = makeTransport()
-    expect(await transport.renewClaim("binv_1", "tok_1", 120)).toEqual({ notFound: false })
+    expect(await transport.renewClaim("binv_1", "tok_1", 120)).toEqual({ notFound: false, renewed: true })
   })
 
   it("posts the presence body verbatim", async () => {
@@ -186,7 +186,7 @@ describe("WS frame sent but ack timed out (idempotency)", () => {
 
     const result = await transport.renewClaim("binv_1", "tok_1", 120)
 
-    expect(result).toEqual({ notFound: false })
+    expect(result).toEqual({ notFound: false, renewed: true })
     expect(calls.some((c) => c.url.includes("/bot-invocations/binv_1/renew"))).toBe(true)
   })
 
@@ -527,7 +527,7 @@ describe("the routed writes never reject (best-effort contract)", () => {
     await expect(
       transport.recordSteps("binv_1", "tok_1", [{ stepType: "thinking", content: "a" }])
     ).resolves.toBeUndefined()
-    await expect(transport.renewClaim("binv_1", "tok_1", 120)).resolves.toEqual({ notFound: false })
+    await expect(transport.renewClaim("binv_1", "tok_1", 120)).resolves.toEqual({ notFound: false, renewed: false })
     await expect(
       transport.updatePresence({
         runtimeKind: "pi-local",
