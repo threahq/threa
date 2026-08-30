@@ -308,6 +308,98 @@ describe("Pi remote trace safety", () => {
     )
   })
 
+  test("leaves the source message out of the stream context so its text ships once", () => {
+    const messages = [
+      {
+        id: "msg_1",
+        authorType: "user",
+        authorDisplayName: "Kris",
+        sequence: "1",
+        content: "earlier note",
+        createdAt: "2026-08-30T10:00:00.000Z",
+      },
+      {
+        id: "msg_2",
+        authorType: "bot",
+        authorDisplayName: "Pi",
+        sequence: "2",
+        content: "earlier answer",
+        createdAt: "2026-08-30T10:01:00.000Z",
+      },
+      {
+        id: "msg_3",
+        authorType: "user",
+        authorDisplayName: "Kris",
+        sequence: "3",
+        content: "run the migration",
+        createdAt: "2026-08-30T10:02:00.000Z",
+      },
+    ]
+
+    const context = __testing.formatInvocationContext(messages as never, "msg_3", new Map())
+
+    expect(context).toBe(
+      ["Recent Threa stream context (oldest first):", "- Kris: earlier note", "- Pi: earlier answer"].join("\n")
+    )
+    expect(context).not.toContain("run the migration")
+  })
+
+  test("keeps history ordering and non-source attachments while the source keeps its own block", () => {
+    const messages = [
+      {
+        id: "msg_3",
+        authorType: "user",
+        authorDisplayName: "Kris",
+        sequence: "3",
+        content: "look at this",
+        createdAt: "2026-08-30T10:02:00.000Z",
+        attachments: [
+          { id: "att_src", filename: "shot.png", mimeType: "image/png", sizeBytes: 12 },
+          { id: "att_missing", filename: "big.zip", mimeType: "application/zip", sizeBytes: 99 },
+        ],
+      },
+      {
+        id: "msg_1",
+        authorType: "user",
+        sequence: "1",
+        content: "context first",
+        createdAt: "2026-08-30T10:00:00.000Z",
+        attachments: [{ id: "att_old", filename: "notes.txt", mimeType: "text/plain", sizeBytes: 7 }],
+      },
+    ]
+
+    const context = __testing.formatInvocationContext(
+      messages as never,
+      "msg_3",
+      new Map([
+        ["att_old", "/cwd/.threa-attachments/binv_1/att_old-notes.txt"],
+        ["att_src", "/cwd/.threa-attachments/binv_1/att_src-shot.png"],
+      ])
+    )
+
+    expect(context).toBe(
+      [
+        "Recent Threa stream context (oldest first):",
+        "- user: context first",
+        "  Attachments: [att_old] notes.txt (text/plain, 7 bytes, downloaded to /cwd/.threa-attachments/binv_1/att_old-notes.txt)",
+        "",
+        "Attachments on the source message:",
+        "- [att_src] shot.png (image/png, 12 bytes, downloaded to /cwd/.threa-attachments/binv_1/att_src-shot.png)",
+        "- [att_missing] big.zip (application/zip, 99 bytes)",
+      ].join("\n")
+    )
+    expect(context).not.toContain("look at this")
+  })
+
+  test("emits no context when the stream is empty or holds only the source message", () => {
+    const source = [
+      { id: "msg_1", authorType: "user", sequence: "1", content: "just me", createdAt: "2026-08-30T10:00:00.000Z" },
+    ]
+
+    expect(__testing.formatInvocationContext([], "msg_1", new Map())).toBe("")
+    expect(__testing.formatInvocationContext(source as never, "msg_1", new Map())).toBe("")
+  })
+
   test("does not treat mention invocations as session-control commands", () => {
     const invocation = {
       id: "binv_1",

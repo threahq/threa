@@ -2275,6 +2275,18 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
   ctx.ui.notify("Threa remote enabled for this Pi session", "info")
 }
 
+function describeContextAttachment(attachment: AttachmentSummary, downloadedAttachments: Map<string, string>): string {
+  const localPath = downloadedAttachments.get(attachment.id)
+  const localNote = localPath ? `, downloaded to ${localPath}` : ""
+  return `[${attachment.id}] ${attachment.filename} (${attachment.mimeType}, ${attachment.sizeBytes} bytes${localNote})`
+}
+
+/**
+ * The source message is left out of the history: {@link buildInvocationPrompt}
+ * already appends its markdown under "Source message prompt", so a copy here
+ * would hand the model the same request twice. Its attachments still need
+ * announcing, hence their own block.
+ */
 function formatInvocationContext(
   messages: StreamMessage[],
   sourceMessageId: string,
@@ -2282,21 +2294,24 @@ function formatInvocationContext(
 ): string {
   if (messages.length === 0) return ""
   const orderedMessages = [...messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  return [
-    "Recent Threa stream context (oldest first):",
-    ...orderedMessages.map((message) => {
+  const historyLines = orderedMessages
+    .filter((message) => message.id !== sourceMessageId)
+    .map((message) => {
       const author = message.authorDisplayName || message.authorType
-      const marker = message.id === sourceMessageId ? " [source]" : ""
       const attachments = (message.attachments ?? [])
-        .map((attachment) => {
-          const localPath = downloadedAttachments.get(attachment.id)
-          const localNote = localPath ? `, downloaded to ${localPath}` : ""
-          return `[${attachment.id}] ${attachment.filename} (${attachment.mimeType}, ${attachment.sizeBytes} bytes${localNote})`
-        })
+        .map((attachment) => describeContextAttachment(attachment, downloadedAttachments))
         .join("; ")
-      return `- ${author}${marker}: ${message.content}${attachments ? `\n  Attachments: ${attachments}` : ""}`
-    }),
-  ].join("\n")
+      return `- ${author}: ${message.content}${attachments ? `\n  Attachments: ${attachments}` : ""}`
+    })
+  const sourceAttachmentLines = (
+    orderedMessages.find((message) => message.id === sourceMessageId)?.attachments ?? []
+  ).map((attachment) => `- ${describeContextAttachment(attachment, downloadedAttachments)}`)
+  return [
+    historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : "",
+    sourceAttachmentLines.length > 0 ? ["Attachments on the source message:", ...sourceAttachmentLines].join("\n") : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
 }
 
 function formatSteerPrompt(promptMarkdown: string, attachmentContext = ""): string {
@@ -4404,6 +4419,7 @@ export const __testing = {
   getRuntimeCommand,
   parseSessionControlCommand,
   formatSteerPrompt,
+  formatInvocationContext,
   resolveSessionControlCommand,
   normalizeThinkingLevel,
   migrateSessionState,
