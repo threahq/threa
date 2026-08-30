@@ -41,6 +41,9 @@ function handleKeyboardClick(action: () => void) {
  * behind the + menu.
  */
 export interface EditorFormatFoot {
+  /** The owning composer's id, stamped on portaled chrome (`data-composer-chrome`)
+   *  so its blur handling can tell this composer's menu from another's. */
+  chromeId: string
   editor: Editor | null
   linkPopoverOpen: boolean
   onLinkPopoverOpenChange: (open: boolean) => void
@@ -111,13 +114,18 @@ export function EditorActionBar({
       <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
         {!formatOpen && (
           <FootMenu
+            chromeId={formatFoot.chromeId}
             disabled={disabled}
             mobileExpanded={mobileExpanded}
             onMobileExpandedChange={showExpand ? onMobileExpandedChange : undefined}
             {...footMenu}
           />
         )}
-        {formatOpen ? <div hidden>{trailingContent}</div> : trailingContent}
+        {/* One wrapper either way: swapping elements would remount the mic
+            mid-take and the hidden pickers with their open bridges. */}
+        <div hidden={formatOpen} className={formatOpen ? undefined : "contents"}>
+          {trailingContent}
+        </div>
         <div className="min-w-0 flex-1">
           {formatOpen && (
             <div className="animate-in fade-in-0 slide-in-from-right-8 duration-200">
@@ -327,6 +335,7 @@ function FormatToggle({
 }
 
 interface FootMenuProps extends EditorFootMenu {
+  chromeId: string
   disabled: boolean
   mobileExpanded: boolean
   onMobileExpandedChange?: (expanded: boolean) => void
@@ -341,6 +350,7 @@ interface FootMenuProps extends EditorFootMenu {
  * hands over to a surface of its own.
  */
 function FootMenu({
+  chromeId,
   disabled,
   mobileExpanded,
   onMobileExpandedChange,
@@ -389,7 +399,7 @@ function FootMenu({
         collisionPadding={8}
         className="flex w-48 flex-col p-1"
         data-testid="composer-foot-menu"
-        data-composer-chrome
+        data-composer-chrome={chromeId}
         {...keepEditorFocusProps(true)}
       >
         {onAttach && row("Attach files", <Paperclip className="h-4 w-4" />, onAttach)}

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { spyOnExport } from "@/test/spy"
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, act, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { forwardRef, useEffect, useImperativeHandle, useState, type ForwardedRef } from "react"
 import { MessageComposer } from "./message-composer"
@@ -17,6 +17,7 @@ import * as pendingAttachmentsModule from "@/components/timeline/pending-attachm
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let isMobileMockValue = false
+let actionBarSpy: ReturnType<typeof spyOnExport<typeof editorModule, "EditorActionBar">>
 const mockRichEditorFocus = vi.fn()
 const mockInsertFiles = vi.fn(() => true)
 const mockInsertTranscribedText = vi.fn()
@@ -209,7 +210,7 @@ describe("MessageComposer", () => {
     spyOnExport(editorModule, "EditorToolbar").mockReturnValue(
       MockEditorToolbar as unknown as typeof editorModule.EditorToolbar
     )
-    spyOnExport(editorModule, "EditorActionBar").mockReturnValue(
+    actionBarSpy = spyOnExport(editorModule, "EditorActionBar").mockReturnValue(
       MockEditorActionBar as unknown as typeof editorModule.EditorActionBar
     )
   })
@@ -806,6 +807,41 @@ describe("MessageComposer", () => {
       })
 
       expect(screen.queryByTestId("mobile-editor-toolbar")).not.toBeInTheDocument()
+    })
+
+    it("collapses when focus lands in another composer's + menu, and stays for its own", () => {
+      isMobileMockValue = true
+      vi.useFakeTimers()
+      // The real foot: its + menu is portaled to <body>, so only the chrome
+      // marker can tell whose menu focus landed in.
+      actionBarSpy.mockRestore()
+
+      render(
+        <>
+          <div data-testid="composer-a">
+            <MessageComposer {...defaultProps} scopeId="stream_a" />
+          </div>
+          <div data-testid="composer-b">
+            <MessageComposer {...defaultProps} scopeId="stream_b" />
+          </div>
+        </>
+      )
+      const rootA = screen.getByTestId("composer-a")
+      const rootB = screen.getByTestId("composer-b")
+      for (const root of [rootA, rootB]) fireEvent.click(within(root).getByTestId("rich-editor-wrapper"))
+      expect(within(rootA).getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+      expect(within(rootB).getByRole("button", { name: "Formatting" })).toBeInTheDocument()
+
+      fireEvent.click(within(rootB).getByRole("button", { name: "More" }))
+      const rowInB = within(screen.getByTestId("composer-foot-menu")).getByRole("button", { name: "Expand editor" })
+
+      fireEvent.blur(within(rootA).getByTestId("rich-editor"), { relatedTarget: rowInB })
+      act(() => vi.advanceTimersByTime(200))
+      expect(within(rootA).queryByRole("button", { name: "Formatting" })).not.toBeInTheDocument()
+
+      fireEvent.blur(within(rootB).getByTestId("rich-editor"), { relatedTarget: rowInB })
+      act(() => vi.advanceTimersByTime(200))
+      expect(within(rootB).getByRole("button", { name: "Formatting" })).toBeInTheDocument()
     })
 
     it("updates mobile toolbar editor when editor instance becomes available asynchronously", () => {

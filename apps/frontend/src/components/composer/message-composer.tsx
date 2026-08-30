@@ -645,6 +645,9 @@ export function MessageComposer({
   const disableSelectionToolbar = useInputMode() === "touch"
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
+  // Marks portaled chrome (the + menu) as this composer's own, so a blur into it
+  // doesn't collapse the mobile chrome while another composer's menu does.
+  const chromeId = useId()
 
   // Mobile chrome (action bar + full editor) stays open while focused OR while
   // a dictation take is in flight (see mobileChromeOpen below). Mirrored in a
@@ -861,11 +864,13 @@ export function MessageComposer({
       const root = e.currentTarget
       // Focus hopping to another control *inside* the composer (a toolbar button,
       // the link popover) must keep the mobile chrome open — never collapse.
-      // The phone's Aa popover is portaled to <body>, so its link editor's URL
-      // input is outside the root in the DOM while being the composer's own
-      // chrome; `data-composer-chrome` marks it as inside.
+      // The + menu is portaled to <body>, so it is outside the root in the DOM
+      // while being this composer's own chrome; `data-composer-chrome` carrying
+      // this composer's id marks it as inside (another composer's menu is not).
       const within = (node: Node | null) =>
-        !!node && (root.contains(node) || !!node.parentElement?.closest("[data-composer-chrome]"))
+        !!node &&
+        (root.contains(node) ||
+          node.parentElement?.closest("[data-composer-chrome]")?.getAttribute("data-composer-chrome") === chromeId)
       const related = e.relatedTarget as Node | null
       if (within(related)) return
 
@@ -887,7 +892,7 @@ export function MessageComposer({
       // lets a refocus into the composer cancel it via the activeElement guard.
       blurTimeoutRef.current = setTimeout(collapse, 0)
     },
-    [cancelPendingChromeOpen]
+    [cancelPendingChromeOpen, chromeId]
   )
 
   // Cleanup timeouts/listeners on unmount
@@ -1743,6 +1748,7 @@ export function MessageComposer({
                         mobileExpanded={mobileExpanded}
                         onMobileExpandedChange={handleMobileExpandedChange}
                         formatFoot={{
+                          chromeId,
                           editor: mobileToolbarEditor,
                           linkPopoverOpen: mobileLinkPopoverOpen,
                           onLinkPopoverOpenChange: setMobileLinkPopoverOpen,

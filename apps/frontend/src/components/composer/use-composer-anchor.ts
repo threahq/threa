@@ -66,7 +66,10 @@ export function useComposerAnchor(open: boolean) {
       const card = cardRef.current?.getBoundingClientRect()
       const trigger = triggerRef.current?.getBoundingClientRect()
       if (!card) return trigger ?? new DOMRect()
-      const top = expandedRef.current ? (trigger?.top ?? card.top) : card.top
+      // A trigger folded away (`hidden`, the phone's + menu rows) has no box;
+      // the card's foot edge stands in for it.
+      const triggerTop = trigger && trigger.height > 0 ? trigger.top : card.bottom
+      const top = expandedRef.current ? triggerTop : card.top
       return new DOMRect(card.left, top, card.width, 0)
     },
   })

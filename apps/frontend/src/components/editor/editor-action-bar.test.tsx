@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
+import { useEffect, useState } from "react"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -116,6 +117,7 @@ describe("action side", () => {
       } as unknown as ReturnType<typeof contextsModule.usePreferences>)
     })
     const folded = (): EditorFormatFoot => ({
+      chromeId: "composer-a",
       editor: null,
       linkPopoverOpen: false,
       onLinkPopoverOpenChange: vi.fn(),
@@ -181,6 +183,51 @@ describe("action side", () => {
       expect(screen.getByRole("button", { name: "Formatting" })).toHaveAttribute("aria-pressed", "true")
       expect(screen.queryByRole("button", { name: "More" })).toBeNull()
       expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument()
+    })
+
+    it("stamps the + menu with the owning composer's id", async () => {
+      const user = userEvent.setup()
+      renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn() } })
+
+      await user.click(screen.getByRole("button", { name: "More" }))
+
+      expect(screen.getByTestId("composer-foot-menu")).toHaveAttribute("data-composer-chrome", "composer-a")
+    })
+
+    it("keeps the trailing slot mounted (hidden) while formatting, so a mic take survives Aa", () => {
+      const mounts = vi.fn()
+      function Mic() {
+        const [takes, setTakes] = useState(0)
+        useEffect(() => {
+          mounts()
+          setTakes(1)
+        }, [])
+        return <button type="button" aria-label="Dictate" data-takes={takes} />
+      }
+      const props = { formatFoot: folded(), footMenu: { onAttach: vi.fn() }, trailingContent: <Mic /> }
+      const { rerender } = render(
+        <TooltipProvider>
+          <EditorActionBar editorHandle={null} formatOpen={false} onFormatOpenChange={vi.fn()} {...props} />
+        </TooltipProvider>
+      )
+      expect(screen.getByRole("button", { name: "Dictate" })).toBeVisible()
+
+      rerender(
+        <TooltipProvider>
+          <EditorActionBar editorHandle={null} formatOpen onFormatOpenChange={vi.fn()} {...props} />
+        </TooltipProvider>
+      )
+      const mic = screen.getByRole("button", { name: "Dictate", hidden: true })
+      expect(mic).not.toBeVisible()
+      expect(mic).toHaveAttribute("data-takes", "1")
+
+      rerender(
+        <TooltipProvider>
+          <EditorActionBar editorHandle={null} formatOpen={false} onFormatOpenChange={vi.fn()} {...props} />
+        </TooltipProvider>
+      )
+      expect(screen.getByRole("button", { name: "Dictate" })).toBeVisible()
+      expect(mounts).toHaveBeenCalledTimes(1)
     })
   })
 })
