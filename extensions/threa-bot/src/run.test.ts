@@ -73,6 +73,26 @@ describe("resolveConfig", () => {
     expect(named.runtimeSessionId).toStartWith("bots-")
   })
 
+  test("--session widens the identity so two sessions share a directory, and the same name resumes", () => {
+    const env = { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" }
+    const base = resolveConfig({ kind: "run", command: ["agent"], mode: "scratchpad" }, { ...deps, env })
+    const red = resolveConfig({ kind: "run", command: ["agent"], mode: "scratchpad", session: "red" }, { ...deps, env })
+    const redAgain = resolveConfig(
+      { kind: "run", command: ["agent"], mode: "scratchpad", session: "red" },
+      { ...deps, env }
+    )
+    const blue = resolveConfig(
+      { kind: "run", command: ["agent"], mode: "scratchpad", session: "blue" },
+      { ...deps, env }
+    )
+    const ids = new Set([base.instanceId, red.instanceId, blue.instanceId])
+    expect(ids.size).toBe(3)
+    expect(red.instanceId).toBe(redAgain.instanceId)
+    expect(red.runtimeSessionId).toBe(redAgain.runtimeSessionId)
+    expect(red.displayName).toBe("agent (red) - project")
+    expect(blue.displayName).toBe("agent (blue) - project")
+  })
+
   test("explains what is missing", () => {
     expect(() => resolveConfig({ kind: "run", command: ["x"], mode: "scratchpad" }, { ...deps, env: {} })).toThrow(
       "THREA_WORKSPACE_ID, THREA_API_KEY"

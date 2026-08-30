@@ -26,7 +26,8 @@ is stopped with POSIX signals; Windows is not supported yet).
 ## Two modes
 
 `threa-bot run -- <command>` links a scratchpad for the directory you run it in
-and prints its URL. Every message in that scratchpad is a turn; `/stop` kills
+and prints its URL. `--session <name>` runs several side by side in one
+directory, each with its own scratchpad; the same name resumes the same one. Every message in that scratchpad is a turn; `/stop` kills
 the running command, `/steer <text>` kills it and starts a new turn with the
 steer text. Restarting in the same directory returns to the same scratchpad.
 
@@ -51,6 +52,7 @@ reply lands in the same stream.
 
 ```text
 --mention          answer @mentions instead of owning a scratchpad
+--session <name>   run several sessions in one directory; same name = same scratchpad
 --name <prefix>    scratchpad name prefix (default: the command's basename)
 --config <file>    JSON config; environment variables win over it
 --timeout <ms>     kill the command after this long per turn

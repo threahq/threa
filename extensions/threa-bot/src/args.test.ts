@@ -10,6 +10,15 @@ describe("parseCliArgs", () => {
     })
   })
 
+  test("names a session so several can share a directory", () => {
+    expect(parseCliArgs(["run", "--session", "red", "--", "x"])).toEqual({
+      kind: "run",
+      command: ["x"],
+      mode: "scratchpad",
+      session: "red",
+    })
+  })
+
   test("reads every option and leaves the command's own flags alone", () => {
     expect(
       parseCliArgs([

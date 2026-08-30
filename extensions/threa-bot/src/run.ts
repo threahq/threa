@@ -5,6 +5,7 @@ import { BotRuntimeTransport, type StepFrame } from "@threahq/bot-runtime-client
 import {
   RemoteSession,
   ThreaClient,
+  deriveStableId,
   loadConfig,
   parseConfigFile,
   wireLifecycle,
@@ -37,8 +38,18 @@ export interface RunDeps {
 export function resolveConfig(args: RunArgs, deps: RunDeps): RemoteSessionConfig {
   const file = args.config ? parseConfigFile(readFileSync(args.config, "utf8")) : undefined
   const prefix = args.name ?? basename(args.command[0] ?? "bot")
+  // `--session` widens the identity seed so several sessions share a directory,
+  // each with its own scratchpad; the same name resumes the same one. These are
+  // file-level defaults, so THREA_INSTANCE_ID etc. still win.
+  const sessionOverrides = args.session
+    ? {
+        instanceId: deriveStableId("bot", `${hostname()}:${deps.cwd}:${args.session}`),
+        runtimeSessionId: deriveStableId("bots", `${hostname()}:${deps.cwd}:${args.session}`),
+        displayName: `${prefix} (${args.session})`,
+      }
+    : {}
   const loaded = loadConfig(
-    { env: deps.env, cwd: deps.cwd, hostname: hostname(), ...(file ? { file } : {}) },
+    { env: deps.env, cwd: deps.cwd, hostname: hostname(), file: { ...(file ?? {}), ...sessionOverrides } },
     { idPrefix: "bot", sessionIdPrefix: "bots", displayNamePrefix: prefix, configPathHint: args.config }
   )
   if ("error" in loaded) throw new Error(loaded.error)

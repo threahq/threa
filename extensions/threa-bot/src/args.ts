@@ -8,6 +8,12 @@ export interface RunArgs {
   mode: "scratchpad" | "mention"
   /** Display-name prefix for the linked scratchpad. */
   name?: string
+  /**
+   * Names this session, so several can run in the same directory: identity
+   * derives from host + directory + session, and re-running with the same
+   * name resumes the same scratchpad. Unset = the directory is the session.
+   */
+  session?: string
   /** JSON config file merged under the environment. */
   config?: string
   /** Kill a turn's command after this long. */
@@ -24,6 +30,7 @@ reply; stderr lines show up as trace steps in Threa.
 Options:
   --mention          Answer @mentions in any stream instead of owning a scratchpad
   --name <prefix>    Scratchpad name prefix (default: the command's basename)
+  --session <name>   Run several sessions in one directory; same name = same scratchpad
   --config <file>    JSON config file; environment variables win over it
   --timeout <ms>     Kill the command if a turn runs longer than this
   -h, --help         Show this help
@@ -48,6 +55,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
     options: {
       mention: { type: "boolean", default: false },
       name: { type: "string" },
+      session: { type: "string" },
       config: { type: "string" },
       timeout: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
@@ -75,6 +83,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
     command,
     mode: values.mention ? "mention" : "scratchpad",
     ...(values.name ? { name: values.name } : {}),
+    ...(values.session?.trim() ? { session: values.session.trim() } : {}),
     ...(values.config ? { config: values.config } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   }
