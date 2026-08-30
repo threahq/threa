@@ -128,20 +128,8 @@ export function EditorActionBar({
     const marksShown = formatOpen || closingMarks
     return (
       <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
-        {!marksShown && (
-          <FootMenu
-            chromeId={formatFoot.chromeId}
-            disabled={disabled}
-            mobileExpanded={mobileExpanded}
-            onMobileExpandedChange={showExpand ? onMobileExpandedChange : undefined}
-            {...footMenu}
-          />
-        )}
-        {/* One wrapper either way: swapping elements would remount the mic
-            mid-take and the hidden pickers with their open bridges. */}
-        <div hidden={marksShown} className={marksShown ? undefined : "contents"}>
-          {trailingContent}
-        </div>
+        {/* Every control hugs Send's edge so a thumb reaches all of them; the
+            marks take the empty side when they slide out. */}
         <div className="min-w-0 flex-1">
           {marksShown && (
             <div
@@ -163,6 +151,20 @@ export function EditorActionBar({
               />
             </div>
           )}
+        </div>
+        {!marksShown && (
+          <FootMenu
+            chromeId={formatFoot.chromeId}
+            disabled={disabled}
+            mobileExpanded={mobileExpanded}
+            onMobileExpandedChange={showExpand ? onMobileExpandedChange : undefined}
+            {...footMenu}
+          />
+        )}
+        {/* One wrapper either way: swapping elements would remount the mic
+            mid-take and the hidden pickers with their open bridges. */}
+        <div hidden={marksShown} className={marksShown ? undefined : "contents"}>
+          {trailingContent}
         </div>
         <FormatToggle open={formatOpen} onOpenChange={onFormatOpenChange} disabled={disabled} large />
         {formatFoot.sendButton}

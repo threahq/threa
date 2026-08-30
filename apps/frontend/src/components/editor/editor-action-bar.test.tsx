@@ -211,6 +211,21 @@ describe("action side", () => {
       }
     })
 
+    it("keeps + and the mic beside Aa and Send, and mirrors the whole cluster for a left thumb", () => {
+      const mic = <button type="button" aria-label="Dictate" />
+      const { rerender } = renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn() }, trailingContent: mic })
+      const names = () =>
+        Array.from(row()!.querySelectorAll("button")).map(
+          (button) => button.getAttribute("aria-label") ?? button.textContent
+        )
+      expect(names()).toEqual(["More", "Dictate", "Formatting", "Send"])
+      expect(row()).not.toHaveClass("flex-row-reverse")
+
+      rerender({ side: "left", trailingContent: mic })
+      expect(names()).toEqual(["More", "Dictate", "Formatting", "Send"])
+      expect(row()).toHaveClass("flex-row-reverse")
+    })
+
     it("stamps the + menu with the owning composer's id", async () => {
       const user = userEvent.setup()
       renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn() } })

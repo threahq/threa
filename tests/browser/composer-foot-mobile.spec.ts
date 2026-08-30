@@ -82,6 +82,10 @@ test.describe("Composer foot — phone", () => {
     expect(await nativeSelection(page)).toEqual({ collapsed: false, text: "hold me" })
     const restBox = (await card.boundingBox())!
     const aaBox = (await foot.getByRole("button", { name: "Formatting" }).boundingBox())!
+    // + and the mic sit with Aa and Send on the thumb's side, not across the card.
+    expect((await foot.getByRole("button", { name: "More" }).boundingBox())!.x).toBeGreaterThan(
+      restBox.x + restBox.width / 2
+    )
     await foot.getByRole("button", { name: "Formatting" }).tap()
     await expect(foot.getByRole("button", { name: "Bold" })).toBeVisible()
     await expect(foot.getByRole("button", { name: "More" })).toHaveCount(0)
