@@ -6,50 +6,55 @@ describe("StepBatcher", () => {
     const sent: number[] = []
     let inFlight = 0
     let peak = 0
-    const errors: unknown[] = []
-    const batcher = new StepBatcher(
-      async (frames) => {
-        inFlight += 1
-        peak = Math.max(peak, inFlight)
-        await new Promise((resolve) => setTimeout(resolve, 5))
-        inFlight -= 1
-        sent.push(frames.length)
-        if (sent.length === 2) throw new Error("socket hiccup")
-      },
-      { flushMs: 10, onError: (error) => errors.push(error) }
-    )
-    for (let i = 0; i < 120; i++) batcher.push(`line ${i}`)
+    const errors: string[] = []
+    const batcher = new StepBatcher({ flushMs: 10, onError: (_id, error) => errors.push(String(error)) })
+    batcher.begin("binv_1", async (frames) => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inFlight -= 1
+      sent.push(frames.length)
+      if (sent.length === 2) throw new Error("socket hiccup")
+    })
+    for (let i = 0; i < 120; i++) batcher.push("binv_1", `line ${i}`)
     await new Promise((resolve) => setTimeout(resolve, 50))
-    await batcher.flush()
+    await batcher.finish("binv_1")
     expect(sent.reduce((a, b) => a + b, 0)).toBe(120)
     expect(Math.max(...sent)).toBeLessThanOrEqual(50)
     expect(peak).toBe(1)
-    expect(errors).toHaveLength(1)
+    expect(errors).toEqual(["Error: socket hiccup"])
   })
-})
 
-describe("StepBatcher bounds", () => {
-  test("drops the oldest lines past the queue cap and reports it once, and the final flush has a deadline", async () => {
+  test("one stuck send blocks the whole process, later turns drop their lines at the deadline instead of starting more", async () => {
     const errors: string[] = []
     let calls = 0
-    const batcher = new StepBatcher(
-      async () => {
-        calls += 1
-        await new Promise((resolve) => setTimeout(resolve, 60_000))
-      },
-      { flushMs: 60_000, onError: (error) => errors.push(error instanceof Error ? error.message : String(error)) }
-    )
+    const stuck = async () => {
+      calls += 1
+      await new Promise((resolve) => setTimeout(resolve, 60_000))
+    }
+    const batcher = new StepBatcher({
+      flushMs: 60_000,
+      onError: (id, error) => errors.push(`${id}: ${(error as Error).message}`),
+    })
+    batcher.begin("binv_1", stuck)
     // The first 50 go out in the one stuck send; 570 more arrive, the cap keeps 500 of them.
-    for (let i = 0; i < 620; i++) batcher.push(`line ${i}`)
-    expect(batcher.dropped).toBe(70)
+    for (let i = 0; i < 620; i++) batcher.push("binv_1", `line ${i}`)
+    expect(batcher.dropped.get("binv_1")).toBe(70)
     const started = Date.now()
-    await batcher.finish(50)
+    await batcher.finish("binv_1", 50)
     expect(Date.now() - started).toBeLessThan(1_000)
-    // One send is stuck in flight; the rest of the queue is dropped, not left draining in the background.
     expect(calls).toBe(1)
-    expect(errors).toEqual([`${70 + 500} trace lines dropped`])
-    batcher.push("late")
-    expect(batcher.dropped).toBe(570)
+    expect(errors).toEqual([`binv_1: ${70 + 500} trace lines dropped`])
+    batcher.push("binv_1", "late")
+    expect(batcher.dropped.has("binv_1")).toBe(false)
+
+    let secondSends = 0
+    batcher.begin("binv_2", async () => void (secondSends += 1))
+    batcher.push("binv_2", "hello")
+    await batcher.finish("binv_2", 50)
+    expect(secondSends).toBe(0)
+    expect(calls).toBe(1)
+    expect(errors.at(-1)).toBe("binv_2: 1 trace lines dropped")
   })
 })
 
