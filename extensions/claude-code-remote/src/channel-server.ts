@@ -78,6 +78,9 @@ const EMBEDDED_STEER_RE = /(^|[^\p{L}\p{N}_/])\/steer(?=$|[^\p{L}\p{N}_/-])/giu
 // dropped push — every tick is a billed edge request.
 const DELEGATION_BACKSTOP_POLL_MS = 15 * 60 * 1000
 
+// Recent ids cover the model's late calls without treating this cache as Threa state.
+export const CLOSED_INVOCATION_MEMORY = 8
+
 /**
  * The delegation brief as delivered into the Claude session. The event carries
  * its own send/reply protocol note because the server's static instructions
@@ -96,6 +99,44 @@ export function formatDelegationContent(task: ClaimedDelegation): string {
     `- When finished, call \`reply\` exactly once with invocation_id "${task.id}" — the reply text is posted to the Threa stream as the delegation's result and completes it. If you are blocked, reply with a short account of what you tried and what blocked you.`,
   ].join("\n")
 }
+
+/** Schemas help validating clients; runtime validation remains authoritative. */
+export const CHANNEL_TOOLS = [
+  {
+    name: "send",
+    description:
+      "Post a progress or intermediate message to the Threa scratchpad WITHOUT closing the request. Call as many times as you like during a turn; finish with `reply`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        invocation_id: {
+          type: "string",
+          minLength: 1,
+          description: "The invocation_id from the <channel> event you are working on.",
+        },
+        text: { type: "string", minLength: 1, description: "The message to post, as markdown." },
+      },
+      required: ["invocation_id", "text"],
+    },
+  },
+  {
+    name: "reply",
+    description:
+      "Post your final answer to the Threa scratchpad and close the request. Call once per invocation_id, last.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        invocation_id: {
+          type: "string",
+          minLength: 1,
+          description: "The invocation_id from the <channel> event you are answering.",
+        },
+        text: { type: "string", minLength: 1, description: "Your reply, as markdown." },
+      },
+      required: ["invocation_id", "text"],
+    },
+  },
+] as const
 
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
@@ -457,6 +498,8 @@ export class ChannelServer {
       clear: () => void
     }
   >()
+  /** Successfully replied invocation ids, newest last for bounded eviction. */
+  private readonly closedInvocations = new Set<string>()
   private started = false
   private shuttingDown = false
 
@@ -728,42 +771,7 @@ export class ChannelServer {
   // --- MCP tool surface --------------------------------------------------------
 
   private registerHandlers(): void {
-    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: "send",
-          description:
-            "Post a progress or intermediate message to the Threa scratchpad WITHOUT closing the request. Call as many times as you like during a turn; finish with `reply`.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              invocation_id: {
-                type: "string",
-                description: "The invocation_id from the <channel> event you are working on.",
-              },
-              text: { type: "string", description: "The message to post, as markdown." },
-            },
-            required: ["invocation_id", "text"],
-          },
-        },
-        {
-          name: "reply",
-          description:
-            "Post your final answer to the Threa scratchpad and close the request. Call once per invocation_id, last.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              invocation_id: {
-                type: "string",
-                description: "The invocation_id from the <channel> event you are answering.",
-              },
-              text: { type: "string", description: "Your reply, as markdown." },
-            },
-            required: ["invocation_id", "text"],
-          },
-        },
-      ],
-    }))
+    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: CHANNEL_TOOLS }))
 
     this.mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (req.params.name !== "reply" && req.params.name !== "send") {
@@ -789,9 +797,9 @@ export class ChannelServer {
   }
 
   /**
-   * The send/reply dispatch behind the MCP tool handler (public for tests).
-   * A delegation id routes to its waiting executor — send becomes the card's
-   * progress note, reply resolves it — everything else is a scratchpad turn.
+   * Delegation ids route to their executor. Scratchpad invocations successfully
+   * closed through this tool answer later calls terminally; unknown ids still
+   * reach the session and fail there.
    */
   async handleToolCall(name: "send" | "reply", invocationId: string, text: string): Promise<SendResult> {
     const delegation = this.openDelegations.get(invocationId)
@@ -804,6 +812,12 @@ export class ChannelServer {
       delegation.resolve(text)
       return { ok: true, message: "Delegation result posted to the Threa stream; the request is closed." }
     }
+    if (this.closedInvocations.has(invocationId)) {
+      return {
+        ok: true,
+        message: `Request ${invocationId} is already closed — this ${name} was not posted, and nothing further is needed for it.`,
+      }
+    }
     const result =
       name === "send"
         ? await this.session.sendInterim(invocationId, text)
@@ -811,8 +825,18 @@ export class ChannelServer {
     if (name === "reply" && result.ok) {
       this.tracer.endTurn(invocationId)
       this.carryOn?.onTurnClosed(invocationId)
+      this.noteInvocationClosed(invocationId)
     }
     return result
+  }
+
+  private noteInvocationClosed(invocationId: string): void {
+    this.closedInvocations.delete(invocationId)
+    this.closedInvocations.add(invocationId)
+    for (const oldest of this.closedInvocations) {
+      if (this.closedInvocations.size <= CLOSED_INVOCATION_MEMORY) break
+      this.closedInvocations.delete(oldest)
+    }
   }
 
   // --- Permission relay -----------------------------------------------------

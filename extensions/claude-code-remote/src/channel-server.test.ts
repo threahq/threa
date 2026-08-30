@@ -8,6 +8,8 @@ import {
   type RemoteSessionConfig,
 } from "@threahq/remote-session"
 import {
+  CHANNEL_TOOLS,
+  CLOSED_INVOCATION_MEMORY,
   ChannelServer,
   buildInstructions,
   formatDelegationContent,
@@ -472,5 +474,113 @@ describe("ChannelServer lifecycle gating", () => {
     await server.shutdown()
     expect(sessionStart).toHaveBeenCalled()
     expect(sessionShutdown).toHaveBeenCalled()
+  })
+})
+
+describe("ChannelServer closed-invocation memory", () => {
+  function makeServer() {
+    const config = makeConfig()
+    return new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+  }
+
+  test("a second reply for an invocation this channel closed is a terminal no-op, not a session call", async () => {
+    const server = makeServer()
+    const sessionReply = spyOn(server.session, "reply").mockResolvedValue({ ok: true, message: "sent" })
+
+    expect(await server.handleToolCall("reply", "binv_1", "Done.")).toEqual({ ok: true, message: "sent" })
+
+    const again = await server.handleToolCall("reply", "binv_1", "Done again.")
+    expect(again.ok).toBe(true)
+    expect(again.message).toContain("already closed")
+    expect(again.message).toContain("was not posted")
+    expect(sessionReply).toHaveBeenCalledTimes(1)
+  })
+
+  test("a send after the reply is a terminal no-op and never posts an interim", async () => {
+    const server = makeServer()
+    spyOn(server.session, "reply").mockResolvedValue({ ok: true, message: "sent" })
+    const sendInterim = spyOn(server.session, "sendInterim").mockResolvedValue({ ok: true, message: "sent" })
+
+    await server.handleToolCall("reply", "binv_1", "Done.")
+
+    const late = await server.handleToolCall("send", "binv_1", "One more thought.")
+    expect(late.ok).toBe(true)
+    expect(late.message).toContain("already closed")
+    expect(sendInterim).not.toHaveBeenCalled()
+  })
+
+  test("an unknown invocation id still fails through the session", async () => {
+    const server = makeServer()
+    const sessionReply = spyOn(server.session, "reply").mockResolvedValue({
+      ok: false,
+      message: "No open request with invocation_id binv_unknown",
+    })
+
+    const result = await server.handleToolCall("reply", "binv_unknown", "Done.")
+    expect(result.ok).toBe(false)
+    expect(sessionReply).toHaveBeenCalledTimes(1)
+  })
+
+  test("a failed reply is not remembered, so the retry still reaches the session", async () => {
+    const server = makeServer()
+    const sessionReply = spyOn(server.session, "reply")
+      .mockResolvedValueOnce({ ok: false, message: "Failed to post reply to Threa", retryable: true })
+      .mockResolvedValueOnce({ ok: true, message: "sent" })
+
+    expect((await server.handleToolCall("reply", "binv_1", "Done.")).ok).toBe(false)
+    expect((await server.handleToolCall("reply", "binv_1", "Done.")).ok).toBe(true)
+    expect(sessionReply).toHaveBeenCalledTimes(2)
+  })
+
+  test("the record is bounded: the oldest closed id ages out and goes back to the session", async () => {
+    const server = makeServer()
+    const sessionReply = spyOn(server.session, "reply").mockResolvedValue({ ok: true, message: "sent" })
+    const ids = Array.from({ length: CLOSED_INVOCATION_MEMORY + 1 }, (_, i) => `binv_${i}`)
+    for (const id of ids) await server.handleToolCall("reply", id, "Done.")
+    expect(sessionReply).toHaveBeenCalledTimes(ids.length)
+
+    // The newest is still remembered; the one evicted by it is not.
+    const newest = await server.handleToolCall("reply", ids.at(-1)!, "Done again.")
+    expect(newest.message).toContain("already closed")
+    expect(sessionReply).toHaveBeenCalledTimes(ids.length)
+
+    const evicted = await server.handleToolCall("reply", ids[0]!, "Done again.")
+    expect(evicted).toEqual({ ok: true, message: "sent" })
+    expect(sessionReply).toHaveBeenCalledTimes(ids.length + 1)
+  })
+
+  test("a delegation id keeps its own routing and is never remembered as closed", async () => {
+    const { server, calls } = await startDelegatingServer("dlg_1")
+    const sessionSend = spyOn(server.session, "sendInterim").mockResolvedValue({
+      ok: false,
+      message: "no open request",
+    })
+
+    await server.handleToolCall("reply", "dlg_1", "Fixed in abc123.")
+    await flush()
+    expect(calls.completes).toEqual([{ id: "dlg_1", resultMarkdown: "Fixed in abc123." }])
+
+    // The executor is gone, so a late send falls through to the session exactly as before.
+    const late = await server.handleToolCall("send", "dlg_1", "One more thought.")
+    expect(late.ok).toBe(false)
+    expect(sessionSend).toHaveBeenCalled()
+
+    await server.shutdown()
+  })
+})
+
+describe("CHANNEL_TOOLS schemas", () => {
+  test("send and reply both require non-empty invocation_id and text", () => {
+    expect(CHANNEL_TOOLS.map((tool) => tool.name)).toEqual(["send", "reply"])
+    for (const tool of CHANNEL_TOOLS) {
+      expect(tool.inputSchema).toMatchObject({
+        type: "object",
+        properties: {
+          invocation_id: { type: "string", minLength: 1 },
+          text: { type: "string", minLength: 1 },
+        },
+        required: ["invocation_id", "text"],
+      })
+    }
   })
 })
