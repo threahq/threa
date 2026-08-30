@@ -151,5 +151,18 @@ test.describe("Composer foot — phone", () => {
     await sheet.getByRole("button", { name: "More" }).tap()
     await expect(page.getByTestId("composer-foot-menu").getByRole("button", { name: "Open an aside" })).toHaveCount(0)
     await page.keyboard.press("Escape")
+
+    const chip = page.getByTestId("aside-header-chip")
+    await expect(chip).toHaveAttribute("data-attention", "open")
+    const asideId = await sheet.getByTestId("aside-pane").getAttribute("data-aside-id")
+    expect(asideId).toBeTruthy()
+    await sheet.getByRole("button", { name: "Close aside" }).tap()
+    await expect(sheet).toHaveCount(0)
+    await expect(chip).toHaveAttribute("data-attention", "quiet")
+    await chip.tap()
+    await expect(sheet).toBeVisible({ timeout: 10000 })
+    await expect(chip).toHaveAttribute("data-attention", "open")
+    // Resumed, not replaced: the same aside comes back.
+    await expect(sheet.getByTestId("aside-pane")).toHaveAttribute("data-aside-id", asideId!)
   })
 })
