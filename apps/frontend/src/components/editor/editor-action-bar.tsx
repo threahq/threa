@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import type { Editor } from "@tiptap/react"
 import {
   AtSign,
@@ -7,8 +7,9 @@ import {
   Maximize2,
   Minimize2,
   CalendarClock,
+  FileEdit,
   MessageSquareDashed,
-  SmilePlus,
+  Plus,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -33,22 +34,30 @@ function handleKeyboardClick(action: () => void) {
 }
 
 /**
- * Folds formatting behind the Aa button as a popover instead of an in-flow
- * toolbar: the marks row on top, then Emoji, Mention, the editor size toggle
- * and Schedule as rows. Emoji and Mention leave the foot when this is set.
+ * The phone foot: Aa · + · trailing. Aa swaps the row for the marks
+ * (`EditorToolbar` in its foot position, with `trailingContent` after it);
+ * everything else lives behind the + menu.
  */
-export interface EditorFormatPopover {
+export interface EditorFormatFoot {
   editor: Editor | null
   linkPopoverOpen: boolean
   onLinkPopoverOpenChange: (open: boolean) => void
+  /** What follows the marks while formatting (Send); the rest of the foot's trailing content is off-screen then. */
+  trailingContent: ReactNode
+}
+
+export interface EditorFootMenu {
+  onAttach?: () => void
+  onOpenAside?: () => void
   onSchedule?: () => void
+  onOpenDrafts?: () => void
 }
 
 export interface EditorActionBarProps {
   editorHandle: RichEditorHandle | null
-  formatPopover?: EditorFormatPopover
-  /** Opens an aside beside this surface; the button sits after Attach. */
-  onOpenAside?: () => void
+  formatFoot?: EditorFormatFoot
+  /** With `formatFoot`: the + menu's rows. */
+  footMenu?: EditorFootMenu
   disabled?: boolean
   // Toggle state
   formatOpen: boolean
@@ -90,12 +99,31 @@ export function EditorActionBar({
   onAttachClick,
   showDesktopExpand = false,
   onDesktopExpandClick,
-  formatPopover,
-  onOpenAside,
+  formatFoot,
+  footMenu,
   trailingContent,
   side = "right",
 }: EditorActionBarProps) {
-  const folded = formatPopover !== undefined
+  const folded = formatFoot !== undefined
+  if (folded && formatOpen) {
+    return (
+      <div className="flex items-center gap-1">
+        <FormatToggle open onOpenChange={onFormatOpenChange} disabled={disabled} />
+        <div className="min-w-0 flex-1">
+          <EditorToolbar
+            editor={formatFoot.editor}
+            isVisible
+            inline
+            inlinePosition="foot"
+            linkPopoverOpen={formatFoot.linkPopoverOpen}
+            onLinkPopoverOpenChange={formatFoot.onLinkPopoverOpenChange}
+            showSpecialInputControls
+          />
+        </div>
+        {formatFoot.trailingContent}
+      </div>
+    )
+  }
   return (
     <div className={cn("flex items-center gap-1", side === "left" && "flex-row-reverse")}>
       {/* Spacer — pushes buttons to whichever edge `side` names */}
@@ -151,37 +179,15 @@ export function EditorActionBar({
       {/* Format toggle — split: pointerdown only prevents blur, click toggles toolbar.
          Firing the toggle on pointerdown would cause the newly-appeared toolbar buttons
          to receive the subsequent pointerup/click, inadvertently activating a mark. */}
-      {folded ? (
-        <FormatPopover
-          editorHandle={editorHandle}
+      <FormatToggle open={formatOpen} onOpenChange={onFormatOpenChange} disabled={disabled} />
+
+      {folded && (
+        <FootMenu
           disabled={disabled}
-          open={formatOpen}
-          onOpenChange={onFormatOpenChange}
           mobileExpanded={mobileExpanded}
           onMobileExpandedChange={showExpand ? onMobileExpandedChange : undefined}
-          {...formatPopover}
+          {...footMenu}
         />
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Formatting"
-              aria-pressed={formatOpen}
-              className={cn("h-7 w-7 shrink-0", formatOpen && "bg-accent text-accent-foreground")}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => onFormatOpenChange(!formatOpen)}
-              disabled={disabled}
-            >
-              <span className="text-[13px] font-bold leading-none tracking-tight">Aa</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            Formatting
-          </TooltipContent>
-        </Tooltip>
       )}
 
       {showEmoji && !folded && (
@@ -250,7 +256,7 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {showAttach && onAttachClick && (
+      {showAttach && onAttachClick && !folded && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -271,64 +277,71 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {onOpenAside && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Open an aside"
-              className="h-7 w-7 shrink-0"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={onOpenAside}
-              disabled={disabled}
-            >
-              <MessageSquareDashed className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            Open an aside
-          </TooltipContent>
-        </Tooltip>
-      )}
-
       {trailingContent}
     </div>
   )
 }
 
-interface FormatPopoverProps extends EditorFormatPopover {
-  editorHandle: RichEditorHandle | null
-  disabled: boolean
+function FormatToggle({
+  open,
+  onOpenChange,
+  disabled,
+}: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  disabled: boolean
+}) {
+  // Split: pointerdown only prevents blur, click toggles. Toggling on
+  // pointerdown would hand the trailing pointerup/click to whatever control
+  // appears under the finger.
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Formatting"
+          aria-pressed={open}
+          className={cn("h-7 w-7 shrink-0", open && "bg-accent text-accent-foreground")}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => onOpenChange(!open)}
+          disabled={disabled}
+        >
+          <span className="text-[13px] font-bold leading-none tracking-tight">Aa</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        Formatting
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+interface FootMenuProps extends EditorFootMenu {
+  disabled: boolean
   mobileExpanded: boolean
   onMobileExpandedChange?: (expanded: boolean) => void
 }
 
 /**
- * The folded formatting surface. Nothing in it may take focus: the editor keeps
- * the caret and the soft keyboard the whole time (`keepEditorFocusProps` on the
- * content, pointerdown prevented on every row). Rows act on click, never on
- * pointerdown — acting early closes the popover under a finger still down and
- * the trailing click lands on whatever is beneath. Marks keep the popover open
- * (several usually go together); the rows close it, since each hands over to a
- * surface of its own (a suggestion popup, the resized editor, the schedule
- * picker).
+ * The + menu. Nothing in it may take focus: the editor keeps the caret and the
+ * soft keyboard the whole time (`keepEditorFocusProps` on the content,
+ * pointerdown prevented on every row). Rows act on click, never on pointerdown
+ * (acting early closes the menu under a finger still down and the trailing
+ * click lands on whatever is beneath), and each closes the menu, since it
+ * hands over to a surface of its own.
  */
-function FormatPopover({
-  editorHandle,
+function FootMenu({
   disabled,
-  open,
-  onOpenChange,
   mobileExpanded,
   onMobileExpandedChange,
-  editor,
-  linkPopoverOpen,
-  onLinkPopoverOpenChange,
+  onAttach,
+  onOpenAside,
   onSchedule,
-}: FormatPopoverProps) {
+  onOpenDrafts,
+}: FootMenuProps) {
+  const [open, setOpen] = useState(false)
   const row = (label: string, icon: ReactNode, action: () => void) => (
     <Button
       type="button"
@@ -338,7 +351,7 @@ function FormatPopover({
       className="h-9 w-full justify-start gap-2 px-2 text-sm"
       onPointerDown={(e) => e.preventDefault()}
       onClick={() => {
-        onOpenChange(false)
+        setOpen(false)
         action()
       }}
     >
@@ -347,52 +360,40 @@ function FormatPopover({
     </Button>
   )
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="Formatting"
+          aria-label="More"
           className={cn("h-7 w-7 shrink-0", open && "bg-accent text-accent-foreground")}
           onPointerDown={(e) => e.preventDefault()}
           disabled={disabled}
         >
-          <span className="text-[13px] font-bold leading-none tracking-tight">Aa</span>
+          <Plus className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
         side="top"
-        align="end"
+        align="start"
         sideOffset={8}
         collisionPadding={8}
-        className="w-[min(22rem,calc(100vw-1rem))] p-1"
-        data-testid="composer-format-popover"
+        className="flex w-48 flex-col p-1"
+        data-testid="composer-foot-menu"
         data-composer-chrome
         {...keepEditorFocusProps(true)}
       >
-        <div data-testid="composer-format-toolbar">
-          <EditorToolbar
-            editor={editor}
-            isVisible
-            inline
-            inlinePosition="below"
-            linkPopoverOpen={linkPopoverOpen}
-            onLinkPopoverOpenChange={onLinkPopoverOpenChange}
-            showSpecialInputControls
-          />
-        </div>
-        <div className="mt-1 flex flex-col border-t pt-1">
-          {row("Emoji", <SmilePlus className="h-4 w-4" />, () => editorHandle?.insertEmoji())}
-          {row("Mention", <AtSign className="h-4 w-4" />, () => editorHandle?.insertMention())}
-          {onMobileExpandedChange &&
-            row(
-              mobileExpanded ? "Minimize editor" : "Expand editor",
-              mobileExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />,
-              () => onMobileExpandedChange(!mobileExpanded)
-            )}
-          {onSchedule && row("Schedule", <CalendarClock className="h-4 w-4" />, onSchedule)}
-        </div>
+        {onAttach && row("Attach files", <Paperclip className="h-4 w-4" />, onAttach)}
+        {onOpenAside && row("Open an aside", <MessageSquareDashed className="h-4 w-4" />, onOpenAside)}
+        {onSchedule && row("Schedule", <CalendarClock className="h-4 w-4" />, onSchedule)}
+        {onOpenDrafts && row("Drafts", <FileEdit className="h-4 w-4" />, onOpenDrafts)}
+        {onMobileExpandedChange &&
+          row(
+            mobileExpanded ? "Minimize editor" : "Expand editor",
+            mobileExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />,
+            () => onMobileExpandedChange(!mobileExpanded)
+          )}
       </PopoverContent>
     </Popover>
   )

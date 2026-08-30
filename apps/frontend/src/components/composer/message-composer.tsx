@@ -476,6 +476,27 @@ export function MessageComposer({
   // app — `Aa` opens it — so a phone's writing surface doesn't hand two rows of
   // chrome to a keyboard that is about to take half the screen.
   const [formatOpen, setFormatOpen] = useState(expanded && !isMobile)
+  // Aa on a phone holds the selection (HeldSelectionExtension): the native
+  // selection collapses, which dismisses the OS text toolbar, while the range
+  // stays the marks' target. Aa again with a fresh selection re-holds instead
+  // of closing; otherwise it releases and folds the row.
+  const handleMobileFormatOpenChange = useCallback(
+    (open: boolean) => {
+      const editor = mobileToolbarEditor
+      if (open) {
+        editor?.chain().focus().holdSelection().run()
+        setFormatOpen(true)
+        return
+      }
+      if (editor && !editor.state.selection.empty && editor.chain().focus().holdSelection().run()) return
+      setFormatOpen(false)
+    },
+    [mobileToolbarEditor]
+  )
+  useEffect(() => {
+    if (!formatOpen) mobileToolbarEditor?.commands.releaseHeld()
+  }, [formatOpen, mobileToolbarEditor])
+
   // Height of everything above the editor card (attachment tray, link previews)
   // — the same "extras" the drag floor reserves, measured live because a
   // persisted cap outlives the state it was chosen in: shrink the composer with
@@ -1718,18 +1739,21 @@ export function MessageComposer({
                         editorHandle={richEditorRef.current}
                         disabled={controlsDisabled}
                         formatOpen={formatOpen}
-                        onFormatOpenChange={setFormatOpen}
+                        onFormatOpenChange={handleMobileFormatOpenChange}
                         mobileExpanded={mobileExpanded}
                         onMobileExpandedChange={handleMobileExpandedChange}
-                        formatPopover={{
+                        formatFoot={{
                           editor: mobileToolbarEditor,
                           linkPopoverOpen: mobileLinkPopoverOpen,
                           onLinkPopoverOpenChange: setMobileLinkPopoverOpen,
-                          onSchedule: scheduledMessagesTrigger ? () => scheduledMessagesOpenRef.current?.() : undefined,
+                          trailingContent: sendButton,
                         }}
-                        onOpenAside={onOpenAside}
-                        showAttach
-                        onAttachClick={handleAttachClick}
+                        footMenu={{
+                          onAttach: handleAttachClick,
+                          onOpenAside,
+                          onSchedule: scheduledMessagesTrigger ? () => scheduledMessagesOpenRef.current?.() : undefined,
+                          onOpenDrafts: stashedDraftsTrigger ? () => stashedDraftsOpenRef.current?.() : undefined,
+                        }}
                         side={actionSide}
                         trailingContent={
                           micButton || stashedDraftsTrigger || scheduledMessagesTrigger ? (
@@ -1737,10 +1761,10 @@ export function MessageComposer({
                             // rather than sitting behind the triggers.
                             <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
                               {micButton}
-                              {stashedDraftsTrigger}
-                              {/* Schedule lives in the Aa popover on a phone; the picker
-                                  stays mounted (hidden) so its popover and open bridge
-                                  survive, the same way the desktop overflow keeps it. */}
+                              {/* Drafts and Schedule are rows in the + menu on a phone; the
+                                  pickers stay mounted (hidden) so their popovers and open
+                                  bridges survive, the same way the desktop overflow keeps them. */}
+                              {stashedDraftsTrigger && <div hidden>{stashedDraftsTrigger}</div>}
                               {scheduledMessagesTrigger && <div hidden>{scheduledMessagesTrigger}</div>}
                               {sendButton}
                             </div>

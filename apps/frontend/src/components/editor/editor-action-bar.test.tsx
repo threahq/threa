@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { EditorActionBar, type EditorFormatPopover } from "./editor-action-bar"
+import { EditorActionBar, type EditorFormatFoot } from "./editor-action-bar"
 import * as contextsModule from "@/contexts"
 
 function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> = {}) {
@@ -115,77 +115,72 @@ describe("action side", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof contextsModule.usePreferences>)
     })
-    const folded = (overrides: Partial<EditorFormatPopover> = {}): EditorFormatPopover => ({
+    const folded = (): EditorFormatFoot => ({
       editor: null,
       linkPopoverOpen: false,
       onLinkPopoverOpenChange: vi.fn(),
-      ...overrides,
+      trailingContent: <button type="button">Send</button>,
     })
 
-    it("keeps emoji and mention out of the foot and behind the Aa popover with the size toggle and schedule", async () => {
+    it("rests as Aa · + · trailing, with everything else behind the + menu", async () => {
       const user = userEvent.setup()
-      const onSchedule = vi.fn()
-      const { onFormatOpenChange } = renderBar({ formatPopover: folded({ onSchedule }), showAttach: false })
+      const { onFormatOpenChange } = renderBar({
+        formatFoot: folded(),
+        footMenu: { onAttach: vi.fn(), onOpenAside: vi.fn(), onSchedule: vi.fn(), onOpenDrafts: vi.fn() },
+      })
 
-      expect(screen.queryByRole("button", { name: "Insert emoji" })).toBeNull()
-      expect(screen.queryByRole("button", { name: "Insert mention" })).toBeNull()
-      expect(screen.queryByRole("button", { name: "Expand editor" })).toBeNull()
+      for (const name of ["Insert emoji", "Insert mention", "Expand editor", "Attach files", "Open an aside"]) {
+        expect(screen.queryByRole("button", { name })).toBeNull()
+      }
+      expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument()
 
       await user.click(screen.getByRole("button", { name: "Formatting" }))
       expect(onFormatOpenChange).toHaveBeenCalledWith(true)
     })
 
-    it("acts from the popover rows without moving focus off the editor, and closes after each row", async () => {
+    it("acts from the + menu rows without moving focus off the editor, and closes after each row", async () => {
       const user = userEvent.setup()
       const editorEl = document.createElement("div")
       editorEl.contentEditable = "true"
       editorEl.tabIndex = 0
       document.body.appendChild(editorEl)
       editorEl.focus()
-      const onSchedule = vi.fn()
+      const footMenu = { onAttach: vi.fn(), onOpenAside: vi.fn(), onSchedule: vi.fn(), onOpenDrafts: vi.fn() }
       const onMobileExpandedChange = vi.fn()
-      const { editorHandle, onFormatOpenChange } = renderBar({
-        formatPopover: folded({ onSchedule }),
-        formatOpen: true,
-        onMobileExpandedChange,
-        showAttach: false,
-      })
+      renderBar({ formatFoot: folded(), footMenu, onMobileExpandedChange })
 
-      expect(screen.getByTestId("composer-format-toolbar")).toBeInTheDocument()
-      await user.click(screen.getByRole("button", { name: "Emoji" }))
-      expect(editorHandle.insertEmoji).toHaveBeenCalled()
-      await user.click(screen.getByRole("button", { name: "Mention" }))
-      expect(editorHandle.insertMention).toHaveBeenCalled()
-      await user.click(screen.getByRole("button", { name: "Expand editor" }))
-      expect(onMobileExpandedChange).toHaveBeenCalledWith(true)
-      await user.click(screen.getByRole("button", { name: "Schedule" }))
-      expect(onSchedule).toHaveBeenCalled()
-      expect(onFormatOpenChange.mock.calls).toEqual([[false], [false], [false], [false]])
-      expect(document.activeElement).toBe(editorEl)
-      editorEl.remove()
-    })
-
-    it("disables the popover rows along with the bar", () => {
-      renderBar({ formatPopover: folded({ onSchedule: vi.fn() }), formatOpen: true, disabled: true, showAttach: false })
-      for (const name of ["Emoji", "Mention", "Expand editor", "Schedule"]) {
-        expect(screen.getByRole("button", { name })).toBeDisabled()
+      const rows: Array<[string, () => unknown]> = [
+        ["Attach files", () => expect(footMenu.onAttach).toHaveBeenCalled()],
+        ["Open an aside", () => expect(footMenu.onOpenAside).toHaveBeenCalled()],
+        ["Schedule", () => expect(footMenu.onSchedule).toHaveBeenCalled()],
+        ["Drafts", () => expect(footMenu.onOpenDrafts).toHaveBeenCalled()],
+        ["Expand editor", () => expect(onMobileExpandedChange).toHaveBeenCalledWith(true)],
+      ]
+      for (const [name, assertCalled] of rows) {
+        await user.click(screen.getByRole("button", { name: "More" }))
+        await user.click(screen.getByRole("button", { name }))
+        assertCalled()
+        expect(screen.queryByTestId("composer-foot-menu")).toBeNull()
+        expect(document.activeElement).toBe(editorEl)
       }
+      editorEl.remove()
     })
 
-    it("shows the aside button after Attach, keeping the editor focused", async () => {
+    it("disables the + menu rows along with the bar", async () => {
       const user = userEvent.setup()
-      const editorEl = document.createElement("div")
-      editorEl.contentEditable = "true"
-      editorEl.tabIndex = 0
-      document.body.appendChild(editorEl)
-      editorEl.focus()
-      const onOpenAside = vi.fn()
-      renderBar({ formatPopover: folded(), onOpenAside, showAttach: false })
+      renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn(), onSchedule: vi.fn() }, disabled: true })
+      expect(screen.getByRole("button", { name: "More" })).toBeDisabled()
+      expect(screen.getByRole("button", { name: "Formatting" })).toBeDisabled()
+      await user.click(screen.getByRole("button", { name: "More" }))
+      expect(screen.queryByTestId("composer-foot-menu")).toBeNull()
+    })
 
-      await user.click(screen.getByRole("button", { name: "Open an aside" }))
-      expect(onOpenAside).toHaveBeenCalled()
-      expect(document.activeElement).toBe(editorEl)
-      editorEl.remove()
+    it("swaps the row for the marks while formatting, with Aa lit and the trailing slot after them", () => {
+      renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn() }, formatOpen: true })
+
+      expect(screen.getByRole("button", { name: "Formatting" })).toHaveAttribute("aria-pressed", "true")
+      expect(screen.queryByRole("button", { name: "More" })).toBeNull()
+      expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument()
     })
   })
 })

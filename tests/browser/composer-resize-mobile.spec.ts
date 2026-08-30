@@ -141,10 +141,10 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   expect(after.cardBottom).toBeCloseTo(constrained.cardBottom, 0)
   expect(await editor.textContent()).toBe(contentBeforeResize)
 
-  // The size toggle lives in the Aa popover on a phone; picking a row closes it.
-  await page.getByRole("button", { name: "Formatting" }).click()
+  // The size toggle lives in the + menu on a phone; picking a row closes it.
+  await page.getByRole("button", { name: "More" }).click()
   await page.getByRole("button", { name: "Expand editor" }).click()
-  await expect(page.getByTestId("composer-format-popover")).toHaveCount(0)
+  await expect(page.getByTestId("composer-foot-menu")).toHaveCount(0)
   const fullscreen = await page.evaluate(() => {
     const zone = document.querySelector('[data-editor-zone="main"]')!.getBoundingClientRect()
     const card = document.querySelector("[data-message-composer-root] [data-composer-card]")!.getBoundingClientRect()
@@ -156,7 +156,7 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   })
   expect(Math.abs(fullscreen.topGap - fullscreen.bottomGap)).toBeLessThanOrEqual(1)
 
-  await page.getByRole("button", { name: "Formatting" }).click()
+  await page.getByRole("button", { name: "More" }).click()
   await page.getByRole("button", { name: "Minimize editor" }).click()
   await expect.poll(async () => Math.round((await card.boundingBox())!.height)).toBeLessThan(fullscreen.height)
 
@@ -167,14 +167,14 @@ test("mobile composer resizes from its top edge without losing the editor bottom
   await page.mouse.up()
   const compactHeight = Math.round((await card.boundingBox())!.height)
 
-  // Formatting is a popover over the card: the card keeps its height and the
-  // editor keeps the caret (the keyboard stays up) while it is open.
+  // Formatting swaps the foot row for the marks: the card keeps its height and
+  // the editor keeps the caret (the keyboard stays up) while it is open.
   await page.getByRole("button", { name: "Formatting" }).click()
-  await expect(page.getByTestId("composer-format-toolbar")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Bold" })).toBeVisible()
   expect(Math.round((await card.boundingBox())!.height)).toBe(compactHeight)
   expect(await page.evaluate(() => document.activeElement?.getAttribute("contenteditable"))).toBe("true")
   await page.getByRole("button", { name: "Formatting" }).click()
-  await expect(page.getByTestId("composer-format-popover")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Bold" })).toHaveCount(0)
 
   await page.locator('[data-message-composer-root] button[aria-label^="Send"]').click()
   await expect.poll(() => page.evaluate(() => localStorage.getItem("threa:composer-drag-height"))).toBeNull()

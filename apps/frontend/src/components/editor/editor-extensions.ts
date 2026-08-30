@@ -38,6 +38,7 @@ import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-sea
 import { DictationPreview } from "./dictation-preview-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
 import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
+import { HeldSelectionExtension } from "./held-selection-extension"
 
 const lowlight = createLowlight(common)
 
@@ -136,6 +137,7 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     GiphyEmbedExtension,
 
     ComposerPillDragExtension,
+    HeldSelectionExtension,
 
     // Live dictation hypothesis ghost (inert unless actively dictating)
     DictationPreview,

@@ -32,6 +32,8 @@ function createEditorStub() {
     deleteColumn: vi.fn(() => chain),
     deleteTable: vi.fn(() => chain),
     insertTable: vi.fn(() => chain),
+    selectHeld: vi.fn(() => chain),
+    collapseToHeld: vi.fn(() => chain),
     run: vi.fn(() => true),
   }
 
@@ -47,6 +49,8 @@ function createEditorStub() {
     chain: vi.fn(() => chain),
     commands: {
       focus: vi.fn(),
+      selectHeld: vi.fn(() => true),
+      collapseToHeld: vi.fn(() => true),
     },
     on: vi.fn(),
     off: vi.fn(),

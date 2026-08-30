@@ -542,6 +542,13 @@ html[data-input="mouse"] .message-hover-wash:hover {
   content: attr(data-placeholder);
 }
 
+/* The range the format foot holds while the native selection is collapsed
+   (see HeldSelectionExtension): painted like a selection so the marks' target
+   stays visible once the OS toolbar is gone. */
+.ProseMirror .held-selection {
+  @apply bg-primary/25 rounded-[2px];
+}
+
 /* Live dictation hypothesis shown at the caret while speaking. Muted and
    non-selectable so it reads as provisional and never participates in editing. */
 .dictation-preview-ghost {
