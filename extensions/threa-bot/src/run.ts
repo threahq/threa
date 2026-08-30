@@ -17,6 +17,9 @@ const MENTION_RUNTIME_KIND = "custom"
 const MENTION_POLL_MS = 30_000
 const MENTION_PRESENCE_MS = 20_000
 const CLAIM_TTL_SECONDS = 120
+// Stop work this long after the last confirmed renewal: one renew interval
+// before the lease can expire, so a claim never runs past its server deadline.
+const LEASE_UNCONFIRMED_LIMIT_MS = CLAIM_TTL_SECONDS * 1000 - Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
 const STEP_FLUSH_MS = 1_000
 const MAX_STEPS_PER_FLUSH = 50
 // Trace is best effort: with the socket down every frame is an HTTP request,
@@ -50,9 +53,11 @@ export function resolveConfig(args: RunArgs, deps: RunDeps): RemoteSessionConfig
 export class StepBatcher {
   private pending: StepFrame[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
-  // Flushes run one at a time: a chatty command must not fan out into a socket
-  // frame per 50 lines. Anything queued while one is in flight goes next.
-  private inFlight: Promise<void> = Promise.resolve()
+  // One drain at a time: a chatty command must not fan out into a socket frame
+  // per 50 lines, and pushes while a drain runs only add to `pending`, never
+  // another drain. `finished` stops the worker from picking up more.
+  private draining: Promise<void> | undefined
+  private finished = false
 
   constructor(
     private readonly send: (frames: StepFrame[]) => Promise<unknown>,
@@ -63,6 +68,7 @@ export class StepBatcher {
   dropped = 0
 
   push(line: string): void {
+    if (this.finished) return
     if (this.pending.length >= MAX_PENDING_STEPS) {
       this.pending.shift()
       this.dropped += 1
@@ -75,18 +81,25 @@ export class StepBatcher {
   flush(): Promise<void> {
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
-    this.inFlight = this.inFlight.then(async () => {
-      while (this.pending.length > 0) {
-        const frames = this.pending.splice(0, MAX_STEPS_PER_FLUSH)
-        await this.send(frames).catch((error) => this.options.onError?.(error))
+    this.draining ??= (async () => {
+      try {
+        while (this.pending.length > 0 && !this.finished) {
+          const frames = this.pending.splice(0, MAX_STEPS_PER_FLUSH)
+          await this.send(frames).catch((error) => this.options.onError?.(error))
+        }
+      } finally {
+        this.draining = undefined
       }
-    })
-    return this.inFlight
+    })()
+    return this.draining
   }
 
-  /** The end-of-turn flush: whatever has not landed by the deadline is left to finish in the background. */
+  /**
+   * The end-of-turn flush. Whatever has not landed by the deadline is dropped
+   * and reported; the one send still in flight completes on its own, nothing
+   * else is started.
+   */
   async finish(deadlineMs = FINAL_FLUSH_DEADLINE_MS): Promise<void> {
-    if (this.dropped > 0) this.options.onError?.(new Error(`${this.dropped} trace lines dropped (queue full)`))
     let timer: ReturnType<typeof setTimeout> | undefined
     await Promise.race([
       this.flush(),
@@ -95,6 +108,10 @@ export class StepBatcher {
       }),
     ])
     if (timer) clearTimeout(timer)
+    this.finished = true
+    this.dropped += this.pending.length
+    this.pending = []
+    if (this.dropped > 0) this.options.onError?.(new Error(`${this.dropped} trace lines dropped`))
   }
 }
 
@@ -149,11 +166,10 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
     const steps = new StepBatcher((frames) => session.recordSteps(invocationId, frames), {
       onError: (error) => deps.log(`trace steps dropped: ${error instanceof Error ? error.message : error}`),
     })
-    runtime.onStderrLine = (line) => {
+    const outcome = await runtime.run(content, env, (line) => {
       steps.push(line)
       deps.log(`${name}: ${line}`)
-    }
-    const outcome = await runtime.run(content, env)
+    })
     await steps.finish()
     const reply = describeOutcome(outcome, args.command)
     if (reply === undefined) return
@@ -234,16 +250,30 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
           claimTtlSeconds: CLAIM_TTL_SECONDS,
         })
         if (!invocation) return
+        if (stopped) {
+          // Claimed while shutting down: hand it back rather than start work nobody will finish.
+          await client
+            .fail(invocation.id, {
+              instanceId,
+              claimToken: invocation.claimToken,
+              errorMessage: "threa-bot shut down before the command started",
+            })
+            .catch(() => undefined)
+          return
+        }
         await presence("busy")
         // A claim the server no longer knows has nowhere to reply; stop the work.
-        // The same goes for a lease that has gone unconfirmed for a whole TTL:
-        // another runtime may hold the invocation by then.
+        // The same goes for a lease the server has not confirmed recently: the
+        // watchdog trips before the lease can expire (a renewal may itself
+        // take the socket-ack plus HTTP timeouts), because after expiry another
+        // runtime may already be running the same invocation.
         let claimLost = false
         let leaseConfirmedAt = Date.now()
         const loseClaim = (why: string) => {
           if (claimLost) return
           claimLost = true
           clearInterval(renew)
+          clearInterval(watchdog)
           deps.log(`claim ${invocation.id} ${why}; stopping the command`)
           runtime.interrupt()
         }
@@ -256,11 +286,12 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
             )
             if (notFound) loseClaim("lost (expired or reassigned)")
             else if (renewed) leaseConfirmedAt = Date.now()
-            else if (Date.now() - leaseConfirmedAt > CLAIM_TTL_SECONDS * 1000)
-              loseClaim("lease unconfirmed for a full TTL")
           },
           Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
         )
+        const watchdog = setInterval(() => {
+          if (Date.now() - leaseConfirmedAt > LEASE_UNCONFIRMED_LIMIT_MS) loseClaim("lease unconfirmed too long")
+        }, 5_000)
         try {
           const steps = new StepBatcher(
             (frames) =>
@@ -272,15 +303,18 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
               ),
             { onError: (error) => deps.log(`trace steps dropped: ${error instanceof Error ? error.message : error}`) }
           )
-          runtime.onStderrLine = (line) => {
-            steps.push(line)
-            deps.log(`${basename(args.command[0]!)}: ${line}`)
-          }
-          const outcome = await runtime.run(invocation.promptMarkdown, {
-            THREA_INVOCATION_ID: invocation.id,
-            THREA_STREAM_ID: invocation.responseStreamId,
-            THREA_SOURCE_MESSAGE_ID: invocation.sourceMessageId,
-          })
+          const outcome = await runtime.run(
+            invocation.promptMarkdown,
+            {
+              THREA_INVOCATION_ID: invocation.id,
+              THREA_STREAM_ID: invocation.responseStreamId,
+              THREA_SOURCE_MESSAGE_ID: invocation.sourceMessageId,
+            },
+            (line) => {
+              steps.push(line)
+              deps.log(`${basename(args.command[0]!)}: ${line}`)
+            }
+          )
           await steps.finish()
           if (claimLost) continue
           if (stopped && !outcome.ok && outcome.reason === "interrupted") {
@@ -308,6 +342,7 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
             .catch((failure) => deps.log(`fail() failed: ${failure instanceof Error ? failure.message : failure}`))
         } finally {
           clearInterval(renew)
+          clearInterval(watchdog)
           if (!stopped) await presence("available")
         }
       }

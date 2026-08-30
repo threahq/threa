@@ -39,13 +39,17 @@ describe("StepBatcher bounds", () => {
       },
       { flushMs: 60_000, onError: (error) => errors.push(error instanceof Error ? error.message : String(error)) }
     )
+    // The first 50 go out in the one stuck send; 570 more arrive, the cap keeps 500 of them.
     for (let i = 0; i < 620; i++) batcher.push(`line ${i}`)
-    expect(batcher.dropped).toBe(120)
+    expect(batcher.dropped).toBe(70)
     const started = Date.now()
     await batcher.finish(50)
     expect(Date.now() - started).toBeLessThan(1_000)
-    expect(calls).toBeGreaterThanOrEqual(1)
-    expect(errors).toEqual(["120 trace lines dropped (queue full)"])
+    // One send is stuck in flight; the rest of the queue is dropped, not left draining in the background.
+    expect(calls).toBe(1)
+    expect(errors).toEqual([`${70 + 500} trace lines dropped`])
+    batcher.push("late")
+    expect(batcher.dropped).toBe(570)
   })
 })
 

@@ -33,8 +33,8 @@ export interface CommandRuntimeOptions {
  */
 export class CommandRuntime {
   private active: { child: ChildProcess; interrupted: boolean; closed: Promise<void> } | undefined
-  /** One stderr line at a time, as the command emits them; rebound per turn by the caller. */
-  onStderrLine: ((line: string) => void) | undefined
+  /** Set by `shutdown()`: no command may start after it, including one waiting on a dying predecessor. */
+  private closedForGood = false
 
   constructor(private readonly options: CommandRuntimeOptions) {}
 
@@ -42,10 +42,16 @@ export class CommandRuntime {
     return this.active !== undefined
   }
 
-  async run(input: string, extraEnv: Record<string, string> = {}): Promise<CommandOutcome> {
+  async run(
+    input: string,
+    extraEnv: Record<string, string> = {},
+    onStderrLine?: (line: string) => void
+  ): Promise<CommandOutcome> {
+    if (this.closedForGood) return { ok: false, reason: "interrupted" }
     if (this.active) {
       if (!this.active.interrupted) throw new Error("a command is already running")
       await this.active.closed
+      if (this.closedForGood) return { ok: false, reason: "interrupted" }
     }
     const [file, ...args] = this.options.command
     if (!file) throw new Error("empty command")
@@ -103,7 +109,7 @@ export class CommandRuntime {
           lines.push(stderrLine.slice(0, MAX_STDERR_LINE_CHARS))
           stderrLine = stderrLine.slice(MAX_STDERR_LINE_CHARS)
         }
-        for (const line of lines) if (line.trim()) this.onStderrLine?.(line)
+        for (const line of lines) if (line.trim()) onStderrLine?.(line)
       })
       child.on("error", (error) => {
         if (timer) clearTimeout(timer)
@@ -113,7 +119,7 @@ export class CommandRuntime {
       })
       child.on("close", (code, signal) => {
         if (timer) clearTimeout(timer)
-        if (stderrLine.trim()) this.onStderrLine?.(stderrLine)
+        if (stderrLine.trim()) onStderrLine?.(stderrLine)
         this.active = undefined
         markClosed()
         if (state.interrupted) resolve({ ok: false, reason: "interrupted" })
@@ -137,6 +143,7 @@ export class CommandRuntime {
 
   /** Interrupt and wait for the process group to be gone (bounded by the SIGKILL grace). */
   async shutdown(): Promise<void> {
+    this.closedForGood = true
     const active = this.active
     if (!active) return
     this.interrupt()

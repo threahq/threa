@@ -7,8 +7,7 @@ describe("CommandRuntime", () => {
     const runtime = new CommandRuntime({
       command: ["sh", "-c", 'echo "step one" >&2; echo "step two" >&2; echo "Echo: $(cat) [$THREA_INVOCATION_ID]"'],
     })
-    runtime.onStderrLine = (line) => lines.push(line)
-    const outcome = await runtime.run("hello", { THREA_INVOCATION_ID: "binv_1" })
+    const outcome = await runtime.run("hello", { THREA_INVOCATION_ID: "binv_1" }, (line) => lines.push(line))
     expect(outcome).toEqual({ ok: true, stdout: "Echo: hello [binv_1]\n", truncated: false })
     expect(lines).toEqual(["step one", "step two"])
     expect(runtime.busy).toBe(false)
@@ -50,22 +49,26 @@ describe("CommandRuntime", () => {
     await third
   })
 
-  test("shutdown kills a running process tree and waits for it", async () => {
+  test("shutdown kills a running process tree, waits for it, and refuses anything queued behind it", async () => {
     const runtime = new CommandRuntime({ command: ["sh", "-c", "sleep 30 & wait"] })
     const pending = runtime.run("x")
     await new Promise((resolve) => setTimeout(resolve, 100))
+    runtime.interrupt()
+    // A /steer replacement parked behind the dying child must not spawn after shutdown.
+    const replacement = runtime.run("y")
     const started = Date.now()
     await runtime.shutdown()
     expect(Date.now() - started).toBeLessThan(2_500)
     expect(runtime.busy).toBe(false)
     await expect(pending).resolves.toEqual({ ok: false, reason: "interrupted" })
+    await expect(replacement).resolves.toEqual({ ok: false, reason: "interrupted" })
+    await expect(runtime.run("z")).resolves.toEqual({ ok: false, reason: "interrupted" })
   })
 
   test("stderr without newlines is cut into bounded lines instead of buffered forever", async () => {
     const lines: string[] = []
     const runtime = new CommandRuntime({ command: ["sh", "-c", "head -c 9000 /dev/zero | tr '\\0' x >&2"] })
-    runtime.onStderrLine = (line) => lines.push(line)
-    await runtime.run("x")
+    await runtime.run("x", {}, (line) => lines.push(line))
     expect(lines.map((l) => l.length)).toEqual([4000, 4000, 1000])
   })
 
