@@ -78,8 +78,17 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
   if (values.help) return { kind: "help" }
   if (values.version) return { kind: "version" }
   const [subcommand, ...rest] = positionals
+  // Every option is parsed up front; the ones that belong to the other
+  // subcommand are rejected rather than silently dropped.
+  const rejectOptions = (names: string[]) => {
+    for (const name of names) {
+      const value = values[name as keyof typeof values]
+      if (value !== undefined && value !== false) throw new Error(`--${name} does not apply to ${subcommand}`)
+    }
+  }
   if (subcommand === "connect") {
     if (rest.length > 0 || command.length > 0) throw new Error("connect takes no command")
+    rejectOptions(["mention", "config", "timeout"])
     return {
       kind: "connect",
       ...(values["base-url"] ? { baseUrl: values["base-url"] } : {}),
@@ -89,6 +98,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
   if (subcommand !== "run") {
     throw new Error(subcommand ? `Unknown command: ${subcommand}` : "Missing command; expected `connect` or `run`.")
   }
+  rejectOptions(["base-url"])
   if (rest.length > 0) throw new Error(`Unexpected argument before --: ${rest[0]}`)
   if (command.length === 0) throw new Error("Missing agent command: put it after `--`.")
   let timeoutMs: number | undefined

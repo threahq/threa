@@ -458,6 +458,7 @@ describe("workspace-router", () => {
           const fn = mockFetchFn()
           await worker.fetch(makeRequest(path, method), makeEnv({ CONTROL_PLANE_URL: CP_URL }))
           expect(getProxiedUrl(fn)).toBe(`http://localhost:3003${path}`)
+          expect(getProxiedInit(fn).method).toBe(method)
         }
       } finally {
         globalThis.fetch = originalFetch

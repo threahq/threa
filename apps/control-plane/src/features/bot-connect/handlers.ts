@@ -21,6 +21,8 @@ const tokenSchema = z.object({
   device_code: z.string().min(20).max(200),
   client_id: clientIdSchema,
 })
+// Only consulted once `tokenSchema` has failed, to pick the RFC error code.
+const grantTypeSchema = z.object({ grant_type: z.string().optional() })
 
 /** RFC 6749 §5.1: responses carrying codes or tokens are never cached. */
 function noStore(res: Response): void {
@@ -79,7 +81,7 @@ export function createBotConnectHandlers({ botConnectService }: Dependencies) {
       noStore(res)
       const parsed = tokenSchema.safeParse(req.body ?? {})
       if (!parsed.success) {
-        const grant = (req.body as { grant_type?: unknown } | undefined)?.grant_type
+        const grant = grantTypeSchema.safeParse(req.body ?? {}).data?.grant_type
         const knownGrant = grant === undefined || grant === DEVICE_CODE_GRANT
         res.status(400).json({ error: knownGrant ? "invalid_request" : "unsupported_grant_type" })
         return

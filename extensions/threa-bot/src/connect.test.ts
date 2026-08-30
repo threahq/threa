@@ -82,12 +82,16 @@ describe("threa-bot connect", () => {
     expect(printed[1]).toContain("BCDF-GHJK")
     // slow_down, an edge 429, a dropped connection and a 5xx all push the interval out by 5s.
     expect(slept).toEqual([3000, 3000, 8000, 13000, 18000, 23000])
-    expect(calls[0]).toBe("POST https://app.example/api/oauth/device_authorization")
-    expect(bodies[0]).toContain("client_id=threa-bot")
-    expect(calls.filter((c) => c.endsWith("/api/oauth/token"))).toHaveLength(6)
-    expect(bodies[1]).toBe(
+    // The whole request sequence, in order: one authorization, then one identical token poll per sleep.
+    const tokenBody =
       "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=device-secret-1234567890abcdefghijklmnopqrstuv&client_id=threa-bot"
-    )
+    expect(calls.map((call, i) => ({ call, body: bodies[i] }))).toEqual([
+      {
+        call: "POST https://app.example/api/oauth/device_authorization",
+        body: expect.stringMatching(/^client_id=threa-bot&name=my-agent&host=[^&]+$/),
+      },
+      ...Array.from({ length: 6 }, () => ({ call: "POST https://app.example/api/oauth/token", body: tokenBody })),
+    ])
     expect(statSync(configPath).mode & 0o777).toBe(0o600)
     expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(stored)
     expect(readStoredConfig(configPath)).toEqual(stored)

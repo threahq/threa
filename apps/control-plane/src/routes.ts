@@ -128,9 +128,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const shadow = createInvitationShadowHandlers({ shadowService })
   const waitlist = createWaitlistHandlers({ waitlistService })
   const botConnect = createBotConnectHandlers({ botConnectService })
-  // A connecting device polls the token endpoint every 3s; several behind one
-  // NAT must not trip the auth limiter, and the device code is what gates the data.
-  const botConnectLimit = createRateLimit({ name: "cp-bot-connect", windowMs: 60_000, max: 120, key: ipKey })
+  // A connecting device polls the token endpoint every 3s (20/min); an office
+  // NAT with a dozen devices connecting at once must not trip this, and the
+  // device code is what gates the data, not the limiter.
+  const botConnectLimit = createRateLimit({ name: "cp-bot-connect", windowMs: 60_000, max: 300, key: ipKey })
   // The user code is the short, human one; its lookup/approve/deny budget is
   // its own and far smaller than the device's polling budget.
   const botConnectCodeLimit = createRateLimit({ name: "cp-bot-connect-code", windowMs: 60_000, max: 20, key: ipKey })
