@@ -7,6 +7,7 @@ export interface BotConnectRequestRow {
   id: string
   device_code_hash: string
   user_code: string
+  client_id: string
   status: string
   requested_name: string | null
   requested_host: string | null
@@ -23,7 +24,7 @@ export interface BotConnectRequestRow {
   claimed_at: Date | null
 }
 
-const SELECT_FIELDS = `id, device_code_hash, user_code, status, requested_name, requested_host,
+const SELECT_FIELDS = `id, device_code_hash, user_code, client_id, status, requested_name, requested_host,
   approved_workspace_id, approved_workspace_name, approved_bot_id, approved_bot_slug, approved_scope,
   approved_by_workos_user_id, api_key, created_at, expires_at, approved_at, claimed_at`
 
@@ -35,16 +36,17 @@ export const BotConnectRepository = {
       id: string
       deviceCodeHash: string
       userCode: string
+      clientId: string
       requestedName: string | null
       requestedHost: string | null
       expiresAt: Date
     }
   ): Promise<boolean> {
     const result = await db.query(
-      `INSERT INTO bot_connect_requests (id, device_code_hash, user_code, requested_name, requested_host, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO bot_connect_requests (id, device_code_hash, user_code, client_id, requested_name, requested_host, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT DO NOTHING`,
-      [row.id, row.deviceCodeHash, row.userCode, row.requestedName, row.requestedHost, row.expiresAt]
+      [row.id, row.deviceCodeHash, row.userCode, row.clientId, row.requestedName, row.requestedHost, row.expiresAt]
     )
     return (result.rowCount ?? 0) > 0
   },
@@ -125,7 +127,7 @@ export const BotConnectRepository = {
        SET status = 'claimed', claimed_at = NOW(), api_key = NULL
        FROM (SELECT id, api_key FROM bot_connect_requests WHERE id = $1 AND status = 'approved' AND expires_at > NOW() FOR UPDATE) AS prior
        WHERE r.id = prior.id
-       RETURNING r.id, r.device_code_hash, r.user_code, r.status, r.requested_name, r.requested_host,
+       RETURNING r.id, r.device_code_hash, r.user_code, r.client_id, r.status, r.requested_name, r.requested_host,
          r.approved_workspace_id, r.approved_workspace_name, r.approved_bot_id, r.approved_bot_slug, r.approved_scope,
          r.approved_by_workos_user_id, prior.api_key AS api_key, r.created_at, r.expires_at, r.approved_at, r.claimed_at`,
       [id]
@@ -133,7 +135,12 @@ export const BotConnectRepository = {
     return result.rows[0] ?? null
   },
 
-  /** Drop expired rows (and any key they still hold). Cheap enough to run on every start. */
+  /** An expired request keeps nothing: the key it may hold is dropped the moment expiry is observed. */
+  async clearKey(db: Querier, id: string): Promise<void> {
+    await db.query(`UPDATE bot_connect_requests SET api_key = NULL WHERE id = $1`, [id])
+  },
+
+  /** Drop expired rows (and any key they still hold). Runs on every authorization and on the sweeper. */
   async purgeExpired(db: Querier): Promise<void> {
     await db.query(`DELETE FROM bot_connect_requests WHERE expires_at < NOW()`)
   },

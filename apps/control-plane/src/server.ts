@@ -114,6 +114,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     membership: workspaceService,
     frontendUrl: config.frontendUrl,
   })
+  botConnectService.startSweeper()
   const workosAuthzAdminService = new WorkosAuthzAdminService({ pool, workosOrgService })
   const authLogService = new AuthLogService({ pool })
   await seedPlatformAdmins(pool, config.platformAdminWorkosUserIds)
@@ -305,6 +306,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     await githubWebhookRetention.stop().catch(() => {})
     await authLogPoller?.stop().catch(() => {})
     await authLogRetention?.stop().catch(() => {})
+    botConnectService.stopSweeper()
     await outboxDispatcher.stop().catch(() => {})
     await listenPool.end().catch(() => {})
     await pool.end().catch(() => {})

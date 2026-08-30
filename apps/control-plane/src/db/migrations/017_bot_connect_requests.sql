@@ -15,6 +15,7 @@ CREATE TABLE bot_connect_requests (
     id                         TEXT PRIMARY KEY,
     device_code_hash           TEXT NOT NULL UNIQUE,
     user_code                  TEXT NOT NULL,
+    client_id                  TEXT NOT NULL,
     status                     TEXT NOT NULL DEFAULT 'pending',
     requested_name             TEXT,
     requested_host             TEXT,

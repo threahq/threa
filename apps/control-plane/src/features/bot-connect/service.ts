@@ -1,10 +1,14 @@
 import { createHash, randomBytes, randomInt } from "node:crypto"
 import type { Pool } from "pg"
-import { HttpError, botConnectRequestId } from "@threa/backend-common"
+import { HttpError, botConnectRequestId, logger } from "@threa/backend-common"
 import { BotConnectRepository, type BotConnectRequestRow } from "./repository"
 
 export const BOT_CONNECT_REQUEST_TTL_MS = 15 * 60 * 1000
 export const BOT_CONNECT_POLL_INTERVAL_SECONDS = 3
+// Expired rows are also purged on every authorization; the sweeper covers a
+// quiet deployment where the last approved-but-unclaimed row would otherwise
+// keep its key until the next device shows up.
+export const BOT_CONNECT_SWEEP_INTERVAL_MS = 5 * 60 * 1000
 // No vowels or look-alikes (0/O, 1/I/L), so a code read aloud or typed from a
 // phone screen survives. 8 characters from 28 symbols: ~3.8e11 combinations,
 // only meaningful while a request is pending (15 minutes) and only reachable
@@ -83,9 +87,29 @@ function mintUserCode(): string {
 }
 
 export class BotConnectService {
+  private sweeper: ReturnType<typeof setInterval> | undefined
+
   constructor(private readonly deps: Dependencies) {}
 
-  async authorize(input: { requestedName: string | null; requestedHost: string | null }): Promise<DeviceAuthorization> {
+  startSweeper(intervalMs = BOT_CONNECT_SWEEP_INTERVAL_MS): void {
+    this.sweeper ??= setInterval(() => {
+      BotConnectRepository.purgeExpired(this.deps.pool).catch((error) => {
+        logger.warn({ err: error }, "bot-connect sweep failed")
+      })
+    }, intervalMs)
+    this.sweeper.unref()
+  }
+
+  stopSweeper(): void {
+    if (this.sweeper) clearInterval(this.sweeper)
+    this.sweeper = undefined
+  }
+
+  async authorize(input: {
+    clientId: string
+    requestedName: string | null
+    requestedHost: string | null
+  }): Promise<DeviceAuthorization> {
     await BotConnectRepository.purgeExpired(this.deps.pool)
     const deviceCode = randomBytes(32).toString("base64url")
     const expiresAt = new Date(Date.now() + BOT_CONNECT_REQUEST_TTL_MS)
@@ -95,6 +119,7 @@ export class BotConnectService {
         id: botConnectRequestId(),
         deviceCodeHash: hashDeviceCode(deviceCode),
         userCode,
+        clientId: input.clientId,
         requestedName: input.requestedName,
         requestedHost: input.requestedHost,
         expiresAt,
@@ -113,13 +138,17 @@ export class BotConnectService {
     throw new HttpError("Could not allocate a connect code", { status: 503, code: "BOT_CONNECT_UNAVAILABLE" })
   }
 
-  async token(deviceCode: string): Promise<DeviceTokenResult> {
+  async token(deviceCode: string, clientId: string): Promise<DeviceTokenResult> {
     const row = await BotConnectRepository.findByDeviceCodeHash(this.deps.pool, hashDeviceCode(deviceCode))
-    // An unknown code and an already-redeemed one read the same to the caller:
-    // the grant is not valid, and nothing distinguishes them for an attacker.
-    if (!row || row.status === "claimed") return { error: "invalid_grant" }
+    // An unknown code, an already-redeemed one, and a grant redeemed by a
+    // different client than the one that asked all read the same to the
+    // caller: the grant is not valid (RFC 8628 §3.4 binds the grant to the client).
+    if (!row || row.status === "claimed" || row.client_id !== clientId) return { error: "invalid_grant" }
     if (row.status === "denied") return { error: "access_denied" }
-    if (row.expires_at.getTime() <= Date.now()) return { error: "expired_token" }
+    if (row.expires_at.getTime() <= Date.now()) {
+      if (row.api_key) await BotConnectRepository.clearKey(this.deps.pool, row.id)
+      return { error: "expired_token" }
+    }
     if (row.status === "pending") return { error: "authorization_pending" }
     const claimed = await BotConnectRepository.claim(this.deps.pool, row.id)
     // Lost the race with a concurrent poll, or expired between the reads.

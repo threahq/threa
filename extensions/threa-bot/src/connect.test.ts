@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, statSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { runConnect, readStoredConfig, defaultConfigPath } from "./connect"
+import { assertSecureBaseUrl, runConnect, readStoredConfig, defaultConfigPath } from "./connect"
+import { chmodSync, writeFileSync } from "node:fs"
 import { resolveConfig } from "./run"
 
 function fakeThrea(tokenResults: Array<Record<string, unknown>>) {
@@ -109,6 +110,62 @@ describe("threa-bot connect", () => {
         }
       )
     ).rejects.toThrow("denied")
+  })
+
+  test("refuses a plaintext origin unless it is loopback", () => {
+    expect(assertSecureBaseUrl("https://app.threa.io/")).toBe("https://app.threa.io")
+    expect(assertSecureBaseUrl("http://localhost:3000")).toBe("http://localhost:3000")
+    expect(assertSecureBaseUrl("http://127.0.0.1:3000/")).toBe("http://127.0.0.1:3000")
+    expect(() => assertSecureBaseUrl("http://threa.example")).toThrow("must use https")
+    expect(() => assertSecureBaseUrl("app.threa.io")).toThrow("Not a URL")
+  })
+
+  test("a rate-limited authorization is a clear error, and an existing world-readable config ends up 0600", async () => {
+    const home = mkdtempSync(join(tmpdir(), "threa-bot-home-"))
+    const configPath = defaultConfigPath({ HOME: home })
+    const limited = (async () => new Response("Too Many Requests", { status: 429 })) as unknown as typeof fetch
+    await expect(
+      runConnect(
+        { baseUrl: "https://app.example" },
+        {
+          fetch: limited,
+          log: () => undefined,
+          print: () => undefined,
+          sleep: async () => undefined,
+          configPath,
+          env: {},
+        }
+      )
+    ).rejects.toThrow("rate limiting")
+
+    mkdirSync(join(home, ".threa"), { recursive: true })
+    writeFileSync(configPath, "{}", { mode: 0o644 })
+    chmodSync(configPath, 0o644)
+    const { fetchImpl } = fakeThrea([
+      {
+        access_token: "threa_bk_new",
+        token_type: "Bearer",
+        scope: "",
+        base_url: "https://app.example",
+        workspace_id: "ws_2",
+        workspace_name: "Two",
+        bot_id: "bot_2",
+        bot_slug: "two",
+      },
+    ])
+    await runConnect(
+      { baseUrl: "https://app.example" },
+      {
+        fetch: fetchImpl,
+        log: () => undefined,
+        print: () => undefined,
+        sleep: async () => undefined,
+        configPath,
+        env: {},
+      }
+    )
+    expect(statSync(configPath).mode & 0o777).toBe(0o600)
+    expect(readStoredConfig(configPath)?.apiKey).toBe("threa_bk_new")
   })
 
   test("run without credentials or a stored config points at connect", () => {

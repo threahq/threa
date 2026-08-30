@@ -21,14 +21,29 @@ async function authorize(client: TestClient, body: Record<string, unknown> = {})
   return res.data
 }
 
-function token(client: TestClient, deviceCode: string) {
-  return client.post<Record<string, unknown>>("/api/oauth/token", { grant_type: GRANT, device_code: deviceCode })
+function token(client: TestClient, deviceCode: string, clientId = "threa-bot") {
+  return client.post<Record<string, unknown>>("/api/oauth/token", {
+    grant_type: GRANT,
+    device_code: deviceCode,
+    client_id: clientId,
+  })
 }
 
 describe("OAuth device authorization grant (threa-bot connect)", () => {
   test("device_authorization answers with the RFC 8628 response", async () => {
-    const auth = await authorize(new TestClient(), { name: "my-agent", host: "laptop" })
+    const client = new TestClient()
+    const auth = await authorize(client, { name: "my-agent", host: "laptop" })
     expect(auth.device_code.length).toBeGreaterThanOrEqual(40)
+    const raw = await fetch(`${process.env.TEST_BASE_URL}/api/oauth/device_authorization`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: "threa-bot" }),
+    })
+    expect(raw.headers.get("cache-control")).toBe("no-store")
+    expect(raw.headers.get("pragma")).toBe("no-cache")
+    const noClient = await client.post<{ error: string }>("/api/oauth/device_authorization", { name: "x" })
+    expect(noClient.status).toBe(400)
+    expect(noClient.data).toEqual({ error: "invalid_request" })
     expect(auth.user_code).toMatch(/^[BCDFGHJKMNPQRSTVWXYZ2-9]{4}-[BCDFGHJKMNPQRSTVWXYZ2-9]{4}$/)
     expect(auth.verification_uri).toEndWith("/connect")
     expect(auth.verification_uri_complete).toBe(`${auth.verification_uri}?code=${auth.user_code}`)
@@ -63,9 +78,15 @@ describe("OAuth device authorization grant (threa-bot connect)", () => {
     })
     expect(approve.status).toBe(200)
 
+    // The grant is bound to the client id that asked for it.
+    const otherClient = await token(device, auth.device_code, "someone-else")
+    expect(otherClient.status).toBe(400)
+    expect(otherClient.data).toEqual({ error: "invalid_grant" })
+
     const issued = await token(device, auth.device_code)
     expect(issued.status).toBe(200)
     expect(issued.headers.get("cache-control")).toBe("no-store")
+    expect(issued.headers.get("pragma")).toBe("no-cache")
     expect(issued.data).toEqual({
       access_token: "threa_bk_test_value",
       token_type: "Bearer",
@@ -141,7 +162,7 @@ describe("OAuth device authorization grant (threa-bot connect)", () => {
     const res = await fetch(`${process.env.TEST_BASE_URL}/api/oauth/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: GRANT, device_code: auth.device_code }),
+      body: new URLSearchParams({ grant_type: GRANT, device_code: auth.device_code, client_id: "threa-bot" }),
     })
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: "authorization_pending" })

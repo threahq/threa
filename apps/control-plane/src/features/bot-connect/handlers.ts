@@ -5,11 +5,13 @@ import type { BotConnectService } from "./service"
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
-// RFC 8628 §3.1: `client_id` is required by the spec; Threa has one public
-// client (the CLI), so it is accepted and ignored. `name`/`host` are what the
-// approval page shows.
+// RFC 8628 §3.1/§3.4: a public client identifies itself at both endpoints and
+// the grant is bound to that id. There is no client registry; the id is what
+// the device says it is, and redemption must say the same. `name`/`host` are
+// what the approval page shows.
+const clientIdSchema = z.string().trim().min(1).max(100)
 const authorizeSchema = z.object({
-  client_id: z.string().max(100).optional(),
+  client_id: clientIdSchema,
   scope: z.string().max(500).optional(),
   name: z.string().trim().min(1).max(60).optional(),
   host: z.string().trim().min(1).max(100).optional(),
@@ -17,8 +19,14 @@ const authorizeSchema = z.object({
 const tokenSchema = z.object({
   grant_type: z.literal(DEVICE_CODE_GRANT),
   device_code: z.string().min(20).max(200),
-  client_id: z.string().max(100).optional(),
+  client_id: clientIdSchema,
 })
+
+/** RFC 6749 §5.1: responses carrying codes or tokens are never cached. */
+function noStore(res: Response): void {
+  res.setHeader("Cache-Control", "no-store")
+  res.setHeader("Pragma", "no-cache")
+}
 const codeSchema = z.string().trim().min(8).max(12)
 const lookupSchema = z.object({ code: codeSchema })
 const approveSchema = z.object({
@@ -55,8 +63,10 @@ export function createBotConnectHandlers({ botConnectService }: Dependencies) {
         res.status(400).json({ error: "invalid_request" })
         return
       }
+      noStore(res)
       res.json(
         await botConnectService.authorize({
+          clientId: parsed.data.client_id,
           requestedName: parsed.data.name ?? null,
           requestedHost: parsed.data.host ?? null,
         })
@@ -72,8 +82,8 @@ export function createBotConnectHandlers({ botConnectService }: Dependencies) {
         res.status(400).json({ error: grant === DEVICE_CODE_GRANT ? "invalid_request" : "unsupported_grant_type" })
         return
       }
-      const result = await botConnectService.token(parsed.data.device_code)
-      res.setHeader("Cache-Control", "no-store")
+      const result = await botConnectService.token(parsed.data.device_code, parsed.data.client_id)
+      noStore(res)
       if ("error" in result) res.status(400).json(result)
       else res.json(result)
     },

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Bot, Check, Hourglass, SearchX, type LucideIcon } from "lucide-react"
@@ -41,45 +41,88 @@ export function slugForBot(name: string): string {
     .slice(0, 40)
 }
 
+/** The regional writes approval depends on; kept across a failed approval so a retry does not mint again. */
+export interface ProvisionedBot {
+  workspaceId: string
+  botId: string
+  botSlug: string
+  keyId: string
+  apiKey: string
+}
+
+/** The code cannot be approved any more; the bot and key minted for it were removed. */
+export class ConnectCodeGoneError extends Error {
+  constructor() {
+    super(
+      "This code is no longer valid (expired, denied, or already used). The bot created for it was removed; run `threa-bot connect` again."
+    )
+  }
+}
+
 /**
  * Create the bot and mint its key in the workspace's region, then hand the
- * key to the control plane for the waiting device. A slug collision retries
- * once with a random suffix; anything else surfaces as the mutation error.
+ * key to the control plane for the waiting device. The three writes are not
+ * one transaction, so: a slug collision retries once with a random suffix;
+ * `provisioned` from an earlier attempt in the same workspace is reused rather
+ * than minted again; and when the control plane says the code is gone
+ * (404/409) the bot and key are revoked so nothing usable is left behind.
  */
 export async function approveConnect(input: {
   code: string
   workspace: Workspace
   botName: string
-}): Promise<{ slug: string }> {
-  const baseSlug = slugForBot(input.botName) || "bot"
-  const create = (slug: string) =>
-    botsApi.create(input.workspace.id, {
-      type: "personal",
-      name: input.botName,
-      slug,
-      traits: [BotTraits.MENTIONABLE, BotTraits.ACTIVE_SCRATCHPAD],
+  provisioned?: ProvisionedBot
+  onProvisioned?: (provisioned: ProvisionedBot) => void
+}): Promise<{ slug: string; provisioned: ProvisionedBot }> {
+  let provisioned = input.provisioned?.workspaceId === input.workspace.id ? input.provisioned : undefined
+  if (!provisioned) {
+    const baseSlug = slugForBot(input.botName) || "bot"
+    const create = (slug: string) =>
+      botsApi.create(input.workspace.id, {
+        type: "personal",
+        name: input.botName,
+        slug,
+        traits: [BotTraits.MENTIONABLE, BotTraits.ACTIVE_SCRATCHPAD],
+      })
+    let bot
+    try {
+      bot = await create(baseSlug)
+    } catch (error) {
+      if (!(ApiError.isApiError(error) && error.code === "DUPLICATE_SLUG")) throw error
+      bot = await create(`${baseSlug}-${Math.random().toString(36).slice(2, 6)}`)
+    }
+    const key = await botsApi.createKey(input.workspace.id, bot.id, {
+      name: "threa-bot connect",
+      scopes: CONNECTED_BOT_SCOPES,
     })
-  let bot
-  try {
-    bot = await create(baseSlug)
-  } catch (error) {
-    if (!(ApiError.isApiError(error) && error.code === "DUPLICATE_SLUG")) throw error
-    bot = await create(`${baseSlug}-${Math.random().toString(36).slice(2, 6)}`)
+    provisioned = {
+      workspaceId: input.workspace.id,
+      botId: bot.id,
+      botSlug: bot.slug ?? baseSlug,
+      keyId: key.key.id,
+      apiKey: key.value,
+    }
+    input.onProvisioned?.(provisioned)
   }
-  const key = await botsApi.createKey(input.workspace.id, bot.id, {
-    name: "threa-bot connect",
-    scopes: CONNECTED_BOT_SCOPES,
-  })
-  await botConnectApi.approve({
-    code: input.code,
-    workspaceId: input.workspace.id,
-    workspaceName: input.workspace.name,
-    botId: bot.id,
-    botSlug: bot.slug ?? baseSlug,
-    scope: CONNECTED_BOT_SCOPES.join(" "),
-    apiKey: key.value,
-  })
-  return { slug: bot.slug ?? baseSlug }
+  try {
+    await botConnectApi.approve({
+      code: input.code,
+      workspaceId: provisioned.workspaceId,
+      workspaceName: input.workspace.name,
+      botId: provisioned.botId,
+      botSlug: provisioned.botSlug,
+      scope: CONNECTED_BOT_SCOPES.join(" "),
+      apiKey: provisioned.apiKey,
+    })
+  } catch (error) {
+    if (!(ApiError.isApiError(error) && (error.status === 404 || error.status === 409))) throw error
+    await Promise.allSettled([
+      botsApi.revokeKey(provisioned.workspaceId, provisioned.botId, provisioned.keyId),
+      botsApi.archive(provisioned.workspaceId, provisioned.botId),
+    ])
+    throw new ConnectCodeGoneError()
+  }
+  return { slug: provisioned.botSlug, provisioned }
 }
 
 function Shell({ children }: { children?: React.ReactNode }) {
@@ -164,8 +207,22 @@ function ApproveForm({
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "")
   const [botName, setBotName] = useState(lookup.requestedName ?? "My agent")
   const workspace = workspaces.find((w) => w.id === workspaceId)
+  const provisioned = useRef<ProvisionedBot | undefined>(undefined)
   const approve = useMutation({
-    mutationFn: () => approveConnect({ code, workspace: workspace!, botName: botName.trim() }),
+    mutationFn: async () => {
+      try {
+        return await approveConnect({
+          code,
+          workspace: workspace!,
+          botName: botName.trim(),
+          provisioned: provisioned.current,
+          onProvisioned: (next) => (provisioned.current = next),
+        })
+      } catch (error) {
+        if (error instanceof ConnectCodeGoneError) provisioned.current = undefined
+        throw error
+      }
+    },
     onSuccess: ({ slug }) => onDone({ slug, workspaceName: workspace!.name }),
   })
   const deny = useMutation({
@@ -256,18 +313,9 @@ function ApproveForm({
 }
 
 export function ConnectPage() {
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const { user, loading: authLoading, login } = useAuth()
-  const { workspaces, isLoading: workspacesLoading } = useWorkspaces()
   const code = normalizeCode(params.get("code") ?? "")
-  const [done, setDone] = useState<{ slug: string; workspaceName: string } | "denied" | null>(null)
-
-  const lookup = useQuery({
-    queryKey: ["bot-connect-lookup", code],
-    queryFn: () => botConnectApi.lookup(code),
-    enabled: !!user && code.length === 9,
-    retry: false,
-  })
 
   if (authLoading) return <Shell />
 
@@ -287,6 +335,23 @@ export function ConnectPage() {
       </Shell>
     )
   }
+
+  return <SignedInConnect />
+}
+
+/** Mounted only with a session: the workspace list query would otherwise 401 and bounce to login. */
+function SignedInConnect() {
+  const [params, setParams] = useSearchParams()
+  const { workspaces, isLoading: workspacesLoading } = useWorkspaces()
+  const code = normalizeCode(params.get("code") ?? "")
+  const [done, setDone] = useState<{ slug: string; workspaceName: string } | "denied" | null>(null)
+
+  const lookup = useQuery({
+    queryKey: ["bot-connect-lookup", code],
+    queryFn: () => botConnectApi.lookup(code),
+    enabled: code.length === 9,
+    retry: false,
+  })
 
   if (done === "denied") {
     return (

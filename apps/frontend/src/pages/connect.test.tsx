@@ -115,6 +115,46 @@ describe("ConnectPage", () => {
     expect(await screen.findByRole("heading", { name: /@my-agent-x1y2 is connected to Acme/ })).toBeInTheDocument()
   })
 
+  it("keeps the minted bot and key across a transient approval failure, and cleans up when the code is gone", async () => {
+    vi.spyOn(botConnectApi, "lookup").mockResolvedValue({
+      userCode: "BCDF-GHJK",
+      requestedName: "my-agent",
+      requestedHost: null,
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    })
+    const create = vi
+      .spyOn(botsApi, "create")
+      .mockResolvedValue({ id: "bot_1", slug: "my-agent", name: "my-agent" } as never)
+    const createKey = vi
+      .spyOn(botsApi, "createKey")
+      .mockResolvedValue({ key: { id: "key_1" } as never, value: "threa_bk_minted" })
+    const approve = vi
+      .spyOn(botConnectApi, "approve")
+      .mockRejectedValueOnce(new ApiError(502, "BAD_GATEWAY", "upstream hiccup"))
+      .mockRejectedValueOnce(new ApiError(409, "BOT_CONNECT_NOT_PENDING", "gone"))
+    const revokeKey = vi.spyOn(botsApi, "revokeKey").mockResolvedValue()
+    const archive = vi.spyOn(botsApi, "archive").mockResolvedValue({} as never)
+
+    renderPage()
+    await userEvent.click(await screen.findByRole("button", { name: "Connect" }))
+    expect(await screen.findByText("upstream hiccup")).toBeInTheDocument()
+    expect(revokeKey).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }))
+    expect(await screen.findByText(/no longer valid/)).toBeInTheDocument()
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(createKey).toHaveBeenCalledTimes(1)
+    expect(approve).toHaveBeenCalledTimes(2)
+    expect(revokeKey).toHaveBeenCalledWith("ws_1", "bot_1", "key_1")
+    expect(archive).toHaveBeenCalledWith("ws_1", "bot_1")
+  })
+
+  it("does not fetch workspaces before sign-in", () => {
+    mockUseAuth.mockReturnValue({ ...signedIn, user: null })
+    renderPage()
+    expect(mockUseWorkspaces).not.toHaveBeenCalled()
+  })
+
   it("denies without creating anything", async () => {
     vi.spyOn(botConnectApi, "lookup").mockResolvedValue({
       userCode: "BCDF-GHJK",

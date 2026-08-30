@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -29,8 +29,31 @@ export function readStoredConfig(path: string): StoredBotConfig | undefined {
 
 function writeStoredConfig(path: string, config: StoredBotConfig): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
-  chmodSync(path, 0o600)
+  // Owner-only from the first byte, then swapped in whole: an existing file's
+  // looser mode never applies to the new key, and a crash mid-write cannot
+  // leave a truncated config behind.
+  const temp = `${path}.${process.pid}.tmp`
+  writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: "wx" })
+  chmodSync(temp, 0o600)
+  renameSync(temp, path)
+}
+
+/**
+ * The key travels in the token response, so the origin must be TLS (RFC 8628
+ * §3.1) — except a loopback address, which is where a developer runs the app.
+ */
+export function assertSecureBaseUrl(raw: string): string {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error(`Not a URL: ${raw}`)
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname)
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error(`${raw} must use https (plain http is only allowed for localhost)`)
+  }
+  return url.origin
 }
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -72,9 +95,7 @@ async function postForm<T>(fetchImpl: typeof fetch, url: string, fields: Record<
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: new URLSearchParams(fields).toString(),
   })
-  // The edge rate limiter answers 429 before the grant does; RFC 8628 §3.5
-  // spells the same instruction as `slow_down`.
-  if (response.status === 429) return { error: "slow_down" } as T
+  if (response.status === 429) throw new RateLimited()
   let body: unknown
   try {
     body = await response.json()
@@ -86,6 +107,12 @@ async function postForm<T>(fetchImpl: typeof fetch, url: string, fields: Record<
     throw new Error(`Threa API ${response.status}`)
   }
   return body as T
+}
+
+class RateLimited extends Error {
+  constructor() {
+    super("Threa is rate limiting this address; wait a minute and try again.")
+  }
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -103,7 +130,7 @@ export async function runConnect(
   args: { baseUrl?: string; name?: string },
   deps: ConnectDeps
 ): Promise<StoredBotConfig> {
-  const baseUrl = (args.baseUrl ?? deps.env.THREA_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, "")
+  const baseUrl = assertSecureBaseUrl(args.baseUrl ?? deps.env.THREA_BASE_URL ?? DEFAULT_BASE_URL)
   const auth = await postForm<DeviceAuthorization>(deps.fetch, `${baseUrl}/api/oauth/device_authorization`, {
     client_id: CLIENT_ID,
     ...(args.name ? { name: args.name } : {}),
@@ -115,11 +142,19 @@ export async function runConnect(
   let intervalMs = auth.interval * 1000
   while (Date.now() < deadline) {
     await deps.sleep(intervalMs)
-    const result = await postForm<TokenResponse>(deps.fetch, `${baseUrl}/api/oauth/token`, {
-      grant_type: DEVICE_CODE_GRANT,
-      device_code: auth.device_code,
-      client_id: CLIENT_ID,
-    })
+    let result: TokenResponse
+    try {
+      result = await postForm<TokenResponse>(deps.fetch, `${baseUrl}/api/oauth/token`, {
+        grant_type: DEVICE_CODE_GRANT,
+        device_code: auth.device_code,
+        client_id: CLIENT_ID,
+      })
+    } catch (error) {
+      // The edge rate limiter answers 429 before the grant does; RFC 8628 §3.5
+      // spells the same instruction as `slow_down`.
+      if (!(error instanceof RateLimited)) throw error
+      result = { error: "slow_down" }
+    }
     if ("error" in result) {
       if (result.error === "authorization_pending") continue
       if (result.error === "slow_down") {
