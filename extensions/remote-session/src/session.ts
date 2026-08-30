@@ -872,6 +872,8 @@ export class RemoteSession {
 
   /** Register an invocation as the in-flight turn and push its content to the runtime. */
   private async deliverTurn(invocation: ClaimedInvocation, content: string): Promise<void> {
+    // The lease clock starts at the claim, not at the first renewal tick.
+    this.leaseConfirmedAt.set(invocation.id, Date.now())
     this.inflight.set(invocation.id, {
       invocation,
       deadline: this.scheduleIdleTimeout(invocation.id),
