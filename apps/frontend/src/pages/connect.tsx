@@ -76,6 +76,7 @@ export async function approveConnect(input: {
     workspaceName: input.workspace.name,
     botId: bot.id,
     botSlug: bot.slug ?? baseSlug,
+    scope: CONNECTED_BOT_SCOPES.join(" "),
     apiKey: key.value,
   })
   return { slug: bot.slug ?? baseSlug }

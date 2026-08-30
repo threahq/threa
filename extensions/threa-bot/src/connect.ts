@@ -33,24 +33,28 @@ function writeStoredConfig(path: string, config: StoredBotConfig): void {
   chmodSync(path, 0o600)
 }
 
-interface Started {
-  deviceCode: string
-  userCode: string
-  verificationUrl: string
-  expiresAt: string
-  intervalSeconds: number
+const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+const CLIENT_ID = "threa-bot"
+
+/** RFC 8628 §3.2. */
+interface DeviceAuthorization {
+  device_code: string
+  user_code: string
+  verification_uri_complete: string
+  expires_in: number
+  interval: number
 }
 
-type PollResult =
-  | { status: "pending" | "denied" | "expired" | "claimed" }
+/** RFC 8628 §3.5: a token, or one of the grant's error codes. */
+type TokenResponse =
+  | { error: string }
   | {
-      status: "approved"
-      baseUrl: string
-      workspaceId: string
-      workspaceName: string
-      botId: string
-      botSlug: string
-      apiKey: string
+      access_token: string
+      base_url: string
+      workspace_id: string
+      workspace_name: string
+      bot_id: string
+      bot_slug: string
     }
 
 export interface ConnectDeps {
@@ -62,58 +66,79 @@ export interface ConnectDeps {
   env: NodeJS.ProcessEnv
 }
 
-async function json<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let code = ""
-    try {
-      code = ((await response.json()) as { code?: string }).code ?? ""
-    } catch {
-      code = ""
-    }
-    throw new Error(`Threa API ${response.status}${code ? ` (${code})` : ""}`)
+async function postForm<T>(fetchImpl: typeof fetch, url: string, fields: Record<string, string>): Promise<T> {
+  const response = await fetchImpl(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams(fields).toString(),
+  })
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw new Error(`Threa answered ${response.status} without a JSON body`)
   }
-  return (await response.json()) as T
+  // Token errors are 400s with an `error` code the caller reads; anything else is a failure.
+  if (!response.ok && !(response.status === 400 && body && typeof body === "object" && "error" in body)) {
+    throw new Error(`Threa API ${response.status}`)
+  }
+  return body as T
+}
+
+const ERROR_MESSAGES: Record<string, string> = {
+  access_denied: "The request was denied in Threa.",
+  expired_token: "The code expired before it was approved.",
+  invalid_grant: "The request is no longer valid.",
 }
 
 /**
- * The device half of the connect flow: ask for a code pair, show the user
- * where to approve, poll until the browser has minted a bot key, store it.
+ * The device half of the OAuth device authorization grant (RFC 8628): ask for
+ * a code pair, show the user where to approve, poll the token endpoint until
+ * the browser has minted a bot key, store it.
  */
 export async function runConnect(
   args: { baseUrl?: string; name?: string },
   deps: ConnectDeps
 ): Promise<StoredBotConfig> {
   const baseUrl = (args.baseUrl ?? deps.env.THREA_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, "")
-  const started = await json<Started>(
-    await deps.fetch(`${baseUrl}/api/bot-connect`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...(args.name ? { name: args.name } : {}), host: hostname() }),
-    })
-  )
-  deps.print(`Open ${started.verificationUrl}`)
-  deps.print(`and confirm the code ${started.userCode} to connect this machine as a Threa bot.`)
-  const deadline = new Date(started.expiresAt).getTime()
+  const auth = await postForm<DeviceAuthorization>(deps.fetch, `${baseUrl}/api/oauth/device_authorization`, {
+    client_id: CLIENT_ID,
+    ...(args.name ? { name: args.name } : {}),
+    host: hostname(),
+  })
+  deps.print(`Open ${auth.verification_uri_complete}`)
+  deps.print(`and confirm the code ${auth.user_code} to connect this machine as a Threa bot.`)
+  const deadline = Date.now() + auth.expires_in * 1000
+  let intervalMs = auth.interval * 1000
   while (Date.now() < deadline) {
-    await deps.sleep(started.intervalSeconds * 1000)
-    const result = await json<PollResult>(
-      await deps.fetch(`${baseUrl}/api/bot-connect/poll?deviceCode=${encodeURIComponent(started.deviceCode)}`)
-    )
-    if (result.status === "pending") continue
-    if (result.status !== "approved")
-      throw new Error(`Connect request ${result.status}; run \`threa-bot connect\` again.`)
+    await deps.sleep(intervalMs)
+    const result = await postForm<TokenResponse>(deps.fetch, `${baseUrl}/api/oauth/token`, {
+      grant_type: DEVICE_CODE_GRANT,
+      device_code: auth.device_code,
+      client_id: CLIENT_ID,
+    })
+    if ("error" in result) {
+      if (result.error === "authorization_pending") continue
+      if (result.error === "slow_down") {
+        intervalMs += 5_000
+        continue
+      }
+      throw new Error(
+        `${ERROR_MESSAGES[result.error] ?? `Connect failed (${result.error}).`} Run \`threa-bot connect\` again.`
+      )
+    }
     const config: StoredBotConfig = {
-      baseUrl: result.baseUrl,
-      workspaceId: result.workspaceId,
-      workspaceName: result.workspaceName,
-      botId: result.botId,
-      botSlug: result.botSlug,
-      apiKey: result.apiKey,
+      baseUrl: result.base_url,
+      workspaceId: result.workspace_id,
+      workspaceName: result.workspace_name,
+      botId: result.bot_id,
+      botSlug: result.bot_slug,
+      apiKey: result.access_token,
     }
     writeStoredConfig(deps.configPath, config)
     deps.print(`Connected as @${config.botSlug} in ${config.workspaceName}. Credentials saved to ${deps.configPath}.`)
     deps.print(`Next: threa-bot run -- <your agent command>`)
     return config
   }
-  throw new Error("The connect code expired before it was approved; run `threa-bot connect` again.")
+  throw new Error("The code expired before it was approved. Run `threa-bot connect` again.")
 }

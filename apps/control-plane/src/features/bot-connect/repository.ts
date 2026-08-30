@@ -14,6 +14,7 @@ export interface BotConnectRequestRow {
   approved_workspace_name: string | null
   approved_bot_id: string | null
   approved_bot_slug: string | null
+  approved_scope: string | null
   approved_by_workos_user_id: string | null
   api_key: string | null
   created_at: Date
@@ -23,7 +24,7 @@ export interface BotConnectRequestRow {
 }
 
 const SELECT_FIELDS = `id, device_code_hash, user_code, status, requested_name, requested_host,
-  approved_workspace_id, approved_workspace_name, approved_bot_id, approved_bot_slug,
+  approved_workspace_id, approved_workspace_name, approved_bot_id, approved_bot_slug, approved_scope,
   approved_by_workos_user_id, api_key, created_at, expires_at, approved_at, claimed_at`
 
 export const BotConnectRepository = {
@@ -77,6 +78,7 @@ export const BotConnectRepository = {
       workspaceName: string
       botId: string
       botSlug: string
+      scope: string
       apiKey: string
       approvedByWorkosUserId: string
     }
@@ -84,7 +86,8 @@ export const BotConnectRepository = {
     const result = await db.query<BotConnectRequestRow>(
       `UPDATE bot_connect_requests
        SET status = 'approved', approved_workspace_id = $2, approved_workspace_name = $3,
-           approved_bot_id = $4, approved_bot_slug = $5, api_key = $6, approved_by_workos_user_id = $7,
+           approved_bot_id = $4, approved_bot_slug = $5, approved_scope = $6, api_key = $7,
+           approved_by_workos_user_id = $8,
            approved_at = NOW(), expires_at = GREATEST(expires_at, NOW() + INTERVAL '5 minutes')
        WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
        RETURNING ${SELECT_FIELDS}`,
@@ -94,6 +97,7 @@ export const BotConnectRepository = {
         params.workspaceName,
         params.botId,
         params.botSlug,
+        params.scope,
         params.apiKey,
         params.approvedByWorkosUserId,
       ]
@@ -122,7 +126,7 @@ export const BotConnectRepository = {
        FROM (SELECT id, api_key FROM bot_connect_requests WHERE id = $1 AND status = 'approved' AND expires_at > NOW() FOR UPDATE) AS prior
        WHERE r.id = prior.id
        RETURNING r.id, r.device_code_hash, r.user_code, r.status, r.requested_name, r.requested_host,
-         r.approved_workspace_id, r.approved_workspace_name, r.approved_bot_id, r.approved_bot_slug,
+         r.approved_workspace_id, r.approved_workspace_name, r.approved_bot_id, r.approved_bot_slug, r.approved_scope,
          r.approved_by_workos_user_id, prior.api_key AS api_key, r.created_at, r.expires_at, r.approved_at, r.claimed_at`,
       [id]
     )

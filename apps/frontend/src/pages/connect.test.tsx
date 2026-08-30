@@ -109,6 +109,7 @@ describe("ConnectPage", () => {
       workspaceName: "Acme",
       botId: "bot_1",
       botSlug: "my-agent-x1y2",
+      scope: CONNECTED_BOT_SCOPES.join(" "),
       apiKey: "threa_bk_minted",
     })
     expect(await screen.findByRole("heading", { name: /@my-agent-x1y2 is connected to Acme/ })).toBeInTheDocument()

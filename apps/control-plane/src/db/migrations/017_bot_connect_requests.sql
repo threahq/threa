@@ -1,7 +1,7 @@
--- Device-code style requests from `threa-bot connect`: a runtime that has no
--- credentials yet asks for a pair of codes, the user approves in the browser
--- (which mints the bot key against the workspace's region), and the runtime
--- polls here for the result. Global (control-plane) because the device does
+-- OAuth 2.0 device authorization grant (RFC 8628) requests from `threa-bot
+-- connect`: a runtime that has no credentials yet asks for a pair of codes, the
+-- user approves in the browser (which mints the bot key against the
+-- workspace's region), and the runtime polls the token endpoint for the result. Global (control-plane) because the device does
 -- not know the workspace, hence the region, until approval.
 --
 -- `device_code_hash` is the SHA-256 of the secret the device holds; `user_code`
@@ -22,6 +22,7 @@ CREATE TABLE bot_connect_requests (
     approved_workspace_name    TEXT,
     approved_bot_id            TEXT,
     approved_bot_slug          TEXT,
+    approved_scope             TEXT,
     approved_by_workos_user_id TEXT,
     api_key                    TEXT,
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),

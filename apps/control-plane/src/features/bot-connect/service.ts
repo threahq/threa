@@ -27,24 +27,33 @@ interface Dependencies {
   frontendUrl: string
 }
 
-export interface StartedBotConnect {
-  deviceCode: string
-  userCode: string
-  verificationUrl: string
-  expiresAt: string
-  intervalSeconds: number
+/** RFC 8628 §3.2 device authorization response. */
+export interface DeviceAuthorization {
+  device_code: string
+  user_code: string
+  verification_uri: string
+  verification_uri_complete: string
+  expires_in: number
+  interval: number
 }
 
-export type BotConnectPollResult =
-  | { status: "pending" | "denied" | "expired" | "claimed" }
+/**
+ * RFC 8628 §3.5 token response, or one of its error codes. The access token
+ * is the minted `threa_bk_` bot key: long-lived and revocable from the bot's
+ * keys page, so no refresh token. The extra members tell the device where and
+ * who it is; RFC 6749 §5.1 allows them.
+ */
+export type DeviceTokenResult =
+  | { error: "authorization_pending" | "access_denied" | "expired_token" | "invalid_grant" }
   | {
-      status: "approved"
-      baseUrl: string
-      workspaceId: string
-      workspaceName: string
-      botId: string
-      botSlug: string
-      apiKey: string
+      access_token: string
+      token_type: "Bearer"
+      scope: string
+      base_url: string
+      workspace_id: string
+      workspace_name: string
+      bot_id: string
+      bot_slug: string
     }
 
 export interface BotConnectLookup {
@@ -76,7 +85,7 @@ function mintUserCode(): string {
 export class BotConnectService {
   constructor(private readonly deps: Dependencies) {}
 
-  async start(input: { requestedName: string | null; requestedHost: string | null }): Promise<StartedBotConnect> {
+  async authorize(input: { requestedName: string | null; requestedHost: string | null }): Promise<DeviceAuthorization> {
     await BotConnectRepository.purgeExpired(this.deps.pool)
     const deviceCode = randomBytes(32).toString("base64url")
     const expiresAt = new Date(Date.now() + BOT_CONNECT_REQUEST_TTL_MS)
@@ -91,35 +100,39 @@ export class BotConnectService {
         expiresAt,
       })
       if (!inserted) continue
+      const verificationUri = `${this.deps.frontendUrl.replace(/\/$/, "")}/connect`
       return {
-        deviceCode,
-        userCode: formatUserCode(userCode),
-        verificationUrl: `${this.deps.frontendUrl.replace(/\/$/, "")}/connect?code=${formatUserCode(userCode)}`,
-        expiresAt: expiresAt.toISOString(),
-        intervalSeconds: BOT_CONNECT_POLL_INTERVAL_SECONDS,
+        device_code: deviceCode,
+        user_code: formatUserCode(userCode),
+        verification_uri: verificationUri,
+        verification_uri_complete: `${verificationUri}?code=${formatUserCode(userCode)}`,
+        expires_in: Math.floor(BOT_CONNECT_REQUEST_TTL_MS / 1000),
+        interval: BOT_CONNECT_POLL_INTERVAL_SECONDS,
       }
     }
     throw new HttpError("Could not allocate a connect code", { status: 503, code: "BOT_CONNECT_UNAVAILABLE" })
   }
 
-  async poll(deviceCode: string): Promise<BotConnectPollResult> {
+  async token(deviceCode: string): Promise<DeviceTokenResult> {
     const row = await BotConnectRepository.findByDeviceCodeHash(this.deps.pool, hashDeviceCode(deviceCode))
-    if (!row) throw new HttpError("Unknown connect request", { status: 404, code: "BOT_CONNECT_NOT_FOUND" })
-    if (row.status === "denied") return { status: "denied" }
-    if (row.status === "claimed") return { status: "claimed" }
-    if (row.expires_at.getTime() <= Date.now()) return { status: "expired" }
-    if (row.status === "pending") return { status: "pending" }
+    // An unknown code and an already-redeemed one read the same to the caller:
+    // the grant is not valid, and nothing distinguishes them for an attacker.
+    if (!row || row.status === "claimed") return { error: "invalid_grant" }
+    if (row.status === "denied") return { error: "access_denied" }
+    if (row.expires_at.getTime() <= Date.now()) return { error: "expired_token" }
+    if (row.status === "pending") return { error: "authorization_pending" }
     const claimed = await BotConnectRepository.claim(this.deps.pool, row.id)
     // Lost the race with a concurrent poll, or expired between the reads.
-    if (!claimed) return { status: "claimed" }
+    if (!claimed) return { error: "invalid_grant" }
     return {
-      status: "approved",
-      baseUrl: this.deps.frontendUrl.replace(/\/$/, ""),
-      workspaceId: claimed.approved_workspace_id!,
-      workspaceName: claimed.approved_workspace_name!,
-      botId: claimed.approved_bot_id!,
-      botSlug: claimed.approved_bot_slug!,
-      apiKey: claimed.api_key!,
+      access_token: claimed.api_key!,
+      token_type: "Bearer",
+      scope: claimed.approved_scope ?? "",
+      base_url: this.deps.frontendUrl.replace(/\/$/, ""),
+      workspace_id: claimed.approved_workspace_id!,
+      workspace_name: claimed.approved_workspace_name!,
+      bot_id: claimed.approved_bot_id!,
+      bot_slug: claimed.approved_bot_slug!,
     }
   }
 
@@ -150,6 +163,7 @@ export class BotConnectService {
     workspaceName: string
     botId: string
     botSlug: string
+    scope: string
     apiKey: string
   }): Promise<void> {
     const row = await this.pendingByUserCode(input.rawCode)
@@ -162,6 +176,7 @@ export class BotConnectService {
       workspaceName: input.workspaceName,
       botId: input.botId,
       botSlug: input.botSlug,
+      scope: input.scope,
       apiKey: input.apiKey,
       approvedByWorkosUserId: input.workosUserId,
     })

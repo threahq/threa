@@ -128,8 +128,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const shadow = createInvitationShadowHandlers({ shadowService })
   const waitlist = createWaitlistHandlers({ waitlistService })
   const botConnect = createBotConnectHandlers({ botConnectService })
-  // A connecting device polls every 3s; several behind one NAT must not trip
-  // the auth limiter, and the secret device code is what gates the data.
+  // A connecting device polls the token endpoint every 3s; several behind one
+  // NAT must not trip the auth limiter, and the device code is what gates the data.
   const botConnectLimit = createRateLimit({ name: "cp-bot-connect", windowMs: 60_000, max: 120, key: ipKey })
   const integrations = createIntegrationHandlers({ workspaceService, regions: deps.regions })
   const integrationRoutes = createIntegrationRouteHandlers({ pool })
@@ -156,9 +156,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // its own IP rate limit guards against spam.
   app.post("/api/waitlist", waitlistLimit, waitlist.signUp)
 
-  // `threa-bot connect`: unauthenticated start + poll for the device, session-authenticated approval in the browser.
-  app.post("/api/bot-connect", botConnectLimit, botConnect.start)
-  app.get("/api/bot-connect/poll", botConnectLimit, botConnect.poll)
+  // OAuth 2.0 device authorization grant (RFC 8628) for `threa-bot connect`:
+  // the device authorizes and polls for its token unauthenticated; the user
+  // looks the code up and approves or denies it with a session.
+  app.post("/api/oauth/device_authorization", botConnectLimit, botConnect.authorize)
+  app.post("/api/oauth/token", botConnectLimit, botConnect.token)
   app.get("/api/bot-connect/lookup", auth, botConnectLimit, botConnect.lookup)
   app.post("/api/bot-connect/approve", auth, botConnectLimit, botConnect.approve)
   app.post("/api/bot-connect/deny", auth, botConnectLimit, botConnect.deny)

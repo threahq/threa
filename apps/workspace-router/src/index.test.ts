@@ -449,8 +449,8 @@ describe("workspace-router", () => {
       const originalFetch = globalThis.fetch
       try {
         for (const [path, method] of [
-          ["/api/bot-connect", "POST"],
-          ["/api/bot-connect/poll?deviceCode=abc", "GET"],
+          ["/api/oauth/device_authorization", "POST"],
+          ["/api/oauth/token", "POST"],
           ["/api/bot-connect/lookup?code=ABCD-EFGH", "GET"],
           ["/api/bot-connect/approve", "POST"],
           ["/api/bot-connect/deny", "POST"],

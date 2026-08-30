@@ -13,10 +13,16 @@ export interface ApproveBotConnectInput {
   workspaceName: string
   botId: string
   botSlug: string
+  /** Space-separated scopes the key carries, echoed to the device as the OAuth `scope`. */
+  scope: string
   apiKey: string
 }
 
-/** The `threa-bot connect` approval half: session-authenticated, served by the control plane. */
+/**
+ * The browser half of the OAuth device grant behind `threa-bot connect`:
+ * session-authenticated, served by the control plane. The device side is
+ * `/api/oauth/device_authorization` + `/api/oauth/token`.
+ */
 export const botConnectApi = {
   async lookup(code: string): Promise<BotConnectLookup> {
     return api.get<BotConnectLookup>(`/api/bot-connect/lookup?code=${encodeURIComponent(code)}`)

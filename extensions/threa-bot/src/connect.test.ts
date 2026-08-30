@@ -5,45 +5,52 @@ import { join } from "node:path"
 import { runConnect, readStoredConfig, defaultConfigPath } from "./connect"
 import { resolveConfig } from "./run"
 
-function fakeThrea(pollResults: Array<Record<string, unknown>>) {
+function fakeThrea(tokenResults: Array<Record<string, unknown>>) {
   const calls: string[] = []
+  const bodies: string[] = []
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     calls.push(`${init?.method ?? "GET"} ${url}`)
-    if (url.endsWith("/api/bot-connect")) {
-      return Response.json(
-        {
-          deviceCode: "device-secret-1234567890abcdefghijklmnopqrstuv",
-          userCode: "BCDF-GHJK",
-          verificationUrl: "https://app.example/connect?code=BCDF-GHJK",
-          expiresAt: new Date(Date.now() + 60_000).toISOString(),
-          intervalSeconds: 3,
-        },
-        { status: 201 }
-      )
+    bodies.push(String(init?.body ?? ""))
+    if (url.endsWith("/api/oauth/device_authorization")) {
+      return Response.json({
+        device_code: "device-secret-1234567890abcdefghijklmnopqrstuv",
+        user_code: "BCDF-GHJK",
+        verification_uri: "https://app.example/connect",
+        verification_uri_complete: "https://app.example/connect?code=BCDF-GHJK",
+        expires_in: 60,
+        interval: 3,
+      })
     }
-    if (url.includes("/api/bot-connect/poll?deviceCode=device-secret")) {
-      return Response.json(pollResults.shift() ?? { status: "pending" })
+    if (url.endsWith("/api/oauth/token")) {
+      const next = tokenResults.shift() ?? { error: "authorization_pending" }
+      return Response.json(next, { status: "error" in next ? 400 : 200 })
     }
     return new Response("not found", { status: 404 })
   }) as unknown as typeof fetch
-  return { fetchImpl, calls }
+  return { fetchImpl, calls, bodies }
 }
 
 describe("threa-bot connect", () => {
   test("polls until approved, stores the key with owner-only permissions, and run picks it up", async () => {
     const home = mkdtempSync(join(tmpdir(), "threa-bot-home-"))
     const configPath = defaultConfigPath({ HOME: home })
-    const approved = {
-      status: "approved",
-      baseUrl: "https://app.example",
-      workspaceId: "ws_1",
-      workspaceName: "Acme",
-      botId: "bot_1",
-      botSlug: "my-agent",
-      apiKey: "threa_bk_secret",
+    const issued = {
+      access_token: "threa_bk_secret",
+      token_type: "Bearer",
+      scope: "bot-runtime:write",
+      base_url: "https://app.example",
+      workspace_id: "ws_1",
+      workspace_name: "Acme",
+      bot_id: "bot_1",
+      bot_slug: "my-agent",
     }
-    const { fetchImpl, calls } = fakeThrea([{ status: "pending" }, { status: "pending" }, approved])
+    const { fetchImpl, calls, bodies } = fakeThrea([
+      { error: "authorization_pending" },
+      { error: "slow_down" },
+      { error: "authorization_pending" },
+      issued,
+    ])
     const printed: string[] = []
     const slept: number[] = []
     const stored = await runConnect(
@@ -67,9 +74,14 @@ describe("threa-bot connect", () => {
     })
     expect(printed[0]).toBe("Open https://app.example/connect?code=BCDF-GHJK")
     expect(printed[1]).toContain("BCDF-GHJK")
-    expect(slept).toEqual([3000, 3000, 3000])
-    expect(calls[0]).toBe("POST https://app.example/api/bot-connect")
-    expect(calls.filter((c) => c.includes("/poll"))).toHaveLength(3)
+    // slow_down pushes the interval out by 5s for the rest of the session.
+    expect(slept).toEqual([3000, 3000, 8000, 8000])
+    expect(calls[0]).toBe("POST https://app.example/api/oauth/device_authorization")
+    expect(bodies[0]).toContain("client_id=threa-bot")
+    expect(calls.filter((c) => c.endsWith("/api/oauth/token"))).toHaveLength(4)
+    expect(bodies[1]).toBe(
+      "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&device_code=device-secret-1234567890abcdefghijklmnopqrstuv&client_id=threa-bot"
+    )
     expect(statSync(configPath).mode & 0o777).toBe(0o600)
     expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(stored)
     expect(readStoredConfig(configPath)).toEqual(stored)
@@ -82,7 +94,7 @@ describe("threa-bot connect", () => {
   })
 
   test("a denied request fails with a message that says what to do", async () => {
-    const { fetchImpl } = fakeThrea([{ status: "denied" }])
+    const { fetchImpl } = fakeThrea([{ error: "access_denied" }])
     await expect(
       runConnect(
         {},

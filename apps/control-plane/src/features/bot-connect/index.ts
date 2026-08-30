@@ -4,8 +4,8 @@ export {
   BOT_CONNECT_REQUEST_TTL_MS,
   formatUserCode,
   normalizeUserCode,
-  type BotConnectPollResult,
-  type StartedBotConnect,
+  type DeviceAuthorization,
+  type DeviceTokenResult,
 } from "./service"
 export { createBotConnectHandlers } from "./handlers"
 export { BotConnectRepository } from "./repository"
