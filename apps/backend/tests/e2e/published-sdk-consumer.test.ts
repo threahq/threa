@@ -91,8 +91,11 @@ async function waitFor<T>(what: string, probe: () => Promise<T | undefined>, tim
 beforeAll(() => {
   // Pack from the in-repo sources exactly as a release would, in dependency
   // order: each declaration build resolves its siblings through their dist/.
+  // A tarball left by an earlier local pack must not be the one picked up.
   for (const name of packages) {
-    run("bun", ["run", "pack"], join(repoRoot, "extensions", name))
+    const dir = join(repoRoot, "extensions", name)
+    for (const stale of readdirSync(dir).filter((file) => file.endsWith(".tgz"))) rmSync(join(dir, stale))
+    run("bun", ["run", "pack"], dir)
   }
   consumerDir = mkdtempSync(join(tmpdir(), "threa-sdk-consumer-"))
   const dependencies: Record<string, string> = {}
@@ -254,7 +257,10 @@ describe("published bot-runtime packages", () => {
     // no echo, and no "Stopped by /stop." note either.
     await new Promise((resolve) => setTimeout(resolve, ECHO_DELAY_MS + 1_000))
     const final = await posted()
-    expect(replies(final)).toHaveLength(2)
+    expect(replies(final).map((p) => p.contentMarkdown)).toEqual([
+      expect.stringMatching(/^Echo: hello there/),
+      expect.stringMatching(/^Echo: second[\s\S]*and more$/),
+    ])
     expect(final.some((p) => p.contentMarkdown?.includes("Stopped by /stop."))).toBe(false)
 
     connector.kill("SIGTERM")

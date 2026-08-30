@@ -30,7 +30,7 @@ const presence = (status: "available" | "busy" | "offline") =>
     runtimeKind,
     instanceId,
     status,
-    acceptingInvocations: status !== "offline",
+    acceptingInvocations: status === "available",
     capabilities: {},
   })
 
