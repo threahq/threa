@@ -186,12 +186,17 @@ describe("useSwipeAction", () => {
       vi.spyOn(row, "addEventListener").mockImplementation((type, listener) => {
         if (type === "touchmove") listeners.push(listener as (e: TouchEvent) => void)
       })
+      vi.spyOn(row, "removeEventListener").mockImplementation((type, listener) => {
+        if (type !== "touchmove") return
+        const at = listeners.indexOf(listener as (e: TouchEvent) => void)
+        if (at !== -1) listeners.splice(at, 1)
+      })
       const nativeMove = () => {
         const event = { cancelable: true, preventDefault: vi.fn() } as unknown as TouchEvent
         for (const listener of listeners) listener(event)
         return event.preventDefault as ReturnType<typeof vi.fn>
       }
-      return { scroller, cell, row, nativeMove }
+      return { scroller, cell, row, nativeMove, listeners }
     }
     const withCurrentTarget = (row: HTMLElement, x: number, y: number) =>
       ({ ...touchEvent(row, x, y), currentTarget: row }) as React.TouchEvent
@@ -199,7 +204,7 @@ describe("useSwipeAction", () => {
     it("takes the touch half-way to the threshold: moves are prevented and the timeline is pinned until release", () => {
       const onSwipeDown = vi.fn()
       const { result } = renderHook(() => useSwipeAction({ onSwipe: vi.fn(), onSwipeDown, threshold: 80 }))
-      const { scroller, cell, row, nativeMove } = scrollerWithRow()
+      const { scroller, cell, row, nativeMove, listeners } = scrollerWithRow()
 
       act(() => {
         result.current.handlers.onTouchStart(withCurrentTarget(row, 200, 100))
@@ -229,7 +234,103 @@ describe("useSwipeAction", () => {
       expect(scroller.style.overflowY).toBe("auto")
       expect(result.current.offsetY).toBe(0)
       expect(cell.style.zIndex).toBe("")
-      expect(nativeMove()).not.toHaveBeenCalled()
+      expect(listeners).toHaveLength(0)
+      scroller.remove()
+    })
+
+    function claimAndRaise(result: { current: ReturnType<typeof useSwipeAction> }, row: HTMLElement) {
+      act(() => {
+        result.current.handlers.onTouchStart(withCurrentTarget(row, 200, 100))
+        result.current.handlers.onTouchMove(touchEvent(row, 100, 100))
+        result.current.handlers.onTouchMove(touchEvent(row, 100, 120))
+      })
+    }
+
+    it("a cancelled touch after the claim fires nothing and puts everything back", () => {
+      const onSwipe = vi.fn()
+      const onSwipeDown = vi.fn()
+      const { result } = renderHook(() => useSwipeAction({ onSwipe, onSwipeDown, threshold: 80 }))
+      const { scroller, cell, row, listeners } = scrollerWithRow()
+
+      claimAndRaise(result, row)
+      expect({ overflowY: scroller.style.overflowY, zIndex: cell.style.zIndex, listeners: listeners.length }).toEqual({
+        overflowY: "hidden",
+        zIndex: "1",
+        listeners: 1,
+      })
+
+      act(() => result.current.handlers.onTouchCancel())
+      expect(onSwipe).not.toHaveBeenCalled()
+      expect(onSwipeDown).not.toHaveBeenCalled()
+      expect({
+        overflowY: scroller.style.overflowY,
+        zIndex: cell.style.zIndex,
+        listeners: listeners.length,
+        offset: result.current.offset,
+        offsetY: result.current.offsetY,
+        isLocked: result.current.isLocked,
+        arm: result.current.arm,
+      }).toEqual({
+        overflowY: "auto",
+        zIndex: "",
+        listeners: 0,
+        offset: 0,
+        offsetY: 0,
+        isLocked: false,
+        arm: "primary",
+      })
+      scroller.remove()
+    })
+
+    it("unmounting mid-gesture releases the timeline, the cell and the native listener", () => {
+      const { result, unmount } = renderHook(() =>
+        useSwipeAction({ onSwipe: vi.fn(), onSwipeDown: vi.fn(), threshold: 80 })
+      )
+      const { scroller, cell, row, listeners } = scrollerWithRow()
+
+      claimAndRaise(result, row)
+      unmount()
+      expect({ overflowY: scroller.style.overflowY, zIndex: cell.style.zIndex, listeners: listeners.length }).toEqual({
+        overflowY: "auto",
+        zIndex: "",
+        listeners: 0,
+      })
+      scroller.remove()
+    })
+
+    it("a second touchstart mid-gesture restarts clean: the old claim, lock and arm are gone", () => {
+      const onSwipe = vi.fn()
+      const onSwipeDown = vi.fn()
+      const { result } = renderHook(() => useSwipeAction({ onSwipe, onSwipeDown, threshold: 80 }))
+      const { scroller, cell, row, listeners } = scrollerWithRow()
+
+      claimAndRaise(result, row)
+      act(() => result.current.handlers.onTouchMove(touchEvent(row, 100, 200)))
+      expect(result.current.arm).toBe("down")
+
+      act(() => result.current.handlers.onTouchStart(withCurrentTarget(row, 100, 200)))
+      expect({
+        overflowY: scroller.style.overflowY,
+        zIndex: cell.style.zIndex,
+        listeners: listeners.length,
+        offset: result.current.offset,
+        offsetY: result.current.offsetY,
+        isLocked: result.current.isLocked,
+        arm: result.current.arm,
+      }).toEqual({
+        overflowY: "auto",
+        zIndex: "",
+        listeners: 1,
+        offset: 0,
+        offsetY: 0,
+        isLocked: false,
+        arm: "primary",
+      })
+
+      act(() => result.current.handlers.onTouchEnd())
+      expect(onSwipe).not.toHaveBeenCalled()
+      expect(onSwipeDown).not.toHaveBeenCalled()
+      expect(listeners).toHaveLength(0)
       scroller.remove()
     })
   })

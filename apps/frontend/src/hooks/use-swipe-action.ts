@@ -162,16 +162,16 @@ export function useSwipeAction({
       if (!enabled) return
       if (startedInHorizontalScroller(e.target)) return
       const touch = e.touches[0]
+      // A touchstart mid-gesture (a second finger) restarts from scratch: the
+      // previous claim, lock and arm must not leak into the new stroke.
+      reset()
       startPos.current = { x: touch.clientX, y: touch.clientY }
-      isHorizontalRef.current = null
-      lockedRef.current = false
-      releaseGesture()
       if (e.currentTarget instanceof HTMLElement) {
         elementRef.current = e.currentTarget
         e.currentTarget.addEventListener("touchmove", claimTouchMove, { passive: false })
       }
     },
-    [enabled, releaseGesture]
+    [enabled, reset]
   )
 
   const onTouchMove = useCallback(
