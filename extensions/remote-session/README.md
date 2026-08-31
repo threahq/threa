@@ -34,9 +34,7 @@ plus the transport; see [`examples/mention-bot.ts`](examples/mention-bot.ts).
 Scratchpad-linked. The runtime owns a scratchpad: every message in it is a
 turn for the runtime, the composer offers `/steer`, `/stop`, and whatever
 commands the runtime advertises, and the runtime replies in place. This is
-`RemoteSession`. Session links are created with `POST /bot-runtime/sessions`,
-which today accepts the runtime kinds `pi-local` and `claude-code-channel`
-only; a `custom` runtime cannot link a scratchpad yet. See
+`RemoteSession`, registering as runtime kind `custom`. See
 [`examples/echo-connector.ts`](examples/echo-connector.ts).
 
 ## Credentials
@@ -78,7 +76,7 @@ const session = new RemoteSession({
   config: result.config,
   client: new ThreaClient(result.config),
   runtime: {
-    kind: "claude-code-channel",
+    kind: "custom",
     busyStatusText: "Working in OpenClaw…",
     forwardedNote: "Forwarded to OpenClaw.",
     shutdownErrorMessage: "OpenClaw channel shut down",

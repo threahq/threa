@@ -18,6 +18,7 @@ import {
   type RecordStepResult,
   type RecordSealedStepsParams,
   type RecordSealedStepsResult,
+  resolveRuntimeKindConfig,
 } from "../bot-runtimes"
 import { authorizeSealedCallback, finalizeSealedStep } from "./sealed-callbacks"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -59,10 +60,10 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
   ): Promise<void> {
     const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
     if (streamIds.length === 0) return
-    // Only pi-local runtimes create scratchpad session links; skip the lookup
-    // when there's no presence or the runtime kind can't have linked sessions.
+    // Skip the link lookup when there's no presence or the runtime kind can't
+    // have linked sessions.
     const links =
-      presence?.runtimeKind === BotRuntimeKinds.PI_LOCAL
+      presence && resolveRuntimeKindConfig(presence.runtimeKind).sessionLinking !== "none"
         ? await botRuntimeService.findActivePiRemoteSessionsForStreams({ workspaceId, botId, streamIds })
         : new Map<string, { instanceId: string; runtimeSessionId: string }>()
     const payload = {

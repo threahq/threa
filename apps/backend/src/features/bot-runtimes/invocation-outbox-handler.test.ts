@@ -354,6 +354,17 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
     )
   })
 
+  it("dispatches an untargeted invocation without a notice for an unlinked custom runtime (linking is optional)", () => {
+    const { createInvocation, createMessage } = setupActiveScratchpad({ instance: { runtimeKind: "custom" } })
+
+    return runProcessMessageCreated(plainUserMessage).then(() => {
+      expect(createMessage).not.toHaveBeenCalled()
+      expect(createInvocation).toHaveBeenCalledWith(
+        expect.objectContaining({ actorId: "bot_1", trigger: "active-scratchpad", targetRuntimeSessionId: null })
+      )
+    })
+  })
+
   it("dispatches when the verdict is sealed — the gate's sealed arm enqueues the turn (Phase 2.4)", async () => {
     const { createInvocation } = setupActiveScratchpad({ instance: { runtimeKind: "openclaw" } })
     // Force the sealed verdict — the policy switch is off in production, so this
