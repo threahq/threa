@@ -156,7 +156,33 @@ describe("ConnectPage", () => {
     expect(approve).toHaveBeenCalledTimes(3)
     expect(archive).toHaveBeenCalledTimes(2)
     expect(archive).toHaveBeenLastCalledWith("ws_1", "bot_1")
-    // Reused attempts re-assert the reads-as-owner checkbox onto the minted bot.
+    // An unchanged checkbox adds no extra write to the retry path.
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("re-asserts a checkbox changed between retries onto the reused bot", async () => {
+    vi.spyOn(botConnectApi, "lookup").mockResolvedValue({
+      userCode: "BCDF-GHJK",
+      requestedName: "my-agent",
+      requestedHost: null,
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    })
+    vi.spyOn(botsApi, "create").mockResolvedValue({ id: "bot_1", slug: "my-agent", name: "my-agent" } as never)
+    vi.spyOn(botsApi, "createKey").mockResolvedValue({ key: { id: "key_1" } as never, value: "threa_bk_minted" })
+    const update = vi.spyOn(botsApi, "update").mockResolvedValue({} as never)
+    vi.spyOn(botConnectApi, "approve")
+      .mockRejectedValueOnce(new ApiError(502, "BAD_GATEWAY", "upstream hiccup"))
+      .mockResolvedValue()
+
+    renderPage()
+    await userEvent.click(await screen.findByLabelText("Let it read everything you can read"))
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }))
+    await screen.findByText("upstream hiccup")
+    expect(update).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByLabelText("Let it read everything you can read"))
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }))
+    await screen.findByRole("heading", { name: /is connected to Acme/ })
     expect(update).toHaveBeenCalledWith("ws_1", "bot_1", { readsAsOwner: false })
   })
 

@@ -49,6 +49,7 @@ export interface ProvisionedBot {
   botSlug: string
   keyId: string
   apiKey: string
+  readsAsOwner: boolean
 }
 
 /** The code cannot be approved any more; the bot and key minted for it were removed. */
@@ -91,10 +92,15 @@ export async function approveConnect(input: {
     // in the first one would otherwise stay behind with a live key.
     await botsApi.archive(input.provisioned.workspaceId, input.provisioned.botId).catch(() => undefined)
   }
-  if (provisioned) {
-    // A retry reuses the minted bot; the checkbox may have changed since, so
-    // re-assert the setting instead of silently keeping the first attempt's.
-    await botsApi.update(provisioned.workspaceId, provisioned.botId, { readsAsOwner: input.readsAsOwner ?? false })
+  const readsAsOwner = input.readsAsOwner ?? false
+  if (provisioned && provisioned.readsAsOwner !== readsAsOwner) {
+    // A retry reuses the minted bot, so a changed checkbox is re-asserted —
+    // but only when it actually changed: an unconditional PATCH would make
+    // every ordinary retry depend on one more write that can fail (the reason
+    // this whole function tolerates retries at all).
+    await botsApi.update(provisioned.workspaceId, provisioned.botId, { readsAsOwner })
+    provisioned = { ...provisioned, readsAsOwner }
+    input.onProvisioned?.(provisioned)
   }
   if (!provisioned) {
     const baseSlug = slugForBot(input.botName) || "bot"
@@ -104,7 +110,7 @@ export async function approveConnect(input: {
         name: input.botName,
         slug,
         traits: [BotTraits.MENTIONABLE, BotTraits.ACTIVE_SCRATCHPAD],
-        ...(input.readsAsOwner ? { readsAsOwner: true } : {}),
+        ...(readsAsOwner ? { readsAsOwner: true } : {}),
       })
     let bot
     try {
@@ -123,6 +129,7 @@ export async function approveConnect(input: {
       botSlug: bot.slug ?? baseSlug,
       keyId: key.key.id,
       apiKey: key.value,
+      readsAsOwner,
     }
     input.onProvisioned?.(provisioned)
   }
