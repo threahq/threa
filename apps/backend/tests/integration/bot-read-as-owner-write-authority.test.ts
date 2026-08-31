@@ -32,6 +32,17 @@ describe("read-as-owner write authority", () => {
   let archivedChannelId: string
   let archivedRootThreadId: string
 
+  async function expectHidden404(promise: Promise<unknown>) {
+    const error = (await promise.then(
+      () => {
+        throw new Error("expected the write to be rejected")
+      },
+      (err: unknown) => err
+    )) as HttpError
+    expect(error).toBeInstanceOf(StreamNotFoundError)
+    expect({ status: error.status, code: error.code }).toEqual({ status: 404, code: "STREAM_NOT_FOUND" })
+  }
+
   function writeAs(botIdToUse: string, targetStreamId: string) {
     return withTransaction(pool, (client) =>
       assertStreamWritable(client, {
@@ -145,21 +156,21 @@ describe("read-as-owner write authority", () => {
 
   test("should keep the existence-hiding 404 for a flag-off personal bot and a shared bot", async () => {
     for (const otherBotId of [plainBotId, sharedBotId]) {
-      await expect(writeAs(otherBotId, privateChannelId)).rejects.toBeInstanceOf(StreamNotFoundError)
+      await expectHidden404(writeAs(otherBotId, privateChannelId))
     }
   })
 
   test("should keep the 404 on an E2E-rooted stream the owner can read", async () => {
-    await expect(writeAs(readerBotId, e2eChannelId)).rejects.toBeInstanceOf(StreamNotFoundError)
+    await expectHidden404(writeAs(readerBotId, e2eChannelId))
   })
 
   test("should keep the 404 on an archived stream the owner can read", async () => {
-    await expect(writeAs(readerBotId, archivedChannelId)).rejects.toBeInstanceOf(StreamNotFoundError)
+    await expectHidden404(writeAs(readerBotId, archivedChannelId))
   })
 
   test("should keep the 404 on a live thread whose root is archived", async () => {
     // Only the root's archived_at flips on archive; the thread row stays live.
-    await expect(writeAs(readerBotId, archivedRootThreadId)).rejects.toBeInstanceOf(StreamNotFoundError)
+    await expectHidden404(writeAs(readerBotId, archivedRootThreadId))
   })
 
   test("should let a granted bot write", async () => {
