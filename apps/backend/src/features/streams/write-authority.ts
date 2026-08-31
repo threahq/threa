@@ -11,7 +11,7 @@ import {
 } from "@threa/types"
 import type { Querier } from "../../db"
 import { StreamNotFoundError } from "../../lib/errors"
-import { BotChannelAccessRepository } from "../api-keys"
+import { BotChannelAccessRepository, isStreamReadableAsOwner } from "../api-keys"
 import { resolveEffectiveAccessStream, resolveEffectiveAccessStreams } from "./access"
 import { StreamMemberRepository } from "./member-repository"
 import { StreamRepository, type Stream } from "./repository"
@@ -199,17 +199,34 @@ export async function resolveLockedStreamAuthorities(
   const facts = await lockEffectiveStreams(db, params.workspaceId, params.streamIds)
   if (facts.length === 0) return []
 
+  const principal = params.principal
   const rootIds = [...new Set(facts.map(({ root }) => root.id))].sort()
   const participatingRootIds =
-    params.principal.kind === "user"
-      ? await StreamMemberRepository.lockMemberships(db, rootIds, params.principal.userId)
-      : await BotChannelAccessRepository.lockGrants(db, params.workspaceId, params.principal.botId, rootIds)
+    principal.kind === "user"
+      ? await StreamMemberRepository.lockMemberships(db, rootIds, principal.userId)
+      : await BotChannelAccessRepository.lockGrants(db, params.workspaceId, principal.botId, rootIds)
 
-  return facts.map(({ target, root, parentEffectivelyArchived }) => {
+  const authorities: LockedStreamAuthority[] = []
+  for (const { target, root, parentEffectivelyArchived } of facts) {
     const participates = participatingRootIds.has(root.id)
-    if (root.visibility !== Visibilities.PUBLIC && !participates) throw inaccessibleStream()
-    return { target, root, state: deriveStreamViewerState({ target, root, participates, parentEffectivelyArchived }) }
-  })
+    if (root.visibility !== Visibilities.PUBLIC && !participates) {
+      // A bot that already reads this stream through its owner
+      // (`bots.reads_as_owner`) must not be told "not found" on write — it just
+      // read the stream, so the existence-hiding 404 reads as a transient error
+      // and invites a retry loop. Falling through yields the truthful terminal
+      // READ_ONLY/not_a_member 403. Existence hiding is kept everywhere the bot
+      // genuinely cannot read, so the predicate here is the read gate's own.
+      const readableAsOwner =
+        principal.kind === "bot" && (await isStreamReadableAsOwner(db, params.workspaceId, principal.botId, target.id))
+      if (!readableAsOwner) throw inaccessibleStream()
+    }
+    authorities.push({
+      target,
+      root,
+      state: deriveStreamViewerState({ target, root, participates, parentEffectivelyArchived }),
+    })
+  }
+  return authorities
 }
 
 export async function assertStreamsWritable(

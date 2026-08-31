@@ -138,16 +138,17 @@ describe("read-as-owner over the public API", () => {
   })
 
   test("should still refuse writes everywhere the bot is not added — read widens, participation does not", async () => {
-    // The write authority is untouched: a private root with no grant keeps its
-    // existence-hiding 404, a public root without a grant its 403 READ_ONLY.
-    const privateAttempt = await botApiPost(
+    // A stream the bot can read fails writes with the truthful terminal 403
+    // READ_ONLY; existence hiding (404) is kept for streams it cannot read.
+    const privateAttempt = await botApiPost<{ code: string }>(
       ctx.client,
       ctx.workspaceId,
       `/streams/${ctx.privateChannelId}/messages`,
       ctx.readerKey,
       { content: "bot trying to post" }
     )
-    expect(privateAttempt.status).toBe(404)
+    expect(privateAttempt.status).toBe(403)
+    expect(privateAttempt.data.code).toBe("STREAM_READ_ONLY")
 
     const publicAttempt = await botApiPost(
       ctx.client,
