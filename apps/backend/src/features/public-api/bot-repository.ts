@@ -12,6 +12,7 @@ interface BotRow {
   api_key_id: string | null
   type: string
   owner_user_id: string | null
+  reads_as_owner: boolean
   traits: string[]
   slug: string | null
   name: string
@@ -45,11 +46,11 @@ interface BotBase {
  * and rely on `ownerUserId` being non-null in the personal arm.
  */
 export type Bot =
-  | (BotBase & { type: "shared"; ownerUserId: null })
-  | (BotBase & { type: "personal"; ownerUserId: string })
+  | (BotBase & { type: "shared"; ownerUserId: null; readsAsOwner: false })
+  | (BotBase & { type: "personal"; ownerUserId: string; readsAsOwner: boolean })
 
 const BOT_COLUMNS =
-  "id, workspace_id, api_key_id, type, owner_user_id, traits, slug, name, description, avatar_emoji, avatar_url, archived_at, created_at, updated_at"
+  "id, workspace_id, api_key_id, type, owner_user_id, reads_as_owner, traits, slug, name, description, avatar_emoji, avatar_url, archived_at, created_at, updated_at"
 
 const KNOWN_BOT_TYPES = new Set<string>(BOT_TYPES)
 const KNOWN_BOT_TRAITS = new Set<string>(BOT_TRAITS)
@@ -83,12 +84,15 @@ function mapRowToBot(row: BotRow): Bot {
     if (row.owner_user_id === null) {
       throw new Error(`Bot ${row.id} is personal but has no owner_user_id`)
     }
-    return { ...base, type: "personal", ownerUserId: row.owner_user_id }
+    return { ...base, type: "personal", ownerUserId: row.owner_user_id, readsAsOwner: row.reads_as_owner }
   }
   if (row.owner_user_id !== null) {
     throw new Error(`Bot ${row.id} is shared but has owner_user_id=${row.owner_user_id}`)
   }
-  return { ...base, type: "shared", ownerUserId: null }
+  if (row.reads_as_owner) {
+    throw new Error(`Bot ${row.id} is shared but has reads_as_owner=true`)
+  }
+  return { ...base, type: "shared", ownerUserId: null, readsAsOwner: false }
 }
 
 /** Wire shape (`@threa/types` Bot): ISO-string dates, no apiKeyId. */
@@ -107,9 +111,9 @@ export function serializeBot(bot: Bot): SerializedBot {
     updatedAt: bot.updatedAt.toISOString(),
   }
   if (bot.type === "personal") {
-    return { ...common, type: "personal", ownerUserId: bot.ownerUserId }
+    return { ...common, type: "personal", ownerUserId: bot.ownerUserId, readsAsOwner: bot.readsAsOwner }
   }
-  return { ...common, type: "shared", ownerUserId: null }
+  return { ...common, type: "shared", ownerUserId: null, readsAsOwner: false }
 }
 
 /**
@@ -243,6 +247,7 @@ export const BotRepository = {
       workspaceId: string
       type: BotType
       ownerUserId: string | null
+      readsAsOwner?: boolean
       traits?: BotTrait[]
       slug: string
       name: string
@@ -263,6 +268,9 @@ export const BotRepository = {
     if (isPersonal !== (params.ownerUserId !== null)) {
       throw new Error(`Bot create: type=${params.type} requires ownerUserId=${isPersonal ? "non-null" : "null"}`)
     }
+    if (params.readsAsOwner && !isPersonal) {
+      throw new Error(`Bot create: type=${params.type} cannot have readsAsOwner=true`)
+    }
     const traits = params.traits ?? []
     for (const trait of traits) {
       if (!KNOWN_BOT_TRAITS.has(trait)) {
@@ -270,12 +278,13 @@ export const BotRepository = {
       }
     }
     const result = await db.query<BotRow>(sql`
-      INSERT INTO bots (id, workspace_id, type, owner_user_id, traits, slug, name, description, avatar_emoji)
+      INSERT INTO bots (id, workspace_id, type, owner_user_id, reads_as_owner, traits, slug, name, description, avatar_emoji)
       VALUES (
         ${params.id},
         ${params.workspaceId},
         ${params.type},
         ${params.ownerUserId},
+        ${params.readsAsOwner ?? false},
         ${traits},
         ${params.slug},
         ${params.name},
@@ -316,6 +325,7 @@ export const BotRepository = {
       description?: string | null
       avatarEmoji?: string | null
       traits?: BotTrait[]
+      readsAsOwner?: boolean
     }
   ): Promise<Bot | null> {
     if (
@@ -323,7 +333,8 @@ export const BotRepository = {
       fields.name === undefined &&
       fields.description === undefined &&
       fields.avatarEmoji === undefined &&
-      fields.traits === undefined
+      fields.traits === undefined &&
+      fields.readsAsOwner === undefined
     ) {
       const result = await db.query<BotRow>(sql`
         SELECT ${sql.raw(BOT_COLUMNS)}
@@ -366,6 +377,10 @@ export const BotRepository = {
     if (fields.traits !== undefined) {
       setParts.push(`traits = $${idx++}`)
       values.push(fields.traits)
+    }
+    if (fields.readsAsOwner !== undefined) {
+      setParts.push(`reads_as_owner = $${idx++}`)
+      values.push(fields.readsAsOwner)
     }
     setParts.push("updated_at = NOW()")
     const idIdx = idx++

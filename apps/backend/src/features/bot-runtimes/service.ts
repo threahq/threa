@@ -49,8 +49,10 @@ function serializeBotForOutbox(bot: Bot) {
     createdAt: bot.createdAt.toISOString(),
     updatedAt: bot.updatedAt.toISOString(),
   }
-  if (bot.type === "personal") return { ...common, type: "personal" as const, ownerUserId: bot.ownerUserId }
-  return { ...common, type: "shared" as const, ownerUserId: null }
+  if (bot.type === "personal") {
+    return { ...common, type: "personal" as const, ownerUserId: bot.ownerUserId, readsAsOwner: bot.readsAsOwner }
+  }
+  return { ...common, type: "shared" as const, ownerUserId: null, readsAsOwner: false as const }
 }
 
 export class BotRuntimeService {

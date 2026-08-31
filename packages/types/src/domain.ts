@@ -651,11 +651,13 @@ interface BotBase {
  * Discriminated on `type`:
  * - `shared` bots are admin-managed and workspace-wide; `ownerUserId` is `null`.
  * - `personal` bots are owned by one user, who alone can manage them and grant
- *   them stream access; `ownerUserId` is non-null.
+ *   them stream access; `ownerUserId` is non-null. `readsAsOwner` widens the
+ *   bot's READ access to everything its owner can read (E2E streams excluded);
+ *   participation stays gated by per-stream grants.
  */
 export type Bot =
-  | (BotBase & { type: "shared"; ownerUserId: null })
-  | (BotBase & { type: "personal"; ownerUserId: string })
+  | (BotBase & { type: "shared"; ownerUserId: null; readsAsOwner: false })
+  | (BotBase & { type: "personal"; ownerUserId: string; readsAsOwner: boolean })
 
 export interface Attachment {
   id: string
