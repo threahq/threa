@@ -200,4 +200,23 @@ describe("read-as-owner access", () => {
     await BotRepository.update(pool, readerBotId, ws, { readsAsOwner: true })
     expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(true)
   })
+
+  test("should never widen the actionable (participation) tier — delegations gate there", async () => {
+    expect(await service.isStreamActionableForBot(ws, readerBotId, privateChannelId)).toBe(false)
+    expect(await service.isStreamActionableForBot(ws, readerBotId, privateThreadId)).toBe(false)
+    expect(await service.isStreamActionableForBot(ws, readerBotId, publicChannelId)).toBe(true)
+
+    const actionable = await service.getActionableStreamIdsForBot(ws, readerBotId)
+    expect(actionable).not.toContain(privateChannelId)
+    expect(actionable).not.toContain(privateThreadId)
+    expect(actionable).toContain(publicChannelId)
+  })
+
+  // Destructive: removes the owner's user row. Keep this last.
+  test("should lose every owner-derived read the moment the owner leaves the workspace", async () => {
+    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(true)
+    await pool.query(`DELETE FROM users WHERE workspace_id = $1 AND id = $2`, [ws, ownerId])
+    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(false)
+    expect(await service.getAccessibleStreamIdsForBot(ws, readerBotId)).not.toContain(privateChannelId)
+  })
 })

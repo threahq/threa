@@ -98,11 +98,19 @@ export function createDelegationPublicApiHandlers({
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
   }
 
+  /**
+   * Delegations are a participation surface — claiming one puts the bot's name
+   * on a card other members see, and completing it writes terminal state — so
+   * bot keys gate on the consent-gated ACTIONABLE set (public ∪ grants), never
+   * the read-as-owner-widened one. A reads-as-owner bot that merely reads a
+   * stream must not claim work there, and `requestDelegationAccess`'s
+   * already-granted short-circuit must keep meaning "a grant exists".
+   */
   async function streamAccessibleFor(identity: KeyIdentity, workspaceId: string, streamId: string): Promise<boolean> {
     if (identity.kind === "user") {
       return (await streamService.tryAccess(streamId, workspaceId, identity.userId)) !== null
     }
-    return botChannelService.isStreamAccessibleForBot(workspaceId, identity.botId, streamId)
+    return botChannelService.isStreamActionableForBot(workspaceId, identity.botId, streamId)
   }
 
   /**
@@ -157,7 +165,7 @@ export function createDelegationPublicApiHandlers({
               identity.userId,
               open.map((d) => d.streamId)
             )
-          : new Set(await botChannelService.getAccessibleStreamIdsForBot(workspaceId, identity.botId))
+          : new Set(await botChannelService.getActionableStreamIdsForBot(workspaceId, identity.botId))
       res.json({ data: open.filter((d) => accessible.has(d.streamId)).map(serializeDelegation) })
     },
 
@@ -477,7 +485,7 @@ export function createDelegationPublicApiHandlers({
       if (!delegation) {
         throw new HttpError("Delegation not found", { status: 404, code: "NOT_FOUND" })
       }
-      if (await botChannelService.isStreamAccessibleForBot(workspaceId, identity.botId, delegation.streamId)) {
+      if (await botChannelService.isStreamActionableForBot(workspaceId, identity.botId, delegation.streamId)) {
         res.json({ data: { status: "already_granted" } })
         return
       }
