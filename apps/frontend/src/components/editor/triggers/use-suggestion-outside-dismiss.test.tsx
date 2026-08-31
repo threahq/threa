@@ -32,9 +32,17 @@ function Harness({ capture }: { capture: (cfg: Config) => void }) {
 }
 
 // Minimal editor stand-in: onStart/pointer-dismiss only touch storage,
-// isDestroyed, and view.dom.
+// isDestroyed, view.dom, and — for the emoji picker's liveness guard — the
+// transaction subscription and a state with no suggestion plugin in it.
 function makeFakeEditor(storage: Record<string, unknown>, dom: HTMLElement) {
-  return { storage: { mention: storage, emoji: storage }, isDestroyed: false, view: { dom } }
+  return {
+    storage: { mention: storage, emoji: storage },
+    isDestroyed: false,
+    view: { dom },
+    state: {},
+    on: () => {},
+    off: () => {},
+  }
 }
 
 function activate<T>(
