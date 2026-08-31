@@ -887,6 +887,7 @@ export async function createBot(
     traits?: string[]
     description?: string | null
     avatarEmoji?: string | null
+    readsAsOwner?: boolean
   }
 ): Promise<BotSummary> {
   const { status, data } = await client.post<{ data: BotSummary }>(`/api/workspaces/${workspaceId}/bots`, body)

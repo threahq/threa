@@ -150,16 +150,16 @@ describe("listDelegations", () => {
       makeDelegation({ id: "dlg_granted", streamId: "stream_granted" }),
       makeDelegation({ id: "dlg_other", streamId: "stream_other" }),
     ])
-    const getAccessibleStreamIdsForBot = mock(async () => ["stream_granted"])
+    const getActionableStreamIdsForBot = mock(async () => ["stream_granted"])
     const handlers = makeHandlers({
       delegationService: { listOpen },
-      botChannelService: { getAccessibleStreamIdsForBot },
+      botChannelService: { getActionableStreamIdsForBot },
     })
     const { res, payloads } = createResponse()
 
     await handlers.listDelegations(makeRequest({ userKey: false, botKey: true }), res)
 
-    expect(getAccessibleStreamIdsForBot).toHaveBeenCalledWith("ws_1", "bot_1")
+    expect(getActionableStreamIdsForBot).toHaveBeenCalledWith("ws_1", "bot_1")
     const data = (payloads[0] as { data: Array<{ id: string }> }).data
     expect(data.map((d) => d.id)).toEqual(["dlg_granted"])
   })
@@ -194,16 +194,16 @@ describe("get/release delegation", () => {
       claimIdempotencyKey: "secret-key",
       claimExpiresAt: new Date("2026-07-10T12:15:00Z"),
     })
-    const isStreamAccessibleForBot = mock(async () => true)
+    const isStreamActionableForBot = mock(async () => true)
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => row) },
-      botChannelService: { isStreamAccessibleForBot },
+      botChannelService: { isStreamActionableForBot },
     })
     const { res, payloads } = createResponse()
 
     await handlers.getDelegation(makeRequest({ userKey: false, botKey: true }), res)
 
-    expect(isStreamAccessibleForBot).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1")
+    expect(isStreamActionableForBot).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1")
     const data = (payloads[0] as any).data
     expect(data).toMatchObject({
       brief: row.brief,
@@ -219,7 +219,7 @@ describe("get/release delegation", () => {
     const handlers = makeHandlers({
       delegationService: { getById },
       streamService: { tryAccess: mock(async () => null) },
-      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+      botChannelService: { isStreamActionableForBot: mock(async () => false) },
     })
     const { res } = createResponse()
 
@@ -244,7 +244,7 @@ describe("get/release delegation", () => {
     const release = mock(async (): Promise<DelegatedTask | null> => makeDelegation())
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => makeDelegation()), release },
-      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+      botChannelService: { isStreamActionableForBot: mock(async () => false) },
     })
     const { res } = createResponse()
 
@@ -282,17 +282,17 @@ describe("claimDelegation", () => {
   })
 
   it("gates a bot-key claim on the bot's channel grants (404 without one)", async () => {
-    const isStreamAccessibleForBot = mock(async () => false)
+    const isStreamActionableForBot = mock(async () => false)
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => makeDelegation()) },
-      botChannelService: { isStreamAccessibleForBot },
+      botChannelService: { isStreamActionableForBot },
     })
     const { res } = createResponse()
 
     await expect(
       handlers.claimDelegation(makeRequest({ userKey: false, botKey: true, body: { claimedByLabel: "Runner" } }), res)
     ).rejects.toMatchObject({ status: 404 })
-    expect(isStreamAccessibleForBot).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1")
+    expect(isStreamActionableForBot).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1")
   })
 
   it("409s a lost claim race with DELEGATION_NOT_OPEN", async () => {
@@ -459,7 +459,7 @@ describe("completeDelegation", () => {
           createThreadOn,
           createThreadForPrincipalOn,
         },
-        botChannelService: { isStreamAccessibleForBot: mock(async () => true) },
+        botChannelService: { isStreamActionableForBot: mock(async () => true) },
         eventService: { createMessageInTransaction, createMessageForPrincipalInTransaction },
       }),
       createMessageInTransaction,
@@ -750,7 +750,7 @@ describe("requestDelegationAccess", () => {
     const request = mock(async () => ({ request: accessRequest(), created: true }))
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => makeDelegation()) },
-      botChannelService: { isStreamAccessibleForBot: mock(async () => true) },
+      botChannelService: { isStreamActionableForBot: mock(async () => true) },
       botAccessRequestService: { request } as unknown as Partial<BotAccessRequestService>,
     })
     const { res, payloads } = createResponse()
@@ -766,7 +766,7 @@ describe("requestDelegationAccess", () => {
     const request = mock(async () => ({ request: accessRequest(), created: true }))
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => makeDelegation()) },
-      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+      botChannelService: { isStreamActionableForBot: mock(async () => false) },
       botAccessRequestService: { request } as unknown as Partial<BotAccessRequestService>,
     })
     const { res, payloads } = createResponse()
@@ -792,7 +792,7 @@ describe("requestDelegationAccess", () => {
     spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Runner", archivedAt: new Date() } as never)
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => makeDelegation()) },
-      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+      botChannelService: { isStreamActionableForBot: mock(async () => false) },
     })
     const { res } = createResponse()
     await expect(
@@ -806,7 +806,7 @@ describe("requestDelegationAccess", () => {
     const request = mock(async () => ({ request: accessRequest({ id: "bar_stable" }), created: calls++ === 0 }))
     const handlers = makeHandlers({
       delegationService: { getById: mock(async () => makeDelegation()) },
-      botChannelService: { isStreamAccessibleForBot: mock(async () => false) },
+      botChannelService: { isStreamActionableForBot: mock(async () => false) },
       botAccessRequestService: { request } as unknown as Partial<BotAccessRequestService>,
     })
 

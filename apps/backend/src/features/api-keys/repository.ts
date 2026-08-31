@@ -71,6 +71,32 @@ export const BotChannelAccessRepository = {
     `)
   },
 
+  /**
+   * The owner a personal bot reads through when its `reads_as_owner` setting
+   * is on — null for shared bots, archived bots, or setting off. Queried here
+   * rather than via BotRepository so the bot-access predicate doesn't import
+   * public-api (which imports this feature back).
+   *
+   * The `users` join is the offboarding kill switch: `removeUser` deletes the
+   * user row but deliberately orphans `stream_members`, so without it a
+   * departed owner's memberships would keep granting the bot reads forever —
+   * the same "credential must not outlive its delegating user" rule the
+   * user-key OWNER_INACTIVE check enforces.
+   */
+  async getReadAsOwnerDelegate(db: Querier, workspaceId: string, botId: string): Promise<string | null> {
+    const result = await db.query<{ owner_user_id: string }>(sql`
+      SELECT b.owner_user_id
+      FROM bots b
+      JOIN users u ON u.workspace_id = b.workspace_id AND u.id = b.owner_user_id
+      WHERE b.workspace_id = ${workspaceId}
+        AND b.id = ${botId}
+        AND b.type = 'personal'
+        AND b.reads_as_owner
+        AND b.archived_at IS NULL
+    `)
+    return result.rows[0]?.owner_user_id ?? null
+  },
+
   async hasGrant(db: Querier, workspaceId: string, botId: string, streamId: string): Promise<boolean> {
     const result = await db.query(sql`
       SELECT EXISTS(
