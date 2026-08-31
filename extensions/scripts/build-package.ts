@@ -53,6 +53,26 @@ run("bun", [
   "external",
   "--sourcemap=linked",
 ])
+// Each `bin` gets its own bundle with a node shebang; the manifest points at it.
+const bins: Record<string, string> = {}
+for (const [name, source] of Object.entries((pkg.bin ?? {}) as Record<string, string>)) {
+  const out = `${basename(source).replace(/\.ts$/, "")}.js`
+  run("bun", [
+    "build",
+    source,
+    "--outfile",
+    join(dist, out),
+    "--target",
+    "node",
+    "--format",
+    "esm",
+    "--packages",
+    "external",
+    "--banner",
+    "#!/usr/bin/env node",
+  ])
+  bins[name] = `./${out}`
+}
 run(join(repoRoot, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.build.json"])
 
 // Source imports are extensionless (Bun and `moduleResolution: bundler` accept
@@ -94,12 +114,13 @@ const manifest = {
   main: "./index.js",
   types: "./index.d.ts",
   exports: { ".": { types: "./index.d.ts", import: "./index.js" }, "./package.json": "./package.json" },
+  bin: Object.keys(bins).length > 0 ? bins : undefined,
   engines: pkg.engines,
   dependencies: publishedDeps(pkg.dependencies),
   peerDependencies: pkg.peerDependencies,
   publishConfig: { access: "public" },
 }
-const OPTIONAL = new Set(["dependencies", "peerDependencies"])
+const OPTIONAL = new Set(["dependencies", "peerDependencies", "bin"])
 for (const [key, value] of Object.entries(manifest)) {
   if (value !== undefined) continue
   if (!OPTIONAL.has(key)) throw new Error(`${pkg.name}: package.json is missing "${key}"`)

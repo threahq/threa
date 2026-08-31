@@ -4,8 +4,9 @@
 # npmjs.com lists this repository + this workflow file as a trusted publisher;
 # `id-token: write` lets npm mint the short-lived credential and attach
 # provenance. Run it from the Actions tab with the package name and the version
-# already committed in its package.json. bot-runtime-client goes first for a
-# new version pair — remote-session depends on it by caret range.
+# already committed in its package.json. Order for a new version set:
+# bot-runtime-client, remote-session, threa-bot (each depends on the previous
+# by caret range).
 name: Publish npm package
 
 on:
@@ -18,6 +19,7 @@ on:
         options:
           - bot-runtime-client
           - remote-session
+          - threa-bot
       dry_run:
         description: Build and pack, but do not publish
         required: false
@@ -55,6 +57,7 @@ jobs:
           bun install
           bun install --cwd extensions/bot-runtime-client
           bun install --cwd extensions/remote-session
+          bun install --cwd extensions/threa-bot
 
       - name: Test
         run: |

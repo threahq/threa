@@ -1,13 +1,15 @@
 /**
  * The published bot-runtime packages, consumed from outside the repo.
  *
- * `@threahq/bot-runtime-client` and `@threahq/remote-session` are packed exactly as
- * they would be published, installed with npm into a temporary project that has
- * no path to this checkout, typechecked under `node16` resolution, and then the
- * shipped `echo-connector` example is run from that project against the test
- * server: link a scratchpad, answer a message with an interim and a final
- * reply, fold a `/steer` into the running turn, and `/stop` one. Everything the
- * README promises an external connector rides on this path.
+ * `@threahq/bot-runtime-client`, `@threahq/remote-session` and `@threahq/bot`
+ * are packed exactly as they would be published, installed with npm into a
+ * temporary project that has no path to this checkout, typechecked under
+ * `node16` resolution, and then run from that project against the test server:
+ * the shipped `echo-connector` example links a scratchpad, answers a message
+ * with an interim and a final reply, folds a `/steer` into the running turn,
+ * and takes a `/stop`; the `threa-bot` CLI does the same with a shell script as
+ * the agent. Everything the READMEs promise an external connector rides on
+ * this path.
  */
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
@@ -20,6 +22,7 @@ import {
   TestClient,
   createBot,
   createBotKey,
+  createChannel,
   createWorkspace,
   dispatchCommand,
   listEvents,
@@ -31,7 +34,12 @@ import {
 setDefaultTimeout(300_000)
 
 const repoRoot = resolve(import.meta.dir, "../../../..")
-const packages = ["bot-runtime-client", "remote-session"] as const
+const packages = ["bot-runtime-client", "remote-session", "threa-bot"] as const
+const PACKAGE_NAMES: Record<(typeof packages)[number], string> = {
+  "bot-runtime-client": "@threahq/bot-runtime-client",
+  "remote-session": "@threahq/remote-session",
+  "threa-bot": "@threahq/bot",
+}
 const testRunId = Math.random().toString(36).substring(7)
 // Longer than any claim → deliver → interim round trip, so a /steer or /stop
 // dispatched after the interim lands always finds the turn still running.
@@ -104,7 +112,7 @@ beforeAll(() => {
     const tarball = readdirSync(dir).find((file) => file.endsWith(".tgz"))
     if (!tarball) throw new Error(`no tarball packed for ${name}`)
     cpSync(join(dir, tarball), join(consumerDir, tarball))
-    dependencies[`@threahq/${name}`] = `file:./${tarball}`
+    dependencies[PACKAGE_NAMES[name]] = `file:./${tarball}`
   }
   writeFileSync(
     join(consumerDir, "package.json"),
@@ -170,6 +178,12 @@ describe("published bot-runtime packages", () => {
       ].join("\n")
     )
     run(join(consumerDir, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], consumerDir)
+  })
+
+  test("the installed threa-bot bin reports its version from the published layout", () => {
+    const result = spawnSync(join(consumerDir, "node_modules/.bin/threa-bot"), ["--version"], { encoding: "utf8" })
+    expect(result.status).toBe(0)
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/)
   })
 
   test("the echo connector links a scratchpad and serves a turn, a /steer, and a /stop", async () => {
@@ -269,5 +283,150 @@ describe("published bot-runtime packages", () => {
     const exitCode = await new Promise<number | null>((resolve) => connector!.once("exit", resolve))
     expect(exitCode).toBe(0)
     expect(connectorLog).toContain("shutting down (SIGTERM)")
+  })
+
+  test("threa-bot run pipes each scratchpad turn through a shell script and honours /stop", async () => {
+    const client = new TestClient()
+    await loginAs(client, `threa-bot-${testRunId}@test.com`, "threa-bot User")
+    const workspace = await createWorkspace(client, `threa-bot WS ${testRunId}`)
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `Shell ${testRunId}`,
+      slug: `shell-${testRunId}`,
+      traits: [BotTraits.ACTIVE_SCRATCHPAD, BotTraits.MENTIONABLE],
+    })
+    const apiKey = await createBotKey(client, workspace.id, bot.id, [
+      WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,
+      WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
+      WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ,
+    ])
+    // The "agent": echoes the first stdin line after a delay long enough for a
+    // /stop to land, and narrates on stderr so a trace step is recorded.
+    writeFileSync(
+      join(consumerDir, "agent.sh"),
+      `#!/bin/sh\nread -r first\necho "thinking about: $first" >&2\nsleep ${ECHO_DELAY_MS / 1000}\necho "Shell says: $first ($THREA_INVOCATION_ID)"\n`,
+      { mode: 0o755 }
+    )
+    edge ??= serveEdge(process.env.TEST_BASE_URL!)
+    connectorLog = ""
+    connector = spawn(
+      join(consumerDir, "node_modules/.bin/threa-bot"),
+      ["run", "--name", "Shell", "--", "./agent.sh"],
+      {
+        cwd: consumerDir,
+        env: {
+          ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("THREA_"))),
+          THREA_BASE_URL: edge.url.origin,
+          THREA_WORKSPACE_ID: workspace.id,
+          THREA_API_KEY: apiKey,
+          THREA_BIK_PATH: join(consumerDir, "bik-shell.json"),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    )
+    connector.stdout!.on("data", (chunk) => (connectorLog += chunk))
+    connector.stderr!.on("data", (chunk) => (connectorLog += chunk))
+
+    const streamId = await waitFor("the CLI's scratchpad", async () => connectorLog.match(/\/s\/(stream_\w+)/)?.[1])
+    const scratchpad = await waitFor("the scratchpad in the owner's list", async () =>
+      (await listStreams(client, workspace.id)).find((stream) => stream.id === streamId)
+    )
+    expect(scratchpad.displayName).toBe(`Shell - ${basename(consumerDir)}`)
+    interface Posted {
+      contentMarkdown?: string
+      metadata?: Record<string, string>
+    }
+    const posted = async (): Promise<Posted[]> =>
+      (await listEvents(client, workspace.id, streamId)).map((event) => event.payload as Posted)
+    const replies = (all: Posted[]) =>
+      all.filter((p) => p.metadata?.["remote.instanceId"] && !p.metadata?.["remote.sessionControl"])
+    const acks = (all: Posted[]) => all.filter((p) => p.metadata?.["remote.sessionControl"] === "true")
+
+    await sendMessage(client, workspace.id, streamId, "first question")
+    const afterFirst = await waitFor("the script's reply", async () => {
+      const all = await posted()
+      return replies(all).length >= 1 ? all : undefined
+    })
+    expect(replies(afterFirst)[0]!.contentMarkdown).toMatch(/^Shell says: first question \(binv_\w+\)$/)
+
+    await sendMessage(client, workspace.id, streamId, "second question")
+    await waitFor("the second turn to start", async () =>
+      connectorLog.includes("thinking about: second") ? true : undefined
+    )
+    await dispatchCommand(client, workspace.id, streamId, "/stop")
+    const afterStop = await waitFor("the stop acknowledgement", async () => {
+      const all = await posted()
+      return acks(all).length >= 1 ? all : undefined
+    })
+    expect(acks(afterStop)[0]!.contentMarkdown).toBe("Stopped the current turn.")
+    await new Promise((resolve) => setTimeout(resolve, ECHO_DELAY_MS + 1_000))
+    const final = await posted()
+    expect(replies(final)).toHaveLength(1)
+    expect(final.some((p) => p.contentMarkdown?.includes("Stopped by /stop."))).toBe(true)
+
+    connector.kill("SIGTERM")
+    const exitCode = await new Promise<number | null>((resolve) => connector!.once("exit", resolve))
+    expect(exitCode).toBe(0)
+  })
+
+  test("threa-bot run --mention answers an @mention in a channel", async () => {
+    const client = new TestClient()
+    await loginAs(client, `threa-bot-mention-${testRunId}@test.com`, "threa-bot Mention User")
+    const workspace = await createWorkspace(client, `threa-bot Mention WS ${testRunId}`)
+    const slug = `upper-${testRunId}`
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `Upper ${testRunId}`,
+      slug,
+      traits: [BotTraits.MENTIONABLE],
+    })
+    const apiKey = await createBotKey(client, workspace.id, bot.id, [
+      WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
+    ])
+    const channel = await createChannel(client, workspace.id, `mentions-${testRunId}`)
+    const grant = await client.post(`/api/workspaces/${workspace.id}/bots/${bot.id}/streams/${channel.id}/grant`, {})
+    expect(grant.status).toBeLessThan(300)
+
+    edge ??= serveEdge(process.env.TEST_BASE_URL!)
+    connectorLog = ""
+    connector = spawn(
+      join(consumerDir, "node_modules/.bin/threa-bot"),
+      ["run", "--mention", "--", "sh", "-c", "tr a-z A-Z"],
+      {
+        cwd: consumerDir,
+        env: {
+          ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("THREA_"))),
+          THREA_BASE_URL: edge.url.origin,
+          THREA_WORKSPACE_ID: workspace.id,
+          THREA_API_KEY: apiKey,
+          THREA_BIK_PATH: join(consumerDir, "bik-upper.json"),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    )
+    connector.stdout!.on("data", (chunk) => (connectorLog += chunk))
+    connector.stderr!.on("data", (chunk) => (connectorLog += chunk))
+    await waitFor("the mention loop to start", async () =>
+      connectorLog.includes("answering @mentions") ? true : undefined
+    )
+
+    await sendMessage(client, workspace.id, channel.id, `@${slug} shout this please`)
+    // The reply is the bot's own message, whatever the shouted mention looks like.
+    const reply = await waitFor("the shouted reply", async () =>
+      (await listEvents(client, workspace.id, channel.id))
+        .filter((event) => event.actorType === "bot" && event.actorId === bot.id)
+        .map((event) => (event.payload as { contentMarkdown?: string }).contentMarkdown ?? "")
+        .find((text) => text.includes("SHOUT THIS PLEASE"))
+    )
+    expect(reply).toContain("SHOUT THIS PLEASE")
+
+    connector.kill("SIGTERM")
+    const exitCode = await new Promise<number | null>((resolve) => connector!.once("exit", resolve))
+    expect(exitCode).toBe(0)
   })
 })
