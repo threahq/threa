@@ -21,7 +21,7 @@ import { userId, workspaceId, streamId, botId, botChannelAccessId } from "../../
 
 describe("read-as-owner write authority", () => {
   let pool: Pool
-  let ws: string
+  let testWorkspaceId: string
   let ownerId: string
   let readerBotId: string
   let plainBotId: string
@@ -30,11 +30,12 @@ describe("read-as-owner write authority", () => {
   let grantedChannelId: string
   let e2eChannelId: string
   let archivedChannelId: string
+  let archivedRootThreadId: string
 
   function writeAs(botIdToUse: string, targetStreamId: string) {
     return withTransaction(pool, (client) =>
       assertStreamWritable(client, {
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         streamId: targetStreamId,
         principal: { kind: "bot", botId: botIdToUse },
       })
@@ -43,28 +44,29 @@ describe("read-as-owner write authority", () => {
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
-    ws = workspaceId()
+    testWorkspaceId = workspaceId()
     privateChannelId = streamId()
     grantedChannelId = streamId()
     e2eChannelId = streamId()
     archivedChannelId = streamId()
+    archivedRootThreadId = streamId()
     readerBotId = botId()
     plainBotId = botId()
     sharedBotId = botId()
 
     await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
-        id: ws,
+        id: testWorkspaceId,
         name: "RAO Write",
-        slug: `rao-write-${ws}`,
+        slug: `rao-write-${testWorkspaceId}`,
         createdBy: userId(),
       })
-      ownerId = (await addTestMember(client, ws, userId())).id
+      ownerId = (await addTestMember(client, testWorkspaceId, userId())).id
 
       for (const id of [privateChannelId, grantedChannelId, e2eChannelId, archivedChannelId]) {
         await StreamRepository.insert(client, {
           id,
-          workspaceId: ws,
+          workspaceId: testWorkspaceId,
           type: StreamTypes.CHANNEL,
           visibility: Visibilities.PRIVATE,
           slug: `s-${id.slice(-10)}`,
@@ -73,16 +75,27 @@ describe("read-as-owner write authority", () => {
         await StreamMemberRepository.insert(client, id, ownerId)
       }
 
+      await StreamRepository.insert(client, {
+        id: archivedRootThreadId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.THREAD,
+        visibility: Visibilities.PRIVATE,
+        parentStreamId: archivedChannelId,
+        parentAnchorId: `msg_${archivedRootThreadId.slice(-10)}`,
+        rootStreamId: archivedChannelId,
+        createdBy: ownerId,
+      })
+
       await E2eStreamsRepository.markStreamE2e(client, {
         streamId: e2eChannelId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         ownerUserId: ownerId,
         ownerUserKeyId: "e2ek_test",
       })
 
       await BotRepository.create(client, {
         id: readerBotId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         type: "personal",
         ownerUserId: ownerId,
         readsAsOwner: true,
@@ -91,7 +104,7 @@ describe("read-as-owner write authority", () => {
       })
       await BotRepository.create(client, {
         id: plainBotId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         type: "personal",
         ownerUserId: ownerId,
         slug: "plain-bot",
@@ -99,7 +112,7 @@ describe("read-as-owner write authority", () => {
       })
       await BotRepository.create(client, {
         id: sharedBotId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         type: "shared",
         ownerUserId: null,
         slug: "shared-bot",
@@ -107,7 +120,7 @@ describe("read-as-owner write authority", () => {
       })
       await BotChannelAccessRepository.grantAccess(client, {
         id: botChannelAccessId(),
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         botId: readerBotId,
         streamId: grantedChannelId,
         grantedBy: ownerId,
@@ -142,6 +155,11 @@ describe("read-as-owner write authority", () => {
 
   test("should keep the 404 on an archived stream the owner can read", async () => {
     await expect(writeAs(readerBotId, archivedChannelId)).rejects.toBeInstanceOf(StreamNotFoundError)
+  })
+
+  test("should keep the 404 on a live thread whose root is archived", async () => {
+    // Only the root's archived_at flips on archive; the thread row stays live.
+    await expect(writeAs(readerBotId, archivedRootThreadId)).rejects.toBeInstanceOf(StreamNotFoundError)
   })
 
   test("should let a granted bot write", async () => {
