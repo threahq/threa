@@ -925,6 +925,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
             workspaceId: "ws_1",
             type: "shared",
             ownerUserId: null,
+            readsAsOwner: false,
             traits: [],
             slug: "helper",
             name: "Helper",

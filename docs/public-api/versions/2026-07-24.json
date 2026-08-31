@@ -7536,7 +7536,8 @@
                           "createdAt": { "type": "string", "format": "date-time" },
                           "updatedAt": { "type": "string", "format": "date-time" },
                           "type": { "type": "string", "const": "personal" },
-                          "ownerUserId": { "type": "string" }
+                          "ownerUserId": { "type": "string" },
+                          "readsAsOwner": { "type": "boolean" }
                         },
                         "required": [
                           "id",
@@ -7551,7 +7552,8 @@
                           "createdAt",
                           "updatedAt",
                           "type",
-                          "ownerUserId"
+                          "ownerUserId",
+                          "readsAsOwner"
                         ],
                         "additionalProperties": false
                       }

@@ -325,12 +325,14 @@ const sharedBotSchema = z.object({
   ...botCommonFields,
   type: z.literal("shared"),
   ownerUserId: z.null(),
+  readsAsOwner: z.literal(false),
 })
 
 const personalBotSchema = z.object({
   ...botCommonFields,
   type: z.literal("personal"),
   ownerUserId: z.string(),
+  readsAsOwner: z.boolean(),
 })
 
 const botSchema = z.discriminatedUnion("type", [sharedBotSchema, personalBotSchema])

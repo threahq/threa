@@ -31,14 +31,20 @@ import {
 
 const ALL_BOT_TRAITS = BOT_TRAITS as readonly BotTrait[]
 
-const createBotSchema = z.object({
-  type: z.enum(BOT_TYPES).optional().default("shared"),
-  name: z.string().min(1).max(100),
-  slug: z.string().min(1).max(50),
-  description: z.string().max(500).nullable().optional(),
-  avatarEmoji: z.string().nullable().optional(),
-  traits: z.array(z.enum(ALL_BOT_TRAITS)).optional(),
-})
+const createBotSchema = z
+  .object({
+    type: z.enum(BOT_TYPES).optional().default("shared"),
+    name: z.string().min(1).max(100),
+    slug: z.string().min(1).max(50),
+    description: z.string().max(500).nullable().optional(),
+    avatarEmoji: z.string().nullable().optional(),
+    traits: z.array(z.enum(ALL_BOT_TRAITS)).optional(),
+    readsAsOwner: z.boolean().optional(),
+  })
+  .refine((data) => !data.readsAsOwner || data.type === BotTypes.PERSONAL, {
+    message: "readsAsOwner requires a personal bot",
+    path: ["readsAsOwner"],
+  })
 
 const updateBotSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -46,6 +52,7 @@ const updateBotSchema = z.object({
   description: z.string().max(500).nullable().optional(),
   avatarEmoji: z.string().nullable().optional(),
   traits: z.array(z.enum(ALL_BOT_TRAITS)).optional(),
+  readsAsOwner: z.boolean().optional(),
 })
 
 const createBotKeySchema = z.object({
@@ -115,6 +122,7 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
         description,
         avatarEmoji,
         traits,
+        readsAsOwner,
         slug: slugInput,
       } = validateRequest(createBotSchema, req.body)
 
@@ -163,6 +171,7 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
             workspaceId,
             type,
             ownerUserId,
+            readsAsOwner: readsAsOwner ?? false,
             traits: traits ?? [],
             slug,
             name,
@@ -193,6 +202,13 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       const { botId: id } = req.params
 
       const data = validateRequest(updateBotSchema, req.body)
+
+      if (data.readsAsOwner && req.bot!.type !== BotTypes.PERSONAL) {
+        throw new HttpError("readsAsOwner requires a personal bot", {
+          status: 400,
+          code: "PERSONAL_BOT_REQUIRED",
+        })
+      }
 
       const fields = { ...data }
       if (fields.slug) {

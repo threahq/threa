@@ -168,6 +168,7 @@ describe("ActivityService author name resolution", () => {
       apiKeyId: null,
       type: "shared",
       ownerUserId: null,
+      readsAsOwner: false,
       traits: [],
       slug: "helper-bot",
       name: "Helper Bot",
