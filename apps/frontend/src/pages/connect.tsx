@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { Bot, Check, Hourglass, SearchX, type LucideIcon } from "lucide-react"
 import { BotTraits, WORKSPACE_PERMISSION_SCOPES, type Workspace } from "@threa/types"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -48,6 +49,7 @@ export interface ProvisionedBot {
   botSlug: string
   keyId: string
   apiKey: string
+  readsAsOwner: boolean
 }
 
 /** The code cannot be approved any more; the bot and key minted for it were removed. */
@@ -68,26 +70,47 @@ export class ConnectCleanupFailedError extends Error {
   }
 }
 
-/**
- * Create the bot and mint its key in the workspace's region, then hand the
- * key to the control plane for the waiting device. The three writes are not
- * one transaction, so: a slug collision retries once with a random suffix;
- * `provisioned` from an earlier attempt in the same workspace is reused rather
- * than minted again; and when the control plane says the code is gone
- * (404/409) the bot and key are revoked so nothing usable is left behind.
- */
-export async function approveConnect(input: {
+export interface ApproveConnectInput {
+  /** Normalized device-grant user code (`BCDF-GHJK`). */
   code: string
   workspace: Workspace
   botName: string
+  /** Mint the bot with `readsAsOwner`; omitted means `false`. */
+  readsAsOwner?: boolean
+  /** A prior attempt's mint, reused so a retry does not create a second bot. */
   provisioned?: ProvisionedBot
   onProvisioned?: (provisioned: ProvisionedBot) => void
-}): Promise<{ slug: string; provisioned: ProvisionedBot }> {
+}
+
+/**
+ * Create the bot and mint its key in the workspace's region, then hand the
+ * key to the control plane for the waiting device. Resolves with the bot's
+ * final slug plus the mint to keep for retries. The three writes are not
+ * one transaction, so: a slug collision retries once with a random suffix;
+ * `provisioned` from an earlier attempt in the same workspace is reused rather
+ * than minted again (re-asserting `readsAsOwner` only when it changed); and
+ * when the control plane says the code is gone (404/409) the bot and key are
+ * revoked so nothing usable is left behind.
+ */
+export async function approveConnect(input: ApproveConnectInput): Promise<{
+  slug: string
+  provisioned: ProvisionedBot
+}> {
   let provisioned = input.provisioned?.workspaceId === input.workspace.id ? input.provisioned : undefined
   if (input.provisioned && !provisioned) {
     // The user picked another workspace after a failed attempt: the bot minted
     // in the first one would otherwise stay behind with a live key.
     await botsApi.archive(input.provisioned.workspaceId, input.provisioned.botId).catch(() => undefined)
+  }
+  const readsAsOwner = input.readsAsOwner ?? false
+  if (provisioned && provisioned.readsAsOwner !== readsAsOwner) {
+    // A retry reuses the minted bot, so a changed checkbox is re-asserted —
+    // but only when it actually changed: an unconditional PATCH would make
+    // every ordinary retry depend on one more write that can fail (the reason
+    // this whole function tolerates retries at all).
+    await botsApi.update(provisioned.workspaceId, provisioned.botId, { readsAsOwner })
+    provisioned = { ...provisioned, readsAsOwner }
+    input.onProvisioned?.(provisioned)
   }
   if (!provisioned) {
     const baseSlug = slugForBot(input.botName) || "bot"
@@ -97,6 +120,7 @@ export async function approveConnect(input: {
         name: input.botName,
         slug,
         traits: [BotTraits.MENTIONABLE, BotTraits.ACTIVE_SCRATCHPAD],
+        ...(readsAsOwner ? { readsAsOwner: true } : {}),
       })
     let bot
     try {
@@ -115,6 +139,7 @@ export async function approveConnect(input: {
       botSlug: bot.slug ?? baseSlug,
       keyId: key.key.id,
       apiKey: key.value,
+      readsAsOwner,
     }
     input.onProvisioned?.(provisioned)
   }
@@ -223,6 +248,7 @@ function ApproveForm({
 }) {
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "")
   const [botName, setBotName] = useState(lookup.requestedName ?? "My agent")
+  const [readsAsOwner, setReadsAsOwner] = useState(false)
   const workspace = workspaces.find((w) => w.id === workspaceId)
   const provisioned = useRef<ProvisionedBot | undefined>(undefined)
   const approve = useMutation({
@@ -232,6 +258,7 @@ function ApproveForm({
           code,
           workspace: workspace!,
           botName: botName.trim(),
+          readsAsOwner,
           provisioned: provisioned.current,
           onProvisioned: (next) => (provisioned.current = next),
         })
@@ -304,6 +331,24 @@ function ApproveForm({
             A personal bot you can @mention, with its own scratchpad. Its key is created now and sent to the machine
             that asked.
           </p>
+        </div>
+        <div className="flex items-start gap-2.5 rounded-md border px-3 py-2.5">
+          <Checkbox
+            id="connect-reads-as-owner"
+            checked={readsAsOwner}
+            onCheckedChange={(checked) => setReadsAsOwner(checked === true)}
+            disabled={busy}
+            className="mt-0.5"
+          />
+          <div className="space-y-0.5">
+            <Label htmlFor="connect-reads-as-owner" className="text-sm font-normal">
+              Let it read everything you can read
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Except end-to-end encrypted streams. It can still only post where it has been added. You can change this
+              later in bot settings.
+            </p>
+          </div>
         </div>
         {error && (
           <p className="text-sm text-destructive">{error instanceof Error ? error.message : "Could not connect"}</p>

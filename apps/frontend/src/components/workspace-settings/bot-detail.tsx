@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -52,6 +53,14 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
       botsApi.update(workspaceId, botId, data),
     onSuccess: () => {
       setEditing(false)
+      queryClient.invalidateQueries({ queryKey: botQueryKey })
+      queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
+    },
+  })
+
+  const readsAsOwnerMutation = useMutation({
+    mutationFn: (readsAsOwner: boolean) => botsApi.update(workspaceId, botId, { readsAsOwner }),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: botQueryKey })
       queryClient.invalidateQueries({ queryKey: ["bots", workspaceId] })
     },
@@ -282,6 +291,39 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
       <Separator />
       <BotChannelsSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
       <Separator />
+
+      {bot.type === "personal" && (
+        <>
+          <section className="space-y-3">
+            <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reading access</h4>
+            <div className="rounded-md border px-3 py-2.5 flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="reads-as-owner" className="text-sm font-medium">
+                  Read everything you can read
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Except end-to-end encrypted streams. The bot can still only post where it has been added, and other
+                  members see which streams it was added to — not that it reads through you.
+                </p>
+                {readsAsOwnerMutation.error && (
+                  <p className="text-xs text-destructive">
+                    {readsAsOwnerMutation.error instanceof Error
+                      ? readsAsOwnerMutation.error.message
+                      : "Failed to update."}
+                  </p>
+                )}
+              </div>
+              <Switch
+                id="reads-as-owner"
+                checked={bot.readsAsOwner}
+                disabled={isArchived || readsAsOwnerMutation.isPending}
+                onCheckedChange={(checked) => readsAsOwnerMutation.mutate(checked)}
+              />
+            </div>
+          </section>
+          <Separator />
+        </>
+      )}
 
       <section className="space-y-3">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Danger zone</h4>
