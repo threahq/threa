@@ -71,6 +71,26 @@ export const BotChannelAccessRepository = {
     `)
   },
 
+  /**
+   * The owner a personal bot reads through when its `reads_as_owner` setting
+   * is on — null for shared bots, archived bots, or setting off. Queried here
+   * rather than via BotRepository so the bot-access predicate doesn't import
+   * public-api (which imports this feature back).
+   */
+  async getReadAsOwnerDelegate(db: Querier, workspaceId: string, botId: string): Promise<string | null> {
+    const result = await db.query<{ owner_user_id: string }>(sql`
+      SELECT owner_user_id
+      FROM bots
+      WHERE workspace_id = ${workspaceId}
+        AND id = ${botId}
+        AND type = 'personal'
+        AND reads_as_owner
+        AND owner_user_id IS NOT NULL
+        AND archived_at IS NULL
+    `)
+    return result.rows[0]?.owner_user_id ?? null
+  },
+
   async hasGrant(db: Querier, workspaceId: string, botId: string, streamId: string): Promise<boolean> {
     const result = await db.query(sql`
       SELECT EXISTS(

@@ -84,6 +84,27 @@ export const E2eStreamsRepository = {
   },
 
   /**
+   * Return the subset of `streamIds` whose EFFECTIVE ROOT is not E2E.
+   * `e2e_streams` rows exist per root only, so a thread under an E2E
+   * scratchpad matches nothing in {@link filterE2eStreamIds} — this resolves
+   * `COALESCE(root_stream_id, id)` first (INV-62) so threads are excluded
+   * alongside their root. Ids with no `streams` row drop out.
+   */
+  async excludeE2eRootedStreamIds(db: Querier, workspaceId: string, streamIds: string[]): Promise<string[]> {
+    if (streamIds.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
+      SELECT s.id
+      FROM streams s
+      LEFT JOIN e2e_streams e
+        ON e.workspace_id = s.workspace_id AND e.stream_id = COALESCE(s.root_stream_id, s.id)
+      WHERE s.workspace_id = ${workspaceId}
+        AND s.id = ANY(${streamIds})
+        AND e.stream_id IS NULL
+    `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
    * Store (or clear) the sealed display name for an E2E stream. The authoritative
    * title exists only as opaque bytes + framing the server cannot read;
    * `streams.display_name` remains null while its metadata revision/source is
