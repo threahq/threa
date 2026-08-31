@@ -12,6 +12,7 @@ import {
 } from "@/lib/emoji-picker"
 import type { SuggestionListRef } from "./suggestion-list"
 import { EmojiGrid } from "./emoji-grid"
+import { EmojiPluginKey } from "./emoji-extension"
 
 interface EmojiSuggestionState {
   recent: EmojiEntry[]
@@ -62,6 +63,16 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
     if (storage) storage.popupVisible = visible
   }, [])
 
+  // The plugin's own flag is the authority on whether a suggestion is running.
+  // Its view update is async (it awaits `items()`), so an update queued before
+  // the pick resolves *after* the pick's onExit — a popup nothing will close
+  // again, still swallowing Enter.
+  const suggestionEnded = useCallback((editor: Editor) => {
+    if (editor.isDestroyed) return true
+    const pluginState = EmojiPluginKey.getState(editor.state) as { active?: boolean } | undefined
+    return pluginState !== undefined && pluginState.active !== true
+  }, [])
+
   const allSorted = useMemo(() => sortByDefaultOrder(emojis), [emojis])
   const recentBase = useMemo(
     () => pickRecentlyUsed(emojis, emojiWeights, DESKTOP_GRID_COLUMNS * MAX_RECENTLY_USED_ROWS),
@@ -92,6 +103,7 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
   const onStart = useCallback(
     (props: SuggestionProps<EmojiEntry>) => {
       editorRef.current = props.editor
+      if (suggestionEnded(props.editor)) return
       setPopupVisible(props.editor, props.items.length > 0)
       const { recent, all } = computeSections(props.query, props.items)
       setState({
@@ -101,11 +113,12 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
         command: props.command,
       })
     },
-    [setPopupVisible, computeSections]
+    [setPopupVisible, computeSections, suggestionEnded]
   )
 
   const onUpdate = useCallback(
     (props: SuggestionProps<EmojiEntry>) => {
+      if (suggestionEnded(props.editor)) return
       setPopupVisible(props.editor, props.items.length > 0)
       const { recent, all } = computeSections(props.query, props.items)
       setState({
@@ -115,7 +128,7 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
         command: props.command,
       })
     },
-    [setPopupVisible, computeSections]
+    [setPopupVisible, computeSections, suggestionEnded]
   )
 
   const onExit = useCallback(
@@ -147,6 +160,27 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
     document.addEventListener("pointerdown", onPointerDown, true)
     return () => document.removeEventListener("pointerdown", onPointerDown, true)
   }, [isActive, close])
+
+  // Second half of the same authority rule: a popup whose suggestion has ended
+  // goes on the next transaction, even if its onExit never arrived.
+  useEffect(() => {
+    if (!isActive) return
+    const editor = editorRef.current
+    if (!editor) return
+    if (suggestionEnded(editor)) {
+      close()
+      return
+    }
+    const dropWhenEnded = () => {
+      if (suggestionEnded(editor)) close()
+    }
+    editor.on("transaction", dropWhenEnded)
+    editor.on("destroy", close)
+    return () => {
+      editor.off("transaction", dropWhenEnded)
+      editor.off("destroy", close)
+    }
+  }, [isActive, close, suggestionEnded])
 
   const onKeyDown = useCallback(
     (props: SuggestionKeyDownProps) => {
