@@ -47,9 +47,10 @@ self-contained copy instead:
 bun run extensions/claude-code-remote/install-local.ts [destDir]   # default: ~/.threa/claude-code-remote
 ```
 
-`@threa/bot-runtime-client` is a private sibling package referenced via `file:../bot-runtime-client`,
-which only resolves inside the monorepo. The script vendors its source into the copy, repoints the
-imports, drops the dependency, and runs `bun install` for the rest. It prints the exact
+The channel depends on sibling packages via `file:../…` links that only resolve inside the
+monorepo; `@threa/harness-client` is private (never on npm), so a standalone copy cannot install
+it. The script vendors the siblings' source into the copy, repoints the imports, drops the
+dependencies, and runs `bun install` for the rest. It prints the exact
 `claude mcp add …` command (with the installed absolute path) to use in step 4.
 
 ### 3. Configure credentials
@@ -200,7 +201,7 @@ Each `send` (and each tool-approval prompt) also counts as a sign of life that r
 
 ## End-to-end encrypted scratchpads
 
-The channel serves sealed (E2EE) turns via `@threa/remote-session` + `@threa/bot-runtime-client`. On first start it mints a BIK (Bot Identity Key, an X25519 keypair persisted `0600` at `~/.claude/threa-channel/bik.json`, overridable via `THREA_BIK_PATH`) and registers the public half on every hello/presence write. Once the scratchpad owner invites this bot into an encrypted scratchpad (wrapping the stream key to the BIK), turns arrive sealed: the channel decrypts the trigger + history locally, and everything it posts back — interim `send`s, the final `reply`, permission prompts, trace notes — is sealed under the stream key before it leaves the machine. The server only ever stores ciphertext.
+The channel serves sealed (E2EE) turns via `@threahq/remote-session` + `@threahq/bot-runtime-client`. On first start it mints a BIK (Bot Identity Key, an X25519 keypair persisted `0600` at `~/.claude/threa-channel/bik.json`, overridable via `THREA_BIK_PATH`) and registers the public half on every hello/presence write. Once the scratchpad owner invites this bot into an encrypted scratchpad (wrapping the stream key to the BIK), turns arrive sealed: the channel decrypts the trigger + history locally, and everything it posts back — interim `send`s, the final `reply`, permission prompts, trace notes — is sealed under the stream key before it leaves the machine. The server only ever stores ciphertext.
 
 Sealed-turn differences: `THREA_ATTACH:` files are encrypted locally under a fresh per-file key and uploaded as ciphertext only (the key rides sealed inside the reply payload), and inbound attachments arrive as refs inside the sealed messages — the channel fetches the ciphertext and decrypts it into the working directory. Session-control acks (`/model` etc.) are sealed under the stream key when the claim carries the wraps, falling back to a silent close when the bot can't seal. Deleting the BIK file orphans the owner's key wraps; re-invite the bot after it registers a fresh key.
 

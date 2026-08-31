@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { RemoteSessionStatusSnapshot } from "@threa/remote-session"
+import type { RemoteSessionStatusSnapshot } from "@threahq/remote-session"
 import { formatClaudeStatusReport, type ClaudeChannelStatusContext } from "./status"
 import type { TmuxPaneSnapshot } from "./tmux-control"
 

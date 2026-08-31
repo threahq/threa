@@ -68,4 +68,4 @@ export {
   type DelegationExecutor,
   type DelegationExecutorContext,
 } from "./delegation-runner"
-export type { StepFrame } from "@threa/bot-runtime-client"
+export type { StepFrame } from "@threahq/bot-runtime-client"

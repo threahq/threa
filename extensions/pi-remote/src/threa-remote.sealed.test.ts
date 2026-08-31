@@ -11,11 +11,11 @@ import {
   parseSealedPayload,
   type AttachmentRef,
   type StreamEnvelope,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 import { __testing } from "./threa-remote"
 
 // The full-vs-redacted trace policy for sealed (E2EE) turns. The crypto itself
-// (BIK, claim hydration, seal/open) is covered by @threa/bot-runtime-client's
+// (BIK, claim hydration, seal/open) is covered by @threahq/bot-runtime-client's
 // suite; these tests pin the harness-side policy: full detail is emitted ONLY
 // when the turn is sealed, and the config toggle can only opt a sealed turn
 // back to redacted — never unlock full detail for plaintext.

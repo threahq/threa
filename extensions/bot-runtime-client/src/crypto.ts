@@ -31,6 +31,14 @@ import { Aes256Gcm, CipherSuite, HkdfSha256 } from "@hpke/core"
 // serialize to the same 32 raw bytes).
 import { DhkemX25519HkdfSha256 } from "@hpke/dhkem-x25519"
 
+// WebCrypto key types derived from the `crypto` global in scope rather than
+// named: the bare `CryptoKey` type exists under DOM and Bun typings but not
+// under @types/node, so a Node consumer of the published declarations would
+// not resolve it. This alias is emitted verbatim and resolves in every setup.
+type CryptoKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>
+type CryptoKeyPair = { publicKey: CryptoKey; privateKey: CryptoKey }
+export type { CryptoKey as WebCryptoKey }
+
 // ── encoding ────────────────────────────────────────────────────────────────
 
 export function bytesToBase64(bytes: Uint8Array | ArrayBuffer): string {

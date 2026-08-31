@@ -5,7 +5,7 @@ import {
   decryptAttachmentBytes,
   encryptAttachmentBytes,
   type AttachmentRef,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 import type { AttachmentSummary, StreamMessageSummary, ThreaClient } from "./client"
 
 /** A reply line `THREA_ATTACH: ./out.png` tells the channel to upload that file and attach it to the reply. */

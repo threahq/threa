@@ -4,7 +4,7 @@ import {
   type ProvisionedWrap,
   type SealedReplyBody,
   type SealingState,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 
 const FETCH_TIMEOUT_MS = 30_000
 

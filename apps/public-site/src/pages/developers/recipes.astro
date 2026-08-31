@@ -213,11 +213,14 @@ async function loop() {
     <strong>Faster than polling</strong>
     There's also a Socket.IO <code>/bot</code> namespace that pushes
     <code>bot_invocation:available</code> events so you can react instantly and
-    keep a poll only as a backstop. The Pi extension uses the socket with a 30s
-    poll fallback. Read <code>extensions/pi-remote/</code> in the repo for a
-    complete implementation, including session-control commands like
-    <code>/model</code>, <code>/thinking</code>, and <code>/compact</code> driven
-    from a scratchpad.
+    keep a poll only as a backstop. The npm package
+    <code>@threahq/bot-runtime-client</code> owns that socket and routes presence,
+    claim renewals, and trace steps over it with an HTTP fallback;
+    <code>@threahq/remote-session</code> builds the full scratchpad session loop
+    on top, including <code>/steer</code>, <code>/stop</code>, and session-control
+    commands like <code>/model</code>. Both ship a runnable example. Pi and the
+    Claude Code channel are built on the same packages
+    (<code>extensions/</code> in the repo).
   </div>
   <p>
     With those read and search scopes, the bot can look through stream history,

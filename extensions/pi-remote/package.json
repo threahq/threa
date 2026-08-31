@@ -6,7 +6,8 @@
     "pi-package"
   ],
   "dependencies": {
-    "@threa/bot-runtime-client": "file:../bot-runtime-client",
+    "@threahq/bot-runtime-client": "file:../bot-runtime-client",
+    "@threa/harness-client": "file:../harness-client",
     "socket.io-client": "^4.8.1"
   },
   "scripts": {

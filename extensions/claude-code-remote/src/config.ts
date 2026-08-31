@@ -1,6 +1,11 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { loadConfig, type ConnectorIdentity, type LoadConfigInput, type LoadConfigResult } from "@threa/remote-session"
+import {
+  loadConfig,
+  type ConnectorIdentity,
+  type LoadConfigInput,
+  type LoadConfigResult,
+} from "@threahq/remote-session"
 
 export const CONFIG_DIR = join(homedir(), ".claude", "threa-channel")
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json")
@@ -18,7 +23,9 @@ export function loadChannelConfig(input: LoadConfigInput): LoadConfigResult {
   if ("error" in result) return result
   // Colocate the channel's BIK (its sealed-scratchpad identity key) with its
   // config, unless the user pointed it elsewhere (THREA_BIK_PATH / file bikPath).
-  return { config: { ...result.config, bikPath: result.config.bikPath ?? join(CONFIG_DIR, "bik.json") } }
+  return {
+    config: { ...result.config, localCwd: input.cwd, bikPath: result.config.bikPath ?? join(CONFIG_DIR, "bik.json") },
+  }
 }
 
-export { parseConfigFile, type RawConfig, type RemoteSessionConfig } from "@threa/remote-session"
+export { parseConfigFile, type RawConfig, type RemoteSessionConfig } from "@threahq/remote-session"

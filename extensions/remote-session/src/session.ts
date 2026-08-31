@@ -4,8 +4,6 @@ import {
   ArchiveGraceController,
   BikKeystore,
   WS_BACKSTOP_POLL_MS,
-  markHarnessLinkWoundDown,
-  recordHarnessLink,
   BotRuntimeTransport,
   mintStreamKeyWraps,
   openSealedAck,
@@ -20,7 +18,7 @@ import {
   type DelegationAvailableNudge,
   type SealedReplyBody,
   type StepFrame,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 import {
   downloadInboundAttachments,
   downloadSealedInboundAttachments,
@@ -146,6 +144,14 @@ export interface RemoteSessionDelegate {
    * consumed; the SDK then closes it silently and moves on.
    */
   interceptClaimed?(invocation: ClaimedInvocation): Promise<boolean>
+  /**
+   * The scratchpad link was created or resumed (also after an unarchive
+   * reattach). Runs before the link is committed locally and before presence
+   * is synced, so a connector can record what this process now owns. A throw
+   * leaves the session unlinked for this tick (the next poll links again); it
+   * does not stop the session from connecting or claiming meanwhile.
+   */
+  onLinked?(link: RuntimeSessionLink): Promise<void> | void
   /** Present iff the connector can drive the runtime. Gates advertising session control (fail-safe). */
   sessionControl?: SessionControlActuator
   /**
@@ -348,6 +354,11 @@ export class RemoteSession {
   /** Consecutive empty poll ticks while the socket is down; drives the poll backoff. */
   private emptyNoSocketPolls = 0
   private readonly inflight = new Map<string, Inflight>()
+  // When the server last confirmed each in-flight claim's lease. Renewals that
+  // fail to reach the server look like success to a caller that only checks
+  // `notFound`; after a lease has gone unconfirmed long enough to have expired
+  // (another runtime may hold the invocation by then) the turn is dropped.
+  private readonly leaseConfirmedAt = new Map<string, number>()
   // The invocation whose turn is executing — the stream a relayed permission
   // prompt belongs in. Set when a non-intercepted invocation is pushed to the
   // runtime. Tracking it beats guessing from the in-flight map, where a
@@ -493,17 +504,16 @@ export class RemoteSession {
       this.log("link response raced an archive state change — dropped; the next probe decides")
       return false
     }
+    await this.delegate.onLinked?.(link)
+    // The callback can take real time (it may write files); a shutdown or
+    // archive that landed meanwhile must win, same as above.
+    if (this.stopped) return false
+    if (this.archive.generation !== generation) {
+      this.log("link response raced an archive state change — dropped; the next probe decides")
+      return false
+    }
     this.link = link
     this.linkGeneration += 1
-    // Record what this window owns so harnessd can reap it later: an archive
-    // that lands while this process is dead has nothing else to go on.
-    recordHarnessLink({
-      runtimeKind: this.runtime.kind,
-      runtimeSessionId: this.config.runtimeSessionId,
-      instanceId: this.config.instanceId,
-      rootStreamId: link.rootStreamId,
-      worktree: process.cwd(),
-    })
     this.log(`linked to scratchpad ${this.config.baseUrl}${this.link.streamUrlPath}`)
     await this.syncPresence()
     return true
@@ -569,7 +579,7 @@ export class RemoteSession {
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
-      localCwd: process.cwd(),
+      ...(this.config.localCwd ? { localCwd: this.config.localCwd } : {}),
       // Detached-pending-restore probes always wait. Cold starts replace by
       // default, but supervisors reviving a known stream can force wait so an
       // archive between their preflight and process launch cannot mint another
@@ -862,6 +872,8 @@ export class RemoteSession {
 
   /** Register an invocation as the in-flight turn and push its content to the runtime. */
   private async deliverTurn(invocation: ClaimedInvocation, content: string): Promise<void> {
+    // The lease clock starts at the claim, not at the first renewal tick.
+    this.leaseConfirmedAt.set(invocation.id, Date.now())
     this.inflight.set(invocation.id, {
       invocation,
       deadline: this.scheduleIdleTimeout(invocation.id),
@@ -1574,6 +1586,7 @@ export class RemoteSession {
   }
 
   private clearInflight(invocationId: string): void {
+    this.leaseConfirmedAt.delete(invocationId)
     const entry = this.inflight.get(invocationId)
     if (!entry) return
     clearTimeout(entry.deadline)
@@ -1660,12 +1673,6 @@ export class RemoteSession {
   /** The grace expired with the scratchpad still archived: hand the connector its terminal wind-down. */
   private async windDownForArchive(rootStreamId: string): Promise<void> {
     await this.shutdown()
-    // Marked, not cleared, and only here: harnessd preserves the branch and
-    // removes the worktree under `resume-active.lock`, and it can only find
-    // this worktree while the record is still there. Clearing it would strand
-    // the worktree exactly as an ordinary shutdown-then-archive does — which
-    // is the other case the reaper exists for.
-    markHarnessLinkWoundDown(this.config.runtimeSessionId)
     await this.delegate.onArchived?.({ rootStreamId })
   }
 
@@ -1674,13 +1681,18 @@ export class RemoteSession {
   private startRenewTimer(): void {
     this.renewTimer = setInterval(() => {
       for (const [id, entry] of [...this.inflight]) {
+        if (!this.leaseConfirmedAt.has(id)) this.leaseConfirmedAt.set(id, Date.now())
         // The .catch is fire-and-forget hygiene: a discarded promise in a
         // setInterval must never surface as an unhandled rejection (it's the
         // safety boundary if the .then body throws).
         void this.transport
           .renewClaim(id, entry.invocation.claimToken, CLAIM_TTL_SECONDS)
           .then((result) => {
-            if (result.notFound) {
+            if (result.renewed) this.leaseConfirmedAt.set(id, Date.now())
+            const unconfirmedMs = Date.now() - (this.leaseConfirmedAt.get(id) ?? Date.now())
+            const lapsed = !result.renewed && unconfirmedMs > CLAIM_TTL_SECONDS * 1000 - RENEW_INTERVAL_MS
+            if (lapsed) this.log(`claim ${id} lease unconfirmed for ${Math.round(unconfirmedMs / 1000)}s; dropping it`)
+            if (result.notFound || lapsed) {
               // The claim's gone server-side; drop it and resync presence so a
               // last-in-flight loss doesn't strand the runtime as busy. Clear the
               // active-turn pointer too if this was it, so a relayed permission

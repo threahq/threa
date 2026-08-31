@@ -1,9 +1,29 @@
 {
-  "name": "@threa/remote-session",
+  "name": "@threahq/remote-session",
   "version": "0.1.0",
-  "private": true,
+  "description": "SDK for connecting an interactive agent runtime to a Threa scratchpad: session linking, claiming work, presence and claim renewal, /steer and /stop, attachments, and interim or final replies. A connector implements deliverTurn; the SDK runs the loop.",
+  "keywords": [
+    "threa",
+    "bot",
+    "agent",
+    "runtime",
+    "connector",
+    "sdk"
+  ],
+  "license": "MIT",
+  "homepage": "https://threa.io/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threahq/threa.git",
+    "directory": "extensions/remote-session"
+  },
+  "bugs": {
+    "url": "https://github.com/threahq/threa/issues"
+  },
   "type": "module",
-  "description": "The Threa remote-session SDK: everything a connector needs to bridge an interactive agent runtime (Claude Code, Pi, future Hermes/OpenClaw-style clients) to a Threa scratchpad — identity derivation, the bot HTTP client, attachment plumbing, and the full session loop (claiming, steer/stop, presence, idle timeouts). A connector implements deliverTurn + an optional session-control actuator; the SDK does the rest.",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -11,10 +31,12 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun ../scripts/build-package.ts",
+    "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
-    "@threa/bot-runtime-client": "file:../bot-runtime-client",
+    "@threahq/bot-runtime-client": "file:../bot-runtime-client",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {

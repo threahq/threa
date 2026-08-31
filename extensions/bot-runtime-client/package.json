@@ -1,9 +1,29 @@
 {
-  "name": "@threa/bot-runtime-client",
+  "name": "@threahq/bot-runtime-client",
   "version": "0.1.0",
-  "private": true,
+  "description": "Protocol client for Threa's bot runtime: the /bot WebSocket transport (presence, claim renewal, trace steps, work nudges) with an HTTP fallback, plus the sealed-turn crypto an end-to-end-encrypted bot needs.",
+  "keywords": [
+    "threa",
+    "bot",
+    "agent",
+    "runtime",
+    "socket.io",
+    "e2ee"
+  ],
+  "license": "MIT",
+  "homepage": "https://threa.io/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threahq/threa.git",
+    "directory": "extensions/bot-runtime-client"
+  },
+  "bugs": {
+    "url": "https://github.com/threahq/threa/issues"
+  },
   "type": "module",
-  "description": "Shared transport for Threa bot-runtime extensions: owns the /bot WebSocket and routes background writes (presence/renew/steps) over the socket with an HTTP fallback, so the noisy chatter stops billing the edge Worker.",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -11,7 +31,9 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun ../scripts/build-package.ts",
+    "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
     "@hpke/core": "^1.9.0",

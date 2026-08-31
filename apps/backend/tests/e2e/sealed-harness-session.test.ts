@@ -15,7 +15,7 @@
  *      stored only placeholders + ciphertext throughout.
  *
  * The crypto is the REAL SDK module both harnesses ship
- * (@threa/bot-runtime-client, imported by path like the parity tests), so this
+ * (@threahq/bot-runtime-client, imported by path like the parity tests), so this
  * covers the exact bytes production runs.
  */
 

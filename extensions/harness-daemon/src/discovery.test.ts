@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { HarnessLink } from "@threa/bot-runtime-client"
+import type { HarnessLink } from "@threa/harness-client"
 import type { MintedIdentity } from "./identity-store"
 import { deriveClaudeRuntimeIdentity } from "./spawners"
 import {

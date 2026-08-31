@@ -1,4 +1,4 @@
-import { readHarnessLinks } from "@threa/bot-runtime-client"
+import { readHarnessLinks } from "@threa/harness-client"
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import type { HarnessLink } from "@threa/bot-runtime-client"
+import type { HarnessLink } from "@threa/harness-client"
 import { OBSERVER_WARMUP_MS, REAP_AFTER_MS, reapArchivedWorktrees, type ReapDeps } from "./reap"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"

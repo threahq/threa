@@ -1,6 +1,6 @@
 import * as socketIoClient from "socket.io-client"
 import type { Socket } from "socket.io-client"
-import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint"
+import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "@threahq/bot-runtime-client"
 
 const DEFAULT_FETCH_TIMEOUT_MS = 30_000
 const DEFAULT_RECONNECTION_DELAY_MAX_MS = 30_000

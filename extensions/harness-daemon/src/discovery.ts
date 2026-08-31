@@ -1,7 +1,7 @@
 import { basename } from "node:path"
 import { hostname } from "node:os"
 import { realpathSync } from "node:fs"
-import { readHarnessLinks, type HarnessLink } from "@threa/bot-runtime-client"
+import { readHarnessLinks, type HarnessLink } from "@threa/harness-client"
 import { identityRecordsFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
 import { output } from "./shell"
 import { deriveClaudeRuntimeIdentity, readThreaChannelConfig, sanitizeId } from "./spawners"

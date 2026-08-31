@@ -21,7 +21,7 @@ import {
   type SealedReplyBody,
   type SealedStepFrame,
   type StreamEnvelope,
-} from "@threa/bot-runtime-client"
+} from "@threahq/bot-runtime-client"
 import { RemoteSession, type RemoteSessionDelegate, type RuntimeDescriptor } from "./session"
 import type { RemoteSessionConfig } from "./identity"
 import type { ClaimedInvocation, ThreaClient } from "./client"
@@ -157,7 +157,7 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     recordSealedSteps: async (id: string, callbackToken: string, frames: SealedStepFrame[]) => {
       calls.sealedSteps.push({ id, callbackToken, frames })
     },
-    renewClaim: async () => ({ notFound: false }),
+    renewClaim: async () => ({ notFound: false, renewed: true }),
     updatePresence: async () => {},
   }
   const session = new RemoteSession({
@@ -509,7 +509,7 @@ describe("harness-created E2E scratchpad (two-phase create)", () => {
       updatePresence: async () => {},
       recordSteps: async () => {},
       recordSealedSteps: async () => {},
-      renewClaim: async () => ({ notFound: false }),
+      renewClaim: async () => ({ notFound: false, renewed: true }),
     }
     const session = new RemoteSession({
       config: { ...makeConfig(join(dir, "bik.json")), e2e: true },

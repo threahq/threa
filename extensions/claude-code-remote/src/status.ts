@@ -1,4 +1,4 @@
-import type { RemoteSessionStatusSnapshot } from "@threa/remote-session"
+import type { RemoteSessionStatusSnapshot } from "@threahq/remote-session"
 import { captureTmuxPaneSnapshot, type TmuxPaneSnapshot } from "./tmux-control"
 
 export interface ClaudeChannelStatusContext {
