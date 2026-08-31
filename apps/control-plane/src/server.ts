@@ -33,6 +33,7 @@ import {
 } from "./features/workspaces"
 import { InvitationShadowService } from "./features/invitation-shadows"
 import { WaitlistService, ResendWaitlistEmailSender, StubWaitlistEmailSender } from "./features/waitlist"
+import { BotConnectService } from "./features/bot-connect"
 import { BackofficeService, seedPlatformAdmins } from "./features/backoffice"
 import {
   WorkosAuthzService,
@@ -108,6 +109,12 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     ? new ResendWaitlistEmailSender({ apiKey: config.waitlist.resendApiKey, from: config.waitlist.fromEmail })
     : new StubWaitlistEmailSender()
   const waitlistService = new WaitlistService({ pool, emailSender: waitlistEmailSender })
+  const botConnectService = new BotConnectService({
+    pool,
+    membership: workspaceService,
+    frontendUrl: config.frontendUrl,
+  })
+  botConnectService.startSweeper()
   const workosAuthzAdminService = new WorkosAuthzAdminService({ pool, workosOrgService })
   const authLogService = new AuthLogService({ pool })
   await seedPlatformAdmins(pool, config.platformAdminWorkosUserIds)
@@ -269,6 +276,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       workspaceService,
       shadowService,
       waitlistService,
+      botConnectService,
       backofficeService,
       workosAuthzAdminService,
       featureFlagService,
@@ -298,6 +306,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     await githubWebhookRetention.stop().catch(() => {})
     await authLogPoller?.stop().catch(() => {})
     await authLogRetention?.stop().catch(() => {})
+    botConnectService.stopSweeper()
     await outboxDispatcher.stop().catch(() => {})
     await listenPool.end().catch(() => {})
     await pool.end().catch(() => {})
@@ -312,6 +321,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   const startedAuthLogRetention = authLogRetention
 
   const stop = async () => {
+    botConnectService.stopSweeper()
     if (config.fastShutdown) {
       logger.info("Fast shutdown - skipping graceful shutdown")
       startedServer.close()

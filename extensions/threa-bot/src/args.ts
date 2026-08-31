@@ -20,14 +20,26 @@ export interface RunArgs {
   timeoutMs?: number
 }
 
-export type CliArgs = RunArgs | { kind: "help" } | { kind: "version" }
+export interface ConnectArgs {
+  kind: "connect"
+  /** Threa origin to connect to; default https://app.threa.io. */
+  baseUrl?: string
+  /** Shown to the approver as the runtime's name. */
+  name?: string
+}
 
-export const USAGE = `threa-bot run [options] -- <command> [args...]
+export type CliArgs = RunArgs | ConnectArgs | { kind: "help" } | { kind: "version" }
 
-Runs <command> once per turn with the turn's text on stdin. Its stdout is the
-reply; stderr lines show up as trace steps in Threa.
+export const USAGE = `threa-bot connect [--base-url <url>] [--name <name>]
+threa-bot run [options] -- <command> [args...]
 
-Options:
+connect prints a URL and a code; approve it in Threa and the bot key lands in
+~/.threa/bot.json (override with THREA_BOT_CONFIG). run then needs nothing else.
+
+run executes <command> once per turn with the turn's text on stdin. Its stdout
+is the reply; stderr lines show up as trace steps in Threa.
+
+Options (run):
   --mention          Answer @mentions in any stream instead of owning a scratchpad
   --name <prefix>    Scratchpad name prefix (default: the command's basename)
   --session <name>   Run several sessions in one directory; same name = same scratchpad
@@ -58,6 +70,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
       session: { type: "string" },
       config: { type: "string" },
       timeout: { type: "string" },
+      "base-url": { type: "string" },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
     },
@@ -65,9 +78,27 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
   if (values.help) return { kind: "help" }
   if (values.version) return { kind: "version" }
   const [subcommand, ...rest] = positionals
-  if (subcommand !== "run") {
-    throw new Error(subcommand ? `Unknown command: ${subcommand}` : "Missing command; expected `run`.")
+  // Every option is parsed up front; the ones that belong to the other
+  // subcommand are rejected rather than silently dropped.
+  const rejectOptions = (names: string[]) => {
+    for (const name of names) {
+      const value = values[name as keyof typeof values]
+      if (value !== undefined && value !== false) throw new Error(`--${name} does not apply to ${subcommand}`)
+    }
   }
+  if (subcommand === "connect") {
+    if (rest.length > 0 || command.length > 0) throw new Error("connect takes no command")
+    rejectOptions(["mention", "config", "timeout", "session"])
+    return {
+      kind: "connect",
+      ...(values["base-url"] ? { baseUrl: values["base-url"] } : {}),
+      ...(values.name ? { name: values.name } : {}),
+    }
+  }
+  if (subcommand !== "run") {
+    throw new Error(subcommand ? `Unknown command: ${subcommand}` : "Missing command; expected `connect` or `run`.")
+  }
+  rejectOptions(["base-url"])
   if (rest.length > 0) throw new Error(`Unexpected argument before --: ${rest[0]}`)
   if (command.length === 0) throw new Error("Missing agent command: put it after `--`.")
   let timeoutMs: number | undefined

@@ -3,25 +3,28 @@
 Run any command as a Threa bot.
 
 ```sh
+npx @threahq/bot connect
 npx @threahq/bot run -- my-agent --answer
 ```
 
-Each turn runs `my-agent --answer` with the message text on stdin. Whatever it
-prints to stdout is posted as the reply; stderr lines appear as trace steps
-while it works. That is the whole contract, so a shell script, a Python
-program, or an agent CLI all qualify.
-
-## Setup
-
-1. In Threa, create a bot with the `mentionable` trait (and `active-scratchpad`
-   if it should own a scratchpad), then mint a `threa_bk_` key on it with
-   `bot-runtime:write`, `bot-invocations:write`, `messages:write`,
-   `messages:read`, `streams:read`, `attachments:read`.
-2. Export `THREA_WORKSPACE_ID` and `THREA_API_KEY` (or put them in a JSON file
-   and pass `--config`). `THREA_BASE_URL` defaults to `https://app.threa.io`.
+`connect` prints a URL and a code. Open it, pick a workspace, confirm, and the
+bot plus its key are created for you; the key lands in `~/.threa/bot.json`.
+`run` then executes `my-agent --answer` once per turn with the message text on
+stdin. Whatever it prints to stdout is posted as the reply; stderr lines appear
+as trace steps while it works. That is the whole contract, so a shell script, a
+Python program, or an agent CLI all qualify.
 
 Node 20+ or Bun, on macOS or Linux (the agent runs in its own process group and
 is stopped with POSIX signals; Windows is not supported yet).
+
+## Credentials without connect
+
+`run` also reads `THREA_WORKSPACE_ID` and `THREA_API_KEY` from the environment
+(`THREA_BASE_URL` defaults to `https://app.threa.io`), or a JSON file passed
+with `--config`. The key has to be a `threa_bk_` bot key with
+`bot-runtime:write`, `bot-invocations:write`, `messages:write`,
+`messages:read`, `streams:read`, `attachments:read`. `THREA_BOT_CONFIG` moves
+the file `connect` writes.
 
 ## Two modes
 
@@ -51,8 +54,11 @@ reply lands in the same stream.
 ## Options
 
 ```text
---mention          answer @mentions instead of owning a scratchpad
---session <name>   run several sessions in one directory; same name = same scratchpad
+connect --base-url <url>   Threa origin (default https://app.threa.io)
+connect --name <name>      shown to whoever approves
+
+run --mention      answer @mentions instead of owning a scratchpad
+run --session <s>  run several sessions in one directory; same name = same scratchpad
 --name <prefix>    scratchpad name prefix (default: the command's basename)
 --config <file>    JSON config; environment variables win over it
 --timeout <ms>     kill the command after this long per turn

@@ -13,6 +13,7 @@ import {
 } from "@threahq/remote-session"
 import type { RunArgs } from "./args"
 import { CommandRuntime, describeOutcome } from "./command-runtime"
+import { defaultConfigPath, readStoredConfig } from "./connect"
 
 const MENTION_RUNTIME_KIND = "custom"
 const MENTION_POLL_MS = 30_000
@@ -35,8 +36,25 @@ export interface RunDeps {
   log: (line: string) => void
 }
 
+/**
+ * Credentials come from, in order: the environment, `--config`, and the file
+ * `threa-bot connect` wrote. A missing key points at `connect` rather than at
+ * env vars, since that is the one-command path.
+ */
 export function resolveConfig(args: RunArgs, deps: RunDeps): RemoteSessionConfig {
-  const file = args.config ? parseConfigFile(readFileSync(args.config, "utf8")) : undefined
+  const storedPath = defaultConfigPath(deps.env)
+  let file: ReturnType<typeof readStoredConfig> | ReturnType<typeof parseConfigFile> | undefined
+  if (args.config) {
+    file = parseConfigFile(readFileSync(args.config, "utf8"))
+  } else if (!(deps.env.THREA_API_KEY && deps.env.THREA_WORKSPACE_ID)) {
+    // Only consulted when the environment does not carry credentials, and a
+    // damaged file is reported rather than fatal: `connect` rewrites it.
+    try {
+      file = readStoredConfig(storedPath)
+    } catch (error) {
+      deps.log(`ignoring ${storedPath}: ${error instanceof Error ? error.message : error}`)
+    }
+  }
   const prefix = args.name ?? basename(args.command[0] ?? "bot")
   // `--session` widens the identity seed so several sessions share a directory,
   // each with its own scratchpad; the same name resumes the same one. These are
@@ -52,7 +70,9 @@ export function resolveConfig(args: RunArgs, deps: RunDeps): RemoteSessionConfig
     { env: deps.env, cwd: deps.cwd, hostname: hostname(), file: { ...(file ?? {}), ...sessionOverrides } },
     { idPrefix: "bot", sessionIdPrefix: "bots", displayNamePrefix: prefix, configPathHint: args.config }
   )
-  if ("error" in loaded) throw new Error(loaded.error)
+  if ("error" in loaded) {
+    throw new Error(args.config ? loaded.error : `${loaded.error} Or run \`threa-bot connect\` once on this machine.`)
+  }
   return loaded.config
 }
 

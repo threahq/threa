@@ -61,6 +61,14 @@ export const router = createBrowserRouter([
         errorElement: <ErrorBoundary />,
       },
       {
+        // `threa-bot connect` approval. Needs a session but no workspace
+        // bootstrap: it lists workspaces and mints a bot key in the chosen one.
+        path: "/connect",
+        HydrateFallback: FallbackLoader,
+        lazy: async () => ({ Component: (await import("@/pages/connect")).ConnectPage }),
+        errorElement: <ErrorBoundary />,
+      },
+      {
         // Setup page lives outside WorkspaceLayout — it's a lightweight form that
         // doesn't need the full workspace bootstrap (socket, sidebar, etc.)
         path: "/w/:workspaceId/setup",

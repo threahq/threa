@@ -115,6 +115,7 @@ export {
   enclaveInvocationId,
   streamE2eKeyWrapId,
   waitlistId,
+  botConnectRequestId,
   conversationFeedbackId,
   boardViewId,
   streamBriefId,

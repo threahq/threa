@@ -93,6 +93,9 @@ export function createApp(options: CreateAppOptions): Express {
         paths: [
           "req.headers.authorization",
           "req.headers.cookie",
+          // The referer carries the document URL, and `/connect?code=…` puts a
+          // live device-flow user code there.
+          "req.headers.referer",
           `req.headers["${INTERNAL_API_KEY_HEADER.toLowerCase()}"]`,
           "res.headers['set-cookie']",
         ],

@@ -45,6 +45,22 @@ describe("parseCliArgs", () => {
     })
   })
 
+  test("connect takes a base url and a name, and no command", () => {
+    expect(parseCliArgs(["connect"])).toEqual({ kind: "connect" })
+    expect(parseCliArgs(["connect", "--base-url", "http://localhost:3000", "--name", "Ops"])).toEqual({
+      kind: "connect",
+      baseUrl: "http://localhost:3000",
+      name: "Ops",
+    })
+    expect(() => parseCliArgs(["connect", "--", "x"])).toThrow("connect takes no command")
+    expect(() => parseCliArgs(["connect", "--timeout", "soon"])).toThrow("--timeout does not apply to connect")
+    expect(() => parseCliArgs(["connect", "--mention"])).toThrow("--mention does not apply to connect")
+    expect(() => parseCliArgs(["connect", "--session", "red"])).toThrow("--session does not apply to connect")
+    expect(() => parseCliArgs(["run", "--base-url", "https://x", "--", "cmd"])).toThrow(
+      "--base-url does not apply to run"
+    )
+  })
+
   test("help and version short-circuit", () => {
     expect(parseCliArgs(["--help"])).toEqual({ kind: "help" })
     expect(parseCliArgs(["-v"])).toEqual({ kind: "version" })

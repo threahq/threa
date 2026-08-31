@@ -17,6 +17,7 @@ import { createGithubWebhookHandlers, GithubWebhookService, GITHUB_WEBHOOK_PATH 
 import { createWorkspaceHandlers, type ControlPlaneWorkspaceService } from "./features/workspaces"
 import { createInvitationShadowHandlers, type InvitationShadowService } from "./features/invitation-shadows"
 import { createWaitlistHandlers, type WaitlistService } from "./features/waitlist"
+import { createBotConnectHandlers, type BotConnectService } from "./features/bot-connect"
 import { createBackofficeHandlers, createPlatformAdminMiddleware, type BackofficeService } from "./features/backoffice"
 import { createFeatureFlagHandlers, type ControlPlaneFeatureFlagService } from "./features/feature-flags"
 import {
@@ -41,6 +42,7 @@ interface Dependencies {
   workspaceService: ControlPlaneWorkspaceService
   shadowService: InvitationShadowService
   waitlistService: WaitlistService
+  botConnectService: BotConnectService
   backofficeService: BackofficeService
   workosAuthzAdminService: WorkosAuthzAdminService
   featureFlagService: ControlPlaneFeatureFlagService
@@ -62,6 +64,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceService,
     shadowService,
     waitlistService,
+    botConnectService,
     backofficeService,
     workosAuthzAdminService,
     featureFlagService,
@@ -124,6 +127,14 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const workspace = createWorkspaceHandlers({ workspaceService, shadowService })
   const shadow = createInvitationShadowHandlers({ shadowService })
   const waitlist = createWaitlistHandlers({ waitlistService })
+  const botConnect = createBotConnectHandlers({ botConnectService })
+  // A connecting device polls the token endpoint every 3s (20/min); an office
+  // NAT with a dozen devices connecting at once must not trip this, and the
+  // device code is what gates the data, not the limiter.
+  const botConnectLimit = createRateLimit({ name: "cp-bot-connect", windowMs: 60_000, max: 300, key: ipKey })
+  // The user code is the short, human one; its lookup/approve/deny budget is
+  // its own and far smaller than the device's polling budget.
+  const botConnectCodeLimit = createRateLimit({ name: "cp-bot-connect-code", windowMs: 60_000, max: 20, key: ipKey })
   const integrations = createIntegrationHandlers({ workspaceService, regions: deps.regions })
   const integrationRoutes = createIntegrationRouteHandlers({ pool })
   const backoffice = createBackofficeHandlers({ backofficeService })
@@ -148,6 +159,15 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Public waitlist signup from the marketing site (threa.io). Unauthenticated;
   // its own IP rate limit guards against spam.
   app.post("/api/waitlist", waitlistLimit, waitlist.signUp)
+
+  // OAuth 2.0 device authorization grant (RFC 8628) for `threa-bot connect`:
+  // the device authorizes and polls for its token unauthenticated; the user
+  // looks the code up and approves or denies it with a session.
+  app.post("/api/oauth/device_authorization", botConnectLimit, botConnect.authorize)
+  app.post("/api/oauth/token", botConnectLimit, botConnect.token)
+  app.get("/api/bot-connect/lookup", auth, botConnectCodeLimit, botConnect.lookup)
+  app.post("/api/bot-connect/approve", auth, botConnectCodeLimit, botConnect.approve)
+  app.post("/api/bot-connect/deny", auth, botConnectCodeLimit, botConnect.deny)
 
   if (authService instanceof StubAuthService) {
     if (!allowDevAuthRoutes) {
