@@ -26,7 +26,7 @@ import { userId, workspaceId, streamId, messageId, botId, botChannelAccessId } f
 describe("read-as-owner access", () => {
   let pool: Pool
   let service: BotChannelService
-  let ws: string
+  let testWorkspaceId: string
   let ownerId: string
   let readerBotId: string
   let plainBotId: string
@@ -37,6 +37,7 @@ describe("read-as-owner access", () => {
   let e2eRootId: string
   let e2eThreadId: string
   let archivedChannelId: string
+  let archivedRootThreadId: string
   let publicChannelId: string
 
   async function insertChannel(
@@ -47,7 +48,7 @@ describe("read-as-owner access", () => {
   ) {
     await StreamRepository.insert(client, {
       id,
-      workspaceId: ws,
+      workspaceId: testWorkspaceId,
       type: StreamTypes.CHANNEL,
       visibility,
       slug: `s-${id.slice(-10)}`,
@@ -58,7 +59,7 @@ describe("read-as-owner access", () => {
   async function insertThread(client: Parameters<typeof StreamRepository.insert>[0], id: string, rootId: string) {
     await StreamRepository.insert(client, {
       id,
-      workspaceId: ws,
+      workspaceId: testWorkspaceId,
       type: StreamTypes.THREAD,
       visibility: Visibilities.PRIVATE,
       parentStreamId: rootId,
@@ -71,13 +72,14 @@ describe("read-as-owner access", () => {
   beforeAll(async () => {
     pool = await setupTestDatabase()
     service = new BotChannelService({ pool })
-    ws = workspaceId()
+    testWorkspaceId = workspaceId()
     privateChannelId = streamId()
     privateThreadId = streamId()
     revocableChannelId = streamId()
     e2eRootId = streamId()
     e2eThreadId = streamId()
     archivedChannelId = streamId()
+    archivedRootThreadId = streamId()
     publicChannelId = streamId()
     readerBotId = botId()
     plainBotId = botId()
@@ -85,12 +87,12 @@ describe("read-as-owner access", () => {
 
     await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
-        id: ws,
+        id: testWorkspaceId,
         name: "Read As Owner",
-        slug: `read-as-owner-${ws}`,
+        slug: `read-as-owner-${testWorkspaceId}`,
         createdBy: userId(),
       })
-      ownerId = (await addTestMember(client, ws, userId())).id
+      ownerId = (await addTestMember(client, testWorkspaceId, userId())).id
 
       await insertChannel(client, privateChannelId, Visibilities.PRIVATE, ownerId)
       await insertThread(client, privateThreadId, privateChannelId)
@@ -98,6 +100,7 @@ describe("read-as-owner access", () => {
       await insertChannel(client, e2eRootId, Visibilities.PRIVATE, ownerId)
       await insertThread(client, e2eThreadId, e2eRootId)
       await insertChannel(client, archivedChannelId, Visibilities.PRIVATE, ownerId)
+      await insertThread(client, archivedRootThreadId, archivedChannelId)
       await insertChannel(client, publicChannelId, Visibilities.PUBLIC, ownerId)
       for (const memberOf of [privateChannelId, revocableChannelId, e2eRootId, archivedChannelId]) {
         await StreamMemberRepository.insert(client, memberOf, ownerId)
@@ -105,14 +108,14 @@ describe("read-as-owner access", () => {
 
       await E2eStreamsRepository.markStreamE2e(client, {
         streamId: e2eRootId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         ownerUserId: ownerId,
         ownerUserKeyId: "e2ek_test",
       })
 
       await BotRepository.create(client, {
         id: readerBotId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         type: "personal",
         ownerUserId: ownerId,
         readsAsOwner: true,
@@ -121,7 +124,7 @@ describe("read-as-owner access", () => {
       })
       await BotRepository.create(client, {
         id: plainBotId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         type: "personal",
         ownerUserId: ownerId,
         slug: "plain-bot",
@@ -129,7 +132,7 @@ describe("read-as-owner access", () => {
       })
       await BotRepository.create(client, {
         id: sharedBotId,
-        workspaceId: ws,
+        workspaceId: testWorkspaceId,
         type: "shared",
         ownerUserId: null,
         slug: "shared-bot",
@@ -144,10 +147,10 @@ describe("read-as-owner access", () => {
   })
 
   test("should read a private channel and its non-granted thread when the owner is a member", async () => {
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(true)
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateThreadId)).toBe(true)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, privateChannelId)).toBe(true)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, privateThreadId)).toBe(true)
 
-    const ids = await service.getAccessibleStreamIdsForBot(ws, readerBotId)
+    const ids = await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)
     expect(ids).toContain(privateChannelId)
     expect(ids).toContain(privateThreadId)
     expect(ids).toContain(publicChannelId)
@@ -155,9 +158,9 @@ describe("read-as-owner access", () => {
 
   test("should deny the same streams to a flag-off personal bot and a shared bot", async () => {
     for (const otherBotId of [plainBotId, sharedBotId]) {
-      expect(await service.isStreamAccessibleForBot(ws, otherBotId, privateChannelId)).toBe(false)
-      expect(await service.isStreamAccessibleForBot(ws, otherBotId, privateThreadId)).toBe(false)
-      const ids = await service.getAccessibleStreamIdsForBot(ws, otherBotId)
+      expect(await service.isStreamAccessibleForBot(testWorkspaceId, otherBotId, privateChannelId)).toBe(false)
+      expect(await service.isStreamAccessibleForBot(testWorkspaceId, otherBotId, privateThreadId)).toBe(false)
+      const ids = await service.getAccessibleStreamIdsForBot(testWorkspaceId, otherBotId)
       expect(ids).not.toContain(privateChannelId)
       expect(ids).not.toContain(privateThreadId)
       expect(ids).toContain(publicChannelId)
@@ -165,48 +168,52 @@ describe("read-as-owner access", () => {
   })
 
   test("should lose access the moment the owner does — live delegation, not a snapshot", async () => {
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, revocableChannelId)).toBe(true)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, revocableChannelId)).toBe(true)
     await StreamMemberRepository.delete(pool, revocableChannelId, ownerId)
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, revocableChannelId)).toBe(false)
-    expect(await service.getAccessibleStreamIdsForBot(ws, readerBotId)).not.toContain(revocableChannelId)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, revocableChannelId)).toBe(false)
+    expect(await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)).not.toContain(revocableChannelId)
   })
 
   test("should exclude an E2E root and its thread from the owner arm, while an explicit grant still works", async () => {
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, e2eRootId)).toBe(false)
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, e2eThreadId)).toBe(false)
-    const ids = await service.getAccessibleStreamIdsForBot(ws, readerBotId)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, e2eRootId)).toBe(false)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, e2eThreadId)).toBe(false)
+    const ids = await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)
     expect(ids).not.toContain(e2eRootId)
     expect(ids).not.toContain(e2eThreadId)
 
     // The existing grant + key-wrap path is untouched by the owner arm.
     await BotChannelAccessRepository.grantAccess(pool, {
       id: botChannelAccessId(),
-      workspaceId: ws,
+      workspaceId: testWorkspaceId,
       botId: readerBotId,
       streamId: e2eRootId,
       grantedBy: ownerId,
     })
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, e2eRootId)).toBe(true)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, e2eRootId)).toBe(true)
   })
 
-  test("should keep denying archived streams the owner can read", async () => {
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, archivedChannelId)).toBe(false)
-    expect(await service.getAccessibleStreamIdsForBot(ws, readerBotId)).not.toContain(archivedChannelId)
+  test("should keep denying archived streams the owner can read — a live thread under the archived root included", async () => {
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, archivedChannelId)).toBe(false)
+    // The thread's own row stays unarchived; only the root's archived_at flips.
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, archivedRootThreadId)).toBe(false)
+    const ids = await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)
+    expect(ids).not.toContain(archivedChannelId)
+    expect(ids).not.toContain(archivedRootThreadId)
   })
 
   test("should stop reading as owner when the flag is turned off", async () => {
-    await BotRepository.update(pool, readerBotId, ws, { readsAsOwner: false })
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(false)
-    await BotRepository.update(pool, readerBotId, ws, { readsAsOwner: true })
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(true)
+    await BotRepository.update(pool, readerBotId, testWorkspaceId, { readsAsOwner: false })
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, privateChannelId)).toBe(false)
+    await BotRepository.update(pool, readerBotId, testWorkspaceId, { readsAsOwner: true })
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, privateChannelId)).toBe(true)
   })
 
   test("should never widen the actionable (participation) tier — delegations gate there", async () => {
-    expect(await service.isStreamActionableForBot(ws, readerBotId, privateChannelId)).toBe(false)
-    expect(await service.isStreamActionableForBot(ws, readerBotId, privateThreadId)).toBe(false)
-    expect(await service.isStreamActionableForBot(ws, readerBotId, publicChannelId)).toBe(true)
+    expect(await service.isStreamActionableForBot(testWorkspaceId, readerBotId, privateChannelId)).toBe(false)
+    expect(await service.isStreamActionableForBot(testWorkspaceId, readerBotId, privateThreadId)).toBe(false)
+    expect(await service.isStreamActionableForBot(testWorkspaceId, readerBotId, publicChannelId)).toBe(true)
 
-    const actionable = await service.getActionableStreamIdsForBot(ws, readerBotId)
+    const actionable = await service.getActionableStreamIdsForBot(testWorkspaceId, readerBotId)
     expect(actionable).not.toContain(privateChannelId)
     expect(actionable).not.toContain(privateThreadId)
     expect(actionable).toContain(publicChannelId)
@@ -214,9 +221,9 @@ describe("read-as-owner access", () => {
 
   // Destructive: removes the owner's user row. Keep this last.
   test("should lose every owner-derived read the moment the owner leaves the workspace", async () => {
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(true)
-    await pool.query(`DELETE FROM users WHERE workspace_id = $1 AND id = $2`, [ws, ownerId])
-    expect(await service.isStreamAccessibleForBot(ws, readerBotId, privateChannelId)).toBe(false)
-    expect(await service.getAccessibleStreamIdsForBot(ws, readerBotId)).not.toContain(privateChannelId)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, privateChannelId)).toBe(true)
+    await pool.query(`DELETE FROM users WHERE workspace_id = $1 AND id = $2`, [testWorkspaceId, ownerId])
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, privateChannelId)).toBe(false)
+    expect(await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)).not.toContain(privateChannelId)
   })
 })

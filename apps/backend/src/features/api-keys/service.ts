@@ -59,12 +59,15 @@ export class BotChannelService {
    * The read-as-owner arm: everything the delegating owner can read (the
    * canonical INV-62 predicate, threads included), minus E2E-rooted streams —
    * read-as-owner never shortcuts the grant + key-wrap path an E2E stream
-   * requires. Active-only, matching the public and grant arms; evaluated per
-   * call, so the owner losing access revokes the bot's in the same moment.
+   * requires — and minus streams whose effective root is archived (a thread
+   * stays unarchived when its root archives, and the owner-set filter only
+   * sees the target's own `archived_at`). Evaluated per call, so the owner
+   * losing access revokes the bot's in the same moment.
    */
   private async getOwnerReadableStreamIds(workspaceId: string, ownerUserId: string): Promise<string[]> {
     const ownerIds = await resolveUserAccessibleStreamIds(this.pool, workspaceId, ownerUserId, {})
-    return E2eStreamsRepository.excludeE2eRootedStreamIds(this.pool, workspaceId, ownerIds)
+    const liveRooted = await StreamRepository.filterIdsWithActiveRoot(this.pool, workspaceId, ownerIds)
+    return E2eStreamsRepository.excludeE2eRootedStreamIds(this.pool, workspaceId, liveRooted)
   }
 
   async isStreamActionableForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {
@@ -93,15 +96,21 @@ export class BotChannelService {
   /**
    * Point-check form of the read-as-owner arm: delegate to the canonical
    * per-id predicate with the owner's identity, then apply the same archived
-   * denial and E2E exclusion as {@link getOwnerReadableStreamIds} — the
-   * archived check must live in this arm (not only in the actionable one),
-   * since an archived stream reaches here whenever the grant arm misses.
+   * and E2E exclusions as {@link getOwnerReadableStreamIds}. The archived
+   * checks must live in this arm (not only in the actionable one), since a
+   * stream reaches here whenever the grant arm misses — and the root's
+   * `archived_at` matters on its own, because a thread stays unarchived when
+   * its root archives.
    */
   private async isReadableAsOwner(workspaceId: string, botId: string, streamId: string): Promise<boolean> {
     const readAsOwnerId = await BotChannelAccessRepository.getReadAsOwnerDelegate(this.pool, workspaceId, botId)
     if (!readAsOwnerId) return false
     const readable = await checkStreamAccess(this.pool, streamId, workspaceId, readAsOwnerId)
     if (!readable || readable.archivedAt) return false
+    if (readable.rootStreamId) {
+      const root = await StreamRepository.findById(this.pool, readable.rootStreamId)
+      if (!root || root.archivedAt) return false
+    }
     return !(await E2eStreamsRepository.isE2eStream(this.pool, workspaceId, readable.rootStreamId ?? readable.id))
   }
 

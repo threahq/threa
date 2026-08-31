@@ -80,7 +80,7 @@ describe("read-as-owner over the public API", () => {
   test("should list the owner's private channel and read its messages, thread included", async () => {
     const streams = await botApiGet<{ data: { id: string }[] }>(ctx.client, ctx.workspaceId, "/streams", ctx.readerKey)
     expect(streams.status).toBe(200)
-    expect(streams.data.data.map((s) => s.id)).toContain(ctx.privateChannelId)
+    expect(streams.data.data.map((stream) => stream.id)).toContain(ctx.privateChannelId)
 
     const messages = await botApiGet<{ data: { content: string }[] }>(
       ctx.client,
@@ -89,7 +89,7 @@ describe("read-as-owner over the public API", () => {
       ctx.readerKey
     )
     expect(messages.status).toBe(200)
-    expect(messages.data.data.some((m) => m.content.includes(ctx.keyword))).toBe(true)
+    expect(messages.data.data.some((message) => message.content.includes(ctx.keyword))).toBe(true)
 
     const threadMessages = await botApiGet<{ data: { content: string }[] }>(
       ctx.client,
@@ -98,7 +98,7 @@ describe("read-as-owner over the public API", () => {
       ctx.readerKey
     )
     expect(threadMessages.status).toBe(200)
-    expect(threadMessages.data.data.some((m) => m.content.includes(`thread ${ctx.keyword}`))).toBe(true)
+    expect(threadMessages.data.data.some((message) => message.content.includes(`thread ${ctx.keyword}`))).toBe(true)
   })
 
   test("should surface private results in search with the setting on, public-only with it off", async () => {
@@ -110,7 +110,7 @@ describe("read-as-owner over the public API", () => {
       { query: ctx.keyword }
     )
     expect(readerSearch.status).toBe(200)
-    const readerStreamIds = readerSearch.data.data.map((r) => r.streamId)
+    const readerStreamIds = readerSearch.data.data.map((result) => result.streamId)
     expect(readerStreamIds).toContain(ctx.privateChannelId)
     expect(readerStreamIds).toContain(ctx.publicChannelId)
 
@@ -122,7 +122,7 @@ describe("read-as-owner over the public API", () => {
       { query: ctx.keyword }
     )
     expect(plainSearch.status).toBe(200)
-    const plainStreamIds = plainSearch.data.data.map((r) => r.streamId)
+    const plainStreamIds = plainSearch.data.data.map((result) => result.streamId)
     expect(plainStreamIds).not.toContain(ctx.privateChannelId)
     expect(plainStreamIds).toContain(ctx.publicChannelId)
   })

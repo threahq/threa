@@ -385,6 +385,25 @@ export const StreamRepository = {
   },
 
   /**
+   * The subset of `ids` whose EFFECTIVE ROOT (`COALESCE(root_stream_id, id)`,
+   * INV-62) is a live row — a thread stays unarchived when its root archives,
+   * so filtering on the target's own `archived_at` alone leaks those threads.
+   * Ids with no `streams` row or a dangling root drop out.
+   */
+  async filterIdsWithActiveRoot(db: Querier, workspaceId: string, ids: readonly string[]): Promise<string[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
+      SELECT s.id
+      FROM streams s
+      JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+      WHERE s.workspace_id = ${workspaceId}
+        AND s.id = ANY(${ids as string[]})
+        AND root.archived_at IS NULL
+    `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
    * Returns true when `ancestorCandidateId` equals `streamId`, is its parent
    * anywhere up the chain, or is the non-thread root (`root_stream_id`) of any
    * stream on the chain. Runs as a single recursive CTE — no app-level loop,
