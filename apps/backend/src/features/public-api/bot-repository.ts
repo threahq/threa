@@ -240,6 +240,11 @@ export const BotRepository = {
     return result.rows.map(mapRowToBot)
   },
 
+  /**
+   * `readsAsOwner` (default false) is personal-only — the read delegation has
+   * no owner to delegate from on a shared bot, so `shared` + `true` throws
+   * before the INSERT, like the type/owner shape invariant below.
+   */
   async create(
     db: Querier,
     params: {
@@ -315,6 +320,12 @@ export const BotRepository = {
     return result.rows.map(mapRowToBot)
   },
 
+  /**
+   * Partial update; returns the updated bot, or null when no live row matched.
+   * `readsAsOwner: true` matches personal rows only (see the WHERE guard), so
+   * enabling it on a shared bot returns null rather than writing an invalid
+   * row; the HTTP handler rejects that case up front with 400.
+   */
   async update(
     db: Querier,
     id: string,
@@ -387,8 +398,14 @@ export const BotRepository = {
     const wsIdx = idx
     values.push(id, workspaceId)
 
+    // Enabling reads-as-owner matches personal rows only, so the shared+TRUE
+    // combination can never be written — not even transiently before the
+    // RETURNING row would fail mapRowToBot (a bare-pool caller has no
+    // transaction to roll that back).
+    const personalOnly = fields.readsAsOwner ? ` AND type = '${BotTypes.PERSONAL}'` : ""
+
     const result = await db.query<BotRow>({
-      text: `UPDATE bots SET ${setParts.join(", ")} WHERE id = $${idIdx} AND workspace_id = $${wsIdx} AND archived_at IS NULL RETURNING ${BOT_COLUMNS}`,
+      text: `UPDATE bots SET ${setParts.join(", ")} WHERE id = $${idIdx} AND workspace_id = $${wsIdx} AND archived_at IS NULL${personalOnly} RETURNING ${BOT_COLUMNS}`,
       values,
     })
     if (!result.rows[0]) return null

@@ -72,7 +72,7 @@ describe("bots.reads_as_owner", () => {
 
   test("should refuse readsAsOwner on a shared bot at create and at read", async () => {
     const id = botId()
-    expect(
+    await expect(
       BotRepository.create(pool, {
         id,
         workspaceId: testWorkspaceId,
@@ -92,6 +92,22 @@ describe("bots.reads_as_owner", () => {
        VALUES ($1, $2, 'shared', NULL, TRUE, '{}', $3, 'Rogue Shared')`,
       [rogueId, testWorkspaceId, `rao-rogue-${rogueId.slice(-8)}`]
     )
-    expect(BotRepository.findById(pool, testWorkspaceId, rogueId)).rejects.toThrow("reads_as_owner=true")
+    await expect(BotRepository.findById(pool, testWorkspaceId, rogueId)).rejects.toThrow("reads_as_owner=true")
+
+    // The dynamic-SET update can never plant the invalid combination either:
+    // enabling reads-as-owner matches only personal rows, so a shared target
+    // yields no row instead of a write that fails after the fact.
+    const sharedId = botId()
+    await BotRepository.create(pool, {
+      id: sharedId,
+      workspaceId: testWorkspaceId,
+      type: "shared",
+      ownerUserId: null,
+      slug: `rao-upd-${sharedId.slice(-8)}`,
+      name: "Shared Update Target",
+    })
+    expect(await BotRepository.update(pool, sharedId, testWorkspaceId, { readsAsOwner: true })).toBeNull()
+    const untouched = await pool.query(`SELECT reads_as_owner FROM bots WHERE id = $1`, [sharedId])
+    expect(untouched.rows[0].reads_as_owner).toBe(false)
   })
 })
