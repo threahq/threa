@@ -8,24 +8,29 @@ import * as useFormattedDateModule from "@/hooks/use-formatted-date"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { BotDetail } from "./bot-detail"
 
-function makeBot(overrides: Partial<Bot> = {}): Bot {
-  return {
-    id: "bot_1",
-    workspaceId: "ws_1",
-    type: "personal",
-    ownerUserId: "usr_owner",
-    readsAsOwner: false,
-    traits: [],
-    slug: "helper",
-    name: "Helper",
-    description: null,
-    avatarEmoji: null,
-    avatarUrl: null,
-    archivedAt: null,
-    createdAt: "2026-07-01T00:00:00.000Z",
-    updatedAt: "2026-07-01T00:00:00.000Z",
-    ...overrides,
-  } as Bot
+type PersonalBot = Extract<Bot, { type: "personal" }>
+type SharedBot = Extract<Bot, { type: "shared" }>
+
+const botBase = {
+  id: "bot_1",
+  workspaceId: "ws_1",
+  traits: [],
+  slug: "helper",
+  name: "Helper",
+  description: null,
+  avatarEmoji: null,
+  avatarUrl: null,
+  archivedAt: null,
+  createdAt: "2026-07-01T00:00:00.000Z",
+  updatedAt: "2026-07-01T00:00:00.000Z",
+} satisfies Omit<PersonalBot, "type" | "ownerUserId" | "readsAsOwner">
+
+function makePersonalBot(overrides: Partial<Omit<PersonalBot, "type">> = {}): PersonalBot {
+  return { ...botBase, type: "personal", ownerUserId: "usr_owner", readsAsOwner: false, ...overrides }
+}
+
+function makeSharedBot(): SharedBot {
+  return { ...botBase, type: "shared", ownerUserId: null, readsAsOwner: false }
 }
 
 function renderDetail() {
@@ -53,8 +58,8 @@ describe("BotDetail — reads-as-owner setting", () => {
   })
 
   it("turns the setting on for a personal bot via PATCH", async () => {
-    vi.spyOn(botsApi, "get").mockResolvedValue(makeBot())
-    const update = vi.spyOn(botsApi, "update").mockResolvedValue(makeBot({ readsAsOwner: true }))
+    vi.spyOn(botsApi, "get").mockResolvedValue(makePersonalBot())
+    const update = vi.spyOn(botsApi, "update").mockResolvedValue(makePersonalBot({ readsAsOwner: true }))
 
     renderDetail()
     const toggle = await screen.findByRole("switch", { name: "Read everything you can read" })
@@ -64,8 +69,8 @@ describe("BotDetail — reads-as-owner setting", () => {
   })
 
   it("reflects an enabled setting and turns it off", async () => {
-    vi.spyOn(botsApi, "get").mockResolvedValue(makeBot({ readsAsOwner: true }))
-    const update = vi.spyOn(botsApi, "update").mockResolvedValue(makeBot({ readsAsOwner: false }))
+    vi.spyOn(botsApi, "get").mockResolvedValue(makePersonalBot({ readsAsOwner: true }))
+    const update = vi.spyOn(botsApi, "update").mockResolvedValue(makePersonalBot({ readsAsOwner: false }))
 
     renderDetail()
     const toggle = await screen.findByRole("switch", { name: "Read everything you can read" })
@@ -75,7 +80,7 @@ describe("BotDetail — reads-as-owner setting", () => {
   })
 
   it("offers no reading-access section for a shared bot", async () => {
-    vi.spyOn(botsApi, "get").mockResolvedValue(makeBot({ type: "shared", ownerUserId: null } as Partial<Bot>))
+    vi.spyOn(botsApi, "get").mockResolvedValue(makeSharedBot())
 
     renderDetail()
     await screen.findByRole("heading", { name: "Helper" })
@@ -83,7 +88,7 @@ describe("BotDetail — reads-as-owner setting", () => {
   })
 
   it("surfaces a rejected toggle instead of pretending it stuck", async () => {
-    vi.spyOn(botsApi, "get").mockResolvedValue(makeBot())
+    vi.spyOn(botsApi, "get").mockResolvedValue(makePersonalBot())
     vi.spyOn(botsApi, "update").mockRejectedValue(new Error("readsAsOwner requires a personal bot"))
 
     renderDetail()

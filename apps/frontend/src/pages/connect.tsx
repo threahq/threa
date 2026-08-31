@@ -70,22 +70,32 @@ export class ConnectCleanupFailedError extends Error {
   }
 }
 
-/**
- * Create the bot and mint its key in the workspace's region, then hand the
- * key to the control plane for the waiting device. The three writes are not
- * one transaction, so: a slug collision retries once with a random suffix;
- * `provisioned` from an earlier attempt in the same workspace is reused rather
- * than minted again; and when the control plane says the code is gone
- * (404/409) the bot and key are revoked so nothing usable is left behind.
- */
-export async function approveConnect(input: {
+export interface ApproveConnectInput {
+  /** Normalized device-grant user code (`BCDF-GHJK`). */
   code: string
   workspace: Workspace
   botName: string
+  /** Mint the bot with `readsAsOwner`; omitted means `false`. */
   readsAsOwner?: boolean
+  /** A prior attempt's mint, reused so a retry does not create a second bot. */
   provisioned?: ProvisionedBot
   onProvisioned?: (provisioned: ProvisionedBot) => void
-}): Promise<{ slug: string; provisioned: ProvisionedBot }> {
+}
+
+/**
+ * Create the bot and mint its key in the workspace's region, then hand the
+ * key to the control plane for the waiting device. Resolves with the bot's
+ * final slug plus the mint to keep for retries. The three writes are not
+ * one transaction, so: a slug collision retries once with a random suffix;
+ * `provisioned` from an earlier attempt in the same workspace is reused rather
+ * than minted again (re-asserting `readsAsOwner` only when it changed); and
+ * when the control plane says the code is gone (404/409) the bot and key are
+ * revoked so nothing usable is left behind.
+ */
+export async function approveConnect(input: ApproveConnectInput): Promise<{
+  slug: string
+  provisioned: ProvisionedBot
+}> {
   let provisioned = input.provisioned?.workspaceId === input.workspace.id ? input.provisioned : undefined
   if (input.provisioned && !provisioned) {
     // The user picked another workspace after a failed attempt: the bot minted
