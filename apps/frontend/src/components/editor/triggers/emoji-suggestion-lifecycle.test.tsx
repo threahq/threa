@@ -38,7 +38,7 @@ function Harness() {
 }
 
 afterEach(() => {
-  editor?.destroy()
+  if (editor && !editor.isDestroyed) editor.destroy()
   editor = null
   active = false
 })
@@ -84,6 +84,18 @@ describe("emoji suggestion lifecycle", () => {
     await act(async () => {
       editor!.commands.insertContent("i")
       pickHighlighted()
+    })
+    await settle()
+
+    expect(active).toBe(false)
+    expect(document.querySelector("[data-emoji-grid]")).toBeNull()
+  })
+
+  it("drops the picker when the editor is destroyed under it", async () => {
+    await openPicker()
+
+    await act(async () => {
+      editor!.destroy()
     })
     await settle()
 

@@ -175,10 +175,8 @@ export function useEmojiSuggestion(config: UseEmojiSuggestionConfig): UseEmojiSu
       if (suggestionEnded(editor)) close()
     }
     editor.on("transaction", dropWhenEnded)
-    editor.on("destroy", close)
     return () => {
       editor.off("transaction", dropWhenEnded)
-      editor.off("destroy", close)
     }
   }, [isActive, close, suggestionEnded])
 
