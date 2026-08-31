@@ -109,6 +109,7 @@ function arrangeSealedClaim(params: {
     targetInstanceId: null,
     targetRuntimeSessionId: null,
     claimedByInstanceId: "inst_1",
+    claimedRuntimeSessionId: "rts_1",
     claimToken: "tok_1",
     claimExpiresAt: new Date("2026-06-12T09:01:00.000Z"),
     attempts: 1,

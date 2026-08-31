@@ -17,7 +17,10 @@ import {
   botUploadFile,
   createBot,
   createBotKey,
+  createChannel,
   createWorkspace,
+  dispatchCommand,
+  listEvents,
   loginAs,
   sendMessage,
   sendMessageWithAttachments,
@@ -43,6 +46,7 @@ interface ClaimedInvocationData {
   claimToken: string
   promptMarkdown: string
   requiredCapability: string
+  runtimeSessionId: string | null
 }
 
 interface ListedMessage {
@@ -317,6 +321,144 @@ describe("claude-code-channel runtime sessions", () => {
       displayName: "Openclaw",
     })
     expect(res.status).toBe(400)
+  })
+
+  test("should keep an untargeted mention authorized by its claiming runtime elsewhere", async () => {
+    const client = new TestClient()
+    await loginAs(client, `cc-msg-${testRunId}@test.com`, "CC Message User")
+    const workspace = await createWorkspace(client, `CC Message WS ${testRunId}`)
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `CCMSG ${testRunId}`,
+      slug: `ccmsg-${testRunId}`,
+      traits: [BotTraits.ACTIVE_SCRATCHPAD, BotTraits.MENTIONABLE],
+    })
+    const apiKey = await createBotKey(client, workspace.id, bot.id, [
+      WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
+    ])
+
+    const instanceId = `ccmsg-inst-${testRunId}`
+    const runtimeSessionId = `ccmsg-sess-${testRunId}`
+    const session = await botApiPost<{ data: SessionLinkData }>(client, workspace.id, "/bot-runtime/sessions", apiKey, {
+      runtimeKind: "claude-code-channel",
+      instanceId,
+      runtimeSessionId,
+      displayName: "Claude Code - msg",
+      localCwd: "/tmp/threa-cc-msg",
+    })
+    const channel = await createChannel(client, workspace.id, `ccmsg-${testRunId}`, "public")
+    if (!bot.slug) throw new Error("Expected the test bot to have a slug")
+    const invited = await dispatchCommand(client, workspace.id, channel.id, `/invite [@${bot.slug}](bot:${bot.id})`)
+    expect(invited.success).toBe(true)
+    let inviteCompleted = false
+    for (let attempt = 0; attempt < 50 && !inviteCompleted; attempt++) {
+      const events = await listEvents(client, workspace.id, channel.id)
+      inviteCompleted = events.some(
+        (event) =>
+          event.eventType === "command_completed" &&
+          (event.payload as { commandId?: string }).commandId === invited.commandId
+      )
+      if (!inviteCompleted) await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    expect(inviteCompleted).toBe(true)
+    expect(session.data.data.activeStreamId).not.toBe(channel.id)
+    const streamId = channel.id
+    const claimBody = {
+      runtimeKind: "claude-code-channel",
+      instanceId,
+      runtimeSessionId,
+      supportedCapabilities: ["active-scratchpad", "mentionable"],
+      claimTtlSeconds: 120,
+    }
+
+    await sendMessage(client, workspace.id, streamId, `[@${bot.slug}](bot:${bot.id}) First question`)
+    const first = await claimInvocation(client, workspace.id, apiKey, claimBody)
+    expect(first.requiredCapability).toBe("mentionable")
+    expect(first.runtimeSessionId).toBeNull()
+
+    const interim = await botApiPost<{ data: { invocationId: string; sessionId: string; messageId: string } }>(
+      client,
+      workspace.id,
+      `/bot-invocations/${first.id}/messages`,
+      apiKey,
+      {
+        instanceId,
+        claimToken: first.claimToken,
+        content: "Working on it.",
+        clientMessageId: `remote-send-${first.id}-1`,
+      }
+    )
+    expect(interim.status).toBe(200)
+    expect(interim.data.data.sessionId).toBe(first.id)
+
+    const wrongToken = await botApiPost(client, workspace.id, `/bot-invocations/${first.id}/messages`, apiKey, {
+      instanceId,
+      claimToken: "tok_not_ours",
+      content: "Should never land.",
+    })
+    expect(wrongToken.status).toBe(404)
+
+    await botApiPost(client, workspace.id, `/bot-invocations/${first.id}/complete`, apiKey, {
+      instanceId,
+      claimToken: first.claimToken,
+      finalMessageMarkdown: "First answer.",
+    })
+
+    await sendMessage(client, workspace.id, streamId, `[@${bot.slug}](bot:${bot.id}) Second question`)
+    const second = await claimInvocation(client, workspace.id, apiKey, claimBody)
+    expect(second.id).not.toBe(first.id)
+
+    const lateBody = {
+      instanceId,
+      claimToken: first.claimToken,
+      content: "One more thought on the first question.",
+      clientMessageId: `remote-send-${first.id}-2`,
+    }
+    const late = await botApiPost<{ data: { sessionId: string; messageId: string } }>(
+      client,
+      workspace.id,
+      `/bot-invocations/${first.id}/messages`,
+      apiKey,
+      lateBody
+    )
+    expect(late.status).toBe(200)
+    expect(late.data.data.sessionId).toBe(first.id)
+
+    const retry = await botApiPost<{ data: { messageId: string } }>(
+      client,
+      workspace.id,
+      `/bot-invocations/${first.id}/messages`,
+      apiKey,
+      lateBody
+    )
+    expect(retry.status).toBe(200)
+    expect(retry.data.data.messageId).toBe(late.data.data.messageId)
+
+    await botApiPost(client, workspace.id, `/bot-invocations/${second.id}/complete`, apiKey, {
+      instanceId,
+      claimToken: second.claimToken,
+      finalMessageMarkdown: "Second answer.",
+    })
+
+    const events = await client.get<{
+      events: Array<{
+        eventType: string
+        payload: { messageId?: string; sessionId?: string; contentMarkdown?: string }
+      }>
+    }>(`/api/workspaces/${workspace.id}/streams/${streamId}/events`)
+    expect(events.status).toBe(200)
+    const posted = events.data.events.filter(
+      (event) => event.eventType === "message_created" && event.payload.messageId === late.data.data.messageId
+    )
+    expect(posted).toHaveLength(1)
+    expect(posted[0]!.payload.contentMarkdown).toBe("One more thought on the first question.")
+    expect(posted[0]!.payload.sessionId).toBe(first.id)
+    const interimEvent = events.data.events.find(
+      (event) => event.eventType === "message_created" && event.payload.messageId === interim.data.data.messageId
+    )
+    expect(interimEvent?.payload.sessionId).toBe(first.id)
   })
 
   test("a user message round-trips: active-scratchpad dispatch → claim → reply", async () => {

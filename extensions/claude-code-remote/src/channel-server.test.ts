@@ -1,13 +1,15 @@
-import { describe, expect, spyOn, test } from "bun:test"
+import { describe, expect, mock, spyOn, test } from "bun:test"
 import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   ThreaClient,
   type ClaimedDelegation,
   type ClaimedInvocation,
   type DelegationClient,
+  type DeliveredTurn,
   type RemoteSessionConfig,
 } from "@threahq/remote-session"
 import {
+  CHANNEL_TOOLS,
   ChannelServer,
   buildInstructions,
   formatDelegationContent,
@@ -365,6 +367,7 @@ function permissionServer() {
   const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
   const internals = server as unknown as {
     mcp: { notification: (msg: { method: string; params: Record<string, unknown> }) => Promise<void> }
+    deliverToClaude: (turn: DeliveredTurn) => Promise<void>
     handlePermissionRequest: (params: {
       request_id: string
       tool_name: string
@@ -375,28 +378,48 @@ function permissionServer() {
   }
   const notifications: Array<{ method: string; params: Record<string, unknown> }> = []
   spyOn(internals.mcp, "notification").mockImplementation(async (msg) => void notifications.push(msg))
-  const posts: Array<{ streamId: string; body: { content: string; metadata?: Record<string, unknown> } }> = []
+  const invocationPosts: Array<{
+    invocationId: string
+    body: { content: string; metadata?: Record<string, unknown> }
+  }> = []
+  const streamPosts: Array<{ streamId: string; body: { content: string; metadata?: Record<string, unknown> } }> = []
+  const invocationPostSpy = spyOn(server.session, "postToInvocation").mockImplementation(
+    async (invocationId: string, body: { content: string; metadata?: Record<string, unknown> }) =>
+      void invocationPosts.push({ invocationId, body })
+  )
   spyOn(server.session, "postToStream").mockImplementation(
     async (streamId: string, body: { content: string; metadata?: Record<string, unknown> }) =>
-      void posts.push({ streamId, body })
+      void streamPosts.push({ streamId, body })
   )
   spyOn(server.session, "keepAlive").mockImplementation(() => {})
-  ;(server.session as unknown as { activeTurnStream?: string }).activeTurnStream = "stream_turn"
-  return { server, internals, notifications, posts }
+  ;(server.session as unknown as { link?: { rootStreamId: string } }).link = { rootStreamId: "stream_root" }
+  const deliver = async (invocationId: string) => {
+    await internals.deliverToClaude({
+      invocationId,
+      streamId: "stream_turn",
+      sourceMessageId: `msg_${invocationId}`,
+      content: "Do the thing",
+      sealed: false,
+    })
+    notifications.length = 0
+  }
+  return { server, internals, notifications, invocationPosts, streamPosts, invocationPostSpy, deliver }
 }
 
 describe("ChannelServer permission verdict routing", () => {
-  test("posts the approval prompt, then a plain 'yes <id>' reply routes to it and releases the claim hold", async () => {
-    const { server, internals, notifications, posts } = permissionServer()
+  test("posts the approval prompt through the delivered invocation, then routes its verdict", async () => {
+    const { server, internals, notifications, invocationPosts, streamPosts, deliver } = permissionServer()
+    await deliver("binv_turn")
     await internals.handlePermissionRequest({
       request_id: "krjtt",
       tool_name: "Bash",
       description: "Run a command",
       input_preview: "bun run test",
     })
-    expect(posts[0]?.streamId).toBe("stream_turn")
-    expect(posts[0]?.body.content).toContain("yes krjtt")
-    expect(posts[0]?.body.metadata?.["cc.channel.permissionRequest"]).toBe("krjtt")
+    expect(invocationPosts[0]?.invocationId).toBe("binv_turn")
+    expect(invocationPosts[0]?.body.content).toContain("yes krjtt")
+    expect(invocationPosts[0]?.body.metadata?.["cc.channel.permissionRequest"]).toBe("krjtt")
+    expect(streamPosts).toEqual([])
     expect(server.session.interceptHoldsClaims).toBe(true)
 
     expect(await internals.interceptVerdict(makeInvocation({ promptMarkdown: "yes krjtt" }))).toBe(true)
@@ -404,6 +427,64 @@ describe("ChannelServer permission verdict routing", () => {
       { method: "notifications/claude/channel/permission", params: { request_id: "krjtt", behavior: "allow" } },
     ])
     expect(server.session.interceptHoldsClaims).toBe(false)
+    await server.shutdown()
+  })
+
+  test("should keep the completed invocation for permission prompts until a new turn is delivered", async () => {
+    const { server, internals, invocationPosts, streamPosts, deliver } = permissionServer()
+    spyOn(server.session, "reply").mockResolvedValue({ ok: true, message: "sent", closedTurn: true })
+    await deliver("binv_completed")
+    await server.handleToolCall("reply", "binv_completed", "Done.")
+
+    await internals.handlePermissionRequest({
+      request_id: "abcde",
+      tool_name: "Bash",
+      description: "Run the old turn's command",
+      input_preview: "pwd",
+    })
+    await deliver("binv_replacement")
+    await internals.handlePermissionRequest({
+      request_id: "fghij",
+      tool_name: "Bash",
+      description: "Run the new turn's command",
+      input_preview: "bun test",
+    })
+
+    expect({ invocationIds: invocationPosts.map((post) => post.invocationId), streamPosts }).toEqual({
+      invocationIds: ["binv_completed", "binv_replacement"],
+      streamPosts: [],
+    })
+    await server.shutdown()
+  })
+
+  test("falls back to the root stream only before the first delivered turn", async () => {
+    const { server, internals, invocationPosts, streamPosts } = permissionServer()
+
+    await internals.handlePermissionRequest({
+      request_id: "abcde",
+      tool_name: "Bash",
+      description: "Run a command",
+      input_preview: "pwd",
+    })
+
+    expect(invocationPosts).toEqual([])
+    expect(streamPosts.map((post) => post.streamId)).toEqual(["stream_root"])
+    await server.shutdown()
+  })
+
+  test("never falls back to the root when the delivered invocation route rejects the prompt", async () => {
+    const { server, internals, streamPosts, invocationPostSpy, deliver } = permissionServer()
+    await deliver("binv_revoked")
+    invocationPostSpy.mockRejectedValue(new Error("request is no longer routable"))
+
+    await internals.handlePermissionRequest({
+      request_id: "fghij",
+      tool_name: "Bash",
+      description: "Run a command",
+      input_preview: "pwd",
+    })
+
+    expect(streamPosts).toEqual([])
     await server.shutdown()
   })
 
@@ -472,5 +553,113 @@ describe("ChannelServer lifecycle gating", () => {
     await server.shutdown()
     expect(sessionStart).toHaveBeenCalled()
     expect(sessionShutdown).toHaveBeenCalled()
+  })
+})
+
+describe("ChannelServer tool routing", () => {
+  function makeServer() {
+    const config = makeConfig()
+    return new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+  }
+
+  test("send and reply delegate to the session, which owns open and closed requests alike", async () => {
+    const server = makeServer()
+    const sendInterim = spyOn(server.session, "sendInterim").mockResolvedValue({ ok: true, message: "sent" })
+    const sessionReply = spyOn(server.session, "reply").mockResolvedValue({
+      ok: true,
+      message: "Posted as a follow-up message — request binv_1 had already closed, and stays closed.",
+    })
+
+    expect(await server.handleToolCall("send", "binv_1", "Halfway.")).toEqual({ ok: true, message: "sent" })
+    const late = await server.handleToolCall("reply", "binv_1", "One more thought.")
+
+    expect(sendInterim).toHaveBeenCalledWith("binv_1", "Halfway.")
+    expect(sessionReply).toHaveBeenCalledWith("binv_1", "One more thought.")
+    expect(late.ok).toBe(true)
+    expect(late.message).toContain("follow-up")
+  })
+
+  test("the reply that reports closing the turn ends the trace and carry-on hold", async () => {
+    const server = makeServer()
+    spyOn(server.session, "isInflight").mockImplementation(() => {
+      throw new Error("ChannelServer must not infer close evidence from a snapshot")
+    })
+    spyOn(server.session, "reply").mockResolvedValue({ ok: true, message: "sent", closedTurn: true })
+    const onTurnClosed = mock(() => {})
+    const internals = server as unknown as {
+      tracer: { endTurn: (id: string) => void }
+      carryOn?: { onTurnClosed: (id: string) => void }
+    }
+    internals.carryOn = { onTurnClosed }
+    const endTurn = spyOn(internals.tracer, "endTurn").mockImplementation(() => {})
+
+    await server.handleToolCall("reply", "binv_1", "Done.")
+
+    expect(endTurn).toHaveBeenCalledTimes(1)
+    expect(endTurn).toHaveBeenCalledWith("binv_1")
+    expect(onTurnClosed).toHaveBeenCalledTimes(1)
+    expect(onTurnClosed).toHaveBeenCalledWith("binv_1")
+  })
+
+  test("should end one turn for concurrent identical replies", async () => {
+    const server = makeServer()
+    spyOn(server.session, "isInflight").mockImplementation(() => {
+      throw new Error("ChannelServer must not infer close evidence from a snapshot")
+    })
+    let replies = 0
+    spyOn(server.session, "reply").mockImplementation(async () => {
+      replies += 1
+      return replies === 1 ? { ok: true, message: "sent", closedTurn: true } : { ok: true, message: "sent" }
+    })
+    const onTurnClosed = mock(() => {})
+    const internals = server as unknown as {
+      tracer: { endTurn: (id: string) => void }
+      carryOn?: { onTurnClosed: (id: string) => void }
+    }
+    internals.carryOn = { onTurnClosed }
+    const endTurn = spyOn(internals.tracer, "endTurn").mockImplementation(() => {})
+
+    await Promise.all([
+      server.handleToolCall("reply", "binv_1", "Done."),
+      server.handleToolCall("reply", "binv_1", "Done."),
+    ])
+
+    expect(endTurn).toHaveBeenCalledTimes(1)
+    expect(onTurnClosed).toHaveBeenCalledTimes(1)
+  })
+
+  test("a delegation id keeps its own routing and never reaches the session", async () => {
+    const { server, calls } = await startDelegatingServer("dlg_1")
+    const sessionSend = spyOn(server.session, "sendInterim").mockResolvedValue({
+      ok: false,
+      message: "no open request",
+    })
+
+    await server.handleToolCall("reply", "dlg_1", "Fixed in abc123.")
+    await flush()
+    expect(calls.completes).toEqual([{ id: "dlg_1", resultMarkdown: "Fixed in abc123." }])
+
+    // The executor is gone, so a late send falls through to the session exactly as before.
+    const late = await server.handleToolCall("send", "dlg_1", "One more thought.")
+    expect(late.ok).toBe(false)
+    expect(sessionSend).toHaveBeenCalled()
+
+    await server.shutdown()
+  })
+})
+
+describe("CHANNEL_TOOLS schemas", () => {
+  test("send and reply both require non-empty invocation_id and text", () => {
+    expect(CHANNEL_TOOLS.map((tool) => tool.name)).toEqual(["send", "reply"])
+    for (const tool of CHANNEL_TOOLS) {
+      expect(tool.inputSchema).toMatchObject({
+        type: "object",
+        properties: {
+          invocation_id: { type: "string", minLength: 1 },
+          text: { type: "string", minLength: 1 },
+        },
+        required: ["invocation_id", "text"],
+      })
+    }
   })
 })

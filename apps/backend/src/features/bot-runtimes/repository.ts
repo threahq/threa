@@ -105,6 +105,8 @@ export interface BotInvocation {
   targetInstanceId: string | null
   targetRuntimeSessionId: string | null
   claimedByInstanceId: string | null
+  claimedRuntimeSessionId: string | null
+  claimedRuntimeSessionClaimToken: string | null
   claimToken: string | null
   claimExpiresAt: Date | null
   attempts: number
@@ -180,6 +182,8 @@ interface BotInvocationRow {
   target_instance_id: string | null
   target_runtime_session_id: string | null
   claimed_by_instance_id: string | null
+  claimed_runtime_session_id: string | null
+  claimed_runtime_session_claim_token: string | null
   claim_token: string | null
   claim_expires_at: Date | null
   attempts: number
@@ -287,6 +291,8 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
     targetInstanceId: row.target_instance_id,
     targetRuntimeSessionId: row.target_runtime_session_id,
     claimedByInstanceId: row.claimed_by_instance_id,
+    claimedRuntimeSessionId: row.claimed_runtime_session_id,
+    claimedRuntimeSessionClaimToken: row.claimed_runtime_session_claim_token,
     claimToken: row.claim_token,
     claimExpiresAt: row.claim_expires_at,
     attempts: row.attempts,
@@ -637,6 +643,25 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  /** Share-lock the active link for the runtime identity that won a claim (INV-20). */
+  async findActiveByRuntimeSessionForShare(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string; runtimeSessionId: string }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links
+        WHERE workspace_id = ${params.workspaceId}
+          AND bot_id = ${params.botId}
+          AND instance_id = ${params.instanceId}
+          AND runtime_session_id = ${params.runtimeSessionId}
+          AND status = 'active'
+        ORDER BY updated_at DESC
+        LIMIT 1
+        FOR SHARE`
+    )
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
   async findActiveByStream(
     db: Querier,
     params: { workspaceId: string; botId: string; rootStreamId: string; activeStreamId: string }
@@ -808,6 +833,8 @@ export const BotInvocationRepository = {
       BotInvocation,
       | "status"
       | "claimedByInstanceId"
+      | "claimedRuntimeSessionId"
+      | "claimedRuntimeSessionClaimToken"
       | "claimToken"
       | "claimExpiresAt"
       | "attempts"
@@ -921,7 +948,7 @@ export const BotInvocationRepository = {
         LIMIT 1
       )
       UPDATE bot_invocations i
-      SET status = 'claimed', claimed_by_instance_id = ${params.instanceId}, claim_token = ${params.claimToken}, claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, attempts = attempts + 1, updated_at = NOW()
+      SET status = 'claimed', claimed_by_instance_id = ${params.instanceId}, claimed_runtime_session_id = ${params.runtimeSessionId ?? null}, claimed_runtime_session_claim_token = ${params.claimToken}, claim_token = ${params.claimToken}, claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, attempts = attempts + 1, updated_at = NOW()
       FROM candidate
       WHERE i.id = candidate.id
       RETURNING i.*`)

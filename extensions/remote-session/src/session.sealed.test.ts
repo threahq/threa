@@ -24,7 +24,8 @@ import {
 } from "@threahq/bot-runtime-client"
 import { RemoteSession, type RemoteSessionDelegate, type RuntimeDescriptor } from "./session"
 import type { RemoteSessionConfig } from "./identity"
-import type { ClaimedInvocation, ThreaClient } from "./client"
+import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
+import { fireIdleTimeout, gate } from "./session.test-support"
 
 // End-to-end sealed session behavior with REAL crypto: an "owner" wraps a
 // stream key to the session's BIK and seals a trigger; the session must open
@@ -74,6 +75,7 @@ interface FakeCalls {
   fail: Array<{ id: string; body: Record<string, unknown> }>
   complete: Array<{ id: string; body: Record<string, unknown> }>
   sendMessage: Array<{ streamId: string; body: Record<string, unknown> }>
+  invocationMessages: Array<{ id: string; body: Record<string, unknown> }>
   sealedMessages: Array<{ id: string; callbackToken: string; body: SealedReplyBody }>
   completeSealed: Array<{ id: string; callbackToken: string; body: Record<string, unknown> }>
   sealedSteps: Array<{ id: string; callbackToken: string; frames: SealedStepFrame[] }>
@@ -92,6 +94,7 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     fail: [],
     complete: [],
     sendMessage: [],
+    invocationMessages: [],
     sealedMessages: [],
     completeSealed: [],
     sealedSteps: [],
@@ -100,8 +103,20 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
   // Every upload a sealed turn makes: it must be ciphertext-only, e2e-flagged,
   // under the placeholder filename — the assertions read these captures.
   const uploads: Array<{ filename: string; type: string; e2e: unknown; bytes: Uint8Array }> = []
-  // Fault injection for the sealed-messages POST (retry-path tests).
-  const control = { failNextSealedMessage: 0 }
+  // Every sealed completion ATTEMPT, failures included — a retry must re-send
+  // the same body, which only the attempt log can show.
+  const completeSealedAttempts: Array<{ id: string; callbackToken: string; body: Record<string, unknown> }> = []
+  const sealedMessageAttempts: SealedReplyBody[] = []
+  // Fault injection for the sealed-messages POST, plus a hook that runs while an
+  // attachment upload is in flight (retry- and race-path tests).
+  const control: {
+    failNextSealedMessage: number
+    failNextCompleteSealed: number
+    onUpload?: () => Promise<void>
+    onSealedMessage?: () => Promise<void>
+    onCompleteSealed?: () => Promise<void>
+    nextSealedMessageError?: unknown
+  } = { failNextSealedMessage: 0, failNextCompleteSealed: 0 }
   const client = {
     claim: async () => queue.shift() ?? null,
     fail: async (id: string, body: Record<string, unknown>) => {
@@ -113,7 +128,17 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     sendMessage: async (streamId: string, body: Record<string, unknown>) => {
       calls.sendMessage.push({ streamId, body })
     },
+    sendInvocationMessage: async (id: string, body: Record<string, unknown>) => {
+      calls.invocationMessages.push({ id, body })
+    },
     sendSealedMessage: async (id: string, callbackToken: string, body: SealedReplyBody) => {
+      sealedMessageAttempts.push(body)
+      await control.onSealedMessage?.()
+      if (control.nextSealedMessageError !== undefined) {
+        const error = control.nextSealedMessageError
+        control.nextSealedMessageError = undefined
+        throw error
+      }
       if (control.failNextSealedMessage > 0) {
         control.failNextSealedMessage -= 1
         throw new Error("simulated sealed-message POST failure")
@@ -121,9 +146,16 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
       calls.sealedMessages.push({ id, callbackToken, body })
     },
     completeSealed: async (id: string, callbackToken: string, body: Record<string, unknown>) => {
+      completeSealedAttempts.push({ id, callbackToken, body })
+      await control.onCompleteSealed?.()
+      if (control.failNextCompleteSealed > 0) {
+        control.failNextCompleteSealed -= 1
+        throw new Error("simulated sealed-completion POST failure")
+      }
       calls.completeSealed.push({ id, callbackToken, body })
     },
     uploadAttachment: async (form: FormData) => {
+      await control.onUpload?.()
       const file = form.get("file") as Blob & { name?: string }
       uploads.push({
         filename: file.name ?? "",
@@ -167,7 +199,7 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     runtime: RUNTIME,
     transport: transport as unknown as BotRuntimeTransport,
   })
-  return { session, calls, queue, uploads, control }
+  return { session, calls, queue, uploads, control, completeSealedAttempts, sealedMessageAttempts }
 }
 
 /** The owner's half of the ceremony: wrap a fresh SSK to the session's BIK and seal trigger + history under it. */
@@ -266,7 +298,7 @@ describe("sealed claim hydration + delivery", () => {
     expect(calls.sealedSteps).toHaveLength(1)
     expect(calls.plainSteps).toHaveLength(0)
     expect(await openSealed(calls.sealedSteps[0]!.frames[0]!)).toBe("Forwarded to the runtime.")
-    expect(calls.sendMessage).toHaveLength(0)
+    expect([...calls.sendMessage, ...calls.invocationMessages]).toHaveLength(0)
     expect(calls.complete).toHaveLength(0)
   })
 
@@ -355,7 +387,7 @@ describe("sealed output paths", () => {
     const result = await session.sendInterim("binv_sealed", `Progress so far.\nTHREA_ATTACH: ${filePath}`)
 
     expect(result.ok).toBe(true)
-    expect(calls.sendMessage).toHaveLength(0)
+    expect([...calls.sendMessage, ...calls.invocationMessages]).toHaveLength(0)
     expect(calls.sealedMessages).toHaveLength(1)
     // The upload was ciphertext-only, flagged e2e, under the placeholder name.
     expect(uploads).toHaveLength(1)
@@ -449,7 +481,7 @@ describe("sealed output paths", () => {
 
     await session.postToStream(ROOT_STREAM, { content: "**Claude Code wants to run `Bash`**" })
 
-    expect(calls.sendMessage).toHaveLength(0)
+    expect([...calls.sendMessage, ...calls.invocationMessages]).toHaveLength(0)
     expect(calls.sealedMessages).toHaveLength(1)
     expect(await openSealed(calls.sealedMessages[0]!.body)).toBe("**Claude Code wants to run `Bash`**")
   })
@@ -457,13 +489,175 @@ describe("sealed output paths", () => {
   test("the idle-timeout close seals its note instead of posting plaintext", async () => {
     const { session, calls, openSealed } = await startSealedTurn()
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (session as any).onReplyTimeout("binv_sealed")
+    await fireIdleTimeout(session, "binv_sealed")
 
     expect(calls.complete).toHaveLength(0)
     expect(calls.completeSealed).toHaveLength(1)
     const body = calls.completeSealed[0]!.body
     expect(await openSealed(body.reply as SealedReplyBody)).toContain("without sending a reply")
+  })
+
+  test("should replay the exact sealed timeout body when the re-armed deadline fires", async () => {
+    const { session, calls, control, completeSealedAttempts } = await startSealedTurn()
+    control.failNextCompleteSealed = 1
+
+    await fireIdleTimeout(session, "binv_sealed")
+    await fireIdleTimeout(session, "binv_sealed")
+
+    expect({ attempts: completeSealedAttempts, completions: calls.completeSealed.length }).toEqual({
+      attempts: [completeSealedAttempts[0]!, completeSealedAttempts[0]!],
+      completions: 1,
+    })
+  })
+})
+
+describe("sealed concurrent posts", () => {
+  test("keeps a failed post's sealed body while a concurrent later post runs", async () => {
+    const { session, control, sealedMessageAttempts, openSealed } = await startSealedTurn()
+    const firstOnWire = gate()
+    const releaseFirst = gate()
+    let attempts = 0
+    control.onSealedMessage = async () => {
+      attempts += 1
+      if (attempts !== 1) return
+      firstOnWire.open()
+      await releaseFirst.promise
+    }
+    control.failNextSealedMessage = 1
+
+    const first = session.sendInterim("binv_sealed", "first")
+    await firstOnWire.promise
+    const later = session.sendInterim("binv_sealed", "second")
+    releaseFirst.open()
+    const [failed, sent] = await Promise.all([first, later])
+    const retried = await session.sendInterim("binv_sealed", "first")
+
+    expect(failed).toMatchObject({ ok: false, retryable: true })
+    expect(sent.ok).toBe(true)
+    expect(retried.ok).toBe(true)
+    expect(sealedMessageAttempts.map((body) => body.messageId)).toEqual([
+      sealedMessageAttempts[0]!.messageId,
+      sealedMessageAttempts[1]!.messageId,
+      sealedMessageAttempts[0]!.messageId,
+    ])
+    expect(sealedMessageAttempts[1]!.messageId).not.toBe(sealedMessageAttempts[0]!.messageId)
+    expect(await Promise.all(sealedMessageAttempts.map(openSealed))).toEqual(["first", "second", "first"])
+  })
+})
+
+describe("sealed late delivery after completion", () => {
+  test("a late send seals and posts a follow-up the owner key opens, with the request still closed", async () => {
+    const { session, calls, openSealed } = await startSealedTurn()
+    await session.reply("binv_sealed", "All done.")
+
+    const late = await session.sendInterim("binv_sealed", "One more thought, sealed.")
+
+    expect(late.ok).toBe(true)
+    expect([...calls.sendMessage, ...calls.invocationMessages]).toHaveLength(0)
+    expect(calls.sealedMessages).toHaveLength(1)
+    expect(calls.sealedMessages[0]!.callbackToken).toBe("cbtok")
+    expect(await openSealed(calls.sealedMessages[0]!.body)).toBe("One more thought, sealed.")
+    expect(calls.completeSealed).toHaveLength(1)
+  })
+
+  test("an exact repeat of the sealed reply posts nothing; a changed one posts a sealed follow-up", async () => {
+    const { session, calls, openSealed } = await startSealedTurn()
+    await session.reply("binv_sealed", "All done.")
+
+    const repeat = await session.reply("binv_sealed", "All done.")
+    const changed = await session.reply("binv_sealed", "Correction: one file left.")
+
+    expect(repeat).toEqual({ ok: true, message: "sent" })
+    expect(changed.ok).toBe(true)
+    expect(calls.sealedMessages).toHaveLength(1)
+    expect(await openSealed(calls.sealedMessages[0]!.body)).toBe("Correction: one file left.")
+    expect(calls.completeSealed).toHaveLength(1)
+  })
+
+  test("changed final text resolves the exact failed completion before posting a follow-up", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sealed-final-retry-"))
+    tempDirs.push(dir)
+    const filePath = join(dir, "result.txt")
+    writeFileSync(filePath, "original result")
+    const { session, calls, uploads, control, completeSealedAttempts, openSealed } = await startSealedTurn()
+    const original = `Original answer.\nTHREA_ATTACH: ${filePath}`
+
+    control.failNextCompleteSealed = 1
+    const failed = await session.reply("binv_sealed", original)
+    const changed = await session.reply("binv_sealed", "Corrected answer.")
+
+    expect(failed).toMatchObject({ ok: false, retryable: true })
+    expect(changed).toMatchObject({ ok: true, closedTurn: true })
+    expect(uploads).toHaveLength(1)
+    expect(completeSealedAttempts).toHaveLength(2)
+    const attemptedReplies = completeSealedAttempts.map((attempt) => attempt.body.reply as SealedReplyBody)
+    expect(attemptedReplies[1]).toEqual(attemptedReplies[0])
+    expect(attemptedReplies[1]!.messageId).toBe(attemptedReplies[0]!.messageId)
+    expect(await openSealed(calls.completeSealed[0]!.body.reply as SealedReplyBody)).toBe("Original answer.")
+    expect(await openSealed(calls.sealedMessages[0]!.body)).toBe("Corrected answer.")
+  })
+
+  test("should replay an ambiguous sealed timeout note before posting a later reply as a follow-up", async () => {
+    const { session, calls, control, completeSealedAttempts, openSealed } = await startSealedTurn()
+    control.failNextCompleteSealed = 1
+
+    await fireIdleTimeout(session, "binv_sealed")
+    const late = await session.reply("binv_sealed", "Here it is.")
+
+    expect(late).toMatchObject({ ok: true, closedTurn: true })
+    expect(completeSealedAttempts).toHaveLength(2)
+    expect(completeSealedAttempts[1]).toEqual(completeSealedAttempts[0])
+    const timeoutReply = completeSealedAttempts[0]!.body.reply as SealedReplyBody
+    expect(timeoutReply.messageId).toBe((completeSealedAttempts[1]!.body.reply as SealedReplyBody).messageId)
+    expect(await openSealed(timeoutReply)).toContain("without sending a reply")
+    expect(calls.sealedMessages).toHaveLength(1)
+    expect(await openSealed(calls.sealedMessages[0]!.body)).toBe("Here it is.")
+  })
+
+  test("a deterministic sealed follow-up refusal evicts its route and credentials", async () => {
+    const { session, control, sealedMessageAttempts } = await startSealedTurn()
+    await session.reply("binv_sealed", "All done.")
+    const internals = session as unknown as {
+      completed: Map<string, { pending: Map<number, unknown>; invocation: ClaimedInvocation }>
+      terminalReplies: Map<string, unknown>
+    }
+    const route = internals.completed.get("binv_sealed")!
+    control.nextSealedMessageError = new ThreaApiError("Session is not running", 409, "SESSION_NOT_RUNNING")
+
+    const refused = await session.sendInterim("binv_sealed", "Late note.")
+    const repeatedFinal = await session.reply("binv_sealed", "All done.")
+    const changed = await session.sendInterim("binv_sealed", "Another late note.")
+
+    expect(refused).toMatchObject({ ok: false, retryable: false })
+    expect(repeatedFinal).toEqual({ ok: true, message: "sent" })
+    expect(changed).toMatchObject({ ok: false, retryable: false })
+    expect(sealedMessageAttempts).toHaveLength(1)
+    expect(internals.completed.has("binv_sealed")).toBe(false)
+    expect(internals.terminalReplies.has("binv_sealed")).toBe(true)
+    expect(route.pending.size).toBe(0)
+    expect(route.invocation.claimToken).toBe("")
+    expect(route.invocation.sealing).toBeUndefined()
+  })
+
+  test("a failed late post retries with the SAME sealed body, message id, and upload", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sealed-late-retry-"))
+    tempDirs.push(dir)
+    const filePath = join(dir, "log.txt")
+    writeFileSync(filePath, "retry me")
+    const { session, calls, uploads, control } = await startSealedTurn()
+    await session.reply("binv_sealed", "All done.")
+    const text = `Late note.\nTHREA_ATTACH: ${filePath}`
+
+    control.failNextSealedMessage = 1
+    const first = await session.sendInterim("binv_sealed", text)
+    const retry = await session.sendInterim("binv_sealed", text)
+
+    expect(first).toMatchObject({ ok: false, retryable: true })
+    expect(retry.ok).toBe(true)
+    expect(uploads).toHaveLength(1)
+    expect(calls.sealedMessages).toHaveLength(1)
+    const wire = calls.sealedMessages[0]!.body as SealedReplyBody & { attachmentIds?: string[] }
+    expect(wire.attachmentIds).toEqual(["att_up_1"])
   })
 })
 

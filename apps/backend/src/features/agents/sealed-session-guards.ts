@@ -13,11 +13,30 @@ import { SessionStatuses, type AgentSession } from "./session-repository"
  * hands the value here.
  */
 
-export function assertSessionRunning(session: AgentSession | null): asserts session is AgentSession {
+function assertSessionStatus(
+  session: AgentSession | null,
+  allowed: readonly AgentSession["status"][]
+): asserts session is AgentSession {
   if (!session) throw new HttpError("Session not found", { status: 404, code: "SESSION_NOT_FOUND" })
-  if (session.status !== SessionStatuses.RUNNING) {
+  if (!allowed.includes(session.status)) {
     throw new HttpError("Session is not running", { status: 409, code: "SESSION_NOT_RUNNING" })
   }
+}
+
+export function assertSessionRunning(session: AgentSession | null): asserts session is AgentSession {
+  assertSessionStatus(session, [SessionStatuses.RUNNING])
+}
+
+export function assertSessionRunningOrCompleted(session: AgentSession | null): asserts session is AgentSession {
+  assertSessionStatus(session, [SessionStatuses.RUNNING, SessionStatuses.COMPLETED])
+}
+
+export function assertSessionRunningOrFailed(session: AgentSession | null): asserts session is AgentSession {
+  assertSessionStatus(session, [SessionStatuses.RUNNING, SessionStatuses.FAILED])
+}
+
+export function assertSessionRunningOrCompletedOrFailed(session: AgentSession | null): asserts session is AgentSession {
+  assertSessionStatus(session, [SessionStatuses.RUNNING, SessionStatuses.COMPLETED, SessionStatuses.FAILED])
 }
 
 /**

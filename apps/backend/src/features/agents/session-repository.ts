@@ -375,6 +375,19 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
+  /** Pin after the invocation lock so completion, supersede, and delete share one lock order (INV-20). */
+  async findByIdForUpdate(db: Querier, id: string): Promise<AgentSession | null> {
+    const result = await db.query<SessionRow>(
+      sql`
+        SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
+        FROM agent_sessions
+        WHERE id = ${id}
+        FOR UPDATE
+      `
+    )
+    return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
   async findByTriggerMessage(db: Querier, triggerMessageId: string): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`

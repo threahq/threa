@@ -208,6 +208,8 @@ function makeInvocationRow(overrides: Record<string, unknown> = {}) {
     target_instance_id: null,
     target_runtime_session_id: null,
     claimed_by_instance_id: "inst_42",
+    claimed_runtime_session_id: "rts_42",
+    claimed_runtime_session_claim_token: "tok_1",
     claim_token: "tok_1",
     claim_expires_at: new Date(),
     attempts: 1,
@@ -390,7 +392,7 @@ describe("BotInvocationRepository.claimOne", () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [makeInvocationRow()])
 
-    await BotInvocationRepository.claimOne(db, {
+    const claimed = await BotInvocationRepository.claimOne(db, {
       workspaceId: "ws_1",
       botId: "bot_alice",
       instanceId: "inst_42",
@@ -401,6 +403,10 @@ describe("BotInvocationRepository.claimOne", () => {
       maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
     })
 
+    expect(claimed).toMatchObject({
+      claimedRuntimeSessionId: "rts_42",
+      claimedRuntimeSessionClaimToken: "tok_1",
+    })
     // Bounded re-claim: a wedged invocation can't be picked up forever.
     expect(captured.text).toContain("attempts < ")
     expect(captured.text).toContain("attempts = attempts + 1")

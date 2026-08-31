@@ -889,6 +889,14 @@ export class BotRuntimeService {
     return BotInvocationRepository.findCompletedForReplay(db, params)
   }
 
+  /** Share-lock the active runtime identity that authorizes a completed claim's late writes. */
+  async findActiveSessionLinkForCompletedClaim(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string; runtimeSessionId: string }
+  ): Promise<BotRuntimeSessionLink | null> {
+    return BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, params)
+  }
+
   async renewInvocationClaim(params: {
     workspaceId: string
     botId: string
