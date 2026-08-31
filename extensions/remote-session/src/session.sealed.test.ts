@@ -25,6 +25,7 @@ import {
 import { RemoteSession, type RemoteSessionDelegate, type RuntimeDescriptor } from "./session"
 import type { RemoteSessionConfig } from "./identity"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
+import { fireIdleTimeout, gate } from "./session.test-support"
 
 // End-to-end sealed session behavior with REAL crypto: an "owner" wraps a
 // stream key to the session's BIK and seals a trigger; the session must open
@@ -272,22 +273,6 @@ async function ownerBuildsSealedClaim(
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const drain = (session: RemoteSession) => (session as any).claimDrain() as Promise<void>
-
-/** Fire the idle timeout the way its timer would, without waiting out the window. */
-function fireIdleTimeout(session: RemoteSession, invocationId: string): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const internals = session as any
-  const route = internals.inflight.get(invocationId)
-  return internals.onReplyTimeout(route, route.deadlineGeneration) as Promise<void>
-}
-
-function gate() {
-  let open: () => void = () => {}
-  const promise = new Promise<void>((resolve) => {
-    open = resolve
-  })
-  return { promise, open: () => open() }
-}
 
 async function startSealedTurn(delegate: Partial<RemoteSessionDelegate> = {}, promptExtras?: SealedPayloadExtras) {
   const made = makeSealedSession(delegate)

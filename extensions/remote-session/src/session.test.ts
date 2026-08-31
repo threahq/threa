@@ -20,6 +20,7 @@ import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ThreaApiError, type ClaimedInvocation, type ThreaClient } from "./client"
+import { fireIdleTimeout, gate } from "./session.test-support"
 
 function makeConfig(overrides?: Partial<RemoteSessionConfig>): RemoteSessionConfig {
   return {
@@ -115,14 +116,6 @@ function seedInflight(session: RemoteSession, invocation: ClaimedInvocation, sen
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const route = (session as any).registerTurn(invocation)
   route.sentCount = sentCount
-}
-
-/** Fire the idle timeout the way its timer would, without waiting out the window. */
-function fireIdleTimeout(session: RemoteSession, invocationId: string): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const internals = session as any
-  const route = internals.inflight.get(invocationId)
-  return internals.onReplyTimeout(route, route.deadlineGeneration) as Promise<void>
 }
 
 function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation {
@@ -682,14 +675,6 @@ describe("RemoteSession concurrent posts on one turn", () => {
 /** Resolve on the next macrotask, so a queued route task has actually started. */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-function gate() {
-  let open: () => void = () => {}
-  const promise = new Promise<void>((resolve) => {
-    open = resolve
-  })
-  return { promise, open: () => open() }
-}
-
 // Completion is a state, not a gap. While it is on the wire the turn stays
 // addressable, so nothing that arrives meanwhile can be told the id is unknown —
 // and nothing may record it as completed unless the server said so.
@@ -1007,7 +992,7 @@ describe("RemoteSession completed-route post errors", () => {
     expect(await session.reply("binv_term_reply", "Done.")).toEqual({ ok: true, message: "sent" })
   })
 
-  test.each([408, 425, 429, 502])("retryable responses keep the reserved id", async (status) => {
+  test.each([408, 425, 429, 502])("retryable response %i keeps the reserved id", async (status) => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
     const session = makeSession(client, transport)

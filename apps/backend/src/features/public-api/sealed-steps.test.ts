@@ -434,6 +434,17 @@ describe("sendBotInvocationSealedMessage", () => {
     }
   )
 
+  it("rejects a session row deleted after the callback was authorized (404)", async () => {
+    const { handlers, createMessage } = arrangeWithEventService(undefined, null)
+    const { res } = createResponse()
+
+    await expect(handlers.sendBotInvocationSealedMessage(req(sealedBody), res)).rejects.toMatchObject({
+      status: 404,
+      code: "SESSION_NOT_FOUND",
+    })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
   // Keep invocation before session to match completion and avoid ABBA deadlocks.
   it("pins the session row inside the write transaction, after the invocation lock", async () => {
     const { handlers, createMessage, findActiveClaim, findSessionForUpdate } = arrangeWithEventService()

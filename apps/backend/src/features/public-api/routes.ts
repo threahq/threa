@@ -1065,7 +1065,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "sendBotInvocationMessage",
     summary: "Post a message from a bot invocation",
     description:
-      "Posts one plaintext message into the invocation's own response stream — progress notes and permission prompts mid-turn, follow-ups after the turn completed (a callback-bound completed invocation may still post; completion itself stays terminal and is never reopened). The claim decides the stream and the session the message is attributed to, so a harness never has to name either. Rejects end-to-end encrypted streams (use sealed-messages). Authenticated with the bot API key plus the claim's instanceId and claimToken; clientMessageId dedupes a retried post.",
+      "Posts one plaintext message into the invocation's own response stream — progress notes and permission prompts mid-turn, follow-ups after the turn completed (a claim-bound completed invocation may still post; completion itself stays terminal and is never reopened). The claim decides the stream and the session the message is attributed to, so a harness never has to name either. Rejects end-to-end encrypted streams (use sealed-messages). Authenticated with the bot API key plus the claim's instanceId and claimToken; clientMessageId dedupes a retried post.",
     tags: ["Bot invocations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
     parameters: [
