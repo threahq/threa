@@ -35,6 +35,7 @@ import {
   type ExternalHistoryMessage,
   type RuntimeSessionLink,
 } from "./client"
+import { RouteRevokedError, TurnRoute, type CloseRequest, type PostIntent, type PreparedClose } from "./turn-route"
 
 export const SUPPORTED_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
 export const SESSION_CONTROL_CAPABILITY = "session-control"
@@ -286,84 +287,6 @@ export function runtimeCapabilitiesFor(
       : {}),
   }
 }
-
-/** Exact failed POST bytes and id, retained because an ambiguous failure may have committed. */
-type PreparedPost =
-  | {
-      kind: "plaintext"
-      seq: number
-      text: string
-      retryKey?: string
-      body: {
-        instanceId: string
-        claimToken: string
-        content: string
-        clientMessageId: string
-        metadata: Record<string, unknown>
-      }
-    }
-  | {
-      kind: "sealed"
-      seq: number
-      text: string
-      retryKey?: string
-      body: SealedReplyBody
-      attachmentIds: string[]
-    }
-
-interface PostIntent {
-  text: string
-  retryKey?: string
-  retry?: PreparedPost
-}
-
-type PlaintextCompletionBody = {
-  instanceId: string
-  claimToken: string
-  metadata: Record<string, unknown>
-} & ({ finalMessageMarkdown: string } | { noResponse: true })
-
-type SealedCompletionBody = { reply: SealedReplyBody & { attachmentIds?: string[] } } | { noResponse: true }
-
-type PreparedCompletionWire =
-  | { kind: "plaintext"; body: PlaintextCompletionBody }
-  | { kind: "sealed"; callbackToken: string; body: SealedCompletionBody }
-
-type PreparedClose =
-  | { reason: "reply"; sourceText: string; wire: PreparedCompletionWire }
-  | { reason: "timeout"; wire: PreparedCompletionWire }
-
-type CloseRequest = { kind: "reply"; text: string } | { kind: "timeout" }
-
-type RouteState = "open" | "closing" | "closed"
-
-/** Maps and queued posts share this object so reserved ids survive state transitions. */
-interface TurnRoute {
-  invocation: ClaimedInvocation
-  state: RouteState
-  /** Registration order distinguishes an older route from a newer owner of the same stream. */
-  order: number
-  sentCount: number
-  /** Highest sequence handed out. Reserved before the write, so a failure spends it. */
-  reservedSeq: number
-  /** FIFO tail: every post on this route runs behind it, in call order. */
-  tail: Promise<unknown>
-  pending: Map<number, PreparedPost>
-  replyText?: string
-  deadline?: ReturnType<typeof setTimeout>
-  /** Bumped on every (re-)arm, so a fired timeout queued behind a post can tell it is stale. */
-  deadlineGeneration: number
-  /** Exact close body retained after an ambiguous completion. */
-  prepared?: PreparedClose
-  /** The completion currently on the wire, so shutdown can settle it instead of racing it. */
-  closing?: Promise<unknown>
-  /** The session lifecycle this route belongs to; a bump fences it out for good. */
-  generation: number
-  revoked: boolean
-  terminal: boolean
-}
-
-class RouteRevokedError extends Error {}
 
 export interface RemoteSessionOptions {
   config: RemoteSessionConfig
@@ -628,8 +551,8 @@ export class RemoteSession {
   private revokeAllRoutes(): TurnRoute[] {
     this.lifecycle += 1
     const inflight = [...this.inflight.values()]
-    for (const route of inflight) this.revokeRoute(route)
-    for (const route of this.completed.values()) this.revokeRoute(route)
+    for (const route of inflight) route.revoke()
+    for (const route of this.completed.values()) route.revoke()
     this.inflight.clear()
     this.completed.clear()
     this.terminalReplies.clear()
@@ -1172,7 +1095,7 @@ export class RemoteSession {
     // the trace; a steer is also a sign of life for the turn it redirects.
     for (const route of [...this.inflight.values()]) {
       await this.recordSteps(route.invocation.id, [{ stepType: "steer", content: combined }])
-      this.touchIdleTimeout(route)
+      route.touchIdleTimeout()
     }
     if (!(await steer(combined))) {
       // Nothing was injected: the swept messages were claimed but not
@@ -1381,11 +1304,11 @@ export class RemoteSession {
   private async completeInterruptedTurns(note: string, opts: { alwaysNote?: boolean } = {}): Promise<void> {
     const routes = [...this.inflight.values()]
     const closes = routes.map((route) => {
-      this.revokeRoute(route)
-      if (route.state === "open") route.state = "closing"
+      route.revoke()
+      if (route.state === "open") route.beginClosing()
       if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
       const generation = route.generation
-      const task = this.enqueue(route, async () => {
+      const task = route.enqueue(async () => {
         if (this.stopped || generation !== this.lifecycle || route.state === "closed") return
         const silent = route.sentCount > 0 && !opts.alwaysNote
         try {
@@ -1393,7 +1316,7 @@ export class RemoteSession {
             ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
             metadata: { "remote.invocationId": route.invocation.id, "remote.interrupted": "true" },
           })
-          route.state = "closed"
+          route.markClosed()
         } catch (error) {
           this.log(`interrupted-turn close failed: ${this.summarize(error)}`)
         } finally {
@@ -1402,10 +1325,7 @@ export class RemoteSession {
           }
         }
       })
-      route.closing = task
-      return task.finally(() => {
-        if (route.closing === task) route.closing = undefined
-      })
+      return route.trackClosing(task)
     })
     await Promise.all(closes)
   }
@@ -1456,46 +1376,21 @@ export class RemoteSession {
 
   // --- Interim + final output ------------------------------------------------
 
-  /** FIFO allocation keeps concurrent posts on distinct ids and orders them against completion. */
-  private enqueue<T>(route: TurnRoute, task: () => Promise<T>): Promise<T> {
-    // `.then(task, task)` so one rejected post never wedges the queue behind it.
-    const run = route.tail.then(task, task)
-    route.tail = run.then(
-      () => undefined,
-      () => undefined
-    )
-    return run
-  }
-
   private route(invocationId: string): TurnRoute | undefined {
     return this.inflight.get(invocationId) ?? this.completed.get(invocationId)
   }
 
   private registerTurn(invocation: ClaimedInvocation): TurnRoute {
-    const route: TurnRoute = {
+    const route = new TurnRoute({
       invocation,
-      state: "open",
       order: (this.nextRouteOrder += 1),
-      sentCount: 0,
-      reservedSeq: 0,
-      tail: Promise.resolve(),
-      pending: new Map(),
-      deadlineGeneration: 0,
       generation: this.lifecycle,
-      revoked: false,
-      terminal: false,
-    }
-    route.deadline = this.scheduleIdleTimeout(route)
+      idleTimeoutMs: this.config.idleTimeoutMs,
+      onIdleDeadline: (target, generation) => void this.onReplyTimeout(target, generation),
+    })
+    route.armIdleTimeout()
     this.inflight.set(invocation.id, route)
     return route
-  }
-
-  private revokeRoute(route: TurnRoute): void {
-    route.revoked = true
-    route.pending.clear()
-    route.prepared = undefined
-    clearTimeout(route.deadline)
-    route.deadline = undefined
   }
 
   private revokedResult(route: TurnRoute): SendResult {
@@ -1506,33 +1401,12 @@ export class RemoteSession {
     }
   }
 
-  private findPending(route: TurnRoute, text: string, retryKey?: string): PreparedPost | undefined {
-    let match: PreparedPost | undefined
-    for (const pending of route.pending.values()) {
-      if (pending.text === text && pending.retryKey === retryKey && (!match || pending.seq < match.seq)) {
-        match = pending
-      }
-    }
-    return match
-  }
-
-  /** Snapshot retry intent before queueing so concurrent callers cannot adopt each other's failure. */
-  private postIntent(route: TurnRoute, text: string, retryKey?: string): PostIntent {
-    const retry = this.findPending(route, text, retryKey)
-    return {
-      text,
-      ...(retryKey === undefined ? {} : { retryKey }),
-      ...(retry ? { retry } : {}),
-    }
-  }
-
-  /** An ambiguous failure reserves its id and exact bytes; changed text takes the next id. */
   private async postTurnMessage(
     route: TurnRoute,
     intent: PostIntent,
     metadata: Record<string, unknown>
   ): Promise<void> {
-    const seq = intent.retry?.seq ?? (route.reservedSeq += 1)
+    const seq = route.claimSeq(intent.retry)
     const sealing = route.invocation.sealing
     let prepared = intent.retry
     if (!prepared) {
@@ -1570,7 +1444,7 @@ export class RemoteSession {
       }
     }
     if (!prepared) throw new Error("post preparation produced no body")
-    if (route.revoked || route.generation !== this.lifecycle) {
+    if (route.isFenced(this.lifecycle)) {
       throw new RouteRevokedError(this.revokedResult(route).message)
     }
     try {
@@ -1583,11 +1457,10 @@ export class RemoteSession {
         await this.client.sendInvocationMessage(route.invocation.id, prepared.body)
       }
     } catch (error) {
-      if (!route.revoked && route.generation === this.lifecycle) route.pending.set(seq, prepared)
+      route.rememberFailedPost(seq, prepared, this.lifecycle)
       throw error
     }
-    if (route.pending.get(seq) === prepared) route.pending.delete(seq)
-    route.sentCount += 1
+    route.recordLandedPost(seq, prepared)
   }
 
   private async writeRouteMessage(
@@ -1672,7 +1545,7 @@ export class RemoteSession {
   }
 
   private async postPreparedClose(route: TurnRoute, prepared: PreparedClose): Promise<void> {
-    if (route.revoked || route.generation !== this.lifecycle) throw new RouteRevokedError("route revoked")
+    if (route.isFenced(this.lifecycle)) throw new RouteRevokedError("route revoked")
     if (prepared.wire.kind === "sealed") {
       await this.client.completeSealed(route.invocation.id, prepared.wire.callbackToken, prepared.wire.body)
       return
@@ -1682,13 +1555,10 @@ export class RemoteSession {
 
   private async settleClosed(route: TurnRoute, replyText?: string): Promise<void> {
     const invocationId = route.invocation.id
-    route.state = "closed"
-    route.prepared = undefined
-    if (replyText === undefined) delete route.replyText
-    else route.replyText = replyText
+    route.settleClosed(replyText)
     this.inflight.delete(invocationId)
     // Teardown owns reinsertion and presence if it advanced the route generation.
-    if (route.revoked || route.generation !== this.lifecycle) return
+    if (route.isFenced(this.lifecycle)) return
     // Keep the same object so ids reserved by posts queued behind this close remain visible.
     this.completed.delete(invocationId)
     this.completed.set(invocationId, route)
@@ -1701,13 +1571,12 @@ export class RemoteSession {
   }
 
   private async reopenAfterFailedCompletion(route: TurnRoute, prepared: PreparedClose | undefined): Promise<void> {
-    route.state = "open"
-    if (route.revoked || route.generation !== this.lifecycle) {
-      route.prepared = undefined
+    if (route.isFenced(this.lifecycle)) {
+      route.reopen(undefined)
       return
     }
-    route.prepared = prepared
-    route.deadline = this.scheduleIdleTimeout(route)
+    route.reopen(prepared)
+    route.armIdleTimeout()
     this.inflight.set(route.invocation.id, route)
     await this.syncPresence()
   }
@@ -1753,19 +1622,7 @@ export class RemoteSession {
   /** Drop write credentials but retain a digest for exact final-reply idempotency. */
   private async evictTerminalRoute(route: TurnRoute): Promise<void> {
     const invocationId = route.invocation.id
-    route.state = "closed"
-    route.terminal = true
-    route.revoked = true
-    clearTimeout(route.deadline)
-    route.deadline = undefined
-    route.deadlineGeneration += 1
-    route.closing = undefined
-    route.pending.clear()
-    route.prepared = undefined
-    route.invocation.claimToken = ""
-    route.invocation.sealing = undefined
-    route.invocation.sealedAttachments = undefined
-    route.invocation.sealedAck = undefined
+    route.markTerminal()
     this.inflight.delete(invocationId)
     this.completed.delete(invocationId)
     const newerRouteOwnsStream = [...this.inflight.values()].some(
@@ -1823,8 +1680,8 @@ export class RemoteSession {
         message: `No open request with invocation_id ${invocationId} — interim messages need an open request (it may have been answered or closed).`,
       }
     }
-    const intent = this.postIntent(route, text)
-    return this.enqueue(route, () => this.runSend(route, intent))
+    const intent = route.snapshotIntent(text)
+    return route.enqueue(() => this.runSend(route, intent))
   }
 
   private async runSend(route: TurnRoute, intent: PostIntent): Promise<SendResult> {
@@ -1843,7 +1700,7 @@ export class RemoteSession {
     }
     // A send is a sign of life: push the idle timeout out so a turn that keeps
     // posting progress is never force-closed.
-    this.touchIdleTimeout(route)
+    route.touchIdleTimeout()
     return { ok: true, message: "sent" }
   }
 
@@ -1857,8 +1714,8 @@ export class RemoteSession {
         message: `No open request with invocation_id ${invocationId} (already answered, expired, or unknown).`,
       }
     }
-    const intent = this.postIntent(route, text)
-    return this.enqueue(route, () => this.runReply(route, intent))
+    const intent = route.snapshotIntent(text)
+    return route.enqueue(() => this.runReply(route, intent))
   }
 
   private async runReply(route: TurnRoute, intent: PostIntent): Promise<SendResult> {
@@ -1883,14 +1740,8 @@ export class RemoteSession {
   }
 
   private closeWith(route: TurnRoute, source: PreparedClose | CloseRequest): Promise<SendResult> {
-    route.state = "closing"
-    clearTimeout(route.deadline)
-    route.deadline = undefined
-    const task = this.runCompletion(route, source)
-    route.closing = task
-    return task.finally(() => {
-      if (route.closing === task) route.closing = undefined
-    })
+    route.beginClosing()
+    return route.trackClosing(this.runCompletion(route, source))
   }
 
   private async runCompletion(route: TurnRoute, source: PreparedClose | CloseRequest): Promise<SendResult> {
@@ -1997,8 +1848,8 @@ export class RemoteSession {
     route: TurnRoute,
     body: { content: string; clientMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<void> {
-    const intent = this.postIntent(route, body.content, body.clientMessageId)
-    await this.enqueue(route, async () => {
+    const intent = route.snapshotIntent(body.content, body.clientMessageId)
+    await route.enqueue(async () => {
       if (route.terminal) throw this.routeUnavailableError(route.invocation.id)
       if (route.revoked) throw new RouteRevokedError(this.revokedResult(route).message)
       await this.writeRouteMessage(route, intent, {
@@ -2039,18 +1890,18 @@ export class RemoteSession {
   /** Reset idle timeouts for every in-flight turn in a stream (a pending approval is a sign of life). */
   keepAlive(streamId: string): void {
     for (const entry of this.inflight.values()) {
-      if (entry.state === "open" && entry.invocation.responseStreamId === streamId) this.touchIdleTimeout(entry)
+      if (entry.state === "open" && entry.invocation.responseStreamId === streamId) entry.touchIdleTimeout()
     }
   }
 
   /** Queue timeout closure behind posts so in-flight output cannot be overtaken. */
   private async onReplyTimeout(route: TurnRoute, generation: number): Promise<void> {
-    if (route.deadlineGeneration !== generation || route.state !== "open") return
-    await this.enqueue(route, () => this.runIdleTimeout(route, generation))
+    if (!route.isCurrentDeadline(generation) || route.state !== "open") return
+    await route.enqueue(() => this.runIdleTimeout(route, generation))
   }
 
   private async runIdleTimeout(route: TurnRoute, generation: number): Promise<void> {
-    if (route.deadlineGeneration !== generation || route.state !== "open" || route.revoked) return
+    if (!route.isCurrentDeadline(generation) || route.state !== "open" || route.revoked) return
     const result = await this.closeWith(route, route.prepared ?? { kind: "timeout" })
     if (!result.ok) this.log(`timeout close failed: ${result.message}`)
   }
@@ -2059,20 +1910,8 @@ export class RemoteSession {
     this.leaseConfirmedAt.delete(invocationId)
     const entry = this.inflight.get(invocationId)
     if (!entry) return
-    this.revokeRoute(entry)
+    entry.revoke()
     this.inflight.delete(invocationId)
-  }
-
-  private scheduleIdleTimeout(route: TurnRoute): ReturnType<typeof setTimeout> {
-    const generation = (route.deadlineGeneration += 1)
-    return setTimeout(() => void this.onReplyTimeout(route, generation), this.config.idleTimeoutMs)
-  }
-
-  /** Reset an in-flight turn's idle timeout after a sign of life. */
-  private touchIdleTimeout(route: TurnRoute): void {
-    if (route.state !== "open" || route.revoked) return
-    clearTimeout(route.deadline)
-    route.deadline = this.scheduleIdleTimeout(route)
   }
 
   /**
