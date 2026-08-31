@@ -128,6 +128,7 @@ describe("ConnectPage", () => {
     const createKey = vi
       .spyOn(botsApi, "createKey")
       .mockResolvedValue({ key: { id: "key_1" } as never, value: "threa_bk_minted" })
+    const update = vi.spyOn(botsApi, "update").mockResolvedValue({} as never)
     const approve = vi
       .spyOn(botConnectApi, "approve")
       .mockRejectedValueOnce(new ApiError(502, "BAD_GATEWAY", "upstream hiccup"))
@@ -155,6 +156,36 @@ describe("ConnectPage", () => {
     expect(approve).toHaveBeenCalledTimes(3)
     expect(archive).toHaveBeenCalledTimes(2)
     expect(archive).toHaveBeenLastCalledWith("ws_1", "bot_1")
+    // Reused attempts re-assert the reads-as-owner checkbox onto the minted bot.
+    expect(update).toHaveBeenCalledWith("ws_1", "bot_1", { readsAsOwner: false })
+  })
+
+  it("mints the bot with reads-as-owner when the checkbox is ticked", async () => {
+    vi.spyOn(botConnectApi, "lookup").mockResolvedValue({
+      userCode: "BCDF-GHJK",
+      requestedName: "my-agent",
+      requestedHost: null,
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    })
+    const create = vi
+      .spyOn(botsApi, "create")
+      .mockResolvedValue({ id: "bot_1", slug: "my-agent", name: "my-agent" } as never)
+    vi.spyOn(botsApi, "createKey").mockResolvedValue({ key: { id: "key_1" } as never, value: "threa_bk_minted" })
+    vi.spyOn(botConnectApi, "approve").mockResolvedValue()
+
+    renderPage()
+    await userEvent.click(await screen.findByLabelText("Let it read everything you can read"))
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }))
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith("ws_1", {
+        type: "personal",
+        name: "my-agent",
+        slug: "my-agent",
+        traits: ["mentionable", "active-scratchpad"],
+        readsAsOwner: true,
+      })
+    )
   })
 
   it("does not fetch workspaces before sign-in", () => {

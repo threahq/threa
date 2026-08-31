@@ -8,6 +8,7 @@ export interface CreateBotInput {
   description?: string | null
   avatarEmoji?: string | null
   traits?: BotTrait[]
+  readsAsOwner?: boolean
 }
 
 export interface UpdateBotInput {
@@ -16,6 +17,7 @@ export interface UpdateBotInput {
   description?: string | null
   avatarEmoji?: string | null
   traits?: BotTrait[]
+  readsAsOwner?: boolean
 }
 
 export interface CreateBotKeyInput {

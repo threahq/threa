@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { Bot, Check, Hourglass, SearchX, type LucideIcon } from "lucide-react"
 import { BotTraits, WORKSPACE_PERMISSION_SCOPES, type Workspace } from "@threa/types"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -80,6 +81,7 @@ export async function approveConnect(input: {
   code: string
   workspace: Workspace
   botName: string
+  readsAsOwner?: boolean
   provisioned?: ProvisionedBot
   onProvisioned?: (provisioned: ProvisionedBot) => void
 }): Promise<{ slug: string; provisioned: ProvisionedBot }> {
@@ -89,6 +91,11 @@ export async function approveConnect(input: {
     // in the first one would otherwise stay behind with a live key.
     await botsApi.archive(input.provisioned.workspaceId, input.provisioned.botId).catch(() => undefined)
   }
+  if (provisioned) {
+    // A retry reuses the minted bot; the checkbox may have changed since, so
+    // re-assert the setting instead of silently keeping the first attempt's.
+    await botsApi.update(provisioned.workspaceId, provisioned.botId, { readsAsOwner: input.readsAsOwner ?? false })
+  }
   if (!provisioned) {
     const baseSlug = slugForBot(input.botName) || "bot"
     const create = (slug: string) =>
@@ -97,6 +104,7 @@ export async function approveConnect(input: {
         name: input.botName,
         slug,
         traits: [BotTraits.MENTIONABLE, BotTraits.ACTIVE_SCRATCHPAD],
+        ...(input.readsAsOwner ? { readsAsOwner: true } : {}),
       })
     let bot
     try {
@@ -223,6 +231,7 @@ function ApproveForm({
 }) {
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "")
   const [botName, setBotName] = useState(lookup.requestedName ?? "My agent")
+  const [readsAsOwner, setReadsAsOwner] = useState(false)
   const workspace = workspaces.find((w) => w.id === workspaceId)
   const provisioned = useRef<ProvisionedBot | undefined>(undefined)
   const approve = useMutation({
@@ -232,6 +241,7 @@ function ApproveForm({
           code,
           workspace: workspace!,
           botName: botName.trim(),
+          readsAsOwner,
           provisioned: provisioned.current,
           onProvisioned: (next) => (provisioned.current = next),
         })
@@ -304,6 +314,24 @@ function ApproveForm({
             A personal bot you can @mention, with its own scratchpad. Its key is created now and sent to the machine
             that asked.
           </p>
+        </div>
+        <div className="flex items-start gap-2.5 rounded-md border px-3 py-2.5">
+          <Checkbox
+            id="connect-reads-as-owner"
+            checked={readsAsOwner}
+            onCheckedChange={(checked) => setReadsAsOwner(checked === true)}
+            disabled={busy}
+            className="mt-0.5"
+          />
+          <div className="space-y-0.5">
+            <Label htmlFor="connect-reads-as-owner" className="text-sm font-normal">
+              Let it read everything you can read
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Except end-to-end encrypted streams. It can still only post where it has been added. You can change this
+              later in bot settings.
+            </p>
+          </div>
         </div>
         {error && (
           <p className="text-sm text-destructive">{error instanceof Error ? error.message : "Could not connect"}</p>
