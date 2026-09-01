@@ -3,13 +3,19 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ReactNode } from "react"
-import type { WorkspaceBootstrap, WorkspaceSettings } from "@threa/types"
+import {
+  DEFAULT_SUBAGENT_MODELS,
+  SUBAGENT_MODEL_CATALOG,
+  type WorkspaceBootstrap,
+  type WorkspaceSettings,
+} from "@threa/types"
 import * as contextsModule from "@/contexts"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { PersonalSubagentModelsSection } from "./subagent-models-settings"
 
 const TERRA = "openrouter:openai/gpt-5.6-terra"
 const SONNET = "openrouter:anthropic/claude-sonnet-5"
+const OPUS = "openrouter:anthropic/claude-opus-5"
 
 const updatePreference = vi.fn().mockResolvedValue(undefined)
 
@@ -44,6 +50,7 @@ describe("PersonalSubagentModelsSection", () => {
 
     expect(screen.getByLabelText("GPT-5.6 Terra")).toHaveAttribute("data-state", "checked")
     expect(screen.getByLabelText("Claude Sonnet 5")).toHaveAttribute("data-state", "checked")
+    expect(screen.getByText(/Following your workspace's set/)).toBeInTheDocument()
   })
 
   it("renders nothing when the workspace offers fewer than two models — there is nothing to subset", () => {
@@ -73,23 +80,63 @@ describe("PersonalSubagentModelsSection", () => {
     await waitFor(() => expect(updatePreference).toHaveBeenCalledWith("subagentModels", []))
   })
 
-  it("will not let the last ticked model be unticked — zero ticks is the follow-the-workspace state", async () => {
+  it("unticking the last one stores an empty list — that is the follow-the-workspace state", async () => {
     mockPreferences([SONNET])
     const user = userEvent.setup()
     renderSection([TERRA, SONNET])
 
-    const last = screen.getByLabelText("Claude Sonnet 5")
-    expect(last).toBeDisabled()
-    await user.click(last)
+    await user.click(screen.getByLabelText("Claude Sonnet 5"))
 
-    expect(updatePreference).not.toHaveBeenCalled()
+    await waitFor(() => expect(updatePreference).toHaveBeenCalledWith("subagentModels", []))
   })
 
-  it("ignores a stored model the workspace has since dropped", () => {
-    mockPreferences([SONNET, "openrouter:anthropic/claude-opus-5"])
+  it("drops a stored model the workspace no longer offers on the next edit", async () => {
+    mockPreferences([SONNET, OPUS])
+    const user = userEvent.setup()
     renderSection([TERRA, SONNET])
 
     expect(screen.queryByLabelText("Claude Opus 5")).toBeNull()
     expect(screen.getByLabelText("GPT-5.6 Terra")).toHaveAttribute("data-state", "unchecked")
+
+    await user.click(screen.getByLabelText("GPT-5.6 Terra"))
+
+    await waitFor(() => expect(updatePreference).toHaveBeenCalledWith("subagentModels", []))
+  })
+
+  it("says delegation is off when the stored subset no longer names a workspace model", () => {
+    mockPreferences([OPUS])
+    renderSection([TERRA, SONNET])
+
+    // Ticks come from the STORED preference, so nothing is ticked — the picker
+    // must not claim the full set the user does not actually have.
+    expect(screen.getByLabelText("GPT-5.6 Terra")).toHaveAttribute("data-state", "unchecked")
+    expect(screen.getByLabelText("Claude Sonnet 5")).toHaveAttribute("data-state", "unchecked")
+    expect(screen.getByText(/nothing can be delegated for you/)).toBeInTheDocument()
+    expect(screen.queryByText(/Following your workspace's set/)).toBeNull()
+  })
+
+  it("re-picking from the emptied state stores just that model", async () => {
+    mockPreferences([OPUS])
+    const user = userEvent.setup()
+    renderSection([TERRA, SONNET])
+
+    await user.click(screen.getByLabelText("GPT-5.6 Terra"))
+
+    await waitFor(() => expect(updatePreference).toHaveBeenCalledWith("subagentModels", [TERRA]))
+  })
+
+  it("falls back to the shipped default set and stays read-only while the bootstrap is unresolved", () => {
+    mockPreferences([])
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    }
+    render(<PersonalSubagentModelsSection workspaceId="ws_1" />, { wrapper: Wrapper })
+
+    for (const modelId of DEFAULT_SUBAGENT_MODELS) {
+      const box = screen.getByLabelText(SUBAGENT_MODEL_CATALOG.find((entry) => entry.id === modelId)!.label)
+      expect(box).toHaveAttribute("data-state", "checked")
+      expect(box).toBeDisabled()
+    }
   })
 })

@@ -1,4 +1,9 @@
-import { SUBAGENT_MODEL_CATALOG, WORKSPACE_PERMISSION_SCOPES, type SubagentModelCatalogEntry } from "@threa/types"
+import {
+  DEFAULT_SUBAGENT_MODELS,
+  SUBAGENT_MODEL_CATALOG,
+  WORKSPACE_PERMISSION_SCOPES,
+  type SubagentModelCatalogEntry,
+} from "@threa/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
 import { hasPermission } from "@/lib/permissions"
@@ -37,14 +42,24 @@ export function SubagentModelsSection({ workspaceId }: { workspaceId: string }) 
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
   const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const settings = bootstrap?.workspaceSettings ?? null
-  const selected = settings?.subagentModels ?? []
+  // Show the shipped default until the bootstrap resolves — an unresolved
+  // bootstrap is not the same claim as "this workspace allows nothing", and the
+  // rows below say exactly that when the set is empty. Same `?? DEFAULT` shape
+  // as `FollowUpLimitSection`; edits stay disabled until `settings` is real.
+  const selected = settings?.subagentModels ?? DEFAULT_SUBAGENT_MODELS
+  const rows = pickerRows(selected)
 
   const mutation = useWorkspaceSettingMutation(workspaceId, "subagentModels", "Failed to save the delegation models")
 
-  // Toggling writes the whole list, preserving the stored order: it is what an
-  // admin arranged, and the tool's refusal message renders it back to the model.
+  // Toggling writes the whole list in the picker's own order (catalog first,
+  // then anything stored the catalog dropped). Canonical order is what makes
+  // untick-then-retick round-trip to the shipped default and actually elide the
+  // override, instead of storing a permutation that only looks different.
   const toggle = (modelId: string, next: boolean) => {
-    mutation.mutate(next ? [...selected, modelId] : selected.filter((id) => id !== modelId))
+    const updated = new Set(selected)
+    if (next) updated.add(modelId)
+    else updated.delete(modelId)
+    mutation.mutate(rows.map((row) => row.id).filter((id) => updated.has(id)))
   }
 
   return (
@@ -55,7 +70,7 @@ export function SubagentModelsSection({ workspaceId }: { workspaceId: string }) 
         Delegating spends the workspace&apos;s AI budget at the rates below.
       </p>
       <ul className="mt-3 space-y-2">
-        {pickerRows(selected).map(({ id, label, entry }) => {
+        {rows.map(({ id, label, entry }) => {
           const checked = selected.includes(id)
           return (
             <li key={id} className="flex items-start gap-2.5">
@@ -83,7 +98,7 @@ export function SubagentModelsSection({ workspaceId }: { workspaceId: string }) 
           )
         })}
       </ul>
-      {selected.length === 0 && (
+      {settings != null && selected.length === 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
           With nothing ticked, assistants cannot delegate to another model at all.
         </p>

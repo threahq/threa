@@ -1,4 +1,4 @@
-import { SUBAGENT_MODEL_CATALOG } from "@threa/types"
+import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODEL_CATALOG } from "@threa/types"
 import { usePreferences } from "@/contexts"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { modelDisplayName } from "@/lib/model-display"
@@ -21,33 +21,45 @@ function describe(modelId: string): { label: string; price: string | null } {
  * subset, never an extension: the list offered is exactly what the workspace
  * allows, and storing every one of them stores nothing at all — an empty
  * preference means "follow the workspace", so a set the admin later widens
- * reaches a user who never narrowed it.
+ * reaches a user who never narrowed it. Unticking the last box is allowed and
+ * lands in exactly that state.
  *
- * The last ticked model can't be unticked: zero ticks IS the follow-the-
- * workspace state, so it would read as a refusal and behave as the opposite.
- * Hidden entirely when the workspace offers fewer than two models — there is
- * nothing to subset.
+ * Ticks derive from the STORED preference, never from the effective fallback:
+ * when a stored subset no longer names a single model the workspace still
+ * allows, resolution yields nothing and delegation is off for this user — an
+ * honest empty picker plus a note, rather than a full set of ticks claiming a
+ * permission they do not have. Hidden entirely when the workspace offers fewer
+ * than two models; there is nothing to subset.
  */
 export function PersonalSubagentModelsSection({ workspaceId }: { workspaceId: string }) {
   const { preferences, updatePreference, isLoading } = usePreferences()
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
-  const workspaceModels = bootstrap?.workspaceSettings?.subagentModels ?? []
+  const workspaceSettings = bootstrap?.workspaceSettings ?? null
+  // The shipped default stands in until the bootstrap resolves, so a mid-load
+  // render never claims the workspace allows nothing (`FollowUpLimitSection`'s
+  // `?? DEFAULT` shape); the boxes stay disabled until the real set arrives.
+  const workspaceModels = workspaceSettings?.subagentModels ?? DEFAULT_SUBAGENT_MODELS
   const stored = preferences?.subagentModels ?? []
 
-  // A stored id the workspace has since dropped is not in the offered list, so
-  // it neither renders nor counts — the same thing resolution does with it.
-  const narrowed = stored.filter((id) => workspaceModels.includes(id))
-  const selected = narrowed.length > 0 ? narrowed : workspaceModels
+  const narrowed = workspaceModels.filter((id) => stored.includes(id))
+  const hasSubset = stored.length > 0
+  const selected = hasSubset ? narrowed : workspaceModels
+  // A subset that survived the workspace dropping every model in it: resolution
+  // returns nothing and the user gets no delegation at all until they re-pick.
+  const delegationOff = hasSubset && narrowed.length === 0
 
   if (workspaceModels.length < 2) return null
 
   const toggle = (modelId: string, next: boolean) => {
-    const updated = next ? [...selected, modelId] : selected.filter((id) => id !== modelId)
-    if (updated.length === 0) return
-    // Every model ticked is the default: store nothing rather than a list that
-    // would freeze this user out of a model the workspace adds later.
-    const covers = workspaceModels.every((id) => updated.includes(id))
-    void updatePreference("subagentModels", covers ? [] : workspaceModels.filter((id) => updated.includes(id)))
+    const updated = new Set(selected)
+    if (next) updated.add(modelId)
+    else updated.delete(modelId)
+    // Ordered on the workspace list, which also drops any stale id the stored
+    // subset was still carrying. Every model ticked is the default: store nothing
+    // rather than a list that would freeze this user out of a model the
+    // workspace adds later — and an empty selection is that same default.
+    const ordered = workspaceModels.filter((id) => updated.has(id))
+    void updatePreference("subagentModels", ordered.length === workspaceModels.length ? [] : ordered)
   }
 
   // The separator belongs to the section, not the page: the section disappears
@@ -73,7 +85,7 @@ export function PersonalSubagentModelsSection({ workspaceId }: { workspaceId: st
                   id={`personal-subagent-model-${modelId}`}
                   className="mt-0.5"
                   checked={checked}
-                  disabled={isLoading || (checked && selected.length === 1)}
+                  disabled={isLoading || workspaceSettings == null}
                   onCheckedChange={(value) => toggle(modelId, value === true)}
                 />
                 <div className="min-w-0">
@@ -86,6 +98,17 @@ export function PersonalSubagentModelsSection({ workspaceId }: { workspaceId: st
             )
           })}
         </ul>
+        {delegationOff && (
+          <p className="text-xs text-amber-700 dark:text-amber-500">
+            None of the models you picked are in your workspace&apos;s set any more, so nothing can be delegated for you
+            until you choose one above.
+          </p>
+        )}
+        {!hasSubset && (
+          <p className="text-xs text-muted-foreground">
+            Following your workspace&apos;s set — models it adds later are available to you automatically.
+          </p>
+        )}
       </section>
     </>
   )

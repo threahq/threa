@@ -295,4 +295,33 @@ describe("user subset", () => {
 
     expect(parse(result.output)).toMatchObject({ ok: true, model: DEFAULT_SUBAGENT_MODELS[0] })
   })
+
+  test("a workspace that drops every model the user picked leaves them with no delegation, not the full set", async () => {
+    await userPreferencesService.updatePreferences(ctx.workspaceId, ctx.member, {
+      subagentModels: [DEFAULT_SUBAGENT_MODELS[1]],
+    })
+    await workspaceSettingsService.updateSettings(ctx.workspaceId, { subagentModels: [DEFAULT_SUBAGENT_MODELS[0]] })
+
+    try {
+      const channel = await ctx.createChannel({ slug: "subset-emptied" })
+      // The user's restriction is honoured rather than silently widened back to
+      // the workspace set — an intersection of nothing is nothing.
+      const result = await (
+        await toolForStream(channel.id, ctx.member)
+      ).config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+
+      expect(parse(result.output)).toMatchObject({ ok: false, allowedModels: [] })
+      expect(await activeRunCount(channel.id)).toBe(0)
+
+      // A user who narrowed nothing still delegates on the shrunken set.
+      const ownerChannel = await ctx.createChannel({ slug: "subset-emptied-owner" })
+      const allowed = await (
+        await toolForStream(ownerChannel.id, ctx.owner)
+      ).config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+      expect(parse(allowed.output)).toMatchObject({ ok: true })
+    } finally {
+      await clearUserSubset(ctx.member)
+      await workspaceSettingsService.updateSettings(ctx.workspaceId, { subagentModels: DEFAULT_SUBAGENT_MODELS })
+    }
+  })
 })

@@ -114,6 +114,44 @@ describe("SubagentModelsSection", () => {
     expect(update).not.toHaveBeenCalled()
   })
 
+  it("round-trips an untick and retick to the canonical order, so the default elides again", async () => {
+    const queryClient = new QueryClient()
+    // Stored in an order no admin would have arranged by hand — the shape a
+    // naive append leaves behind, and the one that stops the default eliding.
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], [DEFAULT_SUBAGENT_MODELS[1]])
+    const update = vi
+      .spyOn(workspaceSettingsApi, "update")
+      .mockResolvedValue({ subagentModels: DEFAULT_SUBAGENT_MODELS } as WorkspaceSettings)
+    const user = userEvent.setup()
+
+    renderSection(queryClient)
+    const first = SUBAGENT_MODEL_CATALOG.find((entry) => entry.id === DEFAULT_SUBAGENT_MODELS[0])!
+    await user.click(screen.getByLabelText(new RegExp(first.label)))
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { subagentModels: DEFAULT_SUBAGENT_MODELS }))
+  })
+
+  it("falls back to the shipped default set while the bootstrap is unresolved, and claims nothing", () => {
+    const queryClient = new QueryClient()
+    renderSection(queryClient)
+
+    for (const entry of SUBAGENT_MODEL_CATALOG) {
+      const box = screen.getByLabelText(new RegExp(entry.label))
+      expect(box).toHaveAttribute("data-state", DEFAULT_SUBAGENT_MODELS.includes(entry.id) ? "checked" : "unchecked")
+      expect(box).toBeDisabled()
+    }
+    expect(screen.queryByText(/assistants cannot delegate/)).toBeNull()
+  })
+
+  it("says so once an empty set is genuinely what the workspace stored", () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], [])
+
+    renderSection(queryClient)
+
+    expect(screen.getByText(/assistants cannot delegate/)).toBeInTheDocument()
+  })
+
   it("keeps a stored model the catalog no longer lists tickable, so it can be dropped", async () => {
     const queryClient = new QueryClient()
     const retired = "openrouter:anthropic/claude-sonnet-4.6"

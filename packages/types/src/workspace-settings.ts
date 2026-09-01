@@ -32,6 +32,10 @@ export type SubagentModelTier = (typeof SUBAGENT_MODEL_TIERS)[number]
  * number a picker shows has to come from somewhere and this is the one place it
  * does (INV-33). The backend still sends only ids (INV-46); the label and the
  * rate are formatted client-side from here.
+ *
+ * Rates verified against the `docs/model-reference.md` price table on
+ * 2026-09-01. They are DISPLAY-ONLY — nothing bills off them — so a stale figure
+ * misinforms an admin but cannot mischarge anyone.
  */
 export interface SubagentModelCatalogEntry {
   id: string
@@ -48,10 +52,10 @@ export interface SubagentModelCatalogEntry {
 /**
  * The models offered as delegation targets. A curated subset of the registry —
  * a subagent is a second opinion, so the list is the models worth asking, not
- * every chat model that exists. `subagent-model-catalog.test.ts` holds every id
- * here to being a registry chat model, and the settings write path re-checks
- * against the registry, so an entry can never become an offer the runtime
- * refuses.
+ * every chat model that exists. `apps/backend/src/features/subagents/models.test.ts`
+ * holds every id here to being a registry chat model, and the settings write path
+ * re-checks against the registry, so an entry can never become an offer the
+ * runtime refuses.
  */
 export const SUBAGENT_MODEL_CATALOG: readonly SubagentModelCatalogEntry[] = [
   {
