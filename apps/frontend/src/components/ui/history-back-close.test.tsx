@@ -3,7 +3,7 @@ import { useState } from "react"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { createMemoryRouter, Link, RouterProvider } from "react-router-dom"
 import * as mobileModule from "@/hooks/use-mobile"
-import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter, OverlayHistoryLayout } from "./history-back-close"
+import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter } from "./history-back-close"
 import { Drawer, DrawerContent, DrawerTitle } from "./drawer"
 import { Dialog, DialogContent, DialogTitle } from "./dialog"
 import { MediaGalleryProvider, useMediaGallery } from "@/contexts/media-gallery-context"
@@ -86,12 +86,11 @@ function StackedHarness() {
 const STREAM_PATH = "/w/ws1/s/stream1"
 
 function makeRouter(ui: React.ReactElement) {
-  // Same shape as production: the coordinator's location feed is a pathless
-  // layout wrapping every route, and the router itself is attached.
+  // Same shape as production: a pathless layout wrapping every route, and the
+  // router attached — its own subscription is the coordinator's location feed.
   const router = createMemoryRouter(
     [
       {
-        element: <OverlayHistoryLayout />,
         children: [
           { path: "/other", element: <div>other-page</div> },
           { path: STREAM_PATH, element: ui },
@@ -218,6 +217,27 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
     await act(async () => {})
     expect(router.state.location.pathname).toBe("/other")
+  })
+
+  it("back onto an entry left with the drawer open lands there, one press one entry", async () => {
+    const router = makeRouter(<DrawerHarness />)
+    render(<RouterProvider router={router} />)
+
+    await openDrawer(router)
+    const sentinelKey = router.state.location.key
+    fireEvent.click(screen.getByText("navigate-item"))
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+    await act(async () => {})
+
+    // The sentinel entry is where the reader left the page: back returns to it
+    // and stops. Popping it as well — it is still marked, and it was ours once
+    // — spends two entries on one press, and on a phone that is how the app
+    // ends up closing a navigation early.
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await act(async () => {})
+    expect(router.state.location.key).toBe(sentinelKey)
   })
 
   it("a menu item that closes the drawer and replace-navigates keeps its target", async () => {
