@@ -282,6 +282,11 @@ describe("conversationAssigner — new (client-minted id)", () => {
     addPrimaryMessage = spyOn(ConversationRepository, "addPrimaryMessage").mockResolvedValue(undefined as never)
     spyOn(ConversationRepository, "bumpActivityForIds").mockResolvedValue(undefined as never)
     emitAssignmentEvents = spyOn(assignmentEvents, "emitAssignmentEvents").mockResolvedValue(undefined as never)
+    // The mint reads the send's stream so a card-anchored thread (a subagent's)
+    // records the conversation it branches from.
+    spyOn(streams.StreamRepository, "findById").mockImplementation(
+      async (_client: unknown, id: string) => (STREAMS[id] ?? null) as never
+    )
   })
 
   afterEach(() => {

@@ -3,6 +3,7 @@ import {
   type AsideAnchoredEventPayload,
   type DelegationStatusChangedEventPayload,
   type MemosCapturedEventPayload,
+  type SubagentStatusChangedEventPayload,
 } from "@threa/types"
 import type { CachedEvent } from "@/db"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/components/timeline/session-grouping"
@@ -29,6 +30,14 @@ export type BoardEventRow =
       streamId: string
       event: CachedEvent
       statusPatch?: DelegationStatusChangedEventPayload
+    }
+  | {
+      kind: "subagent"
+      key: string
+      sortMs: number
+      streamId: string
+      event: CachedEvent
+      statusPatch?: CachedEvent
     }
 
 export interface ResolveBoardEventRowsCtx {
@@ -81,6 +90,7 @@ function timeMs(event: CachedEvent): number {
 export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEventRowsCtx): BoardEventRow[] {
   const cancelledFollowUpIds = new Set<string>()
   const delegationStatusPatches = new Map<string, { payload: DelegationStatusChangedEventPayload; atMs: number }>()
+  const subagentStatusPatches = new Map<string, { event: CachedEvent; atMs: number }>()
   for (const event of events) {
     if (event.eventType === "agent:follow_up_cancelled") {
       const followUpId = (event.payload as { followUpId?: string })?.followUpId
@@ -93,6 +103,16 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
       const atMs = timeMs(event)
       const existing = delegationStatusPatches.get(payload.delegationId)
       if (!existing || atMs >= existing.atMs) delegationStatusPatches.set(payload.delegationId, { payload, atMs })
+      continue
+    }
+    if (event.eventType === "subagent:status_changed") {
+      const subagentId = (event.payload as SubagentStatusChangedEventPayload | undefined)?.subagentId
+      if (!subagentId) continue
+      const atMs = timeMs(event)
+      const existing = subagentStatusPatches.get(subagentId)
+      // The whole event, not just the payload: the card's meta line reports who
+      // ended the run and when, and only the event row carries actor and time.
+      if (!existing || atMs >= existing.atMs) subagentStatusPatches.set(subagentId, { event, atMs })
     }
   }
 
@@ -178,6 +198,16 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
           streamId: event.streamId,
           event,
           statusPatch: delegationId ? delegationStatusPatches.get(delegationId)?.payload : undefined,
+        })
+      } else if (event.eventType === "subagent:created") {
+        const subagentId = (event.payload as { subagentId?: string })?.subagentId
+        rows.push({
+          kind: "subagent",
+          key: event.id,
+          sortMs: timeMs(event),
+          streamId: event.streamId,
+          event,
+          statusPatch: subagentId ? subagentStatusPatches.get(subagentId)?.event : undefined,
         })
       }
     }

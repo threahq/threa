@@ -92,6 +92,17 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
       sourceConversationId: CONV,
     }),
   ],
+  "subagent:created": [
+    cachedEvent("subagent:created", {
+      subagentId: "subagent_1",
+      title: "Second opinion: outbox retry semantics",
+      model: "openrouter:anthropic/claude-opus-5",
+      personaId: "persona_1",
+      threadStreamId: "stream_subagent_1",
+      createdBy: "usr_1",
+      sourceConversationId: CONV,
+    }),
+  ],
   "aside:anchored": [
     cachedEvent("aside:anchored", { asideId: "stream_aside_1", anchorId: MEMBER_MESSAGE, conversationId: CONV }),
   ],
@@ -159,6 +170,7 @@ describe("BoardEventRowItem renders every spec-declared board row", () => {
       "memos:captured": ["memo"],
       "agent:follow_up_scheduled": ["followUp"],
       "delegation:created": ["delegation"],
+      "subagent:created": ["subagent"],
       "aside:anchored": ["aside"],
       command_dispatched: ["command"],
       command_completed: ["command"],

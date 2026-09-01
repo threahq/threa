@@ -4,6 +4,7 @@ import { ConversationRepository } from "./repository"
 import type { ConversationAssigner, Message } from "../messaging"
 import { checkStreamAccess, StreamRepository, type Stream } from "../streams"
 import { emitAssignmentEvents } from "./assignment-events"
+import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
 import { conversationId } from "../../lib/id"
 import { ConversationIntents, ConversationStatuses, StreamTypes, type AuthorType } from "@threa/types"
 import { HttpError } from "../../lib/errors"
@@ -183,12 +184,16 @@ async function mintConversationForMessage(
   initiatingUserId?: string
 ): Promise<string> {
   const newId = preferredId ?? conversationId()
+  // A PK read so a mint inside a card-anchored thread (a subagent's) records the
+  // conversation it branches from; the graph can't derive that one.
+  const stream = await StreamRepository.findById(client, message.streamId)
   await ConversationRepository.insert(client, {
     id: newId,
     streamId: message.streamId,
     workspaceId,
     confidence: 1,
     status: ConversationStatuses.ACTIVE,
+    parentConversationId: await resolveEventAnchoredParentConversationId(client, stream),
   })
   await ConversationRepository.addPrimaryMessage(client, workspaceId, newId, message.id, message.authorId)
   await ConversationRepository.bumpActivityForIds(client, workspaceId, [newId])

@@ -22,17 +22,22 @@ import { applySettlingAll } from "@/hooks/use-board-card-messages"
  *   member of, so a child card can find the parent conversation its opener thread
  *   forked from.
  * - `conversationById` — resolve a looked-up id back to its post (topic/anchor).
+ * - `storedParentConversationId` — the parent the SERVER wrote down, for the
+ *   branches the graph cannot derive: a thread anchored on a card event has no
+ *   member message to look the fork up by. Written for subagent threads.
  */
 export interface ConversationGraph {
   conversationByAnchorStreamId: Map<string, CachedBoardPost>
   conversationIdByMemberMessageId: Map<string, string>
   conversationById: Map<string, CachedBoardPost>
+  storedParentConversationId: Map<string, string>
 }
 
 const EMPTY_GRAPH: ConversationGraph = {
   conversationByAnchorStreamId: new Map(),
   conversationIdByMemberMessageId: new Map(),
   conversationById: new Map(),
+  storedParentConversationId: new Map(),
 }
 
 export function buildConversationGraph(posts: CachedBoardPost[]): ConversationGraph {
@@ -43,15 +48,24 @@ function buildGraph(posts: CachedBoardPost[]): ConversationGraph {
   const conversationByAnchorStreamId = new Map<string, CachedBoardPost>()
   const conversationIdByMemberMessageId = new Map<string, string>()
   const conversationById = new Map<string, CachedBoardPost>()
+  const storedParentConversationId = new Map<string, string>()
   for (const post of posts) {
     conversationById.set(post.id, post)
+    if (post.conversation.parentConversationId) {
+      storedParentConversationId.set(post.id, post.conversation.parentConversationId)
+    }
     const anchor = post.conversation.streamId
     if (post.rootStreamId !== undefined && post.rootStreamId !== anchor) {
       conversationByAnchorStreamId.set(anchor, post)
     }
     for (const messageId of post.conversation.messageIds ?? []) conversationIdByMemberMessageId.set(messageId, post.id)
   }
-  return { conversationByAnchorStreamId, conversationIdByMemberMessageId, conversationById }
+  return {
+    conversationByAnchorStreamId,
+    conversationIdByMemberMessageId,
+    conversationById,
+    storedParentConversationId,
+  }
 }
 
 interface GraphEntry {
@@ -173,7 +187,7 @@ export function useStreamStructuralIndex(workspaceId: string): StreamStructuralI
 }
 
 /**
- * The branch relationship, resolved from the graph alone: the parent conversation
+ * The branch relationship: the parent conversation
  * a `conversationId`'s anchor thread forks off, or `null` when it isn't a branch
  * (anchor isn't a thread, its fork message belongs to no conversation, or that
  * conversation is empty/itself). The single walk primitive shared by the child
@@ -188,12 +202,15 @@ export function resolveParentConversationId(params: {
 }): string | null {
   const { conversationId, anchorStreamId, index, graph } = params
   const anchor = index.streamsById.get(anchorStreamId)
-  // The fork the branch hangs off is this thread's anchor. A card anchor (event_)
-  // never matches a message-keyed conversation membership, so it resolves to no
-  // parent naturally — the board's message-only assumption without an extra guard.
+  // The fork the branch hangs off is this thread's anchor. A card anchor
+  // (`event_`) never matches a message-keyed membership, so those threads resolve
+  // through the server-written parent below instead.
   const anchorId = anchor?.parentAnchorId ?? anchor?.parentMessageId
   if (!anchor || anchor.type !== StreamTypes.THREAD || !anchorId) return null
-  const parentId = graph.conversationIdByMemberMessageId.get(anchorId)
+  // Graph derivation stays primary; the stored id covers only what it cannot
+  // see — a card-anchored thread, whose fork is an event, not a message.
+  const parentId =
+    graph.conversationIdByMemberMessageId.get(anchorId) ?? graph.storedParentConversationId.get(conversationId)
   if (!parentId || parentId === conversationId) return null
   const parentPost = graph.conversationById.get(parentId)
   if (!parentPost || parentPost.conversation.messageIds.length === 0) return null

@@ -24,6 +24,7 @@ import { MessageConversationStateRepository } from "./settling-repository"
 import { SETTLING_CONFIDENCE_THRESHOLD } from "./boundary-extraction/config"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
+import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
 import { isClusteredAuthorType, isClusteredStreamType } from "./extraction-eligibility"
 import { conversationId } from "../../lib/id"
 import {
@@ -430,6 +431,7 @@ export class BoundaryExtractionService {
               id: conversationId(),
               streamId,
               workspaceId,
+              parentConversationId: await resolveEventAnchoredParentConversationId(client, stream),
               topicSummary: decision.newTopic,
               topicSummarySource: decision.newTopic === undefined ? undefined : TitleSources.GENERATED,
               summary: decision.newSummary,
@@ -863,6 +865,7 @@ export class BoundaryExtractionService {
           workspaceId,
           confidence: 1,
           status: ConversationStatuses.ACTIVE,
+          parentConversationId: await resolveEventAnchoredParentConversationId(client, stream),
         }))
 
       await ConversationRepository.addPrimaryMessage(client, workspaceId, conversation.id, message.id, message.authorId)

@@ -13,10 +13,15 @@ import {
   type LinkPreviewContentType,
   type LinkPreviewSummary,
   type MemosCapturedEventPayload,
+  type SubagentCreatedEventPayload,
+  type SubagentStatus,
+  type SubagentStatusChangedEventPayload,
+  SubagentStatuses,
 } from "@threa/types"
 
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import { delegationAvailabilityLabel } from "@/lib/delegation-display"
+import { resolveSubagentCardState, SUBAGENT_STATE_LABEL } from "@/lib/subagent-display"
 import { formatDuration, formatFireTime } from "@/lib/dates"
 import { resolveEmojiShortcodes, stripMarkdownKeepingCode, truncateInline } from "@/lib/markdown/strip"
 
@@ -269,6 +274,21 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
         kind: "delegation",
         label: payload?.title ? `Delegation: ${payload.title}` : "Delegation",
         meta: delegationAvailabilityLabel(row.statusPatch?.status ?? DelegationStatuses.OPEN, row.statusPatch?.reason),
+      }
+    }
+    case "subagent": {
+      const payload = row.event.payload as SubagentCreatedEventPayload | undefined
+      const patch = row.statusPatch?.payload as SubagentStatusChangedEventPayload | undefined
+      const status: SubagentStatus = patch?.status ?? SubagentStatuses.ACTIVE
+      return {
+        key: row.key,
+        kind: "subagent",
+        label: payload?.title ? `Subagent: ${payload.title}` : "Subagent",
+        // The ledger has no live-session map, so an active run reads as working
+        // unless its own patch says the subagent is waiting on the reader.
+        meta: SUBAGENT_STATE_LABEL[
+          resolveSubagentCardState({ status, hasLiveSession: false, lastAgentMessageAt: patch?.lastAgentMessageAt })
+        ],
       }
     }
     case "aside": {

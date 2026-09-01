@@ -24,11 +24,17 @@ function stream(id: string, type: string, parentMessageId: string | null = null)
   } as CachedStream
 }
 
-function post(id: string, anchorStreamId: string, messageIds: string[], topicSummary: string | null): CachedBoardPost {
+function post(
+  id: string,
+  anchorStreamId: string,
+  messageIds: string[],
+  topicSummary: string | null,
+  parentConversationId: string | null = null
+): CachedBoardPost {
   return {
     id,
     workspaceId: "ws_1",
-    conversation: { id, streamId: anchorStreamId, messageIds, topicSummary },
+    conversation: { id, streamId: anchorStreamId, messageIds, topicSummary, parentConversationId },
     rootStreamId: "root",
   } as unknown as CachedBoardPost
 }
@@ -51,6 +57,11 @@ function fixtures(streams: CachedStream[], posts: CachedBoardPost[]) {
       posts.flatMap((p) => p.conversation.messageIds.map((m) => [m, p.id] as const))
     ),
     conversationById: new Map(posts.map((p) => [p.id, p])),
+    storedParentConversationId: new Map(
+      posts.flatMap((p) =>
+        p.conversation.parentConversationId ? [[p.id, p.conversation.parentConversationId] as const] : []
+      )
+    ),
   }
   return { index, graph }
 }
@@ -201,5 +212,27 @@ describe("branchParentConversationId", () => {
     const emptied = posts.map((p) => (p.id === "conv_root" ? post("conv_root", "root", [], null) : p))
     const f2 = fixtures(streams, emptied)
     expect(branchParentConversationId("conv_child", f2.index, f2.graph)).toBeNull()
+  })
+
+  it("nests a card-anchored thread through the parent the server wrote down", () => {
+    // A subagent's thread hangs off the `subagent:created` card, so the graph has
+    // no member message to derive the fork from — without the stored parent this
+    // conversation renders as its own top-level board card.
+    const streams = [stream("root", StreamTypes.CHANNEL), stream("t_sub", StreamTypes.THREAD, "event_card")]
+    const derived = [post("conv_root", "root", ["m1"], null), post("conv_sub", "t_sub", ["c1"], null)]
+    const withoutStored = fixtures(streams, derived)
+    expect(branchParentConversationId("conv_sub", withoutStored.index, withoutStored.graph)).toBeNull()
+
+    const stored = fixtures(streams, [derived[0], post("conv_sub", "t_sub", ["c1"], null, "conv_root")])
+    expect(branchParentConversationId("conv_sub", stored.index, stored.graph)).toBe("conv_root")
+  })
+
+  it("ignores a stored parent that is the conversation itself", () => {
+    const streams = [stream("root", StreamTypes.CHANNEL), stream("t_sub", StreamTypes.THREAD, "event_card")]
+    const { index, graph } = fixtures(streams, [
+      post("conv_root", "root", ["m1"], null),
+      post("conv_sub", "t_sub", ["c1"], null, "conv_sub"),
+    ])
+    expect(branchParentConversationId("conv_sub", index, graph)).toBeNull()
   })
 })
