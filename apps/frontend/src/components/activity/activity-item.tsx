@@ -90,9 +90,7 @@ export function ActivityItem({
         isSelf && "opacity-75 hover:bg-muted/40 hover:opacity-100"
       )}
     >
-      {/* Urgency strip, the sidebar's signal for the same thing (`UrgencyStrip`
-          in `sidebar/stream-item.tsx`). The slot is always 4px wide and only the
-          colour changes, so reading a row can't shift it (INV-21). */}
+      {/* The slot is always 4px wide and only the colour changes, so reading a row can't shift it (INV-21). */}
       <span
         aria-hidden
         className="w-1 shrink-0 rounded-l-lg transition-colors"

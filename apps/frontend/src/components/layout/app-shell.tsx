@@ -7,7 +7,6 @@ import {
   SIDEBAR_COLLAPSE_THRESHOLD,
   sidebarWidthCap,
   clampSidebarWidth,
-  type UrgencyBlock,
 } from "@/contexts"
 import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useTouchCapable } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -72,39 +71,6 @@ function PullIndicator({ distance, progress, pulling, refreshing, mode }: PullIn
   )
 }
 
-/**
- * Soft, position-matched urgency glow blocks. Each block is a single blurred
- * bar sized to its stream row (expanded 150% and centered) so the color diffuses
- * out as a glow rather than a hard bar. Rendered on the desktop edge strip; the
- * `position`/`height` fractions are measured against the sidebar in
- * `useUrgencyTracking`.
- */
-function UrgencyGlowBlocks({ blocks }: { blocks: Map<string, UrgencyBlock> }) {
-  return (
-    <>
-      {Array.from(blocks.entries()).map(([streamId, block]) => {
-        const expandedHeight = block.height * 1.5
-        const centeredTop = block.position - block.height * 0.25
-        return (
-          <div
-            key={streamId}
-            className="absolute transition-opacity duration-300"
-            style={{
-              left: "-4px",
-              width: "14px",
-              top: `${centeredTop * 100}%`,
-              height: `${Math.max(expandedHeight * 100, 4)}%`,
-              backgroundColor: block.color,
-              filter: "blur(12px)",
-              opacity: block.opacity,
-            }}
-          />
-        )
-      })}
-    </>
-  )
-}
-
 interface AppShellProps {
   sidebar: ReactNode
   children: ReactNode
@@ -114,7 +80,7 @@ interface AppShellProps {
  * Main application shell with collapsible sidebar.
  *
  * Sidebar states:
- * - collapsed: 6px color strip only, 30px hover margin for "magnetic" feel
+ * - collapsed: 6px rail only, 30px hover margin for "magnetic" feel
  * - preview: user-defined width, positioned absolute, doesn't push content (hover state)
  * - pinned: user-defined width, positioned normal, pushes content
  */
@@ -124,7 +90,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     width,
     isMobile,
     isResizing,
-    urgencyBlocks,
     setHovering,
     collapse,
     showPreview,
@@ -304,8 +269,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             transition: pulling ? "none" : "transform 0.3s ease-out",
           }}
         >
-          {/* Top-edge fade — smooths the hard cutoff of sidebar glow and backdrop
-               darkness where they meet the pull padding area above */}
+          {/* Top-edge fade smooths the backdrop cutoff where it meets the pull padding above. */}
           <div
             className="absolute inset-x-0 top-0 z-[60] pointer-events-none"
             style={{
@@ -353,17 +317,9 @@ export function AppShell({ sidebar, children }: AppShellProps) {
           >
             {!isMobile && (
               <div
-                className="absolute left-0 top-0 h-full w-[6px] z-50 pointer-events-none"
-                style={{
-                  // Clip right edge to prevent blur bleeding into sidebar/content
-                  // Let blur extend left (off-screen), up, and down for soft glow
-                  clipPath: "inset(-50px 0 -50px -50px)",
-                }}
+                className="absolute left-0 top-0 h-full w-[6px] z-50 pointer-events-none bg-muted-foreground/30"
                 aria-hidden="true"
-              >
-                <div className="absolute inset-0" style={{ backgroundColor: "hsl(var(--muted-foreground) / 0.3)" }} />
-                <UrgencyGlowBlocks blocks={urgencyBlocks} />
-              </div>
+              />
             )}
 
             {/* Invisible 30px zone giving the collapsed sidebar a "magnetic" feel — enters preview on hover. */}

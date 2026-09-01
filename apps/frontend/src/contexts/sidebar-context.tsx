@@ -20,18 +20,6 @@ type SidebarOpenState = "open" | "collapsed"
  */
 type CollapseState = "open" | "collapsed"
 
-/** Urgency block for position-matched collapsed strip */
-interface UrgencyBlock {
-  /** Position as fraction of total list height (0 to 1) */
-  position: number
-  /** Height as fraction of total list height */
-  height: number
-  /** CSS color for this urgency level */
-  color: string
-  /** Opacity for fade transitions (0-1) */
-  opacity: number
-}
-
 /** Persisted sidebar state (single localStorage key) */
 interface SidebarPersistedState {
   openState: SidebarOpenState
@@ -89,14 +77,6 @@ interface SidebarContextValue {
   isHovering: boolean
   /** Whether sidebar is currently being resized */
   isResizing: boolean
-  /** Position-matched urgency blocks for collapsed strip */
-  urgencyBlocks: Map<string, UrgencyBlock>
-  /** Total height of sidebar (for position calculations) */
-  sidebarHeight: number
-  /** Offset from sidebar top to scroll viewport top (header) */
-  scrollContainerOffset: number
-  /** Monotonic counter bumped on sidebar scroll so position-tracked glow blocks re-measure */
-  scrollVersion: number
   /** Show preview state on hover (only from collapsed) */
   showPreview: () => void
   /** Hide preview state after delay */
@@ -122,14 +102,6 @@ interface SidebarContextValue {
   toggleSectionState: (section: string, defaultState?: CollapseState) => void
   /** Force a section to a specific state without toggling. */
   setSectionState: (section: string, state: CollapseState) => void
-  /** Set urgency block for a stream item (opacity is added automatically) */
-  setUrgencyBlock: (streamId: string, block: Omit<UrgencyBlock, "opacity"> | null) => void
-  /** Set sidebar height */
-  setSidebarHeight: (height: number) => void
-  /** Set scroll container offset from sidebar top */
-  setScrollContainerOffset: (offset: number) => void
-  /** Bump `scrollVersion` to trigger re-measurement of glow block positions */
-  bumpScrollVersion: () => void
   /** Notify that a menu inside the sidebar opened/closed (prevents collapse while open) */
   setMenuOpen: (open: boolean) => void
 }
@@ -234,12 +206,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
   const [isHovering, setIsHovering] = useState(false)
   const isHoveringRef = useRef(false)
   const [isResizing, setIsResizing] = useState(false)
-  const [urgencyBlocks, setUrgencyBlocks] = useState<Map<string, UrgencyBlock>>(new Map())
-  const [sidebarHeight, setSidebarHeight] = useState(0)
-  const [scrollContainerOffset, setScrollContainerOffset] = useState(0)
-  const [scrollVersion, setScrollVersion] = useState(0)
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const fadeOutTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const menuOpenCountRef = useRef(0)
 
   const updatePersistedState = useCallback(
@@ -433,54 +400,11 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     [storageKey]
   )
 
-  // Urgency block registration for position-matched strip with fade transitions
-  const setUrgencyBlock = useCallback((streamId: string, block: Omit<UrgencyBlock, "opacity"> | null) => {
-    const existingTimeout = fadeOutTimeoutsRef.current.get(streamId)
-    if (existingTimeout) {
-      clearTimeout(existingTimeout)
-      fadeOutTimeoutsRef.current.delete(streamId)
-    }
-
-    if (block === null) {
-      // Fade out: set opacity to 0, then remove after transition
-      setUrgencyBlocks((current) => {
-        const existing = current.get(streamId)
-        if (!existing) return current
-
-        const next = new Map(current)
-        next.set(streamId, { ...existing, opacity: 0 })
-        return next
-      })
-
-      // Schedule removal after fade transition completes
-      const timeout = setTimeout(() => {
-        setUrgencyBlocks((current) => {
-          const next = new Map(current)
-          next.delete(streamId)
-          return next
-        })
-        fadeOutTimeoutsRef.current.delete(streamId)
-      }, 300)
-      fadeOutTimeoutsRef.current.set(streamId, timeout)
-    } else {
-      // Fade in: set block with full opacity
-      setUrgencyBlocks((current) => {
-        const next = new Map(current)
-        next.set(streamId, { ...block, opacity: 1 })
-        return next
-      })
-    }
-  }, [])
-
-  const bumpScrollVersion = useCallback(() => setScrollVersion((v) => v + 1), [])
-
   useEffect(() => {
     return () => {
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current)
       }
-      fadeOutTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout))
-      fadeOutTimeoutsRef.current.clear()
     }
   }, [])
 
@@ -494,10 +418,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         isMobile,
         isHovering,
         isResizing,
-        urgencyBlocks,
-        sidebarHeight,
-        scrollContainerOffset,
-        scrollVersion,
         showPreview,
         hidePreview,
         togglePinned,
@@ -509,10 +429,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         setWidth,
         toggleSectionState,
         setSectionState,
-        setUrgencyBlock,
-        setSidebarHeight,
-        setScrollContainerOffset,
-        bumpScrollVersion,
         setMenuOpen,
       }}
     >
@@ -529,4 +445,4 @@ export function useSidebar() {
   return context
 }
 
-export type { UrgencyBlock, CollapseState }
+export type { CollapseState }

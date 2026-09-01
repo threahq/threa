@@ -66,7 +66,6 @@ export {
   SIDEBAR_COLLAPSE_THRESHOLD,
   sidebarWidthCap,
   clampSidebarWidth,
-  type UrgencyBlock,
   type CollapseState,
 } from "./sidebar-context"
 export { TraceProvider, useTrace } from "./trace-context"

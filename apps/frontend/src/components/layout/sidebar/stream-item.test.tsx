@@ -14,7 +14,6 @@ import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
-import * as urgencyTrackingModule from "./use-urgency-tracking"
 
 const collapseOnMobile = vi.fn()
 const openStreamSettings = vi.fn()
@@ -84,9 +83,6 @@ describe("StreamItem", () => {
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
       collapseOnMobile,
       setMenuOpen,
-      setUrgencyBlock: vi.fn(),
-      sidebarHeight: 0,
-      scrollContainerOffset: 0,
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
     vi.spyOn(hooksModule, "isDraftId").mockImplementation(() => false)
@@ -141,8 +137,6 @@ describe("StreamItem", () => {
     vi.spyOn(streamSettingsModule, "useStreamSettings").mockReturnValue({
       openStreamSettings,
     } as unknown as ReturnType<typeof streamSettingsModule.useStreamSettings>)
-
-    vi.spyOn(urgencyTrackingModule, "useUrgencyTracking").mockImplementation(() => undefined)
   })
 
   afterEach(() => {
@@ -513,7 +507,6 @@ describe("StreamItem — board mode", () => {
     vi.spyOn(streamSettingsModule, "useStreamSettings").mockReturnValue({
       openStreamSettings,
     } as unknown as ReturnType<typeof streamSettingsModule.useStreamSettings>)
-    vi.spyOn(urgencyTrackingModule, "useUrgencyTracking").mockImplementation(() => undefined)
   })
 
   afterEach(() => vi.useRealTimers())

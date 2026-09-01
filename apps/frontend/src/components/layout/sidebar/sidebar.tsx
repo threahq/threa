@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
@@ -86,15 +86,7 @@ interface SidebarProps {
 
 export function Sidebar({ workspaceId }: SidebarProps) {
   const { phase } = useCoordinatedLoading()
-  const {
-    getSectionState,
-    toggleSectionState,
-    setSidebarHeight,
-    setScrollContainerOffset,
-    bumpScrollVersion,
-    collapseOnMobile,
-    isMobile,
-  } = useSidebar()
+  const { getSectionState, toggleSectionState, collapseOnMobile, isMobile } = useSidebar()
   const { isOpen: isSearchOpen } = useSearchPanel()
   const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
@@ -435,54 +427,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     )
   }
 
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const sidebarRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    const sidebar = sidebarRef.current
-    if (!container || !sidebar) return
-
-    // The element that actually scrolls is Radix's viewport, not the padded
-    // content div — measure the header offset and listen for scroll on it.
-    const viewport = container.closest<HTMLElement>("[data-radix-scroll-area-viewport]")
-    const offsetRef = viewport ?? container
-
-    const updateDimensions = () => {
-      setSidebarHeight(sidebar.offsetHeight)
-
-      // Offset from sidebar top to the scroll viewport top (the header region).
-      // Scroll-independent, so glow blocks can add their own scroll delta on top.
-      const refRect = offsetRef.getBoundingClientRect()
-      const sidebarRect = sidebar.getBoundingClientRect()
-      setScrollContainerOffset(refRect.top - sidebarRect.top)
-    }
-
-    updateDimensions()
-
-    const observer = new ResizeObserver(updateDimensions)
-    observer.observe(container)
-    observer.observe(sidebar)
-
-    // Re-measure glow positions as the list scrolls so blocks stay flush with
-    // their rows. rAF-coalesced to one update per frame.
-    let frame = 0
-    const handleScroll = () => {
-      if (frame) return
-      frame = requestAnimationFrame(() => {
-        frame = 0
-        bumpScrollVersion()
-      })
-    }
-    viewport?.addEventListener("scroll", handleScroll, { passive: true })
-
-    return () => {
-      observer.disconnect()
-      viewport?.removeEventListener("scroll", handleScroll)
-      if (frame) cancelAnimationFrame(frame)
-    }
-  }, [setSidebarHeight, setScrollContainerOffset, bumpScrollVersion])
-
   const handleCreateScratchpad = async () => {
     try {
       const draftId = await createScratchpad("on")
@@ -678,8 +622,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   return (
     <>
       <SidebarShell
-        sidebarRef={sidebarRef}
-        scrollContainerRef={scrollContainerRef}
         header={
           <SidebarHeader
             workspaceName={workspace?.name ?? ""}
@@ -708,7 +650,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
             homeHintFor={(id) => homeHintById.get(id) ?? null}
             quickLinksSlot={quickLinksSlot}
-            scrollContainerRef={scrollContainerRef}
             boardMode={boardMode}
           />
         }

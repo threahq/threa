@@ -1,4 +1,3 @@
-import { createRef } from "react"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { render, screen } from "@/test"
@@ -81,7 +80,6 @@ function renderList(streams: StreamItemData[], search: string) {
         onAssignStreamLabel={vi.fn()}
         onStreamMovedFromLabel={vi.fn()}
         homeHintFor={() => null}
-        scrollContainerRef={createRef<HTMLDivElement>()}
         boardMode={makeBoardMode()}
       />
     </MemoryRouter>

@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode, type RefObject } from "react"
+import { Fragment, useState, type ReactNode } from "react"
 import {
   DndContext,
   DragOverlay,
@@ -139,7 +139,6 @@ interface SidebarStreamListProps {
   onStreamMovedFromLabel: (streamId: string, sourceLabelId: string) => void
   /** Resolve a stream's "· home" hint (custom section / pinned label) for Unread rows. */
   homeHintFor: (streamId: string) => string | null
-  scrollContainerRef: RefObject<HTMLDivElement | null>
   /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. Every
    *  row's board branch is gated on it, so chats mode is untouched. */
   boardMode?: SidebarBoardMode | null
@@ -165,7 +164,6 @@ export function SidebarStreamList({
   onAssignStreamLabel,
   onStreamMovedFromLabel,
   homeHintFor,
-  scrollContainerRef,
   boardMode,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
@@ -394,7 +392,6 @@ export function SidebarStreamList({
               onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
               compact={presentation.compact}
               showPreviewOnHover={presentation.showPreviewOnHover}
-              scrollContainerRef={scrollContainerRef}
               onAdd={add?.onAdd}
               addTooltip={add?.addTooltip}
               addMenuActions={add?.addMenuActions}
@@ -424,7 +421,6 @@ export function SidebarStreamList({
               headerAccessory={unreadAccessory}
               compact={presentation.compact}
               showPreviewOnHover={presentation.showPreviewOnHover}
-              scrollContainerRef={scrollContainerRef}
               streamDragEnabled={streamDragEnabled}
               homeHintFor={isUnread ? homeHintFor : undefined}
               boardMode={boardMode}

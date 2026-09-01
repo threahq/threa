@@ -29,10 +29,9 @@ export function SidebarToggle({ location, className }: SidebarToggleProps) {
   // affordance — clicking it locks the hover-preview into pinned.
   const hidden = location === "page" && isPinned
 
-  // Desktop page headers sit 6px right of the viewport edge (urgency strip
-  // occupies the first 6px). Pull the button 6px left so it lands at the same
-  // viewport x as the sidebar version. Not needed on mobile (no strip) or in
-  // the sidebar (padding is already measured from the sidebar's own edge).
+  // Desktop page headers sit 6px right of the viewport edge because of the
+  // collapsed sidebar rail. Pull the button 6px left so it lands at the same
+  // viewport x as the sidebar version. Not needed on mobile or in the sidebar.
   const offsetClass = location === "page" && !isMobile ? "-ml-1.5" : ""
 
   // When hidden we also collapse the wrapper's flex footprint so following
