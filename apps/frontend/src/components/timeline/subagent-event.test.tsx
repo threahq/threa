@@ -125,7 +125,9 @@ function geometrySignature(container: HTMLElement): string {
 beforeEach(() => {
   vi.restoreAllMocks()
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
-    getActorName: () => "Kristoffer",
+    // Per-id resolution: the card matches a live session's personaName against
+    // the run persona's resolved name before claiming the spinner.
+    getActorName: (id: string | null) => (id === CREATED_PAYLOAD.personaId ? "Ariadne" : "Kristoffer"),
   } as unknown as ReturnType<typeof hooksModule.useActors>)
   vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(false)
   vi.spyOn(hooksModule, "useInputMode").mockReturnValue("mouse")
@@ -139,6 +141,13 @@ describe("SubagentEvent states", () => {
     expect(screen.getByText("Working")).toBeInTheDocument()
     expect(screen.getByText(/Claude Opus 5 · reading apps\/backend/)).toBeInTheDocument()
     expect(container.querySelector(".animate-spin")).not.toBeNull()
+  })
+
+  it("does not spin for another persona's session in the thread", () => {
+    const { container } = renderCard({ activity: { ...LIVE_SESSION, personaName: "Sage" } })
+
+    expect(container.querySelector(".animate-spin")).toBeNull()
+    expect(screen.getByText(/starting…/)).toBeInTheDocument()
   })
 
   it("waits for the reader once the subagent spoke last and no session is live", () => {

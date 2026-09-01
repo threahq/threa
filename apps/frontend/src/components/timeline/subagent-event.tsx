@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react"
 import {
+  AuthorTypes,
   SubagentStatuses,
   type StreamEvent,
   type SubagentCreatedEventPayload,
@@ -134,9 +135,17 @@ export function SubagentEvent({
   else if (optimisticallyRequeued) status = SubagentStatuses.ACTIVE
   const optimisticFlip = optimisticallyCancelled || optimisticallyRequeued
 
+  // A live session in the thread is only this run's if the persona matches: an
+  // @mention of another persona can win the thread's one-session slot, and the
+  // card must not spin for someone else's turn. An unresolved actor name
+  // mismatches, which degrades toward "starting" — under-claiming motion, never
+  // claiming work that isn't the subagent's.
+  const runActivity =
+    activity && activity.personaName === getActorName(payload.personaId, AuthorTypes.PERSONA) ? activity : undefined
+
   const state = resolveSubagentCardState({
     status,
-    hasLiveSession: !!activity && !optimisticFlip,
+    hasLiveSession: !!runActivity && !optimisticFlip,
     lastAgentMessageAt: optimisticFlip ? null : patchPayload?.lastAgentMessageAt,
     threadSummary: payload.threadSummary,
   })
@@ -150,7 +159,10 @@ export function SubagentEvent({
   const metaParts: Array<string | null> = []
   switch (state) {
     case "working":
-      metaParts.push(modelLabel, activity ? (activity.substep ?? getStepInlineLabel(activity.currentStepType)) : null)
+      metaParts.push(
+        modelLabel,
+        runActivity ? (runActivity.substep ?? getStepInlineLabel(runActivity.currentStepType)) : null
+      )
       break
     case "starting":
       // Nothing is running: say when the subagent last spoke, or that it has yet
@@ -179,11 +191,13 @@ export function SubagentEvent({
       )
       break
     case "failed":
-      metaParts.push(modelLabel, subagentFailureLabel(patchPayload?.statusNote))
+      metaParts.push(modelLabel, subagentFailureLabel(settled?.statusNote))
       break
     case "cancelled":
+      // The fallback fetch carries no actor, so the by-line only appears when
+      // the patch does — "Cancelled by Unknown" would be worse than "Cancelled".
       metaParts.push(
-        `Cancelled by ${getActorName(statusPatch?.actorId ?? null, statusPatch?.actorType ?? null)}`,
+        statusPatch ? `Cancelled by ${getActorName(statusPatch.actorId ?? null, statusPatch.actorType ?? null)}` : null,
         patchAt ? formatTime(patchAt) : null
       )
       break
