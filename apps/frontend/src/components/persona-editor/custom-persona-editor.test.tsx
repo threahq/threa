@@ -12,7 +12,10 @@ import {
   type JSONContent,
   type PersonaConfigResponse,
   type PersonaResolvedConfig,
+  type WorkspaceBootstrap,
+  type WorkspaceSettings,
 } from "@threa/types"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
 import * as attachmentsApiModule from "@/api/attachments"
@@ -203,8 +206,11 @@ function attachmentInput(container: HTMLElement): HTMLInputElement {
   return input
 }
 
-function renderEditor(cfg: PersonaConfigResponse = config()) {
+function renderEditor(cfg: PersonaConfigResponse = config(), governedModels: string[] = []) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+    workspaceSettings: { subagentModels: governedModels } as WorkspaceSettings,
+  } as unknown as WorkspaceBootstrap)
   const tree = (next: PersonaConfigResponse) => (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -225,6 +231,27 @@ function renderEditor(cfg: PersonaConfigResponse = config()) {
 }
 
 describe("CustomPersonaEditor", () => {
+  it("offers only the workspace's delegation models as escalation targets, unlike the model picker", async () => {
+    const user = userEvent.setup()
+    const withTwoModels = config({
+      availableModels: [
+        { id: "openrouter:anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
+        { id: "openrouter:anthropic/claude-opus-5", label: "Claude Opus 5" },
+      ],
+    })
+    renderEditor(withTwoModels, ["openrouter:anthropic/claude-opus-5"])
+
+    await user.click(screen.getByRole("combobox", { name: /Escalation model/ }))
+    const escalationOptions = await screen.findAllByRole("option")
+    expect(escalationOptions.map((option) => option.textContent)).toEqual(["None (no escalation)", "Claude Opus 5"])
+    await user.keyboard("{Escape}")
+
+    // The plain model picker is unaffected — only escalation is governed.
+    await user.click(screen.getByRole("combobox", { name: "Model" }))
+    const modelOptions = await screen.findAllByRole("option")
+    expect(modelOptions.map((option) => option.textContent)).toEqual(["Claude Sonnet 4.6", "Claude Opus 5"])
+  })
+
   it("saves the full config verbatim with the row's OCC token", async () => {
     const update = vi
       .spyOn(personasApi, "updateCustom")

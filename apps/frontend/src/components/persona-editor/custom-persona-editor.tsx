@@ -14,6 +14,7 @@ import {
   PERSONA_NAME_MAX_CHARS,
   PERSONA_SLOT_MAX_CHARS,
   PERSONA_SYSTEM_PROMPT_MAX_CHARS,
+  DEFAULT_SUBAGENT_MODELS,
   type AgentToolName,
   type JSONContent,
   type PersonaAttachmentContextMode,
@@ -44,6 +45,7 @@ import { EmojiField } from "@/components/labels/label-edit-form"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { cn } from "@/lib/utils"
 import { formatFileSize } from "@/lib/file-size"
 import {
@@ -130,6 +132,7 @@ export function CustomPersonaEditor({
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { toEmoji, toShortcode } = useWorkspaceEmoji(workspaceId)
+  const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
   const disableSelectionToolbar = useInputMode() === "touch"
   const promptEditorRef = useRef<RichEditorHandle>(null)
   const [promptFormatOpen, setPromptFormatOpen] = useState(false)
@@ -184,9 +187,25 @@ export function CustomPersonaEditor({
     () => buildModelOptions(config.availableModels, [values.model, resolved.model]),
     [config.availableModels, values.model, resolved.model]
   )
+  // Escalation is governed workspace-wide, personal personas included — the
+  // backend refuses anything outside the delegation set. The row's own current
+  // value stays offered so a set narrowed after the fact still saves; an
+  // unresolved bootstrap falls back to the shipped default rather than claiming
+  // nothing is governed.
+  const workspaceSettings = bootstrap?.workspaceSettings ?? null
+  const governedModels = workspaceSettings?.subagentModels ?? DEFAULT_SUBAGENT_MODELS
   const escalationOptions = useMemo(
-    () => buildModelOptions(config.availableModels, [values.escalationModel, resolved.escalationModel]),
-    [config.availableModels, values.escalationModel, resolved.escalationModel]
+    () =>
+      buildModelOptions(
+        config.availableModels.filter(
+          (option) =>
+            governedModels.includes(option.id) ||
+            option.id === values.escalationModel ||
+            option.id === resolved.escalationModel
+        ),
+        [values.escalationModel, resolved.escalationModel]
+      ),
+    [config.availableModels, governedModels, values.escalationModel, resolved.escalationModel]
   )
 
   const nameValid = values.name.trim().length > 0 && values.name.length <= PERSONA_NAME_MAX_CHARS
@@ -589,9 +608,9 @@ export function CustomPersonaEditor({
       </div>
 
       <div className="space-y-1.5">
-        <Label>Model</Label>
+        <Label htmlFor="custom-persona-model">Model</Label>
         <Select value={values.model} onValueChange={(value) => setField("model", value)}>
-          <SelectTrigger className="w-full sm:w-72">
+          <SelectTrigger id="custom-persona-model" className="w-full sm:w-72">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -605,13 +624,16 @@ export function CustomPersonaEditor({
       </div>
 
       <div className="space-y-1.5">
-        <Label>Escalation model</Label>
-        <p className="text-xs text-muted-foreground">Used for harder turns. None disables escalation.</p>
+        <Label htmlFor="custom-persona-escalation-model">Escalation model</Label>
+        <p className="text-xs text-muted-foreground">
+          Used for harder turns, from the workspace&apos;s delegation models. None disables escalation.
+        </p>
         <Select
           value={values.escalationModel ?? ESCALATION_NONE}
+          disabled={workspaceSettings == null}
           onValueChange={(value) => setField("escalationModel", value === ESCALATION_NONE ? null : value)}
         >
-          <SelectTrigger className="w-full sm:w-72">
+          <SelectTrigger id="custom-persona-escalation-model" className="w-full sm:w-72">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

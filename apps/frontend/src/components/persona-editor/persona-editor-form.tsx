@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { ChevronDown } from "lucide-react"
-import type { AgentToolName, PersonaConfigResponse } from "@threa/types"
+import { DEFAULT_SUBAGENT_MODELS, type AgentToolName, type PersonaConfigResponse } from "@threa/types"
 import { ApiError } from "@/api/client"
 import type { PersonaCustomConflict, PersonaOverrideConflict } from "@/api"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -70,13 +70,17 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
   // Escalation answers to the workspace's delegation set, not the whole registry
   // — the backend rejects anything else. The persona's own current and default
   // values are folded in so a set narrowed after the fact still renders and saves.
-  const governedModels = bootstrap?.workspaceSettings?.subagentModels
+  // An unresolved bootstrap falls back to the shipped default set rather than an
+  // empty one: "no models are governed" is a claim, not a loading state, and the
+  // picker is disabled until the real set lands anyway.
+  const workspaceSettings = bootstrap?.workspaceSettings ?? null
+  const governedModels = workspaceSettings?.subagentModels ?? DEFAULT_SUBAGENT_MODELS
   const escalationOptions = useMemo(
     () =>
       buildModelOptions(
         config.availableModels.filter(
           (option) =>
-            (governedModels ?? []).includes(option.id) ||
+            governedModels.includes(option.id) ||
             option.id === values.escalationModel ||
             option.id === defaults.escalationModel
         ),
@@ -183,6 +187,7 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
       >
         <Select
           value={values.escalationModel ?? ESCALATION_NONE}
+          disabled={workspaceSettings == null}
           onValueChange={(value) => setField("escalationModel", value === ESCALATION_NONE ? null : value)}
         >
           <SelectTrigger id="persona-escalation-model" className="w-full sm:w-72">
