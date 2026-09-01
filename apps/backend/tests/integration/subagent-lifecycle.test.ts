@@ -457,7 +457,7 @@ describe("failure, expiry and requeue", () => {
     const reactivated = await subagentService.requeue({
       workspaceId: ctx.workspaceId,
       id: run.id,
-      parentStreamId: channel.id,
+      scopeStreamId: channel.id,
       requeuedBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
     })
 
@@ -472,7 +472,7 @@ describe("failure, expiry and requeue", () => {
       await subagentService.requeue({
         workspaceId: ctx.workspaceId,
         id: run.id,
-        parentStreamId: channel.id,
+        scopeStreamId: channel.id,
         requeuedBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
       })
     ).toBeNull()
@@ -491,7 +491,7 @@ describe("failure, expiry and requeue", () => {
     await subagentService.requeue({
       workspaceId: ctx.workspaceId,
       id: run.id,
-      parentStreamId: channel.id,
+      scopeStreamId: channel.id,
       requeuedBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
     })
 
@@ -517,7 +517,7 @@ describe("failure, expiry and requeue", () => {
       subagentService.requeue({
         workspaceId: ctx.workspaceId,
         id: first.run.id,
-        parentStreamId: channel.id,
+        scopeStreamId: channel.id,
         requeuedBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
       })
     ).rejects.toBeInstanceOf(SubagentAlreadyActiveError)
@@ -569,7 +569,7 @@ describe("failure, expiry and requeue", () => {
       await subagentService.requeue({
         workspaceId: ctx.workspaceId,
         id: idle.run.id,
-        parentStreamId: idleChannel.id,
+        scopeStreamId: idleChannel.id,
         requeuedBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
       })
     ).toMatchObject({ status: SubagentStatuses.ACTIVE })

@@ -114,8 +114,8 @@ const EFFECT_ROUTE_RESOLVERS = {
   },
   follow_up: () => null,
   brief: () => null,
-  // Routeless until the subagent card ships: the effect's target is the run id,
-  // and the thread it would link to is only known to the card's own payload.
+  // Routeless: the effect's target is the run id, which names no route — the
+  // destination thread is known only to the card event's own payload.
   subagent: () => null,
   other: () => null,
 } as const satisfies Record<ToolEffectKind, EffectResolver>

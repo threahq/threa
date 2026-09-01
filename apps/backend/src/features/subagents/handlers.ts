@@ -60,7 +60,7 @@ export function createSubagentHandlers({ pool, subagentService }: Dependencies) 
         const reactivated = await subagentService.requeue({
           workspaceId,
           id: run.id,
-          parentStreamId: run.parentStreamId,
+          scopeStreamId: run.scopeStreamId,
           requeuedBy: { actorId: userId, actorType: AuthorTypes.USER },
         })
         res.json({ requeued: reactivated !== null })

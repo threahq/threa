@@ -7,7 +7,7 @@ import type { ReportBackToolDeps } from "./tool-deps"
 const ReportBackSchema = z.object({
   summary: z
     .string()
-    .min(1)
+    .refine((value) => value.trim().length > 0, "summary must contain non-whitespace content")
     .describe("Your closing answer (markdown). Posted as your message in this thread and shown on the card."),
 })
 

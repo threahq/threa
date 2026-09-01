@@ -14,7 +14,7 @@ import {
 } from "@threa/types"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import type { CreateThreadParams } from "../streams"
-import { SUBAGENT_IDLE_EXPIRY_DAYS } from "./config"
+import { SUBAGENT_EXPIRY_SWEEP_LIMIT, SUBAGENT_IDLE_EXPIRY_DAYS } from "./config"
 import { SubagentRunRepository, type SubagentRun } from "./repository"
 
 /** The outbox event type that carries each subagent timeline event to the stream room. */
@@ -302,14 +302,14 @@ export class SubagentService {
   async requeue(params: {
     workspaceId: string
     id: string
-    parentStreamId?: string
+    scopeStreamId: string
     requeuedBy: { actorId: string; actorType: AuthorType }
   }): Promise<SubagentRun | null> {
     return withTransaction(this.pool, async (client) => {
       const reactivated = await SubagentRunRepository.requeue(client, {
         workspaceId: params.workspaceId,
         id: params.id,
-        parentStreamId: params.parentStreamId,
+        scopeStreamId: params.scopeStreamId,
       })
       if (!reactivated) return null
       await this.appendStatusEvent(client, reactivated, params.requeuedBy)
@@ -319,12 +319,16 @@ export class SubagentService {
   }
 
   /**
-   * Expiry-sweep entry: CAS every idle live run to `expired` (set-based,
-   * INV-56) and append each card's status patch in the same transaction.
+   * Expiry-sweep entry: CAS idle live runs to `expired` (set-based, INV-56,
+   * bounded per pass) and append each card's status patch in the same
+   * transaction.
    */
   async expireIdleRuns(): Promise<SubagentRun[]> {
     return withTransaction(this.pool, async (client) => {
-      const expired = await SubagentRunRepository.expireIdle(client, { idleDays: this.idleExpiryDays })
+      const expired = await SubagentRunRepository.expireIdle(client, {
+        idleDays: this.idleExpiryDays,
+        limit: SUBAGENT_EXPIRY_SWEEP_LIMIT,
+      })
       for (const run of expired) {
         await this.appendStatusEvent(client, run, { actorType: AuthorTypes.SYSTEM })
       }

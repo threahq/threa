@@ -22,7 +22,8 @@ import { SubagentService } from "../../src/features/subagents"
 import { JobQueues, type QueueManager } from "../../src/lib/queue"
 import { messageId, sessionId } from "../../src/lib/id"
 import type { OutboxEvent } from "../../src/lib/outbox"
-import { setupIsolatedTestDatabase } from "./setup"
+import { setupIsolatedTestDatabase, testMessageContent, withTransaction } from "./setup"
+import { MessageRepository } from "../../src/features/messaging"
 import { createParams, createSubagentTestContext, type SubagentTestContext } from "./subagent-support"
 
 let pool: Pool
@@ -111,7 +112,33 @@ describe("subagent thread in a channel", () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  test("a channel thread with no subagent never dispatched in the first place", async () => {
+  test("a channel thread that never hosted a subagent does not dispatch", async () => {
+    const channel = await ctx.createChannel({ slug: "wake-plain", memberIds: [ctx.owner, ctx.member] })
+    const anchorId = messageId()
+    await withTransaction(pool, async (client) => {
+      await MessageRepository.insert(client, {
+        id: anchorId,
+        streamId: channel.id,
+        sequence: 1,
+        authorId: ctx.member,
+        authorType: AuthorTypes.USER,
+        ...testMessageContent("plain thread anchor"),
+      })
+    })
+    const thread = await ctx.streamService.createThreadInternal({
+      workspaceId: ctx.workspaceId,
+      parentStreamId: channel.id,
+      parentAnchorId: anchorId,
+      createdBy: ctx.member,
+    })
+    const { handler, send } = createHandler()
+
+    await handler.process(userMessageEvent(thread.id))
+
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  test("a cancelled run reverts the thread to the ordinary rules — no dispatch", async () => {
     const channel = await ctx.createChannel({ slug: "wake-baseline", memberIds: [ctx.owner] })
     const { run, threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
     await subagentService.cancel({

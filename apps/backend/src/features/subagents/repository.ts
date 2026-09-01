@@ -1,5 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
+import { isUniqueViolation } from "../../lib/errors"
 import { SubagentStatuses, type SubagentFailureReason, type SubagentStatus } from "@threa/types"
 
 interface SubagentRunRow {
@@ -69,24 +70,19 @@ export interface InsertSubagentRunParams {
 }
 
 /**
- * The partial unique index `(parent_stream_id) WHERE status = 'active'` rejected
- * the write: this stream already has a live subagent. Typed so the tool and the
- * requeue endpoint can tell the model/user "one at a time" instead of surfacing
- * a raw Postgres error (INV-11 — the refusal is explicit, not a silent no-op).
+ * The partial unique index `(scope_stream_id) WHERE status = 'active'` rejected
+ * the write: this conversation surface already has a live subagent. Typed so
+ * the tool and the requeue endpoint can tell the model/user "one at a time"
+ * instead of surfacing a raw Postgres error (INV-11 — the refusal is explicit,
+ * not a silent no-op).
  */
 export class SubagentAlreadyActiveError extends Error {
   readonly code = "SUBAGENT_ALREADY_ACTIVE"
 
-  constructor(readonly parentStreamId: string) {
-    super(`A subagent is already active in stream ${parentStreamId}`)
+  constructor(readonly scopeStreamId: string) {
+    super(`A subagent is already active for scope ${scopeStreamId}`)
     this.name = "SubagentAlreadyActiveError"
   }
-}
-
-const UNIQUE_VIOLATION = "23505"
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === UNIQUE_VIOLATION
 }
 
 const COLUMNS = `
@@ -258,7 +254,11 @@ export const SubagentRunRepository = {
    * patches in the same transaction. Concurrent sweeps are idempotent — the
    * second matches nothing.
    */
-  async expireIdle(db: Querier, params: { idleDays: number }): Promise<SubagentRun[]> {
+  async expireIdle(db: Querier, params: { idleDays: number; limit: number }): Promise<SubagentRun[]> {
+    // Bounded per pass so a post-downtime backlog can't turn one sweep
+    // transaction into an unbounded per-card event loop; the hourly sweep
+    // drains the remainder on later passes. The CAS on `status` keeps a row
+    // selected by two concurrent sweeps single-transition.
     const result = await db.query<SubagentRunRow>(sql`
       UPDATE subagent_runs SET
         status = ${SubagentStatuses.EXPIRED},
@@ -266,7 +266,12 @@ export const SubagentRunRepository = {
         status_changed_at = NOW(),
         updated_at = NOW()
       WHERE status = ${SubagentStatuses.ACTIVE}
-        AND status_changed_at <= NOW() - (${params.idleDays} || ' days')::interval
+        AND id IN (
+          SELECT id FROM subagent_runs
+          WHERE status = ${SubagentStatuses.ACTIVE}
+            AND status_changed_at <= NOW() - (${params.idleDays} || ' days')::interval
+          LIMIT ${params.limit}
+        )
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows.map(mapRow)
@@ -280,7 +285,7 @@ export const SubagentRunRepository = {
    */
   async requeue(
     db: Querier,
-    params: { workspaceId: string; id: string; parentStreamId?: string }
+    params: { workspaceId: string; id: string; scopeStreamId: string }
   ): Promise<SubagentRun | null> {
     try {
       const result = await db.query<SubagentRunRow>(sql`
@@ -292,13 +297,13 @@ export const SubagentRunRepository = {
           updated_at = NOW()
         WHERE id = ${params.id}
           AND workspace_id = ${params.workspaceId}
-          AND (${params.parentStreamId ?? null}::text IS NULL OR parent_stream_id = ${params.parentStreamId ?? null})
+          AND scope_stream_id = ${params.scopeStreamId}
           AND status IN (${SubagentStatuses.FAILED}, ${SubagentStatuses.EXPIRED})
         RETURNING ${sql.raw(COLUMNS)}
       `)
       return result.rows[0] ? mapRow(result.rows[0]) : null
     } catch (error) {
-      if (isUniqueViolation(error)) throw new SubagentAlreadyActiveError(params.parentStreamId ?? params.id)
+      if (isUniqueViolation(error)) throw new SubagentAlreadyActiveError(params.scopeStreamId)
       throw error
     }
   },

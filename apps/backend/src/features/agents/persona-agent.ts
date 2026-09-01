@@ -1184,7 +1184,7 @@ export class PersonaAgent {
         const subagentModels =
           offerSubagentDelegation && loadSubagentModels ? await loadSubagentModels({ workspaceId }) : []
         const subagentDelegationDeps: import("./tools/tool-deps").DelegateToModelToolDeps | undefined =
-          delegateToModel && subagentUserId && subagentModels.length > 0
+          offerSubagentDelegation && delegateToModel && subagentUserId && subagentModels.length > 0
             ? {
                 allowedModels: subagentModels,
                 delegateToModel: async ({ model, title, brief }) =>
