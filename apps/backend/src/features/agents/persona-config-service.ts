@@ -1042,13 +1042,22 @@ export class PersonaConfigService {
       throw new HttpError("Source persona not found", { status: 404, code: "PERSONA_SOURCE_NOT_FOUND" })
     }
     const slots = resolvePersonaStyleSlots(source)
+    // A fork copies the source's config, and `POST /personas` is open to any
+    // member for a personal fork — so copying an ungoverned escalation verbatim
+    // would launder it into a fresh row, which the ∪-current allowance then
+    // blesses on every later write. Clamp it to null instead of refusing the
+    // fork: an admin narrowing the delegation set must not break an unrelated
+    // member action, and the owner can re-pick from the governed set.
+    const governed = await this.deps.loadGovernedModels(workspaceId)
+    const escalationModel =
+      source.escalationModel && governed.includes(source.escalationModel) ? source.escalationModel : null
     return {
       name,
       description: source.description,
       avatarEmoji: source.avatarEmoji,
       systemPrompt: source.systemPrompt ?? "",
       model: source.model,
-      escalationModel: source.escalationModel,
+      escalationModel,
       temperature: source.temperature,
       maxTokens: source.maxTokens,
       enabledTools: (source.enabledTools ?? []) as PersonaCustomConfig["enabledTools"],
