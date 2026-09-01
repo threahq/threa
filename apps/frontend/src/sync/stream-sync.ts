@@ -1842,6 +1842,15 @@ function bindStreamSocketHandlers(
     await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
   }
 
+  // Subagent runs have no list hook behind them — the card renders from the
+  // `subagent:created` payload plus the in-window status patches, so the append
+  // IS the update. Only the outcomes board reads them out of band.
+  const handleSubagentEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
+    if (payload.streamId !== streamId) return
+    await handleAppendEvent(payload)
+    await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
+  }
+
   // Follow-ups have no `fired`/`failed` event, so these two are the only live
   // signals the outcomes read gets — schedule and cancel.
   const handleFollowUpEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
@@ -1981,6 +1990,8 @@ function bindStreamSocketHandlers(
   socket.on("stream:agent_follow_up_cancelled", handleFollowUpEvent)
   socket.on("stream:delegation_created", handleDelegationEvent)
   socket.on("stream:delegation_status_changed", handleDelegationEvent)
+  socket.on("stream:subagent_created", handleSubagentEvent)
+  socket.on("stream:subagent_status_changed", handleSubagentEvent)
   // Bot-access request/resolution rows append to the timeline like any other
   // broadcast/patch event; there is no list hook behind them (the card renders
   // from the payload snapshot + the in-window status patch), so a plain append
@@ -2025,6 +2036,8 @@ function bindStreamSocketHandlers(
     socket.off("stream:agent_follow_up_cancelled", handleFollowUpEvent)
     socket.off("stream:delegation_created", handleDelegationEvent)
     socket.off("stream:delegation_status_changed", handleDelegationEvent)
+    socket.off("stream:subagent_created", handleSubagentEvent)
+    socket.off("stream:subagent_status_changed", handleSubagentEvent)
     socket.off("stream:bot_access_requested", handleAppendEvent)
     socket.off("stream:bot_access_status_changed", handleAppendEvent)
     socket.off("stream:brief_updated", handleAppendEvent)

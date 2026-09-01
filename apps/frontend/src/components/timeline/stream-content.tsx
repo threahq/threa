@@ -4,6 +4,7 @@ import { useLocation, useNavigationType, useSearchParams } from "react-router-do
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { SUBAGENT_TERMINAL, type SubagentThreadRun } from "@/lib/subagent-display"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
@@ -73,6 +74,8 @@ import {
   type StreamBootstrap,
   type ConversationWithStaleness,
   type DelegationStatusChangedEventPayload,
+  type SubagentCreatedEventPayload,
+  type SubagentStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
   type UnreadOpenPosition,
@@ -91,6 +94,7 @@ import {
   findFirstMessageId,
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
+  collectSubagentStatusPatches,
   collectBotAccessStatusPatches,
   collectCallEndedPatches,
   findMessageItemIndex,
@@ -862,6 +866,29 @@ export function StreamContent({
     localAnchorEvent
   )
 
+  // The run this stream IS the thread of, read off its own anchor card — the
+  // card and the terminal patch both live in the PARENT stream, which the thread
+  // view already loads to pin the anchor, so this costs no fetch. Drives the
+  // per-message model badge: same persona, different brain, for this window only.
+  const subagentThreadRun = useMemo<SubagentThreadRun | null>(() => {
+    if (!isThread || anchorEvent?.eventType !== "subagent:created") return null
+    const created = anchorEvent.payload as SubagentCreatedEventPayload
+    let endedAt: string | null = null
+    for (const event of parentCachedEvents ?? []) {
+      if (event.eventType !== "subagent:status_changed") continue
+      const patch = event.payload as SubagentStatusChangedEventPayload
+      if (patch.subagentId !== created.subagentId || !SUBAGENT_TERMINAL.has(patch.status)) continue
+      if (!endedAt || event.createdAt > endedAt) endedAt = event.createdAt
+    }
+    return {
+      subagentId: created.subagentId,
+      model: created.model,
+      personaId: created.personaId,
+      startedAt: anchorEvent.createdAt,
+      endedAt,
+    }
+  }, [isThread, anchorEvent, parentCachedEvents])
+
   // Subscribe to stream room FIRST (subscribe-then-bootstrap pattern)
   useStreamSocket(workspaceId, streamId, { enabled: !isDraft })
 
@@ -1507,6 +1534,13 @@ export function StreamContent({
   // patches to render the authoritative live status on the virtualized path.
   const delegationStatusPatches = useMemo(
     () => timeDerive(() => collectDelegationStatusPatches(timelineItems)),
+    [timelineItems]
+  )
+  // Same full-window read for subagent status patches (zero-height, filtered out
+  // of `visibleItems`): the card must see the run's transitions — and the
+  // `lastAgentMessageAt` that makes "waiting for you" true — on the virtualized path.
+  const subagentStatusPatches = useMemo(
+    () => timeDerive(() => collectSubagentStatusPatches(timelineItems)),
     [timelineItems]
   )
   // Same full-window read for bot-access request status patches (zero-height,
@@ -2990,6 +3024,8 @@ export function StreamContent({
                           visibleItems={visibleItems}
                           cancelledFollowUpIds={cancelledFollowUpIds}
                           delegationStatusPatches={delegationStatusPatches}
+                          subagentStatusPatches={subagentStatusPatches}
+                          subagentThreadRun={subagentThreadRun}
                           botAccessStatusPatches={botAccessStatusPatches}
                           callEndedPatches={callEndedPatches}
                           viewerIsMember={isMember}
@@ -3098,6 +3134,7 @@ export function StreamContent({
                             isDividerDimmed={isDividerDimmed}
                             agentActivity={agentActivity}
                             hideSessionCards={isChannel}
+                            subagentThreadRun={subagentThreadRun}
                             newMessageIds={newMessageIds}
                             viewerIsMember={isMember}
                             batch={batchState}
@@ -3264,6 +3301,8 @@ function TimelineMessageList({
   visibleItems,
   cancelledFollowUpIds,
   delegationStatusPatches,
+  subagentStatusPatches,
+  subagentThreadRun,
   botAccessStatusPatches,
   callEndedPatches,
   viewerIsMember,
@@ -3305,6 +3344,8 @@ function TimelineMessageList({
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
   delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
+  subagentStatusPatches: Map<string, StreamEvent>
+  subagentThreadRun: SubagentThreadRun | null
   botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
   callEndedPatches: Map<string, CallEndedEventPayload>
   /** True when the viewer is a member — gates the bot-access card's Approve/Deny. */
@@ -3430,6 +3471,8 @@ function TimelineMessageList({
       onSteerSession: steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
+      subagentStatusPatches,
+      subagentThreadRun,
       botAccessStatusPatches,
       callEndedPatches,
       viewerIsMember,
@@ -3452,6 +3495,8 @@ function TimelineMessageList({
       steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
+      subagentStatusPatches,
+      subagentThreadRun,
       botAccessStatusPatches,
       callEndedPatches,
       viewerIsMember,

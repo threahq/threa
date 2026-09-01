@@ -654,6 +654,7 @@ describe("row-tree read fan-out", () => {
       sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
+      subagentStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
       callEndedPatches: new Map(),
     }

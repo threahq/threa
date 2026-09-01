@@ -13,6 +13,7 @@ import {
   type TraceSource,
 } from "@threa/types"
 import { cn } from "@/lib/utils"
+import { modelDisplayName } from "@/lib/model-display"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
@@ -92,6 +93,14 @@ export function TraceStep({
   const hasSources = effectiveSources && effectiveSources.length > 0
   const messageLink = step.messageId ? `/w/${workspaceId}/s/${streamId}?m=${step.messageId}` : null
   const hueColor = `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`
+  // A subagent turn runs the model the user asked for, which may be weaker or
+  // lateral — calling that "Stronger Model" is a claim the trace cannot make.
+  // The cause lives in the step's own content, so the chip is resolved here
+  // rather than in the step-type-keyed config.
+  const headerConfig =
+    step.stepType === "model_escalated" && parseStructuredContent(effectiveContent)?.cause === "subagent"
+      ? { ...config, label: "Delegated Model" }
+      : config
 
   // A guarded call's step opens BEFORE the guardian decides, so for the whole
   // review window `isInProgress` is true while the action has not started and
@@ -132,7 +141,7 @@ export function TraceStep({
       }}
     >
       <StepHeader
-        config={config}
+        config={headerConfig}
         Icon={Icon}
         startedAt={step.startedAt}
         duration={duration}
@@ -432,12 +441,6 @@ interface AttachedContextRefInfo {
 
 interface AttachedContextInfo {
   refs: AttachedContextRefInfo[]
-}
-
-/** "openrouter:anthropic/claude-opus-4.8" → "claude-opus-4.8" for display. */
-function shortModelName(modelId: string): string {
-  const afterProvider = modelId.split(":").pop() ?? modelId
-  return afterProvider.split("/").pop() ?? afterProvider
 }
 
 function renderStepContent(
@@ -790,14 +793,26 @@ function renderStepContent(
     }
 
     case "model_escalated": {
-      // Dispatch-minted escalation marker ({fromModel, toModel, cause} from
-      // resolveTurnModel) — rendered as prose, never raw wire JSON.
+      // Dispatch-minted escalation marker ({fromModel, toModel, cause,
+      // personaName} from resolveTurnModel) — rendered as prose, never raw wire JSON.
       if (structured && typeof structured.toModel === "string") {
-        const from = typeof structured.fromModel === "string" ? shortModelName(structured.fromModel) : null
+        const to = modelDisplayName(structured.toModel)
+        const from = typeof structured.fromModel === "string" ? modelDisplayName(structured.fromModel) : null
+        // A subagent turn is not an escalation up a ladder — it is a delegation
+        // to a chosen model, so it says who chose and stops there.
+        if (structured.cause === "subagent") {
+          const persona = typeof structured.personaName === "string" ? structured.personaName : null
+          return (
+            <span>
+              Running as <strong>{to}</strong>
+              {persona ? ` — delegated by ${persona}` : " for this delegated thread"}.
+            </span>
+          )
+        }
         return (
           <div className="space-y-1">
             <span>
-              Switched to <strong>{shortModelName(structured.toModel)}</strong>
+              Switched to <strong>{to}</strong>
               {from ? ` (from ${from})` : ""} for this turn.
             </span>
             {structured.cause === "previous_attempt_failed_validation" && (

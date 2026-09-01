@@ -21,6 +21,7 @@ import { MessageContextBadge } from "@/components/composer"
 import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
+import { ModelBadge } from "@/components/message/model-badge"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
 import { usePendingMessages, usePanel, createConversationPanelId, useTrace } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
@@ -169,6 +170,12 @@ interface MessageEventProps {
    * message reopens a scattered conversation (channel/DM timelines only).
    */
   revival?: ConversationRevival
+  /**
+   * The model this message was authored on, when it differs from the persona's
+   * own — a subagent turn. Renders the header chip; absent on every ordinary
+   * message. The window test lives in `EventItem`, which holds the run's card.
+   */
+  modelBadgeId?: string
   batch?: BatchTimelineState
 }
 
@@ -180,6 +187,12 @@ interface MessageLayoutProps {
   actorName: string
   /** True when this is the first message in the stream — renders `<MessageContextBadge>` for bag-attached scratchpads. */
   isFirstMessage?: boolean
+  /**
+   * The model this message was authored on, when it differs from the persona's
+   * own — a subagent turn. Renders the header chip; absent on every ordinary
+   * message. The window test lives in `EventItem`, which holds the run's card.
+   */
+  modelBadgeId?: string
   /** Persona slug for SVG icon support (e.g., "ariadne") */
   /** User avatar image URL */
   statusIndicator: ReactNode
@@ -540,6 +553,7 @@ function MessageLayout({
   isEditing,
   isGroupContinuation,
   isFirstMessage,
+  modelBadgeId,
   containerRef,
   deferSecondaryHydration,
   touchHandlers,
@@ -670,6 +684,7 @@ function MessageLayout({
         <span className={cn("font-semibold text-sm", theme.nameClassName)}>{actorName}</span>
       )}
       {theme.badge}
+      {modelBadgeId && <ModelBadge modelId={modelBadgeId} />}
       {payload.sentVia && isSentViaApi(payload.sentVia) && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -855,6 +870,12 @@ interface MessageEventInnerProps {
   isFirstMessage?: boolean
   /** Topic-revival annotation for the on-message provenance chip (channel/DM only). */
   revival?: ConversationRevival
+  /**
+   * The model this message was authored on, when it differs from the persona's
+   * own — a subagent turn. Renders the header chip; absent on every ordinary
+   * message. The window test lives in `EventItem`, which holds the run's card.
+   */
+  modelBadgeId?: string
   /** Decrypted E2E attachment refs, threaded to the body's `<E2eAttachmentList>`. */
   attachmentRefs?: AttachmentRef[]
   /** Decrypted E2E citation sources, threaded to the body's `<MessageSourceList>` (E2EE-9). */
@@ -908,6 +929,7 @@ function SentMessageEvent({
   groupContinuation,
   isFirstMessage,
   revival,
+  modelBadgeId,
   attachmentRefs,
   sources,
   e2eEnabled,
@@ -1457,6 +1479,7 @@ function SentMessageEvent({
         streamId={streamId}
         actorName={actorName}
         isFirstMessage={isFirstMessage}
+        modelBadgeId={modelBadgeId}
         attachmentRefs={attachmentRefs}
         sources={sources}
         statusIndicator={
@@ -1990,6 +2013,7 @@ export function MessageEvent({
   groupContinuation = false,
   isFirstMessage = false,
   revival,
+  modelBadgeId,
   batch,
 }: MessageEventProps) {
   const rawPayload = event.payload as MessagePayload
@@ -2072,6 +2096,7 @@ export function MessageEvent({
           groupContinuation={groupContinuation}
           isFirstMessage={isFirstMessage}
           revival={revival}
+          modelBadgeId={modelBadgeId}
           attachmentRefs={decrypted.status === "decrypted" ? decrypted.attachmentRefs : undefined}
           sources={decrypted.status === "decrypted" ? decrypted.sources : undefined}
           e2eEnabled={decrypted.status !== "plaintext"}

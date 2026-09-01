@@ -969,6 +969,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
+      subagentStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
       callEndedPatches: new Map(),
       ...overrides,

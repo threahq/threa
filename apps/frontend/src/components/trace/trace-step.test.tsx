@@ -70,10 +70,36 @@ describe("TraceStep", () => {
       </MemoryRouter>
     )
 
-    expect(screen.getByText("claude-opus-4.8")).toBeInTheDocument()
-    expect(screen.getByText(/from claude-sonnet-4\.6/)).toBeInTheDocument()
+    expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument()
+    expect(screen.getByText(/from Claude Sonnet 4\.6/)).toBeInTheDocument()
     expect(screen.getByText(/could not produce a response that passed validation/i)).toBeInTheDocument()
     expect(screen.queryByText(/fromModel/)).not.toBeInTheDocument()
+  })
+
+  it("names the delegating persona on a subagent turn instead of calling it an escalation", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "model_escalated",
+            content: JSON.stringify({
+              fromModel: "openrouter:openai/gpt-5.6-luna",
+              toModel: "openrouter:anthropic/claude-opus-5",
+              cause: "subagent",
+              personaName: "Ariadne",
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Claude Opus 5")).toBeInTheDocument()
+    expect(screen.getByText(/delegated by Ariadne/)).toBeInTheDocument()
+    // A delegation is not a ladder step — the escalation wording must not leak in.
+    expect(screen.queryByText(/stronger model/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Switched to/)).not.toBeInTheDocument()
   })
 
   it("indicates edited messages in reconsideration context", () => {
