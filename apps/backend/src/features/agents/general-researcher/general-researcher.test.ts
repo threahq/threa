@@ -1,6 +1,8 @@
 import { describe, expect, test, mock } from "bun:test"
 import type { AI } from "@threa/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
+import { defaultConfigResolver } from "../../../lib/ai/static-config-resolver"
+import { GENERAL_RESEARCH_MODEL_ID } from "./config"
 import { GeneralResearcher } from "./general-researcher"
 
 /**
@@ -24,10 +26,11 @@ function buildAI(): AI {
   } as unknown as AI
 }
 
-function buildResearcher() {
+/** `configModelId` mirrors the resolver: production registers none, an override sets one. */
+function buildResearcher(configModelId?: string) {
   const ai = buildAI()
   const resolve = mock(async () => ({
-    modelId: "openrouter:openai/gpt-5.6-luna",
+    ...(configModelId ? { modelId: configModelId } : {}),
     temperature: 0.3,
     maxIterations: 3,
   }))
@@ -49,24 +52,53 @@ function researchInput(overrides: Record<string, unknown> = {}) {
 }
 
 describe("GeneralResearcher (backend adapter)", () => {
-  test("resolves config + model and delegates to the shared loop", async () => {
+  test("resolves config and delegates to the shared loop", async () => {
     const { ai, resolve, researcher } = buildResearcher()
 
-    const result = await researcher.research(researchInput())
+    const result = await researcher.research(researchInput({ modelId: "openrouter:openai/gpt-5.6-terra" }))
 
     expect(resolve).toHaveBeenCalledTimes(1)
-    // Model resolved off the resolved config id and handed to the loop.
-    expect(ai.getLanguageModel).toHaveBeenCalledWith("openrouter:openai/gpt-5.6-luna")
+    expect(ai.getLanguageModel).toHaveBeenCalledWith("openrouter:openai/gpt-5.6-terra")
     expect(result.partial).toBeUndefined()
     expect(result.brief).toBe("Auth now uses WorkOS sessions; PR #412 is merged.")
   })
 
-  test("runs the caller's turn model when one is passed, not the config default", async () => {
-    const { ai, researcher } = buildResearcher()
+  describe("model precedence", () => {
+    test("a resolved config model wins over the caller's turn model", async () => {
+      // An eval's componentOverrides / a -m permutation must isolate the
+      // researcher from whichever model the turn under test is running.
+      const { ai, researcher } = buildResearcher("openrouter:anthropic/claude-sonnet-5")
+
+      await researcher.research(researchInput({ modelId: "openrouter:openai/gpt-5.6-terra" }))
+
+      expect(ai.getLanguageModel).toHaveBeenCalledWith("openrouter:anthropic/claude-sonnet-5")
+      expect(ai.getLanguageModel).not.toHaveBeenCalledWith("openrouter:openai/gpt-5.6-terra")
+    })
+
+    test("the caller's turn model wins over the fallback constant", async () => {
+      const { ai, researcher } = buildResearcher()
+
+      await researcher.research(researchInput({ modelId: "openrouter:openai/gpt-5.6-terra" }))
+
+      expect(ai.getLanguageModel).toHaveBeenCalledWith("openrouter:openai/gpt-5.6-terra")
+      expect(ai.getLanguageModel).not.toHaveBeenCalledWith(GENERAL_RESEARCH_MODEL_ID)
+    })
+
+    test("falls back to the constant when neither is set", async () => {
+      const { ai, researcher } = buildResearcher()
+
+      await researcher.research(researchInput())
+
+      expect(ai.getLanguageModel).toHaveBeenCalledWith(GENERAL_RESEARCH_MODEL_ID)
+    })
+  })
+
+  test("production registers no researcher model, so the turn's model reaches the loop", async () => {
+    const ai = buildAI()
+    const researcher = new GeneralResearcher({ ai, configResolver: defaultConfigResolver })
 
     await researcher.research(researchInput({ modelId: "openrouter:openai/gpt-5.6-terra" }))
 
     expect(ai.getLanguageModel).toHaveBeenCalledWith("openrouter:openai/gpt-5.6-terra")
-    expect(ai.getLanguageModel).not.toHaveBeenCalledWith("openrouter:openai/gpt-5.6-luna")
   })
 })

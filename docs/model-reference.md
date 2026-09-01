@@ -115,7 +115,9 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 
 **When to use:** nothing new. Prefer `claude-sonnet-5` — cheaper and it won the eval.
 
-The general researcher (`general_research`) pinned 4.6 until 2026-08-31. It now inherits the calling turn's model — the persona turn's resolved model, escalation included — and falls back to `gpt-5.6-luna` only where there is no calling turn. No code path selects 4.6 by default any more.
+The general researcher (`general_research`) pinned 4.6 until 2026-08-31. It now inherits the calling turn's model: on a backend persona turn that is the resolved turn model, escalation included; an enclave turn always forwards the persona's base model, since enclave turns never escalate. `gpt-5.6-luna` is the fallback where there is no calling turn, and an eval's `general:researcher` override outranks both. No code path selects 4.6 by default any more.
+
+Research cost now follows the turn: a persona pinned to Opus 5 researches at Opus prices, where the same research used to bill at Sonnet 4.6's.
 
 ---
 

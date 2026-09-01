@@ -21,6 +21,11 @@
 # the comparison and breaks providers with stricter structured-output rules
 # (Luna via OpenAI rejects the retrieval agent's zod schema in strict mode).
 #
+# Since 2026-08-31 the general researcher follows the CALLING TURN's model, so
+# each arm would otherwise research on the model it is testing. The explicit
+# `general:researcher` override below restores the isolation: a resolved config
+# model outranks the turn's, so both arms research on the same production model.
+#
 # Run (needs OPENROUTER_API_KEY with credit headroom + TAVILY_API_KEY):
 #   bun run eval -- --config evals/companion-model-comparison.yaml -r 3 -p 4 \
 #     --min-pass-rate 0.67 --json /tmp/ariadne-model-comparison.json
@@ -35,6 +40,8 @@ suites:
       companion:
         model: openrouter:anthropic/claude-sonnet-5
         temperature: 0.7
+      "general:researcher":
+        model: openrouter:openai/gpt-5.6-luna
 
   - name: companion
     title: gpt-5.6-luna
@@ -42,6 +49,8 @@ suites:
       companion:
         model: openrouter:openai/gpt-5.6-luna
         temperature: 0.7
+      "general:researcher":
+        model: openrouter:openai/gpt-5.6-luna
 
   - name: persona-style
     title: claude-sonnet-5 (production)
@@ -49,6 +58,8 @@ suites:
       companion:
         model: openrouter:anthropic/claude-sonnet-5
         temperature: 0.7
+      "general:researcher":
+        model: openrouter:openai/gpt-5.6-luna
 
   - name: persona-style
     title: gpt-5.6-luna
@@ -56,6 +67,8 @@ suites:
       companion:
         model: openrouter:openai/gpt-5.6-luna
         temperature: 0.7
+      "general:researcher":
+        model: openrouter:openai/gpt-5.6-luna
 
   - name: brief-correction
     title: claude-sonnet-5 (production)
@@ -63,6 +76,8 @@ suites:
       companion:
         model: openrouter:anthropic/claude-sonnet-5
         temperature: 0.7
+      "general:researcher":
+        model: openrouter:openai/gpt-5.6-luna
 
   - name: brief-correction
     title: gpt-5.6-luna
@@ -70,3 +85,5 @@ suites:
       companion:
         model: openrouter:openai/gpt-5.6-luna
         temperature: 0.7
+      "general:researcher":
+        model: openrouter:openai/gpt-5.6-luna

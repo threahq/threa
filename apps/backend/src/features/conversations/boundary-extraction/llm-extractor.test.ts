@@ -3,7 +3,7 @@ import { LLMBoundaryExtractor, formatRelativeAge } from "./llm-extractor"
 import type { ExtractionContext, ConversationSummary } from "./types"
 import type { Message } from "../../messaging"
 import type { AI } from "@threa/agent-runtime"
-import type { ConfigResolver, ComponentConfig } from "../../../lib/ai/config-resolver"
+import type { ConfigResolver, AnyComponentConfig } from "../../../lib/ai/config-resolver"
 
 import { NoObjectGeneratedError } from "ai"
 import { BOUNDARY_EXTRACTION_PROMPT, BOUNDARY_EXTRACTION_SYSTEM_PROMPT } from "./config"
@@ -21,7 +21,7 @@ const mockAI: Partial<AI> = {
 }
 
 const mockConfigResolver: ConfigResolver = {
-  async resolve<T extends ComponentConfig>(): Promise<T> {
+  async resolve<T extends AnyComponentConfig>(): Promise<T> {
     return {
       modelId: "openrouter:anthropic/claude-haiku-4.5",
       temperature: 0.2,

@@ -1,6 +1,7 @@
 import type { AI, CostContext } from "@threa/agent-runtime"
 import { runGeneralResearch, type AgentTool, type GeneralResearchResult } from "../runtime"
 import { COMPONENT_PATHS, type ConfigResolver, type GeneralResearcherConfig } from "../../../lib/ai/config-resolver"
+import { GENERAL_RESEARCH_MODEL_ID } from "./config"
 
 export type { GeneralResearchResult, GeneralResearchSubstep } from "@threa/agent-runtime"
 
@@ -19,8 +20,8 @@ export interface GeneralResearchInput {
   tools: AgentTool[]
   /**
    * The calling turn's resolved model, so the research the persona delegates
-   * runs on the brain the user is talking to. Absent (no calling turn) the
-   * ConfigResolver's default stands.
+   * runs on the brain the user is talking to. Absent (no calling turn), the
+   * shared fallback constant stands.
    */
   modelId?: string
   /** Cost context forwarded to every inner AI call for usage attribution. */
@@ -48,18 +49,18 @@ export interface GeneralResearcherDeps {
  * production `AI`, and forwards everything to the shared loop. No behavior of its
  * own beyond that wiring.
  *
- * The one overrideable entry point for the model is `input.modelId` — the
- * calling turn's resolved model. It wins over the resolved config so a persona
- * turn's research runs on the same model as the turn; the ConfigResolver value
- * is the no-turn fallback (INV-44/45: one config path, evals still swap the
- * resolver).
+ * Model precedence, highest first: a resolved `config.modelId` (production
+ * registers none, so a value here is always a deliberate override — an eval's
+ * `componentOverrides` or a `-m` permutation, INV-44/45), then `input.modelId`
+ * (the calling turn's resolved model), then GENERAL_RESEARCH_MODEL_ID for a
+ * caller with no turn of its own.
  */
 export class GeneralResearcher {
   constructor(private readonly deps: GeneralResearcherDeps) {}
 
   async research(input: GeneralResearchInput): Promise<GeneralResearchResult> {
     const config = await this.deps.configResolver.resolve<GeneralResearcherConfig>(COMPONENT_PATHS.GENERAL_RESEARCHER)
-    const modelId = input.modelId ?? config.modelId
+    const modelId = config.modelId ?? input.modelId ?? GENERAL_RESEARCH_MODEL_ID
     const parsed = this.deps.ai.parseModel(modelId)
 
     return runGeneralResearch(

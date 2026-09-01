@@ -419,8 +419,9 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
 
     expect(result.status).toBe("completed")
     expect(capturedModelStrings[0]).toBe(OPUS)
+    expect(researchInputs).toHaveLength(1)
     // Same model the turn ran on — not GENERAL_RESEARCH_MODEL_ID, the no-turn fallback.
-    expect(researchInputs).toEqual([expect.objectContaining({ modelId: OPUS })])
+    expect(researchInputs[0]?.modelId).toBe(OPUS)
   })
 
   it("terminalizes a denied channel-mention thread creation on the parent stream", async () => {

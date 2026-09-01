@@ -10,7 +10,7 @@
  * combinations while using the SAME production code paths.
  */
 
-import type { ConfigResolver, ComponentConfig } from "../../src/lib/ai/config-resolver"
+import type { ConfigResolver, ComponentConfig, AnyComponentConfig } from "../../src/lib/ai/config-resolver"
 import type { ComponentConfig as YamlComponentConfig, ComponentOverrides } from "./config-types"
 
 // -----------------------------------------------------------------------------
@@ -109,7 +109,7 @@ export function createEvalConfigResolver(options: EvalConfigResolverOptions): Co
   const { base, overrides = {} } = options
 
   return {
-    async resolve<T extends ComponentConfig = ComponentConfig>(path: string): Promise<T> {
+    async resolve<T extends AnyComponentConfig = ComponentConfig>(path: string): Promise<T> {
       // Get base config (may throw for unknown paths)
       const baseConfig = await base.resolve<T>(path)
 
