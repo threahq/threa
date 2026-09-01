@@ -38,29 +38,28 @@ test.describe("Sidebar Preview Behavior", () => {
     await page.getByRole("link", { name: "Drafts" }).click()
     await expect(page).toHaveURL(/\/drafts/, { timeout: 5000 })
 
-    // Collapse the sidebar via topbar, then move the mouse away: the redesign's
-    // hover-preview re-expands the sidebar while the pointer sits near the
-    // left-edge toggle, so the collapsed 6px state is only observable once the
-    // pointer leaves the magnetic zone.
+    // Collapse the sidebar via topbar, then move the mouse away: hover-preview
+    // re-expands the sidebar while the pointer sits near the left-edge toggle,
+    // so the collapsed state is only observable outside the magnetic zone.
     await page.getByRole("button", { name: "Collapse sidebar" }).click()
     await moveAwayFromSidebar(page)
-    await expect(sidebar).toHaveCSS("width", "6px", { timeout: 3000 })
+    await expect(sidebar).toHaveCSS("width", "0px", { timeout: 3000 })
 
     // Hover near left edge to trigger preview
     await hoverToPreview(page)
-    await expect(sidebar).not.toHaveCSS("width", "6px", { timeout: 3000 })
+    await expect(sidebar).not.toHaveCSS("width", "0px", { timeout: 3000 })
 
     // Click the channel link inside the previewed sidebar
     await page.getByRole("link", { name: `#${channelName}` }).click()
 
     // Sidebar should still be visible (mouse is over it)
-    await expect(sidebar).not.toHaveCSS("width", "6px")
+    await expect(sidebar).not.toHaveCSS("width", "0px")
 
     // Move mouse away from sidebar
     await moveAwayFromSidebar(page)
 
     // Sidebar should collapse (proves it was preview, not pinned)
-    await expect(sidebar).toHaveCSS("width", "6px", { timeout: 3000 })
+    await expect(sidebar).toHaveCSS("width", "0px", { timeout: 3000 })
   })
 
   test("topbar pin button should still pin the sidebar", async ({ page }) => {
@@ -69,13 +68,13 @@ test.describe("Sidebar Preview Behavior", () => {
     const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
 
     // Sidebar starts pinned
-    await expect(sidebar).not.toHaveCSS("width", "6px")
+    await expect(sidebar).not.toHaveCSS("width", "0px")
 
     // Collapse via topbar, then move the mouse away so the hover-preview
     // doesn't keep the sidebar expanded while the pointer rests on the toggle.
     await page.getByRole("button", { name: "Collapse sidebar" }).click()
     await moveAwayFromSidebar(page)
-    await expect(sidebar).toHaveCSS("width", "6px", { timeout: 3000 })
+    await expect(sidebar).toHaveCSS("width", "0px", { timeout: 3000 })
 
     // Pin from collapsed: hover the left edge to reveal the preview, then click
     // the Pin toggle inside the revealed sidebar header. (The page-topbar copy
@@ -84,12 +83,12 @@ test.describe("Sidebar Preview Behavior", () => {
     // the first place. Scope to the sidebar nav: the page topbar renders its own
     // "Pin sidebar" copy too.)
     await hoverToPreview(page)
-    await expect(sidebar).not.toHaveCSS("width", "6px", { timeout: 3000 })
+    await expect(sidebar).not.toHaveCSS("width", "0px", { timeout: 3000 })
     await sidebar.getByRole("button", { name: "Pin sidebar" }).click()
 
     // Move mouse away - sidebar should stay open because it's pinned (a mere
-    // preview would collapse back to 6px once the pointer leaves).
+    // preview would collapse to zero width once the pointer leaves).
     await moveAwayFromSidebar(page)
-    await expect(sidebar).not.toHaveCSS("width", "6px")
+    await expect(sidebar).not.toHaveCSS("width", "0px")
   })
 })
