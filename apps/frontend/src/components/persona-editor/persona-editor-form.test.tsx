@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { PersonaConfigResponse, PersonaResolvedConfig } from "@threa/types"
+import type { PersonaConfigResponse, PersonaResolvedConfig, WorkspaceBootstrap, WorkspaceSettings } from "@threa/types"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import { PersonaEditorForm } from "./persona-editor-form"
 
 afterEach(() => vi.restoreAllMocks())
@@ -53,8 +54,11 @@ function config(overrides: Partial<PersonaConfigResponse> = {}): PersonaConfigRe
   }
 }
 
-function renderForm(cfg: PersonaConfigResponse = config()) {
+function renderForm(cfg: PersonaConfigResponse = config(), governedModels: string[] = []) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
+    workspaceSettings: { subagentModels: governedModels } as WorkspaceSettings,
+  } as unknown as WorkspaceBootstrap)
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <PersonaEditorForm workspaceId="ws_1" personaId="persona_system_ariadne" config={cfg} />
@@ -87,6 +91,41 @@ describe("PersonaEditorForm (restricted built-in editor)", () => {
     // The system prompt is shown read-only inside a disclosure.
     await user.click(screen.getByRole("button", { name: /System prompt/ }))
     expect(await screen.findByText("You are Ariadne.")).toBeInTheDocument()
+  })
+
+  it("offers only the workspace's delegation models as escalation targets, plus the current value and None", async () => {
+    const user = userEvent.setup()
+    renderForm(config(), ["openrouter:anthropic/claude-sonnet-4.6"])
+
+    await user.click(screen.getByRole("combobox", { name: /Escalation model/ }))
+
+    const options = await screen.findAllByRole("option")
+    expect(options.map((option) => option.textContent)).toEqual([
+      "None (no escalation)",
+      "Claude Sonnet 4.6",
+      // The persona's current escalation stays selectable even though the
+      // workspace's set no longer carries it.
+      "Claude Opus 4.8",
+    ])
+  })
+
+  it("saves the escalation model as a sparse patch key", async () => {
+    const put = vi
+      .spyOn(personasApi, "putOverride")
+      .mockResolvedValue({ persona: { id: "persona_system_ariadne" } as never, updatedAt: "2026-07-11T00:00:00Z" })
+    const user = userEvent.setup()
+    renderForm(config(), ["openrouter:anthropic/claude-sonnet-4.6"])
+
+    await user.click(screen.getByRole("combobox", { name: /Escalation model/ }))
+    await user.click(await screen.findByRole("option", { name: "Claude Sonnet 4.6" }))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith("ws_1", "persona_system_ariadne", {
+        patch: { escalationModel: "openrouter:anthropic/claude-sonnet-4.6" },
+        expectedUpdatedAt: null,
+      })
+    )
   })
 
   it("saves a sparse patch containing only editable keys", async () => {
@@ -163,7 +202,9 @@ describe("PersonaEditorForm (restricted built-in editor)", () => {
     )
 
     // Pristine form adopts their model; Save stays disabled and never fires.
-    await waitFor(() => expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument())
+    await waitFor(() =>
+      expect(within(screen.getByRole("combobox", { name: "Model" })).getByText("Claude Opus 4.8")).toBeInTheDocument()
+    )
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
     expect(put).not.toHaveBeenCalled()
   })

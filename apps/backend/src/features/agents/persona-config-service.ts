@@ -62,6 +62,13 @@ interface Dependencies {
   streamService: StreamService
   modelRegistry: ModelRegistry
   attachmentService: AttachmentService
+  /**
+   * The workspace's governed model set (`resolveSubagentModels` over workspace
+   * settings, wired in server.ts). A function rather than the settings service
+   * itself: workspace-settings already imports this feature for persona
+   * validation, so the dependency only goes one way.
+   */
+  loadGovernedModels: (workspaceId: string) => Promise<string[]>
 }
 
 /**
@@ -257,8 +264,8 @@ function customRowToListItem(row: Persona): PersonaListItem {
 
 /**
  * Reject a write patch touching any field a system persona locks (identity,
- * prompt, temperature, maxTokens, escalationModel). Only toolset, model, and the
- * two style presets are editable for `managed_by: "system"` (roadmap 7.1 product
+ * prompt, temperature, maxTokens). Only toolset, the two models, and the two
+ * style presets are editable for `managed_by: "system"` (roadmap 7.1 product
  * spec). Applies to the WRITE paths only (`setOverride`/`saveDraft`); resolution
  * of already-stored patches stays permissive so a legacy override keeps
  * applying (INV-11 fail-safe — a v0 restore is how a workspace clears one).
@@ -337,20 +344,64 @@ export class PersonaConfigService {
     return this.modelRegistry.isChatModel(model)
   }
 
-  /** Reject an override/draft patch selecting a model outside the assignable set (INV-16). */
-  private assertModelsAllowed(patch: PersonaConfigPatch, base: BuiltInAgentConfig): void {
+  /**
+   * Reject an override/draft patch selecting a model outside the assignable set
+   * (INV-16), and an escalation outside the workspace's GOVERNED set.
+   *
+   * Escalation is the one persona field that spends money the admin did not
+   * pick per turn, so it answers to the same list as subagent delegation
+   * (`subagentModels`) rather than to the whole registry. The persona's current
+   * escalation stays legal whatever the list says — a workspace that narrows
+   * its set must still be able to save an unrelated toolset edit, and clearing
+   * escalation to `null` is always available as the way out.
+   */
+  private async assertModelsAllowed(
+    workspaceId: string,
+    agentId: string,
+    patch: PersonaConfigPatch,
+    base: BuiltInAgentConfig
+  ): Promise<void> {
     if (patch.model !== undefined && !this.isModelAssignable(patch.model, base)) {
       throw new HttpError(`Model "${patch.model}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
-    if (patch.escalationModel != null && !this.isModelAssignable(patch.escalationModel, base)) {
-      throw new HttpError(`Escalation model "${patch.escalationModel}" is not an assignable persona model`, {
+    const escalation = patch.escalationModel
+    if (escalation == null || escalation === base.escalationModel) return
+    if (!this.isModelAssignable(escalation, base)) {
+      throw new HttpError(`Escalation model "${escalation}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
+    const governed = await this.deps.loadGovernedModels(workspaceId)
+    if (governed.includes(escalation)) return
+    if (escalation === (await this.resolveCurrentEscalationModel(workspaceId, agentId, base))) return
+    throw new HttpError(`Escalation model "${escalation}" is not in this workspace's delegation model set`, {
+      status: 400,
+      code: "UNSUPPORTED_PERSONA_MODEL",
+    })
+  }
+
+  /**
+   * The built-in's escalation model as it stands right now — the stored
+   * override's value, else the code default. Read outside the write
+   * transaction: it only widens what is legal, and the write itself is guarded
+   * by optimistic concurrency.
+   */
+  private async resolveCurrentEscalationModel(
+    workspaceId: string,
+    agentId: string,
+    base: BuiltInAgentConfig
+  ): Promise<string | null> {
+    const detail = await AgentConfigOverrideRepository.findActiveDetailByWorkspaceAndAgent(
+      this.pool,
+      workspaceId,
+      agentId
+    )
+    if (!detail) return base.escalationModel
+    return applyBuiltInAgentPatch(base, detail.patch, { workspaceId, agentId }).escalationModel
   }
 
   /**
@@ -610,7 +661,7 @@ export class PersonaConfigService {
       throw new Error(`setOverride called for non-editable persona ${agentId}`)
     }
     assertSystemPersonaFieldsEditable(patch)
-    this.assertModelsAllowed(patch, base)
+    await this.assertModelsAllowed(workspaceId, agentId, patch, base)
 
     // An empty patch means "identical to the built-in defaults" — remove the
     // override entirely (restore-to-default / the history's v0) rather than store
@@ -797,7 +848,7 @@ export class PersonaConfigService {
       this.assertCustomDraftAllowed(patch, editable.row)
     } else {
       assertSystemPersonaFieldsEditable(patch)
-      this.assertModelsAllowed(patch, editable.base)
+      await this.assertModelsAllowed(workspaceId, agentId, patch, editable.base)
     }
 
     const detail = await PersonaConfigDraftRepository.upsert(this.pool, {

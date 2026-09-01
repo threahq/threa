@@ -70,6 +70,11 @@ const FAKE_MODEL_REGISTRY = {
   },
 } as unknown as ModelRegistry
 
+// The workspace's delegable set (`subagentModels`), which is also what a
+// built-in's escalation model must come from. Sonnet 5 is deliberately absent so
+// an assignable-but-ungoverned escalation is expressible.
+const GOVERNED_MODELS = ["openrouter:anthropic/claude-haiku-4.5"]
+
 function setupTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
 }
@@ -83,6 +88,7 @@ function makeService(
     streamService,
     modelRegistry: FAKE_MODEL_REGISTRY,
     attachmentService: extra.attachmentService ?? ({} as any),
+    loadGovernedModels: async () => GOVERNED_MODELS,
   })
 }
 
@@ -406,6 +412,7 @@ describe("PersonaConfigService.setOverride", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { tonePreset: "direct" }, null, CALLER_ID)
@@ -506,6 +513,74 @@ describe("PersonaConfigService.setOverride", () => {
       )
     ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
     expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("accepts an escalation model the workspace's delegation set allows", async () => {
+    setupTransaction()
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { escalationModel: GOVERNED_MODELS[0] },
+      null,
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("written")
+    expect(upsert).toHaveBeenCalled()
+  })
+
+  it("refuses an escalation model that is assignable but outside the workspace's delegation set", async () => {
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
+
+    await expect(
+      makeService().setOverride(
+        WORKSPACE_ID,
+        ARIADNE_AGENT_ID,
+        { escalationModel: "openrouter:anthropic/claude-sonnet-5" },
+        null,
+        CALLER_ID
+      )
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("keeps the persona's stored escalation model saveable after the workspace narrows its set", async () => {
+    setupTransaction()
+    const stored = "openrouter:anthropic/claude-sonnet-5"
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue({
+      patch: { escalationModel: stored },
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    } as any)
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { escalationModel: stored, tonePreset: "direct" },
+      "2026-07-01T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("written")
+    expect(upsert).toHaveBeenCalled()
   })
 
   it("accepts a built-in default model even when the registry lacks it (a code default stays assignable)", async () => {
@@ -789,6 +864,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -808,6 +884,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -829,6 +906,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -850,6 +928,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { getStreamById, createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -871,6 +950,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -913,6 +993,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
