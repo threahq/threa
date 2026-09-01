@@ -2543,12 +2543,12 @@ appended here, not silently fixed by rewriting the body.
 
 ### 1. Color tokens
 
-| Claim above                                                           | Reality                                                                                                                                                                                            | Source                                                                                                                                               |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hsl(var(--success))` referenced throughout (trace, AI message theme) | **There is no `--success` token.** Real "success" greens are hard-coded: `hsl(142 76% 36%)` for the `message_sent` trace step, `text-emerald-600` / `hsl(152 69% 41%)` for the `bot` actor accent. | `apps/frontend/src/index.css`, `apps/frontend/src/lib/step-config.ts`, `apps/frontend/src/components/timeline/message-event.tsx` (`ACTOR_ROW_THEME`) |
-| "Scratchpad" color = `hsl(280 60% 70%)` (purple)                      | `BADGE_CONFIG.scratchpad.color = "text-primary"` — gold, not purple.                                                                                                                               | `apps/frontend/src/components/layout/sidebar/config.ts`                                                                                              |
-| Stalled = `hsl(45 70% 60%)` (yellow)                                  | Not used anywhere as a "stalled" signal. The closest live color is the gold urgency strip `hsl(45 100% 50%)` ("ai" activity).                                                                      | `apps/frontend/src/components/layout/sidebar/config.ts` (`URGENCY_COLORS`)                                                                           |
-| Light-mode `--input` listed without `--ring` color callout            | Both `:root` and `.dark` define a `--ring` (`38 65% 50%` / `40 55% 55%`) — DESIGN.md §2.1 has the full table.                                                                                      | `apps/frontend/src/index.css`                                                                                                                        |
+| Claim above                                                           | Reality                                                                                                                                                                                            | Source                                                                                                                                                                                             |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hsl(var(--success))` referenced throughout (trace, AI message theme) | **There is no `--success` token.** Real "success" greens are hard-coded: `hsl(142 76% 36%)` for the `message_sent` trace step, `text-emerald-600` / `hsl(152 69% 41%)` for the `bot` actor accent. | `apps/frontend/src/index.css`, `apps/frontend/src/lib/step-config.ts`, `apps/frontend/src/components/timeline/message-event.tsx` (`ACTOR_ROW_THEME`)                                               |
+| "Scratchpad" color = `hsl(280 60% 70%)` (purple)                      | `BADGE_CONFIG.scratchpad.color = "text-primary"` — gold, not purple.                                                                                                                               | `apps/frontend/src/components/layout/sidebar/config.ts`                                                                                                                                            |
+| Stalled = `hsl(45 70% 60%)` (yellow)                                  | Not used anywhere as a "stalled" signal. The closest live color is the gold `ai` urgency marker used in Activity and the quick switcher.                                                           | `apps/frontend/src/components/layout/sidebar/config.ts` (`URGENCY_COLORS`), `apps/frontend/src/components/activity/activity-item.tsx`, `apps/frontend/src/components/quick-switcher/item-list.tsx` |
+| Light-mode `--input` listed without `--ring` color callout            | Both `:root` and `.dark` define a `--ring` (`38 65% 50%` / `40 55% 55%`) — DESIGN.md §2.1 has the full table.                                                                                      | `apps/frontend/src/index.css`                                                                                                                                                                      |
 
 ### 2. Mentions
 
@@ -2609,30 +2609,29 @@ dialog is implemented:
 - Status states: `pending`, `running`, `completed`, `failed`, `deleted`, `superseded` — six, not just complete/failed/running.
 - Source: `apps/frontend/src/components/trace/trace-dialog.tsx`.
 
-### 6. Sidebar — urgency strip
+### 6. Sidebar: urgency treatment
 
-The doc describes the urgency strip as a **6px column inside `.smart-sidebar-body`**
-that scrolls with the content. The shipped implementation is different:
+The prose above describes a 6px urgency column inside `.smart-sidebar-body`. The shipped sidebar does not display an urgency strip:
 
-- The strip is **per-row**, not a separate column. Each `<StreamItem>` renders its own `<UrgencyStrip>` as a `w-1` left bar with `rounded-l-lg`.
-- Width is Tailwind `w-1` (4px), not 6px.
-- Quiet rows render `transparent`, not muted gray — the row owns the strip slot regardless.
-- Source: `apps/frontend/src/components/layout/sidebar/stream-item.tsx`; colors in `apps/frontend/src/components/layout/sidebar/config.ts` (`URGENCY_COLORS`).
+- Stream and scratchpad rows have no colored urgency strip or reserved strip slot.
+- Unread title weight, mention badges, urgency ordering, and the Unread section remain the sidebar's urgency signals.
+- Colored urgency markers remain in Activity and the quick switcher.
+- Sources: `apps/frontend/src/components/layout/sidebar/stream-item.tsx`, `apps/frontend/src/components/layout/sidebar/scratchpad-item.tsx`, `apps/frontend/src/components/activity/activity-item.tsx`, and `apps/frontend/src/components/quick-switcher/item-list.tsx`.
 
 ### 7. Sidebar — sections
 
 Section labels and emojis are correct. Item caps and rules drift:
 
 - Important: doc says "max 10 items". Shipped `TieredStreamSection` enforces `TIER_VISIBLE_LIMIT = 10` **across any tiered section**, with a `<MoreDivider>` (`"N more"` / `"less"`) toggle to reveal the rest — not a hard cap of 10.
-- Recent: doc says "max 15 items, auto-expires after 7 days". Recency policy lives in the sort/scoring code, not as a literal cap of 15. Verify against `use-urgency-tracking.ts` and the section composition in `sections.tsx` before quoting numbers.
+- Recent: doc says "max 15 items, auto-expires after 7 days". Recency policy lives in `sidebar/utils.ts` and the section composition in `sections.tsx`, not as a literal cap of 15.
 - Pinned: behavior described is broadly correct, but pin/unpin lives behind `SidebarActionMenu`/`SidebarActionDrawer`, not a "right-click to unpin" affordance.
 - "Smart" vs "All" toggle exists in spirit — the actual section sets are `SMART_SECTIONS` (`important`/`recent`/`pinned`/`other`) and `ALL_SECTIONS` (`scratchpads`/`channels`/`dms`). See `sidebar/config.ts`.
 
-### 8. Sidebar — collapse, width, hover margin
+### 8. Sidebar: collapse, width, hover target
 
-- "30px hover margin" is the value in `app-shell.tsx`'s own comment ("30px hover margin for 'magnetic' feel"). The doc says **15px** — drift.
-- Three sidebar states: `collapsed` / `preview` / `pinned` — match the doc's intent, but the doc claims the collapsed state is a 6px strip. The collapsed state shows a column of urgency blocks driven by `urgencyBlocks` from `useSidebar()`; width matches `w-1` per row stacked, not a flat 6px bar.
-- LocalStorage keys (`sidebar.width.preview`, `sidebar.width.pinned`) and 200/600 width constraints are **unverified** against `apps/frontend/src/contexts/sidebar-context.tsx`; do not quote them as ground truth without checking that file.
+- The collapsed desktop sidebar is zero-width and draws nothing. A 30px invisible target at the viewport edge opens the preview; the prose above says 15px.
+- The three states remain `collapsed`, `preview`, and `pinned`. Preview uses the saved width as an overlay, while pinned uses it in the page layout.
+- Sidebar state uses one account-scoped `threa-sidebar-state` localStorage entry and one shared width. The default is 260px; the width is clamped between 200px and the smaller of 500px or half the viewport. See `apps/frontend/src/contexts/sidebar-context.tsx`.
 
 ### 9. Composer / message input
 
