@@ -951,7 +951,8 @@ export class PersonaAgent {
               cause: turnModel.cause,
               // Who delegated: a subagent turn runs the SAME persona on another
               // model, so the trace has to name it or "delegated by" is empty.
-              personaName: persona.name,
+              // The id, not the name — the client resolves actors (INV-46).
+              personaId: persona.id,
             }),
           })
           await escalationStep.complete({})

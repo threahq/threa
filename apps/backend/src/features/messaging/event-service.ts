@@ -455,6 +455,10 @@ export interface ConversationAssigner {
       workspaceId: string
       message: Message
       directive: ConversationDirective
+      /** The send's stream, when the caller already holds it — a mint reads it to
+       *  record the parent of a card-anchored thread, and re-reading here would
+       *  add a query to every declared send. */
+      stream?: Stream | null
       /** Human who initiated this explicit structural assignment. */
       initiatingUserId?: string
     }
@@ -1122,6 +1126,7 @@ export class EventService {
         workspaceId: params.workspaceId,
         message,
         directive: params.conversation,
+        stream: stream ?? null,
         initiatingUserId,
       })
     } else if (this.conversationAssigner) {

@@ -94,7 +94,12 @@ function toSummary(row: AgentOutcomeRow): AgentOutcomeSummary {
     case "delegation":
       return { ...base, kind: "delegation", status: row.status as DelegationStatus }
     case "subagent":
-      return { ...base, kind: "subagent", status: row.status as SubagentStatus }
+      return {
+        ...base,
+        kind: "subagent",
+        status: row.status as SubagentStatus,
+        lastAgentMessageAt: row.lastAgentMessageAt,
+      }
   }
 }
 

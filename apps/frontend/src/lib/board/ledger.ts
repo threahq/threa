@@ -17,6 +17,7 @@ import {
   type SubagentStatus,
   type SubagentStatusChangedEventPayload,
   SubagentStatuses,
+  type ThreadSummary,
 } from "@threa/types"
 
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
@@ -277,17 +278,23 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
       }
     }
     case "subagent": {
-      const payload = row.event.payload as SubagentCreatedEventPayload | undefined
+      const payload = row.event.payload as (SubagentCreatedEventPayload & { threadSummary?: ThreadSummary }) | undefined
       const patch = row.statusPatch?.payload as SubagentStatusChangedEventPayload | undefined
       const status: SubagentStatus = patch?.status ?? SubagentStatuses.ACTIVE
       return {
         key: row.key,
         kind: "subagent",
         label: payload?.title ? `Subagent: ${payload.title}` : "Subagent",
-        // The ledger has no live-session map, so an active run reads as working
-        // unless its own patch says the subagent is waiting on the reader.
+        // The ledger has no live-session map, so it never resolves the animated
+        // `working` — but it reads the same two waiting sources the card does,
+        // healed thread stats included, so the rail and the card agree.
         meta: SUBAGENT_STATE_LABEL[
-          resolveSubagentCardState({ status, hasLiveSession: false, lastAgentMessageAt: patch?.lastAgentMessageAt })
+          resolveSubagentCardState({
+            status,
+            hasLiveSession: false,
+            lastAgentMessageAt: patch?.lastAgentMessageAt,
+            threadSummary: payload?.threadSummary,
+          })
         ],
       }
     }

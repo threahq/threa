@@ -7,9 +7,11 @@ import { modelDisplayName } from "./model-display"
 const MODELS_YAML = resolve(process.cwd(), "../../packages/agent-runtime/src/ai/models.yaml")
 
 /**
- * Every chat entry in the registry as `[id, name]`. Chat models are the ones
- * that take images and emit text; the embedding and speech-to-text entries are
- * never rendered to a reader, so the derivation makes no claim about them.
+ * Every entry a reader is ever shown a name for, as `[id, name]`: the models the
+ * persona picker offers. Excluded are the two kinds nothing renders — the
+ * embedding entry (emits vectors, not text) and the speech-to-text entries
+ * (audio in), which are vendor-branded and would hold this derivation to names
+ * no slug carries.
  */
 function registryChatModels(): Array<[string, string]> {
   const yaml = readFileSync(MODELS_YAML, "utf8")
@@ -18,7 +20,7 @@ function registryChatModels(): Array<[string, string]> {
     /^ {2}([\w-]+:[\w./-]+):\n {4}name: (.+)\n {4}inputModalities: \[([^\]]*)\]\n {4}outputModalities: \[([^\]]*)\]/gm
   )
   for (const [, id, name, inputs, outputs] of blocks) {
-    if (!inputs.includes("image") || outputs.trim() !== "text") continue
+    if (outputs.trim() !== "text" || inputs.includes("audio")) continue
     entries.push([id, name.trim()])
   }
   return entries
@@ -28,7 +30,7 @@ describe("modelDisplayName", () => {
   const chatModels = registryChatModels()
 
   // A silently-empty scan would turn the drift guard below into a no-op.
-  it("finds the registry's chat models", () => {
+  it("finds the registry's named models", () => {
     expect(chatModels.length).toBeGreaterThanOrEqual(10)
   })
 

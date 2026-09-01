@@ -11,6 +11,7 @@ import {
   type AgentSessionStep,
 } from "@threa/types"
 import { TraceStep } from "./trace-step"
+import * as hooksModule from "@/hooks"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as e2eSessionModule from "@/stores/e2e-session-store"
 import * as decryptCacheModule from "@/lib/crypto/decrypt-cache"
@@ -37,6 +38,9 @@ describe("TraceStep", () => {
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
+    vi.spyOn(hooksModule, "useActors").mockReturnValue({
+      getActorName: (actorId: string | null) => (actorId === "persona_ariadne" ? "Ariadne" : "Unknown"),
+    } as unknown as ReturnType<typeof hooksModule.useActors>)
   })
 
   it("shows explicit keep-response reasoning for supersede no-change decisions", () => {
@@ -86,7 +90,7 @@ describe("TraceStep", () => {
               fromModel: "openrouter:openai/gpt-5.6-luna",
               toModel: "openrouter:anthropic/claude-opus-5",
               cause: "subagent",
-              personaName: "Ariadne",
+              personaId: "persona_ariadne",
             }),
           })}
           workspaceId="ws_1"

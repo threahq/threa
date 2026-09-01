@@ -27,6 +27,7 @@ import { commandsApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
+import { subagentKeys } from "@/hooks/use-subagent-run"
 import { commandKeys } from "@/hooks/use-stream-commands"
 import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
 import type { QueryClient } from "@tanstack/react-query"
@@ -1842,12 +1843,14 @@ function bindStreamSocketHandlers(
     await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
   }
 
-  // Subagent runs have no list hook behind them — the card renders from the
-  // `subagent:created` payload plus the in-window status patches, so the append
-  // IS the update. Only the outcomes board reads them out of band.
+  // The card renders from the `subagent:created` payload plus the in-window
+  // status patches, so the append IS the update. The two authoritative reads
+  // that can't see this window — the outcomes board, and the run a deep-linked
+  // thread falls back to — are invalidated alongside it (INV-53).
   const handleSubagentEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
     if (payload.streamId !== streamId) return
     await handleAppendEvent(payload)
+    await queryClient.invalidateQueries({ queryKey: subagentKeys.all })
     await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
   }
 

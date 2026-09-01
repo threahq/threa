@@ -22,15 +22,18 @@ import { applySettlingAll } from "@/hooks/use-board-card-messages"
  *   member of, so a child card can find the parent conversation its opener thread
  *   forked from.
  * - `conversationById` — resolve a looked-up id back to its post (topic/anchor).
- * - `storedParentConversationId` — the parent the SERVER wrote down, for the
- *   branches the graph cannot derive: a thread anchored on a card event has no
- *   member message to look the fork up by. Written for subagent threads.
+ * - `storedParentConversationId` / `storedChildConversationIds` — the parent the
+ *   SERVER wrote down, both ways round, for the branches the graph cannot
+ *   derive: a thread anchored on a card event has no member message to look the
+ *   fork up by, so neither suppression (child → parent) nor nested discovery
+ *   (parent → children) can walk to it. Written for subagent threads.
  */
 export interface ConversationGraph {
   conversationByAnchorStreamId: Map<string, CachedBoardPost>
   conversationIdByMemberMessageId: Map<string, string>
   conversationById: Map<string, CachedBoardPost>
   storedParentConversationId: Map<string, string>
+  storedChildConversationIds: Map<string, string[]>
 }
 
 const EMPTY_GRAPH: ConversationGraph = {
@@ -38,6 +41,7 @@ const EMPTY_GRAPH: ConversationGraph = {
   conversationIdByMemberMessageId: new Map(),
   conversationById: new Map(),
   storedParentConversationId: new Map(),
+  storedChildConversationIds: new Map(),
 }
 
 export function buildConversationGraph(posts: CachedBoardPost[]): ConversationGraph {
@@ -49,10 +53,15 @@ function buildGraph(posts: CachedBoardPost[]): ConversationGraph {
   const conversationIdByMemberMessageId = new Map<string, string>()
   const conversationById = new Map<string, CachedBoardPost>()
   const storedParentConversationId = new Map<string, string>()
+  const storedChildConversationIds = new Map<string, string[]>()
   for (const post of posts) {
     conversationById.set(post.id, post)
-    if (post.conversation.parentConversationId) {
-      storedParentConversationId.set(post.id, post.conversation.parentConversationId)
+    const storedParent = post.conversation.parentConversationId
+    if (storedParent && storedParent !== post.id) {
+      storedParentConversationId.set(post.id, storedParent)
+      const siblings = storedChildConversationIds.get(storedParent)
+      if (siblings) siblings.push(post.id)
+      else storedChildConversationIds.set(storedParent, [post.id])
     }
     const anchor = post.conversation.streamId
     if (post.rootStreamId !== undefined && post.rootStreamId !== anchor) {
@@ -65,6 +74,7 @@ function buildGraph(posts: CachedBoardPost[]): ConversationGraph {
     conversationIdByMemberMessageId,
     conversationById,
     storedParentConversationId,
+    storedChildConversationIds,
   }
 }
 
@@ -230,22 +240,74 @@ export function branchParentConversationId(
   return resolveParentConversationId({ conversationId, anchorStreamId: post.conversation.streamId, index, graph })
 }
 
-/** Whether any of `memberMessageIds` opens a further non-empty branch conversation
- *  — the depth-cap overflow signal (a grandchild that itself branches links out
- *  instead of nesting a third level). */
+interface BranchCandidate {
+  thread: CachedStream
+  childPost: CachedBoardPost
+  /** The parent-conversation row this branch is placed beside: a member message,
+   *  or the card event a card-anchored thread hangs under. */
+  forkMessageId: string
+}
+
+/**
+ * The branch conversations directly under a parent, from BOTH sources the board
+ * has: the threads forking off its member messages (derivation), and the
+ * conversations the server recorded a parent for (a card-anchored thread, whose
+ * fork is an event and therefore invisible to the message-keyed index).
+ *
+ * One function so discovery, the overflow probe and the subscription collector
+ * cannot disagree about what a branch is — a card-anchored child that only one
+ * of them can see would be suppressed from the board list and absent from the
+ * parent card, which is how it disappears entirely.
+ */
+function branchCandidates(
+  conversationId: string,
+  forkCandidateIds: string[],
+  index: StreamStructuralIndex,
+  graph: ConversationGraph,
+  seenConversationIds: Set<string>
+): BranchCandidate[] {
+  const out: BranchCandidate[] = []
+  const seenChildIds = new Set<string>()
+  const push = (thread: CachedStream | undefined, childPost: CachedBoardPost | undefined, forkMessageId: string) => {
+    if (!thread || !childPost) return
+    if (seenChildIds.has(childPost.id) || seenConversationIds.has(childPost.id)) return
+    if (childPost.conversation.messageIds.length === 0) return
+    seenChildIds.add(childPost.id)
+    out.push({ thread, childPost, forkMessageId })
+  }
+
+  const seenFork = new Set<string>()
+  for (const messageId of forkCandidateIds) {
+    if (seenFork.has(messageId)) continue
+    seenFork.add(messageId)
+    const thread = index.threadsByAnchorId.get(messageId)
+    push(thread, thread && graph.conversationByAnchorStreamId.get(thread.id), messageId)
+  }
+
+  for (const childId of graph.storedChildConversationIds.get(conversationId) ?? []) {
+    const childPost = graph.conversationById.get(childId)
+    if (!childPost) continue
+    const thread = index.streamsById.get(childPost.conversation.streamId)
+    if (!thread || thread.type !== StreamTypes.THREAD) continue
+    const forkMessageId = thread.parentAnchorId ?? thread.parentMessageId
+    if (!forkMessageId) continue
+    push(thread, childPost, forkMessageId)
+  }
+
+  return out
+}
+
+/** Whether a conversation opens a further non-empty branch — the depth-cap
+ *  overflow signal (a grandchild that itself branches links out instead of
+ *  nesting a third level). */
 function hasDeeperBranch(
+  conversationId: string,
   memberMessageIds: string[],
   index: StreamStructuralIndex,
   graph: ConversationGraph,
   seenConversationIds: Set<string>
 ): boolean {
-  for (const messageId of memberMessageIds) {
-    const thread = index.threadsByAnchorId.get(messageId)
-    if (!thread) continue
-    const childPost = graph.conversationByAnchorStreamId.get(thread.id)
-    if (childPost && !seenConversationIds.has(childPost.id) && childPost.conversation.messageIds.length > 0) return true
-  }
-  return false
+  return branchCandidates(conversationId, memberMessageIds, index, graph, seenConversationIds).length > 0
 }
 
 /**
@@ -284,16 +346,21 @@ export function deriveBranchConversations(params: {
     excludeThreadStreamIds,
     maxDepth = 2,
   } = params
-  const walk = (forkCandidateIds: string[], depth: number, seen: Set<string>): BranchConversationView[] => {
+  const walk = (
+    parentConversationId: string,
+    forkCandidateIds: string[],
+    depth: number,
+    seen: Set<string>
+  ): BranchConversationView[] => {
     const out: BranchConversationView[] = []
-    const seenFork = new Set<string>()
-    for (const messageId of forkCandidateIds) {
-      if (seenFork.has(messageId)) continue
-      seenFork.add(messageId)
-      const thread = index.threadsByAnchorId.get(messageId)
-      if (!thread || excludeThreadStreamIds?.has(thread.id)) continue
-      const childPost = graph.conversationByAnchorStreamId.get(thread.id)
-      if (!childPost || seen.has(childPost.id) || childPost.conversation.messageIds.length === 0) continue
+    for (const { thread, childPost, forkMessageId: messageId } of branchCandidates(
+      parentConversationId,
+      forkCandidateIds,
+      index,
+      graph,
+      seen
+    )) {
+      if (excludeThreadStreamIds?.has(thread.id)) continue
       const childConversationId = childPost.id
       const nextSeen = new Set(seen).add(childConversationId)
       const childMemberIds = childPost.conversation.messageIds
@@ -307,8 +374,8 @@ export function deriveBranchConversations(params: {
         ? applySettlingAll(messages, new Set(settlingMessageIds))
         : messages
       const title = effectiveConversationTitle(childPost.conversation, thread) || streamLabel(thread, "generic")
-      const children = depth < maxDepth ? walk(childMemberIds, depth + 1, nextSeen) : []
-      const overflow = depth >= maxDepth && hasDeeperBranch(childMemberIds, index, graph, nextSeen)
+      const children = depth < maxDepth ? walk(childConversationId, childMemberIds, depth + 1, nextSeen) : []
+      const overflow = depth >= maxDepth && hasDeeperBranch(childConversationId, childMemberIds, index, graph, nextSeen)
       out.push({
         conversationId: childConversationId,
         threadStreamId: thread.id,
@@ -325,7 +392,7 @@ export function deriveBranchConversations(params: {
     }
     return out
   }
-  return walk(memberMessageIds, 1, new Set([conversationId]))
+  return walk(conversationId, memberMessageIds, 1, new Set([conversationId]))
 }
 
 /** Every branch thread stream a parent card renders, flattened from the graph
@@ -340,22 +407,15 @@ export function collectBranchThreadStreamIds(params: {
 }): string[] {
   const { conversationId, memberMessageIds, index, graph, maxDepth = 2 } = params
   const out = new Set<string>()
-  const walk = (forkCandidateIds: string[], depth: number, seen: Set<string>) => {
+  const walk = (parentConversationId: string, forkCandidateIds: string[], depth: number, seen: Set<string>) => {
     if (depth > maxDepth) return
-    const seenFork = new Set<string>()
-    for (const messageId of forkCandidateIds) {
-      if (seenFork.has(messageId)) continue
-      seenFork.add(messageId)
-      const thread = index.threadsByAnchorId.get(messageId)
-      if (!thread) continue
-      const childPost = graph.conversationByAnchorStreamId.get(thread.id)
-      if (!childPost || seen.has(childPost.id) || childPost.conversation.messageIds.length === 0) continue
+    for (const { thread, childPost } of branchCandidates(parentConversationId, forkCandidateIds, index, graph, seen)) {
       out.add(thread.id)
       const nextSeen = new Set(seen).add(childPost.id)
-      if (depth < maxDepth) walk(childPost.conversation.messageIds, depth + 1, nextSeen)
+      if (depth < maxDepth) walk(childPost.id, childPost.conversation.messageIds, depth + 1, nextSeen)
     }
   }
-  walk(memberMessageIds, 1, new Set([conversationId]))
+  walk(conversationId, memberMessageIds, 1, new Set([conversationId]))
   return [...out]
 }
 

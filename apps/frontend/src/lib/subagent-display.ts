@@ -2,28 +2,42 @@ import {
   SUBAGENT_FAILURE_REASONS,
   SUBAGENT_TERMINAL_STATUSES,
   SubagentStatuses,
+  type SubagentCreatedEventPayload,
   type SubagentFailureReason,
   type SubagentStatus,
   type ThreadSummary,
 } from "@threa/types"
 
 /**
- * What the subagent card says it is doing. Five states over four statuses: an
- * `active` run is either `working` (a session is live, or its kickoff turn has
- * not spoken yet) or `waiting` (the subagent asked something and the reader owes
- * it an answer). Everything terminal maps to its status.
+ * What the subagent card says it is doing. An `active` run splits three ways:
+ * `working` — a session is live in the thread, the ONLY state that may animate;
+ * `waiting` — the subagent spoke last and the reader owes it an answer;
+ * `starting` — active with nothing running, because the kickoff is queued or the
+ * reader's reply has not been dispatched yet. Everything terminal maps to its
+ * status.
+ *
+ * `starting` reads as "Working" to the user — the run IS ours, not theirs — but
+ * it is a separate state because a spinner with no session behind it is a lie,
+ * and every surface without a session signal (board ledger, outcomes list) can
+ * only ever resolve to this one.
  */
-export type SubagentCardState = "working" | "waiting" | "completed" | "failed" | "cancelled" | "expired"
+export type SubagentCardState = "working" | "starting" | "waiting" | "completed" | "failed" | "cancelled" | "expired"
 
 export const SUBAGENT_TERMINAL: ReadonlySet<SubagentStatus> = new Set(SUBAGENT_TERMINAL_STATUSES)
 
 export const SUBAGENT_STATE_LABEL: Record<SubagentCardState, string> = {
   working: "Working",
+  starting: "Working",
   waiting: "Waiting for you",
   completed: "Done",
   failed: "Failed",
   cancelled: "Cancelled",
   expired: "Expired",
+}
+
+/** Only a live session may animate — see {@link SubagentCardState}. */
+export function subagentStateAnimates(state: SubagentCardState): boolean {
+  return state === "working"
 }
 
 /**
@@ -40,6 +54,7 @@ export function subagentStatePillClass(state: SubagentCardState): string {
     case "failed":
       return "bg-red-500/15 text-red-600 dark:text-red-400"
     case "working":
+    case "starting":
     case "cancelled":
     case "expired":
       return "bg-muted text-muted-foreground"
@@ -83,17 +98,20 @@ export interface SubagentCardStateInput {
  * refreshed on thread updates, so it can lag a just-finished turn. So: take the
  * newer of the two, and when the thread stats are the newer one, believe who
  * they say spoke.
+ *
+ * Everything else active is `starting`, never `working`: a caller with no
+ * session signal to give must not be handed the animated state.
  */
 export function resolveSubagentCardState(input: SubagentCardStateInput): SubagentCardState {
   if (input.status !== SubagentStatuses.ACTIVE) return input.status
   if (input.hasLiveSession) return "working"
 
   const agentMs = input.lastAgentMessageAt ? Date.parse(input.lastAgentMessageAt) : NaN
-  if (Number.isNaN(agentMs)) return "working"
+  if (Number.isNaN(agentMs)) return "starting"
 
   const replyMs = input.threadSummary ? Date.parse(input.threadSummary.lastReplyAt) : NaN
   if (Number.isNaN(replyMs) || agentMs >= replyMs) return "waiting"
-  return input.threadSummary!.latestReply.actorType === "user" ? "working" : "waiting"
+  return input.threadSummary!.latestReply.actorType === "user" ? "starting" : "waiting"
 }
 
 /**
@@ -107,6 +125,35 @@ export interface SubagentThreadRun {
   personaId: string
   startedAt: string
   endedAt: string | null
+}
+
+/**
+ * The badge window for the thread a subagent card anchors.
+ *
+ * Two traps live here. The run's state is the LAST patch, never the last
+ * TERMINAL one: a requeue appends an `active` patch after a terminal one, and
+ * closing the window on the terminal row would unbadge every message of the
+ * restarted run, permanently. And a thread opened by deep link has no patches in
+ * reach at all — without the authoritative row behind it a finished run reads as
+ * open and badges everything posted after it closed.
+ */
+export function resolveSubagentThreadRun(input: {
+  card: { createdAt: string; payload: SubagentCreatedEventPayload }
+  /** This run's status transitions, oldest → newest. */
+  orderedPatches: ReadonlyArray<{ at: string; status: SubagentStatus }>
+  /** The run row, for when `orderedPatches` cannot contain the transition. */
+  fallback?: { status: SubagentStatus; statusChangedAt: string } | null
+}): SubagentThreadRun {
+  const latest = input.orderedPatches[input.orderedPatches.length - 1]
+  const status = latest?.status ?? input.fallback?.status
+  const settledAt = latest?.at ?? input.fallback?.statusChangedAt ?? null
+  return {
+    subagentId: input.card.payload.subagentId,
+    model: input.card.payload.model,
+    personaId: input.card.payload.personaId,
+    startedAt: input.card.createdAt,
+    endedAt: status && SUBAGENT_TERMINAL.has(status) ? settledAt : null,
+  }
 }
 
 /**

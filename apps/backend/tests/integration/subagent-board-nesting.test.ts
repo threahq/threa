@@ -15,6 +15,7 @@ import type { Pool } from "pg"
 import { ConversationIntents, ConversationStatuses } from "@threa/types"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository, conversationAssigner } from "../../src/features/conversations"
+import { BoundaryExtractionService, type BoundaryExtractor } from "../../src/features/conversations"
 import { SubagentService } from "../../src/features/subagents"
 import { StreamRepository } from "../../src/features/streams"
 import { conversationId, messageId } from "../../src/lib/id"
@@ -26,7 +27,19 @@ let pool: Pool
 let cleanup: () => Promise<void>
 let ctx: SubagentTestContext
 let subagentService: SubagentService
+let extractionService: BoundaryExtractionService
 let sequence = 1
+
+/** Always "open a new topic" — the mint branch is what this suite is about. */
+const alwaysNewTopic: BoundaryExtractor = {
+  async extract() {
+    return {
+      assignments: [{ conversationId: null, isPrimary: true }],
+      newConversationTopic: "Second opinion",
+      confidence: 0.9,
+    }
+  },
+} as unknown as BoundaryExtractor
 
 beforeAll(async () => {
   const db = await setupIsolatedTestDatabase("subagent-board-nesting")
@@ -34,6 +47,7 @@ beforeAll(async () => {
   cleanup = db.cleanup
   ctx = await createSubagentTestContext(pool, "board-nesting")
   subagentService = new SubagentService({ pool, streamService: ctx.streamService })
+  extractionService = new BoundaryExtractionService(pool, alwaysNewTopic)
 })
 
 afterAll(async () => {
@@ -99,6 +113,47 @@ describe("conversations minted inside a subagent thread", () => {
     const minted = await ConversationRepository.findById(pool, mintedId)
 
     expect(minted?.parentConversationId).toBeNull()
+  })
+
+  test("carry the parent when the subagent itself opens the conversation (agent reply)", async () => {
+    // The likeliest mint of all: the delegated model speaks first in its thread.
+    const channel = await ctx.createChannel({ slug: "nesting-agent-reply", memberIds: [ctx.owner] })
+    const sourceConversationId = await seedSourceConversation(channel.id)
+    const run = await subagentService.create({ ...createParams(ctx, channel.id), sourceConversationId })
+
+    const reply = await withTransaction(pool, (client) =>
+      MessageRepository.insert(client, {
+        id: messageId(),
+        streamId: run.threadStreamId,
+        sequence: sequence++,
+        authorId: ctx.persona.id,
+        authorType: "persona",
+        ...testMessageContent("Before I commit to a recommendation…"),
+      })
+    )
+    const minted = await extractionService.processMessage(reply.id, run.threadStreamId, ctx.workspaceId)
+
+    expect(minted?.parentConversationId).toBe(sourceConversationId)
+  })
+
+  test("carry the parent when the extractor opens a new topic in the thread", async () => {
+    const channel = await ctx.createChannel({ slug: "nesting-extracted", memberIds: [ctx.owner] })
+    const sourceConversationId = await seedSourceConversation(channel.id)
+    const run = await subagentService.create({ ...createParams(ctx, channel.id), sourceConversationId })
+
+    const reply = await withTransaction(pool, (client) =>
+      MessageRepository.insert(client, {
+        id: messageId(),
+        streamId: run.threadStreamId,
+        sequence: sequence++,
+        authorId: ctx.owner,
+        authorType: "user",
+        ...testMessageContent("Per-stream ordering is hard."),
+      })
+    )
+    const minted = await extractionService.processMessage(reply.id, run.threadStreamId, ctx.workspaceId)
+
+    expect(minted?.parentConversationId).toBe(sourceConversationId)
   })
 
   test("leave message-anchored threads alone — the graph already derives those", async () => {

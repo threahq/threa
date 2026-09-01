@@ -4,7 +4,7 @@ import { useLocation, useNavigationType, useSearchParams } from "react-router-do
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { SUBAGENT_TERMINAL, type SubagentThreadRun } from "@/lib/subagent-display"
+import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
@@ -32,6 +32,7 @@ import {
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
+import { useSubagentRun } from "@/hooks/use-subagent-run"
 import {
   useSocket,
   useCoordinatedLoading,
@@ -866,28 +867,67 @@ export function StreamContent({
     localAnchorEvent
   )
 
-  // The run this stream IS the thread of, read off its own anchor card — the
-  // card and the terminal patch both live in the PARENT stream, which the thread
-  // view already loads to pin the anchor, so this costs no fetch. Drives the
-  // per-message model badge: same persona, different brain, for this window only.
+  // This stream's own anchor card, when the stream IS a subagent's thread.
+  const subagentAnchorPayload = useMemo<SubagentCreatedEventPayload | null>(
+    () =>
+      isThread && anchorEvent?.eventType === "subagent:created"
+        ? (anchorEvent.payload as SubagentCreatedEventPayload)
+        : null,
+    [isThread, anchorEvent]
+  )
+
+  // The run's LATEST status patch — by sequence, never "the latest terminal
+  // one": a requeue appends an `active` patch AFTER a terminal one, and reading
+  // the terminal row would close the badge window permanently, so every message
+  // of the restarted run would lose its model badge.
+  const subagentStatusPatchEvent = useMemo(() => {
+    if (!subagentAnchorPayload) return undefined
+    const matching = (parentCachedEvents ?? []).filter(
+      (event) =>
+        event.eventType === "subagent:status_changed" &&
+        (event.payload as SubagentStatusChangedEventPayload).subagentId === subagentAnchorPayload.subagentId
+    )
+    return orderStreamEvents(matching).at(-1)
+  }, [subagentAnchorPayload, parentCachedEvents])
+
+  // A thread opened by deep link has no parent stream cached at all, so the
+  // patches above cannot exist — the run row is the only authority left, and
+  // without it a finished run reads as open and badges every message posted
+  // after it closed. Gated so the loaded-window path stays fetch-free.
+  const { data: subagentRunFallback } = useSubagentRun(workspaceId, subagentAnchorPayload?.subagentId ?? null, {
+    enabled: !!subagentAnchorPayload && !subagentStatusPatchEvent,
+  })
+
+  // The run's state as two primitives, so the window below keeps one identity
+  // across every unrelated parent event: `parentCachedEvents` gets a new array
+  // per data tick, and the row comparator repaints EVERY message row when the
+  // run object changes.
+  const subagentSettledStatus =
+    (subagentStatusPatchEvent?.payload as SubagentStatusChangedEventPayload | undefined)?.status ??
+    subagentRunFallback?.status
+  const subagentSettledAt = subagentStatusPatchEvent?.createdAt ?? subagentRunFallback?.statusChangedAt ?? undefined
+
+  // The run's badge window: same persona, different brain, between these marks.
   const subagentThreadRun = useMemo<SubagentThreadRun | null>(() => {
-    if (!isThread || anchorEvent?.eventType !== "subagent:created") return null
-    const created = anchorEvent.payload as SubagentCreatedEventPayload
-    let endedAt: string | null = null
-    for (const event of parentCachedEvents ?? []) {
-      if (event.eventType !== "subagent:status_changed") continue
-      const patch = event.payload as SubagentStatusChangedEventPayload
-      if (patch.subagentId !== created.subagentId || !SUBAGENT_TERMINAL.has(patch.status)) continue
-      if (!endedAt || event.createdAt > endedAt) endedAt = event.createdAt
+    if (!subagentAnchorPayload || !anchorEvent) return null
+    return resolveSubagentThreadRun({
+      card: { createdAt: anchorEvent.createdAt, payload: subagentAnchorPayload },
+      orderedPatches:
+        subagentSettledStatus && subagentSettledAt ? [{ at: subagentSettledAt, status: subagentSettledStatus }] : [],
+    })
+  }, [subagentAnchorPayload, anchorEvent, subagentSettledStatus, subagentSettledAt])
+
+  // The pinned anchor card renders through the same `EventItem` as the timeline,
+  // so it needs the inputs the parent stream would have given it — otherwise it
+  // sits on `active` forever, telling a reader whose run finished days ago that
+  // it is still working.
+  const subagentThreadParentPatches = useMemo(() => {
+    const patches = new Map<string, StreamEvent>()
+    if (subagentAnchorPayload && subagentStatusPatchEvent) {
+      patches.set(subagentAnchorPayload.subagentId, subagentStatusPatchEvent as unknown as StreamEvent)
     }
-    return {
-      subagentId: created.subagentId,
-      model: created.model,
-      personaId: created.personaId,
-      startedAt: anchorEvent.createdAt,
-      endedAt,
-    }
-  }, [isThread, anchorEvent, parentCachedEvents])
+    return patches
+  }, [subagentAnchorPayload, subagentStatusPatchEvent])
 
   // Subscribe to stream room FIRST (subscribe-then-bootstrap pattern)
   useStreamSocket(workspaceId, streamId, { enabled: !isDraft })
@@ -955,6 +995,17 @@ export function StreamContent({
   // thread-panel StreamContent (mounted outside the open stream's provider).
   const publishAgentActivitySummary = usePublishAgentActivitySummary()
   const agentActivitySummary = useMemo(() => buildAgentActivitySummary(agentActivity, events), [agentActivity, events])
+
+  // The pinned card reads its activity under its OWN event id — the alias the
+  // parent stream's map carries. In a subagent's thread any live session IS that
+  // run's turn (an active run is the only thing dispatched there), so aliasing it
+  // is what makes the pinned card show the spinner exactly while one is running.
+  const subagentThreadParentActivity = useMemo(() => {
+    const aliased = new Map<string, MessageAgentActivity>()
+    const live = agentActivity.values().next().value
+    if (subagentThreadRun && anchorEvent && live) aliased.set(anchorEvent.id, live)
+    return aliased
+  }, [subagentThreadRun, anchorEvent, agentActivity])
   useEffect(() => {
     publishAgentActivitySummary(agentActivitySummary)
   }, [agentActivitySummary, publishAgentActivitySummary])
@@ -3117,6 +3168,9 @@ export function StreamContent({
                               workspaceId={workspaceId}
                               streamId={parentStreamId}
                               replyCount={displayEvents.length}
+                              subagentStatusPatches={subagentThreadParentPatches}
+                              subagentRunFallback={subagentRunFallback}
+                              agentActivity={subagentThreadParentActivity}
                             />
                           )}
                           {isFetchingOlder && (

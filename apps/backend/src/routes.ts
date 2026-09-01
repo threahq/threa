@@ -1450,8 +1450,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("delegations.cancel", "write"),
     delegations.cancel
   )
-  // Subagent runs — the card's Cancel and Try again. Same access model as
-  // delegation cancel: stream access, 404-hiding, race-honest response.
+  // Subagent runs — the card's Cancel and Try again, plus the authoritative
+  // read a surface falls back to when the run's status patches are outside its
+  // window. Same access model as delegation cancel: stream access, 404-hiding,
+  // race-honest response.
+  app.get("/api/workspaces/:workspaceId/subagents/:id", ...authed, audit("subagents.get", "read"), subagents.get)
   app.post(
     "/api/workspaces/:workspaceId/subagents/:id/cancel",
     ...authed,

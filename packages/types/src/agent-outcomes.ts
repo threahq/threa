@@ -55,6 +55,12 @@ export interface DelegationOutcomeSummary extends AgentOutcomeBase {
 export interface SubagentOutcomeSummary extends AgentOutcomeBase {
   kind: "subagent"
   status: SubagentStatus
+  /**
+   * When the delegated model last posted in its thread, from the run's latest
+   * status patch. The one fact that separates "working" from "waiting for you",
+   * and it lives on the timeline event rather than the run row.
+   */
+  lastAgentMessageAt: string | null
 }
 
 export type AgentOutcomeSummary = FollowUpOutcomeSummary | DelegationOutcomeSummary | SubagentOutcomeSummary

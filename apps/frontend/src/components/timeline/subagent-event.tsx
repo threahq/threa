@@ -19,6 +19,7 @@ import {
   type SubagentCreatedEventPayload,
   type SubagentStatus,
   type SubagentStatusChangedEventPayload,
+  type SubagentSummary,
   type ThreadSummary,
 } from "@threa/types"
 import { subagentsApi } from "@/api"
@@ -32,8 +33,10 @@ import { getStepInlineLabel } from "@/lib/step-config"
 import {
   resolveSubagentCardState,
   subagentFailureLabel,
+  subagentStateAnimates,
   subagentStatePillClass,
   SUBAGENT_STATE_LABEL,
+  SUBAGENT_TERMINAL,
   type SubagentCardState,
 } from "@/lib/subagent-display"
 import { cn } from "@/lib/utils"
@@ -62,6 +65,12 @@ interface SubagentEventProps {
    */
   statusPatch?: StreamEvent
   /**
+   * The authoritative run, used ONLY when no patch is in reach — the card pinned
+   * atop its own thread, opened by deep link. It carries no actor, so a
+   * transition read from it names the state without naming who drove it.
+   */
+  runFallback?: SubagentSummary
+  /**
    * The live session in the subagent's thread, aliased under this card's event id
    * by `useAgentActivity` (a thread's activity lights up its anchor). Present
    * only while a turn is actually running.
@@ -73,6 +82,7 @@ interface SubagentEventProps {
 
 const STATE_ICON = {
   working: Loader2,
+  starting: Loader2,
   waiting: MessageCircleQuestion,
   completed: Check,
   failed: CircleX,
@@ -89,7 +99,14 @@ const STATE_ICON = {
  * The whole card is a link to the subagent's thread (INV-40); every action lives
  * in the hover toolbar / long-press drawer, never in the flow.
  */
-export function SubagentEvent({ event, workspaceId, statusPatch, activity, isThreadParent }: SubagentEventProps) {
+export function SubagentEvent({
+  event,
+  workspaceId,
+  statusPatch,
+  runFallback,
+  activity,
+  isThreadParent,
+}: SubagentEventProps) {
   const { getActorName } = useActors(workspaceId)
   const { getPanelUrl } = usePanel()
   const queryClient = useQueryClient()
@@ -110,7 +127,9 @@ export function SubagentEvent({ event, workspaceId, statusPatch, activity, isThr
   if (!payload) return null
 
   const patchPayload = statusPatch?.payload as SubagentStatusChangedEventPayload | undefined
-  let status: SubagentStatus = patchPayload?.status ?? SubagentStatuses.ACTIVE
+  const settled: { status: SubagentStatus; statusNote?: string | null } | undefined =
+    patchPayload ?? (runFallback ? { status: runFallback.status, statusNote: runFallback.statusNote } : undefined)
+  let status: SubagentStatus = settled?.status ?? SubagentStatuses.ACTIVE
   if (optimisticallyCancelled) status = SubagentStatuses.CANCELLED
   else if (optimisticallyRequeued) status = SubagentStatuses.ACTIVE
   const optimisticFlip = optimisticallyCancelled || optimisticallyRequeued
@@ -121,7 +140,7 @@ export function SubagentEvent({ event, workspaceId, statusPatch, activity, isThr
     lastAgentMessageAt: optimisticFlip ? null : patchPayload?.lastAgentMessageAt,
     threadSummary: payload.threadSummary,
   })
-  const terminal = state !== "working" && state !== "waiting"
+  const terminal = SUBAGENT_TERMINAL.has(status)
 
   const modelLabel = modelDisplayName(payload.model)
   const replyCount = payload.replyCount ?? 0
@@ -132,6 +151,16 @@ export function SubagentEvent({ event, workspaceId, statusPatch, activity, isThr
   switch (state) {
     case "working":
       metaParts.push(modelLabel, activity ? (activity.substep ?? getStepInlineLabel(activity.currentStepType)) : null)
+      break
+    case "starting":
+      // Nothing is running: say when the subagent last spoke, or that it has yet
+      // to. Never a phase — there is no session to have one.
+      metaParts.push(
+        modelLabel,
+        patchPayload?.lastAgentMessageAt
+          ? formatRelativeTime(new Date(patchPayload.lastAgentMessageAt), new Date(), undefined, { terse: true })
+          : "starting…"
+      )
       break
     case "waiting":
       metaParts.push(
@@ -254,7 +283,7 @@ export function SubagentEvent({ event, workspaceId, statusPatch, activity, isThr
           state === "waiting" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
         )}
       >
-        <Icon className={cn("h-4 w-4", state === "working" && "animate-spin")} aria-hidden="true" />
+        <Icon className={cn("h-4 w-4", subagentStateAnimates(state) && "animate-spin")} aria-hidden="true" />
       </span>
 
       <div className="min-w-0 flex-1">

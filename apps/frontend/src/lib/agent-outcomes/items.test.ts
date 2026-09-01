@@ -61,6 +61,7 @@ function subagent(overrides: Partial<AgentOutcomeSummary> = {}): AgentOutcomeSum
     statusChangedAt: "2026-07-28T10:30:00.000Z",
     occursAt: "2026-07-28T10:30:00.000Z",
     anchorEventId: "event_3",
+    lastAgentMessageAt: null,
     ...overrides,
   } as AgentOutcomeSummary
 }
@@ -143,6 +144,15 @@ describe("toOutcomeItem", () => {
       canRequeue: false,
       canMarkDone: false,
     })
+  })
+
+  it("says a run is waiting once it has spoken, and never spins without a session", () => {
+    expect(toOutcomeItem("ws_1", subagent({ lastAgentMessageAt: "2026-07-28T10:31:00.000Z" }))).toMatchObject({
+      statusLabel: "Waiting for you",
+      isSettled: false,
+    })
+    // The list has no session signal, so the animated state is unreachable here.
+    expect(toOutcomeItem("ws_1", subagent()).statusLabel).toBe("Working")
   })
 
   it("turns a run's failure reason CODE into words and settles it", () => {

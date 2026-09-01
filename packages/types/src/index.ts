@@ -643,6 +643,7 @@ export type {
   CallStartedEventPayload,
   CallEndedEventPayload,
   DelegationSummary,
+  SubagentSummary,
   ListDelegationsResponse,
   DescriptionSetEventPayload,
   BriefUpdatedEventPayload,

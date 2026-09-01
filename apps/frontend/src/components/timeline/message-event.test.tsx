@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { ServicesProvider, type SavedService } from "@/contexts"
 import { MessageEvent } from "./message-event"
 import { TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
+import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
 import {
   clearStreams,
   clearWorkspaceActorTables,
@@ -639,6 +640,113 @@ describe("MessageEvent", () => {
 
       expect(screen.getByText("Editing unsent message")).toBeInTheDocument()
     })
+  })
+})
+
+/**
+ * The delegated-model badge as the timeline actually mounts it: the window test
+ * lives in `EventItem`, so ctx → EventItem → MessageEvent is the layer that
+ * proves both the gate and the window the thread resolved.
+ */
+describe("delegated-model badge in a subagent thread", () => {
+  const workspaceId = "ws_123"
+  const streamId = "stream_thread"
+  const PERSONA = "persona_ariadne"
+  const CARD = {
+    createdAt: "2026-09-01T10:00:00.000Z",
+    payload: {
+      subagentId: "subagent_1",
+      title: "Second opinion",
+      model: "openrouter:anthropic/claude-opus-5",
+      personaId: PERSONA,
+      threadStreamId: streamId,
+      createdBy: "usr_kris",
+      sourceConversationId: null,
+    },
+  }
+
+  function personaMessage(overrides: Partial<StreamEvent> = {}): StreamEvent {
+    return {
+      ...createMessageEvent("msg_sub", "Here it is."),
+      streamId,
+      actorId: PERSONA,
+      actorType: "persona",
+      createdAt: "2026-09-01T10:05:00.000Z",
+      ...overrides,
+    }
+  }
+
+  function renderRow(event: StreamEvent, subagentThreadRun: SubagentThreadRun | null) {
+    const ctx: TimelineItemRenderContext = {
+      workspaceId,
+      streamId,
+      sessionLiveCounts: new Map(),
+      sessionLiveSubsteps: new Map(),
+      cancelledFollowUpIds: new Set(),
+      delegationStatusPatches: new Map(),
+      subagentStatusPatches: new Map(),
+      subagentThreadRun,
+      botAccessStatusPatches: new Map(),
+      callEndedPatches: new Map(),
+    }
+    return render(<TimelineItemContent item={{ type: "event", event }} ctx={ctx} deferSecondaryHydration={false} />, {
+      wrapper: Wrapper,
+    })
+  }
+
+  const badge = () => screen.queryByText("Claude Opus 5")
+
+  it("badges the run's persona inside an open window, and nothing outside a subagent thread", () => {
+    const open = renderRow(personaMessage(), resolveSubagentThreadRun({ card: CARD, orderedPatches: [] }))
+    expect(badge()).toBeInTheDocument()
+    open.unmount()
+
+    renderRow(personaMessage(), null)
+    expect(badge()).not.toBeInTheDocument()
+  })
+
+  it("badges neither the reader nor another persona", () => {
+    const run = resolveSubagentThreadRun({ card: CARD, orderedPatches: [] })
+    const user = renderRow(personaMessage({ actorId: "member_123", actorType: "user" }), run)
+    expect(badge()).not.toBeInTheDocument()
+    user.unmount()
+
+    renderRow(personaMessage({ actorId: "persona_other" }), run)
+    expect(badge()).not.toBeInTheDocument()
+  })
+
+  it("stops badging replies posted after the run closed", () => {
+    const run = resolveSubagentThreadRun({
+      card: CARD,
+      orderedPatches: [{ at: "2026-09-01T10:03:00.000Z", status: "completed" }],
+    })
+    renderRow(personaMessage(), run)
+    expect(badge()).not.toBeInTheDocument()
+  })
+
+  it("badges again once a requeue reopens the window", () => {
+    // Reading "the latest TERMINAL patch" would leave this message unbadged for good.
+    const run = resolveSubagentThreadRun({
+      card: CARD,
+      orderedPatches: [
+        { at: "2026-09-01T10:03:00.000Z", status: "failed" },
+        { at: "2026-09-01T10:04:00.000Z", status: "active" },
+      ],
+    })
+    renderRow(personaMessage(), run)
+    expect(badge()).toBeInTheDocument()
+  })
+
+  it("stops badging a cold-cache thread once the run row says it finished", () => {
+    // A deep link into a finished thread caches no parent events, so without the
+    // authoritative row every message posted after it closed keeps the badge.
+    const run = resolveSubagentThreadRun({
+      card: CARD,
+      orderedPatches: [],
+      fallback: { status: "completed", statusChangedAt: "2026-09-01T10:03:00.000Z" },
+    })
+    renderRow(personaMessage(), run)
+    expect(badge()).not.toBeInTheDocument()
   })
 })
 

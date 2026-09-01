@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom"
 import {
   AgentReconsiderationDecisions,
+  AuthorTypes,
   PI_TOOL_TRACE_FORMAT,
   PI_TOOL_TRACE_REDACTED_BODY_SET,
   PiToolTraceSectionLabels,
@@ -12,6 +13,7 @@ import {
   type AgentToolEffect,
   type TraceSource,
 } from "@threa/types"
+import { useActors } from "@/hooks"
 import { cn } from "@/lib/utils"
 import { modelDisplayName } from "@/lib/model-display"
 import { MarkdownContent } from "@/components/ui/markdown-content"
@@ -443,6 +445,29 @@ interface AttachedContextInfo {
   refs: AttachedContextRefInfo[]
 }
 
+/**
+ * "Running as X — delegated by Y". The step ships the persona's ID, never its
+ * name (INV-46), so the name is resolved here like every other actor label.
+ */
+function SubagentDelegationLine({
+  modelLabel,
+  personaId,
+  workspaceId,
+}: {
+  modelLabel: string
+  personaId: string | null
+  workspaceId: string
+}) {
+  const { getActorName } = useActors(workspaceId)
+  const persona = personaId ? getActorName(personaId, AuthorTypes.PERSONA) : null
+  return (
+    <span>
+      Running as <strong>{modelLabel}</strong>
+      {persona ? ` — delegated by ${persona}` : " for this delegated thread"}.
+    </span>
+  )
+}
+
 function renderStepContent(
   stepType: AgentStepType,
   content: string,
@@ -801,13 +826,8 @@ function renderStepContent(
         // A subagent turn is not an escalation up a ladder — it is a delegation
         // to a chosen model, so it says who chose and stops there.
         if (structured.cause === "subagent") {
-          const persona = typeof structured.personaName === "string" ? structured.personaName : null
-          return (
-            <span>
-              Running as <strong>{to}</strong>
-              {persona ? ` — delegated by ${persona}` : " for this delegated thread"}.
-            </span>
-          )
+          const personaId = typeof structured.personaId === "string" ? structured.personaId : null
+          return <SubagentDelegationLine modelLabel={to} personaId={personaId} workspaceId={workspaceId} />
         }
         return (
           <div className="space-y-1">

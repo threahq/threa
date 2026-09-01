@@ -49,6 +49,8 @@ export interface AgentOutcomeRow {
   claimedByLabel: string | null
   statusNote: string | null
   resultMessageId: string | null
+  /** Subagent runs only: when the delegated model last posted in its thread. */
+  lastAgentMessageAt: string | null
   actorType: string
   actorId: string
   createdAt: Date
@@ -69,6 +71,7 @@ interface DbRow {
   claimed_by_label: string | null
   status_note: string | null
   result_message_id: string | null
+  last_agent_message_at: string | null
   actor_type: string
   actor_id: string
   created_at: Date
@@ -89,6 +92,7 @@ function mapRow(row: DbRow): AgentOutcomeRow {
     claimedByLabel: row.claimed_by_label,
     statusNote: row.status_note,
     resultMessageId: row.result_message_id,
+    lastAgentMessageAt: row.last_agent_message_at,
     actorType: row.actor_type,
     actorId: row.actor_id,
     createdAt: row.created_at,
@@ -247,7 +251,8 @@ export const AgentOutcomeReadRepository = {
       )
       SELECT
         p.*,
-        COALESCE(p.own_anchor_event_id, de.id, fe.id) AS anchor_event_id
+        COALESCE(p.own_anchor_event_id, de.id, fe.id) AS anchor_event_id,
+        sa.last_agent_message_at
       FROM page p
       LEFT JOIN stream_events de
         ON p.kind = 'delegation'
@@ -259,6 +264,20 @@ export const AgentOutcomeReadRepository = {
        AND fe.stream_id = p.stream_id
        AND fe.event_type = 'agent:follow_up_scheduled'
        AND fe.payload->>'followUpId' = p.id
+      -- "Waiting for you" is a fact about the run's THREAD, and the run row does
+      -- not hold it — the status patch that carried it does. Read on the page,
+      -- after the cut, so it costs one lookup per rendered row.
+      LEFT JOIN LATERAL (
+        SELECT se.payload->>'lastAgentMessageAt' AS last_agent_message_at
+        FROM stream_events se
+        WHERE p.kind = 'subagent'
+          AND se.stream_id = p.stream_id
+          AND se.event_type = 'subagent:status_changed'
+          AND se.payload->>'subagentId' = p.id
+          AND se.payload->>'lastAgentMessageAt' IS NOT NULL
+        ORDER BY se.sequence DESC
+        LIMIT 1
+      ) sa ON TRUE
       ORDER BY p.occurs_at ${order}, p.id ${order}
     `)
     return result.rows.map(mapRow)

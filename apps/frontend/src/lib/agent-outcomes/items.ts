@@ -48,6 +48,13 @@ export const OUTCOME_KIND_LABEL: Record<AgentOutcomeKind, string> = {
   subagent: "Subagent",
 }
 
+/** The same nouns, plural — filter chips and empty-state copy read this one map. */
+export const OUTCOME_KIND_PLURAL: Record<AgentOutcomeKind, string> = {
+  follow_up: "Follow-ups",
+  delegation: "Delegations",
+  subagent: "Subagents",
+}
+
 export function outcomeAnchorPath(workspaceId: string, outcome: AgentOutcomeSummary): string | null {
   if (!outcome.anchorEventId) return null
   return `/w/${workspaceId}/s/${outcome.streamId}?m=${outcome.anchorEventId}`
@@ -69,9 +76,14 @@ function statusFace(outcome: AgentOutcomeSummary): { label: string; pillClass: s
         settled: DELEGATION_TERMINAL.has(outcome.status),
       }
     case "subagent": {
-      // No live-session signal in this read, so an active run reads as working
-      // rather than claiming to wait on the reader.
-      const state = resolveSubagentCardState({ status: outcome.status, hasLiveSession: false })
+      // This read carries no live-session signal, so an active run can only
+      // resolve to `waiting` (the subagent spoke last) or `starting` — never the
+      // animated `working`, which needs a session behind it.
+      const state = resolveSubagentCardState({
+        status: outcome.status,
+        hasLiveSession: false,
+        lastAgentMessageAt: outcome.lastAgentMessageAt,
+      })
       return {
         label: SUBAGENT_STATE_LABEL[state],
         pillClass: subagentStatePillClass(state),

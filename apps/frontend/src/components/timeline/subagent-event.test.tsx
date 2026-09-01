@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { StreamEvent, SubagentCreatedEventPayload, SubagentStatus } from "@threa/types"
+import type { StreamEvent, SubagentCreatedEventPayload, SubagentStatus, SubagentSummary } from "@threa/types"
 import * as hooksModule from "@/hooks"
 import type { MessageAgentActivity } from "@/hooks"
 import { PanelProvider } from "@/contexts"
@@ -66,6 +66,7 @@ const LIVE_SESSION: MessageAgentActivity = {
 function renderCard(props: {
   event?: StreamEvent
   patch?: StreamEvent
+  runFallback?: SubagentSummary
   activity?: MessageAgentActivity
   isThreadParent?: boolean
 }) {
@@ -79,6 +80,7 @@ function renderCard(props: {
               event={props.event ?? createdEvent()}
               workspaceId={WS}
               statusPatch={props.patch}
+              runFallback={props.runFallback}
               activity={props.activity}
               isThreadParent={props.isThreadParent}
             />
@@ -95,7 +97,8 @@ function renderCard(props: {
  * so the check is structural: the same element tree carrying the same size,
  * spacing and flow classes, with only color and text free to vary.
  */
-const LAYOUT_CLASS = /^(flex|items-|justify-|gap-|p-|px-|py-|h-\d|w-\d|size-|min-w-|mt-|rounded|border$|shrink|truncate|font-|text-\[)/
+const LAYOUT_CLASS =
+  /^(flex|items-|justify-|gap-|p-|px-|py-|h-\d|w-\d|size-|min-w-|mt-|rounded|border$|shrink|truncate|font-|text-\[)/
 
 function layoutOf(element: Element | null): string {
   if (!element) return "<missing>"
@@ -152,17 +155,18 @@ describe("SubagentEvent states", () => {
     expect(container.querySelector(".animate-spin")).toBeNull()
   })
 
-  it("stays working when the reader answered after the subagent's last message", () => {
+  it("stops waiting — without spinning — when the reader answered last", () => {
     const event = createdEvent()
     ;(event.payload as Record<string, unknown>).threadSummary = {
       lastReplyAt: "2026-09-01T10:20:00.000Z",
       participants: [],
       latestReply: { messageId: "msg_1", actorId: "usr_kris", actorType: "user", contentMarkdown: "yes" },
     }
-    renderCard({ event, patch: statusPatch("active", { lastAgentMessageAt: PATCH_AT }) })
+    const { container } = renderCard({ event, patch: statusPatch("active", { lastAgentMessageAt: PATCH_AT }) })
 
     expect(screen.getByText("Working")).toBeInTheDocument()
     expect(screen.queryByText("Waiting for you")).not.toBeInTheDocument()
+    expect(container.querySelector(".animate-spin")).toBeNull()
   })
 
   it("reports a failure by its reason code, in words", () => {
@@ -180,13 +184,49 @@ describe("SubagentEvent states", () => {
     expect(screen.getByText(CREATED_PAYLOAD.title).className).toContain("line-through")
   })
 
-  it("keeps one geometry across all five states", () => {
+  it("says a queued run is working without pretending a session is behind it", () => {
+    const { container } = renderCard({})
+
+    expect(screen.getByText("Working")).toBeInTheDocument()
+    expect(screen.getByText("Claude Opus 5 · starting…")).toBeInTheDocument()
+    // The spinner is the claim "a turn is running right now" — never made here.
+    expect(container.querySelector(".animate-spin")).toBeNull()
+  })
+
+  it("reads the authoritative run when no patch is in reach", () => {
+    // A deep link into a finished thread: the parent stream is not cached, so
+    // without the run row the card would spin "Working" forever.
+    renderCard({
+      isThreadParent: true,
+      runFallback: {
+        id: CREATED_PAYLOAD.subagentId,
+        parentStreamId: "stream_1",
+        threadStreamId: THREAD,
+        cardEventId: "event_card",
+        personaId: CREATED_PAYLOAD.personaId,
+        model: CREATED_PAYLOAD.model,
+        title: CREATED_PAYLOAD.title,
+        status: "completed",
+        statusNote: null,
+        resultMessageId: "msg_result",
+        createdAt: CREATED_AT,
+        statusChangedAt: PATCH_AT,
+      },
+    })
+
+    expect(screen.getByText("Done")).toBeInTheDocument()
+    expect(screen.queryByText("Working")).not.toBeInTheDocument()
+  })
+
+  it("keeps one geometry across every state", () => {
     const signatures = [
       renderCard({ activity: LIVE_SESSION }),
+      renderCard({}),
       renderCard({ patch: statusPatch("active", { lastAgentMessageAt: PATCH_AT }) }),
       renderCard({ patch: statusPatch("completed", { resultMessageId: "msg_result" }) }),
       renderCard({ patch: statusPatch("failed", { statusNote: "turn_failed" }) }),
       renderCard({ patch: statusPatch("cancelled") }),
+      renderCard({ patch: statusPatch("expired") }),
     ].map(({ container }) => geometrySignature(container))
 
     expect(new Set(signatures).size).toBe(1)

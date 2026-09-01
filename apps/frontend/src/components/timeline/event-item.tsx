@@ -3,6 +3,7 @@ import type {
   CallEndedEventPayload,
   DelegationStatusChangedEventPayload,
   StreamEvent,
+  SubagentSummary,
 } from "@threa/types"
 import type { MessageAgentActivity } from "@/hooks"
 import { isSubagentAuthoredMessage, type SubagentThreadRun } from "@/lib/subagent-display"
@@ -53,6 +54,12 @@ interface EventItemProps {
   /** Latest status-change EVENT per subagentId within the loaded window — drives the subagent card's state. */
   subagentStatusPatches?: Map<string, StreamEvent>
   /**
+   * The authoritative run, for a surface whose window cannot hold that patch —
+   * the card pinned atop its own thread, opened by deep link. Used only when no
+   * patch is present.
+   */
+  subagentRunFallback?: SubagentSummary
+  /**
    * Set only when THIS stream is a subagent's thread: the run the thread was
    * created for. Persona messages inside its window carry the model badge, so
    * the reader can see which brain is talking.
@@ -99,6 +106,7 @@ export function EventItem({
   cancelledFollowUpIds,
   delegationStatusPatches,
   subagentStatusPatches,
+  subagentRunFallback,
   subagentThreadRun,
   botAccessStatusPatches,
   callEndedPatches,
@@ -254,6 +262,7 @@ export function EventItem({
             event={event}
             workspaceId={workspaceId}
             statusPatch={statusPatch}
+            runFallback={statusPatch ? undefined : subagentRunFallback}
             // The subagent's session runs in its thread, so it is aliased under
             // this card's event id — the anchor the thread was created on.
             activity={agentActivity?.get(event.id)}

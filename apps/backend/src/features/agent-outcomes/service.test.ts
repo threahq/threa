@@ -18,6 +18,7 @@ function makeRow(overrides: Partial<AgentOutcomeRow> = {}): AgentOutcomeRow {
     claimedByLabel: null,
     statusNote: null,
     resultMessageId: null,
+    lastAgentMessageAt: null,
     actorType: "persona",
     actorId: "persona_1",
     createdAt: NOW,

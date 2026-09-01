@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 import type { ThreadSummary } from "@threa/types"
-import { isSubagentAuthoredMessage, resolveSubagentCardState, subagentFailureLabel } from "./subagent-display"
+import type { SubagentCreatedEventPayload, SubagentStatus } from "@threa/types"
+import {
+  isSubagentAuthoredMessage,
+  resolveSubagentCardState,
+  resolveSubagentThreadRun,
+  subagentFailureLabel,
+  subagentStateAnimates,
+  SUBAGENT_STATE_LABEL,
+} from "./subagent-display"
 
 const AGENT_AT = "2026-09-01T10:00:00.000Z"
 
@@ -21,13 +29,16 @@ describe("resolveSubagentCardState", () => {
   })
 
   it("prefers a live session over anything the patches say", () => {
-    expect(
-      resolveSubagentCardState({ status: "active", hasLiveSession: true, lastAgentMessageAt: AGENT_AT })
-    ).toBe("working")
+    expect(resolveSubagentCardState({ status: "active", hasLiveSession: true, lastAgentMessageAt: AGENT_AT })).toBe(
+      "working"
+    )
   })
 
-  it("does not claim to wait before the subagent has spoken", () => {
-    expect(resolveSubagentCardState({ status: "active", hasLiveSession: false })).toBe("working")
+  it("never resolves the animated state without a live session", () => {
+    expect(resolveSubagentCardState({ status: "active", hasLiveSession: false })).toBe("starting")
+    // Same words to the reader, no motion behind them.
+    expect(SUBAGENT_STATE_LABEL.starting).toBe(SUBAGENT_STATE_LABEL.working)
+    expect([subagentStateAnimates("working"), subagentStateAnimates("starting")]).toEqual([true, false])
   })
 
   it("waits when the subagent's message is the newest thing either source knows", () => {
@@ -41,7 +52,7 @@ describe("resolveSubagentCardState", () => {
     ).toBe("waiting")
   })
 
-  it("stops waiting once newer thread stats say the reader replied", () => {
+  it("stops waiting — but does not start spinning — once the reader replied", () => {
     expect(
       resolveSubagentCardState({
         status: "active",
@@ -49,7 +60,7 @@ describe("resolveSubagentCardState", () => {
         lastAgentMessageAt: AGENT_AT,
         threadSummary: summary("2026-09-01T10:05:00.000Z", "user"),
       })
-    ).toBe("working")
+    ).toBe("starting")
   })
 
   it("keeps waiting when the newer reply is the subagent's own", () => {
@@ -127,5 +138,65 @@ describe("isSubagentAuthoredMessage", () => {
         createdAt: "2026-09-01T09:59:00.000Z",
       }),
     ]).toEqual([true, false, false])
+  })
+})
+
+describe("resolveSubagentThreadRun", () => {
+  const card = {
+    createdAt: "2026-09-01T10:00:00.000Z",
+    payload: {
+      subagentId: "subagent_1",
+      title: "Second opinion",
+      model: "openrouter:anthropic/claude-opus-5",
+      personaId: "persona_ariadne",
+      threadStreamId: "stream_thread",
+      createdBy: "usr_kris",
+      sourceConversationId: null,
+    } satisfies SubagentCreatedEventPayload,
+  }
+
+  function patch(status: SubagentStatus, at: string) {
+    return { at, status }
+  }
+
+  it("leaves the window open while the run is active", () => {
+    expect(resolveSubagentThreadRun({ card, orderedPatches: [] }).endedAt).toBeNull()
+  })
+
+  it("closes the window on the run's last transition", () => {
+    const run = resolveSubagentThreadRun({
+      card,
+      orderedPatches: [patch("active", "2026-09-01T10:05:00.000Z"), patch("completed", "2026-09-01T10:12:00.000Z")],
+    })
+    expect(run.endedAt).toBe("2026-09-01T10:12:00.000Z")
+  })
+
+  it("reopens the window when a requeue follows a terminal patch", () => {
+    // The trap: reading "the latest TERMINAL patch" would leave the window shut
+    // and unbadge every message of the restarted run, permanently.
+    const run = resolveSubagentThreadRun({
+      card,
+      orderedPatches: [patch("failed", "2026-09-01T10:12:00.000Z"), patch("active", "2026-09-01T10:20:00.000Z")],
+    })
+    expect(run.endedAt).toBeNull()
+  })
+
+  it("closes the window from the run row when no patch is in reach", () => {
+    // A deep link into a finished thread caches no parent events at all.
+    const run = resolveSubagentThreadRun({
+      card,
+      orderedPatches: [],
+      fallback: { status: "completed", statusChangedAt: "2026-09-01T10:12:00.000Z" },
+    })
+    expect(run.endedAt).toBe("2026-09-01T10:12:00.000Z")
+  })
+
+  it("prefers a patch it can see over the fallback", () => {
+    const run = resolveSubagentThreadRun({
+      card,
+      orderedPatches: [patch("active", "2026-09-01T10:20:00.000Z")],
+      fallback: { status: "completed", statusChangedAt: "2026-09-01T10:12:00.000Z" },
+    })
+    expect(run.endedAt).toBeNull()
   })
 })

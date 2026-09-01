@@ -1,11 +1,21 @@
+import type { SubagentSummary } from "@threa/types"
 import { api } from "./client"
 
 /**
- * Subagent runs. The timeline card renders entirely from its own payload plus
- * the in-window status patches, so there is no read endpoint here — only the
- * two first-party transitions the card's actions drive.
+ * Subagent runs. The timeline card renders from its own payload plus the
+ * in-window status patches; the read below is the fallback for a surface whose
+ * window cannot hold those patches, not the card's normal path.
  */
 export const subagentsApi = {
+  /**
+   * The authoritative run. Access-checked and 404-hiding server-side (a run the
+   * viewer cannot reach 404s exactly like a missing one).
+   */
+  async get(workspaceId: string, id: string): Promise<SubagentSummary> {
+    const { subagent } = await api.get<{ subagent: SubagentSummary }>(`/api/workspaces/${workspaceId}/subagents/${id}`)
+    return subagent
+  },
+
   /**
    * Cancel an active run. `cancelled` is false when the run already settled
    * (reported back, failed, expired) — a lost race, not an error.

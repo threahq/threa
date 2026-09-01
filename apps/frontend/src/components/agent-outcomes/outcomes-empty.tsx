@@ -1,5 +1,5 @@
 import { AlertCircle, Filter, Inbox } from "lucide-react"
-import type { AgentOutcomeKind } from "@threa/types"
+import { OUTCOME_KIND_PLURAL } from "@/lib/agent-outcomes/items"
 import { Button } from "@/components/ui/button"
 import type { OutcomesFilters } from "./use-outcomes-url-state"
 
@@ -10,12 +10,6 @@ interface OutcomesEmptyProps {
   filters: OutcomesFilters
   onClearFilters?: () => void
   onWidenScope?: () => void
-}
-
-const KIND_NOUN: Record<AgentOutcomeKind, string> = {
-  follow_up: "follow-ups",
-  delegation: "delegations",
-  subagent: "subagents",
 }
 
 const CHROME: Record<EmptyKind, { icon: typeof Inbox; accent: string }> = {
@@ -36,7 +30,7 @@ const FIXED_COPY: Record<"empty" | "error", { title: string; body: string }> = {
 }
 
 function filteredCopy(filters: OutcomesFilters): { title: string; body: string } {
-  const noun = filters.kind ? KIND_NOUN[filters.kind] : "outcomes"
+  const noun = filters.kind ? OUTCOME_KIND_PLURAL[filters.kind].toLowerCase() : "outcomes"
   if (filters.queryText.trim()) {
     return { title: "No matches", body: `No ${noun} match “${filters.queryText.trim()}” in this scope.` }
   }

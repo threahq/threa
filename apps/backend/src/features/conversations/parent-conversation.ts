@@ -28,6 +28,10 @@ export async function resolveEventAnchoredParentConversationId(
   const anchorId = stream.parentAnchorId
   if (!anchorId?.startsWith("event_")) return undefined
 
+  // Unscoped by id on purpose: `parentAnchorId` is a column of a stream this
+  // caller already resolved inside its own workspace, so the id is not caller
+  // input and the event it names is in that same workspace by construction
+  // (INV-8 is satisfied upstream, not re-derived here).
   const anchor = await StreamEventRepository.findById(db, anchorId)
   if (anchor?.eventType !== "subagent:created") return undefined
   return (anchor.payload as SubagentCreatedEventPayload).sourceConversationId ?? undefined
