@@ -32,6 +32,8 @@ describe("resolveEffectPath", () => {
     expect(Object.fromEntries(TOOL_EFFECT_KINDS.map((kind, i) => [kind, resolved[i]]))).toEqual({
       settings: "?settings=appearance",
       delegation: "/w/ws_1/delegations/id_1",
+      // Routeless until the subagent card ships.
+      subagent: null,
       // A memo opens in place, so it has no route at all.
       memo: null,
       follow_up: null,
@@ -72,6 +74,7 @@ describe("labels and diffs", () => {
     expect(TOOL_EFFECT_KINDS.map((kind) => kindNoun(kind))).toEqual([
       "Setting",
       "Delegation",
+      "Subagent",
       "Memo",
       "Follow-up",
       "Brief",
