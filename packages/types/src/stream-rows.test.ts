@@ -93,7 +93,6 @@ describe("STREAM_ROW_SPEC", () => {
         "memos:captured",
         "agent:follow_up_scheduled",
         "delegation:created",
-        "subagent:created",
         "command_dispatched",
         "command_completed",
         "command_failed",
