@@ -342,7 +342,7 @@ export function EditorToolbar({
             <div
               data-testid={isMobileInlineToolbar ? "mobile-inline-toolbar-scroll" : undefined}
               className={cn(
-                "flex min-w-0 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                "flex min-w-0 items-center gap-0.5 overflow-x-auto scrollbar-none",
                 "overscroll-x-contain touch-pan-x",
                 isMobileInlineToolbar ? "grow pb-1 -mb-1 pr-3" : "shrink",
                 // The foot row's controls are Send-sized (30px); the roomy 36px
@@ -386,7 +386,7 @@ export function EditorToolbar({
         <div className="relative">
           <div
             className={cn(
-              "flex items-center gap-0.5 rounded-md border bg-popover p-1 shadow-md overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              "flex items-center gap-0.5 rounded-md border bg-popover p-1 shadow-md overflow-x-auto scrollbar-none",
               "animate-in fade-in-0 zoom-in-95 duration-150"
             )}
           >
