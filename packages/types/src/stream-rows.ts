@@ -277,6 +277,24 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   // A patch that advances the matching delegation card's status — not its own row.
   "delegation:status_changed": PATCH,
 
+  // A subagent was delegated from this stream — payload carries
+  // `sourceConversationId`. Threadable because the subagent's whole
+  // conversation with the user IS a thread anchored on this card; it is created
+  // eagerly in the same transaction rather than lazily like a call's chat.
+  "subagent:created": {
+    rendersAsOwnRow: true,
+    grouping: null,
+    authorGroupable: false,
+    patchesRow: false,
+    broadcastSlot: true,
+    conversationRef: "source-conversation",
+    bumps: false,
+    threadable: true,
+    readBlocking: false,
+  },
+  // A patch that advances the matching subagent card's status — not its own row.
+  "subagent:status_changed": PATCH,
+
   // A bot access request (F3): a broadcast row in the timeline, never a
   // board/topic row — the request is stream chrome (a bot asking to join), not
   // anchored to a conversation.

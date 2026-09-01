@@ -22,6 +22,11 @@ export type TurnPurpose =
   // saved override. Behaviourally identical to `catch_up` otherwise — no prompt
   // section (the draft prompt must run verbatim), default flags.
   | { kind: "draft_test"; draftId: string }
+  // The first turn of a subagent run: the persona wakes up in a fresh thread,
+  // bound to the delegated model, with the brief as its only instruction. No
+  // trigger message exists (`messageId` is synthetic), so without this kind the
+  // turn would run as a context-less catch-up in an empty stream.
+  | { kind: "subagent_kickoff"; subagentRunId: string }
 
 export type TurnPurposeKind = TurnPurpose["kind"]
 
@@ -40,7 +45,13 @@ export function resolveTurnPurpose(payload: {
   rerunContext?: AgentSessionRerunContext
   followUpId?: string
   personaDraftId?: string
+  subagentRunId?: string
 }): TurnPurpose {
+  // Highest precedence: a kickoff job carries no other purpose field, and its
+  // synthetic messageId would otherwise decode as a plain catch-up.
+  if (payload.subagentRunId) {
+    return { kind: "subagent_kickoff", subagentRunId: payload.subagentRunId }
+  }
   if (payload.followUpId) {
     return { kind: "follow_up", followUpId: payload.followUpId }
   }

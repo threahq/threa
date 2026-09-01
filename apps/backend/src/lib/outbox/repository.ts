@@ -89,6 +89,8 @@ export type OutboxEventType =
   | "stream:brief_updated"
   | "stream:delegation_created"
   | "stream:delegation_status_changed"
+  | "stream:subagent_created"
+  | "stream:subagent_status_changed"
   | "stream:bot_access_requested"
   | "stream:bot_access_status_changed"
   | "invitation:sent"
@@ -157,6 +159,8 @@ export type StreamScopedEventType =
   | "stream:brief_updated"
   | "stream:delegation_created"
   | "stream:delegation_status_changed"
+  | "stream:subagent_created"
+  | "stream:subagent_status_changed"
   | "stream:bot_access_requested"
   | "stream:bot_access_status_changed"
   | "stream:call_started"
@@ -394,6 +398,20 @@ export interface StreamDelegationCreatedOutboxPayload extends StreamScopedPayloa
 }
 
 export interface StreamDelegationStatusChangedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/**
+ * Carries a `subagent:created` / `subagent:status_changed` timeline event to the
+ * stream's room. Same envelope as the delegation events: the full stream event
+ * rides along so clients append (created) or patch (status_changed) without a
+ * fetch.
+ */
+export interface StreamSubagentCreatedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface StreamSubagentStatusChangedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -1232,6 +1250,8 @@ export interface OutboxEventPayloadMap {
   "stream:brief_updated": StreamBriefUpdatedOutboxPayload
   "stream:delegation_created": StreamDelegationCreatedOutboxPayload
   "stream:delegation_status_changed": StreamDelegationStatusChangedOutboxPayload
+  "stream:subagent_created": StreamSubagentCreatedOutboxPayload
+  "stream:subagent_status_changed": StreamSubagentStatusChangedOutboxPayload
   "stream:bot_access_requested": StreamBotAccessRequestedOutboxPayload
   "stream:bot_access_status_changed": StreamBotAccessStatusChangedOutboxPayload
   "stream:read": StreamReadOutboxPayload
@@ -1371,6 +1391,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:brief_updated",
   "stream:delegation_created",
   "stream:delegation_status_changed",
+  "stream:subagent_created",
+  "stream:subagent_status_changed",
   "stream:bot_access_requested",
   "stream:bot_access_status_changed",
   "call:participants_changed",

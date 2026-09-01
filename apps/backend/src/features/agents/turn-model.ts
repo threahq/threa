@@ -11,7 +11,16 @@ export interface ResolvedTurnModel {
   model: string
   /** True when an escalation rule fired (renders as a `model_escalated` trace step). */
   escalated: boolean
+  /** Which rule fired, for the trace step's label. Absent when nothing escalated. */
+  cause?: TurnModelEscalationCause
 }
+
+/**
+ * Why this turn left `persona.model`. `previous_attempt_failed_validation` is
+ * the supersede-rerun rule; `subagent` means the turn is running inside a
+ * subagent thread and is bound to that run's delegated model.
+ */
+export type TurnModelEscalationCause = "previous_attempt_failed_validation" | "subagent"
 
 export interface TurnModelContext {
   /** The turn's EFFECTIVE purpose (a degraded supersede rerun never escalates). */
@@ -21,30 +30,45 @@ export interface TurnModelContext {
    * and the session was loaded. Null/absent for every other purpose.
    */
   supersededSession: { responseValidationFailed: boolean } | null
+  /**
+   * The delegated model of the live subagent run this turn's stream is the
+   * thread of, when there is one. Null/absent for every ordinary turn.
+   */
+  activeSubagentModel?: string | null
 }
 
 /**
  * Resolve the model for one persona turn.
  *
- * Rule v1 — the only escalation rule (mechanical, no language heuristics per
- * INV-54): a supersede rerun whose previous attempt kept its response because
- * drafts repeatedly failed the response validator runs on the persona's
- * `escalationModel`. Everything else runs `persona.model`. An escalation to
- * the same id reports `escalated: false` so the trace never shows a no-op
- * escalation step.
+ * Two rules, both mechanical — no language heuristics (INV-54):
+ * 1. A turn inside a live subagent thread runs that run's delegated model.
+ *    This wins outright: the whole point of the run is that this thread is
+ *    another model's, and it holds for every turn in the thread (the kickoff
+ *    and every later reply alike) until the run settles.
+ * 2. A supersede rerun whose previous attempt kept its response because drafts
+ *    repeatedly failed the response validator runs on the persona's
+ *    `escalationModel`.
+ *
+ * Everything else runs `persona.model`. A binding that lands on `persona.model`
+ * reports `escalated: false`, so the trace never shows a no-op escalation step.
  */
 export function resolveTurnModel(
   persona: { model: string; escalationModel: string | null },
   turnContext: TurnModelContext
 ): ResolvedTurnModel {
-  const { purpose, supersededSession } = turnContext
+  const { purpose, supersededSession, activeSubagentModel } = turnContext
+  if (activeSubagentModel) {
+    return activeSubagentModel === persona.model
+      ? { model: persona.model, escalated: false }
+      : { model: activeSubagentModel, escalated: true, cause: "subagent" }
+  }
   if (
     purpose.kind === "supersede_rerun" &&
     supersededSession?.responseValidationFailed &&
     persona.escalationModel !== null &&
     persona.escalationModel !== persona.model
   ) {
-    return { model: persona.escalationModel, escalated: true }
+    return { model: persona.escalationModel, escalated: true, cause: "previous_attempt_failed_validation" }
   }
   return { model: persona.model, escalated: false }
 }

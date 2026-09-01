@@ -192,6 +192,8 @@ export const EVENT_TYPES = [
   "brief_updated",
   "delegation:created",
   "delegation:status_changed",
+  "subagent:created",
+  "subagent:status_changed",
   "bot_access:requested",
   "bot_access:status_changed",
   "call_started",
@@ -260,6 +262,11 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // A delegated task was handed off (roadmap 5.1): every member sees the
   // delegation card, so it takes a broadcast slot like `agent:follow_up_scheduled`.
   "delegation:created",
+  // A subagent was delegated from this stream: every member sees the subagent
+  // card, so it takes a broadcast slot like `delegation:created`.
+  // `subagent:status_changed` is deliberately NOT here — it is a patch on that
+  // card, like the delegation status change below.
+  "subagent:created",
   // A bot filed an access request (F3): every member sees the request card, so
   // it takes a broadcast slot like `delegation:created`. `bot_access:status_changed`
   // is deliberately NOT here — it is a patch on the request card, like the
@@ -717,6 +724,8 @@ export const AGENT_TOOL_NAMES = [
   "update_follow_up",
   "update_stream_brief",
   "delegate_task",
+  "delegate_to_model",
+  "report_back",
   "save_memo",
   "update_user_settings",
   "github_repos",
@@ -752,6 +761,8 @@ export const AgentToolNames = {
   UPDATE_FOLLOW_UP: "update_follow_up",
   UPDATE_STREAM_BRIEF: "update_stream_brief",
   DELEGATE_TASK: "delegate_task",
+  DELEGATE_TO_MODEL: "delegate_to_model",
+  REPORT_BACK: "report_back",
   SAVE_MEMO: "save_memo",
   UPDATE_USER_SETTINGS: "update_user_settings",
   GITHUB_REPOS: "github_repos",
@@ -836,6 +847,39 @@ export const DELEGATION_TERMINAL_STATUSES = [
   "failed",
   "cancelled",
 ] as const satisfies readonly DelegationStatus[]
+
+/**
+ * Subagent run lifecycle. A subagent is a second model bound to a thread off
+ * the parent stream: `active` while it is the stream's one live delegation,
+ * terminal in every other state. Validated in code, never a DB enum (INV-3);
+ * `active` is also the partial-unique-index predicate that enforces one live
+ * subagent per parent stream (INV-20).
+ */
+export const SUBAGENT_STATUSES = ["active", "completed", "cancelled", "failed", "expired"] as const
+export type SubagentStatus = (typeof SUBAGENT_STATUSES)[number]
+
+export const SubagentStatuses = {
+  ACTIVE: "active",
+  COMPLETED: "completed",
+  CANCELLED: "cancelled",
+  FAILED: "failed",
+  EXPIRED: "expired",
+} as const satisfies Record<string, SubagentStatus>
+
+/** Settled subagent statuses with no further transitions (requeue re-inserts, it does not transition). */
+export const SUBAGENT_TERMINAL_STATUSES = [
+  "completed",
+  "cancelled",
+  "failed",
+  "expired",
+] as const satisfies readonly SubagentStatus[]
+
+// Subagent content caps — same numbers as the delegation caps and here for the
+// same reason: the `delegate_to_model` tool (features/agents/) and the
+// subagents feature both need them, and importing the subagents barrel from an
+// agents tool creates a module cycle.
+export const SUBAGENT_TITLE_MAX_CHARS = 200
+export const SUBAGENT_BRIEF_MAX_CHARS = 20_000
 
 // Bot access-request lifecycle (F3): a bot runtime that lacks stream access
 // files a request; a stream member approves (granting access + re-nudging the

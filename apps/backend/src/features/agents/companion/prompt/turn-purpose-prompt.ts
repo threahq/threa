@@ -25,6 +25,8 @@ interface EarlyPurposeContext {
   mentionerName?: string
   /** The note the fired follow-up carried; present only for a follow-up turn. */
   followUp?: { note: string; scheduledFor: Date } | null
+  /** The brief a subagent kickoff turn wakes up on; present only for that kind. */
+  subagentBrief?: { title: string; brief: string; parentStreamId: string } | null
 }
 
 export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurposeContext): string {
@@ -33,6 +35,8 @@ export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurpose
       return buildMentionSection(ctx.context, ctx.mentionerName)
     case "follow_up":
       return ctx.followUp ? buildFollowUpSection(ctx.context, ctx.followUp) : ""
+    case "subagent_kickoff":
+      return ctx.subagentBrief ? buildSubagentKickoffSection(ctx.subagentBrief) : ""
     case "catch_up":
     case "supersede_rerun":
     // A draft-test turn adds no section on purpose: the editor is judging the
@@ -82,6 +86,23 @@ This turn is a follow-up you scheduled for yourself — not a new message from a
 - This IS that reminder firing. Act on it now — look at what has happened in the stream since you scheduled it and, if there's something worth saying, post your check-in with \`send_message\`. Do not decline or promise to check back later; later is now.
 - Do NOT schedule another follow-up for the same thing. The note above is what this turn is already handling — re-reading it as a fresh instruction and scheduling again just loops forever. Only schedule a new follow-up if genuinely new future work has surfaced.
 - If nothing needs saying (the matter resolved itself, nothing changed, or you're still waiting on someone), call \`keep_response\` with a brief reason and stay silent. Do not post filler.`
+}
+
+function buildSubagentKickoffSection(subagent: { title: string; brief: string; parentStreamId: string }): string {
+  return `
+
+## You were delegated this
+
+Another model handed you this question because the user asked for you, or because it judged this to be beyond it. This thread is yours: you are talking to the user here directly, and this brief is all you were given — the thread starts empty.
+
+- Delegated as: "${subagent.title.trim()}"
+- The brief:
+
+${subagent.brief.trim()}
+
+Answer it now. Use your tools to find whatever the brief assumes you can look up; if something load-bearing is genuinely missing, ask the user here rather than guessing. Do not delegate this onward.
+
+When the question is settled, call \`report_back\` once with your closing answer — that posts it and closes the delegation. Until then, keep talking with the user in this thread as normal.`
 }
 
 function buildSupersedeSection(rerunContext?: AgentSessionRerunContext): string {

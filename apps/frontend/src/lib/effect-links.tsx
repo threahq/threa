@@ -8,7 +8,16 @@ import {
   type SettingsTab,
   type ToolEffectKind,
 } from "@threa/types"
-import { Clock, FileText, PenLine, SlidersHorizontal, Sparkles, TerminalSquare, type LucideIcon } from "lucide-react"
+import {
+  Bot,
+  Clock,
+  FileText,
+  PenLine,
+  SlidersHorizontal,
+  Sparkles,
+  TerminalSquare,
+  type LucideIcon,
+} from "lucide-react"
 import { buildDelegationPath } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
@@ -20,6 +29,7 @@ const EFFECT_KIND_NOUNS = {
   memo: "Memo",
   follow_up: "Follow-up",
   brief: "Brief",
+  subagent: "Subagent",
   other: "Change",
 } as const satisfies Record<ToolEffectKind, string>
 
@@ -38,6 +48,7 @@ const EFFECT_KIND_ICONS = {
   memo: Sparkles,
   follow_up: Clock,
   brief: FileText,
+  subagent: Bot,
   other: PenLine,
 } as const satisfies Record<ToolEffectKind, LucideIcon>
 
@@ -103,6 +114,9 @@ const EFFECT_ROUTE_RESOLVERS = {
   },
   follow_up: () => null,
   brief: () => null,
+  // Routeless until the subagent card ships: the effect's target is the run id,
+  // and the thread it would link to is only known to the card's own payload.
+  subagent: () => null,
   other: () => null,
 } as const satisfies Record<ToolEffectKind, EffectResolver>
 

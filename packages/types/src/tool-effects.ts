@@ -10,7 +10,7 @@ import { TOOL_TIERS_BY_NAME, ToolTiers } from "./tool-tiers"
  * reviewed" and "did this change something" are two different claims, and only
  * the first one was visible before this existed.
  */
-export const TOOL_EFFECT_KINDS = ["settings", "delegation", "memo", "follow_up", "brief", "other"] as const
+export const TOOL_EFFECT_KINDS = ["settings", "delegation", "subagent", "memo", "follow_up", "brief", "other"] as const
 export type ToolEffectKind = (typeof TOOL_EFFECT_KINDS)[number]
 
 export interface AgentToolEffect {
@@ -75,10 +75,16 @@ export const MUTATING_TOOLS = {
   save_memo: true,
   delegate_task: true,
   update_user_settings: true,
+  // Opens a durable run + thread the user finds from the parent card, not from
+  // the reply that created it.
+  delegate_to_model: true,
 
   // Participation: durable, but rendered in place as itself.
   send_message: false,
   react_to_message: false,
+  // Posts the summary as an ordinary message in the thread the user is already
+  // reading and closes the run that card already shows — nothing to go find.
+  report_back: false,
 
   // Reads.
   list_follow_ups: false,

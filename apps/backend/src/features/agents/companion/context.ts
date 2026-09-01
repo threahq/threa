@@ -65,6 +65,12 @@ export interface ContextParams {
    * request to schedule one.
    */
   followUp?: { note: string; scheduledFor: Date }
+  /**
+   * Present when this turn is a subagent kickoff: the brief the delegating
+   * persona wrote. Drives the "You were delegated this" prompt section — the
+   * turn's only instruction, since the thread it wakes in is empty.
+   */
+  subagentBrief?: { title: string; brief: string; parentStreamId: string }
 }
 
 export interface AgentContext {
@@ -133,7 +139,8 @@ async function resolveScratchpadCustomPrompt(
  */
 export async function buildAgentContext(deps: ContextDeps, params: ContextParams): Promise<AgentContext> {
   const { db, userPreferencesService, conversationSummaryService } = deps
-  const { workspaceId, streamId, stream, messageId, persona, purpose, policy, currentTime, followUp } = params
+  const { workspaceId, streamId, stream, messageId, persona, purpose, policy, currentTime, followUp, subagentBrief } =
+    params
 
   const triggerMessage = await MessageRepository.findById(db, messageId)
   const invokingUserId = triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : undefined
@@ -463,6 +470,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       conversationTopic,
       spawnedFromContext,
       followUp,
+      subagentBrief,
       previousSessions: previousSessionsBlock,
       // Only when the tool that can act on them is actually in this turn's
       // toolset. Elsewhere these values are tokens the model can neither use

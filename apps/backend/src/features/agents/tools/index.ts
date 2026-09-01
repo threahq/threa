@@ -63,6 +63,12 @@ export {
   type UpdateUserSettingsInput,
 } from "./update-user-settings-tool"
 export { createDelegateTaskTool, type DelegateTaskInput } from "./delegate-task-tool"
+export {
+  createDelegateToModelTool,
+  canOfferSubagentDelegation,
+  type DelegateToModelInput,
+} from "./delegate-to-subagent-tool"
+export { createReportBackTool, type ReportBackInput } from "./report-back-tool"
 export { createSaveMemoTool, type SaveMemoInput } from "./save-memo-tool"
 export {
   createWorkspaceResearchTool,

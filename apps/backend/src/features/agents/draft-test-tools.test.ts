@@ -11,6 +11,7 @@ describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
         AgentToolNames.UPDATE_FOLLOW_UP,
         AgentToolNames.UPDATE_STREAM_BRIEF,
         AgentToolNames.DELEGATE_TASK,
+        AgentToolNames.DELEGATE_TO_MODEL,
         AgentToolNames.SAVE_MEMO,
         AgentToolNames.UPDATE_USER_SETTINGS,
       ].sort()
@@ -53,6 +54,10 @@ describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
       AgentToolNames.READ_ATTACHMENT,
       AgentToolNames.GITHUB_REPOS,
       AgentToolNames.LINEAR_LIST_ISSUES,
+      // `report_back` is bound only inside a subagent thread, so a test-drive
+      // turn never builds it anyway — excluding it here would claim a durable
+      // write it cannot make.
+      AgentToolNames.REPORT_BACK,
     ]
     for (const tool of kept) {
       expect(DRAFT_TEST_EXCLUDED_TOOLS.has(tool)).toBe(false)

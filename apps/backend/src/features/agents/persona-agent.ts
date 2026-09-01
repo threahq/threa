@@ -43,6 +43,7 @@ import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { renderAsideDrafts } from "./aside-drafts-context"
 import {
+  canOfferSubagentDelegation,
   canOfferUserSettings,
   createMemoizedGithubClient,
   createMemoizedLinearClient,
@@ -270,6 +271,63 @@ export interface PersonaAgentDeps {
     contextRefs: string[]
   }) => Promise<import("./tools/tool-deps").DelegateTaskToolResult>
   /**
+   * The live subagent run this stream is the thread of, if any. Read on the
+   * turn precheck: its presence pins the turn's model, binds `report_back`,
+   * unbinds `delegate_to_model` (no nesting), and — for a kickoff turn —
+   * supplies the brief the turn wakes up on. Absent in harnesses that don't
+   * wire subagents, in which case every stream reads as an ordinary one.
+   */
+  loadActiveSubagentRun?: (params: {
+    workspaceId: string
+    threadStreamId: string
+  }) => Promise<{ id: string; model: string; title: string; brief: string; parentStreamId: string } | null>
+  /**
+   * The workspace's delegable model set, bound to `resolveSubagentModels` in
+   * server.ts. Read once per turn to build `delegate_to_model`'s description;
+   * the same resolution is re-checked inside `delegateToModel` at execution, so
+   * a set that changed mid-turn cannot be used to delegate off-policy. Absent
+   * (or empty) disables the tool.
+   */
+  loadSubagentModels?: (params: { workspaceId: string }) => Promise<string[]>
+  /**
+   * Open a subagent run, bound to `SubagentService.create` in server.ts. The
+   * turn supplies identity, the source-conversation anchor and the invoking
+   * user; the tool supplies the model, title and brief.
+   */
+  delegateToModel?: (params: {
+    workspaceId: string
+    parentStreamId: string
+    parentSessionId: string | null
+    triggerMessageId: string | null
+    sourceConversationId: string | null
+    personaId: string
+    invokingUserId: string
+    model: string
+    title: string
+    brief: string
+  }) => Promise<import("./tools/tool-deps").DelegateToModelToolResult>
+  /**
+   * Close a subagent run, bound to `SubagentService.reportBack` in server.ts.
+   * The turn supplies the run id and the message its summary was posted as.
+   */
+  reportSubagentBack?: (params: {
+    workspaceId: string
+    subagentId: string
+    resultMessageId: string
+  }) => Promise<import("./tools/tool-deps").ReportBackToolResult>
+  /**
+   * Mark this thread's live subagent run failed, bound to
+   * `SubagentService.failByThreadStream` in server.ts. Called from the turn's
+   * terminal-failure path so a card never keeps saying "waiting for you" for a
+   * subagent whose runtime died.
+   */
+  failSubagentForThread?: (params: {
+    client: Querier
+    workspaceId: string
+    threadStreamId: string
+    statusNote: string
+  }) => Promise<unknown>
+  /**
    * Write an agent-authored memo (roadmap 6.2), bound to `MemoService.saveMemoGenerated`
    * in server.ts. The turn supplies its workspace/stream/session identity; the
    * tool supplies the memo content + source-message anchors. Absent in harnesses
@@ -382,6 +440,10 @@ export class PersonaAgent {
       loadFollowUp,
       updateBrief,
       delegateTask,
+      loadActiveSubagentRun,
+      loadSubagentModels,
+      delegateToModel,
+      reportSubagentBack,
       saveMemo,
     } = this.deps
     const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime, attempt, maxAttempts } = input
@@ -466,6 +528,15 @@ export class PersonaAgent {
       rootStreamCreatedBy,
     } = precheck
 
+    // The live subagent run this stream is the thread of, if any. One query,
+    // and only for threads — every other stream kind is one by construction.
+    // Everything downstream keys off this: the pinned model, the report_back /
+    // delegate_to_model binding, and the kickoff brief.
+    const activeSubagentRun =
+      stream.type === StreamTypes.THREAD && loadActiveSubagentRun
+        ? await loadActiveSubagentRun({ workspaceId, threadStreamId: streamId })
+        : null
+
     // A fired follow-up has no trigger message (synthetic `messageId`); load its
     // row so the turn can be told it IS the scheduled check-in firing (roadmap
     // 1.2). If the row is gone or no loader is wired the turn degrades to a plain
@@ -485,6 +556,19 @@ export class PersonaAgent {
     }
     const isFollowUp = followUpContext !== undefined
 
+    // The kickoff brief, but only when the loaded run IS the one the job named:
+    // a job for a run that was cancelled (or replaced) between enqueue and
+    // dispatch must not wake up on someone else's brief. Missing → the turn
+    // degrades to a plain catch-up below.
+    const subagentKickoffBrief =
+      purpose.kind === "subagent_kickoff" && activeSubagentRun?.id === purpose.subagentRunId
+        ? {
+            title: activeSubagentRun.title,
+            brief: activeSubagentRun.brief,
+            parentStreamId: activeSubagentRun.parentStreamId,
+          }
+        : undefined
+
     const sessionOptions = (targetStreamId: string, targetInitialSequence: bigint) => ({
       pool,
       triggerMessageId: messageId,
@@ -500,6 +584,20 @@ export class PersonaAgent {
       rerunContext,
       attempt,
       maxAttempts,
+      // Terminal failure in a subagent thread settles the run in the same
+      // transaction: the card must never keep saying "waiting for you" for a
+      // subagent whose runtime died.
+      onTerminalFailure:
+        activeSubagentRun && this.deps.failSubagentForThread
+          ? async (db: Querier, error: string) => {
+              await this.deps.failSubagentForThread!({
+                client: db,
+                workspaceId,
+                threadStreamId: targetStreamId,
+                statusNote: `The delegated model's turn failed: ${error}`.slice(0, 500),
+              })
+            }
+          : undefined,
     })
 
     // Create the thread eagerly so successful session events go there for
@@ -640,7 +738,18 @@ export class PersonaAgent {
 
         const agentContext = await buildAgentContext(
           { db: pool, userPreferencesService, conversationSummaryService },
-          { workspaceId, streamId, stream, messageId, persona, purpose, policy, currentTime, followUp: followUpContext }
+          {
+            workspaceId,
+            streamId,
+            stream,
+            messageId,
+            persona,
+            purpose,
+            policy,
+            currentTime,
+            followUp: followUpContext,
+            subagentBrief: subagentKickoffBrief,
+          }
         )
 
         // Resolve an attached ContextBag (if any) so `stable + delta` flow into
@@ -759,6 +868,7 @@ export class PersonaAgent {
         let effectivePurpose: TurnPurpose = purpose
         if (purpose.kind === "supersede_rerun" && !isSupersedeRerun) effectivePurpose = { kind: "catch_up" }
         else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
+        else if (purpose.kind === "subagent_kickoff" && !subagentKickoffBrief) effectivePurpose = { kind: "catch_up" }
         const turnFlags = deriveTurnFlags(effectivePurpose)
 
         // Per-turn model resolution (roadmap 2.3), at the dispatch seam like
@@ -769,6 +879,7 @@ export class PersonaAgent {
         const turnModel = resolveTurnModel(persona, {
           purpose: effectivePurpose,
           supersededSession: supersededMessagePlan?.supersededSession ?? null,
+          activeSubagentModel: activeSubagentRun?.model ?? null,
         })
         if (turnModel.escalated) {
           const escalationStep = await trace.startStep({
@@ -776,7 +887,7 @@ export class PersonaAgent {
             content: JSON.stringify({
               fromModel: persona.model,
               toModel: turnModel.model,
-              cause: "previous_attempt_failed_validation",
+              cause: turnModel.cause,
             }),
           })
           await escalationStep.complete({})
@@ -1014,6 +1125,57 @@ export class PersonaAgent {
               }
             : undefined
 
+        // Subagent delegation for the delegate_to_model tool. Same three gates
+        // as delegate_task (wired, human-triggered, not sealed) plus the one
+        // that makes nesting structurally impossible: inside a subagent thread
+        // the deps are absent, so the tool is never built and the delegated
+        // model is never told it could delegate onward.
+        const subagentUserId = agentContext.invokingUserId
+        const offerSubagentDelegation = canOfferSubagentDelegation({
+          wired: Boolean(delegateToModel && loadSubagentModels),
+          invokingUserId: subagentUserId,
+          e2eEnabled: stream.e2eEnabled === true,
+          insideSubagentThread: activeSubagentRun !== null,
+        })
+        const subagentModels =
+          offerSubagentDelegation && loadSubagentModels ? await loadSubagentModels({ workspaceId }) : []
+        const subagentDelegationDeps: import("./tools/tool-deps").DelegateToModelToolDeps | undefined =
+          delegateToModel && subagentUserId && subagentModels.length > 0
+            ? {
+                allowedModels: subagentModels,
+                delegateToModel: async ({ model, title, brief }) =>
+                  delegateToModel({
+                    workspaceId,
+                    parentStreamId: session.streamId,
+                    parentSessionId: session.id,
+                    triggerMessageId: agentContext.triggerMessage?.id ?? null,
+                    sourceConversationId: await resolveTriggerConversationId(),
+                    personaId: persona.id,
+                    invokingUserId: subagentUserId,
+                    model,
+                    title,
+                    brief,
+                  }),
+              }
+            : undefined
+
+        // The run's own closing tool, bound only while the run is live: the
+        // summary goes out through the turn's normal message path first, so the
+        // card's "done" and the answer it points at can never disagree.
+        const reportBackDeps: import("./tools/tool-deps").ReportBackToolDeps | undefined =
+          activeSubagentRun && reportSubagentBack
+            ? {
+                reportBack: async ({ summary }) => {
+                  const message = await doSendMessage({ content: summary, sources: [] })
+                  return reportSubagentBack({
+                    workspaceId,
+                    subagentId: activeSubagentRun.id,
+                    resultMessageId: message.messageId,
+                  })
+                },
+              }
+            : undefined
+
         // Settings changes for the update_user_settings tool, bound to the
         // INVOKING USER — never a tool parameter, so a cross-user write cannot
         // be expressed. Three independent conditions, each for its own reason:
@@ -1156,6 +1318,8 @@ export class PersonaAgent {
             brief: briefDeps,
             briefVersion: agentContext.streamBrief?.version ?? 0,
             delegation: delegateDeps,
+            subagentDelegation: subagentDelegationDeps,
+            reportBack: reportBackDeps,
             saveMemo: saveMemoDeps,
             settings: settingsDeps,
             github: githubDeps,

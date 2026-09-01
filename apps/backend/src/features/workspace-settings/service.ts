@@ -4,6 +4,8 @@ import { WorkspaceSettingsRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { assertAssignablePersona } from "../agents"
 import { type WorkspaceSettings, type UpdateWorkspaceSettingsInput, DEFAULT_WORKSPACE_SETTINGS } from "@threa/types"
+import type { ModelRegistry } from "@threa/agent-runtime"
+import { HttpError } from "../../lib/errors"
 
 /** Merge sparse overrides onto code defaults to produce full settings. */
 function mergeOverrides(workspaceId: string, overrides: Array<{ key: string; value: unknown }>): WorkspaceSettings {
@@ -37,6 +39,7 @@ function flattenUpdates(updates: UpdateWorkspaceSettingsInput): Array<{ key: str
     "maxPendingFollowUps",
     "defaultCompanionPersonaId",
     "billingTimezone",
+    "subagentModels",
   ] as const
   for (const key of simpleKeys) {
     if (updates[key] !== undefined) {
@@ -47,7 +50,10 @@ function flattenUpdates(updates: UpdateWorkspaceSettingsInput): Array<{ key: str
 }
 
 export class WorkspaceSettingsService {
-  constructor(private pool: Pool) {}
+  constructor(
+    private pool: Pool,
+    private modelRegistry?: ModelRegistry
+  ) {}
 
   /** Get workspace settings, merging overrides with defaults. */
   async getSettings(workspaceId: string): Promise<WorkspaceSettings> {
@@ -62,6 +68,7 @@ export class WorkspaceSettingsService {
    */
   async updateSettings(workspaceId: string, updates: UpdateWorkspaceSettingsInput): Promise<WorkspaceSettings> {
     await assertAssignablePersona(this.pool, updates.defaultCompanionPersonaId, workspaceId)
+    this.assertDelegableModels(updates.subagentModels)
     return withTransaction(this.pool, async (client) => {
       for (const { key, value } of flattenUpdates(updates)) {
         if (matchesDefault(key, value)) {
@@ -81,5 +88,23 @@ export class WorkspaceSettingsService {
 
       return settings
     })
+  }
+
+  /**
+   * The delegable set is checked against the model registry on write as well as
+   * on every tool call: an id that isn't a chat model in `models.yaml` can
+   * never be delegated to, so storing it would be a setting that silently does
+   * nothing. Skipped when no registry is wired (test harnesses).
+   */
+  private assertDelegableModels(models: string[] | undefined): void {
+    if (!models || !this.modelRegistry) return
+    const registry = this.modelRegistry
+    const unknown = models.filter((model) => !registry.isChatModel(model))
+    if (unknown.length > 0) {
+      throw new HttpError(`Unknown or non-chat model: ${unknown.join(", ")}`, {
+        status: 400,
+        code: "UNKNOWN_SUBAGENT_MODEL",
+      })
+    }
   }
 }

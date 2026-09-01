@@ -81,6 +81,12 @@ export const DRAFT_TEST_EXCLUDED_TOOLS: ReadonlySet<AgentToolName> = new Set<Age
   AgentToolNames.UPDATE_FOLLOW_UP,
   AgentToolNames.UPDATE_STREAM_BRIEF,
   AgentToolNames.DELEGATE_TASK,
+  // Opens a real subagent run + thread + queued turn against a live second
+  // model, all of which outlive the ephemeral test scratchpad — and bills the
+  // workspace for a model call nobody asked for. Tier 1, because the delegated
+  // model runs inside Threa under this turn's own access, but durable all the
+  // same, which is what this set is about.
+  AgentToolNames.DELEGATE_TO_MODEL,
   AgentToolNames.SAVE_MEMO,
   // Writes the tester's REAL preferences, which outlive the ephemeral test
   // stream — the same reason every other entry is here. Every tier-2 tool

@@ -89,6 +89,15 @@ export const TOOL_TIERS_BY_NAME = {
   // predating the tier system.
   delegate_task: 2,
 
+  // Delegating to a second model posts a card and opens a thread in the stream
+  // the user is already looking at, and the delegated model runs inside Threa
+  // under the same workspace access as this turn — no credentials, no machine,
+  // nothing that outlives the conversation. The control is the workspace's
+  // governed model set, checked at execution, not a per-call review. Its
+  // counterpart `report_back` only closes the run it belongs to.
+  delegate_to_model: 1,
+  report_back: 1,
+
   // Changes the user's own account settings — durable state they see everywhere,
   // long after this conversation.
   update_user_settings: 2,

@@ -1,7 +1,7 @@
 import { APICallError } from "ai"
 import type { Pool } from "pg"
 import type { AgentSessionRerunContext } from "@threa/types"
-import { withTransaction } from "../../../db"
+import { withTransaction, type Querier } from "../../../db"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../session-repository"
 import { collectSessionEffects } from "../session-effects"
 import { OutboxRepository } from "../../../lib/outbox"
@@ -50,6 +50,13 @@ export async function withCompanionSession(
      */
     attempt?: number
     maxAttempts?: number
+    /**
+     * Runs in the same transaction as a TERMINAL failure (INV-7) — never on a
+     * retryable attempt, which stays non-terminal. Wired to the subagent run
+     * CAS: a subagent whose turn died for good must not leave a card claiming it
+     * is still waiting on the user.
+     */
+    onTerminalFailure?: (db: Querier, error: string) => Promise<void>
   },
   work: (
     session: AgentSession,
@@ -71,6 +78,7 @@ export async function withCompanionSession(
     rerunContext,
     attempt,
     maxAttempts,
+    onTerminalFailure,
   } = params
 
   // Phase 1: Session setup (short-lived transaction)
@@ -292,6 +300,7 @@ export async function withCompanionSession(
             event: streamEvent,
           })
         } else {
+          if (onTerminalFailure) await onTerminalFailure(db, String(err))
           const streamEvent = await StreamEventRepository.insert(db, {
             id: eventId(),
             streamId,

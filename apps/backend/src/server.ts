@@ -4,6 +4,12 @@ import { createAdapter } from "@socket.io/postgres-adapter"
 import { Pool } from "pg"
 import { createApp } from "./app"
 import { DelegationService, createDelegationExpirySweep, validateDelegationContextRefs } from "./features/delegations"
+import {
+  SubagentService,
+  createSubagentExpirySweep,
+  delegateToSubagent,
+  resolveSubagentModels,
+} from "./features/subagents"
 import { registerRoutes } from "./routes"
 import { errorHandler } from "./middleware/error-handler"
 import { registerSocketHandlers } from "./socket"
@@ -350,7 +356,7 @@ export async function startServer(): Promise<ServerInstance> {
     async (workspaceId, userId) =>
       (await userPreferencesService.getPreferences(workspaceId, userId)).performanceDiagnosticsOptIn
   )
-  const workspaceSettingsService = new WorkspaceSettingsService(pool)
+  const workspaceSettingsService = new WorkspaceSettingsService(pool, modelRegistry)
   const platformAdminService = new PlatformAdminService(pool)
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
@@ -627,6 +633,12 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const streamBriefService = new StreamBriefService({ pool })
   const delegationService = new DelegationService({ pool })
+  const subagentService = new SubagentService({ pool, streamService })
+  const subagentDelegationDeps = {
+    subagentService,
+    modelRegistry,
+    loadWorkspaceSettings: (id: string) => workspaceSettingsService.getSettings(id),
+  }
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
@@ -819,6 +831,7 @@ export async function startServer(): Promise<ServerInstance> {
     agentFollowUpService,
     personaConfigService,
     delegationService,
+    subagentService,
     draftsService,
     labelService,
     labelAssignmentService,
@@ -1122,6 +1135,21 @@ export async function startServer(): Promise<ServerInstance> {
       )
       return { ok: true, delegationId: delegation.id, droppedRefs: dropped }
     },
+    loadActiveSubagentRun: ({ workspaceId, threadStreamId }) =>
+      subagentService.findActiveByThreadStream({ workspaceId, threadStreamId }),
+    loadSubagentModels: async ({ workspaceId }) =>
+      resolveSubagentModels({
+        workspaceSettings: await workspaceSettingsService.getSettings(workspaceId),
+        modelRegistry,
+      }),
+    delegateToModel: ({ invokingUserId, ...params }) =>
+      delegateToSubagent(subagentDelegationDeps, { ...params, createdBy: invokingUserId }),
+    reportSubagentBack: async ({ workspaceId, subagentId, resultMessageId }) => {
+      const completed = await subagentService.reportBack({ workspaceId, id: subagentId, resultMessageId })
+      return completed ? { ok: true, subagentId: completed.id } : { ok: false, reason: "already_closed" }
+    },
+    failSubagentForThread: ({ client, workspaceId, threadStreamId, statusNote }) =>
+      subagentService.failByThreadStreamInTransaction(client, { workspaceId, threadStreamId, statusNote }),
     saveMemo: async ({
       initiatingUserId,
       workspaceId,
@@ -1700,11 +1728,25 @@ export async function startServer(): Promise<ServerInstance> {
   const queueDepthSampler = new QueueDepthSampler({ pool })
   queueDepthSampler.start()
 
-  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
+  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io, {
+    // An orphaned turn inside a subagent thread settles that run in the same
+    // transaction — otherwise the card sits on "waiting for you" forever.
+    onSessionFailed: (tx, session) =>
+      subagentService
+        .failByThreadStreamInTransaction(tx, {
+          workspaceId: session.workspaceId,
+          threadStreamId: session.streamId,
+          statusNote: "The delegated model's session was orphaned (stale heartbeat).",
+        })
+        .then(() => undefined),
+  })
   orphanSessionCleanup.start()
 
   const delegationExpirySweep = createDelegationExpirySweep(delegationService)
   delegationExpirySweep.start()
+
+  const subagentExpirySweep = createSubagentExpirySweep(subagentService)
+  subagentExpirySweep.start()
 
   const pushSessionCleanup = createPushSessionCleanup(pushService)
   pushSessionCleanup.start()
@@ -1735,6 +1777,7 @@ export async function startServer(): Promise<ServerInstance> {
     poolMonitor.stop()
     orphanSessionCleanup.stop()
     delegationExpirySweep.stop()
+    subagentExpirySweep.stop()
     pushSessionCleanup.stop()
     voiceSessionSweeper.stop()
     callSweeper.stop()
