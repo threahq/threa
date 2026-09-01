@@ -4,7 +4,7 @@ import type { AttachmentService } from "../../attachments"
 import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
-import type { DelegateToModelOutcome, ReportBackOutcome } from "../../subagents"
+import type { StartSubagentOutcome, ReportBackOutcome } from "../../subagents"
 
 export interface WorkspaceToolDeps {
   db: Pool
@@ -160,15 +160,15 @@ export interface DelegateTaskToolDeps {
 }
 
 /**
- * Result of the `delegate_to_model` tool's callback. The refusals are the two
+ * Result of the `start_subagent` tool's callback. The refusals are the two
  * the model can act on: `already_active` means wait for (or cancel) the running
  * subagent, `model_not_allowed` carries the workspace's governed set so the
  * model can pick from it instead of guessing again.
  */
-export type DelegateToModelToolResult = DelegateToModelOutcome | { ok: false; reason: "failed" }
+export type StartSubagentToolResult = StartSubagentOutcome | { ok: false; reason: "failed" }
 
 /**
- * Callback for the `delegate_to_model` tool, bound to the running persona /
+ * Callback for the `start_subagent` tool, bound to the running persona /
  * session / stream and the invoking user by the caller. The tool supplies only
  * the hand-off content (`model`, `title`, `brief`); identity, the
  * source-conversation anchor and the governed model set are fixed at bind time.
@@ -178,10 +178,10 @@ export type DelegateToModelToolResult = DelegateToModelOutcome | { ok: false; re
  * that last one is how "no nesting" is enforced, since a tool with no
  * dependencies is a tool the model is never told about.
  */
-export interface DelegateToModelToolDeps {
+export interface StartSubagentToolDeps {
   /** The models this workspace allows, for the tool's own description and its refusals. */
   allowedModels: string[]
-  delegateToModel: (params: { model: string; title: string; brief: string }) => Promise<DelegateToModelToolResult>
+  delegateToModel: (params: { model: string; title: string; brief: string }) => Promise<StartSubagentToolResult>
 }
 
 /**

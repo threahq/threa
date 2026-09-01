@@ -4,12 +4,7 @@ import { createAdapter } from "@socket.io/postgres-adapter"
 import { Pool } from "pg"
 import { createApp } from "./app"
 import { DelegationService, createDelegationExpirySweep, validateDelegationContextRefs } from "./features/delegations"
-import {
-  SubagentService,
-  createSubagentExpirySweep,
-  delegateToSubagent,
-  resolveSubagentModels,
-} from "./features/subagents"
+import { SubagentService, createSubagentExpirySweep, startSubagent, resolveSubagentModels } from "./features/subagents"
 import { SubagentFailureReasons } from "@threa/types"
 import { registerRoutes } from "./routes"
 import { errorHandler } from "./middleware/error-handler"
@@ -1164,7 +1159,7 @@ export async function startServer(): Promise<ServerInstance> {
         modelRegistry,
       }),
     delegateToModel: ({ invokingUserId, ...params }) =>
-      delegateToSubagent(subagentDelegationDeps, { ...params, createdBy: invokingUserId }),
+      startSubagent(subagentDelegationDeps, { ...params, createdBy: invokingUserId }),
     reportSubagentBack: async ({ workspaceId, subagentId, resultMessageId }) => {
       const completed = await subagentService.reportBack({ workspaceId, id: subagentId, resultMessageId })
       return completed ? { ok: true, subagentId: completed.id } : { ok: false, reason: "already_closed" }

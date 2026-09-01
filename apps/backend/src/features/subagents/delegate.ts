@@ -5,12 +5,12 @@ import { SubagentAlreadyActiveError } from "./repository"
 import type { CreateSubagentParams, SubagentService } from "./service"
 
 /**
- * What the `delegate_to_model` tool boundary returns. The two refusals are the
+ * What the `start_subagent` tool boundary returns. The two refusals are the
  * ones a model can act on: `already_active` means wait for or cancel the
  * running subagent, `model_not_allowed` carries the governed set so the next
  * attempt is a choice, not another guess.
  */
-export type DelegateToModelOutcome =
+export type StartSubagentOutcome =
   | { ok: true; subagentId: string; threadStreamId: string; model: string }
   | { ok: false; reason: "already_active" }
   | { ok: false; reason: "model_not_allowed"; allowedModels: string[] }
@@ -25,16 +25,16 @@ export interface SubagentDelegationDeps {
 }
 
 /**
- * The whole `delegate_to_model` execution: resolve the governed set, refuse an
+ * The whole `start_subagent` execution: resolve the governed set, refuse an
  * off-policy model, then open the run. The allowlist is re-resolved HERE rather
  * than trusted from the description the turn was built with — the workspace's
  * set may have moved since, and this is the boundary the model actually
  * crosses. One path, shared by the live tool binding and its tests (INV-45).
  */
-export async function delegateToSubagent(
+export async function startSubagent(
   deps: SubagentDelegationDeps,
   params: CreateSubagentParams
-): Promise<DelegateToModelOutcome> {
+): Promise<StartSubagentOutcome> {
   const workspaceSettings = await deps.loadWorkspaceSettings(params.workspaceId)
   const allowedModels = resolveSubagentModels({ workspaceSettings, modelRegistry: deps.modelRegistry })
   if (!allowedModels.includes(params.model)) {

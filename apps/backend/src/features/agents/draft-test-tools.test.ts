@@ -11,7 +11,7 @@ describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
         AgentToolNames.UPDATE_FOLLOW_UP,
         AgentToolNames.UPDATE_STREAM_BRIEF,
         AgentToolNames.DELEGATE_TASK,
-        AgentToolNames.DELEGATE_TO_MODEL,
+        AgentToolNames.START_SUBAGENT,
         AgentToolNames.SAVE_MEMO,
         AgentToolNames.UPDATE_USER_SETTINGS,
       ].sort()

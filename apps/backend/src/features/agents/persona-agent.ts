@@ -274,7 +274,7 @@ export interface PersonaAgentDeps {
   /**
    * The live subagent run this stream is the thread of, if any. Read on the
    * turn precheck: its presence pins the turn's model, binds `report_back`,
-   * unbinds `delegate_to_model` (no nesting), and — for a kickoff turn —
+   * unbinds `start_subagent` (no nesting), and — for a kickoff turn —
    * supplies the brief the turn wakes up on. Absent in harnesses that don't
    * wire subagents, in which case every stream reads as an ordinary one.
    */
@@ -288,7 +288,7 @@ export interface PersonaAgentDeps {
   } | null>
   /**
    * The workspace's delegable model set, bound to `resolveSubagentModels` in
-   * server.ts. Read once per turn to build `delegate_to_model`'s description;
+   * server.ts. Read once per turn to build `start_subagent`'s description;
    * the same resolution is re-checked inside `delegateToModel` at execution, so
    * a set that changed mid-turn cannot be used to delegate off-policy. Absent
    * (or empty) disables the tool.
@@ -310,7 +310,7 @@ export interface PersonaAgentDeps {
     model: string
     title: string
     brief: string
-  }) => Promise<import("./tools/tool-deps").DelegateToModelToolResult>
+  }) => Promise<import("./tools/tool-deps").StartSubagentToolResult>
   /**
    * Close a subagent run, bound to `SubagentService.reportBack` in server.ts.
    * The turn supplies the run id and the message its summary was posted as.
@@ -561,7 +561,7 @@ export class PersonaAgent {
     // The live subagent run this stream is the thread of, if any. One query,
     // and only for threads — every other stream kind is one by construction.
     // Everything downstream keys off this: the pinned model, the report_back /
-    // delegate_to_model binding, and the kickoff brief.
+    // start_subagent binding, and the kickoff brief.
     const activeSubagentRun =
       stream.type === StreamTypes.THREAD && loadActiveSubagentRun
         ? await loadActiveSubagentRun({ workspaceId, threadStreamId: streamId })
@@ -1169,7 +1169,7 @@ export class PersonaAgent {
               }
             : undefined
 
-        // Subagent delegation for the delegate_to_model tool. Same three gates
+        // Subagent delegation for the start_subagent tool. Same three gates
         // as delegate_task (wired, human-triggered, not sealed) plus the one
         // that makes nesting structurally impossible: inside a subagent thread
         // the deps are absent, so the tool is never built and the delegated
@@ -1183,7 +1183,7 @@ export class PersonaAgent {
         })
         const subagentModels =
           offerSubagentDelegation && loadSubagentModels ? await loadSubagentModels({ workspaceId }) : []
-        const subagentDelegationDeps: import("./tools/tool-deps").DelegateToModelToolDeps | undefined =
+        const subagentDelegationDeps: import("./tools/tool-deps").StartSubagentToolDeps | undefined =
           offerSubagentDelegation && delegateToModel && subagentUserId && subagentModels.length > 0
             ? {
                 allowedModels: subagentModels,

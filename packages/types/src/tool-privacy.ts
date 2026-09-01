@@ -92,7 +92,7 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // leaves the product, so it rides the always-allowed `messaging` class like
   // `delegate_task`. `report_back` is the persona posting its own summary into
   // the thread it is running in: a reply, by another name.
-  delegate_to_model: ["messaging"],
+  start_subagent: ["messaging"],
   report_back: ["messaging"],
 
   web_search: ["web"],

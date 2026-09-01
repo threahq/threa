@@ -27,7 +27,7 @@ import { buildToolSet } from "../companion/tool-set"
 const stub: any = new Proxy(() => stub, { get: () => stub, apply: () => stub })
 
 /**
- * `delegate_to_model` names the workspace's governed set in its description, so
+ * `start_subagent` names the workspace's governed set in its description, so
  * it needs a real array rather than the proxy. Per-workspace, not per-request:
  * a workspace's set is stable across calls, which is what the cached prefix
  * requires.

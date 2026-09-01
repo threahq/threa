@@ -22,6 +22,14 @@ describe("Ariadne built-in config", () => {
     expect(enabledTools).toContain(AgentToolNames.READ_ATTACHMENT)
   })
 
+  it("can start a subagent", () => {
+    // The whole subagent feature hangs off this one enablement: the tool-set
+    // gates start_subagent on the persona's enabledTools, so a default Ariadne
+    // without it has the entire lifecycle shipped and unreachable — which is
+    // exactly how it first shipped, caught only by hands-on use.
+    expect(BUILT_IN_AGENTS[ARIADNE_AGENT_ID].enabledTools).toContain(AgentToolNames.START_SUBAGENT)
+  })
+
   it("has an escalation model distinct from the default model (roadmap 2.3)", () => {
     const { model, escalationModel } = BUILT_IN_AGENTS[ARIADNE_AGENT_ID]
     expect(escalationModel).toBe("openrouter:openai/gpt-5.6-terra")

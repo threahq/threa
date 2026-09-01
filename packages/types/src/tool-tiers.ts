@@ -95,7 +95,7 @@ export const TOOL_TIERS_BY_NAME = {
   // nothing that outlives the conversation. The control is the workspace's
   // governed model set, checked at execution, not a per-call review. Its
   // counterpart `report_back` only closes the run it belongs to.
-  delegate_to_model: 1,
+  start_subagent: 1,
   report_back: 1,
 
   // Changes the user's own account settings — durable state they see everywhere,

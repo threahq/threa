@@ -77,7 +77,7 @@ export const MUTATING_TOOLS = {
   update_user_settings: true,
   // Opens a durable run + thread the user finds from the parent card, not from
   // the reply that created it.
-  delegate_to_model: true,
+  start_subagent: true,
 
   // Participation: durable, but rendered in place as itself.
   send_message: false,

@@ -86,7 +86,7 @@ export interface WorkspaceSettings {
    */
   billingTimezone: string
   /**
-   * The models a persona may delegate a subagent to (`delegate_to_model`). Each
+   * The models a persona may delegate a subagent to (`start_subagent`). Each
    * entry is a registry model id (`provider:model`); the tool validates against
    * the registry first, then this set, so an id that leaves `models.yaml` stops
    * being delegable without a settings migration. Expensive tiers are opt-in:

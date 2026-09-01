@@ -4,7 +4,7 @@
  * Three seams, all keyed off ONE database read (`findActiveByThreadStream`, the
  * call `server.ts` binds as `loadActiveSubagentRun`): the turn's model is the
  * run's pinned binding for as long as the run lives, the run's own closing tool
- * is bound only there, and `delegate_to_model` is NOT — a subagent that could
+ * is bound only there, and `start_subagent` is NOT — a subagent that could
  * delegate onward is the nesting this design refuses. The gate
  * (`canOfferSubagentDelegation`) and the builder (`buildToolSet`) are the
  * production ones; only the dep wiring around them is restated here.
@@ -160,16 +160,16 @@ describe("tool binding", () => {
     const names = await turnToolNames(threadStreamId)
 
     expect(names).toContain(AgentToolNames.REPORT_BACK)
-    expect(names).not.toContain(AgentToolNames.DELEGATE_TO_MODEL)
+    expect(names).not.toContain(AgentToolNames.START_SUBAGENT)
   })
 
-  test("the parent stream gets delegate_to_model and no report_back", async () => {
+  test("the parent stream gets start_subagent and no report_back", async () => {
     const channel = await ctx.createChannel({ slug: "tools-parent" })
     await subagentService.create(createParams(ctx, channel.id))
 
     const names = await turnToolNames(channel.id)
 
-    expect(names).toContain(AgentToolNames.DELEGATE_TO_MODEL)
+    expect(names).toContain(AgentToolNames.START_SUBAGENT)
     expect(names).not.toContain(AgentToolNames.REPORT_BACK)
   })
 
@@ -184,7 +184,7 @@ describe("tool binding", () => {
 
     const names = await turnToolNames(threadStreamId)
 
-    expect(names).toContain(AgentToolNames.DELEGATE_TO_MODEL)
+    expect(names).toContain(AgentToolNames.START_SUBAGENT)
     expect(names).not.toContain(AgentToolNames.REPORT_BACK)
   })
 
@@ -198,7 +198,7 @@ describe("tool binding", () => {
 
     const names = await turnToolNames(sealed.id)
 
-    expect(names).not.toContain(AgentToolNames.DELEGATE_TO_MODEL)
+    expect(names).not.toContain(AgentToolNames.START_SUBAGENT)
     expect(names).not.toContain(AgentToolNames.REPORT_BACK)
   })
 
@@ -207,6 +207,6 @@ describe("tool binding", () => {
 
     const names = await turnToolNames(channel.id, { invokingUserId: undefined })
 
-    expect(names).not.toContain(AgentToolNames.DELEGATE_TO_MODEL)
+    expect(names).not.toContain(AgentToolNames.START_SUBAGENT)
   })
 })

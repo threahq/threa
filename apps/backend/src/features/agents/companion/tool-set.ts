@@ -5,7 +5,7 @@ import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
 import type {
   DelegateTaskToolDeps,
-  DelegateToModelToolDeps,
+  StartSubagentToolDeps,
   ReportBackToolDeps,
   FollowUpToolDeps,
   ReactionToolDeps,
@@ -32,7 +32,7 @@ import {
   createUpdateStreamBriefTool,
   createUpdateUserSettingsTool,
   createDelegateTaskTool,
-  createDelegateToModelTool,
+  createStartSubagentTool,
   createReportBackTool,
   createSaveMemoTool,
   createWorkspaceResearchTool,
@@ -93,11 +93,11 @@ export interface ToolSetConfig {
   delegation?: DelegateTaskToolDeps
   /**
    * Subagent delegation callback bound to the running persona/session/stream and
-   * the invoking user, gating the `delegate_to_model` tool. Absent — so the tool
+   * the invoking user, gating the `start_subagent` tool. Absent — so the tool
    * is never built — on sealed streams, on turns without a human trigger, and
    * inside a subagent thread (that absence IS the no-nesting rule).
    */
-  subagentDelegation?: DelegateToModelToolDeps
+  subagentDelegation?: StartSubagentToolDeps
   /**
    * Run-closing callback bound to the subagent run this turn is executing,
    * gating the `report_back` tool. Present ONLY inside a subagent thread.
@@ -224,8 +224,8 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       ? createUpdateStreamBriefTool(brief, { currentVersion: briefVersion ?? 0 })
       : null,
     delegation && isToolEnabled(enabledTools, AgentToolNames.DELEGATE_TASK) ? createDelegateTaskTool(delegation) : null,
-    subagentDelegation && isToolEnabled(enabledTools, AgentToolNames.DELEGATE_TO_MODEL)
-      ? createDelegateToModelTool(subagentDelegation)
+    subagentDelegation && isToolEnabled(enabledTools, AgentToolNames.START_SUBAGENT)
+      ? createStartSubagentTool(subagentDelegation)
       : null,
     // Not gated on persona enablement: the run exists because the persona was
     // delegated to, and a subagent with no way to close its own run would leave

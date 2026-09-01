@@ -13,9 +13,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { createModelRegistry, type ModelRegistry } from "@threa/agent-runtime"
 import { DEFAULT_SUBAGENT_MODELS } from "@threa/types"
-import { createDelegateToModelTool } from "../../src/features/agents/tools"
+import { createStartSubagentTool } from "../../src/features/agents/tools"
 import { StreamEventRepository } from "../../src/features/streams"
-import { SubagentService, delegateToSubagent, resolveSubagentModels } from "../../src/features/subagents"
+import { SubagentService, startSubagent, resolveSubagentModels } from "../../src/features/subagents"
 import { WorkspaceSettingsService } from "../../src/features/workspace-settings"
 import { HttpError } from "../../src/lib/errors"
 import { setupIsolatedTestDatabase } from "./setup"
@@ -46,16 +46,16 @@ afterAll(async () => {
   await cleanup()
 })
 
-/** The `delegate_to_model` tool as `server.ts` binds it, for one stream. */
+/** The `start_subagent` tool as `server.ts` binds it, for one stream. */
 async function toolForStream(parentStreamId: string) {
   const allowedModels = resolveSubagentModels({
     workspaceSettings: await workspaceSettingsService.getSettings(ctx.workspaceId),
     modelRegistry,
   })
-  return createDelegateToModelTool({
+  return createStartSubagentTool({
     allowedModels,
     delegateToModel: ({ model, title, brief }) =>
-      delegateToSubagent(
+      startSubagent(
         {
           subagentService,
           modelRegistry,

@@ -8,10 +8,10 @@ import {
 } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
-import type { DelegateToModelToolDeps } from "./tool-deps"
+import type { StartSubagentToolDeps } from "./tool-deps"
 
-const DelegateToModelSchema = z.object({
-  model: z.string().min(1).describe("Model id to delegate to, exactly as listed in this tool's description."),
+const StartSubagentSchema = z.object({
+  model: z.string().min(1).describe("Model id for the subagent, exactly as listed in this tool's description."),
   title: z
     .string()
     .min(1)
@@ -26,22 +26,22 @@ const DelegateToModelSchema = z.object({
     ),
 })
 
-export type DelegateToModelInput = z.infer<typeof DelegateToModelSchema>
+export type StartSubagentInput = z.infer<typeof StartSubagentSchema>
 
 function buildPromptBlock(allowedModels: string[]): string {
   return `## Delegating to another model
 
-\`delegate_to_model\` opens a subagent: you post a card in this stream and another model picks up the question in a thread hanging off it, talking to the user there directly.
+\`start_subagent\` opens a subagent: you post a card in this stream and another model picks up the question in a thread hanging off it, talking to the user there directly.
 
 - Available models: ${allowedModels.join(", ")}.
-- Delegate when the user asks for a second opinion, names a model they want, or the task visibly exceeds what you can do well. Never for work you can simply do — a subagent costs the user time and money.
+- Start one when the user asks for a second opinion, names a model they want, or the task visibly exceeds what you can do well. Never for work you can simply do — a subagent costs the user time and money.
 - The \`brief\` is everything the subagent gets. It has your workspace tools but has not read this conversation: write the question, the context, and what would count as an answer.
 - One subagent at a time per conversation surface (a channel or scratchpad, including its threads). If one is already running, say so instead of trying again.
 - After delegating, tell the user the card is there and that the other model will talk to them in its thread. Do not narrate on its behalf or answer the question yourself in parallel.`
 }
 
 /**
- * Whether this turn may offer `delegate_to_model` at all. Four independent
+ * Whether this turn may offer `start_subagent` at all. Four independent
  * conditions, each for its own reason: the delegation path must be wired, a
  * human must have triggered the turn (the run carries that user's authority —
  * INV-50), the stream must not be sealed (a server-built plaintext brief cannot
@@ -65,14 +65,14 @@ export function canOfferSubagentDelegation(params: {
  * one-live-subagent rule is decided by a unique index — so both refusals below
  * are real outcomes, not advisory prose.
  */
-export function createDelegateToModelTool(deps: DelegateToModelToolDeps) {
+export function createStartSubagentTool(deps: StartSubagentToolDeps) {
   return defineAgentTool({
-    name: AgentToolNames.DELEGATE_TO_MODEL,
-    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.DELEGATE_TO_MODEL],
-    description: `Delegate this question to another model, which answers the user in a thread off a card in this stream.
+    name: AgentToolNames.START_SUBAGENT,
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.START_SUBAGENT],
+    description: `Start a subagent: hand this question to another model, which answers the user in a thread off a card in this stream.
 
 Allowed models: ${deps.allowedModels.join(", ")}. Pass the \`model\` id, a short \`title\` for the card, and a self-contained \`brief\` (the delegated model has your workspace tools but has not read this conversation). One subagent at a time per conversation surface (a channel or scratchpad, including its threads).`,
-    inputSchema: DelegateToModelSchema,
+    inputSchema: StartSubagentSchema,
     promptBlock: buildPromptBlock(deps.allowedModels),
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -109,14 +109,14 @@ Allowed models: ${deps.allowedModels.join(", ")}. Pass the \`model\` id, a short
           }),
         }
       } catch (error) {
-        logger.error({ error }, "delegate_to_model failed")
+        logger.error({ error }, "start_subagent failed")
         return { output: JSON.stringify({ ok: false, error: "Failed to start the subagent" }) }
       }
     },
 
     trace: {
       stepType: AgentStepTypes.TOOL_CALL,
-      formatContent: (input) => JSON.stringify({ tool: "delegate_to_model", model: input.model, title: input.title }),
+      formatContent: (input) => JSON.stringify({ tool: "start_subagent", model: input.model, title: input.title }),
       effects: (input, result) => {
         const parsed = JSON.parse(result.output) as { ok: boolean; subagentId?: string }
         if (!parsed.ok || !parsed.subagentId) return []

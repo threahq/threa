@@ -86,7 +86,7 @@ export const DRAFT_TEST_EXCLUDED_TOOLS: ReadonlySet<AgentToolName> = new Set<Age
   // workspace for a model call nobody asked for. Tier 1, because the delegated
   // model runs inside Threa under this turn's own access, but durable all the
   // same, which is what this set is about.
-  AgentToolNames.DELEGATE_TO_MODEL,
+  AgentToolNames.START_SUBAGENT,
   AgentToolNames.SAVE_MEMO,
   // Writes the tester's REAL preferences, which outlive the ephemeral test
   // stream — the same reason every other entry is here. Every tier-2 tool

@@ -724,7 +724,7 @@ export const AGENT_TOOL_NAMES = [
   "update_follow_up",
   "update_stream_brief",
   "delegate_task",
-  "delegate_to_model",
+  "start_subagent",
   "report_back",
   "save_memo",
   "update_user_settings",
@@ -761,7 +761,7 @@ export const AgentToolNames = {
   UPDATE_FOLLOW_UP: "update_follow_up",
   UPDATE_STREAM_BRIEF: "update_stream_brief",
   DELEGATE_TASK: "delegate_task",
-  DELEGATE_TO_MODEL: "delegate_to_model",
+  START_SUBAGENT: "start_subagent",
   REPORT_BACK: "report_back",
   SAVE_MEMO: "save_memo",
   UPDATE_USER_SETTINGS: "update_user_settings",
@@ -890,7 +890,7 @@ export const SubagentFailureReasons = {
 } as const satisfies Record<string, SubagentFailureReason>
 
 // Subagent content caps — same numbers as the delegation caps and here for the
-// same reason: the `delegate_to_model` tool (features/agents/) and the
+// same reason: the `start_subagent` tool (features/agents/) and the
 // subagents feature both need them, and importing the subagents barrel from an
 // agents tool creates a module cycle.
 export const SUBAGENT_TITLE_MAX_CHARS = 200
