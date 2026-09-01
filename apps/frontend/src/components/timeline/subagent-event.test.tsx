@@ -294,4 +294,44 @@ describe("SubagentEvent actions", () => {
     await waitFor(() => expect(info).toHaveBeenCalledWith("This subagent already finished"))
     expect(screen.getByText("Working")).toBeInTheDocument()
   })
+
+  it("flips back to working on a requeue and yields to a newer server patch", async () => {
+    const requeue = vi.spyOn(subagentsApi, "requeue").mockResolvedValue({ requeued: true })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const tree = (patch: StreamEvent) => (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={[`/w/${WS}/s/stream_1`]}>
+            <PanelProvider>
+              <SubagentEvent event={createdEvent()} workspaceId={WS} statusPatch={patch} />
+            </PanelProvider>
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    )
+    const view = render(tree(statusPatch("failed", { statusNote: "turn_failed" })))
+
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    await userEvent.click(screen.getByRole("menuitem", { name: "Try again" }))
+    await waitFor(() => expect(screen.getByText("Working")).toBeInTheDocument())
+    expect(requeue).toHaveBeenCalledWith(WS, CREATED_PAYLOAD.subagentId)
+
+    // A patch the requeue did not race supersedes the local flip: the server's
+    // word is the one on screen.
+    view.rerender(tree(statusPatch("cancelled")))
+    expect(screen.getByText("Cancelled")).toBeInTheDocument()
+    expect(screen.queryByText("Working")).not.toBeInTheDocument()
+  })
+
+  it("tells the reader when a requeue finds the run no longer terminal", async () => {
+    vi.spyOn(subagentsApi, "requeue").mockResolvedValue({ requeued: false })
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "")
+
+    renderCard({ patch: statusPatch("expired") })
+    await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
+    await userEvent.click(screen.getByRole("menuitem", { name: "Try again" }))
+
+    await waitFor(() => expect(info).toHaveBeenCalledWith("This subagent is no longer failed or expired"))
+    expect(screen.getByText("Expired")).toBeInTheDocument()
+  })
 })

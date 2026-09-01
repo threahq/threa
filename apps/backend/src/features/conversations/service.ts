@@ -1553,12 +1553,13 @@ export class ConversationService {
       // for the feedback rows.
       const movedTo = new Map<string, string>()
       const mintedIds: string[] = []
+      const mintedParentConversationId = await resolveEventAnchoredParentConversationId(client, ownerStream)
       for (const g of moveGroups) {
         const minted = await ConversationRepository.insert(client, {
           id: generateConversationId(),
           streamId,
           workspaceId,
-          parentConversationId: await resolveEventAnchoredParentConversationId(client, ownerStream),
+          parentConversationId: mintedParentConversationId,
           topicSummary: g.title,
           topicSummarySource: TitleSources.EXPLICIT,
           topicSummaryUpdatedByUserId: actorUserId,

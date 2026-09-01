@@ -1099,6 +1099,18 @@ export function StreamContent({
     )
   }, [events, isThread])
 
+  // The parent header's reply count: only live reply messages. The window also
+  // holds session cards and other broadcast rows — counting those would claim
+  // more replies than the thread renders.
+  const threadReplyCount = useMemo(
+    () =>
+      displayEvents.filter((event) => {
+        if (event.eventType !== "message_created") return false
+        return !(event.payload as { deletedAt?: string }).deletedAt
+      }).length,
+    [displayEvents]
+  )
+
   // See remapSuppressedWatermark: a fresh thread member's watermark sits on a
   // membership event that threads hide from the rendered window; the auto-read
   // frontier (useLastSeenEvent) needs it remapped to a rendered position.
@@ -3167,7 +3179,7 @@ export function StreamContent({
                               event={anchorEvent}
                               workspaceId={workspaceId}
                               streamId={parentStreamId}
-                              replyCount={displayEvents.length}
+                              replyCount={threadReplyCount}
                               subagentStatusPatches={subagentThreadParentPatches}
                               subagentRunFallback={subagentRunFallback}
                               agentActivity={subagentThreadParentActivity}
