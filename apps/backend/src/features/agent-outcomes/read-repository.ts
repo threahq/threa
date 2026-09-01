@@ -1,4 +1,10 @@
-import type { AgentOutcomeKind, AgentOutcomeScope, DelegationStatus, FollowUpStatus } from "@threa/types"
+import type {
+  AgentOutcomeKind,
+  AgentOutcomeScope,
+  DelegationStatus,
+  FollowUpStatus,
+  SubagentStatus,
+} from "@threa/types"
 import { composeSql, type Querier } from "../../db"
 import { KEYSET_EPOCH, type KeysetCursor } from "../../lib/keyset-cursor"
 import { streamAccessPredicateSql } from "../streams"
@@ -14,6 +20,7 @@ export interface AgentOutcomeFilters {
   /** Concrete status sets the `state` filter resolved to; absent means unfiltered. */
   followUpStatuses?: readonly FollowUpStatus[]
   delegationStatuses?: readonly DelegationStatus[]
+  subagentStatuses?: readonly SubagentStatus[]
   queryText?: string
 }
 
@@ -37,7 +44,7 @@ export interface AgentOutcomeRow {
   kind: AgentOutcomeKind
   streamId: string
   title: string
-  status: FollowUpStatus | DelegationStatus
+  status: FollowUpStatus | DelegationStatus | SubagentStatus
   scheduledFor: Date | null
   claimedByLabel: string | null
   statusNote: string | null
@@ -77,7 +84,7 @@ function mapRow(row: DbRow): AgentOutcomeRow {
     kind: row.kind,
     streamId: row.stream_id,
     title: row.title,
-    status: row.status as FollowUpStatus | DelegationStatus,
+    status: row.status as FollowUpStatus | DelegationStatus | SubagentStatus,
     scheduledFor: row.scheduled_for,
     claimedByLabel: row.claimed_by_label,
     statusNote: row.status_note,
@@ -108,8 +115,10 @@ function scopedSql(filters: AgentOutcomeFilters) {
   const likePattern = `%${(queryText ?? "").replace(/[\\%_]/g, "\\$&")}%`
   const followUpStatuses = filters.followUpStatuses ?? []
   const delegationStatuses = filters.delegationStatuses ?? []
-  const includeFollowUps = filters.kind !== "delegation"
-  const includeDelegations = filters.kind !== "follow_up"
+  const subagentStatuses = filters.subagentStatuses ?? []
+  const includeFollowUps = filters.kind === undefined || filters.kind === "follow_up"
+  const includeDelegations = filters.kind === undefined || filters.kind === "delegation"
+  const includeSubagents = filters.kind === undefined || filters.kind === "subagent"
   const isTree = (filters.scope ?? "tree") === "tree"
 
   return composeSql`
@@ -143,7 +152,8 @@ function scopedSql(filters: AgentOutcomeFilters) {
         dt.created_by_id AS actor_id,
         dt.created_at,
         dt.status_changed_at,
-        dt.status_changed_at AS occurs_at
+        dt.status_changed_at AS occurs_at,
+        NULL::text AS own_anchor_event_id
       FROM delegated_tasks dt
       JOIN scoped_streams ss ON ss.id = dt.stream_id
       WHERE ${includeDelegations}
@@ -165,13 +175,38 @@ function scopedSql(filters: AgentOutcomeFilters) {
         afu.persona_id AS actor_id,
         afu.created_at,
         afu.status_changed_at,
-        afu.scheduled_for AS occurs_at
+        afu.scheduled_for AS occurs_at,
+        NULL::text AS own_anchor_event_id
       FROM agent_follow_ups afu
       JOIN scoped_streams ss ON ss.id = afu.stream_id
       WHERE ${includeFollowUps}
         AND afu.workspace_id = ${workspaceId}
         AND (${followUpStatuses.length === 0} OR afu.status = ANY(${followUpStatuses as string[]}))
         AND (${!hasQuery} OR afu.note ILIKE ${likePattern})
+      UNION ALL
+      SELECT
+        'subagent'::text AS kind,
+        sr.id,
+        sr.parent_stream_id AS stream_id,
+        sr.title,
+        sr.status,
+        NULL::timestamptz AS scheduled_for,
+        NULL::text AS claimed_by_label,
+        sr.status_note,
+        sr.result_message_id,
+        'user'::text AS actor_type,
+        sr.created_by AS actor_id,
+        sr.created_at,
+        sr.status_changed_at,
+        sr.status_changed_at AS occurs_at,
+        -- The run stores its card's event id, so this arm needs no anchor join.
+        sr.card_event_id AS own_anchor_event_id
+      FROM subagent_runs sr
+      JOIN scoped_streams ss ON ss.id = sr.parent_stream_id
+      WHERE ${includeSubagents}
+        AND sr.workspace_id = ${workspaceId}
+        AND (${subagentStatuses.length === 0} OR sr.status = ANY(${subagentStatuses as string[]}))
+        AND (${!hasQuery} OR sr.title ILIKE ${likePattern})
     )
   `
 }
@@ -212,7 +247,7 @@ export const AgentOutcomeReadRepository = {
       )
       SELECT
         p.*,
-        COALESCE(de.id, fe.id) AS anchor_event_id
+        COALESCE(p.own_anchor_event_id, de.id, fe.id) AS anchor_event_id
       FROM page p
       LEFT JOIN stream_events de
         ON p.kind = 'delegation'

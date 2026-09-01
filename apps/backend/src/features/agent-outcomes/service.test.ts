@@ -62,17 +62,19 @@ function makePool(rows: AgentOutcomeRow[], count = 0) {
 }
 
 describe("statusesForState", () => {
-  it("resolves outstanding to the non-terminal statuses of both kinds", () => {
+  it("resolves outstanding to the non-terminal statuses of every kind", () => {
     expect(statusesForState("outstanding")).toEqual({
       followUpStatuses: ["pending"],
       delegationStatuses: ["open", "claimed", "running", "expired"],
+      subagentStatuses: ["active"],
     })
   })
 
-  it("resolves settled to the terminal statuses of both kinds", () => {
+  it("resolves settled to the terminal statuses of every kind", () => {
     expect(statusesForState("settled")).toEqual({
       followUpStatuses: ["fired", "cancelled", "failed"],
       delegationStatuses: ["completed", "failed", "cancelled"],
+      subagentStatuses: ["completed", "cancelled", "failed", "expired"],
     })
   })
 

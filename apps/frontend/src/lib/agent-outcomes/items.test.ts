@@ -44,6 +44,27 @@ function delegation(overrides: Partial<AgentOutcomeSummary> = {}): AgentOutcomeS
   } as AgentOutcomeSummary
 }
 
+function subagent(overrides: Partial<AgentOutcomeSummary> = {}): AgentOutcomeSummary {
+  return {
+    kind: "subagent",
+    id: "subagent_1",
+    streamId: "str_strategy",
+    title: "Second opinion on retry semantics",
+    status: "active",
+    scheduledFor: null,
+    claimedByLabel: null,
+    statusNote: null,
+    resultMessageId: null,
+    actorType: "user",
+    actorId: "usr_kris",
+    createdAt: "2026-07-28T09:00:00.000Z",
+    statusChangedAt: "2026-07-28T10:30:00.000Z",
+    occursAt: "2026-07-28T10:30:00.000Z",
+    anchorEventId: "event_3",
+    ...overrides,
+  } as AgentOutcomeSummary
+}
+
 describe("toOutcomeItem", () => {
   it("maps a pending follow-up to its display shape", () => {
     expect(toOutcomeItem("ws_1", followUp())).toEqual({
@@ -112,7 +133,31 @@ describe("toOutcomeItem", () => {
     expect(toOutcomeItem("ws_1", followUp({ anchorEventId: null })).anchorPath).toBe(null)
   })
 
+  it("reads an active run as working and leaves its actions on the card", () => {
+    expect(toOutcomeItem("ws_1", subagent())).toMatchObject({
+      kind: "subagent",
+      statusLabel: "Working",
+      isSettled: false,
+      anchorPath: "/w/ws_1/s/str_strategy?m=event_3",
+      canCancel: false,
+      canRequeue: false,
+      canMarkDone: false,
+    })
+  })
+
+  it("turns a run's failure reason CODE into words and settles it", () => {
+    expect(toOutcomeItem("ws_1", subagent({ status: "failed", statusNote: "kickoff_failed" }))).toMatchObject({
+      statusLabel: "Failed",
+      statusNote: "it never started",
+      isSettled: true,
+    })
+  })
+
   it("maps a mixed page in order", () => {
-    expect(toOutcomeItems("ws_1", [followUp(), delegation()]).map((i) => i.id)).toEqual(["fup_1", "deleg_1"])
+    expect(toOutcomeItems("ws_1", [followUp(), delegation(), subagent()]).map((i) => i.id)).toEqual([
+      "fup_1",
+      "deleg_1",
+      "subagent_1",
+    ])
   })
 })
