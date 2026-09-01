@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { StreamTypes } from "@threa/types"
+import { AgentToolNames, AuthorTypes, StreamTypes } from "@threa/types"
 import * as dbModule from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
-import { MessageVersionRepository } from "../messaging"
+import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { StreamPoliciesRepository, StreamRepository, StreamEventRepository } from "../streams"
 import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./persona-agent"
 import { DraftsRepository, type Draft } from "../drafts"
@@ -114,6 +114,31 @@ function makeSession(overrides?: Partial<AgentSession>): AgentSession {
   }
 }
 
+function makeTriggerMessage(authorId: string) {
+  return {
+    id: TRIGGER_MESSAGE_ID,
+    streamId: STREAM_ID,
+    sequence: 1n,
+    authorId,
+    authorType: AuthorTypes.USER,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "What's new in the auth rollout?",
+    replyCount: 0,
+    clientMessageId: null,
+    sentVia: null,
+    reactions: {},
+    metadata: {},
+    conversationIntent: null,
+    revision: 1,
+    editedAt: null,
+    deletedAt: null,
+    createdAt: new Date("2026-02-19T11:58:00Z"),
+    ciphertext: null,
+    envelope: null,
+    e2eVersion: null,
+  }
+}
+
 /** Every unstubbed repository read hits this and sees an empty database. */
 const emptyDb = { query: async () => ({ rows: [], rowCount: 0 }) } as any
 
@@ -132,7 +157,12 @@ async function runSupersedeRerun(params: {
   authorityError?: Error
   threadError?: Error
   streamOverride?: Record<string, unknown>
+  personaOverride?: Partial<Persona>
   purpose?: PersonaAgentInput["purpose"]
+  /** When set, the trigger message resolves to this user's message (so the turn has an invoking user). */
+  triggerAuthorUserId?: string
+  /** Tool calls the stubbed model issues on its first turn; the second turn answers in text. */
+  firstTurnToolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>
 }) {
   const supersededSession = makeSession({
     id: SUPERSEDED_SESSION_ID,
@@ -145,7 +175,12 @@ async function runSupersedeRerun(params: {
   spyOn(dbModule, "withClient").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
 
-  spyOn(PersonaRepository, "findById").mockResolvedValue(persona)
+  spyOn(PersonaRepository, "findById").mockResolvedValue({ ...persona, ...params.personaOverride })
+  if (params.triggerAuthorUserId) {
+    spyOn(MessageRepository, "findById").mockResolvedValue(
+      makeTriggerMessage(params.triggerAuthorUserId) as unknown as never
+    )
+  }
   spyOn(StreamRepository, "findById").mockResolvedValue({ ...stream, ...params.streamOverride })
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
   spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(1)
@@ -194,6 +229,7 @@ async function runSupersedeRerun(params: {
   )
   spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
 
+  const researchInputs: Array<{ modelId?: string }> = []
   const capturedModelStrings: string[] = []
   const capturedVolatilePrompts: string[] = []
   const capturedStablePrompts: string[] = []
@@ -201,9 +237,13 @@ async function runSupersedeRerun(params: {
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
     generateTextWithTools: async (opts: { modelString?: string; system?: string; volatileSystem?: string }) => {
+      const turn = capturedModelStrings.length
       capturedModelStrings.push(opts.modelString ?? "unknown")
       capturedVolatilePrompts.push(opts.volatileSystem ?? "")
       capturedStablePrompts.push(opts.system ?? "")
+      if (turn === 0 && params.firstTurnToolCalls) {
+        return { text: "", toolCalls: params.firstTurnToolCalls, response: { messages: [] } }
+      }
       return {
         text: "Revised final answer.",
         toolCalls: [],
@@ -213,6 +253,11 @@ async function runSupersedeRerun(params: {
     // Supersede response validator: accept the revision so the turn commits.
     generateObject: async () => ({ value: { verdict: "accept", reason: "directly answers the edit" } }),
   } as any
+
+  const research = mock(async (input: { modelId?: string }) => {
+    researchInputs.push(input)
+    return { brief: "Research brief.", sources: [], substeps: [] }
+  })
 
   const createMessage = mock(async () => ({ id: "msg_new_1" }))
   const createThread = mock(async () => {
@@ -232,7 +277,7 @@ async function runSupersedeRerun(params: {
     sessionAbortRegistry: new SessionAbortRegistry(),
     userPreferencesService: { getPreferences: async () => ({}) },
     workspaceAgent: { search: async () => ({}) },
-    generalResearcher: { research: async () => ({}) },
+    generalResearcher: { research: research as unknown as () => Promise<unknown> },
     searchService: {},
     conversationSummaryService: { updateForContext: async () => null },
     attachmentService: {},
@@ -271,6 +316,7 @@ async function runSupersedeRerun(params: {
   const escalationSteps = upsertStep.mock.calls.filter(([, input]: any[]) => input.stepType === "model_escalated")
   return {
     result,
+    researchInputs,
     capturedModelStrings,
     capturedVolatilePrompts,
     capturedStablePrompts,
@@ -353,6 +399,28 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
     expect(result.status).toBe("completed")
     expect(capturedModelStrings).toEqual([SONNET])
     expect(escalationSteps).toHaveLength(0)
+  })
+
+  it("runs the general researcher on the model this turn resolved, not the researcher's own default", async () => {
+    const { result, researchInputs, capturedModelStrings } = await runSupersedeRerun({
+      // The escalated turn is the interesting one: the sub-agent must follow the
+      // model the turn actually ran on, not the persona's base model either.
+      supersededFailedValidation: true,
+      personaOverride: { enabledTools: [AgentToolNames.GENERAL_RESEARCH] },
+      triggerAuthorUserId: "usr_1",
+      firstTurnToolCalls: [
+        {
+          toolCallId: "call_1",
+          toolName: AgentToolNames.GENERAL_RESEARCH,
+          input: { query: "What changed in the auth rollout?" },
+        },
+      ],
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedModelStrings[0]).toBe(OPUS)
+    // Same model the turn ran on — not GENERAL_RESEARCH_MODEL_ID, the no-turn fallback.
+    expect(researchInputs).toEqual([expect.objectContaining({ modelId: OPUS })])
   })
 
   it("terminalizes a denied channel-mention thread creation on the parent stream", async () => {

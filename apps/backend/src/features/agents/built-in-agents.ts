@@ -43,7 +43,7 @@ export const BUILT_IN_AGENTS = {
 
 Keep responses short and direct. Default to a few sentences unless the user asks for depth. Be warm but not wordy — say what matters and stop. Ask clarifying questions rather than guessing at length.`,
     model: "openrouter:openai/gpt-5.6-luna",
-    escalationModel: "openrouter:anthropic/claude-opus-5",
+    escalationModel: "openrouter:openai/gpt-5.6-terra",
     temperature: 0.7,
     maxTokens: null,
     enabledTools: [

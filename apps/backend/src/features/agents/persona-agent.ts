@@ -1127,6 +1127,10 @@ export class PersonaAgent {
               query,
               conversationContext,
               tools: researcherTools,
+              // The sub-agent runs on this turn's model, escalation included:
+              // research delegated by the model the user is talking to comes
+              // back with that model's judgement, not a separately pinned one.
+              modelId: turnModel.model,
               costContext: researchCostContext,
               signal,
               deadlineAt,

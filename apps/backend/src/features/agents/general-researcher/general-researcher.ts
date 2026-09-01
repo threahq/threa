@@ -17,6 +17,12 @@ export interface GeneralResearchInput {
    * and send_message.
    */
   tools: AgentTool[]
+  /**
+   * The calling turn's resolved model, so the research the persona delegates
+   * runs on the brain the user is talking to. Absent (no calling turn) the
+   * ConfigResolver's default stands.
+   */
+  modelId?: string
   /** Cost context forwarded to every inner AI call for usage attribution. */
   costContext: CostContext
   /** Cooperative cancellation from the session abort registry (user stop). */
@@ -41,13 +47,19 @@ export interface GeneralResearcherDeps {
  * through the ConfigResolver, materialises the model + telemetry off the full
  * production `AI`, and forwards everything to the shared loop. No behavior of its
  * own beyond that wiring.
+ *
+ * The one overrideable entry point for the model is `input.modelId` — the
+ * calling turn's resolved model. It wins over the resolved config so a persona
+ * turn's research runs on the same model as the turn; the ConfigResolver value
+ * is the no-turn fallback (INV-44/45: one config path, evals still swap the
+ * resolver).
  */
 export class GeneralResearcher {
   constructor(private readonly deps: GeneralResearcherDeps) {}
 
   async research(input: GeneralResearchInput): Promise<GeneralResearchResult> {
     const config = await this.deps.configResolver.resolve<GeneralResearcherConfig>(COMPONENT_PATHS.GENERAL_RESEARCHER)
-    const modelId = config.modelId
+    const modelId = input.modelId ?? config.modelId
     const parsed = this.deps.ai.parseModel(modelId)
 
     return runGeneralResearch(

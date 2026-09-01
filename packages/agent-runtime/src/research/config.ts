@@ -10,8 +10,13 @@
  * catalog; only the runtime-agnostic prompt and budgets live here.
  */
 
-/** Default model for the general research loop when a caller does not override it. */
-export const GENERAL_RESEARCH_MODEL_ID = "openrouter:anthropic/claude-sonnet-4.6"
+/**
+ * Fallback model for the general research loop. Callers that have a turn model
+ * of their own pass it instead — the backend persona forwards the turn's
+ * resolved model, the enclave forwards the assignment's — so this only applies
+ * where there is no calling turn to inherit from.
+ */
+export const GENERAL_RESEARCH_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 /** Slightly above the workspace planner's 0.1 — research benefits from a little exploration. */
 export const GENERAL_RESEARCH_TEMPERATURE = 0.3
