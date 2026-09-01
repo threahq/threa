@@ -248,11 +248,15 @@ describe("access-log socket capture", () => {
     // Hand-inserted rows in the pre-coalescing shape: single-subject subscribe
     // and unsubscribe bracketing now. The CTE must keep pairing these — 13
     // months of production rows have this shape.
+    // The subscribe is clamped to this UTC month: `access_log` is monthly
+    // range-partitioned and a fresh database only has the current month
+    // forward, so a plain `now() - 1 hour` has no partition to land in during
+    // the first hour of a month.
     const authRef = `sconn_v1compat${testRunId}`
     const subject = JSON.stringify([{ type: "stream", id: stream.id }])
     await pool.query(
       `INSERT INTO access_log (id, workspace_id, occurred_at, actor_type, actor_id, auth_ref, operation, access_kind, outcome, subjects)
-       VALUES ($5, $1, now() - interval '1 hour', 'user', $2, $3, 'socket.subscribe', 'subscribe', 'success', $4::jsonb),
+       VALUES ($5, $1, GREATEST(now() - interval '1 hour', date_trunc('month', now())), 'user', $2, $3, 'socket.subscribe', 'subscribe', 'success', $4::jsonb),
               ($6, $1, now() + interval '1 minute', 'user', $2, $3, 'socket.unsubscribe', 'unsubscribe', 'success', $4::jsonb)`,
       [ws.id, userId, authRef, subject, `alog_v1s${testRunId}`, `alog_v1u${testRunId}`]
     )

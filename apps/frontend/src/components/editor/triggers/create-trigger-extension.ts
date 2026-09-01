@@ -4,6 +4,7 @@ import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import { currentWordContainsBacktick } from "../markdown-guards"
 import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
+import { currentSuggestionRange } from "./suggestion-range"
 
 /**
  * Configuration for a single attribute on a trigger node.
@@ -178,7 +179,8 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
           ...this.options.suggestion,
           command: ({ editor, range, props }) => {
             const item = props as TItem
-            if (onSelectItem?.({ editor, range, item })) return
+            const liveRange = currentSuggestionRange(pluginKey, editor, range)
+            if (onSelectItem?.({ editor, range: liveRange, item })) return
             const attrs = mapPropsToAttrs(item)
 
             // Preserve marks at the caret so a chip inserted mid-styled-run keeps the formatting.
@@ -193,7 +195,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
             editor
               .chain()
               .focus()
-              .deleteRange(range)
+              .deleteRange(liveRange)
               .insertContent([
                 { type: name, attrs, marks },
                 { type: "text", text: " ", marks },

@@ -6,6 +6,7 @@ import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion
 import type { EmojiEntry } from "@threa/types"
 import { currentWordContainsBacktick, isInBacktickWord } from "../markdown-guards"
 import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
+import { currentSuggestionRange } from "./suggestion-range"
 
 export const EmojiPluginKey = new PluginKey("emoji")
 
@@ -174,6 +175,7 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as EmojiEntry
+          const liveRange = currentSuggestionRange(EmojiPluginKey, editor, range)
 
           // Preserve marks at the caret so the inserted emoji keeps surrounding styling.
           const { $from } = editor.state.selection
@@ -187,7 +189,7 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
           editor
             .chain()
             .focus()
-            .deleteRange(range)
+            .deleteRange(liveRange)
             .insertContent([
               { type: "text", text: item.emoji, marks },
               { type: "text", text: " ", marks },
