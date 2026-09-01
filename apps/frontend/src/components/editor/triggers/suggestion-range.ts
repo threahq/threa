@@ -9,13 +9,12 @@ export interface SuggestionRange {
 /**
  * The range a pick replaces.
  *
- * A popup is rendered from a snapshot, so the range it hands back is one
- * transaction stale the moment anything else edits the doc first — a phone
- * keyboard's word-correction landing under the finger rewrites `:smi` to
- * `: smile`, and the snapshot's range then cuts the wrong four characters,
- * leaving `ile` behind next to the emoji. The plugin recomputes its own range
- * on every transaction, so while the suggestion is still running that one is
- * current; once it has ended there is nothing better than the snapshot.
+ * A popup is rendered from a snapshot, so the range it hands back goes stale
+ * the moment anything else edits the doc first: a keyboard's word-correction
+ * rewrites `:smi` to `: smile` under the finger, and the snapshot then cuts
+ * four characters off the wrong place, leaving `ile` beside the emoji. The
+ * plugin recomputes its range every transaction, so a running suggestion's
+ * range is current; an ended one leaves nothing better than the snapshot.
  */
 export function currentSuggestionRange(
   pluginKey: PluginKey,

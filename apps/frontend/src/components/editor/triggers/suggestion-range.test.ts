@@ -25,13 +25,13 @@ const editors: Editor[] = []
  */
 function makeEditor(trigger: "emoji" | "mention") {
   let command: ((item: unknown) => void) | null = null
+  let frozen = false
+  const hold = (props: SuggestionProps<unknown>) => {
+    if (!frozen) command = props.command
+  }
   const render = () => ({
-    onStart: (props: SuggestionProps<unknown>) => {
-      command = props.command
-    },
-    onUpdate: (props: SuggestionProps<unknown>) => {
-      command = props.command
-    },
+    onStart: hold,
+    onUpdate: hold,
     onExit: () => {},
     onKeyDown: () => false,
   })
@@ -49,7 +49,15 @@ function makeEditor(trigger: "emoji" | "mention") {
   editor.on("destroy", () => element.remove())
   editors.push(editor)
   editor.commands.focus()
-  return { editor, pick: () => command?.(trigger === "emoji" ? SHRUG : MENTIONABLE) }
+  return {
+    editor,
+    // What the finger is holding: the handler from the render it tapped, which
+    // no later update can refresh out from under the test.
+    freeze: () => {
+      frozen = true
+    },
+    pick: () => command?.(trigger === "emoji" ? SHRUG : MENTIONABLE),
+  }
 }
 
 function typeText(editor: Editor, text: string) {
@@ -65,9 +73,10 @@ afterEach(() => {
 
 describe("a pick after the doc moved under the popup", () => {
   it("replaces the emoji trigger's current text, not the text it was rendered with", async () => {
-    const { editor, pick } = makeEditor("emoji")
+    const { editor, pick, freeze } = makeEditor("emoji")
     typeText(editor, ":shr")
     await popupRendered()
+    freeze()
 
     // The keyboard's word-correction lands before the tap's handler runs, so
     // the popup's own range is a character short of the trigger text.
@@ -78,9 +87,10 @@ describe("a pick after the doc moved under the popup", () => {
   })
 
   it("replaces a mention trigger's current text too", async () => {
-    const { editor, pick } = makeEditor("mention")
+    const { editor, pick, freeze } = makeEditor("mention")
     typeText(editor, "@ad")
     await popupRendered()
+    freeze()
 
     typeText(editor, "a")
     pick()
