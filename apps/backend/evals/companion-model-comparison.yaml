@@ -21,10 +21,10 @@
 # the comparison and breaks providers with stricter structured-output rules
 # (Luna via OpenAI rejects the retrieval agent's zod schema in strict mode).
 #
-# Since 2026-08-31 the general researcher follows the CALLING TURN's model, so
-# each arm would otherwise research on the model it is testing. The explicit
-# `general:researcher` override below restores the isolation: a resolved config
-# model outranks the turn's, so both arms research on the same production model.
+# The general researcher follows the CALLING TURN's model, so each arm would
+# otherwise research on the model it is testing. The explicit
+# `general:researcher` override below preserves the isolation: a resolved config
+# model outranks the turn's, so every arm researches on the same production model.
 #
 # Run (needs OPENROUTER_API_KEY with credit headroom + TAVILY_API_KEY):
 #   bun run eval -- --config evals/companion-model-comparison.yaml -r 3 -p 4 \
