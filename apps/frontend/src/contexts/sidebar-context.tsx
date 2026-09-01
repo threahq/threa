@@ -4,7 +4,7 @@ import { useAccountScopeOptional } from "@/auth/account-scope"
 
 /**
  * Sidebar states:
- * - collapsed: 6px color strip only, content hidden
+ * - collapsed: content hidden; an invisible viewport-edge target opens preview
  * - preview: user-defined width, positioned absolutely (doesn't push content), triggered by hover
  * - pinned: user-defined width, positioned normally (pushes main content)
  */

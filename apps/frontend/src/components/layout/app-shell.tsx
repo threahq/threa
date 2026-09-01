@@ -80,7 +80,7 @@ interface AppShellProps {
  * Main application shell with collapsible sidebar.
  *
  * Sidebar states:
- * - collapsed: 6px rail only, 30px hover margin for "magnetic" feel
+ * - collapsed: no visible sidebar, 30px edge hover target for preview
  * - preview: user-defined width, positioned absolute, doesn't push content (hover state)
  * - pinned: user-defined width, positioned normal, pushes content
  */
@@ -112,7 +112,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     (nextWidth: number) => {
       const willCollapse = nextWidth < SIDEBAR_COLLAPSE_THRESHOLD
       const clampedWidth = clampSidebarWidth(nextWidth)
-      const shellWidth = willCollapse ? "6px" : `${clampedWidth}px`
+      const shellWidth = willCollapse ? "0px" : `${clampedWidth}px`
       shellRef.current?.style.setProperty("--nav-sidebar-width", `${clampedWidth}px`)
       shellRef.current?.style.setProperty("--nav-sidebar-shell-width", shellWidth)
       if (state === "pinned") document.documentElement.style.setProperty("--app-content-left", shellWidth)
@@ -167,17 +167,15 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   const isPreview = state === "preview"
   const isOpen = state === "pinned" || isPreview
   let wrapperWidth = "var(--nav-sidebar-shell-width)"
-  if (isMobile) {
+  if (isMobile || isCollapsed || isPreview) {
     wrapperWidth = "0px"
-  } else if (isCollapsed || isPreview) {
-    wrapperWidth = "6px"
   }
 
   let sidebarWidth = "var(--nav-sidebar-shell-width)"
   if (isMobile) {
     sidebarWidth = "min(85vw, 320px)"
   } else if (isCollapsed) {
-    sidebarWidth = "6px"
+    sidebarWidth = "0px"
   }
 
   // Use showPreview (idempotent) instead of togglePinned (a toggle) to avoid
@@ -211,9 +209,8 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   // app-mounted desktop call dock can pin itself to the content area — over the
   // main region, never the sidebar. Mirrors the `--composer-height` var pattern.
   useEffect(() => {
-    let appContentLeft = "6px"
-    if (isMobile) appContentLeft = "0px"
-    else if (state === "pinned") appContentLeft = `${width}px`
+    let appContentLeft = "0px"
+    if (!isMobile && state === "pinned") appContentLeft = `${width}px`
     document.documentElement.style.setProperty("--app-content-left", appContentLeft)
   }, [isMobile, state, width])
 
@@ -315,13 +312,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               width: wrapperWidth,
             }}
           >
-            {!isMobile && (
-              <div
-                className="absolute left-0 top-0 h-full w-[6px] z-50 pointer-events-none bg-muted-foreground/30"
-                aria-hidden="true"
-              />
-            )}
-
             {/* Invisible 30px zone giving the collapsed sidebar a "magnetic" feel — enters preview on hover. */}
             {isCollapsed && !isMobile && (
               <div
@@ -347,7 +337,8 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             <aside
               ref={isMobile ? sidebarRef : undefined}
               className={cn(
-                "relative flex h-full flex-col border-r bg-background overflow-hidden z-40",
+                "relative flex h-full flex-col bg-background overflow-hidden z-40",
+                !isCollapsed && "border-r",
                 (isPreview || isMobile) && "absolute left-0 top-0",
                 // Depth shadow only when the drawer is actually showing — on mobile the
                 // closed drawer is off-screen and its right-edge shadow would otherwise

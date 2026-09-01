@@ -10,8 +10,8 @@ interface SidebarShellProps {
 /**
  * Sidebar structural shell: pinned header, single scroll area body, pinned footer.
  *
- * Collapsed state is handled by app-shell.tsx (it clips the sidebar to 6px), so
- * this component renders content without reacting to collapse state.
+ * Collapsed state is handled by app-shell.tsx, so this component renders content
+ * without reacting to collapse state.
  */
 export function SidebarShell({ header, body, footer }: SidebarShellProps) {
   return (
