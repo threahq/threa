@@ -421,6 +421,14 @@ export interface UserPreferences {
    */
   defaultCompanionPersonaId: string | null
   /**
+   * The user's personal narrowing of the workspace's delegable model set. A
+   * SUBSET, never an extension: empty (the default) means "whatever the
+   * workspace allows", and a non-empty list is intersected with the workspace
+   * set, so a user can decline an expensive model but never buy one the
+   * workspace withheld. Resolved by `resolveSubagentModels`.
+   */
+  subagentModels: string[]
+  /**
    * The user's personal status presets, additive to the workspace/system
    * defaults shown in the status picker. Empty by default.
    */
@@ -485,6 +493,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   accessibility: DEFAULT_ACCESSIBILITY,
   workSchedule: null,
   defaultCompanionPersonaId: null,
+  subagentModels: [],
   statusPresets: [],
   gettingStartedDismissed: false,
   performanceDiagnosticsOptIn: false,
@@ -533,6 +542,7 @@ export interface UpdateUserPreferencesInput {
   accessibility?: Partial<AccessibilityPreferences>
   workSchedule?: WorkSchedule | null
   defaultCompanionPersonaId?: string | null
+  subagentModels?: string[]
   statusPresets?: StatusPreset[]
   gettingStartedDismissed?: boolean
   performanceDiagnosticsOptIn?: boolean

@@ -288,13 +288,14 @@ export interface PersonaAgentDeps {
     createdBy: string
   } | null>
   /**
-   * The workspace's delegable model set, bound to `resolveSubagentModels` in
+   * The delegable model set for this turn's invoking user (workspace set
+   * narrowed by their own subset), bound to `resolveSubagentModels` in
    * server.ts. Read once per turn to build `start_subagent`'s description;
    * the same resolution is re-checked inside `delegateToModel` at execution, so
    * a set that changed mid-turn cannot be used to delegate off-policy. Absent
    * (or empty) disables the tool.
    */
-  loadSubagentModels?: (params: { workspaceId: string }) => Promise<string[]>
+  loadSubagentModels?: (params: { workspaceId: string; userId: string }) => Promise<string[]>
   /**
    * Open a subagent run, bound to `SubagentService.create` in server.ts. The
    * turn supplies identity, the source-conversation anchor and the invoking
@@ -1203,7 +1204,9 @@ export class PersonaAgent {
           insideSubagentThread: threadSubagentRun !== null,
         })
         const subagentModels =
-          offerSubagentDelegation && loadSubagentModels ? await loadSubagentModels({ workspaceId }) : []
+          offerSubagentDelegation && loadSubagentModels && subagentUserId
+            ? await loadSubagentModels({ workspaceId, userId: subagentUserId })
+            : []
         const subagentDelegationDeps: import("./tools/tool-deps").StartSubagentToolDeps | undefined =
           offerSubagentDelegation && delegateToModel && subagentUserId && subagentModels.length > 0
             ? {
