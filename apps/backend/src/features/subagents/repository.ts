@@ -205,13 +205,37 @@ export const SubagentRunRepository = {
   },
 
   /**
+   * Same read, `FOR UPDATE` — for transactions that go on to append a patch
+   * naming this row's status. Without the lock a cancel can commit between the
+   * read and the patch, leaving an `active` patch sequenced AFTER the terminal
+   * one and a card that says "waiting for you" about a cancelled run.
+   */
+  async lockActiveByThreadStreamId(
+    db: Querier,
+    workspaceId: string,
+    threadStreamId: string
+  ): Promise<SubagentRun | null> {
+    const result = await db.query<SubagentRunRow>(sql`
+      SELECT ${sql.raw(COLUMNS)} FROM subagent_runs
+      WHERE thread_stream_id = ${threadStreamId}
+        AND workspace_id = ${workspaceId}
+        AND status = ${SubagentStatuses.ACTIVE}
+      FOR UPDATE
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
    * CAS `active → failed` for whichever run owns this thread — the session
    * failure path knows the stream it died in, never the run id. Returns `null`
    * when the thread has no live run (the ordinary case for every other stream).
+   * `runId` narrows the CAS to one specific run: a stale kickoff job that
+   * dead-letters after a fail → requeue must not flip the freshly re-activated
+   * run it no longer belongs to.
    */
   async failByThreadStreamId(
     db: Querier,
-    params: { workspaceId: string; threadStreamId: string; reason: SubagentFailureReason }
+    params: { workspaceId: string; threadStreamId: string; reason: SubagentFailureReason; runId?: string }
   ): Promise<SubagentRun | null> {
     const result = await db.query<SubagentRunRow>(sql`
       UPDATE subagent_runs SET
@@ -222,6 +246,7 @@ export const SubagentRunRepository = {
       WHERE thread_stream_id = ${params.threadStreamId}
         AND workspace_id = ${params.workspaceId}
         AND status = ${SubagentStatuses.ACTIVE}
+        AND (${params.runId ?? null}::text IS NULL OR id = ${params.runId ?? null})
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null

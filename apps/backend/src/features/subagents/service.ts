@@ -251,11 +251,13 @@ export class SubagentService {
    * the run settles atomically with the session row that failed (INV-7). A card
    * that keeps saying "waiting for you" for a subagent that can no longer answer
    * is the dishonesty this exists to stop. `null` when the thread has no live
-   * run — the ordinary case for every other stream.
+   * run — the ordinary case for every other stream. `runId` (the DLQ path)
+   * pins the CAS to the run the dead job belonged to, so a stale kickoff can't
+   * flip a re-activated successor.
    */
   async failByThreadStreamInTransaction(
     client: Querier,
-    params: { workspaceId: string; threadStreamId: string; reason: SubagentFailureReason }
+    params: { workspaceId: string; threadStreamId: string; reason: SubagentFailureReason; runId?: string }
   ): Promise<SubagentRun | null> {
     const failed = await SubagentRunRepository.failByThreadStreamId(client, params)
     if (!failed) return null
@@ -274,7 +276,10 @@ export class SubagentService {
     client: Querier,
     params: { workspaceId: string; threadStreamId: string; at: Date }
   ): Promise<SubagentRun | null> {
-    const run = await SubagentRunRepository.findActiveByThreadStreamId(
+    // Locked read: a cancel committing between an unlocked read and this patch
+    // would leave an `active` patch sequenced after the terminal one, and the
+    // card would say "waiting for you" about a cancelled run.
+    const run = await SubagentRunRepository.lockActiveByThreadStreamId(
       client,
       params.workspaceId,
       params.threadStreamId

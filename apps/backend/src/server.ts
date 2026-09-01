@@ -1231,6 +1231,7 @@ export async function startServer(): Promise<ServerInstance> {
       workspaceId: job.data.workspaceId,
       threadStreamId: job.data.streamId,
       reason: SubagentFailureReasons.KICKOFF_FAILED,
+      runId: job.data.subagentRunId,
     })
   }
   jobQueue.registerHandler(JobQueues.PERSONA_AGENT, personaAgentWorker, {
