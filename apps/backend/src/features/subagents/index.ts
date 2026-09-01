@@ -5,7 +5,7 @@ export type { CreateSubagentParams, CreatedSubagent, SubagentThreadCreator } fro
 export { createSubagentHandlers } from "./handlers"
 export { createSubagentExpirySweep } from "./expiry-sweep"
 export type { SubagentExpirySweep } from "./expiry-sweep"
-export { resolveSubagentModels, isSubagentModelAllowed } from "./models"
+export { resolveSubagentModels } from "./models"
 export { delegateToSubagent } from "./delegate"
 export type { DelegateToModelOutcome, ReportBackOutcome, SubagentDelegationDeps } from "./delegate"
 export {

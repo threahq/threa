@@ -98,6 +98,10 @@ const PER_TURN_SENTINEL_VALUES: Record<string, Partial<SystemPromptInputs>> = {
     purpose: { kind: "follow_up", followUpId: "fup_1" },
     followUp: { note: SENTINEL, scheduledFor: new Date("2026-07-04T09:00:00.000Z") },
   },
+  subagentBrief: {
+    purpose: { kind: "subagent_kickoff", subagentRunId: "subagent_1" },
+    subagentBrief: { title: "Second opinion", brief: SENTINEL, parentStreamId: "stream_parent" },
+  },
 }
 
 describe("system prompt cache stability", () => {

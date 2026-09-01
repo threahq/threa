@@ -72,6 +72,15 @@ function parse(output: string) {
 
 const input = { title: "Second opinion", brief: "Here is everything you need to answer." }
 
+/** Rows the `active` unique index would see for this conversation surface. */
+async function activeRunCount(scopeStreamId: string): Promise<number> {
+  const { rows } = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM subagent_runs WHERE scope_stream_id = $1 AND status = 'active'`,
+    [scopeStreamId]
+  )
+  return Number(rows[0].count)
+}
+
 describe("governed model set", () => {
   test("a workspace with no override delegates on the shipped default set", async () => {
     const channel = await ctx.createChannel({ slug: "allowlist-default" })
@@ -93,9 +102,7 @@ describe("governed model set", () => {
     const result = await tool.config.execute({ ...input, model: OFF_POLICY_MODEL }, EXEC_OPTS)
 
     expect(parse(result.output)).toMatchObject({ ok: false, allowedModels: DEFAULT_SUBAGENT_MODELS })
-    expect(
-      await subagentService.findActiveByParentStream({ workspaceId: ctx.workspaceId, parentStreamId: channel.id })
-    ).toBeNull()
+    expect(await activeRunCount(channel.id)).toBe(0)
     expect(await StreamEventRepository.list(pool, channel.id, { types: ["subagent:created"] })).toHaveLength(0)
   })
 
@@ -106,9 +113,7 @@ describe("governed model set", () => {
     const result = await tool.config.execute({ ...input, model: UNKNOWN_MODEL }, EXEC_OPTS)
 
     expect(parse(result.output)).toMatchObject({ ok: false })
-    expect(
-      await subagentService.findActiveByParentStream({ workspaceId: ctx.workspaceId, parentStreamId: channel.id })
-    ).toBeNull()
+    expect(await activeRunCount(channel.id)).toBe(0)
   })
 
   test("the stream's one live slot is reported as a refusal the model can act on", async () => {

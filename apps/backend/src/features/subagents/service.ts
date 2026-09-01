@@ -1,16 +1,18 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, type Querier } from "../../db"
-import { eventId, queueId, streamId, subagentRunId } from "../../lib/id"
+import { eventId, queueId, streamId, subagentKickoffId, subagentRunId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { JobQueues, enqueueQueuedJob, type PersonaAgentJobData } from "../../lib/queue"
 import {
   AuthorTypes,
+  SubagentStatuses,
   type AuthorType,
   type SubagentCreatedEventPayload,
+  type SubagentFailureReason,
   type SubagentStatusChangedEventPayload,
 } from "@threa/types"
-import { StreamEventRepository } from "../streams"
+import { StreamEventRepository, StreamRepository } from "../streams"
 import type { CreateThreadParams } from "../streams"
 import { SUBAGENT_IDLE_EXPIRY_DAYS } from "./config"
 import { SubagentRunRepository, type SubagentRun } from "./repository"
@@ -32,6 +34,14 @@ export interface SubagentThreadCreator {
 interface SubagentServiceDeps {
   pool: Pool
   streamService: SubagentThreadCreator
+  /**
+   * Graceful stop for whatever session is live in a subagent's thread, routed
+   * exactly like the Stop button (`socket.ts` session abort). Cancelling a run
+   * whose turn is mid-flight must stop that turn too — otherwise the card says
+   * cancelled while the delegated model keeps spending and posts an answer into
+   * a closed run. Unwired in harnesses that never run turns.
+   */
+  stopThreadSession?: (params: { workspaceId: string; threadStreamId: string }) => Promise<boolean>
   /** Idle threshold override for tests; production uses the config default. */
   idleExpiryDays?: number
 }
@@ -68,11 +78,13 @@ export interface CreatedSubagent {
 export class SubagentService {
   private readonly pool: Pool
   private readonly streamService: SubagentThreadCreator
+  private readonly stopThreadSession?: SubagentServiceDeps["stopThreadSession"]
   private readonly idleExpiryDays: number
 
   constructor(deps: SubagentServiceDeps) {
     this.pool = deps.pool
     this.streamService = deps.streamService
+    this.stopThreadSession = deps.stopThreadSession
     this.idleExpiryDays = deps.idleExpiryDays ?? SUBAGENT_IDLE_EXPIRY_DAYS
   }
 
@@ -89,6 +101,15 @@ export class SubagentService {
       const id = subagentRunId()
       const cardEventId = eventId()
       const threadStreamId = streamId()
+
+      // The surface the one-live rule binds to. A channel mention runs in the
+      // eagerly created reply thread, so the card lands there — scoping the rule
+      // to that thread would allow one live subagent per mention.
+      const parentStream = await StreamRepository.findById(client, params.parentStreamId)
+      if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
+        throw new Error(`Subagent parent stream not found: ${params.parentStreamId}`)
+      }
+      const scopeStreamId = parentStream.rootStreamId ?? parentStream.id
 
       const payload: SubagentCreatedEventPayload = {
         subagentId: id,
@@ -126,6 +147,7 @@ export class SubagentService {
         id,
         workspaceId: params.workspaceId,
         parentStreamId: params.parentStreamId,
+        scopeStreamId,
         parentSessionId: params.parentSessionId,
         triggerMessageId: params.triggerMessageId,
         cardEventId,
@@ -151,10 +173,6 @@ export class SubagentService {
 
   async getById(params: { workspaceId: string; id: string }): Promise<SubagentRun | null> {
     return SubagentRunRepository.findById(this.pool, params.workspaceId, params.id)
-  }
-
-  async findActiveByParentStream(params: { workspaceId: string; parentStreamId: string }): Promise<SubagentRun | null> {
-    return SubagentRunRepository.findActiveByParentStreamId(this.pool, params.workspaceId, params.parentStreamId)
   }
 
   async findActiveByThreadStream(params: { workspaceId: string; threadStreamId: string }): Promise<SubagentRun | null> {
@@ -196,7 +214,7 @@ export class SubagentService {
     parentStreamId?: string
     cancelledBy: { actorId: string; actorType: AuthorType }
   }): Promise<SubagentRun | null> {
-    return withTransaction(this.pool, async (client) => {
+    const cancelled = await withTransaction(this.pool, async (client) => {
       const cancelled = await SubagentRunRepository.cancel(client, {
         workspaceId: params.workspaceId,
         id: params.id,
@@ -206,38 +224,68 @@ export class SubagentService {
       await this.appendStatusEvent(client, cancelled, params.cancelledBy)
       return cancelled
     })
+    if (!cancelled) return null
+
+    // After the CAS commits, never inside it: an abort is not transactional, and
+    // signalling a turn the rollback then un-cancelled would stop work nobody
+    // asked to stop. Best-effort like the Stop button — a turn that finishes
+    // first simply has nothing to abort.
+    if (this.stopThreadSession) {
+      try {
+        await this.stopThreadSession({
+          workspaceId: cancelled.workspaceId,
+          threadStreamId: cancelled.threadStreamId,
+        })
+      } catch (err) {
+        logger.warn(
+          { err, subagentId: cancelled.id, threadStreamId: cancelled.threadStreamId },
+          "Failed to stop the subagent's live session after cancelling the run"
+        )
+      }
+    }
+    return cancelled
   }
 
   /**
-   * The run's runtime died. Called from the session terminal-failure sites with
-   * the thread it died in — a card that keeps saying "waiting for you" for a
-   * subagent that can no longer answer is the dishonesty this exists to stop.
-   */
-  async failByThreadStream(params: {
-    workspaceId: string
-    threadStreamId: string
-    statusNote: string
-  }): Promise<SubagentRun | null> {
-    return withTransaction(this.pool, async (client) => {
-      const failed = await SubagentRunRepository.failByThreadStreamId(client, params)
-      if (!failed) return null
-      await this.appendStatusEvent(client, failed, { actorType: AuthorTypes.SYSTEM })
-      return failed
-    })
-  }
-
-  /**
-   * Same transition inside a caller-owned transaction, for the session-failure
-   * path that must flip the run atomically with the session row (INV-7).
+   * The run's runtime died: CAS it failed inside the caller's transaction, so
+   * the run settles atomically with the session row that failed (INV-7). A card
+   * that keeps saying "waiting for you" for a subagent that can no longer answer
+   * is the dishonesty this exists to stop. `null` when the thread has no live
+   * run — the ordinary case for every other stream.
    */
   async failByThreadStreamInTransaction(
     client: Querier,
-    params: { workspaceId: string; threadStreamId: string; statusNote: string }
+    params: { workspaceId: string; threadStreamId: string; reason: SubagentFailureReason }
   ): Promise<SubagentRun | null> {
     const failed = await SubagentRunRepository.failByThreadStreamId(client, params)
     if (!failed) return null
     await this.appendStatusEvent(client, failed, { actorType: AuthorTypes.SYSTEM })
     return failed
+  }
+
+  /**
+   * The subagent spoke: stamp the card with when, without settling the run. The
+   * card's "waiting for you" state is exactly "active, and the subagent spoke
+   * last", and this patch is where that timestamp comes from — emitted from the
+   * session-completion transaction (INV-4/7), so it lands with the message that
+   * justifies it. `null` when the thread has no live run.
+   */
+  async noteAgentSpokeInTransaction(
+    client: Querier,
+    params: { workspaceId: string; threadStreamId: string; at: Date }
+  ): Promise<SubagentRun | null> {
+    const run = await SubagentRunRepository.findActiveByThreadStreamId(
+      client,
+      params.workspaceId,
+      params.threadStreamId
+    )
+    if (!run) return null
+    await this.appendStatusEvent(client, run, {
+      actorId: run.personaId,
+      actorType: AuthorTypes.PERSONA,
+      lastAgentMessageAt: params.at,
+    })
+    return run
   }
 
   /**
@@ -288,14 +336,19 @@ export class SubagentService {
   /**
    * The kickoff persona turn, enqueued in the caller's transaction so it can
    * never fire for a run that rolled back. `messageId` is synthetic — there is
-   * no trigger message — and `subagentRunId` is what makes the worker resolve
-   * a `subagent_kickoff` purpose (the fired-follow-up shape).
+   * no trigger message — and `subagentRunId` is what makes the worker resolve a
+   * `subagent_kickoff` purpose (the fired-follow-up shape).
+   *
+   * A FRESH id per enqueue, not one derived from the run: `withCompanionSession`
+   * dedupes by trigger message, so a requeue reusing the first kickoff's id
+   * would find that run's completed session and skip. Queue retries of one
+   * enqueue still carry one id, so they still dedupe.
    */
   private async enqueueKickoff(client: PoolClient, run: SubagentRun): Promise<void> {
     const payload: PersonaAgentJobData = {
       workspaceId: run.workspaceId,
       streamId: run.threadStreamId,
-      messageId: `subagent_${run.id}`,
+      messageId: subagentKickoffId(),
       personaId: run.personaId,
       triggeredBy: run.createdBy,
       subagentRunId: run.id,

@@ -78,7 +78,7 @@ export async function createSubagentTestContext(pool: Pool, label: string): Prom
 }
 
 /** The persona's own model, so a pinned subagent model is visibly a different one. */
-export const PERSONA_MODEL = "openrouter:anthropic/claude-sonnet-4.6"
+export const PERSONA_MODEL = "openrouter:anthropic/claude-sonnet-5"
 
 /** A delegable model from the workspace default set (`DEFAULT_SUBAGENT_MODELS`). */
 export const DELEGATED_MODEL = "openrouter:openai/gpt-5.6-terra"

@@ -10,12 +10,13 @@
  * racer moves nothing and says so.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthorTypes, SubagentStatuses } from "@threa/types"
+import { AuthorTypes, SubagentFailureReasons, SubagentStatuses, type SubagentFailureReason } from "@threa/types"
 import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { createReportBackTool } from "../../src/features/agents/tools"
+import { withCompanionSession } from "../../src/features/agents/companion"
 import { SubagentAlreadyActiveError, SubagentService, createSubagentExpirySweep } from "../../src/features/subagents"
 import { JobQueues, QueueRepository } from "../../src/lib/queue"
 import { messageId } from "../../src/lib/id"
@@ -130,14 +131,16 @@ describe("subagent create", () => {
 
     const jobs = await claimKickoffJobs(threadStreamId)
     expect(jobs).toHaveLength(1)
-    expect(jobs[0].payload).toEqual({
+    expect(jobs[0].payload).toMatchObject({
       workspaceId: ctx.workspaceId,
       streamId: threadStreamId,
-      messageId: `subagent_${run.id}`,
       personaId: ctx.persona.id,
       triggeredBy: ctx.owner,
       subagentRunId: run.id,
     })
+    // Minted per enqueue rather than derived from the run: `withCompanionSession`
+    // dedupes by trigger message, so a requeue must not reuse this id.
+    expect((jobs[0].payload as { messageId: string }).messageId).toMatch(/^kickoff_/)
   })
 
   test("a second concurrent create loses the unique-index race and leaves nothing behind", async () => {
@@ -163,6 +166,35 @@ describe("subagent create", () => {
 
     const threads = await pool.query<{ id: string }>(`SELECT id FROM streams WHERE parent_stream_id = $1`, [channel.id])
     expect(threads.rows.map((row) => row.id)).toEqual([winner.threadStreamId])
+  })
+
+  test("a mention thread's subagent holds the whole channel's slot, not just the thread's", async () => {
+    const channel = await ctx.createChannel({ slug: "mention-scope" })
+    // The shape a channel @mention produces: the turn runs in an eagerly created
+    // reply thread, so the card lands there rather than in the channel.
+    const mentionThread = await ctx.streamService.createThreadInternal({
+      workspaceId: ctx.workspaceId,
+      parentStreamId: channel.id,
+      parentAnchorId: await seedChannelMessage(channel.id, 1n),
+      createdBy: ctx.owner,
+    })
+    const { run } = await subagentService.create(createParams(ctx, mentionThread.id))
+    expect(run).toMatchObject({ parentStreamId: mentionThread.id, scopeStreamId: channel.id })
+
+    // Scoping the rule to the immediate parent would allow one live subagent per
+    // mention thread; the root is the conversation surface the user sees.
+    await expect(subagentService.create(createParams(ctx, channel.id))).rejects.toBeInstanceOf(
+      SubagentAlreadyActiveError
+    )
+    const secondThread = await ctx.streamService.createThreadInternal({
+      workspaceId: ctx.workspaceId,
+      parentStreamId: channel.id,
+      parentAnchorId: await seedChannelMessage(channel.id, 2n),
+      createdBy: ctx.owner,
+    })
+    await expect(subagentService.create(createParams(ctx, secondThread.id))).rejects.toBeInstanceOf(
+      SubagentAlreadyActiveError
+    )
   })
 
   test("a sequential second create in the same stream is refused with the typed error", async () => {
@@ -291,17 +323,114 @@ describe("report_back", () => {
   })
 })
 
+describe("the card's waiting state", () => {
+  test("a completed turn that posted something stamps the card without settling the run", async () => {
+    const channel = await ctx.createChannel({ slug: "spoke" })
+    const { run, threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
+
+    // The wiring from `PersonaAgent.run`: the stamp rides the completion
+    // transaction, so the card's "waiting for you" lands with the message that
+    // justifies it rather than from a later poll.
+    const result = await withCompanionSession(
+      {
+        pool,
+        triggerMessageId: messageId(),
+        streamId: threadStreamId,
+        personaId: ctx.persona.id,
+        personaName: ctx.persona.name,
+        workspaceId: ctx.workspaceId,
+        serverId: "test-server",
+        initialSequence: BigInt(0),
+        onCompletedWithMessages: (client, at) =>
+          subagentService
+            .noteAgentSpokeInTransaction(client, { workspaceId: ctx.workspaceId, threadStreamId, at })
+            .then(() => undefined),
+      },
+      async () => ({ messagesSent: 1, sentMessageIds: [messageId()], lastSeenSequence: BigInt(1) })
+    )
+
+    expect(result.status).toBe("completed")
+    expect(await subagentService.getById({ workspaceId: ctx.workspaceId, id: run.id })).toMatchObject({
+      status: SubagentStatuses.ACTIVE,
+    })
+    const patches = await statusEvents(channel.id)
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toMatchObject({
+      actorId: ctx.persona.id,
+      actorType: AuthorTypes.PERSONA,
+      payload: { subagentId: run.id, status: SubagentStatuses.ACTIVE },
+    })
+    expect((patches[0].payload as { lastAgentMessageAt: string | null }).lastAgentMessageAt).not.toBeNull()
+  })
+
+  test("a silent turn stamps nothing", async () => {
+    const channel = await ctx.createChannel({ slug: "silent" })
+    const { threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
+    const stamp = mock(async () => undefined)
+
+    await withCompanionSession(
+      {
+        pool,
+        triggerMessageId: messageId(),
+        streamId: threadStreamId,
+        personaId: ctx.persona.id,
+        personaName: ctx.persona.name,
+        workspaceId: ctx.workspaceId,
+        serverId: "test-server",
+        initialSequence: BigInt(0),
+        onCompletedWithMessages: stamp,
+      },
+      async () => ({ messagesSent: 0, sentMessageIds: [], lastSeenSequence: BigInt(0) })
+    )
+
+    expect(stamp).not.toHaveBeenCalled()
+    expect(await statusEvents(channel.id)).toHaveLength(0)
+  })
+})
+
+describe("cancel", () => {
+  test("stops the thread's live turn, and only when the CAS was actually won", async () => {
+    const channel = await ctx.createChannel({ slug: "cancel-stops" })
+    const stopThreadSession = mock(async () => true)
+    const service = new SubagentService({ pool, streamService: ctx.streamService, stopThreadSession })
+    const { run, threadStreamId } = await service.create(createParams(ctx, channel.id))
+
+    const cancelled = await service.cancel({
+      workspaceId: ctx.workspaceId,
+      id: run.id,
+      parentStreamId: channel.id,
+      cancelledBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
+    })
+
+    expect(cancelled).toMatchObject({ status: SubagentStatuses.CANCELLED })
+    // Cancelling a run whose turn is mid-flight has to stop that turn too, or
+    // the card says cancelled while the delegated model keeps spending.
+    expect(stopThreadSession).toHaveBeenCalledWith({ workspaceId: ctx.workspaceId, threadStreamId })
+
+    stopThreadSession.mockClear()
+    expect(
+      await service.cancel({
+        workspaceId: ctx.workspaceId,
+        id: run.id,
+        parentStreamId: channel.id,
+        cancelledBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
+      })
+    ).toBeNull()
+    expect(stopThreadSession).not.toHaveBeenCalled()
+  })
+})
+
 describe("failure, expiry and requeue", () => {
   test("a dead runtime fails the run by thread id and patches the card", async () => {
     const channel = await ctx.createChannel({ slug: "session-failure" })
     const { run, threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
 
-    const failed = await failRun(threadStreamId, "The delegated model's session was orphaned (stale heartbeat).")
+    const failed = await failRun(threadStreamId, SubagentFailureReasons.SESSION_ORPHANED)
 
     expect(failed).toMatchObject({
       id: run.id,
       status: SubagentStatuses.FAILED,
-      statusNote: "The delegated model's session was orphaned (stale heartbeat).",
+      statusNote: SubagentFailureReasons.SESSION_ORPHANED,
     })
     const patches = await statusEvents(channel.id)
     expect(patches).toHaveLength(1)
@@ -310,20 +439,20 @@ describe("failure, expiry and requeue", () => {
       payload: {
         subagentId: run.id,
         status: SubagentStatuses.FAILED,
-        statusNote: "The delegated model's session was orphaned (stale heartbeat).",
+        statusNote: SubagentFailureReasons.SESSION_ORPHANED,
       },
     })
 
     // Failing a thread with no live run is a no-op, not an error — every other
     // stream's session failures route through the same call.
-    expect(await failRun(threadStreamId, "second failure")).toBeNull()
+    expect(await failRun(threadStreamId, SubagentFailureReasons.TURN_FAILED)).toBeNull()
   })
 
   test("requeue reactivates a failed run, re-enqueues the kickoff, and loses the slot race", async () => {
     const channel = await ctx.createChannel({ slug: "requeue" })
     const { run, threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
     await claimKickoffJobs(threadStreamId)
-    await failRun(threadStreamId, "died")
+    await failRun(threadStreamId, SubagentFailureReasons.TURN_FAILED)
 
     const reactivated = await subagentService.requeue({
       workspaceId: ctx.workspaceId,
@@ -349,10 +478,39 @@ describe("failure, expiry and requeue", () => {
     ).toBeNull()
   })
 
+  test("the requeued kickoff opens a session instead of deduping onto the first one's", async () => {
+    const channel = await ctx.createChannel({ slug: "requeue-runs" })
+    const { run, threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
+
+    const [firstJob] = await claimKickoffJobs(threadStreamId)
+    const firstTrigger = (firstJob.payload as { messageId: string }).messageId
+    const firstTurn = await runKickoffTurn(threadStreamId, firstTrigger)
+    expect(firstTurn.status).toBe("completed")
+
+    await failRun(threadStreamId, SubagentFailureReasons.TURN_FAILED)
+    await subagentService.requeue({
+      workspaceId: ctx.workspaceId,
+      id: run.id,
+      parentStreamId: channel.id,
+      requeuedBy: { actorId: ctx.owner, actorType: AuthorTypes.USER },
+    })
+
+    const [secondJob] = await claimKickoffJobs(threadStreamId)
+    const secondTrigger = (secondJob.payload as { messageId: string }).messageId
+
+    // The synthetic trigger id is minted per ENQUEUE, not derived from the run:
+    // `withCompanionSession` dedupes by trigger message, so a requeue reusing
+    // the first kickoff's id would find that completed session and skip — the
+    // run would sit `active` with nothing ever running in it.
+    expect(secondTrigger).not.toBe(firstTrigger)
+    const secondTurn = await runKickoffTurn(threadStreamId, secondTrigger)
+    expect(secondTurn.status).toBe("completed")
+  })
+
   test("requeue is refused while another subagent holds the stream's live slot", async () => {
     const channel = await ctx.createChannel({ slug: "requeue-race" })
     const first = await subagentService.create(createParams(ctx, channel.id, { title: "First" }))
-    await failRun(first.threadStreamId, "died")
+    await failRun(first.threadStreamId, SubagentFailureReasons.TURN_FAILED)
     const second = await subagentService.create(createParams(ctx, channel.id, { title: "Second" }))
 
     await expect(
@@ -367,9 +525,9 @@ describe("failure, expiry and requeue", () => {
     expect(await subagentService.getById({ workspaceId: ctx.workspaceId, id: first.run.id })).toMatchObject({
       status: SubagentStatuses.FAILED,
     })
-    expect(
-      await subagentService.findActiveByParentStream({ workspaceId: ctx.workspaceId, parentStreamId: channel.id })
-    ).toMatchObject({ id: second.run.id })
+    expect(await subagentService.getById({ workspaceId: ctx.workspaceId, id: second.run.id })).toMatchObject({
+      status: SubagentStatuses.ACTIVE,
+    })
   })
 
   test("the sweep expires runs idle past the threshold and leaves fresh ones alone", async () => {
@@ -419,13 +577,49 @@ describe("failure, expiry and requeue", () => {
 })
 
 /** The turn/orphan failure path as production wires it: the CAS rides the caller's transaction. */
-async function failRun(threadStreamId: string, statusNote: string) {
+async function failRun(threadStreamId: string, reason: SubagentFailureReason) {
   return withTransaction(pool, (client) =>
     subagentService.failByThreadStreamInTransaction(client, {
       workspaceId: ctx.workspaceId,
       threadStreamId,
-      statusNote,
+      reason,
     })
+  )
+}
+
+/** A message in a channel, so a thread can anchor on it the way a mention's does. */
+async function seedChannelMessage(streamId: string, sequence: bigint): Promise<string> {
+  const id = messageId()
+  await withTransaction(pool, (client) =>
+    MessageRepository.insert(client, {
+      id,
+      streamId,
+      sequence,
+      authorId: ctx.owner,
+      authorType: AuthorTypes.USER,
+      ...testMessageContent("anchor"),
+    })
+  )
+  return id
+}
+
+/**
+ * Run one turn through the real session lifecycle — the seam that dedupes by
+ * trigger message id, which is what a requeue has to get past.
+ */
+async function runKickoffTurn(threadStreamId: string, triggerMessageId: string) {
+  return withCompanionSession(
+    {
+      pool,
+      triggerMessageId,
+      streamId: threadStreamId,
+      personaId: ctx.persona.id,
+      personaName: ctx.persona.name,
+      workspaceId: ctx.workspaceId,
+      serverId: "test-server",
+      initialSequence: BigInt(0),
+    },
+    async () => ({ messagesSent: 0, sentMessageIds: [], lastSeenSequence: BigInt(0) })
   )
 }
 

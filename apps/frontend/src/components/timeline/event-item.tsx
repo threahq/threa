@@ -216,6 +216,13 @@ export function EventItem({
       // delegationStatusPatches (collected in event-list) — renders nothing.
       return null
 
+    case "subagent:created":
+    case "subagent:status_changed":
+      // PR C replaces this with the subagent card and its status patching.
+      // Until then the backend emits both types, and the `default` branch below
+      // would render them as raw "System event: subagent:*" rows.
+      return null
+
     case "bot_access:requested": {
       const requestId = (event.payload as { requestId?: string })?.requestId
       const statusPatch = requestId ? botAccessStatusPatches?.get(requestId) : undefined

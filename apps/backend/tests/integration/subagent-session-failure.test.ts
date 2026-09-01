@@ -13,7 +13,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AuthorTypes, SubagentStatuses } from "@threa/types"
+import { AuthorTypes, SubagentFailureReasons, SubagentStatuses } from "@threa/types"
 import { withCompanionSession } from "../../src/features/agents/companion"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
 import { createOrphanSessionCleanup } from "../../src/features/agents/orphan-session-cleanup"
@@ -65,11 +65,11 @@ describe("terminal turn failure", () => {
         initialSequence: 0n,
         // The wiring from `PersonaAgent.run`: present only because this stream
         // has a live run.
-        onTerminalFailure: async (db, error) => {
+        onTerminalFailure: async (db) => {
           await subagentService.failByThreadStreamInTransaction(db, {
             workspaceId: ctx.workspaceId,
             threadStreamId,
-            statusNote: `The delegated model's turn failed: ${error}`.slice(0, 500),
+            reason: SubagentFailureReasons.TURN_FAILED,
           })
         },
       },
@@ -81,7 +81,9 @@ describe("terminal turn failure", () => {
     expect(result).toMatchObject({ status: "failed", willRetry: false })
     const settled = await subagentService.getById({ workspaceId: ctx.workspaceId, id: run.id })
     expect(settled).toMatchObject({ status: SubagentStatuses.FAILED })
-    expect(settled?.statusNote).toContain("provider exploded")
+    // A code, not prose: the backend never authors display text (INV-46), and a
+    // system transition has no human actor to have written any.
+    expect(settled?.statusNote).toBe(SubagentFailureReasons.TURN_FAILED)
 
     const patches = await statusEvents(channel.id)
     expect(patches).toHaveLength(1)
@@ -115,7 +117,7 @@ describe("terminal turn failure", () => {
           await subagentService.failByThreadStreamInTransaction(db, {
             workspaceId: ctx.workspaceId,
             threadStreamId,
-            statusNote: "should not run",
+            reason: SubagentFailureReasons.TURN_FAILED,
           })
         },
       },
@@ -156,7 +158,7 @@ describe("orphaned runtime", () => {
           .failByThreadStreamInTransaction(tx, {
             workspaceId: failed.workspaceId,
             threadStreamId: failed.streamId,
-            statusNote: "The delegated model's session was orphaned (stale heartbeat).",
+            reason: SubagentFailureReasons.SESSION_ORPHANED,
           })
           .then(() => undefined),
     })
@@ -173,7 +175,7 @@ describe("orphaned runtime", () => {
     expect(await AgentSessionRepository.findById(pool, session.id)).toMatchObject({ status: SessionStatuses.FAILED })
     expect(await subagentService.getById({ workspaceId: ctx.workspaceId, id: run.id })).toMatchObject({
       status: SubagentStatuses.FAILED,
-      statusNote: "The delegated model's session was orphaned (stale heartbeat).",
+      statusNote: SubagentFailureReasons.SESSION_ORPHANED,
     })
     expect(await statusEvents(channel.id)).toHaveLength(1)
   })

@@ -85,8 +85,12 @@ export class CompanionHandler extends DebouncedOutboxHandler {
     // off a CHANNEL, which has none, and the user answering the delegated model
     // there must reach it. The run's own persona is dispatched — never the
     // stream's — and the run going terminal reverts the thread to the ordinary
-    // rules below.
-    const activeSubagent = await SubagentRunRepository.findActiveByThreadStreamId(this.db, workspaceId, streamId)
+    // rules below. Only threads can host a run, so ordinary channel/scratchpad
+    // traffic never pays for the lookup.
+    const activeSubagent =
+      stream.type === StreamTypes.THREAD
+        ? await SubagentRunRepository.findActiveByThreadStreamId(this.db, workspaceId, streamId)
+        : null
 
     let companionSource = stream
     let persona: Awaited<ReturnType<typeof PersonaRepository.findById>> = null

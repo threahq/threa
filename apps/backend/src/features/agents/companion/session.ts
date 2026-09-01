@@ -57,6 +57,14 @@ export async function withCompanionSession(
      * is still waiting on the user.
      */
     onTerminalFailure?: (db: Querier, error: string) => Promise<void>
+    /**
+     * Runs in the same transaction as a completion that actually posted
+     * something (INV-7). Wired to the subagent card's "the delegated model
+     * spoke last" stamp, which is what separates "waiting for you" from
+     * "working" — derived from a patch that lands with the message, never from
+     * a later poll.
+     */
+    onCompletedWithMessages?: (db: Querier, at: Date) => Promise<void>
   },
   work: (
     session: AgentSession,
@@ -79,6 +87,7 @@ export async function withCompanionSession(
     attempt,
     maxAttempts,
     onTerminalFailure,
+    onCompletedWithMessages,
   } = params
 
   // Phase 1: Session setup (short-lived transaction)
@@ -208,6 +217,7 @@ export async function withCompanionSession(
           rootStreamId,
           event: streamEvent,
         })
+        if (messagesSent > 0 && onCompletedWithMessages) await onCompletedWithMessages(db, completedAt)
         completionCommitted = true
       })
     } catch (err) {

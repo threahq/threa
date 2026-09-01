@@ -52,7 +52,7 @@ function flattenUpdates(updates: UpdateWorkspaceSettingsInput): Array<{ key: str
 export class WorkspaceSettingsService {
   constructor(
     private pool: Pool,
-    private modelRegistry?: ModelRegistry
+    private modelRegistry: ModelRegistry
   ) {}
 
   /** Get workspace settings, merging overrides with defaults. */
@@ -94,12 +94,11 @@ export class WorkspaceSettingsService {
    * The delegable set is checked against the model registry on write as well as
    * on every tool call: an id that isn't a chat model in `models.yaml` can
    * never be delegated to, so storing it would be a setting that silently does
-   * nothing. Skipped when no registry is wired (test harnesses).
+   * nothing.
    */
   private assertDelegableModels(models: string[] | undefined): void {
-    if (!models || !this.modelRegistry) return
-    const registry = this.modelRegistry
-    const unknown = models.filter((model) => !registry.isChatModel(model))
+    if (!models) return
+    const unknown = models.filter((model) => !this.modelRegistry.isChatModel(model))
     if (unknown.length > 0) {
       throw new HttpError(`Unknown or non-chat model: ${unknown.join(", ")}`, {
         status: 400,

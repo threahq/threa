@@ -18,11 +18,3 @@ export function resolveSubagentModels(params: {
   const { workspaceSettings, modelRegistry } = params
   return workspaceSettings.subagentModels.filter((model) => modelRegistry.isChatModel(model))
 }
-
-/** Whether one model id is delegable in this workspace right now. */
-export function isSubagentModelAllowed(
-  model: string,
-  params: { workspaceSettings: Pick<WorkspaceSettings, "subagentModels">; modelRegistry: ModelRegistry }
-): boolean {
-  return resolveSubagentModels(params).includes(model)
-}

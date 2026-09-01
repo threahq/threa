@@ -6,6 +6,7 @@ import {
   AuthorTypes,
   ConversationIntents,
   StreamTypes,
+  SubagentFailureReasons,
   type AgentSessionRerunContext,
   type AgentToolEffect,
   type AuthorType,
@@ -277,10 +278,14 @@ export interface PersonaAgentDeps {
    * supplies the brief the turn wakes up on. Absent in harnesses that don't
    * wire subagents, in which case every stream reads as an ordinary one.
    */
-  loadActiveSubagentRun?: (params: {
-    workspaceId: string
-    threadStreamId: string
-  }) => Promise<{ id: string; model: string; title: string; brief: string; parentStreamId: string } | null>
+  loadActiveSubagentRun?: (params: { workspaceId: string; threadStreamId: string }) => Promise<{
+    id: string
+    model: string
+    title: string
+    brief: string
+    parentStreamId: string
+    createdBy: string
+  } | null>
   /**
    * The workspace's delegable model set, bound to `resolveSubagentModels` in
    * server.ts. Read once per turn to build `delegate_to_model`'s description;
@@ -317,15 +322,27 @@ export interface PersonaAgentDeps {
   }) => Promise<import("./tools/tool-deps").ReportBackToolResult>
   /**
    * Mark this thread's live subagent run failed, bound to
-   * `SubagentService.failByThreadStream` in server.ts. Called from the turn's
-   * terminal-failure path so a card never keeps saying "waiting for you" for a
-   * subagent whose runtime died.
+   * `SubagentService.failByThreadStreamInTransaction` in server.ts. Called from
+   * the turn's terminal-failure and precheck-skip paths so a card never keeps
+   * saying "waiting for you" for a subagent that will never speak.
    */
   failSubagentForThread?: (params: {
     client: Querier
     workspaceId: string
     threadStreamId: string
-    statusNote: string
+    reason: import("@threa/types").SubagentFailureReason
+  }) => Promise<unknown>
+  /**
+   * Stamp this thread's live subagent run with when it last spoke, bound to
+   * `SubagentService.noteAgentSpokeInTransaction` in server.ts. Emitted from the
+   * session-completion transaction so the card's "waiting for you" state lands
+   * with the message that justifies it (INV-4/7).
+   */
+  noteSubagentSpoke?: (params: {
+    client: Querier
+    workspaceId: string
+    threadStreamId: string
+    at: Date
   }) => Promise<unknown>
   /**
    * Write an agent-authored memo (roadmap 6.2), bound to `MemoService.saveMemoGenerated`
@@ -509,6 +526,19 @@ export class PersonaAgent {
     })
 
     if (precheck.skip) {
+      // A kickoff that can never run (persona archived, stream gone) must settle
+      // its run here: nothing downstream will, and an `active` row would claim
+      // the user is being waited on until the 7-day sweep.
+      if (purpose.kind === "subagent_kickoff" && this.deps.failSubagentForThread) {
+        await withTransaction(pool, (client) =>
+          this.deps.failSubagentForThread!({
+            client,
+            workspaceId,
+            threadStreamId: streamId,
+            reason: SubagentFailureReasons.KICKOFF_FAILED,
+          })
+        )
+      }
       return {
         sessionId: null,
         messagesSent: 0,
@@ -587,14 +617,24 @@ export class PersonaAgent {
       // Terminal failure in a subagent thread settles the run in the same
       // transaction: the card must never keep saying "waiting for you" for a
       // subagent whose runtime died.
+      // The subagent spoke: stamp the card so PR C can render "waiting for you"
+      // without a fetch. Only while the run is still live — a `report_back` turn
+      // settles it in the same breath, and the CAS there wins.
+      onCompletedWithMessages:
+        activeSubagentRun && this.deps.noteSubagentSpoke
+          ? (db: Querier, at: Date) =>
+              this.deps.noteSubagentSpoke!({ client: db, workspaceId, threadStreamId: targetStreamId, at }).then(
+                () => undefined
+              )
+          : undefined,
       onTerminalFailure:
         activeSubagentRun && this.deps.failSubagentForThread
-          ? async (db: Querier, error: string) => {
+          ? async (db: Querier) => {
               await this.deps.failSubagentForThread!({
                 client: db,
                 workspaceId,
                 threadStreamId: targetStreamId,
-                statusNote: `The delegated model's turn failed: ${error}`.slice(0, 500),
+                reason: SubagentFailureReasons.TURN_FAILED,
               })
             }
           : undefined,
@@ -749,6 +789,10 @@ export class PersonaAgent {
             currentTime,
             followUp: followUpContext,
             subagentBrief: subagentKickoffBrief,
+            // A kickoff has no trigger message, so the run's `createdBy` is the
+            // invoking user — already re-checked against `assertStreamWritable`
+            // above as this turn's principal.
+            invokingUserOverride: subagentKickoffBrief ? activeSubagentRun?.createdBy : undefined,
           }
         )
 

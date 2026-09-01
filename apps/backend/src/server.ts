@@ -10,6 +10,7 @@ import {
   delegateToSubagent,
   resolveSubagentModels,
 } from "./features/subagents"
+import { SubagentFailureReasons } from "@threa/types"
 import { registerRoutes } from "./routes"
 import { errorHandler } from "./middleware/error-handler"
 import { registerSocketHandlers } from "./socket"
@@ -152,6 +153,8 @@ import {
   PersonaAgent,
   TraceEmitter,
   SessionAbortRegistry,
+  AgentSessionRepository,
+  SessionStatuses,
   AgentSessionMetricsCollector,
   ConversationSummaryService,
   COMPANION_SUMMARY_MODEL_ID,
@@ -247,6 +250,7 @@ import {
   QueueDepthSampler,
   QueueRepository,
   TokenPoolRepository,
+  type PersonaAgentJobData,
 } from "./lib/queue"
 import { UserSocketRegistry } from "./lib/user-socket-registry"
 import { PoolMonitor } from "./lib/observability"
@@ -633,7 +637,25 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const streamBriefService = new StreamBriefService({ pool })
   const delegationService = new DelegationService({ pool })
-  const subagentService = new SubagentService({ pool, streamService })
+  // Declared here rather than beside the other socket registries because the
+  // subagent cancel path routes an abort through it (below).
+  const sessionAbortRegistry = new SessionAbortRegistry()
+  const subagentService = new SubagentService({
+    pool,
+    streamService,
+    // Same routing as the Stop button (`socket.ts` `agent_session:research:abort`):
+    // ownership is read off the session row, because an enclave-owned turn has
+    // no inbound cancel route and consumes the flag on its next heartbeat.
+    stopThreadSession: async ({ threadStreamId }) => {
+      const session = await AgentSessionRepository.findLatestByStream(pool, threadStreamId)
+      if (!session || (session.status !== SessionStatuses.RUNNING && session.status !== SessionStatuses.PENDING)) {
+        return false
+      }
+      return session.callbackTokenHash
+        ? AgentSessionRepository.requestAbort(pool, session.id)
+        : sessionAbortRegistry.abort(session.id, "user_abort")
+    },
+  })
   const subagentDelegationDeps = {
     subagentService,
     modelRegistry,
@@ -874,7 +896,6 @@ export async function startServer(): Promise<ServerInstance> {
   app.use(errorHandler)
 
   const userSocketRegistry = new UserSocketRegistry()
-  const sessionAbortRegistry = new SessionAbortRegistry()
   const botSocketRegistry = new BotSocketRegistry({
     // When the last socket for an instance disconnects, wait 30 s for a
     // reconnect (Wi-Fi blip, laptop lid). If nothing comes back, mark the
@@ -1148,8 +1169,10 @@ export async function startServer(): Promise<ServerInstance> {
       const completed = await subagentService.reportBack({ workspaceId, id: subagentId, resultMessageId })
       return completed ? { ok: true, subagentId: completed.id } : { ok: false, reason: "already_closed" }
     },
-    failSubagentForThread: ({ client, workspaceId, threadStreamId, statusNote }) =>
-      subagentService.failByThreadStreamInTransaction(client, { workspaceId, threadStreamId, statusNote }),
+    failSubagentForThread: ({ client, workspaceId, threadStreamId, reason }) =>
+      subagentService.failByThreadStreamInTransaction(client, { workspaceId, threadStreamId, reason }),
+    noteSubagentSpoke: ({ client, workspaceId, threadStreamId, at }) =>
+      subagentService.noteAgentSpokeInTransaction(client, { workspaceId, threadStreamId, at }),
     saveMemo: async ({
       initiatingUserId,
       workspaceId,
@@ -1198,7 +1221,20 @@ export async function startServer(): Promise<ServerInstance> {
   // Fairness defaults to `none` — region sharding already isolates tenants,
   // so a single workspace burst can use the full tier budget.
   const personaAgentWorker = createPersonaAgentWorker({ agent: personaAgent, serverId, pool, jobQueue })
+  // A kickoff that exhausts its retries never wakes the subagent, so the run
+  // must not sit `active` until the 7-day sweep claiming someone is waiting on
+  // the user. Only kickoff jobs carry `subagentRunId`; every other persona job
+  // no-ops here.
+  const personaAgentOnDLQ: OnDLQHook<PersonaAgentJobData> = async (querier, job) => {
+    if (!job.data.subagentRunId) return
+    await subagentService.failByThreadStreamInTransaction(querier, {
+      workspaceId: job.data.workspaceId,
+      threadStreamId: job.data.streamId,
+      reason: SubagentFailureReasons.KICKOFF_FAILED,
+    })
+  }
   jobQueue.registerHandler(JobQueues.PERSONA_AGENT, personaAgentWorker, {
+    hooks: { onDLQ: personaAgentOnDLQ },
     tier: QueueTiers.INTERACTIVE,
     fairness: QueueFairness.NONE,
   })
@@ -1736,7 +1772,7 @@ export async function startServer(): Promise<ServerInstance> {
         .failByThreadStreamInTransaction(tx, {
           workspaceId: session.workspaceId,
           threadStreamId: session.streamId,
-          statusNote: "The delegated model's session was orphaned (stale heartbeat).",
+          reason: SubagentFailureReasons.SESSION_ORPHANED,
         })
         .then(() => undefined),
   })

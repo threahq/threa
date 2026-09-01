@@ -36,7 +36,7 @@ function buildPromptBlock(allowedModels: string[]): string {
 - Available models: ${allowedModels.join(", ")}.
 - Delegate when the user asks for a second opinion, names a model they want, or the task visibly exceeds what you can do well. Never for work you can simply do — a subagent costs the user time and money.
 - The \`brief\` is everything the subagent gets. It has your workspace tools but has not read this conversation: write the question, the context, and what would count as an answer.
-- One subagent at a time per stream. If one is already running, say so instead of trying again.
+- One subagent at a time per conversation surface (a channel or scratchpad, including its threads). If one is already running, say so instead of trying again.
 - After delegating, tell the user the card is there and that the other model will talk to them in its thread. Do not narrate on its behalf or answer the question yourself in parallel.`
 }
 
@@ -71,7 +71,7 @@ export function createDelegateToModelTool(deps: DelegateToModelToolDeps) {
     categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.DELEGATE_TO_MODEL],
     description: `Delegate this question to another model, which answers the user in a thread off a card in this stream.
 
-Allowed models: ${deps.allowedModels.join(", ")}. Pass the \`model\` id, a short \`title\` for the card, and a self-contained \`brief\` (the delegated model has your workspace tools but has not read this conversation). One subagent at a time per stream.`,
+Allowed models: ${deps.allowedModels.join(", ")}. Pass the \`model\` id, a short \`title\` for the card, and a self-contained \`brief\` (the delegated model has your workspace tools but has not read this conversation). One subagent at a time per conversation surface (a channel or scratchpad, including its threads).`,
     inputSchema: DelegateToModelSchema,
     promptBlock: buildPromptBlock(deps.allowedModels),
 

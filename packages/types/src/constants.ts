@@ -874,6 +874,21 @@ export const SUBAGENT_TERMINAL_STATUSES = [
   "expired",
 ] as const satisfies readonly SubagentStatus[]
 
+/**
+ * Why a subagent run ended without the delegated model reporting back. A code,
+ * not prose: the backend never authors display text (INV-46), and these are
+ * system transitions with no human actor to have written one. Validated in
+ * code, stored in `subagent_runs.status_note` (INV-3).
+ */
+export const SUBAGENT_FAILURE_REASONS = ["turn_failed", "session_orphaned", "kickoff_failed"] as const
+export type SubagentFailureReason = (typeof SUBAGENT_FAILURE_REASONS)[number]
+
+export const SubagentFailureReasons = {
+  TURN_FAILED: "turn_failed",
+  SESSION_ORPHANED: "session_orphaned",
+  KICKOFF_FAILED: "kickoff_failed",
+} as const satisfies Record<string, SubagentFailureReason>
+
 // Subagent content caps — same numbers as the delegation caps and here for the
 // same reason: the `delegate_to_model` tool (features/agents/) and the
 // subagents feature both need them, and importing the subagents barrel from an

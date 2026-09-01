@@ -9,6 +9,7 @@ import { CompanionHandler } from "./companion-outbox-handler"
 import { PersonaRepository } from "./persona-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository } from "./session-repository"
+import { SubagentRunRepository } from "../subagents"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -87,11 +88,37 @@ async function waitForDebounce(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 300))
 }
 
+/** A thread hanging off a channel — a surface with no companion mode of its own. */
+function makeChannelThread() {
+  const thread = makeStream({
+    id: "stream_subagent_thread",
+    type: StreamTypes.THREAD,
+    parentStreamId: "stream_channel_root",
+    rootStreamId: "stream_channel_root",
+    companionMode: CompanionModes.OFF,
+    companionPersonaId: null,
+  })
+  const channel = makeStream({
+    id: "stream_channel_root",
+    type: StreamTypes.CHANNEL,
+    companionMode: CompanionModes.OFF,
+    companionPersonaId: null,
+  })
+  spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+    if (id === "stream_subagent_thread") return thread
+    if (id === "stream_channel_root") return channel
+    return null
+  })
+}
+
 describe("CompanionHandler", () => {
   beforeEach(() => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     // Default: no stream is a draft test stream. Overridden in the draft-test case.
     spyOn(PersonaConfigDraftRepository, "findByTestStreamId").mockResolvedValue(null)
+    // Default: no thread hosts a live subagent, so companion mode decides.
+    // Overridden in the subagent-wake cases.
+    spyOn(SubagentRunRepository, "findActiveByThreadStreamId").mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -395,5 +422,58 @@ describe("CompanionHandler", () => {
     await waitForDebounce()
 
     expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+  it("wakes the run's persona in a subagent thread under a channel, which has no companion mode", async () => {
+    mockUserMessageEvent("stream_subagent_thread")
+    makeChannelThread()
+    spyOn(SubagentRunRepository, "findActiveByThreadStreamId").mockResolvedValue({
+      id: "subagent_1",
+      personaId: "persona_delegated",
+      status: "active",
+    } as any)
+    spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_delegated", status: "active" } as any)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(jobQueue.send).toHaveBeenCalledWith("persona.agent", {
+      workspaceId: "ws_1",
+      streamId: "stream_subagent_thread",
+      messageId: "msg_1",
+      personaId: "persona_delegated",
+      triggeredBy: "usr_author",
+    })
+  })
+
+  it("stops waking a subagent thread once the run is terminal", async () => {
+    mockUserMessageEvent("stream_subagent_thread")
+    makeChannelThread()
+    // A settled run is not returned by the active lookup, so the thread falls
+    // back to its root's companion mode — off, for a channel.
+    spyOn(SubagentRunRepository, "findActiveByThreadStreamId").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+
+  it("skips the run lookup entirely for a non-thread stream", async () => {
+    mockUserMessageEvent("stream_plain_channel")
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      makeStream({ id: "stream_plain_channel", type: StreamTypes.CHANNEL, companionMode: CompanionModes.OFF })
+    )
+    const lookup = spyOn(SubagentRunRepository, "findActiveByThreadStreamId").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+
+    const { handler } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(lookup).not.toHaveBeenCalled()
   })
 })

@@ -1,11 +1,12 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { SubagentStatuses, type SubagentStatus } from "@threa/types"
+import { SubagentStatuses, type SubagentFailureReason, type SubagentStatus } from "@threa/types"
 
 interface SubagentRunRow {
   id: string
   workspace_id: string
   parent_stream_id: string
+  scope_stream_id: string
   parent_session_id: string | null
   trigger_message_id: string | null
   card_event_id: string
@@ -27,6 +28,13 @@ export interface SubagentRun {
   id: string
   workspaceId: string
   parentStreamId: string
+  /**
+   * The conversation surface the one-live-subagent rule applies to: the parent's
+   * root, or the parent itself when it is not a thread. A channel mention posts
+   * its card in the reply thread, so scoping the rule to the immediate parent
+   * would allow one live subagent per mention thread.
+   */
+  scopeStreamId: string
   parentSessionId: string | null
   triggerMessageId: string | null
   cardEventId: string
@@ -48,6 +56,7 @@ export interface InsertSubagentRunParams {
   id: string
   workspaceId: string
   parentStreamId: string
+  scopeStreamId: string
   parentSessionId: string | null
   triggerMessageId: string | null
   cardEventId: string
@@ -81,7 +90,7 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 const COLUMNS = `
-  id, workspace_id, parent_stream_id, parent_session_id, trigger_message_id,
+  id, workspace_id, parent_stream_id, scope_stream_id, parent_session_id, trigger_message_id,
   card_event_id, thread_stream_id, persona_id, model, created_by,
   title, brief, status, status_note, result_message_id,
   created_at, updated_at, status_changed_at
@@ -92,6 +101,7 @@ function mapRow(row: SubagentRunRow): SubagentRun {
     id: row.id,
     workspaceId: row.workspace_id,
     parentStreamId: row.parent_stream_id,
+    scopeStreamId: row.scope_stream_id,
     parentSessionId: row.parent_session_id,
     triggerMessageId: row.trigger_message_id,
     cardEventId: row.card_event_id,
@@ -114,18 +124,18 @@ function mapRow(row: SubagentRunRow): SubagentRun {
  * Every transition here CASes on `status = 'active'` and nothing else: a run has
  * one live state and four terminal ones, so a losing racer matches no row and
  * returns `null` rather than clobbering a settled outcome (INV-20). The single
- * `active` slot per parent stream is the partial unique index's job, not a
- * read-then-write guard.
+ * `active` slot per conversation surface is the partial unique index's job, not
+ * a read-then-write guard.
  */
 export const SubagentRunRepository = {
   async insert(db: Querier, params: InsertSubagentRunParams): Promise<SubagentRun> {
     try {
       const result = await db.query<SubagentRunRow>(sql`
         INSERT INTO subagent_runs (
-          id, workspace_id, parent_stream_id, parent_session_id, trigger_message_id,
+          id, workspace_id, parent_stream_id, scope_stream_id, parent_session_id, trigger_message_id,
           card_event_id, thread_stream_id, persona_id, model, created_by, title, brief, status
         ) VALUES (
-          ${params.id}, ${params.workspaceId}, ${params.parentStreamId}, ${params.parentSessionId},
+          ${params.id}, ${params.workspaceId}, ${params.parentStreamId}, ${params.scopeStreamId}, ${params.parentSessionId},
           ${params.triggerMessageId}, ${params.cardEventId}, ${params.threadStreamId}, ${params.personaId},
           ${params.model}, ${params.createdBy}, ${params.title}, ${params.brief}, ${SubagentStatuses.ACTIVE}
         )
@@ -133,7 +143,7 @@ export const SubagentRunRepository = {
       `)
       return mapRow(result.rows[0])
     } catch (error) {
-      if (isUniqueViolation(error)) throw new SubagentAlreadyActiveError(params.parentStreamId)
+      if (isUniqueViolation(error)) throw new SubagentAlreadyActiveError(params.scopeStreamId)
       throw error
     }
   },
@@ -159,20 +169,6 @@ export const SubagentRunRepository = {
     const result = await db.query<SubagentRunRow>(sql`
       SELECT ${sql.raw(COLUMNS)} FROM subagent_runs
       WHERE thread_stream_id = ${threadStreamId}
-        AND workspace_id = ${workspaceId}
-        AND status = ${SubagentStatuses.ACTIVE}
-    `)
-    return result.rows[0] ? mapRow(result.rows[0]) : null
-  },
-
-  async findActiveByParentStreamId(
-    db: Querier,
-    workspaceId: string,
-    parentStreamId: string
-  ): Promise<SubagentRun | null> {
-    const result = await db.query<SubagentRunRow>(sql`
-      SELECT ${sql.raw(COLUMNS)} FROM subagent_runs
-      WHERE parent_stream_id = ${parentStreamId}
         AND workspace_id = ${workspaceId}
         AND status = ${SubagentStatuses.ACTIVE}
     `)
@@ -208,20 +204,6 @@ export const SubagentRunRepository = {
     })
   },
 
-  /** CAS `active → failed`, recording why the runtime died. */
-  async fail(
-    db: Querier,
-    params: { workspaceId: string; id: string; statusNote: string }
-  ): Promise<SubagentRun | null> {
-    return casToTerminal(db, {
-      workspaceId: params.workspaceId,
-      id: params.id,
-      status: SubagentStatuses.FAILED,
-      statusNote: params.statusNote,
-      resultMessageId: null,
-    })
-  },
-
   /**
    * CAS `active → failed` for whichever run owns this thread — the session
    * failure path knows the stream it died in, never the run id. Returns `null`
@@ -229,12 +211,12 @@ export const SubagentRunRepository = {
    */
   async failByThreadStreamId(
     db: Querier,
-    params: { workspaceId: string; threadStreamId: string; statusNote: string }
+    params: { workspaceId: string; threadStreamId: string; reason: SubagentFailureReason }
   ): Promise<SubagentRun | null> {
     const result = await db.query<SubagentRunRow>(sql`
       UPDATE subagent_runs SET
         status = ${SubagentStatuses.FAILED},
-        status_note = ${params.statusNote},
+        status_note = ${params.reason},
         status_changed_at = NOW(),
         updated_at = NOW()
       WHERE thread_stream_id = ${params.threadStreamId}

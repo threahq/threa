@@ -198,6 +198,9 @@ export {
   type SubagentStatus,
   SubagentStatuses,
   SUBAGENT_TERMINAL_STATUSES,
+  SUBAGENT_FAILURE_REASONS,
+  type SubagentFailureReason,
+  SubagentFailureReasons,
   // Bot access-request lifecycle (F3)
   BOT_ACCESS_REQUEST_STATUSES,
   type BotAccessRequestStatus,

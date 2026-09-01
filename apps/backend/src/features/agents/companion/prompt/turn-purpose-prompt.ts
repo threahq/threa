@@ -93,7 +93,7 @@ function buildSubagentKickoffSection(subagent: { title: string; brief: string; p
 
 ## You were delegated this
 
-Another model handed you this question because the user asked for you, or because it judged this to be beyond it. This thread is yours: you are talking to the user here directly, and this brief is all you were given — the thread starts empty.
+Another model handed you this question because the user asked for you, or because it judged this to be beyond it. This thread is yours: you are talking to the user here directly, and this brief is what you were given. The thread may be empty, or may hold an earlier attempt that was restarted — read what is there before you answer.
 
 - Delegated as: "${subagent.title.trim()}"
 - The brief:
