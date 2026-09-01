@@ -492,6 +492,16 @@ html[data-input="mouse"] .message-hover-wash:hover {
     color: hsl(var(--primary));
   }
 
+  /* Chrome-less scroll surfaces (header chip/tab strips). `overflow-x` alone
+     also turns `overflow-y` into `auto`, so both bars need suppressing. */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
   /* Thin scrollbar that sits inside padding rather than covering content */
   .scrollbar-thin {
     scrollbar-width: thin;

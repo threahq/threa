@@ -115,7 +115,7 @@ export function ContextChipRow({
   onSelect: (value: Filter) => void
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b px-3 py-2 [-webkit-mask-image:linear-gradient(to_right,#000_calc(100%_-_20px),transparent)] [mask-image:linear-gradient(to_right,#000_calc(100%_-_20px),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b px-3 py-2 [-webkit-mask-image:linear-gradient(to_right,#000_calc(100%_-_20px),transparent)] [mask-image:linear-gradient(to_right,#000_calc(100%_-_20px),transparent)] scrollbar-none">
       {chips.map((chip) => {
         const isActive = active === chip.value
         return (
