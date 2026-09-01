@@ -185,6 +185,12 @@ test.describe("Aside — mobile surface", () => {
     await expect(sheet(page)).toBeVisible({ timeout: 10000 })
     await expect(sheet(page)).toHaveAttribute("data-detent", "peek")
     await expect(asideEditor).not.toBeFocused()
+
+    // Reopened from the row, with no palette dialog in front of it: the entry
+    // the gesture pops is the sheet's own.
+    await page.goBack()
+    await expect(sheet(page)).toHaveCount(0)
+    expect(page.url()).toContain(streamId)
   })
 
   test("gives an open draft the whole sheet, and comes back to the conversation behind it", async ({ page }) => {

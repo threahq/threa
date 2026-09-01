@@ -3,7 +3,7 @@ import { createBrowserRouter, Navigate, useLocation, useNavigate, useParams } fr
 import { toast } from "sonner"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { FallbackLoader } from "@/components/fallback-loader"
-import { attachOverlayHistoryRouter, OverlayHistoryLayout } from "@/components/ui/history-back-close"
+import { attachOverlayHistoryRouter } from "@/components/ui/history-back-close"
 import { ApiError, delegationsApi } from "@/api"
 import { useSidebar } from "@/contexts"
 import { useLastLocation } from "@/hooks"
@@ -14,9 +14,8 @@ import { getLastWorkspaceId } from "@/lib/last-workspace"
 // with the pages that actually use them instead of bloating the main bundle.
 export const router = createBrowserRouter([
   {
-    // Pathless layout so the overlay-history coordinator's location feed stays
-    // mounted across EVERY navigation (see history-back-close.tsx).
-    element: <OverlayHistoryLayout />,
+    // Pathless layout: renders its children through the default Outlet and
+    // scopes the error boundary over the whole tree.
     errorElement: <ErrorBoundary />,
     children: [
       {
