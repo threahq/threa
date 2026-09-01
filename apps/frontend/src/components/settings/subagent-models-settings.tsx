@@ -29,7 +29,9 @@ function describe(modelId: string): { label: string; price: string | null } {
  * allows, resolution yields nothing and delegation is off for this user — an
  * honest empty picker plus a note, rather than a full set of ticks claiming a
  * permission they do not have. Hidden entirely when the workspace offers fewer
- * than two models; there is nothing to subset.
+ * than two models; there is nothing to subset — unless a stale stored subset
+ * has turned delegation off and a workspace model remains to re-pick, in which
+ * case the picker stays as the only way out of that state.
  */
 export function PersonalSubagentModelsSection({ workspaceId }: { workspaceId: string }) {
   const { preferences, updatePreference, isLoading } = usePreferences()
@@ -48,7 +50,10 @@ export function PersonalSubagentModelsSection({ workspaceId }: { workspaceId: st
   // returns nothing and the user gets no delegation at all until they re-pick.
   const delegationOff = hasSubset && narrowed.length === 0
 
-  if (workspaceModels.length < 2) return null
+  // With an empty workspace set delegation is off workspace-wide and no
+  // preference edit can change that, so hiding stays honest there.
+  const needsRecovery = delegationOff && workspaceModels.length > 0
+  if (workspaceModels.length < 2 && !needsRecovery) return null
 
   const toggle = (modelId: string, next: boolean) => {
     const updated = new Set(selected)

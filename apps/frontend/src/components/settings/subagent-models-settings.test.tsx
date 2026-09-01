@@ -60,6 +60,26 @@ describe("PersonalSubagentModelsSection", () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  it("stays visible for a one-model workspace when a stale subset turned delegation off, and re-picking recovers", async () => {
+    mockPreferences([OPUS])
+    const user = userEvent.setup()
+    renderSection([TERRA])
+
+    expect(screen.getByText(/nothing can be delegated for you/)).toBeInTheDocument()
+
+    await user.click(screen.getByLabelText("GPT-5.6 Terra"))
+
+    // The full workspace set elides the override, so the stale pin is cleared.
+    await waitFor(() => expect(updatePreference).toHaveBeenCalledWith("subagentModels", []))
+  })
+
+  it("renders nothing for an empty workspace set even with a stale subset — delegation is off workspace-wide", () => {
+    mockPreferences([OPUS])
+    const { container } = renderSection([])
+
+    expect(container).toBeEmptyDOMElement()
+  })
+
   it("unticking one stores the rest as the personal subset", async () => {
     mockPreferences([])
     const user = userEvent.setup()
