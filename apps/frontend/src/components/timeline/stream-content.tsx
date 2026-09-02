@@ -931,6 +931,12 @@ export function StreamContent({
 
   // Subscribe to stream room FIRST (subscribe-then-bootstrap pattern)
   useStreamSocket(workspaceId, streamId, { enabled: !isDraft })
+  // The pinned subagent card lives on status patches that land in the PARENT
+  // stream. A viewer here through root access alone (INV-62) has no membership
+  // subscription to that parent, so subscribe it while the card is up (INV-53).
+  useStreamSocket(workspaceId, parentStreamId ?? "", {
+    enabled: !isDraft && !!subagentAnchorPayload && !!parentStreamId,
+  })
 
   const {
     events,

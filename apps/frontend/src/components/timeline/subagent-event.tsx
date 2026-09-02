@@ -194,9 +194,12 @@ export function SubagentEvent({
       metaParts.push(modelLabel, subagentFailureLabel(settled?.statusNote))
       break
     case "cancelled":
+      // The model leads like every other state, so the line is never empty —
+      // an empty line has no line box and the card would lose a row (INV-21).
       // The fallback fetch carries no actor, so the by-line only appears when
       // the patch does — "Cancelled by Unknown" would be worse than "Cancelled".
       metaParts.push(
+        modelLabel,
         statusPatch ? `Cancelled by ${getActorName(statusPatch.actorId ?? null, statusPatch.actorType ?? null)}` : null,
         patchAt ? formatTime(patchAt) : null
       )

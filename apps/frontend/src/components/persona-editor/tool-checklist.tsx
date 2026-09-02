@@ -32,7 +32,11 @@ const TOOL_HELP: Partial<Record<AgentToolName, string>> = {
 const TOOLS_BY_CATEGORY: { category: ToolPrivacyCategory; tools: AgentToolName[] }[] = TOOL_PRIVACY_CATEGORIES.map(
   (category) => ({
     category,
-    tools: AGENT_TOOL_NAMES.filter((tool) => TOOL_CATEGORIES_BY_NAME[tool][0] === category),
+    // `report_back` is bound by the runtime inside a subagent thread, never by
+    // persona choice — a checkbox for it would toggle nothing.
+    tools: AGENT_TOOL_NAMES.filter(
+      (tool) => tool !== AgentToolNames.REPORT_BACK && TOOL_CATEGORIES_BY_NAME[tool][0] === category
+    ),
   })
 ).filter((group) => group.tools.length > 0)
 

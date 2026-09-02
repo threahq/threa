@@ -228,15 +228,41 @@ describe("SubagentEvent states", () => {
   })
 
   it("keeps one geometry across every state", () => {
-    const signatures = [
+    const renders = [
       renderCard({ activity: LIVE_SESSION }),
       renderCard({}),
       renderCard({ patch: statusPatch("active", { lastAgentMessageAt: PATCH_AT }) }),
       renderCard({ patch: statusPatch("completed", { resultMessageId: "msg_result" }) }),
       renderCard({ patch: statusPatch("failed", { statusNote: "turn_failed" }) }),
       renderCard({ patch: statusPatch("cancelled") }),
+      // Cancelled with no patch in reach (the deep-link fallback, and the
+      // optimistic flip before the server patch lands): the one state whose
+      // meta line could go empty and drop a row.
+      renderCard({
+        isThreadParent: true,
+        runFallback: {
+          id: CREATED_PAYLOAD.subagentId,
+          parentStreamId: "stream_1",
+          threadStreamId: THREAD,
+          cardEventId: "event_card",
+          personaId: CREATED_PAYLOAD.personaId,
+          model: CREATED_PAYLOAD.model,
+          title: CREATED_PAYLOAD.title,
+          status: "cancelled",
+          statusNote: null,
+          resultMessageId: null,
+          createdAt: CREATED_AT,
+          statusChangedAt: PATCH_AT,
+        },
+      }),
       renderCard({ patch: statusPatch("expired") }),
-    ].map(({ container }) => geometrySignature(container))
+    ]
+    // jsdom has no layout engine: an empty <p> carries the same classes as a
+    // full one but paints no line box, so the text check is part of the shape.
+    for (const { container } of renders) {
+      for (const line of container.querySelectorAll("p")) expect(line.textContent).not.toBe("")
+    }
+    const signatures = renders.map(({ container }) => geometrySignature(container))
 
     expect(new Set(signatures).size).toBe(1)
     // A signature that collapsed to nothing would make the set trivially equal.
