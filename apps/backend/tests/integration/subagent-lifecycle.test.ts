@@ -543,11 +543,13 @@ describe("failure, expiry and requeue", () => {
     )
     // Idle means silent, not old: an 8-day-old run whose subagent spoke since
     // stays live for the reader it is waiting on.
-    await subagentService.noteAgentSpokeInTransaction(pool, {
-      workspaceId: ctx.workspaceId,
-      threadStreamId: spoke.run.threadStreamId,
-      at: new Date(),
-    })
+    await withTransaction(pool, (client) =>
+      subagentService.noteAgentSpokeInTransaction(client, {
+        workspaceId: ctx.workspaceId,
+        threadStreamId: spoke.run.threadStreamId,
+        at: new Date(),
+      })
+    )
 
     const sweep = createSubagentExpirySweep(subagentService, { intervalMs: 3_600_000 })
     sweep.start()
