@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react"
+import { useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import {
   Ban,
   Bell,
@@ -37,7 +37,7 @@ import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
 import { streamTypeVisual } from "@/lib/stream-visuals"
 import { copyStreamLink } from "@/lib/stream-links"
-import { BADGE_CONFIG, URGENCY_COLORS } from "./config"
+import { BADGE_CONFIG } from "./config"
 import {
   SidebarActionContextMenu,
   SidebarActionDrawer,
@@ -46,7 +46,6 @@ import {
   type SidebarActionPreview,
 } from "./sidebar-actions"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
-import { useUrgencyTracking } from "./use-urgency-tracking"
 import { StreamLabelDots } from "./sidebar-labels"
 import { truncateContent } from "./utils"
 import {
@@ -57,7 +56,7 @@ import {
   type AuthorType,
   type StreamWithPreview,
 } from "@threa/types"
-import type { StreamItemData, UrgencyLevel } from "./types"
+import type { StreamItemData } from "./types"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 import { ScratchpadItem } from "./scratchpad-item"
@@ -123,15 +122,6 @@ export function BoardStatsLine({ stats }: { stats: BoardStreamStats | null }) {
     <div className="truncate text-xs text-muted-foreground">
       {stats.topics} {stats.topics === 1 ? "topic" : "topics"}
     </div>
-  )
-}
-
-export function UrgencyStrip({ urgency }: { urgency: UrgencyLevel }) {
-  return (
-    <div
-      className="w-1 flex-shrink-0 rounded-l-lg transition-colors duration-300"
-      style={{ backgroundColor: URGENCY_COLORS[urgency] }}
-    />
   )
 }
 
@@ -360,13 +350,10 @@ interface StreamItemProps {
   unreadCount: number
   mentionCount: number
   allStreams: StreamItemData[]
-  showUrgencyStrip?: boolean
   /** Show compact view (title only, no preview) */
   compact?: boolean
   /** Show preview on hover when compact (only works with compact=true) */
   showPreviewOnHover?: boolean
-  /** Reference to scroll container for position tracking */
-  scrollContainerRef?: RefObject<HTMLDivElement | null>
   /**
    * A trailing "· home" hint naming where this stream lives (its custom section
    * or pinned label). Set only in the Unread section, where a row is drawn out of
@@ -385,10 +372,8 @@ export function StreamItem({
   unreadCount,
   mentionCount,
   allStreams,
-  showUrgencyStrip = true,
   compact = false,
   showPreviewOnHover = false,
-  scrollContainerRef,
   homeHint,
   boardMode,
 }: StreamItemProps) {
@@ -411,8 +396,6 @@ export function StreamItem({
   // agent dot (roadmap 1.4).
   const callStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
   const callActive = useActiveCallsForStream(workspaceId, callStreamId).length > 0
-
-  useUrgencyTracking(itemRef, stream.id, stream.urgency, scrollContainerRef)
 
   // Per-type glyph + tile tint, shared with the board card (single source of
   // truth so the two surfaces can't drift). A DM overlays the peer avatar below.
@@ -562,8 +545,6 @@ export function StreamItem({
         mentionCount={mentionCount}
         compact={compact}
         showPreviewOnHover={showPreviewOnHover}
-        showUrgencyStrip={showUrgencyStrip}
-        scrollContainerRef={scrollContainerRef}
         homeHint={homeHint}
         boardMode={boardMode}
       />
@@ -636,17 +617,14 @@ export function StreamItem({
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
               // The tinted background means exactly one thing: "you are here" — or,
-              // in board mode, "included in the scope". Unread is signaled by the
-              // bold title + urgency strip — a near-identical primary tint made
-              // unread rows read as active.
+              // in board mode, "included in the scope". Unread keeps its own
+              // title weight; mentions keep their badge.
               isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
               boardDimmed && "opacity-50",
               isTouchInput && canOpenDrawer && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
-            {showUrgencyStrip && <UrgencyStrip urgency={stream.urgency} />}
-
             <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
               <StreamItemAvatar
                 icon={avatar.icon}
@@ -701,14 +679,13 @@ export function StreamItem({
             </div>
           </Link>
 
-          {/* Sibling of the Link (button-in-anchor is invalid); positioned over the
-              tile's bottom-right corner — the tile sits at the strip (4px) + px-2. */}
+          {/* Sibling of the Link because a button inside an anchor is invalid. */}
           {boardScopable && (
             <BoardTileToggle
               state={boardTileState}
               streamName={name}
               onToggle={() => boardMode.applyInclude(boardScopeId)}
-              className={cn("top-[calc(50%+0.25rem)]", showUrgencyStrip ? "left-8" : "left-7")}
+              className="left-7 top-[calc(50%+0.25rem)]"
             />
           )}
 

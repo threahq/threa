@@ -10,7 +10,6 @@ import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
-import * as urgencyTrackingModule from "./use-urgency-tracking"
 import * as itemDrawerModule from "./use-sidebar-item-drawer"
 import * as sidebarActionsModule from "./sidebar-actions"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -83,9 +82,6 @@ describe("ScratchpadItem", () => {
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
       collapseOnMobile,
       setMenuOpen: vi.fn(),
-      setUrgencyBlock: vi.fn(),
-      sidebarHeight: 0,
-      scrollContainerOffset: 0,
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
     vi.spyOn(hooksModule, "isDraftId").mockImplementation((id: string) => id.startsWith("draft_"))
@@ -106,8 +102,6 @@ describe("ScratchpadItem", () => {
     vi.spyOn(streamSettingsModule, "useStreamSettings").mockReturnValue({
       openStreamSettings,
     } as unknown as ReturnType<typeof streamSettingsModule.useStreamSettings>)
-
-    vi.spyOn(urgencyTrackingModule, "useUrgencyTracking").mockImplementation(() => undefined)
 
     vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")
 

@@ -1,5 +1,5 @@
 import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, ListFilter, Plus } from "lucide-react"
-import { Fragment, type ReactNode, type RefObject } from "react"
+import { Fragment, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -286,7 +286,6 @@ interface RenderRowOptions {
   getMentionCount: (streamId: string) => number
   compact: boolean
   showPreviewOnHover: boolean
-  scrollContainerRef?: RefObject<HTMLDivElement | null>
   streamDragEnabled: boolean
   homeHintFor?: (streamId: string) => string | null
   boardMode?: SidebarBoardMode | null
@@ -310,7 +309,6 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
       allStreams={opts.allStreams}
       compact={opts.compact}
       showPreviewOnHover={opts.showPreviewOnHover}
-      scrollContainerRef={opts.scrollContainerRef}
       homeHint={opts.homeHintFor?.(stream.id) ?? undefined}
       boardMode={opts.boardMode}
     />
@@ -380,8 +378,6 @@ interface StreamSectionProps {
   compact?: boolean
   /** Show preview on hover when compact (only works with compact=true) */
   showPreviewOnHover?: boolean
-  /** Reference to scroll container for position tracking */
-  scrollContainerRef?: RefObject<HTMLDivElement | null>
   /** Add button callback - shows plus icon in header */
   onAdd?: () => void
   /** Tooltip for add button */
@@ -422,7 +418,6 @@ export function StreamSection({
   headerAccessory,
   compact = false,
   showPreviewOnHover = false,
-  scrollContainerRef,
   onAdd,
   addTooltip,
   addMenuActions,
@@ -443,7 +438,6 @@ export function StreamSection({
       getMentionCount,
       compact,
       showPreviewOnHover,
-      scrollContainerRef,
       streamDragEnabled,
       homeHintFor,
       boardMode,
@@ -530,7 +524,6 @@ export function TieredStreamSection({
   onToggleMore,
   compact = false,
   showPreviewOnHover = false,
-  scrollContainerRef,
   onAdd,
   addTooltip,
   addMenuActions,
@@ -564,7 +557,6 @@ export function TieredStreamSection({
       getMentionCount,
       compact,
       showPreviewOnHover,
-      scrollContainerRef,
       streamDragEnabled,
       homeHintFor,
       boardMode,

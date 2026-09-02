@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from "react"
+import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import {
   Archive,
   Ban,
@@ -33,7 +33,6 @@ import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
 import { copyStreamLink } from "@/lib/stream-links"
 import { CompanionModes, LabelableResourceTypes } from "@threa/types"
-import { useUrgencyTracking } from "./use-urgency-tracking"
 import {
   SidebarActionContextMenu,
   SidebarActionDrawer,
@@ -42,7 +41,6 @@ import {
   type SidebarActionPreview,
 } from "./sidebar-actions"
 import {
-  UrgencyStrip,
   StreamItemAvatar,
   StreamItemPreview,
   BoardTileToggle,
@@ -64,10 +62,8 @@ interface ScratchpadItemProps {
   isActive: boolean
   unreadCount: number
   mentionCount: number
-  showUrgencyStrip?: boolean
   compact?: boolean
   showPreviewOnHover?: boolean
-  scrollContainerRef?: RefObject<HTMLDivElement | null>
   /** Trailing "· home" hint — set only in the Unread section. See {@link StreamItem}. */
   homeHint?: string
   /** Board-mode descriptor when on `/board` (flag on); `null`/absent in chats mode. */
@@ -80,10 +76,8 @@ export function ScratchpadItem({
   isActive,
   unreadCount,
   mentionCount,
-  showUrgencyStrip = true,
   compact = false,
   showPreviewOnHover = false,
-  scrollContainerRef,
   homeHint,
   boardMode,
 }: ScratchpadItemProps) {
@@ -125,8 +119,6 @@ export function ScratchpadItem({
   let boardTileState: BoardTileState = "neutral"
   if (boardIncluded) boardTileState = "included"
   else if (boardExcluded) boardTileState = "excluded"
-
-  useUrgencyTracking(itemRef, streamWithPreview.id, streamWithPreview.urgency, scrollContainerRef)
 
   const handleArchive = useCallback(async () => {
     if (isDraft) {
@@ -328,16 +320,14 @@ export function ScratchpadItem({
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
               // The tinted background means exactly one thing: "you are here" — or,
-              // in board mode, "included in the scope". See StreamItem; unread is
-              // the bold title + urgency strip.
+              // in board mode, "included in the scope". See StreamItem; unread
+              // keeps its own title weight and mentions keep their badge.
               isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
               boardDimmed && "opacity-50",
               isTouchInput && actions.length > 0 && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
-            {showUrgencyStrip && <UrgencyStrip urgency={streamWithPreview.urgency} />}
-
             <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
               <StreamItemAvatar
                 icon={<FileEdit className="h-3.5 w-3.5" />}
@@ -378,14 +368,13 @@ export function ScratchpadItem({
             </div>
           </Link>
 
-          {/* Sibling of the Link (button-in-anchor is invalid); positioned over the
-              tile's bottom-right corner — see StreamItem. */}
+          {/* Sibling of the Link because a button inside an anchor is invalid. */}
           {boardScopable && (
             <BoardTileToggle
               state={boardTileState}
               streamName={name}
               onToggle={() => boardMode.applyInclude(streamWithPreview.id)}
-              className={cn("top-[calc(50%+0.25rem)]", showUrgencyStrip ? "left-8" : "left-7")}
+              className="left-7 top-[calc(50%+0.25rem)]"
             />
           )}
 
