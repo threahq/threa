@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { output } from "./shell"
+import { readFileSync } from "node:fs"
 import { parseClaudeLaunch, type LocalTmuxPane } from "./discovery"
-import { defaultClaudeRegistryDeps, resolveClaudeNativeSession, type ClaudeRegistryDeps } from "./claude-registry"
+import {
+  defaultClaudeRegistryDeps,
+  procStatStartTime,
+  resolveClaudeNativeSession,
+  type ClaudeRegistryDeps,
+} from "./claude-registry"
 import { reconnectClaude, reconnectRuntime, type ReconnectDeps } from "./reconnect"
 import { deriveClaudeRuntimeIdentity } from "./spawners"
 import type { ManagedAgent } from "./types"
@@ -144,9 +149,29 @@ describe("parseClaudeLaunch", () => {
 })
 
 describe("resolveClaudeNativeSession", () => {
-  test("default process generation uses the registry's UTC ps shape", () => {
-    const expected = output(["env", "TZ=UTC", "ps", "-p", String(process.pid), "-o", "lstart="]).stdout.trim()
+  test("default process generation is the /proc stat start time Claude Code records", () => {
+    const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8")
+    const expected = stat
+      .slice(stat.lastIndexOf(")") + 1)
+      .trim()
+      .split(/\s+/)[19]
+    expect(expected).toMatch(/^\d+$/)
     expect(defaultClaudeRegistryDeps().processStart(process.pid)).toBe(expected)
+    expect(defaultClaudeRegistryDeps().processStart(Number.MAX_SAFE_INTEGER)).toBeUndefined()
+  })
+
+  test("should read the start time after a comm that contains spaces and parentheses", () => {
+    const line =
+      "1234 (bun (x) y) S 1 1234 1234 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 9 0 43661378 2707560 5 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 0 17 3 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+    expect(procStatStartTime(1234, () => line)).toBe("43661378")
+    expect(procStatStartTime(1234, () => "1234 (bun) S 1\n")).toBeUndefined()
+    // No comm delimiter at all: twenty numeric tokens must not pass as a stat line.
+    expect(procStatStartTime(1234, () => Array.from({ length: 24 }, (_, i) => String(i)).join(" "))).toBeUndefined()
+    expect(
+      procStatStartTime(1234, () => {
+        throw new Error("ENOENT")
+      })
+    ).toBeUndefined()
   })
 
   test("validates exact live registry and force policy", () => {

@@ -2,7 +2,6 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "n
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { processAlive } from "./lock"
-import { output } from "./shell"
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -23,15 +22,41 @@ export interface ClaudeRegistryDeps {
   home: string
 }
 
-export function defaultClaudeRegistryDeps(run: typeof output = output): ClaudeRegistryDeps {
+/**
+ * The process generation Claude Code records as `procStart`: the start time in
+ * clock ticks since boot, field 22 of `/proc/<pid>/stat`, compared as the
+ * string it is. Undefined when the process is gone or the record is not a
+ * stat line, so the callers' indeterminate path applies rather than a guess.
+ */
+export function procStatStartTime(
+  pid: number,
+  read: (path: string) => string = (p) => readFileSync(p, "utf8")
+): string | undefined {
+  let stat: string
+  try {
+    stat = read(`/proc/${pid}/stat`)
+  } catch {
+    return undefined
+  }
+  // The comm field is parenthesised and may itself contain spaces or ')', so
+  // the fixed-width fields only start after the LAST ')'.
+  const commEnd = stat.lastIndexOf(")")
+  if (commEnd < 0) return undefined
+  const tail = stat
+    .slice(commEnd + 1)
+    .trim()
+    .split(/\s+/)
+  // tail[0] is field 3 (state), so field 22 sits at index 19.
+  const startTime = tail[19]
+  return startTime && /^\d+$/.test(startTime) ? startTime : undefined
+}
+
+export function defaultClaudeRegistryDeps(): ClaudeRegistryDeps {
   return {
     read: (path) => readFileSync(path, "utf8"),
     exists: existsSync,
     canonical: realpathSync,
-    processStart: (pid) => {
-      const result = run(["env", "TZ=UTC", "ps", "-p", String(pid), "-o", "lstart="], { allowFailure: true })
-      return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined
-    },
+    processStart: (pid) => procStatStartTime(pid),
     home: homedir(),
   }
 }
@@ -51,9 +76,9 @@ export interface ClaudeDiskDeps extends ClaudeRegistryDeps {
   alive(pid: number): boolean
 }
 
-export function defaultClaudeDiskDeps(run: typeof output = output): ClaudeDiskDeps {
+export function defaultClaudeDiskDeps(): ClaudeDiskDeps {
   return {
-    ...defaultClaudeRegistryDeps(run),
+    ...defaultClaudeRegistryDeps(),
     list: (path) => {
       try {
         return readdirSync(path)
