@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import type { VirtualizerHandle } from "virtua"
-import { AlertCircle, ArrowLeft, LayoutGrid, PenLine } from "lucide-react"
+import { AlertCircle, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
@@ -923,13 +923,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     <div className="flex h-full flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
         <SidebarToggle location="page" />
-        <Link
-          to={`/w/${workspaceId}`}
-          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-          aria-label="Back to workspace"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
         <LayoutGrid className="h-5 w-5 shrink-0 text-muted-foreground" />
         <h1 className="truncate font-semibold">Board</h1>
       </header>
