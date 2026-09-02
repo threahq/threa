@@ -179,6 +179,27 @@ describe("useTypeToFocus", () => {
     expect(document.activeElement).toBe(main)
   })
 
+  it("two panel zones (a thread in the aside stage's host pane beside the aside's column): the last-clicked one takes the key", () => {
+    buildDom(
+      '<div data-editor-zone="panel" id="thread"><div contenteditable="true" id="t"></div></div>' +
+        '<div data-editor-zone="panel" id="aside"><div contenteditable="true" id="a"></div></div>'
+    )
+    const thread = document.getElementById("t") as HTMLElement
+    const asideEditor = document.getElementById("a") as HTMLElement
+    setVisible(thread, true)
+    setVisible(asideEditor, true)
+
+    document.getElementById("aside")!.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    press("a")
+    expect(document.activeElement).toBe(asideEditor)
+
+    // The clicked zone goes away (the aside closed); document order rules again.
+    asideEditor.blur()
+    document.getElementById("aside")!.remove()
+    press("a")
+    expect(document.activeElement).toBe(thread)
+  })
+
   it("a rendered panel with no composer (archived: the disabled notice) swallows the key instead of typing into a board card", () => {
     buildDom(
       '<main data-editor-zone="main"><div contenteditable="true" id="m"></div></main>' +

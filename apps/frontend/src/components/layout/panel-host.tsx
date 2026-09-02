@@ -5,6 +5,7 @@ import { ConversationPanel } from "@/components/conversations/conversation-panel
 interface PanelHostProps {
   workspaceId: string
   onClose: () => void
+  className?: string
 }
 
 /**
@@ -14,10 +15,10 @@ interface PanelHostProps {
  * through this, so either surface can open either kind. Keyed on the panel id so
  * switching targets remounts cleanly.
  */
-export function PanelHost({ workspaceId, onClose }: PanelHostProps) {
+export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
   if (panelId && isConversationPanel(panelId)) {
-    return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} />
+    return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
   }
-  return <StreamPanel key={panelId} workspaceId={workspaceId} onClose={onClose} />
+  return <StreamPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
 }

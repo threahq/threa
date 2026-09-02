@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,8 @@ import { useStreamName } from "@/hooks/use-stream-name"
 import { ASIDE_STAGE_MIN_WIDTH, closeAside, setAsideStageWidth, useAsideStageWidth } from "@/stores/aside-store"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { PanelResizeHandle } from "@/components/layout"
+import { PanelHost } from "@/components/layout/panel-host"
+import { usePanel } from "@/contexts"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threa/types"
 import { cn } from "@/lib/utils"
@@ -63,6 +65,22 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   // permanently "active", and `StreamContent` clears a landed one three seconds
   // later, re-claiming the navigation and yanking the reader back every time.
   const [searchParams] = useSearchParams()
+  // A thread opened from the host pane takes the pane. The page's own slot
+  // shows nothing while the stage stands (stream.tsx, board.tsx), so this is
+  // the thread's only mount, and the panel's close hands the pane back. An
+  // aside opened from inside a thread has that thread as its host, and the
+  // host view already shows it — a panel on top would be two chromes for one
+  // stream.
+  const { panelId, closePanel } = usePanel()
+  const threadInPane = panelId !== null && panelId !== hostStreamId
+  // Closing the thread means back to the host, so its composer takes focus on
+  // the hand-back (the page does the same for main when a panel closes);
+  // otherwise the next keystroke routes to the only other panel zone, the
+  // aside column.
+  const [hostTakesFocus, setHostTakesFocus] = useState(false)
+  useEffect(() => {
+    if (threadInPane) setHostTakesFocus(true)
+  }, [threadInPane])
 
   // The stage's own width, so the divider can be capped against what is on
   // screen rather than the viewport.
@@ -107,7 +125,11 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   )
 
   return (
-    <div data-testid="aside-stage" data-aside-id={asideId} className="absolute inset-0 z-30 flex flex-col bg-muted/40">
+    <div
+      data-testid="aside-stage"
+      data-aside-id={asideId}
+      className="absolute inset-0 z-30 flex flex-col bg-background"
+    >
       <TooltipProvider delayDuration={300}>
         <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-background px-4">
           <AsideGlyph className="h-4 w-4 shrink-0 text-primary" aria-hidden />
@@ -137,25 +159,37 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
         </header>
       </TooltipProvider>
 
-      <div ref={stageRef} className="flex min-h-0 flex-1 gap-1 p-3">
+      <div ref={stageRef} className="flex min-h-0 flex-1 gap-1 bg-muted/40 p-3">
         {/* The two panes carry the app's editor zones rather than one of their
             own: type-to-focus and the composer's height observer both route by
             zone, and a zone they do not know is a zone they ignore. */}
-        <div data-editor-zone="main" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
-          <div className={ASIDE_PANE_HEAD}>
-            <span className="min-w-0 truncate font-medium text-foreground">{hostName ?? "Conversation"}</span>
+        {threadInPane ? (
+          <div data-testid="aside-host-pane" data-view="panel" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
+            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
           </div>
-          <div className="relative min-h-0 flex-1">
-            <StreamErrorBoundary streamId={hostStreamId}>
-              <StreamContent
-                workspaceId={workspaceId}
-                streamId={hostStreamId}
-                stream={host}
-                highlightMessageId={searchParams.get("m")}
-              />
-            </StreamErrorBoundary>
+        ) : (
+          <div
+            data-testid="aside-host-pane"
+            data-view="host"
+            data-editor-zone="main"
+            className={cn(ASIDE_PANE, "min-w-0 flex-1")}
+          >
+            <div className={ASIDE_PANE_HEAD}>
+              <span className="min-w-0 truncate font-medium text-foreground">{hostName ?? "Conversation"}</span>
+            </div>
+            <div className="relative min-h-0 flex-1">
+              <StreamErrorBoundary streamId={hostStreamId}>
+                <StreamContent
+                  workspaceId={workspaceId}
+                  streamId={hostStreamId}
+                  stream={host}
+                  highlightMessageId={searchParams.get("m")}
+                  autoFocus={hostTakesFocus}
+                />
+              </StreamErrorBoundary>
+            </div>
           </div>
-        </div>
+        )}
 
         <PanelResizeHandle
           isResizing={isResizing}

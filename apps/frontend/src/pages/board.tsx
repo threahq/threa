@@ -1020,7 +1020,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           displayWidth={displayWidth}
           panelWidth={panelWidth}
           shouldAnimate={shouldAnimate}
-          showContent={showContent}
+          // The stage mounts the panel in its host pane; the slot keeps its
+          // width lifecycle but shows nothing under the overlay.
+          showContent={showContent && !asideStage}
           isResizing={isResizing}
           maxWidth={maxWidth}
           minWidth={minWidth}

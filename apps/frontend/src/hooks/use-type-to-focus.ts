@@ -68,7 +68,14 @@ function isMobileOrCoarse(): boolean {
 
 type PendingOpen = { scope: HTMLElement; chars: string }
 
-function zoneContainer(zone: "main" | "panel"): HTMLElement | null {
+/**
+ * The zone's container: the one last clicked while it is still mounted, else
+ * the first in the document. The aside stage holds two "panel" zones at once
+ * (a thread in its host pane, the aside's own column), so document order alone
+ * would hand every keystroke to the thread.
+ */
+function zoneContainer(zone: "main" | "panel", clicked: HTMLElement | null): HTMLElement | null {
+  if (clicked?.isConnected && clicked.dataset.editorZone === zone) return clicked
   return document.querySelector<HTMLElement>(`[data-editor-zone="${zone}"]`)
 }
 
@@ -88,6 +95,7 @@ function zoneContainer(zone: "main" | "panel"): HTMLElement | null {
  */
 export function useTypeToFocus() {
   const lastZoneRef = useRef<"main" | "panel">("main")
+  const lastZoneElRef = useRef<HTMLElement | null>(null)
   const lastScopeRef = useRef<HTMLElement | null>(null)
   const pendingOpenRef = useRef<PendingOpen | null>(null)
 
@@ -132,6 +140,7 @@ export function useTypeToFocus() {
         const value = zone.dataset.editorZone as "main" | "panel"
         if (value === "main" || value === "panel") {
           lastZoneRef.current = value
+          lastZoneElRef.current = zone
         }
       }
     }
@@ -191,7 +200,7 @@ export function useTypeToFocus() {
         // Opening a conversation from inside a card records the scope, but the
         // panel that just opened is where the typing belongs — with no visible
         // editor in the card, an open panel's live editor outranks the opener.
-        const panelEditor = findVisibleZoneEditor(zoneContainer("panel"))
+        const panelEditor = findVisibleZoneEditor(zoneContainer("panel", lastZoneElRef.current))
         if (panelEditor) {
           focusAtEnd(panelEditor)
           return
@@ -223,15 +232,16 @@ export function useTypeToFocus() {
       // through then appends the keystroke to some board card's open draft and
       // scrolls the feed to it. Main is a feed of zero-or-many card composers,
       // so its emptiness carries no such meaning and still falls through.
-      const panelPresent = zoneContainer("panel") !== null
+      const panelPresent = zoneContainer("panel", lastZoneElRef.current) !== null
       if (lastZoneRef.current === "panel" && panelPresent) {
-        const editor = findVisibleZoneEditor(zoneContainer("panel"))
+        const editor = findVisibleZoneEditor(zoneContainer("panel", lastZoneElRef.current))
         if (editor) focusAtEnd(editor)
         return
       }
       const other = lastZoneRef.current === "main" ? "panel" : "main"
       const editor =
-        findVisibleZoneEditor(zoneContainer(lastZoneRef.current)) ?? findVisibleZoneEditor(zoneContainer(other))
+        findVisibleZoneEditor(zoneContainer(lastZoneRef.current, lastZoneElRef.current)) ??
+        findVisibleZoneEditor(zoneContainer(other, lastZoneElRef.current))
       if (editor) focusAtEnd(editor)
     }
 

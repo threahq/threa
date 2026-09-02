@@ -95,6 +95,7 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
 interface ConversationPanelProps {
   workspaceId: string
   onClose: () => void
+  className?: string
 }
 
 /** How long the reveal waits on an unsettled input before painting rows without
@@ -269,7 +270,7 @@ function ConversationPanelHeader({
  * mutated and access is the conversation's single root check (enforced when the
  * by-id post is fetched, INV-62) — the panel adds no per-message gating.
  */
-export function ConversationPanel({ workspaceId, onClose }: ConversationPanelProps) {
+export function ConversationPanel({ workspaceId, onClose, className }: ConversationPanelProps) {
   const { isMobile } = useSidebar()
   // The composer anchor lives here, above the body, because the body itself
   // reads the anchor context (`useFloatingComposerAnchor`) — it can host the
@@ -428,7 +429,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
 
   if (post) {
     return (
-      <SidePanel data-editor-zone="panel">
+      <SidePanel className={className} data-editor-zone="panel">
         <FloatingComposerAnchorProvider el={floatingAnchorEl}>
           <ConversationPanelBody
             workspaceId={workspaceId}
@@ -469,7 +470,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   }
 
   return (
-    <SidePanel data-editor-zone="panel">
+    <SidePanel className={className} data-editor-zone="panel">
       <ConversationPanelHeader {...headerProps} post={null} isHidden={false} phase={shellPhase} />
       <SidePanelContent className="relative flex flex-col">
         {/* The column's padding, so the placeholder rows sit exactly where the

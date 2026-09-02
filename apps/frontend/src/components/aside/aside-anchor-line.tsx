@@ -39,14 +39,18 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
   )
 
   const onHostPage = pathname.endsWith(`/s/${hostStreamId}`)
+  const chip = variant === "chip"
   // `?m=` is how the app scrolls a timeline to a message, and the aside's own
   // state is keyed by pathname, so the jump never disturbs it (INV-40). Built
-  // on top of the page's other params — a thread panel, a conversation
-  // overlay, a board's filters — rather than replacing them; a board host has
-  // no timeline to scroll, so the jump goes to the host stream's own page.
+  // on top of the page's other params — a conversation overlay, a board's
+  // filters — rather than replacing them; a board host has no timeline to
+  // scroll, so the jump goes to the host stream's own page. The chip is the
+  // stage's, where a thread takes the host pane: the jump drops `?panel=` so
+  // the pane is handed back, or it would scroll a timeline nobody sees.
   const hostPageSearch = () => {
     const next = new URLSearchParams(searchParams)
     next.set("m", anchorId ?? "")
+    if (chip) next.delete("panel")
     return `?${next.toString()}`
   }
   const to =
@@ -54,7 +58,6 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
       ? { pathname, search: hostPageSearch() }
       : `/w/${workspaceId}/s/${hostStreamId}${anchorId ? `?m=${anchorId}` : ""}`
 
-  const chip = variant === "chip"
   // Already looking at the anchor's own stream with nothing to scroll to: the
   // line still says where you are, it just isn't pretending to go anywhere.
   if (onHostPage && !anchorId) {
