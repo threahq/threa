@@ -94,3 +94,17 @@ export function capturePane(target: string, lines = 30): string {
 export function sendKeys(target: string, keys: string[]): void {
   run(["tmux", "send-keys", "-t", target, ...keys])
 }
+
+/**
+ * Submit one line of text to the runtime in a pane. Ctrl-U first: an
+ * interrupted turn leaves its prompt in the composer, and the line would
+ * otherwise concatenate onto it. `-l` keeps punctuation out of tmux's key
+ * parser. False when the pane refused the keys (gone between the lookup and
+ * the send) — never a throw, so a lost pane cannot abort the caller's pass.
+ */
+export function typeLine(target: string, text: string): boolean {
+  for (const keys of [["C-u"], ["-l", text], ["Enter"]]) {
+    if (output(["tmux", "send-keys", "-t", target, ...keys], { allowFailure: true }).exitCode !== 0) return false
+  }
+  return true
+}

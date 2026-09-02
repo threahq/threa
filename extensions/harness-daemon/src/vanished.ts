@@ -1,6 +1,6 @@
 import { readHarnessLinks } from "@threa/harness-client"
 import { hostname } from "node:os"
-import { listLocalTmuxPanes, resolveManagedAgentPane, type ManagedAgentPane } from "./discovery"
+import { listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane, type ManagedAgentPane } from "./discovery"
 import { readMintedIdentities } from "./identity-store"
 import { readInventoryReadonly } from "./inventory"
 import { latestAgentsByIdentity } from "./resume"
@@ -9,19 +9,25 @@ import type { ManagedAgent } from "./types"
 
 export interface VanishedPaneSweepDeps {
   inventory: () => ManagedAgent[]
-  /** Pane status per agent id, resolved in one pass so tmux and the link ledger are read once. */
-  paneStatuses: (agents: ManagedAgent[]) => Map<string, ManagedAgentPane["status"]>
+  /** Pane per agent id, resolved in one pass so tmux and the link ledger are read once. */
+  panes: (agents: ManagedAgent[]) => Map<string, ManagedAgentPane>
+}
+
+export interface VanishedPaneSweepPass {
+  /** Rows whose pane was present at the previous call and is missing now, with the pane last verified as theirs. */
+  vanished: Array<{ agent: ManagedAgent; lastPane?: LocalTmuxPane }>
+  /** Rows whose pane is present and verified as theirs. */
+  live: Array<{ agent: ManagedAgent; pane: LocalTmuxPane }>
 }
 
 export interface VanishedPaneSweep {
-  /** The rows whose pane was present at the previous call and is missing now. */
-  next(): ManagedAgent[]
+  next(): VanishedPaneSweepPass
 }
 
 export function defaultVanishedPaneSweepDeps(): VanishedPaneSweepDeps {
   return {
     inventory: readInventoryReadonly,
-    paneStatuses: (agents) => {
+    panes: (agents) => {
       const panes = listLocalTmuxPanes()
       const config = readThreaChannelConfig()
       const host = hostname()
@@ -37,7 +43,7 @@ export function defaultVanishedPaneSweepDeps(): VanishedPaneSweepDeps {
             host,
             () => links,
             () => identities
-          ).status,
+          ),
         ])
       )
     },
@@ -59,22 +65,29 @@ export function createVanishedPaneSweep(
   deps: VanishedPaneSweepDeps = defaultVanishedPaneSweepDeps()
 ): VanishedPaneSweep {
   const present = new Map<string, boolean>()
+  const lastPane = new Map<string, LocalTmuxPane>()
   return {
     next() {
       const candidates = latestAgentsByIdentity(deps.inventory()).filter(
         (agent) => agent.status === "online" && Boolean(agent.scratchpadUrl)
       )
-      const statuses = deps.paneStatuses(candidates)
-      const vanished: ManagedAgent[] = []
+      const panes = deps.panes(candidates)
+      const pass: VanishedPaneSweepPass = { vanished: [], live: [] }
       const seen = new Set<string>()
       for (const agent of candidates) {
         seen.add(agent.id)
-        const alive = statuses.get(agent.id) !== "missing"
-        if (present.get(agent.id) === true && !alive) vanished.push(agent)
+        const resolved = panes.get(agent.id)
+        const alive = resolved?.status !== "missing"
+        if (present.get(agent.id) === true && !alive) pass.vanished.push({ agent, lastPane: lastPane.get(agent.id) })
         present.set(agent.id, alive)
+        if (resolved?.status === "found") {
+          lastPane.set(agent.id, resolved.pane)
+          pass.live.push({ agent, pane: resolved.pane })
+        }
       }
       for (const id of present.keys()) if (!seen.has(id)) present.delete(id)
-      return vanished
+      for (const id of lastPane.keys()) if (!seen.has(id)) lastPane.delete(id)
+      return pass
     },
   }
 }
