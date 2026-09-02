@@ -33,7 +33,7 @@ function pickerRows(selected: string[]): Array<{ id: string; label: string; entr
 
 /**
  * Which models a persona may hand a subagent to (INV-33 — the same list the
- * `delegate_to_model` tool re-resolves against at execution, and the list a
+ * `start_subagent` tool re-resolves against at execution, and the list a
  * built-in persona's escalation model must come from). Admin-editable; other
  * members see the set read-only, because it explains why a delegation they
  * asked for was refused.
@@ -64,7 +64,7 @@ export function SubagentModelsSection({ workspaceId }: { workspaceId: string }) 
 
   return (
     <div>
-      <h3 className="text-sm font-medium">Delegation models</h3>
+      <h3 className="text-sm font-medium">Subagent models</h3>
       <p className="text-xs text-muted-foreground mt-0.5">
         The models an assistant may hand a task to as a subagent, and the models a built-in persona may escalate to.
         Delegating spends the workspace&apos;s AI budget at the rates below.

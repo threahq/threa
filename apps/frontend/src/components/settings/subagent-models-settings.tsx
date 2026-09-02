@@ -74,7 +74,7 @@ export function PersonalSubagentModelsSection({ workspaceId }: { workspaceId: st
       <Separator />
       <section className="space-y-3">
         <div>
-          <h3 className="text-sm font-medium">Delegation models</h3>
+          <h3 className="text-sm font-medium">Subagent models</h3>
           <p className="text-sm text-muted-foreground">
             Which of your workspace&apos;s models an assistant may hand your work to as a subagent. Untick one to keep
             it out of your conversations; your workspace admin decides the list itself.
@@ -103,7 +103,7 @@ export function PersonalSubagentModelsSection({ workspaceId }: { workspaceId: st
             )
           })}
         </ul>
-        {delegationOff && (
+        {workspaceSettings != null && delegationOff && (
           <p className="text-xs text-amber-700 dark:text-amber-500">
             None of the models you picked are in your workspace&apos;s set any more, so nothing can be delegated for you
             until you choose one above.

@@ -159,4 +159,18 @@ describe("PersonalSubagentModelsSection", () => {
       expect(box).toBeDisabled()
     }
   })
+
+  it("makes no claim about the user's subset while the bootstrap is unresolved", () => {
+    // Opus is opt-in, so it is outside the shipped default the mid-load render
+    // stands in with; the amber "nothing can be delegated" line must wait for
+    // the workspace's real set rather than flash against the placeholder.
+    mockPreferences([OPUS])
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    }
+    render(<PersonalSubagentModelsSection workspaceId="ws_1" />, { wrapper: Wrapper })
+
+    expect(screen.queryByText(/nothing can be delegated for you/)).not.toBeInTheDocument()
+  })
 })
