@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { StreamTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
@@ -8,6 +8,8 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as pointerModule from "@/hooks/use-pointer"
 import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
+import * as panelHostModule from "@/components/layout/panel-host"
+import { PanelProvider } from "@/contexts"
 import { useAgentBlock } from "@/components/timeline/agent-block-context"
 import * as draftEditorModule from "./aside-draft-editor"
 import { clearCallState } from "@/stores/call-store"
@@ -40,10 +42,12 @@ const aside = createMockStream({
 function Page({ takeover = false }: { takeover?: boolean }) {
   const hostKey = useAsideHost()
   return (
-    <div className="flex">
-      <main className="relative" inert={takeover || undefined} hidden={takeover}></main>
-      <AsideSlot workspaceId="ws_1" hostKey={hostKey} />
-    </div>
+    <PanelProvider>
+      <div className="flex">
+        <main className="relative" inert={takeover || undefined} hidden={takeover}></main>
+        <AsideSlot workspaceId="ws_1" hostKey={hostKey} />
+      </div>
+    </PanelProvider>
   )
 }
 
@@ -89,6 +93,13 @@ beforeEach(() => {
   )) as never)
   spyOnExport(boundaryModule, "StreamErrorBoundary").mockReturnValue(((props: { children: React.ReactNode }) => (
     <>{props.children}</>
+  )) as never)
+  // The thread panel is the page's own, mounted wholesale; here it is a marker
+  // that can be closed.
+  spyOnExport(panelHostModule, "PanelHost").mockReturnValue(((props: { onClose: () => void }) => (
+    <button data-testid="panel-host" onClick={props.onClose}>
+      Close thread
+    </button>
   )) as never)
 })
 
@@ -241,6 +252,25 @@ describe("aside surfaces", () => {
     await waitFor(() => expect(column()).toHaveStyle({ width: "770px" }))
     fireEvent.keyDown(handle, { key: "ArrowRight" })
     await waitFor(() => expect(column()).toHaveStyle({ width: "760px" }))
+  })
+
+  it("gives a thread opened from the host pane the pane itself, and hands it back on close", async () => {
+    renderPage(`${HOST_PATH}?panel=stream_thread_1`)
+    openOnHost()
+
+    const pane = await screen.findByTestId("aside-host-pane")
+    expect(pane).toHaveAttribute("data-view", "panel")
+    expect(within(pane).getByTestId("panel-host")).toBeInTheDocument()
+    // The thread is the pane's only content — the host timeline is not mounted
+    // behind it — and the aside's chat stays live beside it.
+    expect(screen.getAllByTestId("stream-content").map((node) => node.getAttribute("data-stream-id"))).toEqual([ASIDE])
+
+    fireEvent.click(within(pane).getByTestId("panel-host"))
+    await waitFor(() => expect(screen.getByTestId("aside-host-pane")).toHaveAttribute("data-view", "host"))
+    expect(screen.getAllByTestId("stream-content").map((node) => node.getAttribute("data-stream-id"))).toEqual([
+      "stream_host",
+      ASIDE,
+    ])
   })
 
   it("should leave nothing behind on close", async () => {

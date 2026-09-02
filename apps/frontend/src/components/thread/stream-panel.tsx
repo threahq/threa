@@ -76,9 +76,10 @@ import { LabelStack } from "@/components/labels/label-stack"
 interface StreamPanelProps {
   workspaceId: string
   onClose: () => void
+  className?: string
 }
 
-export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
+export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProps) {
   const { isMobile } = useSidebar()
   const { getStreamState } = useCoordinatedLoading()
   const [searchParams] = useSearchParams()
@@ -511,6 +512,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
 
   return (
     <SidePanel
+      className={className}
       data-editor-zone="panel"
       onPointerDownCapture={() => setFocusedPane("panel")}
       onFocusCapture={() => setFocusedPane("panel")}

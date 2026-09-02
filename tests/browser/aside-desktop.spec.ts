@@ -219,6 +219,52 @@ test.describe("Aside — desktop surface", () => {
     await expectSilent(page, asideId!)
   })
 
+  test("a thread opened from the host pane takes the pane, and nothing shows through the stage", async ({ page }) => {
+    await createChannel(page, `aside-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    const prefix = `[${testId}]`
+    await seedMessages(page, workspaceId, streamId, prefix)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+
+    await openMessageActions(page, streamId, prefix, MESSAGE_COUNT)
+    await page.getByRole("menuitem", { name: "Open an aside here" }).click()
+    await expect(stage(page)).toBeVisible({ timeout: 15000 })
+
+    // The stage is opaque: the page keeps its own row mounted underneath, and a
+    // translucent ground let the thread panel's chrome bleed through it.
+    const alpha = await stage(page).evaluate((element) => {
+      const parts = getComputedStyle(element).backgroundColor.match(/[\d.]+/g) ?? []
+      return parts.length === 4 ? Number(parts[3]) : 1
+    })
+    expect(alpha).toBe(1)
+
+    // A thread from the host pane takes the pane rather than opening behind
+    // the stage; the page's own slot shows nothing.
+    const hostPane = stage(page).getByTestId("aside-host-pane")
+    const row = hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
+    await row.hover()
+    await row.getByRole("link", { name: "Reply in thread" }).click()
+    await expect(hostPane).toHaveAttribute("data-view", "panel", { timeout: 10000 })
+    await expect(hostPane.getByText(/Start a new thread/)).toBeVisible()
+    await expect(page.getByTestId("panel").locator("[data-editor-zone]")).toHaveCount(0)
+    await expect(hostScroller(page, streamId)).toHaveCount(0)
+
+    const threadEditor = hostPane.locator("[contenteditable='true']").first()
+    await threadEditor.click()
+    await page.keyboard.type("in the thread")
+    await page.keyboard.press("Meta+Enter")
+    await expect(hostPane.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({ timeout: 10000 })
+    await expect(asideChat(page)).toBeVisible()
+
+    // Closing the thread hands the pane back to the host, on the same stage.
+    await hostPane.getByRole("button", { name: "Close", exact: true }).click()
+    await expect(hostPane).toHaveAttribute("data-view", "host", { timeout: 10000 })
+    await expect(hostScroller(page, streamId)).toHaveCount(1)
+    await expect(stage(page)).toBeVisible()
+    await expect(page.getByTestId("panel").locator("[data-editor-zone]")).toHaveCount(0)
+  })
+
   test("folds away on navigation, leaves the next stream clean, and resumes silently from the anchor row", async ({
     page,
   }) => {
