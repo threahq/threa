@@ -62,6 +62,17 @@ import {
 import { attachedTmuxSession, capturePane, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { createVanishedPaneSweep } from "./vanished"
+import {
+  createBriefQueue,
+  createOomKillWatch,
+  matchOomKills,
+  panePidOfScope,
+  postScratchpadNotice,
+  readRecentOomKills,
+  scopeOfPid,
+  typeBrief,
+  type OomKill,
+} from "./oom"
 import { defaultReapDeps, reapArchivedWorktrees } from "./reap"
 import { defaultTombstoneDeps, summarizeTombstones, tombstoneAbandonedRows, type TombstoneOutcome } from "./tombstone"
 import { restorableWorktreeSource, restoreManagedWorktree } from "./worktree"
@@ -298,6 +309,46 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   let reconcileChain = Promise.resolve()
   let unavailablePasses = 0
   let retryTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleUnavailableRetry = (): void => {
+    unavailablePasses += 1
+    const delayMs = unavailableBackoffMs(reconnectIntervalMs, unavailablePasses)
+    if (retryTimer) clearTimeout(retryTimer)
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined
+      reconcile()
+    }, delayMs)
+    console.warn(`harnessd: reconciliation unavailable; retrying in ${delayMs}ms`)
+  }
+
+  // A kill the kernel logged in a managed pane is told to the runtime as one
+  // typed line, and to the scratchpad as a notice; `createBriefQueue` holds
+  // the brief until a verified live pane takes it.
+  const oomWindowMs = reconnectIntervalMs * 3
+  const oomKills = createOomKillWatch({
+    read: () => readRecentOomKills(Math.ceil(oomWindowMs / 1000)),
+    windowMs: oomWindowMs,
+  })
+  const briefs = createBriefQueue({
+    type: typeBrief,
+    dryRun: Boolean(options.dryRun),
+    log: console.log,
+    notify: async (agent, content) => {
+      const scratchpad = agent.scratchpadUrl ? parseScratchpadUrl(agent.scratchpadUrl) : undefined
+      const credentials = targetFor(agent.runtime === "pi" ? piConfig : claudeConfig)
+      if (!scratchpad || !credentials) return
+      await postScratchpadNotice({
+        ...credentials,
+        workspaceId: scratchpad.workspaceId || credentials.workspaceId,
+        streamId: scratchpad.streamId,
+        content,
+      }).catch((error) => {
+        console.warn(
+          `harnessd: OOM notice for ${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      })
+    },
+  })
+
   // Returns the chain, not void: `startupReconciliation` runs the tombstone pass
   // after the sweep specifically so it does not hold the lock while boot revival
   // waits, and a fire-and-forget sweep would put them back in a race for it.
@@ -328,14 +379,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
           }
           return
         }
-        unavailablePasses += 1
-        const delayMs = unavailableBackoffMs(reconnectIntervalMs, unavailablePasses)
-        if (retryTimer) clearTimeout(retryTimer)
-        retryTimer = setTimeout(() => {
-          retryTimer = undefined
-          reconcile()
-        }, delayMs)
-        console.warn(`harnessd: reconciliation unavailable; retrying in ${delayMs}ms`)
+        scheduleUnavailableRetry()
       })
       .catch((error) => {
         console.error(`harnessd: reconciliation failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -345,7 +389,9 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
 
   // A runtime that dies between passes has no event of its own: the sweep
   // notices the pane going missing and revives that row alone. Chained behind
-  // any reconcile in flight so two passes never race for the same window.
+  // any reconcile in flight so two passes never race for the same window. The
+  // sweep reports a disappearance once, so an unreachable Threa hands the row
+  // to the same backoff retry the full pass uses instead of dropping it.
   const reviveVanished = (agents: ManagedAgent[]): Promise<void> => {
     reconcileChain = reconcileChain
       .then(async () => {
@@ -353,7 +399,12 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
           console.log(`harnessd: pane vanished for ${agent.name} (${agent.tmuxPaneId ?? "no pane recorded"}); reviving`)
         }
         if (!options.dryRun) ensureTmuxSession(session, true)
-        await resumeActive({ ...options, tmux: session, agentIds: new Set(agents.map((agent) => agent.id)) })
+        const unavailable = await resumeActive({
+          ...options,
+          tmux: session,
+          agentIds: new Set(agents.map((agent) => agent.id)),
+        })
+        if (unavailable) scheduleUnavailableRetry()
       })
       .catch((error) => {
         console.error(
@@ -379,8 +430,20 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   await runWatchLoop({
     runPass: async () => {
       await Promise.all(transports.map((transport) => transport.connect()))
-      const vanished = vanishedPanes.next()
-      if (vanished.length > 0) void reviveVanished(vanished)
+      const pass = vanishedPanes.next()
+      let kills: OomKill[] = []
+      try {
+        kills = oomKills.next()
+      } catch (error) {
+        // The journal is the brief's source, never the revival's: a failed read
+        // costs the nudge, not the session.
+        console.warn(`harnessd: OOM journal read failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      // Revival first: it is the pass's one irreversible outcome, and nothing
+      // below may stand between the sweep's report and it.
+      if (pass.vanished.length > 0) void reviveVanished(pass.vanished.map((entry) => entry.agent))
+      await briefs.record(matchOomKills(kills, { ...pass, scopeOfPid, panePidOfScope }))
+      await briefs.deliver(pass.live)
     },
     sleep: Bun.sleep,
     intervalMs: reconnectIntervalMs,

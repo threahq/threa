@@ -1,6 +1,6 @@
 # harness-daemon
 
-Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely; `adopt` brings a hand-started Claude session into inventory, live or cold. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). If a Claude channel session was launched by the standalone worktree helper and has no inventory row, `kick` can still resolve its exact runtime session ID from a live `server:threa-channel` tmux pane and nudge it without adopting or reviving it. Run `threa-harnessd help` for the full command list.
+Local supervisor for Threa-linked agent sessions (Claude Code channel + Pi remote). `spawn` creates worktree + tmux window + harness and records the launch in `~/.threa/harnessd/inventory.sqlite`; `up` and the `watch-unarchived` LaunchAgent revive recorded sessions safely (the watcher also notices a pane that vanished between passes and revives that row alone); `adopt` brings a hand-started Claude session into inventory, live or cold. `kick <ref>` sends Enter to a managed session (the same nudge exposed as `/kick` in its linked scratchpad). If a Claude channel session was launched by the standalone worktree helper and has no inventory row, `kick` can still resolve its exact runtime session ID from a live `server:threa-channel` tmux pane and nudge it without adopting or reviving it. Run `threa-harnessd help` for the full command list.
 
 ## Runtime identity
 
@@ -48,6 +48,22 @@ Idempotent: a second run against the same live pane reuses the row (`already man
 | `failed`                                                            | the launch or the post-launch inventory write errored; the window is killed rather than left untracked                            |
 
 An adopted session is an ordinary inventory row afterwards, so `up`, `kick`, `stop` and the watcher all apply — and since `up` now resumes the worktree's conversation too, the history survives an automatic revival as well.
+
+## Memory: a pane's kill stays in its pane
+
+Every pane tmux opens is its own transient scope (`tmux-spawn-<uuid>.scope`), and systemd's default `OOMPolicy=stop` stops the whole scope when the kernel kills one process in it — on 2026-09-02 that turned a 10.8G `bun test` into a dead Claude session. The watcher expects this drop-in, which keeps the runtime alive and caps each pane so a runaway dies under its own limit instead of the global OOM killer picking a session elsewhere (harnessd's `OOMScoreAdjust=200` makes tmux children its first choice):
+
+```ini
+# ~/.config/systemd/user/tmux-spawn-.scope.d/oom.conf
+[Scope]
+OOMPolicy=continue
+MemoryHigh=5G
+MemoryMax=6G
+```
+
+`systemctl --user daemon-reload` applies it to panes opened from then on (`systemctl --user show <scope> -p OOMPolicy -p MemoryMax` confirms). `OOMPolicy=` on a scope needs systemd 253 or newer; on an older systemd the caps still apply but a kill inside a pane still stops the whole pane, so the "survived" brief never fires there and every kill becomes a revival.
+
+The watcher polls the kernel journal each pass for `oom-kill` lines and maps the victim's cgroup to a managed pane. A runtime that survived the kill of a child gets the fact typed into its running turn (`[OOM] At 04:10:18 the kernel killed pid 834669 (bun, 10.7 GB resident) …`); one that died with it is revived by the vanished-pane sweep and briefed the same way once its composer is idle. Either way the scratchpad gets a one-line notice, so the person reading it learns the why without a terminal. Kills outside managed panes are only logged.
 
 ## `up` (alias `resume-active`)
 
