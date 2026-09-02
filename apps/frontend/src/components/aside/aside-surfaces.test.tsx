@@ -267,6 +267,28 @@ describe("aside surfaces", () => {
 
     fireEvent.click(within(pane).getByTestId("panel-host"))
     await waitFor(() => expect(screen.getByTestId("aside-host-pane")).toHaveAttribute("data-view", "host"))
+    const mounted = screen.getAllByTestId("stream-content")
+    expect(mounted.map((node) => node.getAttribute("data-stream-id"))).toEqual(["stream_host", ASIDE])
+    // Back to the host means typing goes to the host: its composer takes the
+    // focus the thread just gave up, not the aside column's.
+    expect(mounted[0]).toHaveAttribute("data-auto-focus", "true")
+  })
+
+  it("keeps the anchor chip's jump on the host: it drops the thread from the URL", async () => {
+    renderPage(`${HOST_PATH}?panel=stream_thread_1`)
+    openOnHost()
+
+    await screen.findByTestId("aside-host-pane")
+    expect(screen.getByTestId("aside-anchor-line")).toHaveAttribute("href", `${HOST_PATH}?m=msg_anchor_1`)
+  })
+
+  it("shows the thread an aside was opened from as the host, not as a panel over itself", async () => {
+    renderPage(`${HOST_PATH}?panel=stream_host`)
+    openOnHost()
+
+    const pane = await screen.findByTestId("aside-host-pane")
+    expect(pane).toHaveAttribute("data-view", "host")
+    expect(screen.queryByTestId("panel-host")).toBeNull()
     expect(screen.getAllByTestId("stream-content").map((node) => node.getAttribute("data-stream-id"))).toEqual([
       "stream_host",
       ASIDE,

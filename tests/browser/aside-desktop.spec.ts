@@ -263,6 +263,27 @@ test.describe("Aside — desktop surface", () => {
     await expect(hostScroller(page, streamId)).toHaveCount(1)
     await expect(stage(page)).toBeVisible()
     await expect(page.getByTestId("panel").locator("[data-editor-zone]")).toHaveCount(0)
+
+    // The anchor chip is the way back to the host row, so from the thread it
+    // hands the pane back too — a jump on an unmounted timeline would be a
+    // dead click.
+    const reopen = hostRow(page, streamId, prefix, MESSAGE_COUNT - 2).getByRole("link", { name: /1 reply/ })
+    await reopen.click()
+    await expect(hostPane).toHaveAttribute("data-view", "panel", { timeout: 10000 })
+    await stage(page).getByTestId("aside-anchor-line").click()
+    await expect(hostPane).toHaveAttribute("data-view", "host", { timeout: 10000 })
+    expect(new URL(page.url()).searchParams.get("panel")).toBeNull()
+
+    // Closing the stage with the thread in its pane returns the thread to the
+    // page's own slot, beside the host timeline.
+    await reopen.click()
+    await expect(hostPane).toHaveAttribute("data-view", "panel", { timeout: 10000 })
+    await page.getByRole("button", { name: "Close aside" }).click()
+    await expectNoAsideChrome(page)
+    await expect(page.getByTestId("panel").locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({
+      timeout: 10000,
+    })
+    await expect(hostScroller(page, streamId)).toHaveCount(1)
   })
 
   test("folds away on navigation, leaves the next stream clean, and resumes silently from the anchor row", async ({

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -67,8 +67,20 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   const [searchParams] = useSearchParams()
   // A thread opened from the host pane takes the pane. The page's own slot
   // shows nothing while the stage stands (stream.tsx, board.tsx), so this is
-  // the thread's only mount, and the panel's close hands the pane back.
+  // the thread's only mount, and the panel's close hands the pane back. An
+  // aside opened from inside a thread has that thread as its host, and the
+  // host view already shows it — a panel on top would be two chromes for one
+  // stream.
   const { panelId, closePanel } = usePanel()
+  const threadInPane = panelId !== null && panelId !== hostStreamId
+  // Closing the thread means back to the host, so its composer takes focus on
+  // the hand-back (the page does the same for main when a panel closes);
+  // otherwise the next keystroke routes to the only other panel zone, the
+  // aside column.
+  const [hostTakesFocus, setHostTakesFocus] = useState(false)
+  useEffect(() => {
+    if (threadInPane) setHostTakesFocus(true)
+  }, [threadInPane])
 
   // The stage's own width, so the divider can be capped against what is on
   // screen rather than the viewport.
@@ -151,7 +163,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
         {/* The two panes carry the app's editor zones rather than one of their
             own: type-to-focus and the composer's height observer both route by
             zone, and a zone they do not know is a zone they ignore. */}
-        {panelId ? (
+        {threadInPane ? (
           <div data-testid="aside-host-pane" data-view="panel" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
             <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
           </div>
@@ -172,6 +184,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
                   streamId={hostStreamId}
                   stream={host}
                   highlightMessageId={searchParams.get("m")}
+                  autoFocus={hostTakesFocus}
                 />
               </StreamErrorBoundary>
             </div>
