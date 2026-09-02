@@ -4,7 +4,7 @@
  * overrides for testing or per-environment configuration.
  */
 
-import type { ConfigResolver, ComponentConfig } from "./config-resolver"
+import type { ConfigResolver, ComponentConfig, AnyComponentConfig } from "./config-resolver"
 import { COMPONENT_PATHS } from "./config-resolver"
 
 import {
@@ -23,7 +23,6 @@ import {
   WORKSPACE_AGENT_TEMPERATURE,
   WORKSPACE_AGENT_MAX_ITERATIONS,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
-  GENERAL_RESEARCH_MODEL_ID,
   GENERAL_RESEARCH_TEMPERATURE,
   GENERAL_RESEARCH_MAX_ITERATIONS,
   COMPANION_MODEL_ID,
@@ -34,8 +33,8 @@ import {
 } from "../../features/agents"
 import { EMBEDDING_MODEL_ID } from "../../features/memos"
 
-function buildDefaultConfigs(): Map<string, ComponentConfig> {
-  const configs = new Map<string, ComponentConfig>()
+function buildDefaultConfigs(): Map<string, AnyComponentConfig> {
+  const configs = new Map<string, AnyComponentConfig>()
 
   configs.set(COMPONENT_PATHS.BOUNDARY_EXTRACTION, {
     modelId: BOUNDARY_EXTRACTION_MODEL_ID,
@@ -75,8 +74,11 @@ function buildDefaultConfigs(): Map<string, ComponentConfig> {
     maxResultsPerSearch: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
   })
 
+  // No modelId: the researcher runs the calling turn's model (GeneralResearcher
+  // falls back to GENERAL_RESEARCH_MODEL_ID when there is no calling turn). A
+  // modelId reaching it from here would be indistinguishable from an eval's
+  // deliberate override, which must win over the turn (INV-44/45).
   configs.set(COMPONENT_PATHS.GENERAL_RESEARCHER, {
-    modelId: GENERAL_RESEARCH_MODEL_ID,
     temperature: GENERAL_RESEARCH_TEMPERATURE,
     maxIterations: GENERAL_RESEARCH_MAX_ITERATIONS,
   })
@@ -105,7 +107,7 @@ export function createStaticConfigResolver(options: StaticConfigResolverOptions 
   const { overrides = {} } = options
 
   return {
-    async resolve<T extends ComponentConfig = ComponentConfig>(path: string): Promise<T> {
+    async resolve<T extends AnyComponentConfig = ComponentConfig>(path: string): Promise<T> {
       const defaultConfig = DEFAULT_CONFIGS.get(path)
 
       if (!defaultConfig) {

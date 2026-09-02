@@ -43,8 +43,19 @@ export interface ResearcherConfig extends ComponentConfig {
   maxResultsPerSearch?: number
 }
 
-export interface GeneralResearcherConfig extends ComponentConfig {
+/**
+ * The one config whose `modelId` is optional: the general researcher takes the
+ * calling turn's model unless something deliberately pins one. Production
+ * therefore registers no default model for it, so a present `modelId` here
+ * always means an explicit override (an eval's `componentOverrides`, a `-m`
+ * permutation) and outranks the caller's turn model.
+ */
+export interface GeneralResearcherConfig {
+  modelId?: string
+  temperature?: number
+  systemPrompt?: string
   maxIterations?: number
+  [key: string]: unknown
 }
 
 export interface CompanionAgentConfig extends ComponentConfig {
@@ -81,10 +92,13 @@ export interface PathConfigMap {
   embedding: ComponentConfig
 }
 
+/** Every shape `resolve` can return: model-pinned components plus the researcher. */
+export type AnyComponentConfig = ComponentConfig | GeneralResearcherConfig
+
 export interface ConfigResolver {
   /**
    * Resolve config for a component path.
    * @throws Error if path is unknown (fail loudly, no silent defaults; INV-11)
    */
-  resolve<T extends ComponentConfig = ComponentConfig>(path: string): Promise<T>
+  resolve<T extends AnyComponentConfig = ComponentConfig>(path: string): Promise<T>
 }

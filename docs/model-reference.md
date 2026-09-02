@@ -81,8 +81,8 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 
 **When to use:**
 
-- Escalation model for persona turns whose previous attempt failed response validation (`escalationModel`)
 - Low-volume, high-stakes calls where quality dominates cost
+- Offered in the picker as an `escalationModel`. It was Ariadne's default escalation until 2026-08-31, when Terra took that slot — see the Terra entry.
 
 **Use instead of:** any Opus 4.x.
 
@@ -109,11 +109,15 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 
 **Name:** Claude Sonnet 4.6
 
-**Description:** The prior Sonnet generation. Kept because it is still pinned by a persona in production and because the July 2026 companion eval measured it directly against Sonnet 5, so the comparison is real rather than assumed.
+**Description:** The prior Sonnet generation. Kept so personas already pinned to it keep resolving, and because the July 2026 companion eval measured it directly against Sonnet 5, so the comparison is real rather than assumed.
 
 **Typical cost:** ~$3.00 / ~$15.00 per 1M (cache read $0.30, cache write $3.75)
 
 **When to use:** nothing new. Prefer `claude-sonnet-5` — cheaper and it won the eval.
+
+The general researcher (`general_research`) pinned 4.6 until 2026-08-31. It now inherits the calling turn's model: on a backend persona turn that is the resolved turn model, escalation included; an enclave turn always forwards the persona's base model, since enclave turns never escalate. `gpt-5.6-luna` is the fallback where there is no calling turn, and an eval's `general:researcher` override outranks both. No code path selects 4.6 by default any more.
+
+Research cost now follows the turn: a persona pinned to Opus 5 researches at Opus prices, where the same research used to bill at Sonnet 4.6's.
 
 ---
 
@@ -174,6 +178,7 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 - Classification, extraction, ranking, naming, transcript polish, and summarization
 - Memo memorization and tool-call guarding
 - Over-budget model degradation
+- Fallback model for the general researcher (since 2026-08-31; was pinned `claude-sonnet-4.6`). Callers with a turn of their own pass their own model instead, so this fires only where no calling turn exists — chosen as the cheapest current-generation model that still holds up on agentic tool use, on the same reasoning as the degradation map below, not on a research-specific eval.
 
 **On the Ariadne default — read this before citing it as an eval win.** It is
 Kristoffer's product call, taken on Luna's cost and his own use of it, and the
@@ -211,7 +216,10 @@ to at the soft limit.
 
 **Typical cost:** ~$2.50 / ~$15.00 per 1M (cache read $0.25, cache write $3.125)
 
-**When to use:** not evaluated here yet. Offered in the picker; nothing selects it by default.
+**When to use:**
+
+- Default `escalationModel` for Ariadne since 2026-08-31 — persona turns whose previous attempt failed response validation run here. A product decision, not an eval result: the companion eval has never run against Terra, and nothing here measures it against `claude-opus-5`, the escalation it replaced.
+- Otherwise not evaluated here.
 
 ---
 

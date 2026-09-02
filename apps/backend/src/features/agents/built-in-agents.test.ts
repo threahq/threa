@@ -24,7 +24,7 @@ describe("Ariadne built-in config", () => {
 
   it("has an escalation model distinct from the default model (roadmap 2.3)", () => {
     const { model, escalationModel } = BUILT_IN_AGENTS[ARIADNE_AGENT_ID]
-    expect(escalationModel).toBe("openrouter:anthropic/claude-opus-5")
+    expect(escalationModel).toBe("openrouter:openai/gpt-5.6-terra")
     // Escalation to the same id would be a no-op — the rule could never fire.
     expect(escalationModel).not.toBe(model)
   })
