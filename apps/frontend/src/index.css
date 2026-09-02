@@ -216,6 +216,10 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 
   :root {
+    /* Native chrome (scrollbars, form controls, canvas) follows the theme class,
+       not the OS: a dark UI with a light native scrollbar is the bug this fixes. */
+    color-scheme: light;
+
     /* Base canvas - very subtle warm tint */
     --background: 40 20% 98%;
     --foreground: 30 10% 12%;
@@ -304,6 +308,8 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 
   .dark {
+    color-scheme: dark;
+
     /* Base canvas - deep charcoal with slight warmth */
     --background: 30 15% 8%;
     --foreground: 35 15% 92%;
@@ -393,6 +399,43 @@ html[data-input="mouse"] .message-hover-wash:hover {
       BlinkMacSystemFont,
       "Segoe UI",
       sans-serif;
+  }
+
+  /* Classic (layout-taking) scrollbars paint a transparent track so they match
+     whichever pane holds them; a 2px groove runs under the thumb. Firefox has no
+     scrollbar pseudo-elements, so it gets the thumb on a transparent track only. */
+  @media (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+    ::-webkit-scrollbar-button {
+      display: none;
+    }
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-track:vertical {
+      background: linear-gradient(to right, transparent 5px, hsl(var(--border)) 5px 7px, transparent 7px);
+    }
+    ::-webkit-scrollbar-track:horizontal {
+      background: linear-gradient(to bottom, transparent 5px, hsl(var(--border)) 5px 7px, transparent 7px);
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 3px solid transparent;
+      border-radius: 6px;
+      background-color: hsl(var(--muted-foreground) / 0.45);
+      background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background-color: hsl(var(--muted-foreground) / 0.7);
+    }
+    @supports not selector(::-webkit-scrollbar) {
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+      }
+    }
   }
   /* Safe area padding for notched devices (iPhone X+).
      Applied to main content rather than #root to avoid double-counting
