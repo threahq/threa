@@ -755,6 +755,31 @@ describe("RemoteSession completion is a closing state", () => {
     expect(calls.invocationMessage).toEqual([])
   })
 
+  test("should leave in-flight claims to lapse and still go offline when the host is gone", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_hostgone" }))
+
+    await session.shutdown({ hostGone: true })
+
+    expect({ fails: calls.fail, presence: presence.at(-1)?.status }).toEqual({ fails: [], presence: "offline" })
+    expect((await session.sendInterim("binv_hostgone", "later")).message).toContain("No open request")
+  })
+
+  test("should fail in-flight claims on an ordinary shutdown", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_stopped" }))
+
+    await session.shutdown()
+
+    expect(calls.fail.map(({ id, body }) => ({ id, errorMessage: body.errorMessage }))).toEqual([
+      { id: "binv_stopped", errorMessage: "Test runtime shut down" },
+    ])
+  })
+
   test("shutdown settles an in-flight completion instead of racing a /fail past it", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()

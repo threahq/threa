@@ -17,6 +17,7 @@ function makeHost() {
     map.set(event, arr)
   }
   const host: LifecycleProcess = {
+    ppid: 4242,
     on: (event, listener) => push(listeners, event, listener),
     stdin: { on: (event, listener) => push(stdinListeners, event, listener) },
     stderr: { write: (chunk) => stderr.push(chunk) },
@@ -57,6 +58,46 @@ describe("wireLifecycle", () => {
 
     expect(shutdowns).toBe(1)
     expect(h.exits).toEqual([0])
+  })
+
+  test("should mark the host gone only when stdin closed and the parent is no longer running", async () => {
+    for (const [trigger, parentAlive, expected] of [
+      [(h: ReturnType<typeof makeHost>) => h.emitStdin("end"), false, { hostGone: true }],
+      [(h: ReturnType<typeof makeHost>) => h.emitStdin("close"), false, { hostGone: true }],
+      [(h: ReturnType<typeof makeHost>) => h.emitStdin("end"), true, { hostGone: false }],
+      [(h: ReturnType<typeof makeHost>) => h.emit("SIGTERM"), false, {}],
+      [(h: ReturnType<typeof makeHost>) => h.emit("SIGHUP"), false, {}],
+    ] as const) {
+      const received: unknown[] = []
+      const h = makeHost()
+      wireLifecycle({ shutdown: async (options) => void received.push(options) }, h.host, {
+        parentAlive: () => parentAlive,
+        parentProbeDelayMs: 0,
+      })
+      trigger(h)
+      await h.exited
+      expect(received).toEqual([expected])
+    }
+  })
+
+  test("should probe the pid captured at wiring, after the delay, not at the moment stdin closes", async () => {
+    let alive = true
+    const received: unknown[] = []
+    const probed: number[] = []
+    const h = makeHost()
+    wireLifecycle({ shutdown: async (options) => void received.push(options) }, h.host, {
+      parentAlive: (pid) => {
+        probed.push(pid)
+        return alive
+      },
+      parentProbeDelayMs: 20,
+    })
+    // A reparented child would now read a different, live ppid; the wiring-time pid is what gets probed.
+    h.host.ppid = 1
+    h.emitStdin("end")
+    alive = false
+    await h.exited
+    expect({ received, probed }).toEqual({ received: [{ hostGone: true }], probed: [4242] })
   })
 
   test("an unhandled rejection is logged and exits non-zero after cleanup", async () => {
