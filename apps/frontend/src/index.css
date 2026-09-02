@@ -216,6 +216,10 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 
   :root {
+    /* Native chrome (scrollbars, form controls, canvas) follows the theme class,
+       not the OS: a dark UI with a light native scrollbar is the bug this fixes. */
+    color-scheme: light;
+
     /* Base canvas - very subtle warm tint */
     --background: 40 20% 98%;
     --foreground: 30 10% 12%;
@@ -304,6 +308,8 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 
   .dark {
+    color-scheme: dark;
+
     /* Base canvas - deep charcoal with slight warmth */
     --background: 30 15% 8%;
     --foreground: 35 15% 92%;
