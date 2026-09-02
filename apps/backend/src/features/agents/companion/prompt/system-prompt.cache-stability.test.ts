@@ -100,7 +100,7 @@ const PER_TURN_SENTINEL_VALUES: Record<string, Partial<SystemPromptInputs>> = {
   },
   subagentBrief: {
     purpose: { kind: "subagent_kickoff", subagentRunId: "subagent_1" },
-    subagentBrief: { title: "Second opinion", brief: SENTINEL, parentStreamId: "stream_parent" },
+    subagentBrief: { title: SENTINEL, brief: "Is this plan sound?", parentStreamId: "stream_parent" },
   },
 }
 

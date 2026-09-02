@@ -1444,7 +1444,21 @@ export class PersonaAgent {
           // one dispatch, no bespoke supersede wrap at the call site (roadmap 1.5).
           systemPrompt: composedPrompt.stable,
           volatileSystemPrompt: composedPrompt.volatile,
-          messages: agentContext.messages,
+          // A kickoff thread starts empty, and the provider refuses an empty
+          // history. The brief IS the relayed user request, so it opens the
+          // history as a user message — on requeue too, since the synthetic
+          // message is never persisted and an earlier attempt's thread holds
+          // only what was actually said. The purpose section frames the
+          // situation but never carries the brief body (one carrier).
+          messages: subagentKickoffBrief
+            ? [
+                {
+                  role: "user" as const,
+                  content: `Hand-off brief — "${subagentKickoffBrief.title}":\n\n${subagentKickoffBrief.brief}`,
+                },
+                ...agentContext.messages,
+              ]
+            : agentContext.messages,
           initialContext,
           tools,
           maxTokens: persona.maxTokens,

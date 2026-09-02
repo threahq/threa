@@ -93,14 +93,11 @@ function buildSubagentKickoffSection(subagent: { title: string; brief: string; p
 
 ## You were delegated this
 
-Another model handed you this question because the user asked for you, or because it judged this to be beyond it. This thread is yours: you are talking to the user here directly, and this brief is what you were given. The thread may be empty, or may hold an earlier attempt that was restarted — read what is there before you answer.
+Another model handed you this question because the user asked for you, or because it judged this to be beyond it. This thread is yours: you are talking to the user here directly. The hand-off brief opens this conversation as the first user message — beyond it, the thread may hold an earlier attempt that was restarted; read what is there before you answer.
 
 - Delegated as: "${subagent.title.trim()}"
-- The brief:
 
-${subagent.brief.trim()}
-
-Answer it now. Use your tools to find whatever the brief assumes you can look up; if something load-bearing is genuinely missing, ask the user here rather than guessing. Do not delegate this onward.
+Answer the brief now. Use your tools to find whatever the brief assumes you can look up; if something load-bearing is genuinely missing, ask the user here rather than guessing. Do not delegate this onward.
 
 When the question is settled, call \`report_back\` once with your closing answer — that posts it and closes the delegation. Until then, keep talking with the user in this thread as normal.`
 }

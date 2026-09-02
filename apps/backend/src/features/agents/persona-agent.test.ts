@@ -9,6 +9,7 @@ import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./p
 import { DraftsRepository, type Draft } from "../drafts"
 import { PersonaRepository, type Persona } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
+import type { SubagentRun } from "../subagents"
 import { SessionAbortRegistry } from "./session-abort-registry"
 import { TraceEmitter } from "./trace-emitter"
 
@@ -47,6 +48,7 @@ const persona: Persona = {
   updatedAt: new Date("2026-01-01T00:00:00Z"),
 }
 
+const PARENT_STREAM_ID = "stream_parent"
 const stream = {
   id: STREAM_ID,
   workspaceId: WORKSPACE_ID,
@@ -163,6 +165,7 @@ async function runSupersedeRerun(params: {
   triggerAuthorUserId?: string
   /** Tool calls the stubbed model issues on its first turn; the second turn answers in text. */
   firstTurnToolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>
+  subagentRun?: SubagentRun
 }) {
   const supersededSession = makeSession({
     id: SUPERSEDED_SESSION_ID,
@@ -181,7 +184,11 @@ async function runSupersedeRerun(params: {
       makeTriggerMessage(params.triggerAuthorUserId) as unknown as never
     )
   }
-  spyOn(StreamRepository, "findById").mockResolvedValue({ ...stream, ...params.streamOverride })
+  // A thread's context walks parent ids up to its root (context-builder); the
+  // parent must resolve to a different, rootless stream or that walk never ends.
+  spyOn(StreamRepository, "findById").mockImplementation(async (_db, id: string) =>
+    id === PARENT_STREAM_ID ? { ...stream, id: PARENT_STREAM_ID } : { ...stream, ...params.streamOverride }
+  )
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
   spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(1)
   spyOn(StreamEventRepository, "insert").mockImplementation(
@@ -233,14 +240,21 @@ async function runSupersedeRerun(params: {
   const capturedModelStrings: string[] = []
   const capturedVolatilePrompts: string[] = []
   const capturedStablePrompts: string[] = []
+  const capturedMessages: Array<Array<{ role: string; content: unknown }>> = []
   const ai = {
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
-    generateTextWithTools: async (opts: { modelString?: string; system?: string; volatileSystem?: string }) => {
+    generateTextWithTools: async (opts: {
+      modelString?: string
+      system?: string
+      volatileSystem?: string
+      messages?: Array<{ role: string; content: unknown }>
+    }) => {
       const turn = capturedModelStrings.length
       capturedModelStrings.push(opts.modelString ?? "unknown")
       capturedVolatilePrompts.push(opts.volatileSystem ?? "")
       capturedStablePrompts.push(opts.system ?? "")
+      capturedMessages.push(opts.messages ?? [])
       if (turn === 0 && params.firstTurnToolCalls) {
         return { text: "", toolCalls: params.firstTurnToolCalls, response: { messages: [] } }
       }
@@ -294,6 +308,7 @@ async function runSupersedeRerun(params: {
     listFollowUps: async () => [],
     cancelFollowUp: async () => ({}),
     updateFollowUp: async () => ({}),
+    loadActiveSubagentRun: async () => params.subagentRun ?? null,
   } as unknown as PersonaAgentDeps
 
   const agent = new PersonaAgent(deps)
@@ -320,6 +335,7 @@ async function runSupersedeRerun(params: {
     capturedModelStrings,
     capturedVolatilePrompts,
     capturedStablePrompts,
+    capturedMessages,
     escalationSteps,
     markResponseValidationFailed,
     createMessage,
@@ -364,6 +380,53 @@ describe("PersonaAgent aside drafts in context", () => {
 
     expect(listByScopePrefix).not.toHaveBeenCalled()
     expect(capturedVolatilePrompts[0]).not.toContain("Drafts open in this aside")
+  })
+})
+
+describe("PersonaAgent subagent kickoff", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("opens the model history with the hand-off brief when the thread is empty", async () => {
+    // The kickoff thread has no messages, and the provider refuses an empty
+    // history outright (AI_InvalidPromptError in the first live run) — the
+    // brief must arrive as the opening user message, not only as prompt copy.
+    const run: SubagentRun = {
+      id: "subagent_run_1",
+      workspaceId: WORKSPACE_ID,
+      parentStreamId: PARENT_STREAM_ID,
+      scopeStreamId: PARENT_STREAM_ID,
+      parentSessionId: null,
+      triggerMessageId: null,
+      cardEventId: "event_card_1",
+      threadStreamId: STREAM_ID,
+      personaId: PERSONA_ID,
+      model: OPUS,
+      createdBy: "usr_1",
+      title: "Plan the identification search",
+      brief: "Find the TV host who alighted at Nacka strand this morning.",
+      status: "active",
+      statusNote: null,
+      resultMessageId: null,
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+      updatedAt: new Date("2026-09-01T00:00:00Z"),
+      statusChangedAt: new Date("2026-09-01T00:00:00Z"),
+    }
+
+    const { result, capturedMessages, capturedModelStrings } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      subagentRun: run,
+      streamOverride: { type: StreamTypes.THREAD, rootStreamId: PARENT_STREAM_ID, parentStreamId: PARENT_STREAM_ID },
+      purpose: { kind: "subagent_kickoff", subagentRunId: run.id },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedModelStrings).toEqual([OPUS])
+    const first = capturedMessages[0]?.[0]
+    expect(first?.role).toBe("user")
+    expect(String(first?.content)).toContain("Plan the identification search")
+    expect(String(first?.content)).toContain("Find the TV host who alighted at Nacka strand this morning.")
   })
 })
 
