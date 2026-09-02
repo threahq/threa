@@ -26,7 +26,7 @@ describe("agent outcome constants", () => {
   })
 
   it("enumerates the kinds and states the endpoint accepts", () => {
-    expect(AGENT_OUTCOME_KINDS).toEqual(["follow_up", "delegation"])
+    expect(AGENT_OUTCOME_KINDS).toEqual(["follow_up", "delegation", "subagent"])
     expect(AGENT_OUTCOME_STATES).toEqual(["outstanding", "settled", "all"])
   })
 })

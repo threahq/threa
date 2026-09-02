@@ -27,6 +27,7 @@ import { commandsApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { delegationKeys } from "@/hooks/use-stream-delegations"
+import { subagentKeys } from "@/hooks/use-subagent-run"
 import { commandKeys } from "@/hooks/use-stream-commands"
 import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
 import type { QueryClient } from "@tanstack/react-query"
@@ -1842,6 +1843,17 @@ function bindStreamSocketHandlers(
     await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
   }
 
+  // The card renders from the `subagent:created` payload plus the in-window
+  // status patches, so the append IS the update. The two authoritative reads
+  // that can't see this window — the outcomes board, and the run a deep-linked
+  // thread falls back to — are invalidated alongside it (INV-53).
+  const handleSubagentEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
+    if (payload.streamId !== streamId) return
+    await handleAppendEvent(payload)
+    await queryClient.invalidateQueries({ queryKey: subagentKeys.all })
+    await queryClient.invalidateQueries({ queryKey: agentOutcomeKeys.all })
+  }
+
   // Follow-ups have no `fired`/`failed` event, so these two are the only live
   // signals the outcomes read gets — schedule and cancel.
   const handleFollowUpEvent = async (payload: Parameters<typeof handleAppendEvent>[0]) => {
@@ -1981,6 +1993,8 @@ function bindStreamSocketHandlers(
   socket.on("stream:agent_follow_up_cancelled", handleFollowUpEvent)
   socket.on("stream:delegation_created", handleDelegationEvent)
   socket.on("stream:delegation_status_changed", handleDelegationEvent)
+  socket.on("stream:subagent_created", handleSubagentEvent)
+  socket.on("stream:subagent_status_changed", handleSubagentEvent)
   // Bot-access request/resolution rows append to the timeline like any other
   // broadcast/patch event; there is no list hook behind them (the card renders
   // from the payload snapshot + the in-window status patch), so a plain append
@@ -2025,6 +2039,8 @@ function bindStreamSocketHandlers(
     socket.off("stream:agent_follow_up_cancelled", handleFollowUpEvent)
     socket.off("stream:delegation_created", handleDelegationEvent)
     socket.off("stream:delegation_status_changed", handleDelegationEvent)
+    socket.off("stream:subagent_created", handleSubagentEvent)
+    socket.off("stream:subagent_status_changed", handleSubagentEvent)
     socket.off("stream:bot_access_requested", handleAppendEvent)
     socket.off("stream:bot_access_status_changed", handleAppendEvent)
     socket.off("stream:brief_updated", handleAppendEvent)

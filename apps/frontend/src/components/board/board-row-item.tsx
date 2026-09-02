@@ -9,6 +9,7 @@ import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
 import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
 import { DelegationEvent } from "@/components/timeline/delegation-event"
+import { SubagentEvent } from "@/components/timeline/subagent-event"
 import { CommandEvent } from "@/components/timeline/command-event"
 import { AsideAnchorEvent } from "@/components/timeline/aside-anchor-event"
 import { getSessionId } from "@/components/timeline/session-grouping"
@@ -528,6 +529,16 @@ export function BoardEventRowItem({
           statusPatch={row.statusPatch}
         />
       )
+    case "subagent":
+      // No `activity`: the board has no live-session map, so a running subagent
+      // reads as working without its substep rather than claiming it is idle.
+      return (
+        <SubagentEvent
+          event={row.event as StreamEvent}
+          workspaceId={workspaceId}
+          statusPatch={row.statusPatch as StreamEvent | undefined}
+        />
+      )
     default: {
       const exhaustive: never = row
       return exhaustive
@@ -541,6 +552,7 @@ const LEDGER_EVENT_ICONS: Record<BoardEventRow["kind"], ReactNode> = {
   memo: <Sparkles className="size-3 text-amber-500" />,
   followUp: <Clock className="size-3" />,
   delegation: <TerminalSquare className="size-3" />,
+  subagent: <Bot className="size-3" />,
   aside: <MessageSquareDashed className="size-3 text-primary" />,
 }
 

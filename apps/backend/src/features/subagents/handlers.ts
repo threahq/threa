@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { z } from "zod"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes, type SubagentSummary } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { checkStreamAccess } from "../streams"
@@ -38,6 +38,32 @@ export function createSubagentHandlers({ pool, subagentService }: Dependencies) 
   }
 
   return {
+    /**
+     * The run as the database holds it. The card normally needs no read — it is
+     * drawn from its own event payload plus the in-window patches — but a
+     * surface whose window cannot contain those patches (a deep link into a
+     * finished subagent's thread) has nothing else to ask.
+     */
+    async get(req: Request, res: Response) {
+      const { run } = await loadAccessible(req)
+      res.json({
+        subagent: {
+          id: run.id,
+          parentStreamId: run.parentStreamId,
+          threadStreamId: run.threadStreamId,
+          cardEventId: run.cardEventId,
+          personaId: run.personaId,
+          model: run.model,
+          title: run.title,
+          status: run.status,
+          statusNote: run.statusNote,
+          resultMessageId: run.resultMessageId,
+          createdAt: run.createdAt.toISOString(),
+          statusChangedAt: run.statusChangedAt.toISOString(),
+        } satisfies SubagentSummary,
+      })
+    },
+
     async cancel(req: Request, res: Response) {
       const { userId, workspaceId, run } = await loadAccessible(req)
 

@@ -53,6 +53,26 @@ describe("computeTimelineHoles", () => {
     expect(computeTimelineHoles(events)).toEqual([])
   })
 
+  it("counts a subagent card in the chain and its status patch out of it", () => {
+    const events = [
+      event({ id: "e1", sequence: "10", broadcastSequence: "5" }),
+      // The card takes a broadcast slot, like `delegation:created`...
+      event({ id: "event_card", sequence: "11", broadcastSequence: "6", eventType: "subagent:created" }),
+      // ...its status patch takes none, so it cannot open a phantom gap.
+      event({ id: "event_patch", sequence: "12", broadcastSequence: null, eventType: "subagent:status_changed" }),
+      event({ id: "e2", sequence: "13", broadcastSequence: "7" }),
+    ]
+    expect(computeTimelineHoles(events)).toEqual([])
+  })
+
+  it("flags a missing subagent card as a real hole", () => {
+    const events = [
+      event({ id: "e1", sequence: "10", broadcastSequence: "5" }),
+      event({ id: "event_card", sequence: "12", broadcastSequence: "7", eventType: "subagent:created" }),
+    ]
+    expect(computeTimelineHoles(events)).toEqual([{ afterEventId: "e1", afterSequence: "10", missingCount: 1 }])
+  })
+
   it("skips pending and failed optimistic rows", () => {
     const events = [
       event({ id: "e1", sequence: "10", broadcastSequence: "5" }),

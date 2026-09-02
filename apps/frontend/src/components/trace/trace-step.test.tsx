@@ -11,6 +11,7 @@ import {
   type AgentSessionStep,
 } from "@threa/types"
 import { TraceStep } from "./trace-step"
+import * as hooksModule from "@/hooks"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as e2eSessionModule from "@/stores/e2e-session-store"
 import * as decryptCacheModule from "@/lib/crypto/decrypt-cache"
@@ -37,6 +38,9 @@ describe("TraceStep", () => {
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
+    vi.spyOn(hooksModule, "useActors").mockReturnValue({
+      getActorName: (actorId: string | null) => (actorId === "persona_ariadne" ? "Ariadne" : "Unknown"),
+    } as unknown as ReturnType<typeof hooksModule.useActors>)
   })
 
   it("shows explicit keep-response reasoning for supersede no-change decisions", () => {
@@ -70,10 +74,36 @@ describe("TraceStep", () => {
       </MemoryRouter>
     )
 
-    expect(screen.getByText("claude-opus-4.8")).toBeInTheDocument()
-    expect(screen.getByText(/from claude-sonnet-4\.6/)).toBeInTheDocument()
+    expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument()
+    expect(screen.getByText(/from Claude Sonnet 4\.6/)).toBeInTheDocument()
     expect(screen.getByText(/could not produce a response that passed validation/i)).toBeInTheDocument()
     expect(screen.queryByText(/fromModel/)).not.toBeInTheDocument()
+  })
+
+  it("names the delegating persona on a subagent turn instead of calling it an escalation", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "model_escalated",
+            content: JSON.stringify({
+              fromModel: "openrouter:openai/gpt-5.6-luna",
+              toModel: "openrouter:anthropic/claude-opus-5",
+              cause: "subagent",
+              personaId: "persona_ariadne",
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Claude Opus 5")).toBeInTheDocument()
+    expect(screen.getByText(/delegated by Ariadne/)).toBeInTheDocument()
+    // A delegation is not a ladder step — the escalation wording must not leak in.
+    expect(screen.queryByText(/stronger model/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Switched to/)).not.toBeInTheDocument()
   })
 
   it("indicates edited messages in reconsideration context", () => {

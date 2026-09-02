@@ -1,7 +1,8 @@
 import { Hash, X } from "lucide-react"
-import type { AgentOutcomeKind, AgentOutcomeState } from "@threa/types"
+import { AGENT_OUTCOME_KINDS, type AgentOutcomeKind, type AgentOutcomeState } from "@threa/types"
 import { Badge } from "@/components/ui/badge"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { OUTCOME_KIND_PLURAL } from "@/lib/agent-outcomes/items"
 import { cn } from "@/lib/utils"
 import type { OutcomesFilters as OutcomesFiltersValue } from "./use-outcomes-url-state"
 
@@ -22,10 +23,12 @@ const STATE_CHIPS: Array<{ value: AgentOutcomeState; label: string }> = [
   { value: "all", label: "All" },
 ]
 
-const KIND_CHIPS: Array<{ value: AgentOutcomeKind; label: string }> = [
-  { value: "follow_up", label: "Follow-ups" },
-  { value: "delegation", label: "Delegations" },
-]
+// Derived, never listed: a kind added to the constant gets its chip for free
+// instead of silently becoming unfilterable (INV-31/33).
+const KIND_CHIPS: Array<{ value: AgentOutcomeKind; label: string }> = AGENT_OUTCOME_KINDS.map((value) => ({
+  value,
+  label: OUTCOME_KIND_PLURAL[value],
+}))
 
 function ToggleChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (

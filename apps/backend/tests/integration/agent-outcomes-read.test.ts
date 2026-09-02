@@ -19,9 +19,16 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamEventRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { createAgentOutcomeService } from "../../src/features/agent-outcomes"
-import { agentFollowUpId, delegationId, eventId, userId, workspaceId } from "../../src/lib/id"
+import { agentFollowUpId, delegationId, eventId, subagentRunId, userId, workspaceId } from "../../src/lib/id"
 import { sql, type Querier } from "../../src/db"
-import { AuthorTypes, StreamTypes, Visibilities, type DelegationStatus, type FollowUpStatus } from "@threa/types"
+import {
+  AuthorTypes,
+  StreamTypes,
+  Visibilities,
+  type DelegationStatus,
+  type FollowUpStatus,
+  type SubagentStatus,
+} from "@threa/types"
 
 let pool: Pool
 
@@ -403,5 +410,268 @@ describe("agent outcomes keyset paging over a shared instant", () => {
   // the same page forever or skips the rest of the set outright.
   test("the ascending keyset pages the same set exactly once", async () => {
     expect((await pageThrough("outstanding")).sort()).toEqual(seededIds.slice().sort())
+  })
+})
+
+/**
+ * The third UNION arm. It differs from the other two in a way a fake Querier
+ * cannot show: a subagent scopes on `parent_stream_id` (the card's stream, not
+ * the run's thread) and resolves its own anchor from the stored `card_event_id`
+ * rather than the payload join the other arms use — so a column that does not
+ * exist, or a join that quietly wins over it, only shows up against the schema
+ * (INV-68). Its own workspace, so the suite above keeps its exact row sets.
+ */
+describe("agent outcomes subagent arm", () => {
+  const wsId = workspaceId()
+  const memberId = userId()
+  const outsiderId = userId()
+  const service = () => createAgentOutcomeService({ pool })
+
+  let channelId: string
+  let privateStreamId: string
+  let activeRunId: string
+  let completedRunId: string
+  let privateRunId: string
+  let activeCardEventId: string
+
+  async function seedSubagentRun(params: {
+    parentStreamId: string
+    title: string
+    status: SubagentStatus
+    statusChangedAt: Date
+    cardEventId: string
+    statusNote?: string
+  }): Promise<string> {
+    const id = subagentRunId()
+    await pool.query(sql`
+      INSERT INTO subagent_runs (
+        id, workspace_id, parent_stream_id, scope_stream_id, card_event_id, thread_stream_id,
+        persona_id, model, created_by, title, brief, status, status_note, status_changed_at
+      ) VALUES (
+        ${id}, ${wsId}, ${params.parentStreamId}, ${params.parentStreamId}, ${params.cardEventId},
+        ${`stream_thread_${id}`}, ${"persona_1"}, ${"openrouter:anthropic/claude-opus-5"}, ${memberId},
+        ${params.title}, ${"brief"}, ${params.status}, ${params.statusNote ?? null}, ${params.statusChangedAt}
+      )
+    `)
+    return id
+  }
+
+  beforeAll(async () => {
+    const streamService = new StreamService(pool)
+
+    await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: wsId,
+        name: "Subagent outcomes WS",
+        slug: `subagent-outcomes-ws-${wsId}`,
+        createdBy: memberId,
+      })
+      await addTestMember(client, wsId, memberId)
+      await addTestMember(client, wsId, outsiderId)
+    })
+
+    const channel = await streamService.create({
+      workspaceId: wsId,
+      type: StreamTypes.CHANNEL,
+      name: "subagent-outcomes",
+      slug: `subagent-outcomes-${wsId.slice(-8)}`,
+      visibility: Visibilities.PUBLIC,
+      createdBy: memberId,
+    })
+    channelId = channel.id
+
+    const privateStream = await streamService.create({
+      workspaceId: wsId,
+      type: StreamTypes.CHANNEL,
+      name: "subagent-outcomes-private",
+      slug: `subagent-outcomes-private-${wsId.slice(-8)}`,
+      visibility: Visibilities.PRIVATE,
+      createdBy: outsiderId,
+    })
+    privateStreamId = privateStream.id
+
+    activeCardEventId = eventId()
+    await withTransaction(pool, async (client) => {
+      await StreamEventRepository.insert(client, {
+        id: activeCardEventId,
+        streamId: channelId,
+        eventType: "subagent:created",
+        payload: { subagentId: "subagent_placeholder", title: "Second opinion" },
+        actorId: "persona_1",
+        actorType: AuthorTypes.PERSONA,
+      })
+    })
+
+    activeRunId = await seedSubagentRun({
+      parentStreamId: channelId,
+      title: "Second opinion on retry semantics",
+      status: "active",
+      statusChangedAt: new Date("2126-02-01T00:00:00.000Z"),
+      cardEventId: activeCardEventId,
+    })
+    completedRunId = await seedSubagentRun({
+      parentStreamId: channelId,
+      title: "Reviewed the migration",
+      status: "completed",
+      statusChangedAt: new Date("2126-02-02T00:00:00.000Z"),
+      cardEventId: eventId(),
+    })
+    privateRunId = await seedSubagentRun({
+      parentStreamId: privateStreamId,
+      title: "Secret second opinion",
+      status: "active",
+      statusChangedAt: new Date("2126-02-03T00:00:00.000Z"),
+      cardEventId: eventId(),
+    })
+  })
+
+  test("returns a run as its own kind, anchored on the card the row already stores", async () => {
+    const response = await service().list({ workspaceId: wsId, userId: memberId, state: "all", limit: 50 })
+
+    expect(response.items.find((i) => i.id === activeRunId)).toMatchObject({
+      kind: "subagent",
+      title: "Second opinion on retry semantics",
+      status: "active",
+      occursAt: "2126-02-01T00:00:00.000Z",
+      scheduledFor: null,
+      actorType: "user",
+      actorId: memberId,
+      streamId: channelId,
+      anchorEventId: activeCardEventId,
+    })
+  })
+
+  test("omits a run whose parent stream the viewer cannot read", async () => {
+    const response = await service().list({ workspaceId: wsId, userId: memberId, state: "all", limit: 50 })
+
+    expect(response.items.map((i) => i.id)).not.toContain(privateRunId)
+  })
+
+  test("splits active from settled and narrows on kind", async () => {
+    const outstanding = await service().list({ workspaceId: wsId, userId: memberId, state: "outstanding", limit: 50 })
+    const settled = await service().list({ workspaceId: wsId, userId: memberId, state: "settled", limit: 50 })
+    const subagentsOnly = await service().list({
+      workspaceId: wsId,
+      userId: memberId,
+      state: "all",
+      kind: "subagent",
+      limit: 50,
+    })
+
+    expect({
+      outstanding: outstanding.items.map((i) => i.id),
+      settled: settled.items.map((i) => i.id),
+      onlySubagents: subagentsOnly.items.map((i) => i.id).sort(),
+    }).toEqual({
+      outstanding: [activeRunId],
+      settled: [completedRunId],
+      onlySubagents: [activeRunId, completedRunId].sort(),
+    })
+  })
+
+  test("returns a run whose card sits in a thread of a readable channel (INV-62)", async () => {
+    // A delegation asked inside a thread puts its card in that thread, so the
+    // arm scopes on `parent_stream_id` - which is a THREAD, not a root.
+    const streamService = new StreamService(pool)
+    const anchor = await new EventService(pool).createMessage({
+      workspaceId: wsId,
+      streamId: channelId,
+      authorId: memberId,
+      authorType: "user",
+      ...testMessageContent("anchor"),
+    })
+    const thread = await streamService.createThreadInternal({
+      workspaceId: wsId,
+      parentStreamId: channelId,
+      parentAnchorId: anchor.id,
+      createdBy: outsiderId,
+    })
+    const threadRunId = await seedSubagentRun({
+      parentStreamId: thread.id,
+      title: "Thread-scoped second opinion",
+      status: "active",
+      statusChangedAt: new Date("2126-02-04T00:00:00.000Z"),
+      cardEventId: eventId(),
+    })
+
+    const all = await service().list({ workspaceId: wsId, userId: memberId, state: "all", limit: 50 })
+    const tree = await service().list({
+      workspaceId: wsId,
+      userId: memberId,
+      state: "all",
+      streamIds: [channelId],
+      limit: 50,
+    })
+    const exact = await service().list({
+      workspaceId: wsId,
+      userId: memberId,
+      state: "all",
+      streamIds: [channelId],
+      scope: "stream",
+      limit: 50,
+    })
+
+    expect({
+      accessible: all.items.some((i) => i.id === threadRunId),
+      inTree: tree.items.some((i) => i.id === threadRunId),
+      inStreamOnly: exact.items.some((i) => i.id === threadRunId),
+    }).toEqual({ accessible: true, inTree: true, inStreamOnly: false })
+  })
+
+  test("carries the thread fact that separates working from waiting for you", async () => {
+    // `lastAgentMessageAt` lives on the run's status PATCH, not the run row -
+    // the arm reads it back through a lateral join, and nothing else can.
+    // Its own channel: one live run per conversation surface is a partial unique
+    // index, so a second active run cannot share this one's scope.
+    const waitingChannel = await new StreamService(pool).create({
+      workspaceId: wsId,
+      type: StreamTypes.CHANNEL,
+      name: "subagent-outcomes-waiting",
+      slug: `subagent-outcomes-waiting-${wsId.slice(-8)}`,
+      visibility: Visibilities.PUBLIC,
+      createdBy: memberId,
+    })
+    const waitingRunId = await seedSubagentRun({
+      parentStreamId: waitingChannel.id,
+      title: "Asked a question",
+      status: "active",
+      statusChangedAt: new Date("2126-02-05T00:00:00.000Z"),
+      cardEventId: eventId(),
+    })
+    await withTransaction(pool, async (client) => {
+      await StreamEventRepository.insert(client, {
+        id: eventId(),
+        streamId: waitingChannel.id,
+        eventType: "subagent:status_changed",
+        payload: {
+          subagentId: waitingRunId,
+          status: "active",
+          lastAgentMessageAt: "2126-02-05T00:10:00.000Z",
+        },
+        actorId: "persona_1",
+        actorType: AuthorTypes.PERSONA,
+      })
+    })
+
+    const response = await service().list({ workspaceId: wsId, userId: memberId, state: "all", limit: 50 })
+    const waiting = response.items.find((i) => i.id === waitingRunId)
+    const silent = response.items.find((i) => i.id === activeRunId)
+
+    expect({
+      waiting: waiting?.kind === "subagent" ? waiting.lastAgentMessageAt : "wrong kind",
+      neverSpoke: silent?.kind === "subagent" ? silent.lastAgentMessageAt : "wrong kind",
+    }).toEqual({ waiting: "2126-02-05T00:10:00.000Z", neverSpoke: null })
+  })
+
+  test("a kind filter for another kind excludes runs entirely", async () => {
+    const delegationsOnly = await service().list({
+      workspaceId: wsId,
+      userId: memberId,
+      state: "all",
+      kind: "delegation",
+      limit: 50,
+    })
+
+    expect(delegationsOnly.items).toEqual([])
   })
 })

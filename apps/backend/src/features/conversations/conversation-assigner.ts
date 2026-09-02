@@ -4,6 +4,7 @@ import { ConversationRepository } from "./repository"
 import type { ConversationAssigner, Message } from "../messaging"
 import { checkStreamAccess, StreamRepository, type Stream } from "../streams"
 import { emitAssignmentEvents } from "./assignment-events"
+import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
 import { conversationId } from "../../lib/id"
 import { ConversationIntents, ConversationStatuses, StreamTypes, type AuthorType } from "@threa/types"
 import { HttpError } from "../../lib/errors"
@@ -46,7 +47,7 @@ export const PROVISIONAL_ATTACH_WINDOW_MINUTES = 30
  *    parentMessageId ∈ the parent conversation), so no parent id is written.
  */
 export const conversationAssigner: ConversationAssigner = {
-  async assignInTransaction(client, { workspaceId, message, directive, initiatingUserId }) {
+  async assignInTransaction(client, { workspaceId, message, directive, stream, initiatingUserId }) {
     if (directive.intent === ConversationIntents.THREAD_FROM_MESSAGE) {
       const sourceId = await attachThreadReplyToSource(
         client,
@@ -56,11 +57,11 @@ export const conversationAssigner: ConversationAssigner = {
         initiatingUserId
       )
       if (sourceId) return sourceId
-      return mintConversationForMessage(client, workspaceId, message, undefined, initiatingUserId)
+      return mintConversationForMessage(client, workspaceId, message, stream, undefined, initiatingUserId)
     }
 
     if (directive.intent === ConversationIntents.NEW_SUBTOPIC) {
-      return mintOrAttachSubtopicConversation(client, workspaceId, message, initiatingUserId)
+      return mintOrAttachSubtopicConversation(client, workspaceId, message, stream, initiatingUserId)
     }
 
     if (directive.intent === ConversationIntents.NEW) {
@@ -68,7 +69,14 @@ export const conversationAssigner: ConversationAssigner = {
       // slotted its card optimistically keyed by this id — INV-20 idempotency
       // rides the upstream `clientMessageId` dedup, which skips this assigner on a
       // retry, so the id inserts exactly once). Omitted → mint server-side.
-      return mintConversationForMessage(client, workspaceId, message, directive.conversationId, initiatingUserId)
+      return mintConversationForMessage(
+        client,
+        workspaceId,
+        message,
+        stream,
+        directive.conversationId,
+        initiatingUserId
+      )
     }
 
     // `existing`. Workspace-scoped + row-locked (INV-8, INV-20): a stale/foreign
@@ -179,16 +187,22 @@ async function mintConversationForMessage(
   client: PoolClient,
   workspaceId: string,
   message: Message,
+  sendStream: Stream | null | undefined,
   preferredId?: string,
   initiatingUserId?: string
 ): Promise<string> {
   const newId = preferredId ?? conversationId()
+  // A mint inside a card-anchored thread (a subagent's) records the conversation
+  // it branches from — the graph cannot derive that one. The send already holds
+  // the stream; only a caller that passed none pays for the PK read.
+  const stream = sendStream !== undefined ? sendStream : await StreamRepository.findById(client, message.streamId)
   await ConversationRepository.insert(client, {
     id: newId,
     streamId: message.streamId,
     workspaceId,
     confidence: 1,
     status: ConversationStatuses.ACTIVE,
+    parentConversationId: await resolveEventAnchoredParentConversationId(client, stream),
   })
   await ConversationRepository.addPrimaryMessage(client, workspaceId, newId, message.id, message.authorId)
   await ConversationRepository.bumpActivityForIds(client, workspaceId, [newId])
@@ -216,12 +230,13 @@ async function mintOrAttachSubtopicConversation(
   client: PoolClient,
   workspaceId: string,
   message: Message,
+  stream: Stream | null | undefined,
   initiatingUserId?: string
 ): Promise<string> {
   await client.query(sql`SELECT id FROM streams WHERE id = ${message.streamId} FOR UPDATE`)
   const active = (await ConversationRepository.findActiveByStream(client, message.streamId))[0]
   if (!active) {
-    return mintConversationForMessage(client, workspaceId, message, undefined, initiatingUserId)
+    return mintConversationForMessage(client, workspaceId, message, stream, undefined, initiatingUserId)
   }
   await ConversationRepository.addPrimaryMessage(client, workspaceId, active.id, message.id, message.authorId)
   await ConversationRepository.bumpActivityForIds(client, workspaceId, [active.id])

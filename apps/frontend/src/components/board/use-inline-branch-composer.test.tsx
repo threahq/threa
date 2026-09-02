@@ -34,6 +34,8 @@ function makeGraph(topicSummary?: string): ConversationGraph {
       ["msg_fork_b", PARENT_ID],
     ]),
     conversationById: new Map([["conv_branch", branchPost]]),
+    storedParentConversationId: new Map(),
+    storedChildConversationIds: new Map(),
   } as unknown as ConversationGraph
 }
 
@@ -241,6 +243,8 @@ describe("useInlineBranchComposer pending→real hand-off", () => {
     conversationByAnchorStreamId: new Map(),
     conversationIdByMemberMessageId: new Map([["msg_new", PARENT_ID]]),
     conversationById: new Map(),
+    storedParentConversationId: new Map(),
+    storedChildConversationIds: new Map(),
   } as unknown as ConversationGraph
   const materializedIndex = {
     threadsByAnchorId: new Map([["msg_new", { id: "stream_thread_new" }]]),
@@ -254,6 +258,8 @@ describe("useInlineBranchComposer pending→real hand-off", () => {
     ]),
     conversationIdByMemberMessageId: new Map([["msg_new", PARENT_ID]]),
     conversationById: new Map(),
+    storedParentConversationId: new Map(),
+    storedChildConversationIds: new Map(),
   } as unknown as ConversationGraph
 
   it("re-keys an open branch-tail composer onto the real conversation when the graph replaces the pending branch", async () => {

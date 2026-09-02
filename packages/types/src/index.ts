@@ -643,6 +643,7 @@ export type {
   CallStartedEventPayload,
   CallEndedEventPayload,
   DelegationSummary,
+  SubagentSummary,
   ListDelegationsResponse,
   DescriptionSetEventPayload,
   BriefUpdatedEventPayload,
@@ -1231,6 +1232,7 @@ export {
   type AgentOutcomeSummary,
   type FollowUpOutcomeSummary,
   type DelegationOutcomeSummary,
+  type SubagentOutcomeSummary,
   type ListAgentOutcomesResponse,
 } from "./agent-outcomes"
 

@@ -21,6 +21,7 @@ import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitSettledConversationUpdates } from "./settling-service"
 import { effectiveRootId } from "./conversation-assigner"
+import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
 import { conversationFeedbackId, conversationId as generateConversationId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
@@ -1032,6 +1033,7 @@ export class ConversationService {
         workspaceId,
         confidence: 1,
         status: ConversationStatuses.ACTIVE,
+        parentConversationId: await resolveEventAnchoredParentConversationId(client, threadStream),
       })
 
       await ConversationRepository.removePrimaryMessages(client, workspaceId, source.id, moveIds, remainingAuthors)
@@ -1255,6 +1257,10 @@ export class ConversationService {
           workspaceId,
           confidence: 1,
           status: ConversationStatuses.ACTIVE,
+          parentConversationId: await resolveEventAnchoredParentConversationId(
+            client,
+            await StreamRepository.findById(client, streamId)
+          ),
         })
       }
       // Non-null past the mint; bind it so the closures below keep the narrowing.
@@ -1547,11 +1553,13 @@ export class ConversationService {
       // for the feedback rows.
       const movedTo = new Map<string, string>()
       const mintedIds: string[] = []
+      const mintedParentConversationId = await resolveEventAnchoredParentConversationId(client, ownerStream)
       for (const g of moveGroups) {
         const minted = await ConversationRepository.insert(client, {
           id: generateConversationId(),
           streamId,
           workspaceId,
+          parentConversationId: mintedParentConversationId,
           topicSummary: g.title,
           topicSummarySource: TitleSources.EXPLICIT,
           topicSummaryUpdatedByUserId: actorUserId,

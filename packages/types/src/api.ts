@@ -1469,6 +1469,29 @@ export interface ListDelegationsResponse {
 }
 
 /**
+ * A subagent run, read by id. The timeline card renders from its own payload and
+ * the in-window status patches; this is the authority a surface falls back to
+ * when those patches are outside the loaded window — a deep link straight into a
+ * finished subagent's thread, where the parent stream is not cached at all.
+ * `statusNote` is a `SubagentFailureReason` code, never prose (INV-46).
+ */
+export interface SubagentSummary {
+  id: string
+  parentStreamId: string
+  threadStreamId: string
+  /** The `subagent:created` timeline event this run's card is. */
+  cardEventId: string
+  personaId: string
+  model: string
+  title: string
+  status: SubagentStatus
+  statusNote: string | null
+  resultMessageId: string | null
+  createdAt: string
+  statusChangedAt: string
+}
+
+/**
  * Payload for `description_set` timeline events: appended to a stream when an
  * actor sets, changes, or clears its description, in the same transaction as the
  * description write. Carries the markdown snapshot at the time it was set so the

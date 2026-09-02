@@ -41,10 +41,12 @@ export function OutcomesDetail({ workspaceId, item }: OutcomesDetailProps) {
   const cancel = useAsyncAction(
     async () => {
       if (!item) return
+      // Named kinds, never "everything else": a third kind reaching the
+      // delegation endpoint with a foreign id would 404 rather than say so.
       if (item.kind === "follow_up") {
         const { cancelled } = await agentFollowUpsApi.cancel(workspaceId, item.id)
         if (!cancelled) toast.info("This follow-up already ran or was cancelled")
-      } else {
+      } else if (item.kind === "delegation") {
         const { cancelled } = await delegationsApi.cancel(workspaceId, item.id)
         if (!cancelled) toast.info("This delegation already finished or was cancelled")
       }
@@ -76,7 +78,7 @@ export function OutcomesDetail({ workspaceId, item }: OutcomesDetailProps) {
   if (!item) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
-        Select a follow-up or delegation to see its detail.
+        Select an outcome to see its detail.
       </div>
     )
   }

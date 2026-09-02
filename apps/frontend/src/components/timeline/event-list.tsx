@@ -4,12 +4,14 @@ import {
   type StreamEvent,
   type AsideAnchoredEventPayload,
   type DelegationStatusChangedEventPayload,
+  type SubagentStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
 } from "@threa/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
 import type { MessageAgentActivity } from "@/hooks"
+import type { SubagentThreadRun } from "@/lib/subagent-display"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { Loader2 } from "lucide-react"
@@ -42,6 +44,8 @@ interface EventListProps {
   agentActivity?: Map<string, MessageAgentActivity>
   /** Hide session group cards (used in channels where responses go to threads) */
   hideSessionCards?: boolean
+  /** The subagent run this stream is the thread of, when it is one. */
+  subagentThreadRun?: SubagentThreadRun | null
   /** Event IDs that just arrived via socket and should flash briefly */
   newMessageIds?: Set<string>
   /** True when the viewer is a member of this stream — gates the bot-access card's Approve/Deny. */
@@ -346,6 +350,8 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "agent:follow_up_cancelled",
   // Status changes patch the delegation card (collectDelegationStatusPatches).
   "delegation:status_changed",
+  // Status changes patch the subagent card (collectSubagentStatusPatches).
+  "subagent:status_changed",
   // Status changes patch the bot-access request card (collectBotAccessStatusPatches).
   "bot_access:status_changed",
   // The end summary patches the call card (collectCallEndedPatches).
@@ -452,6 +458,22 @@ export function collectDelegationStatusPatches(
  * request card reads its entry to render the authoritative terminal state for
  * every viewer — approved / denied — without a fetch.
  */
+/**
+ * Collect the latest `subagent:status_changed` EVENT per subagentId in the
+ * loaded window (items are in sequence order, so the last patch wins). The whole
+ * event, not just its payload: the card reports who ended a run and when, and
+ * only the event row carries actor and time.
+ */
+export function collectSubagentStatusPatches(items: TimelineItem[]): Map<string, StreamEvent> {
+  const patches = new Map<string, StreamEvent>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "subagent:status_changed") continue
+    const payload = item.event.payload as SubagentStatusChangedEventPayload | undefined
+    if (payload?.subagentId) patches.set(payload.subagentId, item.event)
+  }
+  return patches
+}
+
 export function collectBotAccessStatusPatches(items: TimelineItem[]): Map<string, BotAccessStatusChangedEventPayload> {
   const patches = new Map<string, BotAccessStatusChangedEventPayload>()
   for (const item of items) {
@@ -844,6 +866,10 @@ export interface TimelineItemRenderContext {
   cancelledFollowUpIds: Set<string>
   /** Latest `delegation:status_changed` payload per delegationId in the loaded window. */
   delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
+  /** Latest `subagent:status_changed` event per subagentId in the loaded window. */
+  subagentStatusPatches: Map<string, StreamEvent>
+  /** The run this stream is the thread of, when it is one — drives the per-message model badge. */
+  subagentThreadRun?: SubagentThreadRun | null
   /** Latest `bot_access:status_changed` payload per requestId in the loaded window. */
   botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
   /** Latest `call_ended` payload per callId in the loaded window — drives the call card's ended state. */
@@ -887,11 +913,14 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         workspaceId={ctx.workspaceId}
         streamId={ctx.streamId}
         highlightMessageId={ctx.highlightMessageId}
-        agentActivity={ctx.hideSessionCards ? ctx.agentActivity : undefined}
+        agentActivity={ctx.agentActivity}
+        hideSessionCards={ctx.hideSessionCards}
         isNew={ctx.newMessageIds?.has(item.event.id)}
         deferSecondaryHydration={deferSecondaryHydration}
         cancelledFollowUpIds={ctx.cancelledFollowUpIds}
         delegationStatusPatches={ctx.delegationStatusPatches}
+        subagentStatusPatches={ctx.subagentStatusPatches}
+        subagentThreadRun={ctx.subagentThreadRun}
         botAccessStatusPatches={ctx.botAccessStatusPatches}
         callEndedPatches={ctx.callEndedPatches}
         viewerIsMember={ctx.viewerIsMember}
@@ -1091,6 +1120,7 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     p.workspaceId !== n.workspaceId ||
     p.streamId !== n.streamId ||
     p.hideSessionCards !== n.hideSessionCards ||
+    p.subagentThreadRun !== n.subagentThreadRun ||
     p.isDividerDimmed !== n.isDividerDimmed ||
     p.onStopSession !== n.onStopSession
   ) {
@@ -1134,6 +1164,16 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
       !delegationPatchEqual(p.delegationStatusPatches.get(did), n.delegationStatusPatches.get(did))
     )
       return false
+  }
+
+  // A subagent card repaints when its own latest patch changes (a new patch is a
+  // new event id) or when the live session in its thread starts, steps, or ends.
+  // Its activity is keyed under the CARD's event id, not a message id, so the
+  // message-keyed check below never sees it.
+  if (item.event.eventType === "subagent:created") {
+    const sid = (item.event.payload as { subagentId?: string })?.subagentId
+    if (sid !== undefined && p.subagentStatusPatches.get(sid)?.id !== n.subagentStatusPatches.get(sid)?.id) return false
+    if (p.agentActivity?.get(item.event.id) !== n.agentActivity?.get(item.event.id)) return false
   }
 
   // A bot-access request card repaints when its own latest patch changes or when
@@ -1236,6 +1276,7 @@ export function EventList({
   isDividerDimmed,
   agentActivity,
   hideSessionCards,
+  subagentThreadRun,
   newMessageIds,
   viewerIsMember,
   batch,
@@ -1298,6 +1339,7 @@ export function EventList({
   const firstMessageId = findFirstMessageId(timelineItems)
   const cancelledFollowUpIds = collectCancelledFollowUpIds(timelineItems)
   const delegationStatusPatches = collectDelegationStatusPatches(timelineItems)
+  const subagentStatusPatches = collectSubagentStatusPatches(timelineItems)
   const botAccessStatusPatches = collectBotAccessStatusPatches(timelineItems)
   const callEndedPatches = collectCallEndedPatches(timelineItems)
 
@@ -1328,6 +1370,8 @@ export function EventList({
     onSteerSession: steerAgentSession,
     cancelledFollowUpIds,
     delegationStatusPatches,
+    subagentStatusPatches,
+    subagentThreadRun,
     botAccessStatusPatches,
     callEndedPatches,
     viewerIsMember,

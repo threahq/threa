@@ -8,8 +8,8 @@ import {
   deriveBranchConversations,
   collectBranchThreadStreamIds,
   branchParentConversationId,
+  buildConversationGraph,
   useStreamStructuralIndex,
-  type ConversationGraph,
   type StreamStructuralIndex,
 } from "./use-conversation-graph"
 
@@ -24,11 +24,17 @@ function stream(id: string, type: string, parentMessageId: string | null = null)
   } as CachedStream
 }
 
-function post(id: string, anchorStreamId: string, messageIds: string[], topicSummary: string | null): CachedBoardPost {
+function post(
+  id: string,
+  anchorStreamId: string,
+  messageIds: string[],
+  topicSummary: string | null,
+  parentConversationId: string | null = null
+): CachedBoardPost {
   return {
     id,
     workspaceId: "ws_1",
-    conversation: { id, streamId: anchorStreamId, messageIds, topicSummary },
+    conversation: { id, streamId: anchorStreamId, messageIds, topicSummary, parentConversationId },
     rootStreamId: "root",
   } as unknown as CachedBoardPost
 }
@@ -41,18 +47,9 @@ function fixtures(streams: CachedStream[], posts: CachedBoardPost[]) {
       streams.filter((s) => s.type === StreamTypes.THREAD && s.parentMessageId).map((s) => [s.parentMessageId!, s])
     ),
   }
-  const graph: ConversationGraph = {
-    conversationByAnchorStreamId: new Map(
-      posts
-        .filter((p) => p.conversation.streamId !== (p.rootStreamId ?? p.conversation.streamId))
-        .map((p) => [p.conversation.streamId, p])
-    ),
-    conversationIdByMemberMessageId: new Map(
-      posts.flatMap((p) => p.conversation.messageIds.map((m) => [m, p.id] as const))
-    ),
-    conversationById: new Map(posts.map((p) => [p.id, p])),
-  }
-  return { index, graph }
+  // The graph goes through the production builder, so a fixture can never
+  // disagree with the index the board actually reads.
+  return { index, graph: buildConversationGraph(posts) }
 }
 
 const resolveEmpty = () => ({ messages: [] as RenderableMessage[], hiddenCount: 0 })
@@ -98,6 +95,38 @@ describe("deriveBranchConversations", () => {
     // grandchild flags overflow (its subtree continues in the panel) instead.
     expect(grand.children).toEqual([])
     expect(grand.overflow).toBe(true)
+  })
+
+  it("nests a card-anchored branch the message-keyed index cannot see, and subscribes to it", () => {
+    // A subagent's thread hangs off the `subagent:created` card, so no member
+    // message forks it: without the server-written parent it is suppressed from
+    // the board list AND missing from the parent card — gone from the product.
+    const withCard = [...streams, stream("t_sub", StreamTypes.THREAD, "event_card")]
+    const withSub = [...posts, post("conv_sub", "t_sub", ["s1"], "Second opinion", "conv_root")]
+    const { index, graph } = fixtures(withCard, withSub)
+
+    const branches = deriveBranchConversations({
+      conversationId: "conv_root",
+      memberMessageIds: ["m1"],
+      index,
+      graph,
+      resolveMessages: resolveEmpty,
+    })
+
+    expect(branches.map((b) => b.conversationId).sort()).toEqual(["conv_child", "conv_sub"])
+    expect(branches.find((b) => b.conversationId === "conv_sub")).toMatchObject({
+      threadStreamId: "t_sub",
+      forkMessageId: "event_card",
+      title: "Second opinion",
+      displayDepth: 1,
+      overflow: false,
+    })
+    // Suppression (never top-level) and discovery (rendered inside the parent)
+    // are the two halves; a fix to one alone still loses the conversation.
+    expect(branchParentConversationId("conv_sub", index, graph)).toBe("conv_root")
+    expect(
+      collectBranchThreadStreamIds({ conversationId: "conv_root", memberMessageIds: ["m1"], index, graph })
+    ).toContain("t_sub")
   })
 
   it("skips threads the parent conversation itself occupies (soft/spanning render inline)", () => {
@@ -201,5 +230,27 @@ describe("branchParentConversationId", () => {
     const emptied = posts.map((p) => (p.id === "conv_root" ? post("conv_root", "root", [], null) : p))
     const f2 = fixtures(streams, emptied)
     expect(branchParentConversationId("conv_child", f2.index, f2.graph)).toBeNull()
+  })
+
+  it("nests a card-anchored thread through the parent the server wrote down", () => {
+    // A subagent's thread hangs off the `subagent:created` card, so the graph has
+    // no member message to derive the fork from — without the stored parent this
+    // conversation renders as its own top-level board card.
+    const streams = [stream("root", StreamTypes.CHANNEL), stream("t_sub", StreamTypes.THREAD, "event_card")]
+    const derived = [post("conv_root", "root", ["m1"], null), post("conv_sub", "t_sub", ["c1"], null)]
+    const withoutStored = fixtures(streams, derived)
+    expect(branchParentConversationId("conv_sub", withoutStored.index, withoutStored.graph)).toBeNull()
+
+    const stored = fixtures(streams, [derived[0], post("conv_sub", "t_sub", ["c1"], null, "conv_root")])
+    expect(branchParentConversationId("conv_sub", stored.index, stored.graph)).toBe("conv_root")
+  })
+
+  it("ignores a stored parent that is the conversation itself", () => {
+    const streams = [stream("root", StreamTypes.CHANNEL), stream("t_sub", StreamTypes.THREAD, "event_card")]
+    const { index, graph } = fixtures(streams, [
+      post("conv_root", "root", ["m1"], null),
+      post("conv_sub", "t_sub", ["c1"], null, "conv_sub"),
+    ])
+    expect(branchParentConversationId("conv_sub", index, graph)).toBeNull()
   })
 })

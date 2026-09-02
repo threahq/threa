@@ -8,6 +8,7 @@ import {
   collectBotAccessStatusPatches,
   collectCallEndedPatches,
   collectDividerAnchorIds,
+  collectSubagentStatusPatches,
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -885,6 +886,38 @@ describe("collectDelegationStatusPatches", () => {
   })
 })
 
+describe("collectSubagentStatusPatches", () => {
+  const patchItem = (id: string, sequence: string, subagentId: string, status: string): TimelineItem => ({
+    type: "event",
+    event: createEvent({
+      id,
+      sequence,
+      eventType: "subagent:status_changed",
+      payload: { subagentId, status, statusNote: null, resultMessageId: null },
+    }),
+  })
+
+  it("must run on pre-filter items — filterVisibleItems strips the zero-height status patch", () => {
+    const items = [patchItem("evt_1", "5", "sub_1", "completed")]
+    expect(collectSubagentStatusPatches(items).has("sub_1")).toBe(true)
+    expect(collectSubagentStatusPatches(filterVisibleItems(items)).has("sub_1")).toBe(false)
+  })
+
+  it("is never an unread-divider anchor — a trailing patch after the last read message renders no row", () => {
+    // Seen live: the read pointer sat on the last message, the card's status
+    // patches landed after it, and "New" drew under the message with nothing
+    // beneath it because the patch counted as an anchorable row.
+    const items: TimelineItem[] = [
+      {
+        type: "event",
+        event: createEvent({ id: "evt_msg", sequence: "1", eventType: "message_created", payload: {} }),
+      },
+      patchItem("evt_patch", "2", "sub_1", "active"),
+    ]
+    expect(collectDividerAnchorIds(items)).toEqual(new Set(["evt_msg"]))
+  })
+})
+
 describe("collectBotAccessStatusPatches", () => {
   const patchItem = (id: string, requestId: string, status: "approved" | "denied"): TimelineItem => ({
     type: "event",
@@ -969,6 +1002,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
+      subagentStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
       callEndedPatches: new Map(),
       ...overrides,

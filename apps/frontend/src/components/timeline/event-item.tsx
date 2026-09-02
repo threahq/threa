@@ -3,8 +3,10 @@ import type {
   CallEndedEventPayload,
   DelegationStatusChangedEventPayload,
   StreamEvent,
+  SubagentSummary,
 } from "@threa/types"
 import type { MessageAgentActivity } from "@/hooks"
+import { isSubagentAuthoredMessage, type SubagentThreadRun } from "@/lib/subagent-display"
 import type { BatchTimelineState } from "./event-list"
 import type { ConversationRevival } from "./conversation-overlay/model"
 import { MessageEvent } from "./message-event"
@@ -13,6 +15,7 @@ import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
 import { FollowUpScheduledEvent } from "./follow-up-event"
 import { DelegationEvent } from "./delegation-event"
+import { SubagentEvent } from "./subagent-event"
 import { BotAccessEvent } from "./bot-access-event"
 import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
@@ -29,14 +32,39 @@ interface EventItemProps {
   isThreadParent?: boolean
   /** ID of message to highlight and scroll to */
   highlightMessageId?: string | null
-  /** Active agent sessions mapped by trigger message ID */
+  /**
+   * Active agent sessions keyed by the anchor they light up: a trigger message
+   * id, or — for a session running in a thread — the thread's parent anchor
+   * (a message id, or a threadable card's event id).
+   */
   agentActivity?: Map<string, MessageAgentActivity>
+  /**
+   * True in views that suppress session cards (channels), where a message row
+   * carries the inline activity indicator instead. Card rows read `agentActivity`
+   * either way: a subagent's session runs in its thread, so the parent stream
+   * never renders a session card for it regardless of this flag.
+   */
+  hideSessionCards?: boolean
   /** Whether this event just arrived via socket (brief visual indicator) */
   isNew?: boolean
   /** followUpIds cancelled within the loaded window — drives the scheduled card's cancelled state. */
   cancelledFollowUpIds?: Set<string>
   /** Latest status patch per delegationId within the loaded window — drives the delegation card's state. */
   delegationStatusPatches?: Map<string, DelegationStatusChangedEventPayload>
+  /** Latest status-change EVENT per subagentId within the loaded window — drives the subagent card's state. */
+  subagentStatusPatches?: Map<string, StreamEvent>
+  /**
+   * The authoritative run, for a surface whose window cannot hold that patch —
+   * the card pinned atop its own thread, opened by deep link. Used only when no
+   * patch is present.
+   */
+  subagentRunFallback?: SubagentSummary
+  /**
+   * Set only when THIS stream is a subagent's thread: the run the thread was
+   * created for. Persona messages inside its window carry the model badge, so
+   * the reader can see which brain is talking.
+   */
+  subagentThreadRun?: SubagentThreadRun | null
   /** Latest status patch per bot-access requestId within the loaded window — drives the request card's state. */
   botAccessStatusPatches?: Map<string, BotAccessStatusChangedEventPayload>
   /** Latest `call_ended` payload per callId within the loaded window — drives the call card's ended state. */
@@ -73,9 +101,13 @@ export function EventItem({
   isThreadParent,
   highlightMessageId,
   agentActivity,
+  hideSessionCards = false,
   isNew,
   cancelledFollowUpIds,
   delegationStatusPatches,
+  subagentStatusPatches,
+  subagentRunFallback,
+  subagentThreadRun,
   botAccessStatusPatches,
   callEndedPatches,
   viewerIsMember,
@@ -112,7 +144,12 @@ export function EventItem({
             isThreadParent={isThreadParent}
             isHighlighted={isHighlighted}
             isNew={isNew}
-            activity={messageId ? agentActivity?.get(messageId) : undefined}
+            activity={hideSessionCards && messageId ? agentActivity?.get(messageId) : undefined}
+            modelBadgeId={
+              subagentThreadRun && isSubagentAuthoredMessage(subagentThreadRun, event)
+                ? subagentThreadRun.model
+                : undefined
+            }
             deferSecondaryHydration={deferSecondaryHydration}
             groupContinuation={groupContinuation}
             isFirstMessage={isFirstMessage}
@@ -216,10 +253,28 @@ export function EventItem({
       // delegationStatusPatches (collected in event-list) — renders nothing.
       return null
 
-    case "subagent:created":
+    case "subagent:created": {
+      const subagentId = (event.payload as { subagentId?: string })?.subagentId
+      const statusPatch = subagentId ? subagentStatusPatches?.get(subagentId) : undefined
+      return (
+        <div data-event-id={event.id} className={cardHighlightClass}>
+          <SubagentEvent
+            event={event}
+            workspaceId={workspaceId}
+            statusPatch={statusPatch}
+            runFallback={statusPatch ? undefined : subagentRunFallback}
+            // The subagent's session runs in its thread, so it is aliased under
+            // this card's event id — the anchor the thread was created on.
+            activity={agentActivity?.get(event.id)}
+            isThreadParent={isThreadParent}
+          />
+        </div>
+      )
+    }
+
     case "subagent:status_changed":
-      // Subagent lifecycle events belong to the subagent card renderer, never
-      // the generic system-event row the `default` branch would produce.
+      // Patch, not a row: it advances the matching subagent card via
+      // subagentStatusPatches (collected in event-list) — renders nothing.
       return null
 
     case "bot_access:requested": {

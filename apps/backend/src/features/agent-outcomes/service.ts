@@ -4,6 +4,8 @@ import {
   DELEGATION_TERMINAL_STATUSES,
   FOLLOW_UP_STATUSES,
   FOLLOW_UP_TERMINAL_STATUSES,
+  SUBAGENT_STATUSES,
+  SUBAGENT_TERMINAL_STATUSES,
   type AgentOutcomeKind,
   type AgentOutcomeScope,
   type AgentOutcomeState,
@@ -11,6 +13,7 @@ import {
   type DelegationStatus,
   type FollowUpStatus,
   type ListAgentOutcomesResponse,
+  type SubagentStatus,
 } from "@threa/types"
 import { decodeKeysetCursor, encodeKeysetCursor } from "../../lib/keyset-cursor"
 import { AgentOutcomeReadRepository, type AgentOutcomeRow } from "./read-repository"
@@ -35,6 +38,7 @@ export interface ListAgentOutcomesParams {
 
 const FOLLOW_UP_TERMINAL: ReadonlySet<string> = new Set(FOLLOW_UP_TERMINAL_STATUSES)
 const DELEGATION_TERMINAL: ReadonlySet<string> = new Set(DELEGATION_TERMINAL_STATUSES)
+const SUBAGENT_TERMINAL: ReadonlySet<string> = new Set(SUBAGENT_TERMINAL_STATUSES)
 
 /**
  * `state` → the concrete status sets the query filters on. `all` returns
@@ -45,12 +49,14 @@ const DELEGATION_TERMINAL: ReadonlySet<string> = new Set(DELEGATION_TERMINAL_STA
 export function statusesForState(state: AgentOutcomeState): {
   followUpStatuses?: FollowUpStatus[]
   delegationStatuses?: DelegationStatus[]
+  subagentStatuses?: SubagentStatus[]
 } {
   if (state === "all") return {}
   const settled = state === "settled"
   return {
     followUpStatuses: FOLLOW_UP_STATUSES.filter((s) => FOLLOW_UP_TERMINAL.has(s) === settled),
     delegationStatuses: DELEGATION_STATUSES.filter((s) => DELEGATION_TERMINAL.has(s) === settled),
+    subagentStatuses: SUBAGENT_STATUSES.filter((s) => SUBAGENT_TERMINAL.has(s) === settled),
   }
 }
 
@@ -82,9 +88,19 @@ function toSummary(row: AgentOutcomeRow): AgentOutcomeSummary {
     occursAt: row.occursAt.toISOString(),
     anchorEventId: row.anchorEventId,
   }
-  return row.kind === "follow_up"
-    ? { ...base, kind: "follow_up", status: row.status as FollowUpStatus }
-    : { ...base, kind: "delegation", status: row.status as DelegationStatus }
+  switch (row.kind) {
+    case "follow_up":
+      return { ...base, kind: "follow_up", status: row.status as FollowUpStatus }
+    case "delegation":
+      return { ...base, kind: "delegation", status: row.status as DelegationStatus }
+    case "subagent":
+      return {
+        ...base,
+        kind: "subagent",
+        status: row.status as SubagentStatus,
+        lastAgentMessageAt: row.lastAgentMessageAt,
+      }
+  }
 }
 
 /**

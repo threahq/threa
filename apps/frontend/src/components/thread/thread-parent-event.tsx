@@ -1,12 +1,22 @@
 import { Separator } from "@/components/ui/separator"
 import { EventItem } from "@/components/timeline"
-import type { StreamEvent } from "@threa/types"
+import type { MessageAgentActivity } from "@/hooks"
+import type { StreamEvent, SubagentSummary } from "@threa/types"
 
 interface ThreadParentEventProps {
   event: StreamEvent
   workspaceId: string
   streamId: string
   replyCount: number
+  /**
+   * A card anchor's live state, when the panel's host resolved it. Card anchors
+   * are patched by later events in the PARENT stream, which the panel does not
+   * load — without these the card renders its create-time face forever, which
+   * for a subagent means claiming a finished run is still working.
+   */
+  subagentStatusPatches?: Map<string, StreamEvent>
+  subagentRunFallback?: SubagentSummary
+  agentActivity?: Map<string, MessageAgentActivity>
 }
 
 /**
@@ -19,14 +29,31 @@ interface ThreadParentEventProps {
  * would otherwise loop back to the panel already open).
  * A card outside its patch window renders pre-patch (its `call_ended` /
  * `delegation:status_changed` isn't fetched into the panel) — accepted, the
- * parent timeline is authoritative.
+ * parent timeline is authoritative. A subagent card is the exception: its thread
+ * IS this panel, so the host resolves the run's state and passes it in.
  */
-export function ThreadParentEvent({ event, workspaceId, streamId, replyCount }: ThreadParentEventProps) {
+export function ThreadParentEvent({
+  event,
+  workspaceId,
+  streamId,
+  replyCount,
+  subagentStatusPatches,
+  subagentRunFallback,
+  agentActivity,
+}: ThreadParentEventProps) {
   return (
     <div className="border-b">
       <div className="pt-4 pb-2">
         <div className="mx-auto max-w-[800px] w-full min-w-0">
-          <EventItem event={event} workspaceId={workspaceId} streamId={streamId} isThreadParent />
+          <EventItem
+            event={event}
+            workspaceId={workspaceId}
+            streamId={streamId}
+            isThreadParent
+            subagentStatusPatches={subagentStatusPatches}
+            subagentRunFallback={subagentRunFallback}
+            agentActivity={agentActivity}
+          />
         </div>
       </div>
       <Separator />

@@ -4,6 +4,7 @@ import { useLocation, useNavigationType, useSearchParams } from "react-router-do
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
@@ -31,6 +32,7 @@ import {
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
+import { useSubagentRun } from "@/hooks/use-subagent-run"
 import {
   useSocket,
   useCoordinatedLoading,
@@ -73,6 +75,8 @@ import {
   type StreamBootstrap,
   type ConversationWithStaleness,
   type DelegationStatusChangedEventPayload,
+  type SubagentCreatedEventPayload,
+  type SubagentStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
   type UnreadOpenPosition,
@@ -91,6 +95,7 @@ import {
   findFirstMessageId,
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
+  collectSubagentStatusPatches,
   collectBotAccessStatusPatches,
   collectCallEndedPatches,
   findMessageItemIndex,
@@ -862,8 +867,76 @@ export function StreamContent({
     localAnchorEvent
   )
 
+  // This stream's own anchor card, when the stream IS a subagent's thread.
+  const subagentAnchorPayload = useMemo<SubagentCreatedEventPayload | null>(
+    () =>
+      isThread && anchorEvent?.eventType === "subagent:created"
+        ? (anchorEvent.payload as SubagentCreatedEventPayload)
+        : null,
+    [isThread, anchorEvent]
+  )
+
+  // The run's LATEST status patch — by sequence, never "the latest terminal
+  // one": a requeue appends an `active` patch AFTER a terminal one, and reading
+  // the terminal row would close the badge window permanently, so every message
+  // of the restarted run would lose its model badge.
+  const subagentStatusPatchEvent = useMemo(() => {
+    if (!subagentAnchorPayload) return undefined
+    const matching = (parentCachedEvents ?? []).filter(
+      (event) =>
+        event.eventType === "subagent:status_changed" &&
+        (event.payload as SubagentStatusChangedEventPayload).subagentId === subagentAnchorPayload.subagentId
+    )
+    return orderStreamEvents(matching).at(-1)
+  }, [subagentAnchorPayload, parentCachedEvents])
+
+  // A thread opened by deep link has no parent stream cached at all, so the
+  // patches above cannot exist — the run row is the only authority left, and
+  // without it a finished run reads as open and badges every message posted
+  // after it closed. Gated so the loaded-window path stays fetch-free.
+  const { data: subagentRunFallback } = useSubagentRun(workspaceId, subagentAnchorPayload?.subagentId ?? null, {
+    enabled: !!subagentAnchorPayload && !subagentStatusPatchEvent,
+  })
+
+  // The run's state as two primitives, so the window below keeps one identity
+  // across every unrelated parent event: `parentCachedEvents` gets a new array
+  // per data tick, and the row comparator repaints EVERY message row when the
+  // run object changes.
+  const subagentSettledStatus =
+    (subagentStatusPatchEvent?.payload as SubagentStatusChangedEventPayload | undefined)?.status ??
+    subagentRunFallback?.status
+  const subagentSettledAt = subagentStatusPatchEvent?.createdAt ?? subagentRunFallback?.statusChangedAt ?? undefined
+
+  // The run's badge window: same persona, different brain, between these marks.
+  const subagentThreadRun = useMemo<SubagentThreadRun | null>(() => {
+    if (!subagentAnchorPayload || !anchorEvent) return null
+    return resolveSubagentThreadRun({
+      card: { createdAt: anchorEvent.createdAt, payload: subagentAnchorPayload },
+      orderedPatches:
+        subagentSettledStatus && subagentSettledAt ? [{ at: subagentSettledAt, status: subagentSettledStatus }] : [],
+    })
+  }, [subagentAnchorPayload, anchorEvent, subagentSettledStatus, subagentSettledAt])
+
+  // The pinned anchor card renders through the same `EventItem` as the timeline,
+  // so it needs the inputs the parent stream would have given it — otherwise it
+  // sits on `active` forever, telling a reader whose run finished days ago that
+  // it is still working.
+  const subagentThreadParentPatches = useMemo(() => {
+    const patches = new Map<string, StreamEvent>()
+    if (subagentAnchorPayload && subagentStatusPatchEvent) {
+      patches.set(subagentAnchorPayload.subagentId, subagentStatusPatchEvent as unknown as StreamEvent)
+    }
+    return patches
+  }, [subagentAnchorPayload, subagentStatusPatchEvent])
+
   // Subscribe to stream room FIRST (subscribe-then-bootstrap pattern)
   useStreamSocket(workspaceId, streamId, { enabled: !isDraft })
+  // The pinned subagent card lives on status patches that land in the PARENT
+  // stream. A viewer here through root access alone (INV-62) has no membership
+  // subscription to that parent, so subscribe it while the card is up (INV-53).
+  useStreamSocket(workspaceId, parentStreamId ?? "", {
+    enabled: !isDraft && !!subagentAnchorPayload && !!parentStreamId,
+  })
 
   const {
     events,
@@ -928,6 +1001,17 @@ export function StreamContent({
   // thread-panel StreamContent (mounted outside the open stream's provider).
   const publishAgentActivitySummary = usePublishAgentActivitySummary()
   const agentActivitySummary = useMemo(() => buildAgentActivitySummary(agentActivity, events), [agentActivity, events])
+
+  // The pinned card reads its activity under its OWN event id — the alias the
+  // parent stream's map carries. In a subagent's thread any live session IS that
+  // run's turn (an active run is the only thing dispatched there), so aliasing it
+  // is what makes the pinned card show the spinner exactly while one is running.
+  const subagentThreadParentActivity = useMemo(() => {
+    const aliased = new Map<string, MessageAgentActivity>()
+    const live = agentActivity.values().next().value
+    if (subagentThreadRun && anchorEvent && live) aliased.set(anchorEvent.id, live)
+    return aliased
+  }, [subagentThreadRun, anchorEvent, agentActivity])
   useEffect(() => {
     publishAgentActivitySummary(agentActivitySummary)
   }, [agentActivitySummary, publishAgentActivitySummary])
@@ -1020,6 +1104,18 @@ export function StreamContent({
       }
     )
   }, [events, isThread])
+
+  // The parent header's reply count: only live reply messages. The window also
+  // holds session cards and other broadcast rows — counting those would claim
+  // more replies than the thread renders.
+  const threadReplyCount = useMemo(
+    () =>
+      displayEvents.filter((event) => {
+        if (event.eventType !== "message_created") return false
+        return !(event.payload as { deletedAt?: string }).deletedAt
+      }).length,
+    [displayEvents]
+  )
 
   // See remapSuppressedWatermark: a fresh thread member's watermark sits on a
   // membership event that threads hide from the rendered window; the auto-read
@@ -1507,6 +1603,13 @@ export function StreamContent({
   // patches to render the authoritative live status on the virtualized path.
   const delegationStatusPatches = useMemo(
     () => timeDerive(() => collectDelegationStatusPatches(timelineItems)),
+    [timelineItems]
+  )
+  // Same full-window read for subagent status patches (zero-height, filtered out
+  // of `visibleItems`): the card must see the run's transitions — and the
+  // `lastAgentMessageAt` that makes "waiting for you" true — on the virtualized path.
+  const subagentStatusPatches = useMemo(
+    () => timeDerive(() => collectSubagentStatusPatches(timelineItems)),
     [timelineItems]
   )
   // Same full-window read for bot-access request status patches (zero-height,
@@ -2990,6 +3093,8 @@ export function StreamContent({
                           visibleItems={visibleItems}
                           cancelledFollowUpIds={cancelledFollowUpIds}
                           delegationStatusPatches={delegationStatusPatches}
+                          subagentStatusPatches={subagentStatusPatches}
+                          subagentThreadRun={subagentThreadRun}
                           botAccessStatusPatches={botAccessStatusPatches}
                           callEndedPatches={callEndedPatches}
                           viewerIsMember={isMember}
@@ -3080,7 +3185,10 @@ export function StreamContent({
                               event={anchorEvent}
                               workspaceId={workspaceId}
                               streamId={parentStreamId}
-                              replyCount={displayEvents.length}
+                              replyCount={threadReplyCount}
+                              subagentStatusPatches={subagentThreadParentPatches}
+                              subagentRunFallback={subagentRunFallback}
+                              agentActivity={subagentThreadParentActivity}
                             />
                           )}
                           {isFetchingOlder && (
@@ -3098,6 +3206,7 @@ export function StreamContent({
                             isDividerDimmed={isDividerDimmed}
                             agentActivity={agentActivity}
                             hideSessionCards={isChannel}
+                            subagentThreadRun={subagentThreadRun}
                             newMessageIds={newMessageIds}
                             viewerIsMember={isMember}
                             batch={batchState}
@@ -3264,6 +3373,8 @@ function TimelineMessageList({
   visibleItems,
   cancelledFollowUpIds,
   delegationStatusPatches,
+  subagentStatusPatches,
+  subagentThreadRun,
   botAccessStatusPatches,
   callEndedPatches,
   viewerIsMember,
@@ -3305,6 +3416,8 @@ function TimelineMessageList({
   visibleItems: TimelineItem[]
   cancelledFollowUpIds: Set<string>
   delegationStatusPatches: Map<string, DelegationStatusChangedEventPayload>
+  subagentStatusPatches: Map<string, StreamEvent>
+  subagentThreadRun: SubagentThreadRun | null
   botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
   callEndedPatches: Map<string, CallEndedEventPayload>
   /** True when the viewer is a member — gates the bot-access card's Approve/Deny. */
@@ -3430,6 +3543,8 @@ function TimelineMessageList({
       onSteerSession: steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
+      subagentStatusPatches,
+      subagentThreadRun,
       botAccessStatusPatches,
       callEndedPatches,
       viewerIsMember,
@@ -3452,6 +3567,8 @@ function TimelineMessageList({
       steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
+      subagentStatusPatches,
+      subagentThreadRun,
       botAccessStatusPatches,
       callEndedPatches,
       viewerIsMember,

@@ -1,9 +1,16 @@
 import type { AgentOutcomeKind, AgentOutcomeSummary } from "@threa/types"
 import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL, delegationStatusPillClass } from "@/lib/delegation-display"
 import { FOLLOW_UP_STATUS_LABEL, FOLLOW_UP_TERMINAL, followUpStatusPillClass } from "@/lib/follow-up-display"
+import {
+  resolveSubagentCardState,
+  subagentFailureLabel,
+  subagentStatePillClass,
+  SUBAGENT_STATE_LABEL,
+  SUBAGENT_TERMINAL,
+} from "@/lib/subagent-display"
 
 /**
- * The render shape both outcome kinds collapse to. The wire carries no display
+ * The render shape every outcome kind collapses to. The wire carries no display
  * text (INV-46), so the labels and pill classes come from the two display
  * modules the panel and the timeline cards already share.
  */
@@ -38,6 +45,14 @@ export interface OutcomeItem {
 export const OUTCOME_KIND_LABEL: Record<AgentOutcomeKind, string> = {
   follow_up: "Follow-up",
   delegation: "Delegation",
+  subagent: "Subagent",
+}
+
+/** The same nouns, plural — filter chips and empty-state copy read this one map. */
+export const OUTCOME_KIND_PLURAL: Record<AgentOutcomeKind, string> = {
+  follow_up: "Follow-ups",
+  delegation: "Delegations",
+  subagent: "Subagents",
 }
 
 export function outcomeAnchorPath(workspaceId: string, outcome: AgentOutcomeSummary): string | null {
@@ -45,32 +60,64 @@ export function outcomeAnchorPath(workspaceId: string, outcome: AgentOutcomeSumm
   return `/w/${workspaceId}/s/${outcome.streamId}?m=${outcome.anchorEventId}`
 }
 
+/** Status label, pill and settled-ness, per kind. Every kind reads its own display module. */
+function statusFace(outcome: AgentOutcomeSummary): { label: string; pillClass: string; settled: boolean } {
+  switch (outcome.kind) {
+    case "follow_up":
+      return {
+        label: FOLLOW_UP_STATUS_LABEL[outcome.status],
+        pillClass: followUpStatusPillClass(outcome.status),
+        settled: FOLLOW_UP_TERMINAL.has(outcome.status),
+      }
+    case "delegation":
+      return {
+        label: DELEGATION_STATUS_LABEL[outcome.status],
+        pillClass: delegationStatusPillClass(outcome.status),
+        settled: DELEGATION_TERMINAL.has(outcome.status),
+      }
+    case "subagent": {
+      // This read carries no live-session signal, so an active run can only
+      // resolve to `waiting` (the subagent spoke last) or `starting` — never the
+      // animated `working`, which needs a session behind it.
+      const state = resolveSubagentCardState({
+        status: outcome.status,
+        hasLiveSession: false,
+        lastAgentMessageAt: outcome.lastAgentMessageAt,
+      })
+      return {
+        label: SUBAGENT_STATE_LABEL[state],
+        pillClass: subagentStatePillClass(state),
+        settled: SUBAGENT_TERMINAL.has(outcome.status),
+      }
+    }
+  }
+}
+
 export function toOutcomeItem(workspaceId: string, outcome: AgentOutcomeSummary): OutcomeItem {
-  const settled =
-    outcome.kind === "follow_up" ? FOLLOW_UP_TERMINAL.has(outcome.status) : DELEGATION_TERMINAL.has(outcome.status)
+  const face = statusFace(outcome)
 
   return {
     id: outcome.id,
     kind: outcome.kind,
     streamId: outcome.streamId,
     title: outcome.title,
-    statusLabel:
-      outcome.kind === "follow_up" ? FOLLOW_UP_STATUS_LABEL[outcome.status] : DELEGATION_STATUS_LABEL[outcome.status],
-    statusPillClass:
-      outcome.kind === "follow_up"
-        ? followUpStatusPillClass(outcome.status)
-        : delegationStatusPillClass(outcome.status),
-    isSettled: settled,
+    statusLabel: face.label,
+    statusPillClass: face.pillClass,
+    isSettled: face.settled,
     occursAt: outcome.occursAt,
     scheduledFor: outcome.scheduledFor,
     claimedByLabel: outcome.claimedByLabel,
-    statusNote: outcome.statusNote,
+    // A subagent's note is a reason CODE on the wire (INV-46) — words happen here.
+    statusNote: outcome.kind === "subagent" ? subagentFailureLabel(outcome.statusNote) : outcome.statusNote,
     createdAt: outcome.createdAt,
     statusChangedAt: outcome.statusChangedAt,
     anchorPath: outcomeAnchorPath(workspaceId, outcome),
-    canCancel: !settled,
+    // A subagent's cancel/restart live on its timeline card, which "Open in
+    // stream" reaches; wiring a second caller for the same two endpoints here
+    // would be a parallel path (INV-37).
+    canCancel: outcome.kind !== "subagent" && !face.settled,
     canRequeue: outcome.kind === "delegation" && outcome.status === "expired",
-    canMarkDone: outcome.kind === "delegation" && !settled,
+    canMarkDone: outcome.kind === "delegation" && !face.settled,
   }
 }
 

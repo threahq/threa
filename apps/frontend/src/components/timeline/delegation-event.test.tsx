@@ -379,6 +379,7 @@ describe("DelegationEvent", () => {
       sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: collectDelegationStatusPatches(patches),
+      subagentStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
       callEndedPatches: new Map(),
     })

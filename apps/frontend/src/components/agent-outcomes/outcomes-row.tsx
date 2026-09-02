@@ -1,10 +1,16 @@
-import { TerminalSquare, Timer } from "lucide-react"
+import { Bot, TerminalSquare, Timer, type LucideIcon } from "lucide-react"
 import { usePreferences } from "@/contexts"
 import { useFormattedDate } from "@/hooks"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { formatFutureTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import type { OutcomeItem } from "@/lib/agent-outcomes/items"
+
+const KIND_ICON: Record<OutcomeItem["kind"], LucideIcon> = {
+  follow_up: Timer,
+  delegation: TerminalSquare,
+  subagent: Bot,
+}
 
 interface OutcomesRowProps {
   workspaceId: string
@@ -27,7 +33,7 @@ export function OutcomesRow({ workspaceId, item, isSelected, onSelect }: Outcome
       ? formatFutureTime(occursAt, now, { timeFormat: preferences?.timeFormat })
       : formatRelative(occursAt, now, { terse: true })
 
-  const Icon = item.kind === "follow_up" ? Timer : TerminalSquare
+  const Icon = KIND_ICON[item.kind]
 
   return (
     <button

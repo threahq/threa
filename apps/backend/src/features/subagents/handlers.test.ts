@@ -59,6 +59,42 @@ function makeHandlers(subagentService: Partial<SubagentService>) {
   return createSubagentHandlers({ pool: {} as Pool, subagentService: subagentService as SubagentService })
 }
 
+describe("subagent read handler", () => {
+  afterEach(() => mock.restore())
+
+  it("returns the run as the wire shape, and hides one the viewer cannot reach", async () => {
+    const access = spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_1" } as never)
+    const handlers = makeHandlers({ getById: mock(async () => makeRun({ status: SubagentStatuses.COMPLETED })) })
+
+    const ok = createResponse()
+    await handlers.get(makeRequest(), ok.res)
+    expect(ok.payloads[0]).toEqual({
+      subagent: {
+        id: "subagent_1",
+        parentStreamId: "stream_1",
+        threadStreamId: "stream_thread_1",
+        cardEventId: "event_1",
+        personaId: "persona_system_ariadne",
+        model: "openrouter:openai/gpt-5.6-terra",
+        title: "Second opinion on the migration plan",
+        status: SubagentStatuses.COMPLETED,
+        statusNote: null,
+        resultMessageId: null,
+        createdAt: NOW.toISOString(),
+        statusChangedAt: NOW.toISOString(),
+      },
+    })
+    // The brief never crosses: it is the delegation prompt, not card state.
+    expect(JSON.stringify(ok.payloads[0])).not.toContain("Review the plan")
+
+    access.mockResolvedValue(null as never)
+    await expect(handlers.get(makeRequest(), createResponse().res)).rejects.toMatchObject({
+      status: 404,
+      code: "SUBAGENT_NOT_FOUND",
+    })
+  })
+})
+
 describe("subagent cancel handler", () => {
   afterEach(() => mock.restore())
 

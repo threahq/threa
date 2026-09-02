@@ -1,4 +1,5 @@
 import { AlertCircle, Filter, Inbox } from "lucide-react"
+import { OUTCOME_KIND_PLURAL } from "@/lib/agent-outcomes/items"
 import { Button } from "@/components/ui/button"
 import type { OutcomesFilters } from "./use-outcomes-url-state"
 
@@ -11,8 +12,6 @@ interface OutcomesEmptyProps {
   onWidenScope?: () => void
 }
 
-const KIND_NOUN = { follow_up: "follow-ups", delegation: "delegations" } as const
-
 const CHROME: Record<EmptyKind, { icon: typeof Inbox; accent: string }> = {
   empty: { icon: Inbox, accent: "bg-primary/10 text-primary" },
   "filtered-empty": { icon: Filter, accent: "bg-muted text-muted-foreground" },
@@ -22,7 +21,7 @@ const CHROME: Record<EmptyKind, { icon: typeof Inbox; accent: string }> = {
 const FIXED_COPY: Record<"empty" | "error", { title: string; body: string }> = {
   empty: {
     title: "Nothing scheduled yet",
-    body: "Follow-ups your companion schedules and tasks it delegates show up here.",
+    body: "Follow-ups your companion schedules, tasks it delegates, and models it hands work to show up here.",
   },
   error: {
     title: "Couldn't load the agenda",
@@ -31,7 +30,7 @@ const FIXED_COPY: Record<"empty" | "error", { title: string; body: string }> = {
 }
 
 function filteredCopy(filters: OutcomesFilters): { title: string; body: string } {
-  const noun = filters.kind ? KIND_NOUN[filters.kind] : "follow-ups or delegations"
+  const noun = filters.kind ? OUTCOME_KIND_PLURAL[filters.kind].toLowerCase() : "outcomes"
   if (filters.queryText.trim()) {
     return { title: "No matches", body: `No ${noun} match “${filters.queryText.trim()}” in this scope.` }
   }

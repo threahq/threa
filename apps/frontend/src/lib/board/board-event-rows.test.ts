@@ -445,6 +445,21 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
       payload: { delegationId: "dlg_fixture", title: "Fixture", sourceConversationId: CONV },
     }),
   ],
+  "subagent:created": [
+    cachedEvent({
+      eventType: "subagent:created",
+      createdAt: "2026-07-04T10:00:00Z",
+      payload: {
+        subagentId: "subagent_fixture",
+        title: "Fixture",
+        model: "openrouter:anthropic/claude-opus-5",
+        personaId: "persona_ariadne",
+        threadStreamId: "stream_subagent_fixture",
+        createdBy: USER,
+        sourceConversationId: CONV,
+      },
+    }),
+  ],
   "aside:anchored": [
     cachedEvent({
       eventType: "aside:anchored",
@@ -478,6 +493,7 @@ describe("resolveBoardEventRows covers every spec-declared board row type", () =
       "memos:captured": ["memo"],
       "agent:follow_up_scheduled": ["followUp"],
       "delegation:created": ["delegation"],
+      "subagent:created": ["subagent"],
       "aside:anchored": ["aside"],
       command_dispatched: ["command"],
       command_completed: ["command"],

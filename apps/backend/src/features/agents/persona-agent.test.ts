@@ -499,6 +499,7 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
       fromModel: SONNET,
       toModel: OPUS,
       cause: "previous_attempt_failed_validation",
+      personaId: PERSONA_ID,
     })
     // This turn produced a valid revision, so it must not carry the marker forward.
     expect(markResponseValidationFailed).not.toHaveBeenCalled()
