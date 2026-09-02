@@ -260,7 +260,7 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 | Event sourcing          | `stream_events` as append-only log, `messages` as read projection                |
 | AI wrapper (`createAI`) | Unified interface over Vercel AI SDK + LangChain, with cost tracking and budgets |
 
-**Feature domains:** messaging, streams, agents (companion/persona/researcher), memos (GAM), search (semantic + text), attachments, conversations, invitations, activity feed, commands, emoji, AI usage tracking, user preferences, workspaces.
+**Feature domains:** messaging, streams, agents (companion/persona/researcher), subagents (a thread pinned to a stronger model; `SubagentService`, `subagent_runs`, `subagent:created` / `subagent:status_changed` events), memos (GAM), search (semantic + text), attachments, conversations, invitations, activity feed, commands, emoji, AI usage tracking, user preferences, workspaces.
 
 ---
 

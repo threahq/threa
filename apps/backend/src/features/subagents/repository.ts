@@ -225,9 +225,9 @@ export const SubagentRunRepository = {
    * CAS `active → failed` for whichever run owns this thread — the session
    * failure path knows the stream it died in, never the run id. Returns `null`
    * when the thread has no live run (the ordinary case for every other stream).
-   * `runId` narrows the CAS to one specific run: a stale kickoff job that
-   * dead-letters after a fail → requeue must not flip the freshly re-activated
-   * run it no longer belongs to.
+   * `runId` pins the CAS to the run the caller observed. A requeue re-activates
+   * the same row, so this does not distinguish a run from its own restart — a
+   * kickoff job that outlives a fail → requeue can still settle the restart.
    */
   async failByThreadStreamId(
     db: Querier,
@@ -269,12 +269,25 @@ export const SubagentRunRepository = {
         AND id IN (
           SELECT id FROM subagent_runs
           WHERE status = ${SubagentStatuses.ACTIVE}
-            AND status_changed_at <= NOW() - (${params.idleDays} || ' days')::interval
+            AND updated_at <= NOW() - (${params.idleDays} || ' days')::interval
           LIMIT ${params.limit}
         )
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows.map(mapRow)
+  },
+
+  /**
+   * Stamp activity on a live run so the idle sweep measures silence, not age:
+   * `updated_at` is the row's last write, and the subagent speaking is one.
+   */
+  async touchActive(db: Querier, params: { workspaceId: string; id: string }): Promise<void> {
+    await db.query(sql`
+      UPDATE subagent_runs SET updated_at = NOW()
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND status = ${SubagentStatuses.ACTIVE}
+    `)
   },
 
   /**

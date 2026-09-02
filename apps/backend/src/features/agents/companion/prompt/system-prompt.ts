@@ -90,7 +90,7 @@ export interface SystemPromptInputs {
    * delegated this" section, which is the turn's ONLY instruction — the thread
    * it wakes in is empty.
    */
-  subagentBrief?: { title: string; brief: string; parentStreamId: string } | null
+  subagentBrief?: { title: string } | null
   previousSessions?: string | null
   streamBrief?: string | null
   styleSlots?: { tone?: string; brevity?: string }

@@ -533,11 +533,21 @@ describe("failure, expiry and requeue", () => {
   test("the sweep expires runs idle past the threshold and leaves fresh ones alone", async () => {
     const idleChannel = await ctx.createChannel({ slug: "sweep-idle" })
     const freshChannel = await ctx.createChannel({ slug: "sweep-fresh" })
+    const spokeChannel = await ctx.createChannel({ slug: "sweep-spoke" })
     const idle = await subagentService.create(createParams(ctx, idleChannel.id))
     const fresh = await subagentService.create(createParams(ctx, freshChannel.id))
-    await pool.query(`UPDATE subagent_runs SET status_changed_at = NOW() - interval '8 days' WHERE id = $1`, [
-      idle.run.id,
-    ])
+    const spoke = await subagentService.create(createParams(ctx, spokeChannel.id))
+    await pool.query(
+      `UPDATE subagent_runs SET status_changed_at = NOW() - interval '8 days', updated_at = NOW() - interval '8 days' WHERE id = ANY($1)`,
+      [[idle.run.id, spoke.run.id]]
+    )
+    // Idle means silent, not old: an 8-day-old run whose subagent spoke since
+    // stays live for the reader it is waiting on.
+    await subagentService.noteAgentSpokeInTransaction(pool, {
+      workspaceId: ctx.workspaceId,
+      threadStreamId: spoke.run.threadStreamId,
+      at: new Date(),
+    })
 
     const sweep = createSubagentExpirySweep(subagentService, { intervalMs: 3_600_000 })
     sweep.start()
@@ -551,6 +561,9 @@ describe("failure, expiry and requeue", () => {
     }
 
     expect(await subagentService.getById({ workspaceId: ctx.workspaceId, id: fresh.run.id })).toMatchObject({
+      status: SubagentStatuses.ACTIVE,
+    })
+    expect(await subagentService.getById({ workspaceId: ctx.workspaceId, id: spoke.run.id })).toMatchObject({
       status: SubagentStatuses.ACTIVE,
     })
     const patches = await statusEvents(idleChannel.id)

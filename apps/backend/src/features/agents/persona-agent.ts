@@ -280,6 +280,7 @@ export interface PersonaAgentDeps {
    */
   loadActiveSubagentRun?: (params: { workspaceId: string; threadStreamId: string }) => Promise<{
     id: string
+    personaId: string
     model: string
     title: string
     brief: string
@@ -560,12 +561,16 @@ export class PersonaAgent {
 
     // The live subagent run this stream is the thread of, if any. One query,
     // and only for threads — every other stream kind is one by construction.
-    // Everything downstream keys off this: the pinned model, the report_back /
-    // start_subagent binding, and the kickoff brief.
-    const activeSubagentRun =
+    const threadSubagentRun =
       stream.type === StreamTypes.THREAD && loadActiveSubagentRun
         ? await loadActiveSubagentRun({ workspaceId, threadStreamId: streamId })
         : null
+    // The run binds only the persona it was delegated to: the pinned model,
+    // report_back, the spoke stamp and the failure hook. Another persona
+    // @mentioned into the thread answers on its own model and cannot close a
+    // run it never held — the card's "done" would point at an answer the
+    // delegated model never wrote. Nesting is blocked by the thread itself.
+    const activeSubagentRun = threadSubagentRun?.personaId === persona.id ? threadSubagentRun : null
 
     // A fired follow-up has no trigger message (synthetic `messageId`); load its
     // row so the turn can be told it IS the scheduled check-in firing (roadmap
@@ -592,12 +597,25 @@ export class PersonaAgent {
     // degrades to a plain catch-up below.
     const subagentKickoffBrief =
       purpose.kind === "subagent_kickoff" && activeSubagentRun?.id === purpose.subagentRunId
-        ? {
-            title: activeSubagentRun.title,
-            brief: activeSubagentRun.brief,
-            parentStreamId: activeSubagentRun.parentStreamId,
-          }
+        ? { title: activeSubagentRun.title, brief: activeSubagentRun.brief }
         : undefined
+    // A kickoff whose run stopped being live while the job waited (cancelled,
+    // settled, failed and re-queued under a new job) has nothing to wake on:
+    // the thread is empty, so there is no catch-up to degrade to, and the
+    // provider refuses an empty history.
+    if (purpose.kind === "subagent_kickoff" && !subagentKickoffBrief) {
+      logger.info(
+        { workspaceId, streamId, personaId: persona.id, subagentRunId: purpose.subagentRunId },
+        "Subagent kickoff skipped: the run is no longer active for this persona"
+      )
+      return {
+        sessionId: null,
+        messagesSent: 0,
+        sentMessageIds: [],
+        status: "skipped",
+        skipReason: "subagent_run_not_active",
+      }
+    }
 
     const sessionOptions = (targetStreamId: string, targetInitialSequence: bigint) => ({
       pool,
@@ -788,7 +806,7 @@ export class PersonaAgent {
             policy,
             currentTime,
             followUp: followUpContext,
-            subagentBrief: subagentKickoffBrief,
+            subagentBrief: subagentKickoffBrief ? { title: subagentKickoffBrief.title } : undefined,
             // A kickoff has no trigger message, so the run's `createdBy` is the
             // invoking user — already re-checked against `assertStreamWritable`
             // above as this turn's principal.
@@ -912,7 +930,6 @@ export class PersonaAgent {
         let effectivePurpose: TurnPurpose = purpose
         if (purpose.kind === "supersede_rerun" && !isSupersedeRerun) effectivePurpose = { kind: "catch_up" }
         else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
-        else if (purpose.kind === "subagent_kickoff" && !subagentKickoffBrief) effectivePurpose = { kind: "catch_up" }
         const turnFlags = deriveTurnFlags(effectivePurpose)
 
         // Per-turn model resolution (roadmap 2.3), at the dispatch seam like
@@ -1179,7 +1196,7 @@ export class PersonaAgent {
           wired: Boolean(delegateToModel && loadSubagentModels),
           invokingUserId: subagentUserId,
           e2eEnabled: stream.e2eEnabled === true,
-          insideSubagentThread: activeSubagentRun !== null,
+          insideSubagentThread: threadSubagentRun !== null,
         })
         const subagentModels =
           offerSubagentDelegation && loadSubagentModels ? await loadSubagentModels({ workspaceId }) : []

@@ -290,6 +290,7 @@ export class SubagentService {
       actorType: AuthorTypes.PERSONA,
       lastAgentMessageAt: params.at,
     })
+    await SubagentRunRepository.touchActive(client, { workspaceId: params.workspaceId, id: run.id })
     return run
   }
 

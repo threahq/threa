@@ -241,6 +241,7 @@ async function runSupersedeRerun(params: {
   const capturedVolatilePrompts: string[] = []
   const capturedStablePrompts: string[] = []
   const capturedMessages: Array<Array<{ role: string; content: unknown }>> = []
+  const capturedToolNames: string[][] = []
   const ai = {
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
@@ -249,9 +250,11 @@ async function runSupersedeRerun(params: {
       system?: string
       volatileSystem?: string
       messages?: Array<{ role: string; content: unknown }>
+      tools?: Record<string, unknown>
     }) => {
       const turn = capturedModelStrings.length
       capturedModelStrings.push(opts.modelString ?? "unknown")
+      capturedToolNames.push(Object.keys(opts.tools ?? {}))
       capturedVolatilePrompts.push(opts.volatileSystem ?? "")
       capturedStablePrompts.push(opts.system ?? "")
       capturedMessages.push(opts.messages ?? [])
@@ -336,6 +339,7 @@ async function runSupersedeRerun(params: {
     capturedVolatilePrompts,
     capturedStablePrompts,
     capturedMessages,
+    capturedToolNames,
     escalationSteps,
     markResponseValidationFailed,
     createMessage,
@@ -427,6 +431,52 @@ describe("PersonaAgent subagent kickoff", () => {
     expect(first?.role).toBe("user")
     expect(String(first?.content)).toContain("Plan the identification search")
     expect(String(first?.content)).toContain("Find the TV host who alighted at Nacka strand this morning.")
+  })
+
+  it("skips a kickoff whose run is no longer active instead of calling the provider on an empty thread", async () => {
+    const { result, capturedModelStrings } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      subagentRun: undefined,
+      streamOverride: { type: StreamTypes.THREAD, rootStreamId: PARENT_STREAM_ID, parentStreamId: PARENT_STREAM_ID },
+      purpose: { kind: "subagent_kickoff", subagentRunId: "subagent_run_gone" },
+    })
+
+    expect(result).toMatchObject({ status: "skipped", skipReason: "subagent_run_not_active" })
+    expect(capturedModelStrings).toEqual([])
+  })
+
+  it("leaves another persona in the thread on its own model, without the run's report_back", async () => {
+    const run: SubagentRun = {
+      id: "subagent_run_1",
+      workspaceId: WORKSPACE_ID,
+      parentStreamId: PARENT_STREAM_ID,
+      scopeStreamId: PARENT_STREAM_ID,
+      parentSessionId: null,
+      triggerMessageId: null,
+      cardEventId: "event_card_1",
+      threadStreamId: STREAM_ID,
+      personaId: "persona_someone_else",
+      model: OPUS,
+      createdBy: "usr_1",
+      title: "Plan the identification search",
+      brief: "Find the TV host.",
+      status: "active",
+      statusNote: null,
+      resultMessageId: null,
+      createdAt: new Date("2026-09-01T00:00:00Z"),
+      updatedAt: new Date("2026-09-01T00:00:00Z"),
+      statusChangedAt: new Date("2026-09-01T00:00:00Z"),
+    }
+
+    const { result, capturedModelStrings, capturedToolNames } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      subagentRun: run,
+      streamOverride: { type: StreamTypes.THREAD, rootStreamId: PARENT_STREAM_ID, parentStreamId: PARENT_STREAM_ID },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedModelStrings).toEqual([SONNET])
+    expect(capturedToolNames[0]).not.toContain("report_back")
   })
 })
 

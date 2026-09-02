@@ -25,8 +25,12 @@ interface EarlyPurposeContext {
   mentionerName?: string
   /** The note the fired follow-up carried; present only for a follow-up turn. */
   followUp?: { note: string; scheduledFor: Date } | null
-  /** The brief a subagent kickoff turn wakes up on; present only for that kind. */
-  subagentBrief?: { title: string; brief: string; parentStreamId: string } | null
+  /**
+   * The title of the hand-off a subagent kickoff turn wakes on; present only
+   * for that kind. The brief body never enters the prompt — it opens the model
+   * history as the first user message.
+   */
+  subagentBrief?: { title: string } | null
 }
 
 export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurposeContext): string {
@@ -88,7 +92,7 @@ This turn is a follow-up you scheduled for yourself — not a new message from a
 - If nothing needs saying (the matter resolved itself, nothing changed, or you're still waiting on someone), call \`keep_response\` with a brief reason and stay silent. Do not post filler.`
 }
 
-function buildSubagentKickoffSection(subagent: { title: string; brief: string; parentStreamId: string }): string {
+function buildSubagentKickoffSection(subagent: { title: string }): string {
   return `
 
 ## You were delegated this

@@ -23,10 +23,6 @@ describe("Ariadne built-in config", () => {
   })
 
   it("can start a subagent", () => {
-    // The whole subagent feature hangs off this one enablement: the tool-set
-    // gates start_subagent on the persona's enabledTools, so a default Ariadne
-    // without it has the entire lifecycle shipped and unreachable — which is
-    // exactly how it first shipped, caught only by hands-on use.
     expect(BUILT_IN_AGENTS[ARIADNE_AGENT_ID].enabledTools).toContain(AgentToolNames.START_SUBAGENT)
   })
 

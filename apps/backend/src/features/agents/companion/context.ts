@@ -70,7 +70,7 @@ export interface ContextParams {
    * persona wrote. Drives the "You were delegated this" prompt section — the
    * turn's only instruction, since the thread it wakes in is empty.
    */
-  subagentBrief?: { title: string; brief: string; parentStreamId: string }
+  subagentBrief?: { title: string }
   /**
    * The human this turn acts for when no trigger message names one — a subagent
    * kickoff wakes in an empty thread, and its authority is the user who was
