@@ -81,6 +81,13 @@ export interface PersonaAgentJobData {
    * the saved override, so the admin talks to the persona they're editing.
    */
   personaDraftId?: string
+  /**
+   * Set when this job is the kickoff turn of a subagent run. `messageId` is
+   * synthetic (no trigger message); `resolveTurnPurpose` maps this to a
+   * `subagent_kickoff` turn, which injects the run's brief as its wake-up
+   * context and runs on the run's pinned model.
+   */
+  subagentRunId?: string
 }
 
 /**

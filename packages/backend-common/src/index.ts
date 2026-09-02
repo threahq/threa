@@ -121,6 +121,8 @@ export {
   streamBriefId,
   streamBriefRevisionId,
   delegationId,
+  subagentRunId,
+  subagentKickoffId,
   botAccessRequestId,
   agentConfigOverrideId,
   personaConfigDraftId,

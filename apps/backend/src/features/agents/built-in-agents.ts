@@ -59,6 +59,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.UPDATE_FOLLOW_UP,
       AgentToolNames.UPDATE_STREAM_BRIEF,
       AgentToolNames.DELEGATE_TASK,
+      AgentToolNames.START_SUBAGENT,
       AgentToolNames.SAVE_MEMO,
       AgentToolNames.UPDATE_USER_SETTINGS,
       AgentToolNames.SEARCH_ATTACHMENTS,

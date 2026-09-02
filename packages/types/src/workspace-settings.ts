@@ -17,6 +17,16 @@ export const DEFAULT_MAX_PENDING_FOLLOW_UPS = 10
 export const MAX_PENDING_FOLLOW_UPS_MIN = 1
 export const MAX_PENDING_FOLLOW_UPS_MAX = 100
 
+/**
+ * The delegable model set a workspace starts with. Terra and Sonnet 5 are the
+ * two current-gen models worth a second opinion at a price a default can carry;
+ * Opus/Sol tiers are opt-in per workspace rather than on by default.
+ */
+export const DEFAULT_SUBAGENT_MODELS: string[] = [
+  "openrouter:openai/gpt-5.6-terra",
+  "openrouter:anthropic/claude-sonnet-5",
+]
+
 /** Full workspace settings (wire format). */
 export interface WorkspaceSettings {
   workspaceId: string
@@ -75,6 +85,15 @@ export interface WorkspaceSettings {
    * shared money boundary has to be a deliberate choice, not one member's laptop.
    */
   billingTimezone: string
+  /**
+   * The models a persona may delegate a subagent to (`start_subagent`). Each
+   * entry is a registry model id (`provider:model`); the tool validates against
+   * the registry first, then this set, so an id that leaves `models.yaml` stops
+   * being delegable without a settings migration. Expensive tiers are opt-in:
+   * the default carries one strong reasoning model and one strong generalist,
+   * and an admin adds the rest deliberately.
+   */
+  subagentModels: string[]
   createdAt: string
   updatedAt: string
 }
@@ -88,6 +107,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
   defaultCompanionPersonaId: null,
   billingTimezone: "UTC",
+  subagentModels: DEFAULT_SUBAGENT_MODELS,
 }
 
 /** Partial update — only provided fields are changed. */
@@ -99,6 +119,7 @@ export interface UpdateWorkspaceSettingsInput {
   maxPendingFollowUps?: number
   defaultCompanionPersonaId?: string | null
   billingTimezone?: string
+  subagentModels?: string[]
 }
 
 /** Valid top-level settings keys that can be overridden. */

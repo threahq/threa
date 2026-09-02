@@ -5,6 +5,8 @@ import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
 import type {
   DelegateTaskToolDeps,
+  StartSubagentToolDeps,
+  ReportBackToolDeps,
   FollowUpToolDeps,
   ReactionToolDeps,
   SaveMemoToolDeps,
@@ -30,6 +32,8 @@ import {
   createUpdateStreamBriefTool,
   createUpdateUserSettingsTool,
   createDelegateTaskTool,
+  createStartSubagentTool,
+  createReportBackTool,
   createSaveMemoTool,
   createWorkspaceResearchTool,
   createGithubReposTool,
@@ -88,6 +92,18 @@ export interface ToolSetConfig {
    */
   delegation?: DelegateTaskToolDeps
   /**
+   * Subagent delegation callback bound to the running persona/session/stream and
+   * the invoking user, gating the `start_subagent` tool. Absent — so the tool
+   * is never built — on sealed streams, on turns without a human trigger, and
+   * inside a subagent thread (that absence IS the no-nesting rule).
+   */
+  subagentDelegation?: StartSubagentToolDeps
+  /**
+   * Run-closing callback bound to the subagent run this turn is executing,
+   * gating the `report_back` tool. Present ONLY inside a subagent thread.
+   */
+  reportBack?: ReportBackToolDeps
+  /**
    * Memo-save callback bound to the running persona/stream/session, gating the
    * `save_memo` tool. Present only on the live companion turn (not the researcher
    * sub-agent — it reads/searches, it never writes durable memory).
@@ -125,6 +141,8 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     brief,
     briefVersion,
     delegation,
+    subagentDelegation,
+    reportBack,
     saveMemo,
     settings,
     github,
@@ -206,6 +224,13 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       ? createUpdateStreamBriefTool(brief, { currentVersion: briefVersion ?? 0 })
       : null,
     delegation && isToolEnabled(enabledTools, AgentToolNames.DELEGATE_TASK) ? createDelegateTaskTool(delegation) : null,
+    subagentDelegation && isToolEnabled(enabledTools, AgentToolNames.START_SUBAGENT)
+      ? createStartSubagentTool(subagentDelegation)
+      : null,
+    // Not gated on persona enablement: the run exists because the persona was
+    // delegated to, and a subagent with no way to close its own run would leave
+    // the card waiting forever.
+    reportBack ? createReportBackTool(reportBack) : null,
     saveMemo && isToolEnabled(enabledTools, AgentToolNames.SAVE_MEMO) ? createSaveMemoTool(saveMemo) : null,
     settings && isToolEnabled(enabledTools, AgentToolNames.UPDATE_USER_SETTINGS)
       ? createUpdateUserSettingsTool(settings)

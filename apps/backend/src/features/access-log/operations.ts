@@ -214,6 +214,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "delegations.requeue",
   "delegations.cancel",
   "delegations.mark_done",
+  "subagents.cancel",
+  "subagents.requeue",
   "bot_access_requests.approve",
   "bot_access_requests.deny",
   // Drafts

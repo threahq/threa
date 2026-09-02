@@ -4,6 +4,8 @@ import { createAdapter } from "@socket.io/postgres-adapter"
 import { Pool } from "pg"
 import { createApp } from "./app"
 import { DelegationService, createDelegationExpirySweep, validateDelegationContextRefs } from "./features/delegations"
+import { SubagentService, createSubagentExpirySweep, startSubagent, resolveSubagentModels } from "./features/subagents"
+import { SubagentFailureReasons } from "@threa/types"
 import { registerRoutes } from "./routes"
 import { errorHandler } from "./middleware/error-handler"
 import { registerSocketHandlers } from "./socket"
@@ -146,6 +148,8 @@ import {
   PersonaAgent,
   TraceEmitter,
   SessionAbortRegistry,
+  AgentSessionRepository,
+  SessionStatuses,
   AgentSessionMetricsCollector,
   ConversationSummaryService,
   COMPANION_SUMMARY_MODEL_ID,
@@ -241,6 +245,7 @@ import {
   QueueDepthSampler,
   QueueRepository,
   TokenPoolRepository,
+  type PersonaAgentJobData,
 } from "./lib/queue"
 import { UserSocketRegistry } from "./lib/user-socket-registry"
 import { PoolMonitor } from "./lib/observability"
@@ -350,7 +355,7 @@ export async function startServer(): Promise<ServerInstance> {
     async (workspaceId, userId) =>
       (await userPreferencesService.getPreferences(workspaceId, userId)).performanceDiagnosticsOptIn
   )
-  const workspaceSettingsService = new WorkspaceSettingsService(pool)
+  const workspaceSettingsService = new WorkspaceSettingsService(pool, modelRegistry)
   const platformAdminService = new PlatformAdminService(pool)
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
@@ -627,6 +632,30 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const streamBriefService = new StreamBriefService({ pool })
   const delegationService = new DelegationService({ pool })
+  // Declared here rather than beside the other socket registries because the
+  // subagent cancel path routes an abort through it (below).
+  const sessionAbortRegistry = new SessionAbortRegistry()
+  const subagentService = new SubagentService({
+    pool,
+    streamService,
+    // Same routing as the Stop button (`socket.ts` `agent_session:research:abort`):
+    // ownership is read off the session row, because an enclave-owned turn has
+    // no inbound cancel route and consumes the flag on its next heartbeat.
+    stopThreadSession: async ({ threadStreamId }) => {
+      const session = await AgentSessionRepository.findLatestByStream(pool, threadStreamId)
+      if (!session || (session.status !== SessionStatuses.RUNNING && session.status !== SessionStatuses.PENDING)) {
+        return false
+      }
+      return session.callbackTokenHash
+        ? AgentSessionRepository.requestAbort(pool, session.id)
+        : sessionAbortRegistry.abort(session.id, "user_abort")
+    },
+  })
+  const subagentDelegationDeps = {
+    subagentService,
+    modelRegistry,
+    loadWorkspaceSettings: (id: string) => workspaceSettingsService.getSettings(id),
+  }
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
@@ -819,6 +848,7 @@ export async function startServer(): Promise<ServerInstance> {
     agentFollowUpService,
     personaConfigService,
     delegationService,
+    subagentService,
     draftsService,
     labelService,
     labelAssignmentService,
@@ -861,7 +891,6 @@ export async function startServer(): Promise<ServerInstance> {
   app.use(errorHandler)
 
   const userSocketRegistry = new UserSocketRegistry()
-  const sessionAbortRegistry = new SessionAbortRegistry()
   const botSocketRegistry = new BotSocketRegistry({
     // When the last socket for an instance disconnects, wait 30 s for a
     // reconnect (Wi-Fi blip, laptop lid). If nothing comes back, mark the
@@ -1122,6 +1151,23 @@ export async function startServer(): Promise<ServerInstance> {
       )
       return { ok: true, delegationId: delegation.id, droppedRefs: dropped }
     },
+    loadActiveSubagentRun: ({ workspaceId, threadStreamId }) =>
+      subagentService.findActiveByThreadStream({ workspaceId, threadStreamId }),
+    loadSubagentModels: async ({ workspaceId }) =>
+      resolveSubagentModels({
+        workspaceSettings: await workspaceSettingsService.getSettings(workspaceId),
+        modelRegistry,
+      }),
+    delegateToModel: ({ invokingUserId, ...params }) =>
+      startSubagent(subagentDelegationDeps, { ...params, createdBy: invokingUserId }),
+    reportSubagentBack: async ({ workspaceId, subagentId, resultMessageId }) => {
+      const completed = await subagentService.reportBack({ workspaceId, id: subagentId, resultMessageId })
+      return completed ? { ok: true, subagentId: completed.id } : { ok: false, reason: "already_closed" }
+    },
+    failSubagentForThread: ({ client, workspaceId, threadStreamId, reason }) =>
+      subagentService.failByThreadStreamInTransaction(client, { workspaceId, threadStreamId, reason }),
+    noteSubagentSpoke: ({ client, workspaceId, threadStreamId, at }) =>
+      subagentService.noteAgentSpokeInTransaction(client, { workspaceId, threadStreamId, at }),
     saveMemo: async ({
       initiatingUserId,
       workspaceId,
@@ -1170,7 +1216,21 @@ export async function startServer(): Promise<ServerInstance> {
   // Fairness defaults to `none` — region sharding already isolates tenants,
   // so a single workspace burst can use the full tier budget.
   const personaAgentWorker = createPersonaAgentWorker({ agent: personaAgent, serverId, pool, jobQueue })
+  // A kickoff that exhausts its retries never wakes the subagent, so the run
+  // must not sit `active` until the 7-day sweep claiming someone is waiting on
+  // the user. Only kickoff jobs carry `subagentRunId`; every other persona job
+  // no-ops here.
+  const personaAgentOnDLQ: OnDLQHook<PersonaAgentJobData> = async (querier, job) => {
+    if (!job.data.subagentRunId) return
+    await subagentService.failByThreadStreamInTransaction(querier, {
+      workspaceId: job.data.workspaceId,
+      threadStreamId: job.data.streamId,
+      reason: SubagentFailureReasons.KICKOFF_FAILED,
+      runId: job.data.subagentRunId,
+    })
+  }
   jobQueue.registerHandler(JobQueues.PERSONA_AGENT, personaAgentWorker, {
+    hooks: { onDLQ: personaAgentOnDLQ },
     tier: QueueTiers.INTERACTIVE,
     fairness: QueueFairness.NONE,
   })
@@ -1700,11 +1760,25 @@ export async function startServer(): Promise<ServerInstance> {
   const queueDepthSampler = new QueueDepthSampler({ pool })
   queueDepthSampler.start()
 
-  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
+  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io, {
+    // An orphaned turn inside a subagent thread settles that run in the same
+    // transaction — otherwise the card sits on "waiting for you" forever.
+    onSessionFailed: (tx, session) =>
+      subagentService
+        .failByThreadStreamInTransaction(tx, {
+          workspaceId: session.workspaceId,
+          threadStreamId: session.streamId,
+          reason: SubagentFailureReasons.SESSION_ORPHANED,
+        })
+        .then(() => undefined),
+  })
   orphanSessionCleanup.start()
 
   const delegationExpirySweep = createDelegationExpirySweep(delegationService)
   delegationExpirySweep.start()
+
+  const subagentExpirySweep = createSubagentExpirySweep(subagentService)
+  subagentExpirySweep.start()
 
   const pushSessionCleanup = createPushSessionCleanup(pushService)
   pushSessionCleanup.start()
@@ -1735,6 +1809,7 @@ export async function startServer(): Promise<ServerInstance> {
     poolMonitor.stop()
     orphanSessionCleanup.stop()
     delegationExpirySweep.stop()
+    subagentExpirySweep.stop()
     pushSessionCleanup.stop()
     voiceSessionSweeper.stop()
     callSweeper.stop()

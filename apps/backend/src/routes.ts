@@ -104,6 +104,7 @@ import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { AgentFollowUpService, PersonaConfigService } from "./features/agents"
 import { createDelegationHandlers, type DelegationService } from "./features/delegations"
+import { createSubagentHandlers, type SubagentService } from "./features/subagents"
 import { createAgentOutcomeHandlers, createAgentOutcomeService } from "./features/agent-outcomes"
 import { createStreamContextHandlers, createStreamContextService } from "./features/stream-context"
 import { BotAccessRequestService, createBotAccessRequestHandlers } from "./features/bot-access-requests"
@@ -164,6 +165,7 @@ interface Dependencies {
   agentFollowUpService: AgentFollowUpService
   personaConfigService: PersonaConfigService
   delegationService: DelegationService
+  subagentService: SubagentService
   draftsService: DraftsService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
@@ -234,6 +236,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     agentFollowUpService,
     personaConfigService,
     delegationService,
+    subagentService,
     draftsService,
     labelService,
     labelAssignmentService,
@@ -368,6 +371,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
   const delegations = createDelegationHandlers({ pool, delegationService })
+  const subagents = createSubagentHandlers({ pool, subagentService })
   const agentOutcomes = createAgentOutcomeHandlers({
     agentOutcomeService: createAgentOutcomeService({ pool }),
   })
@@ -1446,6 +1450,21 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("delegations.cancel", "write"),
     delegations.cancel
   )
+  // Subagent runs — the card's Cancel and Try again. Same access model as
+  // delegation cancel: stream access, 404-hiding, race-honest response.
+  app.post(
+    "/api/workspaces/:workspaceId/subagents/:id/cancel",
+    ...authed,
+    audit("subagents.cancel", "write"),
+    subagents.cancel
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/subagents/:id/requeue",
+    ...authed,
+    audit("subagents.requeue", "write"),
+    subagents.requeue
+  )
+
   app.get(
     "/api/workspaces/:workspaceId/agent-outcomes",
     ...authed,

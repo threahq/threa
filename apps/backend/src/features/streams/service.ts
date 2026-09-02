@@ -182,6 +182,16 @@ const createThreadParamsSchema = z.object({
    * "user".
    */
   createdByType: z.enum(["user", "bot"]).optional(),
+  /**
+   * Caller-supplied stream id, for a create that must name the thread before it
+   * exists — a subagent's `subagent:created` card carries `threadStreamId` in
+   * its payload, and the thread anchors on that same card, so one of the two
+   * ids has to be minted first. Omitted = generated here.
+   */
+  id: z
+    .string()
+    .regex(/^stream_[0-9A-HJKMNP-TV-Z]{26}$/)
+    .optional(),
 })
 
 export type CreateThreadParams = z.infer<typeof createThreadParamsSchema>
@@ -953,7 +963,15 @@ export class StreamService {
     // Root is either the parent's root (if parent is a thread) or the parent itself
     const rootStreamId = parentStream.rootStreamId ?? parentStream.id
 
-    const id = streamId()
+    // The schema is type-only (never parsed), so a supplied id is validated
+    // here before it reaches `streams.id`.
+    if (!createThreadParamsSchema.shape.id.safeParse(params.id).success) {
+      throw new HttpError("Supplied thread id must be a stream_-prefixed ULID", {
+        status: 400,
+        code: "THREAD_ID_INVALID",
+      })
+    }
+    const id = params.id ?? streamId()
 
     // Inherit visibility from the root stream — threads in public channels
     // are public, threads in private DMs/scratchpads stay private.

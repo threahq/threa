@@ -1,7 +1,7 @@
 import { APICallError } from "ai"
 import type { Pool } from "pg"
 import type { AgentSessionRerunContext } from "@threa/types"
-import { withTransaction } from "../../../db"
+import { withTransaction, type Querier } from "../../../db"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../session-repository"
 import { collectSessionEffects } from "../session-effects"
 import { OutboxRepository } from "../../../lib/outbox"
@@ -50,6 +50,21 @@ export async function withCompanionSession(
      */
     attempt?: number
     maxAttempts?: number
+    /**
+     * Runs in the same transaction as a TERMINAL failure (INV-7) — never on a
+     * retryable attempt, which stays non-terminal. Wired to the subagent run
+     * CAS: a subagent whose turn died for good must not leave a card claiming it
+     * is still waiting on the user.
+     */
+    onTerminalFailure?: (db: Querier, error: string) => Promise<void>
+    /**
+     * Runs in the same transaction as a completion that actually posted
+     * something (INV-7). Wired to the subagent card's "the delegated model
+     * spoke last" stamp, which is what separates "waiting for you" from
+     * "working" — derived from a patch that lands with the message, never from
+     * a later poll.
+     */
+    onCompletedWithMessages?: (db: Querier, at: Date) => Promise<void>
   },
   work: (
     session: AgentSession,
@@ -71,6 +86,8 @@ export async function withCompanionSession(
     rerunContext,
     attempt,
     maxAttempts,
+    onTerminalFailure,
+    onCompletedWithMessages,
   } = params
 
   // Phase 1: Session setup (short-lived transaction)
@@ -200,6 +217,7 @@ export async function withCompanionSession(
           rootStreamId,
           event: streamEvent,
         })
+        if (messagesSent > 0 && onCompletedWithMessages) await onCompletedWithMessages(db, completedAt)
         completionCommitted = true
       })
     } catch (err) {
@@ -292,6 +310,7 @@ export async function withCompanionSession(
             event: streamEvent,
           })
         } else {
+          if (onTerminalFailure) await onTerminalFailure(db, String(err))
           const streamEvent = await StreamEventRepository.insert(db, {
             id: eventId(),
             streamId,

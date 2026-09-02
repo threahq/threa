@@ -191,6 +191,16 @@ export {
   DELEGATION_REOPEN_REASONS,
   type DelegationReopenReason,
   DELEGATION_TERMINAL_STATUSES,
+  // Subagent runs
+  SUBAGENT_TITLE_MAX_CHARS,
+  SUBAGENT_BRIEF_MAX_CHARS,
+  SUBAGENT_STATUSES,
+  type SubagentStatus,
+  SubagentStatuses,
+  SUBAGENT_TERMINAL_STATUSES,
+  SUBAGENT_FAILURE_REASONS,
+  type SubagentFailureReason,
+  SubagentFailureReasons,
   // Bot access-request lifecycle (F3)
   BOT_ACCESS_REQUEST_STATUSES,
   type BotAccessRequestStatus,
@@ -626,6 +636,8 @@ export type {
   AgentFollowUpCancelledEventPayload,
   DelegationCreatedEventPayload,
   DelegationStatusChangedEventPayload,
+  SubagentCreatedEventPayload,
+  SubagentStatusChangedEventPayload,
   BotAccessRequestedEventPayload,
   BotAccessStatusChangedEventPayload,
   CallStartedEventPayload,
@@ -997,6 +1009,7 @@ export {
   DEFAULT_MAX_PENDING_FOLLOW_UPS,
   MAX_PENDING_FOLLOW_UPS_MIN,
   MAX_PENDING_FOLLOW_UPS_MAX,
+  DEFAULT_SUBAGENT_MODELS,
   type UpdateWorkspaceSettingsInput,
   type WorkspaceSettingKey,
 } from "./workspace-settings"

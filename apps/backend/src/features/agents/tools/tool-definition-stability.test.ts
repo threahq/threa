@@ -26,6 +26,14 @@ import { buildToolSet } from "../companion/tool-set"
 
 const stub: any = new Proxy(() => stub, { get: () => stub, apply: () => stub })
 
+/**
+ * `start_subagent` names the workspace's governed set in its description, so
+ * it needs a real array rather than the proxy. Per-workspace, not per-request:
+ * a workspace's set is stable across calls, which is what the cached prefix
+ * requires.
+ */
+const subagentDelegation = { allowedModels: ["openrouter:openai/gpt-5.6-terra"], delegateToModel: stub }
+
 /** Serialize a tool set to exactly what the model would see. */
 function definitions(over: { currentTime: string; timezone: string; briefVersion: number }) {
   const tools = buildToolSet({
@@ -41,6 +49,8 @@ function definitions(over: { currentTime: string; timezone: string; briefVersion
     followUps: stub,
     brief: stub,
     delegation: stub,
+    subagentDelegation,
+    reportBack: stub,
     saveMemo: stub,
     github: stub,
     linear: stub,
@@ -95,6 +105,8 @@ describe("mutating tools declare their own effects", () => {
       followUps: stub,
       brief: stub,
       delegation: stub,
+      subagentDelegation,
+      reportBack: stub,
       saveMemo: stub,
       settings: stub,
       github: stub,

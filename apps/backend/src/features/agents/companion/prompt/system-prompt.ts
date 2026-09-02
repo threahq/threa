@@ -84,6 +84,13 @@ export interface SystemPromptInputs {
   conversationTopic?: string | null
   spawnedFromContext?: string | null
   followUp?: { note: string; scheduledFor: Date } | null
+  /**
+   * Present when this turn is a subagent kickoff: the brief the delegating
+   * persona wrote and the stream it was delegated from. Drives the "You were
+   * delegated this" section, which is the turn's ONLY instruction — the thread
+   * it wakes in is empty.
+   */
+  subagentBrief?: { title: string } | null
   previousSessions?: string | null
   streamBrief?: string | null
   styleSlots?: { tone?: string; brevity?: string }
@@ -135,6 +142,7 @@ export const SYSTEM_PROMPT_INPUT_STABILITY = {
   conversationTopic: "turn",
   spawnedFromContext: "turn",
   followUp: "turn",
+  subagentBrief: "turn",
   previousSessions: "turn",
   streamBrief: "conversation",
   styleSlots: "conversation",
@@ -158,6 +166,7 @@ export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt
     conversationTopic,
     spawnedFromContext,
     followUp,
+    subagentBrief,
     previousSessions,
     streamBrief,
     styleSlots,
@@ -289,7 +298,7 @@ Safety rules:
   // follow-up-triggered turn — i.e. every turn in a channel or DM, where
   // invocation is always a mention — which is exactly the cross-turn cache
   // miss this split exists to remove.
-  volatile += buildEarlyPurposeSection(purpose, { context, mentionerName, followUp })
+  volatile += buildEarlyPurposeSection(purpose, { context, mentionerName, followUp, subagentBrief })
 
   // Both are derived per turn, not per conversation: the topic is resolved from
   // this turn's trigger message and window, and the rolling summary is rebuilt

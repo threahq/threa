@@ -117,9 +117,16 @@ export function createOrphanSessionCleanup(
   options: {
     intervalMs?: number
     staleThresholdSeconds?: number
+    /**
+     * Runs in the same transaction as each RUNNING→FAILED transition, only once
+     * it is won (INV-7). Wired to the subagent run CAS: a subagent whose runtime
+     * was orphaned must not leave a card claiming it is still waiting on the
+     * user.
+     */
+    onSessionFailed?: (tx: Querier, session: { id: string; streamId: string; workspaceId: string }) => Promise<void>
   } = {}
 ): OrphanSessionCleanup {
-  const { intervalMs = 15_000, staleThresholdSeconds = 60 } = options
+  const { intervalMs = 15_000, staleThresholdSeconds = 60, onSessionFailed } = options
 
   let timer: ReturnType<typeof setInterval> | null = null
 
@@ -133,7 +140,11 @@ export function createOrphanSessionCleanup(
 
       for (const session of orphaned) {
         try {
-          const won = await failSessionWithLifecycle(pool, io, session, ORPHAN_ERROR)
+          const won = await failSessionWithLifecycle(pool, io, session, ORPHAN_ERROR, async (tx) => {
+            if (!onSessionFailed) return
+            const stream = await StreamRepository.findById(tx, session.streamId)
+            if (stream) await onSessionFailed(tx, { ...session, workspaceId: stream.workspaceId })
+          })
           if (won) {
             logger.info({ sessionId: session.id, streamId: session.streamId }, "Marked orphaned session as failed")
           }

@@ -11,6 +11,7 @@ import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
+import { SubagentRunRepository } from "../subagents"
 
 export type CompanionHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -80,41 +81,65 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       return
     }
 
-    // Resolve companion settings: for threads rooted in a scratchpad,
-    // inherit the root scratchpad's companion mode and persona so
-    // Ariadna responds in nested threads the same way she responds
-    // in the scratchpad itself.
+    // A live subagent thread answers regardless of companion mode: it may hang
+    // off a CHANNEL, which has none, and the user answering the delegated model
+    // there must reach it. The run's own persona is dispatched — never the
+    // stream's — and the run going terminal reverts the thread to the ordinary
+    // rules below. Only threads can host a run, so ordinary channel/scratchpad
+    // traffic never pays for the lookup.
+    const activeSubagent =
+      stream.type === StreamTypes.THREAD
+        ? await SubagentRunRepository.findActiveByThreadStreamId(this.db, workspaceId, streamId)
+        : null
+
     let companionSource = stream
-    if (stream.companionMode !== CompanionModes.ON && stream.rootStreamId) {
-      const rootStream = await StreamRepository.findById(this.db, stream.rootStreamId)
-      if (
-        rootStream &&
-        (rootStream.type === StreamTypes.SCRATCHPAD || rootStream.type === StreamTypes.ASIDE) &&
-        rootStream.companionMode === CompanionModes.ON
-      ) {
-        companionSource = rootStream
+    let persona: Awaited<ReturnType<typeof PersonaRepository.findById>> = null
+
+    if (activeSubagent) {
+      persona = await PersonaRepository.findById(this.db, activeSubagent.personaId, workspaceId)
+      if (!persona || persona.status !== "active") {
+        logger.warn(
+          { streamId, subagentId: activeSubagent.id, personaId: activeSubagent.personaId },
+          "Active subagent run's persona is missing or inactive, skipping"
+        )
+        return
       }
-    }
+    } else {
+      // Resolve companion settings: for threads rooted in a scratchpad,
+      // inherit the root scratchpad's companion mode and persona so
+      // Ariadna responds in nested threads the same way she responds
+      // in the scratchpad itself.
+      if (stream.companionMode !== CompanionModes.ON && stream.rootStreamId) {
+        const rootStream = await StreamRepository.findById(this.db, stream.rootStreamId)
+        if (
+          rootStream &&
+          (rootStream.type === StreamTypes.SCRATCHPAD || rootStream.type === StreamTypes.ASIDE) &&
+          rootStream.companionMode === CompanionModes.ON
+        ) {
+          companionSource = rootStream
+        }
+      }
 
-    if (companionSource.companionMode !== CompanionModes.ON) {
-      return
-    }
+      if (companionSource.companionMode !== CompanionModes.ON) {
+        return
+      }
 
-    let persona = companionSource.companionPersonaId
-      ? await PersonaRepository.findById(this.db, companionSource.companionPersonaId!, companionSource.workspaceId)
-      : null
+      persona = companionSource.companionPersonaId
+        ? await PersonaRepository.findById(this.db, companionSource.companionPersonaId!, companionSource.workspaceId)
+        : null
 
-    if (!persona || persona.status !== "active") {
-      // Legacy NULL pointers (pre-pin-at-create rows) and archived picks fall
-      // back to the built-in default. Deliberately NOT the user/workspace
-      // default resolver — that runs at CREATE time only; re-resolving here
-      // would switch a scratchpad's agent mid-run when a default changes.
-      persona = await PersonaRepository.getSystemDefault(this.db, companionSource.workspaceId)
-    }
+      if (!persona || persona.status !== "active") {
+        // Legacy NULL pointers (pre-pin-at-create rows) and archived picks fall
+        // back to the built-in default. Deliberately NOT the user/workspace
+        // default resolver — that runs at CREATE time only; re-resolving here
+        // would switch a scratchpad's agent mid-run when a default changes.
+        persona = await PersonaRepository.getSystemDefault(this.db, companionSource.workspaceId)
+      }
 
-    if (!persona) {
-      logger.warn({ streamId }, "Companion mode on but no active persona available")
-      return
+      if (!persona) {
+        logger.warn({ streamId }, "Companion mode on but no active persona available")
+        return
+      }
     }
 
     const lastSession = await AgentSessionRepository.findLatestByStream(this.db, streamId)

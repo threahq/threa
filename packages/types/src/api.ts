@@ -19,6 +19,7 @@ import type {
   KnowledgeType,
   DelegationStatus,
   DelegationReopenReason,
+  SubagentStatus,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
@@ -1324,6 +1325,50 @@ export interface DelegationStatusChangedEventPayload {
   threadStreamId?: string | null
   /** Free-text progress/error note from the executing agent. */
   statusNote?: string | null
+}
+
+/**
+ * Payload for `subagent:created` timeline events: appended in the parent stream
+ * in the same transaction as the `subagent_runs` row and the subagent's thread
+ * (INV-4/7). The card renders entirely from this payload — title, which model
+ * is running, and the thread to open — so the timeline needs no extra fetch.
+ * These are snapshots: a run's title, model and thread never change after
+ * creation; only its status moves, via `subagent:status_changed`.
+ */
+export interface SubagentCreatedEventPayload {
+  subagentId: string
+  title: string
+  /** The pinned model binding, e.g. `openrouter:openai/gpt-5.6-terra`. */
+  model: string
+  /** The persona running on that model — v1 identity is the same persona, new brain. */
+  personaId: string
+  /** The thread anchored on this card, where the subagent and the user talk. */
+  threadStreamId: string
+  /** The user whose authority the run carries (INV-50). */
+  createdBy: string
+  /** The topic the delegation is anchored to, when the trigger had one. */
+  sourceConversationId: string | null
+}
+
+/**
+ * Payload for `subagent:status_changed` events: appended in the same
+ * transaction as every status CAS so the card can never sit on stale state.
+ * A patch, not a visible row — the matching `subagent:created` card advances to
+ * `status`. The event's `actorId`/`actorType` record who drove the transition.
+ */
+export interface SubagentStatusChangedEventPayload {
+  subagentId: string
+  status: SubagentStatus
+  /** Why the run ended, when the transition supplies a reason (failure, expiry). */
+  statusNote?: string | null
+  /** The message the subagent reported back with, on completion. */
+  resultMessageId?: string | null
+  /**
+   * When the subagent last spoke in its thread, so the card can derive
+   * "waiting for you" without a second fetch. Present on transitions that know
+   * it; absent otherwise.
+   */
+  lastAgentMessageAt?: string | null
 }
 
 /**

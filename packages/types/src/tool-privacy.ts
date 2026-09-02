@@ -87,6 +87,13 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // happens on the user's machine with their credentials, so there is no data
   // egress beyond the stream itself. Rides the always-allowed `messaging` class.
   delegate_task: ["messaging"],
+  // Delegating to a second model posts a card and a thread into this stream and
+  // runs that model on the same workspace reach this turn already has — nothing
+  // leaves the product, so it rides the always-allowed `messaging` class like
+  // `delegate_task`. `report_back` is the persona posting its own summary into
+  // the thread it is running in: a reply, by another name.
+  start_subagent: ["messaging"],
+  report_back: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],

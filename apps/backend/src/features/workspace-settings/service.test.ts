@@ -6,8 +6,12 @@ import { WorkspaceSettingsRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { PersonaRepository } from "../agents"
 import * as dbModule from "../../db"
+import type { ModelRegistry } from "@threa/agent-runtime"
 
 const WORKSPACE_ID = "ws_1"
+
+/** The registry the delegable-model check consults; every id in these tests is a chat model. */
+const modelRegistry = { isChatModel: () => true } as unknown as ModelRegistry
 
 const CUSTOM_SCHEDULE: WorkSchedule = {
   days: {
@@ -30,7 +34,7 @@ describe("WorkspaceSettingsService.getSettings", () => {
 
   it("falls back to defaults when no overrides are stored", async () => {
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     const settings = await service.getSettings(WORKSPACE_ID)
 
@@ -42,7 +46,7 @@ describe("WorkspaceSettingsService.getSettings", () => {
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([
       { key: "defaultWorkSchedule", value: CUSTOM_SCHEDULE },
     ])
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     const settings = await service.getSettings(WORKSPACE_ID)
 
@@ -61,7 +65,7 @@ describe("WorkspaceSettingsService.updateSettings", () => {
       { key: "defaultWorkSchedule", value: CUSTOM_SCHEDULE },
     ])
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     const settings = await service.updateSettings(WORKSPACE_ID, { defaultWorkSchedule: CUSTOM_SCHEDULE })
 
@@ -78,7 +82,7 @@ describe("WorkspaceSettingsService.updateSettings", () => {
     const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     await service.updateSettings(WORKSPACE_ID, { defaultWorkSchedule: DEFAULT_WORK_SCHEDULE })
 
@@ -92,7 +96,7 @@ describe("WorkspaceSettingsService.updateSettings", () => {
     const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([{ key: "maxPendingFollowUps", value: 25 }])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     const settings = await service.updateSettings(WORKSPACE_ID, { maxPendingFollowUps: 25 })
 
@@ -107,7 +111,7 @@ describe("WorkspaceSettingsService.updateSettings", () => {
     const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     await service.updateSettings(WORKSPACE_ID, { maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS })
 
@@ -128,7 +132,7 @@ describe("WorkspaceSettingsService.updateSettings defaultCompanionPersonaId", ()
       { key: "defaultCompanionPersonaId", value: "persona_x" },
     ])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     const settings = await service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: "persona_x" })
 
@@ -140,7 +144,7 @@ describe("WorkspaceSettingsService.updateSettings defaultCompanionPersonaId", ()
   it("rejects an archived persona id with a 400", async () => {
     spyOn(PersonaRepository, "findById").mockResolvedValue({ status: "archived" } as any)
     const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     await expect(
       service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: "persona_x" })
@@ -151,7 +155,7 @@ describe("WorkspaceSettingsService.updateSettings defaultCompanionPersonaId", ()
   it("rejects an id not resolvable in this workspace with a 400", async () => {
     spyOn(PersonaRepository, "findById").mockResolvedValue(null)
     const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     await expect(
       service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: "persona_other_ws" })
@@ -166,7 +170,7 @@ describe("WorkspaceSettingsService.updateSettings defaultCompanionPersonaId", ()
     const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const service = new WorkspaceSettingsService({} as any)
+    const service = new WorkspaceSettingsService({} as any, modelRegistry)
 
     await service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: null })
 

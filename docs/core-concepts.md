@@ -197,6 +197,10 @@ AI agents in Threa are data-driven personas, not hardcoded implementations. This
 - Long-running agent tasks
 - Multi-step workflows
 
+#### Subagents
+
+A persona can hand a question to a stronger model with the `start_subagent` tool. A subagent is not a process: it is a thread pinned to a model. The tool appends a `subagent:created` card event to the parent stream, opens a thread anchored on that event, records the run in `subagent_runs`, and enqueues a kickoff turn whose model history opens with the hand-off brief. Inside the thread the persona runs on the pinned model, talks to the user directly, and closes the run with `report_back`; `subagent:status_changed` patches keep the card current. One subagent may be live per conversation surface (root stream) at a time, a subagent cannot start another, and the models a persona may hand off to come from the workspace's allowlist narrowed by the user's own subset.
+
 ### Enabled Tools
 
 Each persona has `enabledTools[]` array controlling available capabilities:
@@ -251,6 +255,7 @@ Ariadne (`persona_system_ariadne`) is the default system persona:
 - `memo_sources`: Many-to-many: memos ↔ messages
 - `personas`: Persona configuration
 - `persona_tools`: Many-to-many: personas ↔ enabled tools
+- `subagent_runs`: Subagent tracking — one row per hand-off, at most one `active` per root stream
 
 ### Key Constraints
 

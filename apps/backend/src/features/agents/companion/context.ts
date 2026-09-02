@@ -65,6 +65,21 @@ export interface ContextParams {
    * request to schedule one.
    */
   followUp?: { note: string; scheduledFor: Date }
+  /**
+   * Present when this turn is a subagent kickoff: the brief the delegating
+   * persona wrote. Drives the "You were delegated this" prompt section — the
+   * turn's only instruction, since the thread it wakes in is empty.
+   */
+  subagentBrief?: { title: string }
+  /**
+   * The human this turn acts for when no trigger message names one — a subagent
+   * kickoff wakes in an empty thread, and its authority is the user who was
+   * delegated to (INV-50). Without it the turn would run with no invoking user
+   * at all: no workspace tools, no access scope, and cost booked to the system
+   * rather than the person who asked. The same id is re-checked against
+   * `assertStreamWritable` before the turn does any work.
+   */
+  invokingUserOverride?: string
 }
 
 export interface AgentContext {
@@ -133,10 +148,23 @@ async function resolveScratchpadCustomPrompt(
  */
 export async function buildAgentContext(deps: ContextDeps, params: ContextParams): Promise<AgentContext> {
   const { db, userPreferencesService, conversationSummaryService } = deps
-  const { workspaceId, streamId, stream, messageId, persona, purpose, policy, currentTime, followUp } = params
+  const {
+    workspaceId,
+    streamId,
+    stream,
+    messageId,
+    persona,
+    purpose,
+    policy,
+    currentTime,
+    followUp,
+    subagentBrief,
+    invokingUserOverride,
+  } = params
 
   const triggerMessage = await MessageRepository.findById(db, messageId)
-  const invokingUserId = triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : undefined
+  const invokingUserId =
+    triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : invokingUserOverride
 
   let preferences: UserPreferences | undefined
   let invokingUser: User | null = null
@@ -463,6 +491,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       conversationTopic,
       spawnedFromContext,
       followUp,
+      subagentBrief,
       previousSessions: previousSessionsBlock,
       // Only when the tool that can act on them is actually in this turn's
       // toolset. Elsewhere these values are tokens the model can neither use

@@ -216,6 +216,12 @@ export function EventItem({
       // delegationStatusPatches (collected in event-list) — renders nothing.
       return null
 
+    case "subagent:created":
+    case "subagent:status_changed":
+      // Subagent lifecycle events belong to the subagent card renderer, never
+      // the generic system-event row the `default` branch would produce.
+      return null
+
     case "bot_access:requested": {
       const requestId = (event.payload as { requestId?: string })?.requestId
       const statusPatch = requestId ? botAccessStatusPatches?.get(requestId) : undefined
