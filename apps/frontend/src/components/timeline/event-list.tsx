@@ -350,6 +350,8 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "agent:follow_up_cancelled",
   // Status changes patch the delegation card (collectDelegationStatusPatches).
   "delegation:status_changed",
+  // Status changes patch the subagent card (collectSubagentStatusPatches).
+  "subagent:status_changed",
   // Status changes patch the bot-access request card (collectBotAccessStatusPatches).
   "bot_access:status_changed",
   // The end summary patches the call card (collectCallEndedPatches).
