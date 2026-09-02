@@ -61,6 +61,7 @@ import {
 } from "./resume"
 import { attachedTmuxSession, capturePane, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
+import { createVanishedPaneSweep } from "./vanished"
 import { defaultReapDeps, reapArchivedWorktrees } from "./reap"
 import { defaultTombstoneDeps, summarizeTombstones, tombstoneAbandonedRows, type TombstoneOutcome } from "./tombstone"
 import { restorableWorktreeSource, restoreManagedWorktree } from "./worktree"
@@ -342,7 +343,28 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
     return reconcileChain
   }
 
+  // A runtime that dies between passes has no event of its own: the sweep
+  // notices the pane going missing and revives that row alone. Chained behind
+  // any reconcile in flight so two passes never race for the same window.
+  const reviveVanished = (agents: ManagedAgent[]): Promise<void> => {
+    reconcileChain = reconcileChain
+      .then(async () => {
+        for (const agent of agents) {
+          console.log(`harnessd: pane vanished for ${agent.name} (${agent.tmuxPaneId ?? "no pane recorded"}); reviving`)
+        }
+        if (!options.dryRun) ensureTmuxSession(session, true)
+        await resumeActive({ ...options, tmux: session, agentIds: new Set(agents.map((agent) => agent.id)) })
+      })
+      .catch((error) => {
+        console.error(
+          `harnessd: vanished-pane revival failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      })
+    return reconcileChain
+  }
+
   await startupReconciliation(defaultStartupReconciliationDeps(() => reconcile(), options.dryRun ?? false))
+  const vanishedPanes = createVanishedPaneSweep()
 
   const transports = targets.map(
     (target) =>
@@ -357,6 +379,8 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   await runWatchLoop({
     runPass: async () => {
       await Promise.all(transports.map((transport) => transport.connect()))
+      const vanished = vanishedPanes.next()
+      if (vanished.length > 0) void reviveVanished(vanished)
     },
     sleep: Bun.sleep,
     intervalMs: reconnectIntervalMs,
@@ -785,8 +809,10 @@ async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionR
   const rows = readInventory()
   // A targeted restore is the server saying this scratchpad came back, which is
   // exactly the evidence a tombstone lacks.
-  const agents = latestAgentsByIdentity(rows, undefined, Boolean(target))
-  const excluded = target ? 0 : rows.filter((agent) => agent.tombstonedAt).length
+  const agents = latestAgentsByIdentity(rows, undefined, Boolean(target)).filter(
+    (agent) => !options.agentIds || options.agentIds.has(agent.id)
+  )
+  const excluded = target || options.agentIds ? 0 : rows.filter((agent) => agent.tombstonedAt).length
   if (excluded > 0) console.log(`harnessd: ${excluded} tombstoned row(s) not evaluated`)
   if (agents.length === 0) {
     console.log("No managed agents.")

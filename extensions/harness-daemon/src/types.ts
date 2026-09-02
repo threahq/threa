@@ -72,6 +72,8 @@ export interface ResumeOptions {
    * `clear` command — a user's explicit request. No revival path may set it.
    */
   fresh?: boolean
+  /** Evaluate only these inventory rows: the watcher's vanished-pane sweep names the rows it saw die. */
+  agentIds?: ReadonlySet<string>
 }
 
 export interface SpawnResult {
