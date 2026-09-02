@@ -201,7 +201,7 @@ describe("PersonaHistoryPanel", () => {
     renderEditor(makeClient())
 
     // v2's model is Opus.
-    expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument()
+    expect(within(screen.getByRole("combobox", { name: "Model" })).getByText("Claude Opus 4.8")).toBeInTheDocument()
 
     const dialog = await openHistory(user)
     await user.click(within(dialog).getByRole("button", { name: "Restore version 1" }))
@@ -248,7 +248,7 @@ describe("PersonaHistoryPanel", () => {
     const user = userEvent.setup()
     renderEditor(makeClient())
 
-    expect(screen.getByText("Claude Opus 4.8")).toBeInTheDocument()
+    expect(within(screen.getByRole("combobox", { name: "Model" })).getByText("Claude Opus 4.8")).toBeInTheDocument()
 
     const dialog = await openHistory(user)
     await user.click(within(dialog).getByRole("button", { name: "Restore built-in defaults" }))

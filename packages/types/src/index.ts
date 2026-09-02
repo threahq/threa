@@ -1011,6 +1011,10 @@ export {
   MAX_PENDING_FOLLOW_UPS_MIN,
   MAX_PENDING_FOLLOW_UPS_MAX,
   DEFAULT_SUBAGENT_MODELS,
+  SUBAGENT_MODEL_CATALOG,
+  SUBAGENT_MODEL_TIERS,
+  type SubagentModelCatalogEntry,
+  type SubagentModelTier,
   type UpdateWorkspaceSettingsInput,
   type WorkspaceSettingKey,
 } from "./workspace-settings"

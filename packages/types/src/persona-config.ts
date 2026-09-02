@@ -52,16 +52,27 @@ export const PERSONA_DESCRIPTION_MAX_CHARS = 500
 
 /**
  * The fields of a system (built-in) persona an admin may edit. A `managed_by:
- * "system"` persona's identity and prompt are locked — only its toolset, model,
- * and the two style presets are configurable. The write path
+ * "system"` persona's identity and prompt are locked — only its toolset, the
+ * two models, and the two style presets are configurable. The write path
  * (`PersonaConfigService.setOverride` / `saveDraft`) rejects any other patch key
  * with 400 `PERSONA_FIELD_LOCKED`; resolution of already-stored patches stays
  * permissive (a legacy override carrying `systemPrompt` keeps applying — a v0
  * restore clears it). Single source of truth so the frontend restricted editor
  * offers exactly these fields (INV-33). Each entry is a key of
  * {@link PersonaConfigPatch}.
+ *
+ * `escalationModel` is governed, not merely assignable: the backend validates it
+ * against the workspace's `subagentModels` set (plus whatever the persona
+ * already resolves to), so the one place an admin decides what a costly model
+ * costs them also decides what a hard turn may escalate to.
  */
-export const SYSTEM_PERSONA_EDITABLE_FIELDS = ["enabledTools", "model", "tonePreset", "brevityPreset"] as const
+export const SYSTEM_PERSONA_EDITABLE_FIELDS = [
+  "enabledTools",
+  "model",
+  "escalationModel",
+  "tonePreset",
+  "brevityPreset",
+] as const
 export type SystemPersonaEditableField = (typeof SYSTEM_PERSONA_EDITABLE_FIELDS)[number]
 
 /**

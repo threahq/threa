@@ -97,6 +97,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "voiceSteeringWords",
     "workSchedule",
     "defaultCompanionPersonaId",
+    "subagentModels",
     "statusPresets",
     "gettingStartedDismissed",
     "performanceDiagnosticsOptIn",

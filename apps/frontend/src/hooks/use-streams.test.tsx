@@ -96,6 +96,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       voiceTranscriptionModel: null,
       voicePolishLevel: "opinionated",
       voiceSteeringWords: [],
+      subagentModels: [],
       statusPresets: [],
       workSchedule: null,
       defaultCompanionPersonaId: null,

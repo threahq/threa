@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import { PersonaListAvatar } from "@/components/persona-avatar"
 import { PersonaForkDialog } from "@/components/workspace-settings/persona-fork-dialog"
+import { PersonalSubagentModelsSection } from "./subagent-models-settings"
 import { usePreferences } from "@/contexts"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
@@ -289,6 +290,7 @@ export function AISettings() {
         <>
           <Separator />
           <PersonalDefaultCompanionSection workspaceId={workspaceId} />
+          <PersonalSubagentModelsSection workspaceId={workspaceId} />
           <Separator />
           <MyPersonasSection workspaceId={workspaceId} />
         </>

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { ChevronDown } from "lucide-react"
-import type { AgentToolName, PersonaConfigResponse } from "@threa/types"
+import { DEFAULT_SUBAGENT_MODELS, type AgentToolName, type PersonaConfigResponse } from "@threa/types"
 import { ApiError } from "@/api/client"
 import type { PersonaCustomConflict, PersonaOverrideConflict } from "@/api"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -11,6 +11,7 @@ import { MarkdownContent } from "@/components/ui/markdown-content"
 import { cn } from "@/lib/utils"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { personaKeys, useUpdatePersonaOverride } from "@/hooks/use-personas"
 import { BUILTIN_EDITABLE_FIELDS, buildModelOptions, isFieldOverridden } from "./persona-form"
 import type { SyncState } from "./persona-form"
@@ -22,6 +23,7 @@ import { FieldRow } from "./field-row"
 import { ToolChecklist } from "./tool-checklist"
 
 const PRESET_DEFAULT = "__default__"
+const ESCALATION_NONE = "__none__"
 
 interface PersonaEditorFormProps {
   workspaceId: string
@@ -42,6 +44,7 @@ interface PersonaEditorFormProps {
 export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateChange }: PersonaEditorFormProps) {
   const queryClient = useQueryClient()
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
   const defaults = config.defaults!
   const [promptOpen, setPromptOpen] = useState(false)
 
@@ -62,6 +65,28 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
   const modelOptions = useMemo(
     () => buildModelOptions(config.availableModels, [values.model, defaults.model]),
     [config.availableModels, values.model, defaults.model]
+  )
+
+  // Escalation answers to the workspace's delegation set, not the whole registry
+  // — the backend rejects anything else. The persona's own current and default
+  // values are folded in so a set narrowed after the fact still renders and saves.
+  // An unresolved bootstrap falls back to the shipped default set rather than an
+  // empty one: "no models are governed" is a claim, not a loading state, and the
+  // picker is disabled until the real set lands anyway.
+  const workspaceSettings = bootstrap?.workspaceSettings ?? null
+  const governedModels = workspaceSettings?.subagentModels ?? DEFAULT_SUBAGENT_MODELS
+  const escalationOptions = useMemo(
+    () =>
+      buildModelOptions(
+        config.availableModels.filter(
+          (option) =>
+            governedModels.includes(option.id) ||
+            option.id === values.escalationModel ||
+            option.id === defaults.escalationModel
+        ),
+        [values.escalationModel, defaults.escalationModel]
+      ),
+    [config.availableModels, governedModels, values.escalationModel, defaults.escalationModel]
   )
 
   // Adopt another admin's committed override as the known baseline (Save/restore
@@ -135,15 +160,42 @@ export function PersonaEditorForm({ workspaceId, personaId, config, onSyncStateC
 
       <FieldRow
         label="Model"
+        htmlFor="persona-model"
         overridden={isFieldOverridden(values, defaults, "model")}
         onReset={() => resetField("model")}
       >
         <Select value={values.model} onValueChange={(value) => setField("model", value)}>
-          <SelectTrigger className="w-full sm:w-72">
+          <SelectTrigger id="persona-model" className="w-full sm:w-72">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {modelOptions.map((option) => (
+              <SelectItem key={option.id} value={option.id}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </FieldRow>
+
+      <FieldRow
+        label="Escalation model"
+        htmlFor="persona-escalation-model"
+        description="Used for harder turns, from the workspace's delegation models. None disables escalation."
+        overridden={isFieldOverridden(values, defaults, "escalationModel")}
+        onReset={() => resetField("escalationModel")}
+      >
+        <Select
+          value={values.escalationModel ?? ESCALATION_NONE}
+          disabled={workspaceSettings == null}
+          onValueChange={(value) => setField("escalationModel", value === ESCALATION_NONE ? null : value)}
+        >
+          <SelectTrigger id="persona-escalation-model" className="w-full sm:w-72">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ESCALATION_NONE}>None (no escalation)</SelectItem>
+            {escalationOptions.map((option) => (
               <SelectItem key={option.id} value={option.id}>
                 {option.label}
               </SelectItem>

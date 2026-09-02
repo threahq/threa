@@ -1,5 +1,5 @@
 import type { ModelRegistry } from "@threa/agent-runtime"
-import type { WorkspaceSettings } from "@threa/types"
+import type { UserPreferences, WorkspaceSettings } from "@threa/types"
 import { resolveSubagentModels } from "./models"
 import { SubagentAlreadyActiveError } from "./repository"
 import type { CreateSubagentParams, SubagentService } from "./service"
@@ -22,21 +22,34 @@ export interface SubagentDelegationDeps {
   subagentService: SubagentService
   modelRegistry: ModelRegistry
   loadWorkspaceSettings: (workspaceId: string) => Promise<Pick<WorkspaceSettings, "subagentModels">>
+  /** The run's `createdBy` user — the authority the run is anchored to, so their subset is the one that binds. */
+  loadUserPreferences: (params: {
+    workspaceId: string
+    userId: string
+  }) => Promise<Pick<UserPreferences, "subagentModels">>
 }
 
 /**
  * The whole `start_subagent` execution: resolve the governed set, refuse an
  * off-policy model, then open the run. The allowlist is re-resolved HERE rather
  * than trusted from the description the turn was built with — the workspace's
- * set may have moved since, and this is the boundary the model actually
- * crosses. One path, shared by the live tool binding and its tests (INV-45).
+ * set or the user's own subset may have moved since, and this is the boundary
+ * the model actually crosses. One path, shared by the live tool binding and its
+ * tests (INV-45).
  */
 export async function startSubagent(
   deps: SubagentDelegationDeps,
   params: CreateSubagentParams
 ): Promise<StartSubagentOutcome> {
-  const workspaceSettings = await deps.loadWorkspaceSettings(params.workspaceId)
-  const allowedModels = resolveSubagentModels({ workspaceSettings, modelRegistry: deps.modelRegistry })
+  const [workspaceSettings, userPreferences] = await Promise.all([
+    deps.loadWorkspaceSettings(params.workspaceId),
+    deps.loadUserPreferences({ workspaceId: params.workspaceId, userId: params.createdBy }),
+  ])
+  const allowedModels = resolveSubagentModels({
+    workspaceSettings,
+    userPreferences,
+    modelRegistry: deps.modelRegistry,
+  })
   if (!allowedModels.includes(params.model)) {
     return { ok: false, reason: "model_not_allowed", allowedModels }
   }

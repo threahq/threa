@@ -18,14 +18,104 @@ export const MAX_PENDING_FOLLOW_UPS_MIN = 1
 export const MAX_PENDING_FOLLOW_UPS_MAX = 100
 
 /**
+ * Price banding for a delegable model. `premium` is the "you are paying real
+ * money for this second opinion" band — the admin picker marks those opt-in and
+ * ships them off by default.
+ */
+export const SUBAGENT_MODEL_TIERS = ["standard", "premium"] as const
+export type SubagentModelTier = (typeof SUBAGENT_MODEL_TIERS)[number]
+
+/**
+ * One model an admin may put in the workspace's delegable set, with what it
+ * costs. Prices are USD per 1M tokens from the `docs/model-reference.md` price
+ * table — the registry (`models.yaml`) carries capabilities, not rates, so the
+ * number a picker shows has to come from somewhere and this is the one place it
+ * does (INV-33). The backend still sends only ids (INV-46); the label and the
+ * rate are formatted client-side from here.
+ *
+ * Rates verified against the `docs/model-reference.md` price table on
+ * 2026-09-01. They are DISPLAY-ONLY — nothing bills off them — so a stale figure
+ * misinforms an admin but cannot mischarge anyone.
+ */
+export interface SubagentModelCatalogEntry {
+  id: string
+  label: string
+  tier: SubagentModelTier
+  /** USD per 1M input tokens. */
+  inputPricePerMTok: number
+  /** USD per 1M output tokens. */
+  outputPricePerMTok: number
+  /** Whether a workspace that never touched the setting delegates to this model. */
+  defaultEnabled: boolean
+}
+
+/**
+ * The models offered as delegation targets. A curated subset of the registry —
+ * a subagent is a second opinion, so the list is the models worth asking, not
+ * every chat model that exists. `apps/backend/src/features/subagents/models.test.ts`
+ * holds every id here to being a registry chat model, and the settings write path
+ * re-checks against the registry, so an entry can never become an offer the
+ * runtime refuses.
+ */
+export const SUBAGENT_MODEL_CATALOG: readonly SubagentModelCatalogEntry[] = [
+  {
+    id: "openrouter:openai/gpt-5.6-terra",
+    label: "GPT-5.6 Terra",
+    tier: "standard",
+    inputPricePerMTok: 2.5,
+    outputPricePerMTok: 15,
+    defaultEnabled: true,
+  },
+  {
+    id: "openrouter:anthropic/claude-sonnet-5",
+    label: "Claude Sonnet 5",
+    tier: "standard",
+    inputPricePerMTok: 2,
+    outputPricePerMTok: 10,
+    defaultEnabled: true,
+  },
+  {
+    id: "openrouter:google/gemini-3.6-flash",
+    label: "Gemini 3.6 Flash",
+    tier: "standard",
+    inputPricePerMTok: 1.5,
+    outputPricePerMTok: 7.5,
+    defaultEnabled: false,
+  },
+  {
+    id: "openrouter:openai/gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
+    tier: "standard",
+    inputPricePerMTok: 0.2,
+    outputPricePerMTok: 1.2,
+    defaultEnabled: false,
+  },
+  {
+    id: "openrouter:anthropic/claude-opus-5",
+    label: "Claude Opus 5",
+    tier: "premium",
+    inputPricePerMTok: 5,
+    outputPricePerMTok: 25,
+    defaultEnabled: false,
+  },
+  {
+    id: "openrouter:openai/gpt-5.6-sol",
+    label: "GPT-5.6 Sol",
+    tier: "premium",
+    inputPricePerMTok: 5,
+    outputPricePerMTok: 30,
+    defaultEnabled: false,
+  },
+] as const
+
+/**
  * The delegable model set a workspace starts with. Terra and Sonnet 5 are the
  * two current-gen models worth a second opinion at a price a default can carry;
  * Opus/Sol tiers are opt-in per workspace rather than on by default.
  */
-export const DEFAULT_SUBAGENT_MODELS: string[] = [
-  "openrouter:openai/gpt-5.6-terra",
-  "openrouter:anthropic/claude-sonnet-5",
-]
+export const DEFAULT_SUBAGENT_MODELS: string[] = SUBAGENT_MODEL_CATALOG.filter((entry) => entry.defaultEnabled).map(
+  (entry) => entry.id
+)
 
 /** Full workspace settings (wire format). */
 export interface WorkspaceSettings {

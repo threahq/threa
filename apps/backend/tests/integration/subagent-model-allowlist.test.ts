@@ -2,11 +2,12 @@
  * Which models a persona may actually delegate to, decided where the model
  * crosses the boundary rather than where the tool was described.
  *
- * Two gates in one order (INV-33, `resolveSubagentModels`): the registry says
- * what exists, the workspace's `subagentModels` says what it pays for. Both are
- * re-resolved at execution, so an allowlist that moved mid-turn cannot be used
- * to delegate off-policy — and a refusal carries the current set, so the model's
- * next attempt is a choice rather than another guess.
+ * Three gates in one order (INV-33, `resolveSubagentModels`): the registry says
+ * what exists, the workspace's `subagentModels` says what it pays for, and the
+ * invoking user's own list narrows that. All three are re-resolved at
+ * execution, so an allowlist that moved mid-turn cannot be used to delegate
+ * off-policy — and a refusal carries the current set, so the model's next
+ * attempt is a choice rather than another guess.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
@@ -16,6 +17,7 @@ import { DEFAULT_SUBAGENT_MODELS } from "@threa/types"
 import { createStartSubagentTool } from "../../src/features/agents/tools"
 import { StreamEventRepository } from "../../src/features/streams"
 import { SubagentService, startSubagent, resolveSubagentModels } from "../../src/features/subagents"
+import { UserPreferencesService } from "../../src/features/user-preferences"
 import { WorkspaceSettingsService } from "../../src/features/workspace-settings"
 import { HttpError } from "../../src/lib/errors"
 import { setupIsolatedTestDatabase } from "./setup"
@@ -30,6 +32,7 @@ let cleanup: () => Promise<void>
 let ctx: SubagentTestContext
 let subagentService: SubagentService
 let workspaceSettingsService: WorkspaceSettingsService
+let userPreferencesService: UserPreferencesService
 let modelRegistry: ModelRegistry
 
 beforeAll(async () => {
@@ -40,16 +43,18 @@ beforeAll(async () => {
   subagentService = new SubagentService({ pool, streamService: ctx.streamService })
   modelRegistry = createModelRegistry()
   workspaceSettingsService = new WorkspaceSettingsService(pool, modelRegistry)
+  userPreferencesService = new UserPreferencesService(pool)
 })
 
 afterAll(async () => {
   await cleanup()
 })
 
-/** The `start_subagent` tool as `server.ts` binds it, for one stream. */
-async function toolForStream(parentStreamId: string) {
+/** The `start_subagent` tool as `server.ts` binds it, for one stream and one invoking user. */
+async function toolForStream(parentStreamId: string, createdBy: string = ctx.owner) {
   const allowedModels = resolveSubagentModels({
     workspaceSettings: await workspaceSettingsService.getSettings(ctx.workspaceId),
+    userPreferences: await userPreferencesService.getPreferences(ctx.workspaceId, createdBy),
     modelRegistry,
   })
   return createStartSubagentTool({
@@ -60,8 +65,9 @@ async function toolForStream(parentStreamId: string) {
           subagentService,
           modelRegistry,
           loadWorkspaceSettings: (workspaceId) => workspaceSettingsService.getSettings(workspaceId),
+          loadUserPreferences: ({ workspaceId, userId }) => userPreferencesService.getPreferences(workspaceId, userId),
         },
-        { ...createParams(ctx, parentStreamId, { model, title }), brief }
+        { ...createParams(ctx, parentStreamId, { model, title, createdBy }), brief }
       ),
   })
 }
@@ -71,6 +77,15 @@ function parse(output: string) {
 }
 
 const input = { title: "Second opinion", brief: "Here is everything you need to answer." }
+
+/** The stored workspace override for a settings key, or null when it sits at the default. */
+async function storedOverride(key: string): Promise<unknown> {
+  const { rows } = await pool.query<{ value: unknown }>(
+    `SELECT value FROM workspace_setting_overrides WHERE workspace_id = $1 AND key = $2`,
+    [ctx.workspaceId, key]
+  )
+  return rows[0]?.value ?? null
+}
 
 /** Rows the `active` unique index would see for this conversation surface. */
 async function activeRunCount(scopeStreamId: string): Promise<number> {
@@ -169,6 +184,18 @@ describe("workspace override", () => {
     )
   })
 
+  test("setting the list back to the shipped default stores no override row at all", async () => {
+    await workspaceSettingsService.updateSettings(ctx.workspaceId, { subagentModels: [OFF_POLICY_MODEL] })
+    expect(await storedOverride("subagentModels")).toEqual([OFF_POLICY_MODEL])
+
+    await workspaceSettingsService.updateSettings(ctx.workspaceId, { subagentModels: DEFAULT_SUBAGENT_MODELS })
+
+    expect(await storedOverride("subagentModels")).toBeNull()
+    expect((await workspaceSettingsService.getSettings(ctx.workspaceId)).subagentModels).toEqual(
+      DEFAULT_SUBAGENT_MODELS
+    )
+  })
+
   test("a stored model that leaves the registry stops being delegable without a settings edit", async () => {
     await workspaceSettingsService.updateSettings(ctx.workspaceId, {
       subagentModels: [OFF_POLICY_MODEL, DEFAULT_SUBAGENT_MODELS[0]],
@@ -186,6 +213,114 @@ describe("workspace override", () => {
 
       expect(allowed).toEqual([DEFAULT_SUBAGENT_MODELS[0]])
     } finally {
+      await workspaceSettingsService.updateSettings(ctx.workspaceId, { subagentModels: DEFAULT_SUBAGENT_MODELS })
+    }
+  })
+})
+
+describe("user subset", () => {
+  /** Reset the user to "no personal narrowing" — an empty list is the default, so no row survives. */
+  async function clearUserSubset(userId: string) {
+    await userPreferencesService.updatePreferences(ctx.workspaceId, userId, { subagentModels: [] })
+  }
+
+  test("a user's list narrows what the tool offers, without touching another user's", async () => {
+    await userPreferencesService.updatePreferences(ctx.workspaceId, ctx.member, {
+      subagentModels: [DEFAULT_SUBAGENT_MODELS[1]],
+    })
+
+    try {
+      const channel = await ctx.createChannel({ slug: "subset-narrowed" })
+      const refused = await (
+        await toolForStream(channel.id, ctx.member)
+      ).config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+
+      expect(parse(refused.output)).toMatchObject({ ok: false, allowedModels: [DEFAULT_SUBAGENT_MODELS[1]] })
+      expect(await activeRunCount(channel.id)).toBe(0)
+
+      const ownerChannel = await ctx.createChannel({ slug: "subset-unaffected" })
+      const allowed = await (
+        await toolForStream(ownerChannel.id, ctx.owner)
+      ).config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+      expect(parse(allowed.output)).toMatchObject({ ok: true, model: DEFAULT_SUBAGENT_MODELS[0] })
+    } finally {
+      await clearUserSubset(ctx.member)
+    }
+  })
+
+  test("a user cannot widen past the workspace — a model it withheld stays refused", async () => {
+    await userPreferencesService.updatePreferences(ctx.workspaceId, ctx.member, {
+      subagentModels: [OFF_POLICY_MODEL, DEFAULT_SUBAGENT_MODELS[0]],
+    })
+
+    try {
+      const channel = await ctx.createChannel({ slug: "subset-no-widening" })
+      const result = await (
+        await toolForStream(channel.id, ctx.member)
+      ).config.execute({ ...input, model: OFF_POLICY_MODEL }, EXEC_OPTS)
+
+      expect(parse(result.output)).toMatchObject({ ok: false, allowedModels: [DEFAULT_SUBAGENT_MODELS[0]] })
+      expect(await activeRunCount(channel.id)).toBe(0)
+    } finally {
+      await clearUserSubset(ctx.member)
+    }
+  })
+
+  test("a subset set after the turn was built still binds at execution", async () => {
+    const channel = await ctx.createChannel({ slug: "subset-midturn" })
+    // Built while the user allowed everything the workspace does.
+    const tool = await toolForStream(channel.id, ctx.member)
+
+    await userPreferencesService.updatePreferences(ctx.workspaceId, ctx.member, {
+      subagentModels: [DEFAULT_SUBAGENT_MODELS[1]],
+    })
+
+    try {
+      const result = await tool.config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+
+      expect(parse(result.output)).toMatchObject({ ok: false, allowedModels: [DEFAULT_SUBAGENT_MODELS[1]] })
+      expect(await activeRunCount(channel.id)).toBe(0)
+    } finally {
+      await clearUserSubset(ctx.member)
+    }
+  })
+
+  test("an empty user list is no narrowing at all — the whole workspace set stays delegable", async () => {
+    await clearUserSubset(ctx.member)
+
+    const channel = await ctx.createChannel({ slug: "subset-empty" })
+    const result = await (
+      await toolForStream(channel.id, ctx.member)
+    ).config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+
+    expect(parse(result.output)).toMatchObject({ ok: true, model: DEFAULT_SUBAGENT_MODELS[0] })
+  })
+
+  test("a workspace that drops every model the user picked leaves them with no delegation, not the full set", async () => {
+    await userPreferencesService.updatePreferences(ctx.workspaceId, ctx.member, {
+      subagentModels: [DEFAULT_SUBAGENT_MODELS[1]],
+    })
+    await workspaceSettingsService.updateSettings(ctx.workspaceId, { subagentModels: [DEFAULT_SUBAGENT_MODELS[0]] })
+
+    try {
+      const channel = await ctx.createChannel({ slug: "subset-emptied" })
+      // The user's restriction is honoured rather than silently widened back to
+      // the workspace set — an intersection of nothing is nothing.
+      const result = await (
+        await toolForStream(channel.id, ctx.member)
+      ).config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+
+      expect(parse(result.output)).toMatchObject({ ok: false, allowedModels: [] })
+      expect(await activeRunCount(channel.id)).toBe(0)
+
+      // A user who narrowed nothing still delegates on the shrunken set.
+      const ownerChannel = await ctx.createChannel({ slug: "subset-emptied-owner" })
+      const allowed = await (
+        await toolForStream(ownerChannel.id, ctx.owner)
+      ).config.execute({ ...input, model: DEFAULT_SUBAGENT_MODELS[0] }, EXEC_OPTS)
+      expect(parse(allowed.output)).toMatchObject({ ok: true })
+    } finally {
+      await clearUserSubset(ctx.member)
       await workspaceSettingsService.updateSettings(ctx.workspaceId, { subagentModels: DEFAULT_SUBAGENT_MODELS })
     }
   })

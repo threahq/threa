@@ -11,6 +11,7 @@ import { PersonaListAvatar } from "@/components/persona-avatar"
 import { useArchivedPersonas, usePersonas, useUnarchivePersona } from "@/hooks/use-personas"
 import { FollowUpLimitSection } from "./follow-up-limit-section"
 import { DefaultCompanionSection } from "./default-companion-section"
+import { SubagentModelsSection } from "./subagent-models-section"
 import { PersonaForkDialog } from "./persona-fork-dialog"
 
 interface PersonasTabProps {
@@ -145,6 +146,7 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
         </div>
         <DefaultCompanionSection workspaceId={workspaceId} />
         <FollowUpLimitSection workspaceId={workspaceId} />
+        <SubagentModelsSection workspaceId={workspaceId} />
       </div>
     </div>
   )

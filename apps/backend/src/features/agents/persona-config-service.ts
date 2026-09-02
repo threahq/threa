@@ -62,6 +62,13 @@ interface Dependencies {
   streamService: StreamService
   modelRegistry: ModelRegistry
   attachmentService: AttachmentService
+  /**
+   * The workspace's governed model set (`resolveSubagentModels` over workspace
+   * settings, wired in server.ts). A function rather than the settings service
+   * itself: workspace-settings already imports this feature for persona
+   * validation, so the dependency only goes one way.
+   */
+  loadGovernedModels: (workspaceId: string) => Promise<string[]>
 }
 
 /**
@@ -257,8 +264,8 @@ function customRowToListItem(row: Persona): PersonaListItem {
 
 /**
  * Reject a write patch touching any field a system persona locks (identity,
- * prompt, temperature, maxTokens, escalationModel). Only toolset, model, and the
- * two style presets are editable for `managed_by: "system"` (roadmap 7.1 product
+ * prompt, temperature, maxTokens). Only toolset, the two models, and the two
+ * style presets are editable for `managed_by: "system"` (roadmap 7.1 product
  * spec). Applies to the WRITE paths only (`setOverride`/`saveDraft`); resolution
  * of already-stored patches stays permissive so a legacy override keeps
  * applying (INV-11 fail-safe — a v0 restore is how a workspace clears one).
@@ -272,6 +279,19 @@ function assertSystemPersonaFieldsEditable(patch: PersonaConfigPatch): void {
       code: "PERSONA_FIELD_LOCKED",
     })
   }
+}
+
+/**
+ * Escalation spends money nobody picks per turn, so every persona kind —
+ * built-in, workspace custom, personal — answers to the workspace's delegation
+ * set, not to the whole registry. Without this a member's personal persona
+ * would be the way around the admin's cost control.
+ */
+function ungovernedEscalation(model: string): HttpError {
+  return new HttpError(`Escalation model "${model}" is not in this workspace's delegation model set`, {
+    status: 400,
+    code: "UNSUPPORTED_PERSONA_MODEL",
+  })
 }
 
 function toPersonaListItem(config: PersonaResolvedConfig, isCustomized: boolean): PersonaListItem {
@@ -337,20 +357,61 @@ export class PersonaConfigService {
     return this.modelRegistry.isChatModel(model)
   }
 
-  /** Reject an override/draft patch selecting a model outside the assignable set (INV-16). */
-  private assertModelsAllowed(patch: PersonaConfigPatch, base: BuiltInAgentConfig): void {
+  /**
+   * Reject an override/draft patch selecting a model outside the assignable set
+   * (INV-16), and an escalation outside the workspace's GOVERNED set.
+   *
+   * Escalation is the one persona field that spends money the admin did not
+   * pick per turn, so it answers to the same list as subagent delegation
+   * (`subagentModels`) rather than to the whole registry. The persona's current
+   * escalation stays legal whatever the list says — a workspace that narrows
+   * its set must still be able to save an unrelated toolset edit, and clearing
+   * escalation to `null` is always available as the way out.
+   */
+  private async assertModelsAllowed(
+    workspaceId: string,
+    agentId: string,
+    patch: PersonaConfigPatch,
+    base: BuiltInAgentConfig
+  ): Promise<void> {
     if (patch.model !== undefined && !this.isModelAssignable(patch.model, base)) {
       throw new HttpError(`Model "${patch.model}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
-    if (patch.escalationModel != null && !this.isModelAssignable(patch.escalationModel, base)) {
-      throw new HttpError(`Escalation model "${patch.escalationModel}" is not an assignable persona model`, {
+    const escalation = patch.escalationModel
+    if (escalation == null || escalation === base.escalationModel) return
+    if (!this.isModelAssignable(escalation, base)) {
+      throw new HttpError(`Escalation model "${escalation}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
+    const governed = await this.deps.loadGovernedModels(workspaceId)
+    if (governed.includes(escalation)) return
+    if (escalation === (await this.resolveCurrentEscalationModel(workspaceId, agentId, base))) return
+    throw ungovernedEscalation(escalation)
+  }
+
+  /**
+   * The built-in's escalation model as it stands right now — the stored
+   * override's value, else the code default. Read outside the write
+   * transaction: it only widens what is legal, and the write itself is guarded
+   * by optimistic concurrency.
+   */
+  private async resolveCurrentEscalationModel(
+    workspaceId: string,
+    agentId: string,
+    base: BuiltInAgentConfig
+  ): Promise<string | null> {
+    const detail = await AgentConfigOverrideRepository.findActiveDetailByWorkspaceAndAgent(
+      this.pool,
+      workspaceId,
+      agentId
+    )
+    if (!detail) return base.escalationModel
+    return applyBuiltInAgentPatch(base, detail.patch, { workspaceId, agentId }).escalationModel
   }
 
   /**
@@ -363,19 +424,42 @@ export class PersonaConfigService {
     return model === current.model || model === current.escalationModel || this.modelRegistry.isChatModel(model)
   }
 
-  private assertCustomModelsAllowed(config: PersonaCustomConfig, current: Persona): void {
+  private async assertCustomModelsAllowed(
+    workspaceId: string,
+    config: PersonaCustomConfig,
+    current: Persona
+  ): Promise<void> {
     if (!this.isCustomModelLegal(config.model, current)) {
       throw new HttpError(`Model "${config.model}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
-    if (config.escalationModel != null && !this.isCustomModelLegal(config.escalationModel, current)) {
-      throw new HttpError(`Escalation model "${config.escalationModel}" is not an assignable persona model`, {
+    await this.assertCustomEscalationAllowed(workspaceId, config.escalationModel, current)
+  }
+
+  /**
+   * A custom (or personal) persona's escalation model: assignable AND in the
+   * workspace's governed set, with the row's own current value always legal so a
+   * narrowed set never blocks an unrelated edit. Same rule as the built-in path
+   * — a personal persona must not be the loophole around the admin's set.
+   */
+  private async assertCustomEscalationAllowed(
+    workspaceId: string,
+    escalation: string | null | undefined,
+    current: Persona
+  ): Promise<void> {
+    if (escalation == null) return
+    if (!this.isCustomModelLegal(escalation, current)) {
+      throw new HttpError(`Escalation model "${escalation}" is not an assignable persona model`, {
         status: 400,
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
+    if (escalation === current.escalationModel) return
+    const governed = await this.deps.loadGovernedModels(workspaceId)
+    if (governed.includes(escalation)) return
+    throw ungovernedEscalation(escalation)
   }
 
   /**
@@ -384,7 +468,11 @@ export class PersonaConfigService {
    * (the row's current values stay legal). Mirrors {@link assertSystemPersonaFieldsEditable}
    * + {@link assertModelsAllowed} for the built-in draft path.
    */
-  private assertCustomDraftAllowed(patch: PersonaConfigPatch, current: Persona): void {
+  private async assertCustomDraftAllowed(
+    workspaceId: string,
+    patch: PersonaConfigPatch,
+    current: Persona
+  ): Promise<void> {
     if (patch.tonePreset !== undefined || patch.brevityPreset !== undefined) {
       throw new HttpError("Style presets are not editable for a custom persona", {
         status: 400,
@@ -397,12 +485,7 @@ export class PersonaConfigService {
         code: "UNSUPPORTED_PERSONA_MODEL",
       })
     }
-    if (patch.escalationModel != null && !this.isCustomModelLegal(patch.escalationModel, current)) {
-      throw new HttpError(`Escalation model "${patch.escalationModel}" is not an assignable persona model`, {
-        status: 400,
-        code: "UNSUPPORTED_PERSONA_MODEL",
-      })
-    }
+    await this.assertCustomEscalationAllowed(workspaceId, patch.escalationModel, current)
   }
 
   /** The bound test stream id when it still exists and is unarchived, else null. */
@@ -610,7 +693,7 @@ export class PersonaConfigService {
       throw new Error(`setOverride called for non-editable persona ${agentId}`)
     }
     assertSystemPersonaFieldsEditable(patch)
-    this.assertModelsAllowed(patch, base)
+    await this.assertModelsAllowed(workspaceId, agentId, patch, base)
 
     // An empty patch means "identical to the built-in defaults" — remove the
     // override entirely (restore-to-default / the history's v0) rather than store
@@ -751,12 +834,32 @@ export class PersonaConfigService {
         code: "PERSONA_REVISION_INCOMPATIBLE",
       })
 
+    // A legacy revision may carry fields since locked for system personas (a
+    // pre-restriction rename), or an escalation model the workspace's delegation
+    // set no longer carries. On a *restore* both are the same "no longer
+    // restorable" situation as schema drift — surface the incompatible semantic,
+    // not a field-lock or model error on a history action. A revision whose
+    // escalation is still governed (or is the persona's current value) restores
+    // normally, because the write path admits it.
+    const asIncompatible = (error: unknown): never => {
+      if (
+        error instanceof HttpError &&
+        (error.code === "PERSONA_FIELD_LOCKED" || error.code === "UNSUPPORTED_PERSONA_MODEL")
+      ) {
+        throw new HttpError("This revision can no longer be restored — its configuration is no longer allowed", {
+          status: 422,
+          code: "PERSONA_REVISION_INCOMPATIBLE",
+        })
+      }
+      throw error
+    }
+
     if (editable.kind === "custom") {
       // A custom revision snapshots the FULL config; re-commit it verbatim
       // through the update path so it appends a new revision like any edit.
       const parsed = personaCustomConfigSchema.safeParse(revision.patch)
       if (!parsed.success) throw incompatible()
-      return this.updateCustom(workspaceId, personaId, parsed.data, expectedUpdatedAt, caller)
+      return this.updateCustom(workspaceId, personaId, parsed.data, expectedUpdatedAt, caller).catch(asIncompatible)
     }
 
     // The stored JSONB is opaque; re-validate through the shared schema before
@@ -766,21 +869,7 @@ export class PersonaConfigService {
     // bare ZodError → 500 (INV-32).
     const parsed = personaConfigPatchSchema.safeParse(revision.patch)
     if (!parsed.success) throw incompatible()
-    try {
-      return await this.setOverride(workspaceId, personaId, parsed.data, expectedUpdatedAt, caller.userId)
-    } catch (error) {
-      // A legacy revision may carry fields since locked for system personas
-      // (e.g. a pre-restriction rename). On a *restore* that is the same "no
-      // longer restorable" situation as schema drift — surface the incompatible
-      // semantic, not a confusing field-lock error on a history action.
-      if (error instanceof HttpError && error.code === "PERSONA_FIELD_LOCKED") {
-        throw new HttpError("This revision can no longer be restored — it changes fields that are now locked", {
-          status: 422,
-          code: "PERSONA_REVISION_INCOMPATIBLE",
-        })
-      }
-      throw error
-    }
+    return this.setOverride(workspaceId, personaId, parsed.data, expectedUpdatedAt, caller.userId).catch(asIncompatible)
   }
 
   /** Upsert the caller's draft patch (race-safe, INV-20). Returns its saved state. */
@@ -794,10 +883,10 @@ export class PersonaConfigService {
     if (editable.kind === "custom") {
       // A custom draft is a sparse diff over the ROW; presets are locked (free
       // text only) and any model it names must be assignable.
-      this.assertCustomDraftAllowed(patch, editable.row)
+      await this.assertCustomDraftAllowed(workspaceId, patch, editable.row)
     } else {
       assertSystemPersonaFieldsEditable(patch)
-      this.assertModelsAllowed(patch, editable.base)
+      await this.assertModelsAllowed(workspaceId, agentId, patch, editable.base)
     }
 
     const detail = await PersonaConfigDraftRepository.upsert(this.pool, {
@@ -953,13 +1042,22 @@ export class PersonaConfigService {
       throw new HttpError("Source persona not found", { status: 404, code: "PERSONA_SOURCE_NOT_FOUND" })
     }
     const slots = resolvePersonaStyleSlots(source)
+    // A fork copies the source's config, and `POST /personas` is open to any
+    // member for a personal fork — so copying an ungoverned escalation verbatim
+    // would launder it into a fresh row, which the ∪-current allowance then
+    // blesses on every later write. Clamp it to null instead of refusing the
+    // fork: an admin narrowing the delegation set must not break an unrelated
+    // member action, and the owner can re-pick from the governed set.
+    const governed = await this.deps.loadGovernedModels(workspaceId)
+    const escalationModel =
+      source.escalationModel && governed.includes(source.escalationModel) ? source.escalationModel : null
     return {
       name,
       description: source.description,
       avatarEmoji: source.avatarEmoji,
       systemPrompt: source.systemPrompt ?? "",
       model: source.model,
-      escalationModel: source.escalationModel,
+      escalationModel,
       temperature: source.temperature,
       maxTokens: source.maxTokens,
       enabledTools: (source.enabledTools ?? []) as PersonaCustomConfig["enabledTools"],
@@ -987,7 +1085,7 @@ export class PersonaConfigService {
     const callerId = caller.userId
     const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     if (editable.kind !== "custom") throw customsOnly()
-    this.assertCustomModelsAllowed(config, editable.row)
+    await this.assertCustomModelsAllowed(workspaceId, config, editable.row)
 
     const txnResult = await withTransaction(this.pool, async (client) => {
       const result = await PersonaRepository.updateWorkspacePersona(client, {

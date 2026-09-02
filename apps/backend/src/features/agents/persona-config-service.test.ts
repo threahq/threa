@@ -8,6 +8,7 @@ import {
   PERSONA_ATTACHMENT_MAX_COUNT,
   StreamPurposes,
   type PersonaConfigPatch,
+  type PersonaCustomConfig,
 } from "@threa/types"
 import { PersonaConfigService, type PersonaCaller } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
@@ -70,6 +71,11 @@ const FAKE_MODEL_REGISTRY = {
   },
 } as unknown as ModelRegistry
 
+// The workspace's delegable set (`subagentModels`), which is also what a
+// built-in's escalation model must come from. Sonnet 5 is deliberately absent so
+// an assignable-but-ungoverned escalation is expressible.
+const GOVERNED_MODELS = ["openrouter:anthropic/claude-haiku-4.5"]
+
 function setupTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
 }
@@ -83,6 +89,7 @@ function makeService(
     streamService,
     modelRegistry: FAKE_MODEL_REGISTRY,
     attachmentService: extra.attachmentService ?? ({} as any),
+    loadGovernedModels: async () => GOVERNED_MODELS,
   })
 }
 
@@ -406,6 +413,7 @@ describe("PersonaConfigService.setOverride", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.setOverride(WORKSPACE_ID, ARIADNE_AGENT_ID, { tonePreset: "direct" }, null, CALLER_ID)
@@ -506,6 +514,74 @@ describe("PersonaConfigService.setOverride", () => {
       )
     ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
     expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("accepts an escalation model the workspace's delegation set allows", async () => {
+    setupTransaction()
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { escalationModel: GOVERNED_MODELS[0] },
+      null,
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("written")
+    expect(upsert).toHaveBeenCalled()
+  })
+
+  it("refuses an escalation model that is assignable but outside the workspace's delegation set", async () => {
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
+
+    await expect(
+      makeService().setOverride(
+        WORKSPACE_ID,
+        ARIADNE_AGENT_ID,
+        { escalationModel: "openrouter:anthropic/claude-sonnet-5" },
+        null,
+        CALLER_ID
+      )
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("keeps the persona's stored escalation model saveable after the workspace narrows its set", async () => {
+    setupTransaction()
+    const stored = "openrouter:anthropic/claude-sonnet-5"
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue({
+      patch: { escalationModel: stored },
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    } as any)
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+
+    const result = await makeService().setOverride(
+      WORKSPACE_ID,
+      ARIADNE_AGENT_ID,
+      { escalationModel: stored, tonePreset: "direct" },
+      "2026-07-01T00:00:00.000Z",
+      CALLER_ID
+    )
+
+    expect(result.outcome).toBe("written")
+    expect(upsert).toHaveBeenCalled()
   })
 
   it("accepts a built-in default model even when the registry lacks it (a code default stays assignable)", async () => {
@@ -687,6 +763,84 @@ describe("PersonaConfigService.restoreRevision", () => {
     expect(upsert).not.toHaveBeenCalled()
   })
 
+  it("422s restoring a legacy revision whose escalation model the workspace no longer governs", async () => {
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_escalation",
+      agentId: ARIADNE_AGENT_ID,
+      version: 1,
+      patch: { escalationModel: "openrouter:anthropic/claude-sonnet-5" },
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    spyOn(AgentConfigOverrideRepository, "findActiveDetailByWorkspaceAndAgent").mockResolvedValue(null)
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive")
+
+    await expect(
+      makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_escalation", null, CALLER)
+    ).rejects.toMatchObject({ status: 422, code: "PERSONA_REVISION_INCOMPATIBLE" })
+    expect(upsert).not.toHaveBeenCalled()
+  })
+
+  it("restores a revision whose escalation model is still governed", async () => {
+    setupTransaction()
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_governed",
+      agentId: ARIADNE_AGENT_ID,
+      version: 1,
+      patch: { escalationModel: GOVERNED_MODELS[0] },
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    const upsert = spyOn(AgentConfigOverrideRepository, "upsertActive").mockResolvedValue({
+      outcome: "written",
+      updatedAt: "2026-07-07T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 2 })
+
+    const result = await makeService().restoreRevision(WORKSPACE_ID, ARIADNE_AGENT_ID, "acrev_governed", null, CALLER)
+
+    expect(result).toMatchObject({ outcome: "written", updatedAt: "2026-07-07T00:00:00.000Z" })
+    expect(upsert).toHaveBeenCalled()
+  })
+
+  it("422s a CUSTOM restore whose snapshot names an escalation the workspace no longer governs", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "custom",
+      row: customPersona({ managedBy: "user", ownerUserId: CALLER_ID, escalationModel: null }),
+    })
+    spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
+      id: "acrev_custom",
+      agentId: "persona_custom_1",
+      version: 1,
+      patch: {
+        name: "Helper",
+        description: null,
+        avatarEmoji: null,
+        systemPrompt: "Help.",
+        model: "openrouter:anthropic/claude-haiku-4.5",
+        escalationModel: "openrouter:anthropic/claude-sonnet-5",
+        temperature: null,
+        maxTokens: null,
+        enabledTools: [AgentToolNames.SEND_MESSAGE],
+        tonePrompt: null,
+        brevityPrompt: null,
+      },
+      createdByKind: "user",
+      createdById: "usr_1",
+      createdAt: "2026-07-01T00:00:00.000Z",
+    })
+    const update = spyOn(PersonaRepository, "updateWorkspacePersona")
+
+    await expect(
+      makeService().restoreRevision(WORKSPACE_ID, "persona_custom_1", "acrev_custom", null, CALLER)
+    ).rejects.toMatchObject({ status: 422, code: "PERSONA_REVISION_INCOMPATIBLE" })
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it("surfaces a 409 conflict from the underlying setOverride without writing a revision", async () => {
     setupTransaction()
     spyOn(PersonaConfigRevisionRepository, "findById").mockResolvedValue({
@@ -789,6 +943,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -808,6 +963,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -829,6 +985,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { archiveStream } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     await service.discardDraft(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -850,6 +1007,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { getStreamById, createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -871,6 +1029,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -913,6 +1072,7 @@ describe("PersonaConfigService draft lifecycle", () => {
       streamService: { getStreamById: mock(async () => null), createScratchpad } as any,
       modelRegistry: FAKE_MODEL_REGISTRY,
       attachmentService: {} as any,
+      loadGovernedModels: async () => GOVERNED_MODELS,
     })
 
     const result = await service.ensureTestStream(WORKSPACE_ID, ARIADNE_AGENT_ID, CALLER)
@@ -992,6 +1152,56 @@ describe("PersonaConfigService.forkPersona", () => {
       "agent_config:updated",
       expect.objectContaining({ agentId: "persona_custom_new" })
     )
+  })
+
+  it("clamps a source's ungoverned escalation to null rather than laundering it into the fork", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "findById").mockResolvedValue(
+      customPersona({ escalationModel: "openrouter:anthropic/claude-sonnet-5" })
+    )
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(
+      customPersona({ id: "persona_custom_new", slug: "coach", name: "Coach", managedBy: "user" })
+    )
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Coach", "personal", CALLER)
+
+    const insertArg = insert.mock.calls[0]![1] as { config: PersonaCustomConfig }
+    expect(insertArg.config.escalationModel).toBeNull()
+  })
+
+  it("keeps a source escalation the workspace's delegation set allows", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "findById").mockResolvedValue(customPersona({ escalationModel: GOVERNED_MODELS[0] }))
+    const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(
+      customPersona({ id: "persona_custom_new", slug: "coach", name: "Coach", managedBy: "user" })
+    )
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 1 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Coach", "personal", CALLER)
+
+    const insertArg = insert.mock.calls[0]![1] as { config: PersonaCustomConfig }
+    expect(insertArg.config.escalationModel).toBe(GOVERNED_MODELS[0])
+  })
+
+  it("refuses a later draft naming the escalation the fork clamped away — the row's own value is null now", async () => {
+    // The fork landed with `escalationModel: null` (clamped above), so the
+    // ∪-current allowance has nothing to bless: the owner cannot re-enter the
+    // ungoverned model through the draft path either.
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "custom",
+      row: customPersona({ managedBy: "user", ownerUserId: CALLER_ID, escalationModel: null }),
+    })
+    const upsert = spyOn(PersonaConfigDraftRepository, "upsert")
+
+    await expect(
+      makeService().saveDraft(WORKSPACE_ID, "persona_custom_1", CALLER, {
+        escalationModel: "openrouter:anthropic/claude-sonnet-5",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+    expect(upsert).not.toHaveBeenCalled()
   })
 
   it("creates a blank agent (starter prompt, companion default model, no tools) when sourcePersonaId is null", async () => {
@@ -1121,6 +1331,76 @@ describe("PersonaConfigService.updateCustom", () => {
       "agent_config:updated",
       expect.objectContaining({ agentId: "persona_custom_1" })
     )
+  })
+
+  it("refuses an escalation model outside the workspace's delegation set — a personal persona is no loophole", async () => {
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "custom",
+      row: customPersona({ managedBy: "user", ownerUserId: CALLER_ID }),
+    })
+    const update = spyOn(PersonaRepository, "updateWorkspacePersona")
+
+    await expect(
+      makeService().updateCustom(
+        WORKSPACE_ID,
+        "persona_custom_1",
+        { ...validConfig, escalationModel: "openrouter:anthropic/claude-sonnet-5" },
+        "2026-02-02T00:00:00.000Z",
+        CALLER
+      )
+    ).rejects.toMatchObject({ status: 400, code: "UNSUPPORTED_PERSONA_MODEL" })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("accepts an escalation model the workspace's delegation set allows", async () => {
+    setupTransaction()
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
+    spyOn(PersonaRepository, "updateWorkspacePersona").mockResolvedValue({
+      outcome: "written",
+      row: customPersona({ escalationModel: GOVERNED_MODELS[0] }),
+      updatedAt: "2026-02-03T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 2 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().updateCustom(
+      WORKSPACE_ID,
+      "persona_custom_1",
+      { ...validConfig, escalationModel: GOVERNED_MODELS[0] },
+      "2026-02-02T00:00:00.000Z",
+      CALLER
+    )
+
+    expect(result.outcome).toBe("written")
+  })
+
+  it("keeps the row's stored escalation saveable after the workspace narrowed its set", async () => {
+    setupTransaction()
+    const stored = "openrouter:anthropic/claude-sonnet-5"
+    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({
+      kind: "custom",
+      row: customPersona({ escalationModel: stored }),
+    })
+    const update = spyOn(PersonaRepository, "updateWorkspacePersona").mockResolvedValue({
+      outcome: "written",
+      row: customPersona({ escalationModel: stored }),
+      updatedAt: "2026-02-03T00:00:00.000Z",
+    })
+    spyOn(PersonaConfigDraftRepository, "deleteByOwner").mockResolvedValue(null)
+    spyOn(PersonaConfigRevisionRepository, "insert").mockResolvedValue({ version: 2 })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await makeService().updateCustom(
+      WORKSPACE_ID,
+      "persona_custom_1",
+      { ...validConfig, escalationModel: stored },
+      "2026-02-02T00:00:00.000Z",
+      CALLER
+    )
+
+    expect(result.outcome).toBe("written")
+    expect(update).toHaveBeenCalled()
   })
 
   it("surfaces an optimistic-concurrency conflict with the current row's config + token", async () => {

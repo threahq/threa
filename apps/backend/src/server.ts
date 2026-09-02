@@ -629,6 +629,8 @@ export async function startServer(): Promise<ServerInstance> {
     streamService,
     modelRegistry,
     attachmentService,
+    loadGovernedModels: async (id: string) =>
+      resolveSubagentModels({ workspaceSettings: await workspaceSettingsService.getSettings(id), modelRegistry }),
   })
   const streamBriefService = new StreamBriefService({ pool })
   const delegationService = new DelegationService({ pool })
@@ -655,6 +657,8 @@ export async function startServer(): Promise<ServerInstance> {
     subagentService,
     modelRegistry,
     loadWorkspaceSettings: (id: string) => workspaceSettingsService.getSettings(id),
+    loadUserPreferences: ({ workspaceId, userId }: { workspaceId: string; userId: string }) =>
+      userPreferencesService.getPreferences(workspaceId, userId),
   }
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
@@ -1153,11 +1157,13 @@ export async function startServer(): Promise<ServerInstance> {
     },
     loadActiveSubagentRun: ({ workspaceId, threadStreamId }) =>
       subagentService.findActiveByThreadStream({ workspaceId, threadStreamId }),
-    loadSubagentModels: async ({ workspaceId }) =>
-      resolveSubagentModels({
-        workspaceSettings: await workspaceSettingsService.getSettings(workspaceId),
-        modelRegistry,
-      }),
+    loadSubagentModels: async ({ workspaceId, userId }) => {
+      const [workspaceSettings, userPreferences] = await Promise.all([
+        workspaceSettingsService.getSettings(workspaceId),
+        userPreferencesService.getPreferences(workspaceId, userId),
+      ])
+      return resolveSubagentModels({ workspaceSettings, userPreferences, modelRegistry })
+    },
     delegateToModel: ({ invokingUserId, ...params }) =>
       startSubagent(subagentDelegationDeps, { ...params, createdBy: invokingUserId }),
     reportSubagentBack: async ({ workspaceId, subagentId, resultMessageId }) => {

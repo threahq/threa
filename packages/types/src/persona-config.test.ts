@@ -76,7 +76,22 @@ describe("personaResolvedConfigSchema style slots", () => {
 })
 
 describe("SYSTEM_PERSONA_EDITABLE_FIELDS", () => {
-  test("is exactly toolset, model, and the two style presets", () => {
-    expect([...SYSTEM_PERSONA_EDITABLE_FIELDS]).toEqual(["enabledTools", "model", "tonePreset", "brevityPreset"])
+  test("is exactly toolset, the two models, and the two style presets", () => {
+    expect([...SYSTEM_PERSONA_EDITABLE_FIELDS]).toEqual([
+      "enabledTools",
+      "model",
+      "escalationModel",
+      "tonePreset",
+      "brevityPreset",
+    ])
+  })
+
+  test("every editable field is a key the patch schema accepts", () => {
+    for (const field of SYSTEM_PERSONA_EDITABLE_FIELDS) {
+      expect(personaConfigPatchSchema.safeParse({ [field]: undefined }).success).toBe(true)
+    }
+    expect(personaConfigPatchSchema.parse({ escalationModel: "openrouter:openai/gpt-5.6-terra" })).toEqual({
+      escalationModel: "openrouter:openai/gpt-5.6-terra",
+    })
   })
 })

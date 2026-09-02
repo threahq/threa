@@ -153,6 +153,11 @@ const updatePreferencesSchema = z.object({
   // Personal default companion persona id; null clears back to the workspace
   // default. Semantic validation (active persona in this workspace) runs in the service.
   defaultCompanionPersonaId: z.string().min(1).max(64).nullable().optional(),
+  // The user's personal narrowing of the workspace's delegable model set. Not
+  // validated against the registry here on purpose: it is intersected with the
+  // workspace set at resolution, so an id that stops existing simply drops out
+  // rather than 400ing a preferences PATCH the user can't fix.
+  subagentModels: z.array(z.string().trim().min(1).max(128)).max(20).optional(),
   // Per-user custom status presets, additive to the workspace/system defaults.
   statusPresets: statusPresetsSchema.optional(),
   gettingStartedDismissed: z.boolean().optional(),
