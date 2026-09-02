@@ -28,6 +28,7 @@ import {
   type SendResult,
   type SessionControlActuator,
   type SessionControlInvocationContext,
+  type ShutdownOptions,
 } from "@threahq/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
@@ -658,7 +659,7 @@ export class ChannelServer {
     this.delegations?.start()
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(options?: ShutdownOptions): Promise<void> {
     this.shuttingDown = true
     this.tracer.stop()
     this.carryOn?.stop()
@@ -668,7 +669,7 @@ export class ChannelServer {
     // A never-started session has nothing linked — skipping its shutdown keeps
     // plain-MCP teardown from writing an offline-presence row for an instance
     // that never existed on the Threa side.
-    if (this.started) await this.session.shutdown()
+    if (this.started) await this.session.shutdown(options)
   }
 
   /**

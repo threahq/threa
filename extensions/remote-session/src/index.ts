@@ -19,6 +19,7 @@ export {
   type SendResult,
   type SessionControlActuator,
   type SessionControlInvocationContext,
+  type ShutdownOptions,
 } from "./session"
 export {
   ThreaClient,

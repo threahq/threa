@@ -1,3 +1,5 @@
+import type { ShutdownOptions } from "./session"
+
 function describeError(value: unknown): string {
   if (value instanceof Error) return value.stack ?? value.message
   return String(value)
@@ -5,6 +7,8 @@ function describeError(value: unknown): string {
 
 /** The slice of `process` the lifecycle wiring touches, narrowed so it can be unit-tested with a fake. */
 export interface LifecycleProcess {
+  /** The host's pid, read once at wiring: after the host dies, `process.ppid` names whoever adopted us. */
+  ppid: number
   on(event: string, listener: (arg?: unknown) => void): unknown
   stdin: { on(event: string, listener: (arg?: unknown) => void): unknown }
   stderr: { write(chunk: string): unknown }
@@ -16,6 +20,19 @@ export interface LifecycleOptions {
   logPrefix?: string
   /** Bound on teardown so a hung Threa request can't hold the process past its host's kill grace window. */
   exitGuardMs?: number
+  /** Is the process with this pid still running? Decides whether a closed stdin is the host's death or its choice. */
+  parentAlive?: (pid: number) => boolean
+  /** Wait before probing the parent: a host that was just killed may not be reaped yet. */
+  parentProbeDelayMs?: number
+}
+
+function defaultParentAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -33,14 +50,17 @@ export interface LifecycleOptions {
  *    vanish the process with no log and no cleanup; log it and exit non-zero.
  */
 export function wireLifecycle(
-  server: { shutdown(): Promise<void> },
+  server: { shutdown(options?: ShutdownOptions): Promise<void> },
   host: LifecycleProcess,
   options: LifecycleOptions = {}
 ): void {
   const logPrefix = options.logPrefix ?? "[threa-remote]"
   const exitGuardMs = options.exitGuardMs ?? 4000
+  const parentAlive = options.parentAlive ?? defaultParentAlive
+  const parentProbeDelayMs = options.parentProbeDelayMs ?? 250
+  const hostPid = host.ppid
   let shuttingDown = false
-  const shutdownAndExit = async (code: number, reason: string): Promise<void> => {
+  const shutdownAndExit = async (code: number, reason: string, shutdown: ShutdownOptions = {}): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
     host.stderr.write(`${logPrefix} shutting down (${reason})\n`)
@@ -48,7 +68,7 @@ export function wireLifecycle(
     // SIGTERM→SIGKILL grace window — exit even if presence/fail never lands.
     const guard = setTimeout(() => host.exit(code), exitGuardMs)
     if (guard && typeof guard === "object" && "unref" in guard) (guard as { unref(): void }).unref()
-    await server.shutdown().catch(() => undefined)
+    await server.shutdown(shutdown).catch(() => undefined)
     clearTimeout(guard)
     host.exit(code)
   }
@@ -56,8 +76,19 @@ export function wireLifecycle(
   host.on("SIGINT", () => void shutdownAndExit(0, "SIGINT"))
   host.on("SIGTERM", () => void shutdownAndExit(0, "SIGTERM"))
   host.on("SIGHUP", () => void shutdownAndExit(0, "SIGHUP"))
-  host.stdin.on("end", () => void shutdownAndExit(0, "stdin closed by parent"))
-  host.stdin.on("close", () => void shutdownAndExit(0, "stdin closed by parent"))
+  // A closed stdin looks the same whether the host died or quit and closed
+  // us on the way out, so the host's absence decides: only a dead host leaves
+  // claims to lapse. A signal is somebody stopping this runtime on purpose,
+  // and its turns fail loudly.
+  const stdinClosed = () => {
+    if (shuttingDown) return
+    setTimeout(
+      () => void shutdownAndExit(0, "stdin closed by parent", { hostGone: !parentAlive(hostPid) }),
+      parentProbeDelayMs
+    )
+  }
+  host.stdin.on("end", stdinClosed)
+  host.stdin.on("close", stdinClosed)
   host.on("uncaughtException", (error) => {
     host.stderr.write(`${logPrefix} uncaughtException: ${describeError(error)}\n`)
     void shutdownAndExit(1, "uncaughtException")

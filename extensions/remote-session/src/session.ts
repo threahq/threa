@@ -170,6 +170,15 @@ export interface RemoteSessionDelegate {
   onArchived?: (payload: { rootStreamId: string }) => Promise<void> | void
 }
 
+export interface ShutdownOptions {
+  /**
+   * The host runtime died under us — stdin closed and the parent process is
+   * gone: an OOM kill, a crash, a supervisor that took the pane down. A host
+   * that quit and closed us on the way out does not set this.
+   */
+  hostGone?: boolean
+}
+
 /** The connector's runtime identity and user-facing wording. */
 export interface RuntimeDescriptor {
   /** Threa runtime kind, e.g. "claude-code-channel". */
@@ -528,7 +537,7 @@ export class RemoteSession {
     return ""
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(options: ShutdownOptions = {}): Promise<void> {
     if (this.stopped) return
     this.stopped = true
     if (this.pollTimer) clearTimeout(this.pollTimer)
@@ -545,6 +554,14 @@ export class RemoteSession {
     const routes = this.revokeAllRoutes()
     await this.waitForClaimDrain()
     await this.enqueueOfflinePresence(() => this.stopped)
+    if (options.hostGone && routes.length > 0) {
+      // Renewal stopped above, so the claims expire on the server and the
+      // next runtime on this scratchpad — the revival — claims the same
+      // messages again and answers them as its own turns. Failing them here
+      // would close those turns for good with nobody left to read the error.
+      this.log(`host gone: leaving ${routes.length} in-flight claim(s) to lapse for the revived session`)
+      return
+    }
     await this.failUnansweredRoutes(routes)
   }
 
