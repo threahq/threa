@@ -29,6 +29,7 @@ const VENDORED = [
     files: [
       "index.ts",
       "transport.ts",
+      "invocation-control.ts",
       "types.ts",
       "ws-hint.ts",
       "crypto.ts",
@@ -58,6 +59,7 @@ const VENDORED = [
     files: [
       "index.ts",
       "session.ts",
+      "turn-route.ts",
       "client.ts",
       "identity.ts",
       "attachments.ts",

@@ -29,6 +29,7 @@ const VENDORED = [
     files: [
       "index.ts",
       "transport.ts",
+      "invocation-control.ts",
       "types.ts",
       "ws-hint.ts",
       "crypto.ts",
