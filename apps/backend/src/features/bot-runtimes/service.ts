@@ -615,10 +615,14 @@ export class BotRuntimeService {
     status: "deleted" | "superseded"
   ): Promise<void> {
     for (const invocation of invocations) {
-      if (invocation.status !== "cancelled") continue
+      // A completed turn's session stays open (running or completed) for late
+      // delivery; a deleted source ends it, a superseding route never does.
+      const terminal = invocation.status === "cancelled" || (invocation.status === "completed" && status === "deleted")
+      if (!terminal) continue
       const updated = await AgentSessionRepository.updateStatus(db, invocation.id, status, {
         error: status === "deleted" ? "Invocation source deleted" : "Invocation route superseded",
-        onlyIfStatus: SessionStatuses.RUNNING,
+        onlyIfStatusIn:
+          status === "deleted" ? [SessionStatuses.RUNNING, SessionStatuses.COMPLETED] : [SessionStatuses.RUNNING],
       })
       if (!updated || status !== "deleted") continue
       const streamEvent = await StreamEventRepository.insert(db, {

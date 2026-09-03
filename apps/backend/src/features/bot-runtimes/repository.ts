@@ -1082,7 +1082,13 @@ export const BotInvocationRepository = {
         UNION ALL
         SELECT i.* FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId} AND i.source_message_id = ${params.sourceMessageId}
-          AND i.status = 'cancelled' AND i.cancellation_reason = ${params.reason}
+          AND (
+            (i.status = 'cancelled' AND i.cancellation_reason = ${params.reason})
+            OR (
+              i.status = 'completed'
+              AND EXISTS (SELECT 1 FROM agent_sessions s WHERE s.id = i.id AND s.status IN ('running', 'completed'))
+            )
+          )
           AND NOT EXISTS (SELECT 1 FROM newly_cancelled n WHERE n.id = i.id)
       `)
       return result.rows.map(mapInvocation)

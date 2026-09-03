@@ -168,6 +168,47 @@ describe("bot invocation canonical source mutations", () => {
     expect(afterDelete.rows).toEqual([])
   })
 
+  test.each(["running", "completed"] as const)(
+    "deleting the source after completion ends the %s late-delivery session without cancelling the turn",
+    async (sessionStatus) => {
+      const message = await source("done")
+      const completed = await invocation(message.id, message.revision)
+      await AgentSessionRepository.insert(pool, {
+        id: completed.invocation.id,
+        streamId: stream,
+        personaId: bot,
+        triggerMessageId: message.id,
+        status: sessionStatus,
+      })
+      await pool.query("UPDATE bot_invocations SET status = 'completed' WHERE id = $1", [completed.invocation.id])
+
+      await MessageRepository.softDelete(pool, message.id)
+      await new BotRuntimeService({ pool }).reconcileInvocationSource({
+        workspaceId: workspace,
+        sourceMessageId: message.id,
+      })
+
+      const session = await AgentSessionRepository.findById(pool, completed.invocation.id)
+      const row = await pool.query<{ status: string; cancellation_reason: string | null }>(
+        "SELECT status, cancellation_reason FROM bot_invocations WHERE id = $1",
+        [completed.invocation.id]
+      )
+      const deletedEvents = await pool.query<{ payload: { sessionId: string } }>(
+        "SELECT payload FROM stream_events WHERE stream_id = $1 AND event_type = 'agent_session:deleted' AND payload->>'sessionId' = $2",
+        [stream, completed.invocation.id]
+      )
+      expect({
+        session: session?.status,
+        invocation: row.rows[0],
+        deletedSessionIds: deletedEvents.rows.map((event) => event.payload.sessionId),
+      }).toEqual({
+        session: "deleted",
+        invocation: { status: "completed", cancellation_reason: null },
+        deletedSessionIds: [completed.invocation.id],
+      })
+    }
+  )
+
   test("repository edits and deletion advance the canonical revision once", async () => {
     const created = await source()
     expect(created.revision).toBe(1)
