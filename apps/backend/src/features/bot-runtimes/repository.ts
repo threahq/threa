@@ -852,7 +852,7 @@ export const BotInvocationRepository = {
     const result =
       await db.query<BotInvocationRowWithInsertMarker>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata)
       VALUES (${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.sourceMessageId}, ${params.responseStreamId}, ${params.actorType}, ${params.actorId}, ${params.trigger}, ${params.requiredCapability}, ${params.promptMarkdown}, ${params.authorUserId}, ${params.mentionedActorSlugs}, ${params.targetInstanceId}, ${params.targetRuntimeSessionId}, ${params.metadata})
-      ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) DO UPDATE SET updated_at = bot_invocations.updated_at
+      ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) WHERE status IN ('pending', 'claimed') DO UPDATE SET updated_at = bot_invocations.updated_at
       RETURNING *, (xmax = 0) AS was_newly_inserted`)
     const row = result.rows[0]!
     return { invocation: mapInvocation(row), wasNewlyInserted: row.was_newly_inserted }
