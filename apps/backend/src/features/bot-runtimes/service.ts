@@ -29,7 +29,13 @@ import {
   type StreamActiveActor,
 } from "./repository"
 import type { LabelAssignmentService } from "../labels"
-import { assertStreamWritable, StreamEventRepository, StreamRepository, type Stream, type StreamService } from "../streams"
+import {
+  assertStreamWritable,
+  StreamEventRepository,
+  StreamRepository,
+  type Stream,
+  type StreamService,
+} from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
 import { E2eStreamActorsRepository } from "../e2e-streams"
 import { MessageRepository, type InvocationSourceState } from "../messaging"
@@ -623,7 +629,7 @@ export class BotRuntimeService {
         actorId: updated.personaId,
         actorType: AuthorTypes.BOT,
       })
-      const stream = await StreamRepository.findById(db, updated.streamId)
+      const stream = await StreamRepository.findByIdForWorkspace(db, updated.streamId, workspaceId)
       await OutboxRepository.insert(db, "agent_session:deleted", {
         workspaceId,
         streamId: updated.streamId,

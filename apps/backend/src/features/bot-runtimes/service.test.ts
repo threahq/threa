@@ -531,7 +531,10 @@ describe("BotRuntimeService outbox emission", () => {
         completedAt,
       } as never)
       const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
-      spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_resp", rootStreamId: "stream_root" } as never)
+      spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({
+        id: "stream_resp",
+        rootStreamId: "stream_root",
+      } as never)
       const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
       const notices = await new BotRuntimeService({ pool: fakePool }).reconcileInvocationSource({

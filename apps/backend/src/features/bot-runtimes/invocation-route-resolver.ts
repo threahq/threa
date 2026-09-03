@@ -73,10 +73,11 @@ export async function resolveCanonicalInvocationRoutes(
   source: InvocationSourceState
 ): Promise<CanonicalInvocationRoute[]> {
   if (source.deleted || source.authorType === AuthorTypes.SYSTEM) return []
-  const stream = await StreamRepository.findById(db, source.streamId)
+  const stream = await StreamRepository.findByIdForWorkspace(db, source.streamId, source.workspaceId)
   if (!stream || stream.workspaceId !== source.workspaceId || stream.archivedAt) return []
   const rootId = stream.rootStreamId ?? stream.id
-  const root = rootId === stream.id ? stream : await StreamRepository.findById(db, rootId)
+  const root =
+    rootId === stream.id ? stream : await StreamRepository.findByIdForWorkspace(db, rootId, source.workspaceId)
   const userAuthored = source.authorType === AuthorTypes.USER
   const refs = userAuthored ? collectMentionActorRefs(source.contentJson) : []
   const mentionedBotIds = refs.filter((ref) => ref.actorType === "bot").map((ref) => ref.actorId)
