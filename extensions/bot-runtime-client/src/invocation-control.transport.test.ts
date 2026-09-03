@@ -282,6 +282,39 @@ describe("BotRuntimeTransport observed claims", () => {
     wsTransport.disconnect()
   })
 
+  it("logs a WS control rejection or unparseable state before recovering over HTTP", async () => {
+    stubFetch((request) => (request.url.includes("/renew") ? json(active("binv_ws", 2)) : json({})))
+    const cases = [
+      {
+        ack: { ok: false, code: "INTERNAL" },
+        expected: "control renew rejected over WS (INTERNAL); retrying over HTTP",
+      },
+      {
+        ack: { ok: true, data: { invocationId: "binv_other" } },
+        expected: "control state rejected over WS (binv_ws); retrying over HTTP",
+      },
+    ]
+    const observed: string[][] = []
+    for (const testCase of cases) {
+      const logs: string[] = []
+      const socket = fakeSocket((_event, _payload, callback) => callback(null, testCase.ack))
+      const transport = makeTransport({ log: (message) => logs.push(message) })
+      attachReadySocket(transport, socket)
+      transport.observeClaim(
+        observation(
+          () => "applied",
+          () => {},
+          "binv_ws"
+        )
+      )
+      await waitFor(() => logs.length === 1)
+      observed.push(logs)
+      transport.disconnect()
+    }
+
+    expect(observed).toEqual(cases.map((testCase) => [testCase.expected]))
+  })
+
   it("rejects cross-invocation, mismatched, negative, and stale cancellation states", async () => {
     const responses = [
       active("binv_other", 3, { delivery: "plaintext", sourceRevision: 3, promptMarkdown: "cross" }),

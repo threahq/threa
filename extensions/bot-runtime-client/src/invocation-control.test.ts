@@ -378,11 +378,11 @@ describe("InvocationControlManager", () => {
     }).toEqual({ cancellationCalls: 1, notFoundCalls: 2, unregisterCalls: 1, firedTimers: 0 })
   })
 
-  it("terminalizes immediately and survives a throwing cancellation callback", async () => {
+  it("terminalizes immediately and logs a throwing cancellation callback", async () => {
     const cancelled = mock(() => {
       throw new Error("adapter failure")
     })
-    const { manager } = setup(async () => active(2))
+    const { manager, logs } = setup(async () => active(2))
     manager.observe({
       ...params(() => "applied", cancelled),
       sealed: {
@@ -394,6 +394,9 @@ describe("InvocationControlManager", () => {
 
     manager.hint({ invocationId: "binv_1", sourceRevision: 2, reason: "source_deleted" }, true)
     await waitFor(() => cancelled.mock.calls.length === 1)
+    await flushMicrotasks()
+
+    expect(logs).toEqual(["invocation cancellation callback failed (binv_1)"])
   })
 
   it("aborts a blocked update synchronously before its queued cancellation callback", async () => {

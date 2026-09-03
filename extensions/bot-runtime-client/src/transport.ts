@@ -565,8 +565,11 @@ export class BotRuntimeTransport {
     if (ws.ack?.ok) {
       const parsed = parseControlState(ws.ack.data, request.invocationId, request.minimumSourceRevision)
       if (parsed) return { kind: "control", state: parsed }
+      this.logFn(`control state rejected over WS (${request.invocationId}); retrying over HTTP`)
     } else if (ws.ack?.code === "NOT_FOUND") {
       return { kind: "not_found" }
+    } else if (ws.ack) {
+      this.logFn(`control renew rejected over WS (${ws.ack.code ?? "?"}); retrying over HTTP`)
     }
     if (request.signal.aborted) return { kind: "aborted" }
     try {

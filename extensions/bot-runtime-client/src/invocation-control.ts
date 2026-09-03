@@ -426,6 +426,8 @@ export class InvocationControlManager {
       if (this.stopped || this.pendingTerminalGenerations.get(invocationId) !== generation) return
       try {
         await callback()
+      } catch {
+        this.hooks.log(`invocation cancellation callback failed (${invocationId})`)
       } finally {
         if (this.pendingTerminalGenerations.get(invocationId) === generation) {
           this.pendingTerminalGenerations.delete(invocationId)
