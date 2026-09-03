@@ -9,10 +9,14 @@ import {
   encryptAttachmentBytes,
   openMessageAsString,
   parseSealedPayload,
-  type AttachmentRef,
   type StreamEnvelope,
 } from "@threahq/bot-runtime-client"
 import { __testing } from "./threa-remote"
+import {
+  attachmentRef,
+  invocation as baseInvocation,
+  sealingState as makeSealingState,
+} from "./threa-remote.test-helpers"
 
 // The full-vs-redacted trace policy for sealed (E2EE) turns. The crypto itself
 // (BIK, claim hydration, seal/open) is covered by @threahq/bot-runtime-client's
@@ -24,24 +28,10 @@ type SealedInvocation = Parameters<typeof __testing.shouldEmitFullTrace>[0]
 
 const BASE_CONFIG = { baseUrl: "https://x", workspaceId: "ws_1", apiKey: "k" }
 
-const sealingState = {
-  streamId: "stream_root",
-  replyKeyGeneration: 1,
-  replySenderId: "bot_1",
-  replySsk: new Uint8Array(32),
-  callbackToken: "cb",
-}
+const sealingState = makeSealingState({ streamId: "stream_root", callbackToken: "cb" })
 
 function invocation(overrides: Record<string, unknown> = {}): SealedInvocation {
-  return {
-    id: "binv_1",
-    activeStreamId: "stream_a",
-    sourceMessageId: "msg_1",
-    promptMarkdown: "hi",
-    claimToken: "tok",
-    claimExpiresAt: null,
-    ...overrides,
-  } as SealedInvocation
+  return baseInvocation("binv_1", 1, "hi", overrides) as unknown as SealedInvocation
 }
 
 function bashCall(command: string): ToolCallEvent {
@@ -122,7 +112,7 @@ describe("sealed attachments (outbound)", () => {
 
     try {
       await __testing.completeSealedWithMarkdown(
-        invocation() as never,
+        invocation({ sealing: sealingState }) as never,
         sealingState as never,
         `Done — data attached.\nTHREA_ATTACH: ${filePath}`,
         dir
@@ -132,12 +122,10 @@ describe("sealed attachments (outbound)", () => {
     }
 
     // Ciphertext-only upload under the placeholder name, flagged e2e.
-    expect(uploads).toHaveLength(1)
-    expect(uploads[0]!.e2e).toBe("true")
-    expect(uploads[0]!.filename).toBe("encrypted")
+    expect(uploads).toEqual([expect.objectContaining({ e2e: "true", filename: "encrypted" })])
     expect(Array.from(uploads[0]!.bytes)).not.toEqual(Array.from(plaintext))
     // The completion binds the row and the sealed payload carries the ref.
-    expect(completions).toHaveLength(1)
+    expect(completions).toEqual([expect.objectContaining({ sourceRevision: 1 })])
     const reply = (
       completions[0] as {
         reply: { messageId: string; ciphertext: string; envelope: StreamEnvelope; attachmentIds?: string[] }
@@ -176,7 +164,7 @@ describe("sealed attachments (outbound)", () => {
 
     try {
       await __testing.completeSealedWithMarkdown(
-        invocation() as never,
+        invocation({ sealing: sealingState }) as never,
         sealingState as never,
         "Answer.\nTHREA_ATTACH: ./missing.bin",
         tempDir()
@@ -208,14 +196,11 @@ describe("sealed attachments (inbound)", () => {
     const dir = tempDir()
     const plaintext = new TextEncoder().encode("inbound secret")
     const encrypted = await encryptAttachmentBytes(plaintext)
-    const ref: AttachmentRef = {
-      attachmentId: "att_in_1",
-      key: encrypted.key,
-      iv: encrypted.iv,
+    const ref = attachmentRef("att_in_1", encrypted, {
       filename: "notes.md",
       mimeType: "text/markdown",
       sizeBytes: plaintext.length,
-    }
+    })
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
       const url = String(input)
       if (url.includes("/attachments/att_in_1/url"))
@@ -244,14 +229,7 @@ describe("sealed attachments (inbound)", () => {
     __testing.setConfigForTesting(BASE_CONFIG)
     const dir = tempDir()
     const encrypted = await encryptAttachmentBytes(new Uint8Array([7]))
-    const ref: AttachmentRef = {
-      attachmentId: "att_dupe",
-      key: encrypted.key,
-      iv: encrypted.iv,
-      filename: "dupe.txt",
-      mimeType: "text/plain",
-      sizeBytes: 1,
-    }
+    const ref = attachmentRef("att_dupe", encrypted, { filename: "dupe.txt" })
     let urlFetches = 0
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
       const url = String(input)
@@ -270,23 +248,18 @@ describe("sealed attachments (inbound)", () => {
       fetchSpy.mockRestore()
     }
 
-    expect(lines.contextLines).toHaveLength(1)
-    expect(lines.sourceLines).toHaveLength(1)
-    expect(urlFetches).toBe(1)
+    expect({ contextLines: lines.contextLines.length, sourceLines: lines.sourceLines.length, urlFetches }).toEqual({
+      contextLines: 1,
+      sourceLines: 1,
+      urlFetches: 1,
+    })
   })
 
   test("keeps history-only attachments out of steer context", async () => {
     __testing.setConfigForTesting(BASE_CONFIG)
     const dir = tempDir()
     const encrypted = await encryptAttachmentBytes(new Uint8Array([9]))
-    const ref: AttachmentRef = {
-      attachmentId: "att_history",
-      key: encrypted.key,
-      iv: encrypted.iv,
-      filename: "old.txt",
-      mimeType: "text/plain",
-      sizeBytes: 1,
-    }
+    const ref = attachmentRef("att_history", encrypted, { filename: "old.txt" })
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
       const url = String(input)
       if (url.includes("/attachments/att_history/url")) {
@@ -303,8 +276,10 @@ describe("sealed attachments (inbound)", () => {
       fetchSpy.mockRestore()
     }
 
-    expect(lines.contextLines).toHaveLength(1)
-    expect(lines.sourceLines).toEqual([])
+    expect({ contextLines: lines.contextLines.length, sourceLines: lines.sourceLines }).toEqual({
+      contextLines: 1,
+      sourceLines: [],
+    })
   })
 })
 
