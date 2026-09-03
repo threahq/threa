@@ -439,7 +439,7 @@ describe("BotRuntimeService outbox emission", () => {
         fakeQuerier,
         "inv_1",
         SessionStatuses.DELETED,
-        expect.objectContaining({ onlyIfStatus: SessionStatuses.RUNNING })
+        expect.objectContaining({ onlyIfStatusIn: [SessionStatuses.RUNNING, SessionStatuses.COMPLETED] })
       )
     })
 
@@ -547,7 +547,7 @@ describe("BotRuntimeService outbox emission", () => {
         fakeQuerier,
         "inv_1",
         SessionStatuses.DELETED,
-        expect.objectContaining({ onlyIfStatus: SessionStatuses.RUNNING })
+        expect.objectContaining({ onlyIfStatusIn: [SessionStatuses.RUNNING, SessionStatuses.COMPLETED] })
       )
       expect(insertEvent).toHaveBeenCalledWith(
         fakeQuerier,
@@ -598,7 +598,7 @@ describe("BotRuntimeService outbox emission", () => {
         fakeQuerier,
         "inv_1",
         SessionStatuses.SUPERSEDED,
-        expect.objectContaining({ onlyIfStatus: SessionStatuses.RUNNING })
+        expect.objectContaining({ onlyIfStatusIn: [SessionStatuses.RUNNING] })
       )
       expect({
         lifecycleEvents: insertEvent.mock.calls.length,
