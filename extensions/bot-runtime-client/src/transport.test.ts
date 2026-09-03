@@ -1,6 +1,14 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { describe, expect, it, mock, spyOn } from "bun:test"
 import * as socketIoClient from "socket.io-client"
 import { BotRuntimeTransport } from "./transport"
+import {
+  attachReadySocket,
+  fakeSocket,
+  restoreFetchAfterEach,
+  stubFetch,
+  testTransportOptions,
+  type CapturedRequest,
+} from "./transport-test-helpers"
 import type { BotRuntimeHello } from "./types"
 import { buildBotSocketUrl, parseWsHint } from "./ws-hint"
 
@@ -27,36 +35,10 @@ it("keeps status fields optional for legacy Pi hello payloads", () => {
 })
 
 function makeTransport(): BotRuntimeTransport {
-  return new BotRuntimeTransport({
-    baseUrl: "https://app.example.test",
-    workspaceId: "ws_1",
-    apiKey: "threa_bk_test",
-    hello: HELLO,
-  })
+  return new BotRuntimeTransport(testTransportOptions(HELLO))
 }
 
-interface CapturedRequest {
-  url: string
-  method: string
-  body: Record<string, unknown> | undefined
-}
-
-function stubFetch(responder: (req: CapturedRequest) => Response): CapturedRequest[] {
-  const calls: CapturedRequest[] = []
-  global.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString()
-    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined
-    const req = { url, method: init?.method ?? "GET", body }
-    calls.push(req)
-    return responder(req)
-  }) as unknown as typeof fetch
-  return calls
-}
-
-const originalFetch = global.fetch
-afterEach(() => {
-  global.fetch = originalFetch
-})
+restoreFetchAfterEach()
 
 describe("ws-hint helpers", () => {
   it("defaults path and namespace, then targets the /bot namespace", () => {
@@ -157,16 +139,13 @@ describe("WS frame sent but ack timed out (idempotency)", () => {
   // `.timeout().emit` fires the callback with a timeout error — i.e. the frame
   // was sent, the server just didn't ack in time (slow processing).
   function attachTimingOutSocket(transport: BotRuntimeTransport): void {
-    const socket = {
+    attachReadySocket(transport, {
       timeout: () => ({
         emit: (_event: string, _payload: unknown, cb: (err: unknown, ack?: unknown) => void) => {
           cb(new Error("operation has timed out"))
         },
       }),
-    }
-    ;(transport as unknown as { socket: unknown; connected: boolean; helloReady: boolean }).socket = socket
-    ;(transport as unknown as { connected: boolean }).connected = true
-    ;(transport as unknown as { helloReady: boolean }).helloReady = true
+    })
   }
 
   it("does NOT re-POST steps on a timed-out ack — the in-flight frame would duplicate the trace row", async () => {
@@ -207,52 +186,16 @@ describe("WS frame sent but ack timed out (idempotency)", () => {
 })
 
 describe("socket self-heal (the wedge that burns the edge quota)", () => {
-  interface FakeSocket {
-    handlers: Record<string, (...args: unknown[]) => void>
-    connect: ReturnType<typeof mock>
-    disconnect: ReturnType<typeof mock>
-    removeAllListeners: ReturnType<typeof mock>
-    on: (event: string, cb: (...args: unknown[]) => void) => FakeSocket
-    emit: (...args: unknown[]) => void
-    timeout: () => { emit: (...args: unknown[]) => void }
-  }
-
-  function makeFakeSocket(): FakeSocket {
-    const socket: FakeSocket = {
-      handlers: {},
-      connect: mock(() => {}),
-      disconnect: mock(() => {}),
-      removeAllListeners: mock(() => {}),
-      on(event, cb) {
-        socket.handlers[event] = cb
-        return socket
-      },
-      emit: (...args) => {
-        const callback = args.at(-1)
-        if (args[0] === "bot:hello" && typeof callback === "function") callback(null, { ok: true })
-      },
-      timeout: () => ({ emit: (...args) => socket.emit(...args) }),
-    }
-    return socket
-  }
-
   function stubHintFetch(): CapturedRequest[] {
     return stubFetch(() => new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }), { status: 200 }))
   }
 
   function makeSelfHealTransport(staleSocketRedialMs: number, reconnectionDelayMaxMs?: number): BotRuntimeTransport {
-    return new BotRuntimeTransport({
-      baseUrl: "https://app.example.test",
-      workspaceId: "ws_1",
-      apiKey: "threa_bk_test",
-      hello: HELLO,
-      staleSocketRedialMs,
-      reconnectionDelayMaxMs,
-    })
+    return new BotRuntimeTransport(testTransportOptions(HELLO, { staleSocketRedialMs, reconnectionDelayMaxMs }))
   }
 
   it("refreshes the initial and reconnect hello payloads immediately before emission", async () => {
-    const fake = makeFakeSocket()
+    const fake = fakeSocket()
     const hellos: unknown[] = []
     fake.emit = (event, payload, callback) => {
       if (event === "bot:hello") {
@@ -265,19 +208,20 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
       stubHintFetch()
       let commands = ["stop"]
       let busy = true
-      const transport = new BotRuntimeTransport({
-        baseUrl: "https://app.example.test",
-        workspaceId: "ws_1",
-        apiKey: "threa_bk_test",
-        hello: { ...HELLO, capabilities: {} },
-        beforeHello: (hello) => {
-          Object.assign(hello, {
-            status: busy ? "busy" : "available",
-            acceptingInvocations: !busy,
-            capabilities: { sessionControlCommands: commands },
-          })
-        },
-      })
+      const transport = new BotRuntimeTransport(
+        testTransportOptions(
+          { ...HELLO, capabilities: {} },
+          {
+            beforeHello: (hello) => {
+              Object.assign(hello, {
+                status: busy ? "busy" : "available",
+                acceptingInvocations: !busy,
+                capabilities: { sessionControlCommands: commands },
+              })
+            },
+          }
+        )
+      )
       await transport.connect()
       fake.handlers.connect!()
       commands = ["stop", "reconnect"]
@@ -299,7 +243,7 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
   })
 
   it("does not send a second hello while the first acknowledgement is in flight", async () => {
-    const fake = makeFakeSocket()
+    const fake = fakeSocket()
     let helloCalls = 0
     let acknowledge: ((error: unknown, ack: unknown) => void) | undefined
     fake.timeout = () => ({
@@ -327,8 +271,8 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
   })
 
   it("tears down a connected socket whose hello is rejected instead of treating it as healthy", async () => {
-    const first = makeFakeSocket()
-    const second = makeFakeSocket()
+    const first = fakeSocket()
+    const second = fakeSocket()
     first.timeout = () => ({
       emit: (...args) => {
         const callback = args.at(-1)
@@ -357,8 +301,8 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
   })
 
   it("schedules a fresh connection when hello is rejected", async () => {
-    const first = makeFakeSocket()
-    const second = makeFakeSocket()
+    const first = fakeSocket()
+    const second = fakeSocket()
     first.timeout = () => ({
       emit: (...args) => {
         const callback = args.at(-1)
@@ -385,19 +329,17 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
   })
 
   it("reports a ready-socket loss and redials after a server-initiated disconnect", async () => {
-    const fake = makeFakeSocket()
+    const fake = fakeSocket()
     const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
     try {
       stubHintFetch()
       const disconnected = mock(() => {})
-      const transport = new BotRuntimeTransport({
-        baseUrl: "https://app.example.test",
-        workspaceId: "ws_1",
-        apiKey: "threa_bk_test",
-        hello: HELLO,
-        staleSocketRedialMs: 3 * 60 * 1000,
-        callbacks: { onDisconnected: disconnected },
-      })
+      const transport = new BotRuntimeTransport(
+        testTransportOptions(HELLO, {
+          staleSocketRedialMs: 3 * 60 * 1000,
+          callbacks: { onDisconnected: disconnected },
+        })
+      )
       await transport.connect()
       fake.handlers.connect!()
       expect(transport.socketConnected).toBe(true)
@@ -418,22 +360,20 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
   })
 
   it("routes bot:session_archived and bot:session_restored to their callbacks", async () => {
-    const fake = makeFakeSocket()
+    const fake = fakeSocket()
     const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
     try {
       stubHintFetch()
       const archived: unknown[] = []
       const restored: unknown[] = []
-      const transport = new BotRuntimeTransport({
-        baseUrl: "https://app.example.test",
-        workspaceId: "ws_1",
-        apiKey: "threa_bk_test",
-        hello: HELLO,
-        callbacks: {
-          onSessionArchived: (payload) => void archived.push(payload),
-          onSessionRestored: (payload) => void restored.push(payload),
-        },
-      })
+      const transport = new BotRuntimeTransport(
+        testTransportOptions(HELLO, {
+          callbacks: {
+            onSessionArchived: (payload) => void archived.push(payload),
+            onSessionRestored: (payload) => void restored.push(payload),
+          },
+        })
+      )
       await transport.connect()
 
       fake.handlers["bot:session_archived"]!({ runtimeSessionId: "rts_1" })
@@ -447,8 +387,8 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
   })
 
   it("connect() leaves a fresh outage to Socket.IO but tears down and redials a stale one", async () => {
-    const first = makeFakeSocket()
-    const second = makeFakeSocket()
+    const first = fakeSocket()
+    const second = fakeSocket()
     const ioSpy = spyOn(socketIoClient, "io")
       .mockReturnValueOnce(first as unknown as ReturnType<typeof socketIoClient.io>)
       .mockReturnValueOnce(second as unknown as ReturnType<typeof socketIoClient.io>)
@@ -491,7 +431,7 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
       }
       return new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }), { status: 200 })
     }) as unknown as typeof fetch
-    const fake = makeFakeSocket()
+    const fake = fakeSocket()
     const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
     try {
       const transport = new BotRuntimeTransport({
@@ -514,11 +454,11 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
 })
 
 describe("the routed writes never reject (best-effort contract)", () => {
-  // Callers (the renew setInterval, pi-remote's per-step await) rely on these
-  // resolving even when the HTTP fallback's fetch throws — the fallbacks swallow
-  // internally. This locks that contract so a future edit can't reintroduce an
-  // unhandled rejection / aborted turn.
-  it("recordSteps / renewClaim / updatePresence all resolve when fetch throws", async () => {
+  // Callers (pi-remote's per-step await) rely on these resolving even when the
+  // HTTP fallback's fetch throws — the fallbacks swallow internally. This locks
+  // that contract so a future edit can't reintroduce an unhandled rejection /
+  // aborted turn.
+  it("recordSteps / updatePresence all resolve when fetch throws", async () => {
     stubFetch(() => {
       throw new Error("network down")
     })
