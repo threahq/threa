@@ -3983,6 +3983,45 @@ describe("invocation edit regressions", () => {
     }
   })
 
+  test("a steer stranded by an errored assistant message settles at agent_end", async () => {
+    configure(true)
+    const claim = invocation("binv_stranded_steer")
+    const ctx = context({ idle: false })
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: any, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: () => {},
+    }
+    threaRemote(pi as never)
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "full prompt" })
+    await observe(claim, pi, ctx, { initialState: "running" })
+    const completions: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).endsWith(`/bot-invocations/${claim.id}/complete`)) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      }
+      return json({ data: {} })
+    })
+    try {
+      __testing.armPendingOutputForTesting()
+      await handlers.get("turn_start")!({ turnIndex: 0 }, ctx)
+      await handlers.get("message_end")!({ message: { role: "assistant", content: "before the steer" } }, ctx)
+      __testing.armPendingOutputForTesting()
+      await handlers.get("agent_end")!(
+        { messages: [{ role: "assistant", stopReason: "error", errorMessage: "provider exploded", content: [] }] },
+        ctx
+      )
+      expect({ completions, pending: __testing.pendingRuntimeState().invocationPrompt }).toEqual({
+        completions: [expect.objectContaining({ finalMessageMarkdown: expect.stringContaining("provider exploded") })],
+        pending: undefined,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("old provider settlement cannot complete after a newer turn starts", async () => {
     configure(true)
     const claim = invocation("binv_output_provider")

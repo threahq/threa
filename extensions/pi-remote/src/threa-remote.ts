@@ -5598,6 +5598,12 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     if (isWaitingForRetry) return
+    // pi-agent-core returns from the loop without another turn_start when the
+    // assistant message a queued steer sits behind stops with error or abort,
+    // so a sent steer settles on this agent_end or the claim renews forever.
+    if (awaitingTurnStart && ![...observedInvocations.values()].some((item) => item.updateInProgress)) {
+      activatePendingOutput()
+    }
     const output = currentPendingOutput()
     if (!output) return
     const expectedInvocation = output.invocation
