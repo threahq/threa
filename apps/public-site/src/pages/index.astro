@@ -35,7 +35,7 @@ const schema = [
           <span class="wordmark">Threa</span>
         </div>
         <nav class="nav-links">
-          <a href="/" aria-current="page">Product</a><a href="/developers">Developer</a><a href="/about">About</a>
+          <a href="/" aria-current="page">Product</a><a href="/developers">Developers</a><a href="/about">About</a>
         </nav>
         <a class="nav-login" href={loginUrl}>Log in</a>
         <ThemeToggle />
@@ -46,10 +46,9 @@ const schema = [
             Chat that remembers the decisions.
           </h1>
           <p class="lede">
-            Channels, threads, and DMs, with a memory underneath. The decisions
-            you make and the reasons behind them stay attached to the
-            conversation, so they're still there when the question comes up
-            again.
+            Channels, threads, and DMs for your team, with a memory underneath.
+            Decisions and the reasons behind them stay attached to the
+            conversation, so they're still there when the question comes back.
           </p>
           <div class="actions">
             <a class="cta" href="#waitlist">Join the waitlist</a>
@@ -59,7 +58,7 @@ const schema = [
           <div class="tl">
             <div class="tl-caption">
               <span class="hash">#api-v3</span>
-              <span class="meta">/ Friday · 5 messages</span>
+              <span class="meta">Friday</span>
             </div>
 
             <!-- Top-anchored message list — messages stack downward and the
@@ -208,6 +207,29 @@ const schema = [
   </div>
 </div>
 
+<div class="frame">
+  <div class="memo-shell value-shell">
+    <ul class="value-grid">
+      <li>
+        <h3>Every channel is also a board</h3>
+        <p>The same messages, grouped by topic. A discussion from three weeks ago is one card away instead of a scroll away.</p>
+      </li>
+      <li>
+        <h3>Ask what was decided</h3>
+        <p>Threa keeps decisions and context as short memos linked to the messages they came from. Ask Ariadne, or search, and get the memo with its sources.</p>
+      </li>
+      <li>
+        <h3>Bring the agent you already use</h3>
+        <p>Claude Code, Codex, Pi, or one you wrote. Connect it as a bot and it reads the room, answers mentions, and posts its work back.</p>
+      </li>
+      <li>
+        <h3>Open source, yours to run</h3>
+        <p>The whole product is public under the MIT license. <a href="https://github.com/threahq/threa">Read it on GitHub</a>, fork it, or host it yourself.</p>
+      </li>
+    </ul>
+  </div>
+</div>
+
 <!-- ============================================================
      BOARD — the same channel, two ways
      A frameless side-by-side: the stream (flat, on the paper, with a
@@ -220,22 +242,17 @@ const schema = [
      ============================================================ -->
 <div class="frame warm" id="board">
   <div class="memo-shell board-shell">
-    <div class="section-meta">
-      <span>The board</span>
-    </div>
     <h2>Chat you can find later.</h2>
     <p class="lede">
-      A timeline is great for real-time chat. It's linear and immediate, and good
-      for keeping up with what's latest. Where it falls short is discoverability.
-      Once a discussion gets long or complex, it's hard to find again weeks later.
-      The board answers that: the same messages, grouped by topic, so you can go
-      back and find a conversation instead of scrolling for it.
+      A timeline is good for keeping up. It's bad for finding a discussion again
+      three weeks later. The board is the same channel grouped by topic, so you
+      open the conversation instead of scrolling for it.
     </p>
 
     <div class="board-compare" data-decorative>
       <!-- STREAM: flat feed on the paper, composer pinned to the bottom -->
       <div class="board-col is-stream">
-        <div class="board-lens"><span class="k">Stream</span><span class="m"># product · today</span></div>
+        <div class="board-lens"><span class="k">Stream</span><span class="m">#product, as it happened</span></div>
 
         <div class="tl-row board-hoverable">
           <div class="tl-avatar av-maya">MR</div>
@@ -303,7 +320,7 @@ const schema = [
 
       <!-- BOARD: the same messages grouped into two topic cards -->
       <div class="board-col">
-        <div class="board-lens"><span class="k">Board</span><span class="m"># product · by topic</span></div>
+        <div class="board-lens"><span class="k">Board</span><span class="m">#product, by topic</span></div>
         <div class="board-list">
           <div class="board-card">
             <div class="board-card-title">
@@ -402,26 +419,21 @@ const schema = [
      conversation, hold it as a memo, retrieve it when someone asks
      about the topic again. No invented graph relations.
      ============================================================ -->
-<div class="frame warm">
-  <div class="memo-shell is-centerpiece">
-    <div class="section-meta">
-      <span>How memory works</span>
-      <span>· capture · hold · return</span>
-    </div>
+<div class="frame">
+  <div class="memo-shell">
     <h2>Conversation becomes memory.</h2>
     <p class="lede">
-      Threa reads the conversation, finds the decisions and context worth
+      Threa reads the conversation, picks out the decisions and context worth
       keeping, and saves them as short memos linked to the messages they came
-      from. When the question comes up again, ask Ariadne to search workspace
-      memory for the relevant memo and its source conversation.
+      from. When the question comes up again, Ariadne finds the memo and the
+      conversation behind it.
     </p>
 
     <div class="memory-flow">
 
       <!-- ============ 01 · CAPTURE ============ -->
       <div class="memory-col">
-        <div class="memory-step">01 / Capture</div>
-        <h3 class="memory-heading">Finding what matters</h3>
+        <h3 class="memory-heading"><span class="n">1</span>Capture what matters</h3>
         <p class="memory-why">
           Most of a channel is noise. The parts worth keeping are usually a
           handful of lines where the team settles something, works out a process,
@@ -495,8 +507,7 @@ const schema = [
 
       <!-- ============ 02 · HOLD ============ -->
       <div class="memory-col">
-        <div class="memory-step">02 / Hold</div>
-        <h3 class="memory-heading">Keeping it as a memo</h3>
+        <h3 class="memory-heading"><span class="n">2</span>Hold it as a memo</h3>
         <p class="memory-why">
           Nobody rereads a transcript two months later. A short, sourced memo is
           the part that stays useful once the thread has scrolled away.
@@ -526,8 +537,7 @@ const schema = [
 
       <!-- ============ 03 · RETURN ============ -->
       <div class="memory-col is-return">
-        <div class="memory-step">03 / Return</div>
-        <h3 class="memory-heading">When it comes up again</h3>
+        <h3 class="memory-heading"><span class="n">3</span>Return when it comes up again</h3>
         <p class="memory-why">
           A reason you can't find isn't worth much. When the question returns,
           ask Ariadne to search for the relevant memo and follow its links back to
@@ -537,7 +547,7 @@ const schema = [
         <div class="recall-thread" data-decorative>
           <div class="recall-meta">
             <span class="hash">#sprint-planning</span>
-            <span>/ May 7 · two months later</span>
+            <span>May 7, two months later</span>
           </div>
 
           <div class="recall-list">
@@ -599,7 +609,7 @@ const schema = [
      dev-credible (real commands, real claims) without star-count
      theatre we don't have yet on day one.
      ============================================================ -->
-<div class="frame" id="open-source">
+<div class="frame warm" id="open-source">
   <div class="memo-shell">
     <div class="feature-band media-left">
       <div class="band-media" data-decorative>
@@ -612,7 +622,7 @@ const schema = [
         </div>
 
         <figure class="patch-example" aria-label="Patch Threa by describing the change to your own agent.">
-          <figcaption><span class="file">patch.md</span><span class="hint">describe the change →</span></figcaption>
+          <figcaption><span class="file">patch.md</span><span class="hint">describe the change</span></figcaption>
           <div class="patch-body">
             <span class="ln md-h"># Compact density toggle</span>
             <span class="ln md-p">Add a "Compact" option under Settings → Appearance.</span>
@@ -625,42 +635,38 @@ const schema = [
         </figure>
       </div>
       <div class="band-copy">
-        <div class="section-meta">
-          <span>Open source</span>
-          <span>· read · fork · audit</span>
-        </div>
         <h2>It's open source.</h2>
         <p class="lede">
-          The frontend, backend, control plane, and infrastructure are all public.
-          Read exactly how Threa works, fork it if you want your own version, or
-          run it yourself. The public repo is the one we ship.
+          The frontend, backend, control plane, and infrastructure are all
+          public, and the public repo is the one we deploy. Read exactly how
+          Threa works, fork it, or run it yourself.
         </p>
 
         <div class="os-tenets">
           <div class="os-tenet">
-            <h4>Public source</h4>
+            <h4>All of it is on GitHub</h4>
             <p>
               The code, data model, access checks, model calls, and deployment
-              setup are all there on GitHub.
+              setup.
             </p>
           </div>
           <div class="os-tenet">
-            <h4>Yours to fork</h4>
+            <h4>MIT licensed</h4>
             <p>
-              It's MIT-licensed. Fork it, change the product, or run your own
-              version on the same codebase we deploy.
+              Fork it, change the product, or run your own version on the same
+              code we ship.
             </p>
           </div>
           <div class="os-tenet">
             <h4>Built in the open</h4>
             <p>
-              Design docs, implementation plans, and the feature inventory are
+              Design docs, implementation plans, and the feature list are
               public too.
             </p>
           </div>
         </div>
 
-        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source <span class="arr">→</span></a>
+        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source on GitHub</a>
       </div>
     </div>
   </div>
@@ -674,73 +680,45 @@ const schema = [
      the agent you already pay for. The starter-motor framing is
      the headline idea.
      ============================================================ -->
-<div class="frame warm" id="byo-agent">
-  <div class="memo-shell">
-    <div class="feature-band media-right">
-      <div class="band-copy">
-        <div class="section-meta">
-          <span>Bring your own agent</span>
-          <span>· bot runtime · CLI · MCP</span>
-        </div>
-        <h2>Bring the agent you already use.</h2>
-        <p class="lede">
-          Threa ships with Ariadne, useful from day one. But you've probably
-          already got an agent set up the way you like it. Connect that agent as a
-          Threa bot and it can stay on your laptop behind NAT, answer @mentions,
-          search messages, memos, and attachments, and post its work back into the
-          conversation.
+<div class="frame" id="byo-agent">
+  <div class="memo-shell byo-shell">
+    <h2>Bring the agent you already use.</h2>
+    <p class="lede">
+      Threa ships with Ariadne, useful from day one. You probably also have an
+      agent set up the way you like it. Connect that agent as a Threa bot. It can
+      stay on your laptop behind NAT, answer mentions, search messages, memos,
+      and attachments, and post its work back into the conversation.
+    </p>
+
+    <div class="os-tenets">
+      <div class="os-tenet">
+        <h4>Ask it in the room</h4>
+        <p>
+          Mention the bot in a channel. The runtime hands the request to your
+          local agent and posts the reply under the bot's own name.
         </p>
-
-        <div class="os-tenets">
-          <div class="os-tenet">
-            <h4>Ask it in the room</h4>
-            <p>
-              Mention the bot in a channel and the runtime sends the invocation
-              to your local agent, then posts its reply under the bot's identity.
-            </p>
-          </div>
-          <div class="os-tenet">
-            <h4>Let it look things up</h4>
-            <p>
-              Your agent can search messages by text or meaning, read memos and
-              attachments, and follow every memo back to its source messages.
-            </p>
-          </div>
-          <div class="os-tenet">
-            <h4>Hand it the work</h4>
-            <p>
-              Delegate a task, follow its progress in the stream, and get the
-              finished work back where the team can see it.
-            </p>
-          </div>
-        </div>
-
-        <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent <span class="arr">→</span></a>
       </div>
-      <div class="band-media">
-        <blockquote class="byo-quote">
-          Ariadne is here to get you started. The agent you rely on can stay on
-          your machine, with your work reachable from it instead of locked inside
-          one more app.
-        </blockquote>
-
-        <div class="byo-agents" data-decorative aria-label="Bring your own Claude Code, Codex, Cursor, OpenCode, Gemini CLI, custom bot, or whatever comes next.">
-          <span class="byo-lead">Bring your own</span>
-          <span class="byo-clip" aria-hidden="true">
-            <span class="byo-track">
-              <span class="byo-word">Claude Code</span>
-              <span class="byo-word">Codex</span>
-              <span class="byo-word">Cursor</span>
-              <span class="byo-word">OpenCode</span>
-              <span class="byo-word">Gemini CLI</span>
-              <span class="byo-word">custom bot</span>
-              <span class="byo-word">whatever's next</span>
-              <span class="byo-word">Claude Code</span>
-            </span>
-          </span>
-        </div>
+      <div class="os-tenet">
+        <h4>Let it look things up</h4>
+        <p>
+          Your agent can search messages by text or meaning, read memos and
+          attachments, and follow a memo back to the messages it came from.
+        </p>
+      </div>
+      <div class="os-tenet">
+        <h4>Hand it the work</h4>
+        <p>
+          Delegate a task, follow its progress in the stream, and get the
+          finished work back where the team can see it.
+        </p>
       </div>
     </div>
+
+    <p class="byo-works">
+      Works today with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot
+      you write yourself, through the bot runtime, the CLI, or the MCP server.
+    </p>
+    <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent</a>
   </div>
 </div>
 
@@ -748,12 +726,8 @@ const schema = [
      05 · WHY I BUILT THIS — features a developer missed in Slack
      First-person founder voice. The byline name is a placeholder.
      ============================================================ -->
-<div class="frame" id="why">
+<div class="frame warm" id="why">
   <div class="memo-shell">
-    <div class="section-meta">
-      <span>Why I built this</span>
-      <span>· from one developer</span>
-    </div>
     <h2>What I wished other tools had.</h2>
     <p class="lede">
       Partly I built Threa out of spite. Years of watching decisions disappear
@@ -763,64 +737,40 @@ const schema = [
 
     <ul class="missing-grid">
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Nested threads</h4>
-          <p>Threads inside threads, so a tangent off a tangent gets its own space instead of taking over the parent.</p>
-        </div>
+        <h4>Nested threads</h4>
+        <p>Threads inside threads, so a tangent off a tangent gets its own space instead of taking over the parent.</p>
       </li>
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Move a message into a thread</h4>
-          <p>A stray reply in the channel can be lifted into a thread after the fact, without copy-paste.</p>
-        </div>
+        <h4>Move a message into a thread</h4>
+        <p>A stray reply in the channel can be lifted into a thread after the fact, without copy-paste.</p>
       </li>
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Quote replies</h4>
-          <p>Reply to the exact line someone wrote, quoted inline, so the context comes with it.</p>
-        </div>
+        <h4>Quote replies</h4>
+        <p>Reply to the exact line someone wrote, quoted inline, so the context comes with it.</p>
       </li>
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Markdown and real code blocks</h4>
-          <p>A markdown composer with fenced code and syntax highlighting that doesn't mangle the snippet you paste.</p>
-        </div>
+        <h4>Markdown and real code blocks</h4>
+        <p>A markdown composer with fenced code and syntax highlighting that doesn't mangle the snippet you paste.</p>
       </li>
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Full-screen composer</h4>
-          <p>Pop the composer out into a full editor for a longer message. Room to draft and edit, with no stray Enter sending it before it's ready.</p>
-        </div>
+        <h4>Full-screen composer</h4>
+        <p>Pop the composer out into a full editor for a longer message. Room to draft and edit, with no stray Enter sending it before it's ready.</p>
       </li>
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Stash a message</h4>
-          <p>Save a half-written message without sending it and pick it back up later.</p>
-        </div>
+        <h4>Stash a message</h4>
+        <p>Save a half-written message without sending it and pick it back up later.</p>
       </li>
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Asides</h4>
-          <p>A private side thread with Ariadne next to the message you're writing. Ask what the conversation actually decided, think out loud, then go back to the draft. Nobody else sees it.</p>
-        </div>
+        <h4>Asides</h4>
+        <p>A private side thread with Ariadne next to the message you're writing. Ask what the conversation actually decided, think out loud, then go back to the draft. Nobody else sees it.</p>
       </li>
       <li class="missing-item">
-        <span class="check"><svg><use href="#check-icon"/></svg></span>
-        <div>
-          <h4>Decisions you can find later</h4>
-          <p>The reasoning behind a call stays in a memo, ready for Ariadne to retrieve when you ask about it again.</p>
-        </div>
+        <h4>Decisions you can find later</h4>
+        <p>The reasoning behind a call stays in a memo, ready for Ariadne to retrieve when you ask about it again.</p>
       </li>
     </ul>
 
-    <p class="missing-sign">Building Threa in the open.</p>
+    <p class="missing-sign">Threa is one developer's project, built in the open. <a href="/about">More about why</a>.</p>
   </div>
 </div>
 
@@ -857,7 +807,7 @@ const schema = [
           aria-hidden="true"
         />
       </form>
-      <span class="quiet" id="wl-status" data-decorative aria-live="polite">/ no spam</span>
+      <span class="quiet" id="wl-status" data-decorative aria-live="polite">No spam. One email when your invite is ready.</span>
     </div>
   </div>
 </div>
@@ -866,11 +816,11 @@ const schema = [
   <div class="brand" style="gap:10px;">
     <svg style="width:18px;height:18px;color:hsl(var(--gold));"><use href="#threa-mark"/></svg>
     <span class="wordmark" style="font-size:11px;">Threa</span>
-    <span style="color:hsl(var(--muted));text-transform:none;letter-spacing:0;font-family:var(--font-display);font-size:12px;margin-left:6px;">· 2026</span>
+    <span class="year">2026</span>
   </div>
   <div class="ln">
     <a href="/">Product</a>
-    <a href="/developers">Developer</a>
+    <a href="/developers">Developers</a>
     <a href="/about">About</a>
   </div>
 </footer>
@@ -909,7 +859,7 @@ const schema = [
       el.textContent = hhmm(d)
     })
     const cap = document.querySelector('.tl-caption .meta')
-    if (cap) cap.textContent = `/ ${dayOf(now)} · 5 messages`
+    if (cap) cap.textContent = dayOf(now)
 
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
@@ -981,32 +931,6 @@ const schema = [
   })()
   </script>
 
-  <script is:inline>
-  /* "Bring your own ___" word reel. Slides the track up one line per beat.
-     The last word is a clone of the first; when we land on it we snap the
-     track back to the top with the transition off, so the loop is seamless. */
-  (function () {
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const track = document.querySelector('.byo-track')
-    if (!track) return
-    const lastIndex = track.querySelectorAll('.byo-word').length - 1 // clone
-    let i = 0
-    const advance = () => {
-      i += 1
-      track.style.transform = `translateY(-${i * 1.3}em)`
-      if (i === lastIndex) {
-        setTimeout(() => {
-          track.style.transition = 'none'
-          i = 0
-          track.style.transform = 'translateY(0)'
-          void track.offsetHeight /* reflow so the next slide animates */
-          track.style.transition = ''
-        }, 560)
-      }
-    }
-    setInterval(advance, 2200)
-  })()
-  </script>
 
   <script is:inline define:vars={{ apiBase }}>
   /* Waitlist signup. Validates on the client for fast feedback, then POSTs to
@@ -1019,7 +943,7 @@ const schema = [
     const hp = document.getElementById("wl-hp")
     const submit = document.getElementById("wl-submit")
     const status = document.getElementById("wl-status")
-    const idle = "/ no spam"
+    const idle = "No spam. One email when your invite is ready."
 
     const setStatus = (msg, kind) => {
       status.textContent = msg
@@ -1050,7 +974,7 @@ const schema = [
         if (!res.ok) throw new Error("status " + res.status)
         form.reset()
         submit.textContent = "Joined"
-        setStatus("You're on the list. I'll be in touch.", "is-ok")
+        setStatus("You're on the list.", "is-ok")
       } catch {
         submit.disabled = false
         submit.textContent = original

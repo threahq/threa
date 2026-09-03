@@ -140,20 +140,6 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Paper grain — a fixed film of fractal noise over the whole page, multiply
-   so it darkens both the light bands and the night surfaces uniformly. At
-   this opacity it reads as paper tooth, not texture; pointer-events none so
-   it never intercepts anything. */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 2147483647;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-  mix-blend-mode: multiply;
-}
-
 ::selection {
   background: hsl(var(--gold) / 0.3);
 }
@@ -179,69 +165,6 @@ body::after {
 .frame.night {
   background: hsl(var(--night));
   color: hsl(35 12% 80%);
-}
-
-/* ---------- THREAD SPINE ----------
-   The golden thread, literally: a 1px gold line running down the left
-   margin of every section shell, with a small diamond bead marking each
-   section's start. Shells touch vertically, so per-shell lines read as one
-   continuous thread from the memory section to the closing band. */
-.memo-shell::before,
-.cta-shell::before {
-  content: "";
-  position: absolute;
-  left: calc(var(--pad-x) / 2);
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: hsl(var(--gold) / 0.18);
-  pointer-events: none;
-}
-.memo-shell::after,
-.cta-shell::after {
-  content: "";
-  position: absolute;
-  left: calc(var(--pad-x) / 2);
-  top: 84px;
-  width: 7px;
-  height: 7px;
-  transform: translateX(-3.5px) rotate(45deg);
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--gold));
-  pointer-events: none;
-}
-/* The first section fades the thread in; the closing band fades it out. */
-.memo-shell.is-centerpiece::before {
-  background: linear-gradient(180deg, hsl(var(--gold) / 0) 0, hsl(var(--gold) / 0.18) 140px);
-}
-.frame.night .cta-shell::before {
-  background: linear-gradient(180deg, hsl(var(--gold) / 0.3), hsl(var(--gold) / 0) 88%);
-}
-.frame.night .cta-shell::after {
-  background: hsl(var(--night));
-}
-@media (max-width: 880px) {
-  .memo-shell::before,
-  .memo-shell::after,
-  .cta-shell::before,
-  .cta-shell::after {
-    display: none;
-  }
-}
-.section-meta {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  margin: 0 0 16px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: hsl(var(--muted));
-}
-.section-meta strong {
-  color: hsl(var(--ink));
-  font-weight: 500;
 }
 
 /* ---------- SHARED PRIMITIVES ---------- */
@@ -271,15 +194,17 @@ body::after {
 }
 .nav-links {
   display: flex;
-  gap: 28px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  gap: 26px;
+  font-size: 14px;
+  font-weight: 500;
 }
 .nav-links a {
-  color: inherit;
+  color: hsl(var(--ink-soft));
   text-decoration: none;
+}
+.nav-links a:hover,
+.nav-links a[aria-current="page"] {
+  color: hsl(var(--ink));
 }
 .h-display {
   font-family: var(--font-display);
@@ -290,10 +215,11 @@ body::after {
   margin: 0;
 }
 .lede {
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.55;
   margin: 22px 0 32px;
   max-width: 480px;
+  color: hsl(var(--ink-soft));
 }
 .cta {
   display: inline-flex;
@@ -301,31 +227,28 @@ body::after {
   gap: 10px;
   background: hsl(var(--ink));
   color: hsl(var(--paper));
-  padding: 12px 20px;
-  font-family: var(--font-display);
+  padding: 11px 20px;
+  font-family: var(--font-body);
   font-weight: 500;
-  font-size: 13.5px;
+  font-size: 14.5px;
+  line-height: 1.2;
   text-decoration: none;
-  border-radius: 2px;
+  border-radius: 10px;
   border: none;
   cursor: pointer;
   white-space: nowrap;
 }
-.cta::after {
-  content: "→";
-  font-family: var(--font-display);
-  font-weight: 400;
-  display: inline-block;
-  transition: transform 0.2s ease-out;
+.cta:hover {
+  background: hsl(var(--ink-soft));
 }
-.cta:hover::after {
-  transform: translateX(3px);
+.cta:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px hsl(var(--paper)),
+    0 0 0 4px hsl(var(--ink) / 0.5);
 }
 .quiet {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 12.5px;
   color: hsl(var(--muted));
 }
 
@@ -399,19 +322,13 @@ body::after {
   flex-shrink: 0;
 }
 .tl-caption .hash {
-  font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: -0.01em;
   color: hsl(var(--ink));
 }
 .tl-caption .meta {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 400;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-size: 12.5px;
   color: hsl(var(--muted));
 }
 /* Message list — top-anchored, like the real app. With a few messages
@@ -1350,7 +1267,7 @@ body::after {
 .hero-stage {
   display: grid;
   grid-template-columns: 0.95fr 1.1fr;
-  gap: 80px;
+  gap: 64px;
   align-items: start;
   position: relative;
   overflow: hidden;
@@ -1417,7 +1334,57 @@ body::after {
 }
 .memo-shell .lede {
   max-width: 580px;
-  margin-bottom: 56px;
+  margin-bottom: 44px;
+}
+
+/* ---------- WHAT YOU GET (under the hero) ---------- */
+.value-shell {
+  padding-top: 8px;
+  padding-bottom: 72px;
+}
+.value-grid {
+  list-style: none;
+  margin: 0;
+  padding: 36px 0 0;
+  border-top: 1px solid hsl(var(--line));
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 32px 40px;
+}
+.value-grid h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: hsl(var(--ink));
+  margin: 0 0 8px;
+}
+.value-grid p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: hsl(var(--ink-soft));
+}
+.value-grid a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--gold) / 0.5);
+  text-underline-offset: 3px;
+}
+.value-grid a:hover {
+  text-decoration-color: hsl(var(--gold));
+}
+@media (max-width: 880px) {
+  .value-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 560px) {
+  .value-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
 }
 
 /* ---------- THREE-PART MEMORY FLOW ---------- */
@@ -1446,34 +1413,21 @@ body::after {
   background: no-repeat center/contain
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12' fill='none' stroke='hsl(38 65%25 50%25 / 0.75)' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M 1 6 L 21 6 M 21 6 L 16 2 M 21 6 L 16 10'/></svg>");
   pointer-events: none;
-  opacity: 0;
-  animation: arrow-fade-in 0.3s ease-out 0.5s forwards;
-}
-.memory-col + .memory-col + .memory-col::before {
-  animation-delay: 0.85s;
-}
-@keyframes arrow-fade-in {
-  to {
-    opacity: 1;
-  }
-}
-.memory-step {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: hsl(var(--gold));
-  display: inline-block;
-  margin-bottom: 12px;
 }
 .memory-col h3.memory-heading {
   font-family: var(--font-display);
-  font-weight: 400;
-  font-size: 18px;
+  font-weight: 500;
+  font-size: 19px;
   line-height: 1.3;
   color: hsl(var(--ink));
   margin: 0 0 8px;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.01em;
+}
+.memory-heading .n {
+  display: inline-block;
+  min-width: 1.4em;
+  font-weight: 400;
+  color: hsl(var(--muted));
 }
 /* Short "why this step matters" line under each heading. Sits at a
      consistent position across all three columns (the headings are one
@@ -1629,10 +1583,7 @@ body::after {
 
 /* Part 3 — Return: mini-stream where Ariadne lifts the memo */
 .recall-meta {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  font-size: 12.5px;
   color: hsl(var(--muted));
   margin-bottom: 12px;
   display: flex;
@@ -1640,7 +1591,10 @@ body::after {
   align-items: baseline;
 }
 .recall-meta .hash {
-  color: hsl(var(--gold));
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: hsl(var(--ink));
 }
 .recall-list {
   display: flex;
@@ -1796,17 +1750,17 @@ body::after {
   min-width: 0;
 }
 .os-tenet h4 {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: hsl(var(--gold));
-  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  color: hsl(var(--ink));
+  margin: 0 0 6px;
   font-weight: 500;
 }
 .os-tenet p {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.55;
   color: hsl(var(--ink-soft));
   max-width: 320px;
@@ -1871,9 +1825,7 @@ body::after {
   background: hsl(var(--paper-warm));
   border-bottom: 1px solid hsl(var(--line));
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-size: 11.5px;
 }
 .patch-example .file {
   color: hsl(var(--gold));
@@ -1929,27 +1881,17 @@ body::after {
 }
 
 .os-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  display: inline-block;
   margin-top: 22px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: hsl(var(--gold));
-  text-decoration: none;
-  border-bottom: 1px solid hsl(var(--gold) / 0.4);
-  padding-bottom: 2px;
+  font-size: 15px;
+  font-weight: 500;
+  color: hsl(var(--ink));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--gold) / 0.5);
+  text-underline-offset: 4px;
 }
 .os-cta:hover {
-  border-bottom-color: hsl(var(--gold));
-}
-.os-cta .arr {
-  transition: transform 0.2s ease-out;
-}
-.os-cta:hover .arr {
-  transform: translateX(3px);
+  text-decoration-color: hsl(var(--gold));
 }
 
 @media (max-width: 880px) {
@@ -1963,72 +1905,15 @@ body::after {
 }
 
 /* ---------- BRING YOUR OWN AGENT SECTION ---------- */
-/* Reuses .os-tenets / .os-tenet / .os-cta from the section above
-     so the visual rhythm stays consistent. Unique pieces: a display
-     pull-quote and a thin "works today with" agent strip. */
-.byo-quote {
-  margin: 8px 0 18px;
-  padding: 28px 30px;
-  background: linear-gradient(180deg, hsl(var(--gold) / 0.05), hsl(var(--paper)) 80%);
-  border-left: 2px solid hsl(var(--gold));
-  border-radius: 0 6px 6px 0;
-  font-family: var(--font-display);
-  font-size: clamp(20px, 2.2vw, 26px);
-  line-height: 1.35;
-  letter-spacing: -0.005em;
-  font-weight: 300;
-  font-style: italic;
-  color: hsl(var(--ink));
-  max-width: 720px;
+.byo-shell .os-tenets {
+  max-width: 980px;
 }
-/* "Bring your own ___" with the agent name rotating through a vertical
-     reel. One clip window shows a single word; the track slides up by one
-     line each beat. The trailing word duplicates the first so the loop can
-     snap back invisibly. */
-.byo-agents {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 18px 0 4px;
-  font-family: var(--font-display);
-  font-weight: 300;
-  font-size: clamp(20px, 2.3vw, 28px);
-  line-height: 1.3;
-  letter-spacing: -0.01em;
+.byo-works {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
   color: hsl(var(--ink-soft));
-}
-.byo-lead {
-  white-space: nowrap;
-}
-.byo-clip {
-  display: inline-block;
-  overflow: hidden;
-  height: 1.3em;
-}
-.byo-track {
-  display: flex;
-  flex-direction: column;
-  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
-}
-.byo-word {
-  display: flex;
-  align-items: center;
-  height: 1.3em;
-  white-space: nowrap;
-  color: hsl(var(--gold));
-  font-weight: 500;
-}
-@media (prefers-reduced-motion: reduce) {
-  .byo-track {
-    transition: none;
-  }
-}
-
-@media (max-width: 880px) {
-  .byo-quote {
-    padding: 22px 24px;
-  }
+  max-width: 580px;
 }
 
 /* ---------- WAITLIST CTA STRIP ---------- */
@@ -2059,10 +1944,10 @@ body::after {
   flex: 1;
   background: hsl(var(--paper));
   border: 1px solid hsl(var(--line));
-  border-radius: 2px;
-  padding: 12px 14px;
-  font-family: var(--font-display);
-  font-size: 14.5px;
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-family: var(--font-body);
+  font-size: 15px;
   color: hsl(var(--ink));
   outline: none;
 }
@@ -2127,14 +2012,17 @@ body::after {
   justify-content: space-between;
   align-items: center;
   color: hsl(var(--muted));
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 13.5px;
 }
 .footer a {
   color: inherit;
   text-decoration: none;
+}
+.footer a:hover {
+  color: hsl(var(--ink));
+}
+.footer .year {
+  margin-left: 8px;
 }
 .footer .ln {
   display: flex;
@@ -2165,11 +2053,6 @@ body::after {
   order: 2;
 }
 
-/* In a band the eyebrow sits inside the copy column and the tenets stack
-     vertically — no room for the 3-up grid at half width. */
-.feature-band .section-meta {
-  margin-bottom: 14px;
-}
 .feature-band .band-copy .os-tenets {
   grid-template-columns: 1fr;
   gap: 16px;
@@ -2185,16 +2068,10 @@ body::after {
 .feature-band .os-terminal {
   margin: 0;
 }
-.feature-band .byo-quote {
-  margin: 0 0 18px;
-}
 
 /* Centerpiece intro (memory section): centered eyebrow, heading, lede. */
 .memo-shell.is-centerpiece {
   text-align: center;
-}
-.memo-shell.is-centerpiece .section-meta {
-  justify-content: center;
 }
 .memo-shell.is-centerpiece h2 {
   max-width: 760px;
@@ -2231,45 +2108,37 @@ body::after {
   gap: 26px 32px;
 }
 .missing-item {
-  display: grid;
-  grid-template-columns: 22px 1fr;
-  gap: 12px;
-  align-items: start;
-}
-.missing-item .check {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: hsl(var(--gold) / 0.14);
-  color: hsl(var(--gold));
-  display: grid;
-  place-items: center;
-  margin-top: 1px;
-}
-.missing-item .check svg {
-  width: 13px;
-  height: 13px;
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid hsl(var(--line));
 }
 .missing-item h4 {
   font-family: var(--font-display);
   font-weight: 500;
-  font-size: 15px;
+  font-size: 16px;
   color: hsl(var(--ink));
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   letter-spacing: -0.005em;
 }
 .missing-item p {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.55;
   color: hsl(var(--ink-soft));
 }
 .missing-sign {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  color: hsl(var(--muted));
+  font-size: 15px;
+  color: hsl(var(--ink-soft));
   margin: 0;
+}
+.missing-sign a {
+  color: hsl(var(--ink));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--gold) / 0.5);
+  text-underline-offset: 4px;
+}
+.missing-sign a:hover {
+  text-decoration-color: hsl(var(--gold));
 }
 @media (max-width: 880px) {
   .missing-grid {
@@ -2325,9 +2194,8 @@ body::after {
 
 @media (max-width: 560px) {
   .nav-links {
-    gap: 16px;
-    font-size: 10px;
-    letter-spacing: 0.1em;
+    gap: 18px;
+    font-size: 13.5px;
   }
   .nav-row .nav-login {
     padding: 8px 15px;
@@ -2443,13 +2311,6 @@ body::after {
    Everything token-based flips automatically; these are the hardcoded
    light-surface values that need explicit dark counterparts. */
 
-/* Multiplied noise is invisible on a dark canvas — switch to screen so the
-   grain lightens instead, at lower strength. */
-[data-theme="dark"] body::after {
-  mix-blend-mode: screen;
-  opacity: 0.4;
-}
-
 /* Chat-demo avatar pastels: same hues, inverted value. */
 [data-theme="dark"] .tl-avatar.av-alex,
 [data-theme="dark"] .capture-row .c-avatar.av-sam {
@@ -2502,14 +2363,6 @@ body::after {
    and an inset action pill — both gated to a real mouse pointer.
    ============================================================ */
 
-/* The board section shares .memo-shell (heading, lede, width, rhythm)
-   but sits in the intro zone with the hero, so it drops the thread spine
-   (the golden thread still starts at the memory section below). */
-.board-shell::before,
-.board-shell::after {
-  display: none;
-}
-
 .board-compare {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
@@ -2530,18 +2383,13 @@ body::after {
   padding: 0 4px 16px;
 }
 .board-lens .k {
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  letter-spacing: -0.01em;
   color: hsl(var(--ink));
 }
 .board-lens .m {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-size: 13px;
   color: hsl(var(--muted));
 }
 
@@ -2595,10 +2443,7 @@ body::after {
 }
 .board-badge .lbl {
   writing-mode: vertical-rl;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-size: 11.5px;
   color: hsl(var(--muted));
 }
 [data-theme="dark"] .board-badge .ic {

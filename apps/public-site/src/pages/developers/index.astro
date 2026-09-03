@@ -8,7 +8,6 @@ import CodeBlock from "../../components/CodeBlock.astro"
   description="The Threa public REST API: what it covers, the base URL, and a quickstart that goes from creating an API key to your first memo search."
   current="overview"
 >
-  <p class="eyebrow">Developers</p>
   <h1>Threa's public API.</h1>
   <p class="lead">
     A REST API over your workspace: messages, streams, members, attachments, and
@@ -64,7 +63,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
       </p>
       <CodeBlock
         lang="bash"
-        label="who am I"
+        label="Who am I"
         code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me \\
   -H "Authorization: Bearer {{apiKey}}"`}
         run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me" }}
@@ -78,7 +77,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
       </p>
       <CodeBlock
         lang="bash"
-        label="search memos"
+        label="Search memos"
         code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
@@ -103,7 +102,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="text"
-    label="prompt for your agent"
+    label="Prompt for your agent"
     code={`Integrate with the Threa API. Read https://threa.io/llms-full.txt for the docs
 and https://threa.io/openapi.json for the exact contract. The base URL is
 {{baseUrl}}, my workspace ID is {{workspaceId}}, and my API key is in the

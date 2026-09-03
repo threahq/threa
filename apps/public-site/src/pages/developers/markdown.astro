@@ -17,7 +17,6 @@ import CodeBlock from "../../components/CodeBlock.astro"
     { id: "structure", label: "Why the schemes exist" },
   ]}
 >
-  <p class="eyebrow">Markdown</p>
   <h1>The message content format.</h1>
   <p class="lead">
     Message bodies are markdown. On top of standard formatting, a few custom
@@ -34,7 +33,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="send a message"
+    label="Send a message"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
@@ -83,12 +82,12 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="text"
-    label="you write"
+    label="You write"
     code={`Ping @pierre and @ariadne about #releases.`}
   />
   <CodeBlock
     lang="text"
-    label="you read back"
+    label="You read back"
     code={`Ping [@pierre](user:usr_8x2…) and [@ariadne](persona:persona_a1…) about [#releases](channel:stream_4f…).`}
   />
   <p>
@@ -111,7 +110,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="upload, then attach"
+    label="Upload, then attach"
     code={`# 1. upload, returns { "id": "attach_…" }
 curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/attachments \\
   -H "Authorization: Bearer {{apiKey}}" \\
