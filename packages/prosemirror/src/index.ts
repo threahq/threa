@@ -60,6 +60,7 @@ export {
   collectAgentBlockAuthorIds,
   collectMemoEmbedIds,
   collectMentionActorRefs,
+  collectMentionSlugs,
   collectChannelStreamIds,
   collectUnresolvedMentionSlugs,
   collectUnresolvedChannelLinkSlugs,

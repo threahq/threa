@@ -112,6 +112,7 @@ function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[]; 
 
   const botRuntimeService = {
     claimNextInvocation: mock(() => Promise.resolve(invocation)),
+    findActiveClaimForUpdate: mock(() => Promise.resolve(invocation)),
     upsertPresenceFromBotKey: mock(() => Promise.resolve(null)),
   } as unknown as PublicApiDeps["botRuntimeService"]
   const isStreamAccessibleForBot = mock(() => Promise.resolve(true))

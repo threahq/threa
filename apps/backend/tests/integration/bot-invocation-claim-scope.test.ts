@@ -56,6 +56,7 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
       trigger: "active-scratchpad",
       requiredCapability: "active-scratchpad",
       promptMarkdown: `prompt for ${responseStreamId}`,
+      sourceMessageRevision: 0,
       authorUserId: author,
       mentionedActorSlugs: [],
       targetInstanceId: null,

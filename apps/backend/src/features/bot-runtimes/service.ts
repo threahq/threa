@@ -14,9 +14,12 @@ import { OutboxRepository } from "../../lib/outbox"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
 import { botInvocationId, botRuntimeInstanceId, botRuntimeSessionLinkId, streamActiveActorId } from "../../lib/id"
 import { logger } from "../../lib/logger"
+import { serializeBigInt } from "@threa/backend-common"
+import { eventId } from "../../lib/id"
 import {
   BOT_CLAIM_MAX_ATTEMPTS,
   BotInvocationRepository,
+  botInvocationActorSourceLockKey,
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
@@ -26,14 +29,25 @@ import {
   type StreamActiveActor,
 } from "./repository"
 import type { LabelAssignmentService } from "../labels"
-import { assertStreamWritable, type Stream, type StreamService } from "../streams"
+import { assertStreamWritable, StreamEventRepository, StreamRepository, type Stream, type StreamService } from "../streams"
+import { AgentSessionRepository, SessionStatuses } from "../agents"
 import { E2eStreamActorsRepository } from "../e2e-streams"
+import { MessageRepository, type InvocationSourceState } from "../messaging"
+import {
+  buildCanonicalInvocationPrompt,
+  resolveCanonicalInvocationRoutes,
+  type CanonicalInvocationRoute,
+} from "./invocation-route-resolver"
 
 interface BotRuntimeServiceDeps {
   pool: Pool
   streamService?: Pick<StreamService, "createScratchpadInTransaction" | "addBotToStreamOn">
   labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
 }
+
+class ClaimCandidateFenceLost extends Error {}
+
+const DELETED_SOURCE_SESSION_REPAIR_BATCH_SIZE = 100
 
 function serializeBotForOutbox(bot: Bot) {
   const common = {
@@ -588,6 +602,179 @@ export class BotRuntimeService {
     })
   }
 
+  private async terminalizeCancelledSessions(
+    db: Querier,
+    workspaceId: string,
+    invocations: BotInvocation[],
+    status: "deleted" | "superseded"
+  ): Promise<void> {
+    for (const invocation of invocations) {
+      if (invocation.status !== "cancelled") continue
+      const updated = await AgentSessionRepository.updateStatus(db, invocation.id, status, {
+        error: status === "deleted" ? "Invocation source deleted" : "Invocation route superseded",
+        onlyIfStatus: SessionStatuses.RUNNING,
+      })
+      if (!updated || status !== "deleted") continue
+      const streamEvent = await StreamEventRepository.insert(db, {
+        id: eventId(),
+        streamId: updated.streamId,
+        eventType: "agent_session:deleted",
+        payload: { sessionId: updated.id, deletedAt: updated.completedAt?.toISOString() ?? new Date().toISOString() },
+        actorId: updated.personaId,
+        actorType: AuthorTypes.BOT,
+      })
+      const stream = await StreamRepository.findById(db, updated.streamId)
+      await OutboxRepository.insert(db, "agent_session:deleted", {
+        workspaceId,
+        streamId: updated.streamId,
+        rootStreamId: stream?.rootStreamId ?? stream?.id,
+        event: serializeBigInt(streamEvent),
+      })
+    }
+  }
+
+  private async cancelInvocationsForDeletedSourceInTransaction(
+    db: Querier,
+    params: { workspaceId: string; sourceMessageId: string }
+  ): Promise<number> {
+    const cancelled = await BotInvocationRepository.cancelActiveBySource(db, {
+      ...params,
+      reason: "source_deleted",
+    })
+    await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "deleted")
+    return cancelled.length
+  }
+
+  async cancelInvocationsForDeletedSource(params: { workspaceId: string; sourceMessageId: string }): Promise<number> {
+    return withTransaction(this.pool, (db) => this.cancelInvocationsForDeletedSourceInTransaction(db, params))
+  }
+
+  async repairDeletedSourceSession(params: { workspaceId: string; sessionId: string }): Promise<boolean> {
+    const source = await BotInvocationRepository.findDeletedSourceForRunningSession(this.pool, params)
+    if (!source) return false
+    await this.cancelInvocationsForDeletedSource(source)
+    return true
+  }
+
+  /**
+   * Repair rows a migration cancelled before application lifecycle code could
+   * run. The RUNNING-session predicate is the CAS: concurrent backend startups
+   * may discover the same source, but only one transaction emits each deletion.
+   */
+  async repairDeletedSourceSessions(): Promise<number> {
+    let repairedSources = 0
+    for (;;) {
+      const sources = await BotInvocationRepository.findDeletedSourcesWithRunningSessions(
+        this.pool,
+        DELETED_SOURCE_SESSION_REPAIR_BATCH_SIZE
+      )
+      if (sources.length === 0) return repairedSources
+      for (const source of sources) {
+        await this.cancelInvocationsForDeletedSource(source)
+        repairedSources += 1
+      }
+    }
+  }
+
+  private async insertCanonicalRoute(
+    db: Querier,
+    source: InvocationSourceState,
+    sourceMessageId: string,
+    route: CanonicalInvocationRoute
+  ): Promise<void> {
+    const { invocation, wasNewlyInserted } = await BotInvocationRepository.insertIdempotent(db, {
+      id: botInvocationId(),
+      workspaceId: source.workspaceId,
+      rootStreamId: route.rootStreamId,
+      activeStreamId: route.activeStreamId,
+      sourceMessageId,
+      responseStreamId: route.responseStreamId,
+      actorType: "bot",
+      actorId: route.actorId,
+      trigger: route.trigger,
+      requiredCapability: route.requiredCapability,
+      promptMarkdown: route.promptMarkdown,
+      sourceMessageRevision: source.revision,
+      authorUserId: route.authorUserId,
+      mentionedActorSlugs: route.mentionedActorSlugs,
+      targetInstanceId: route.targetInstanceId,
+      targetRuntimeSessionId: route.targetRuntimeSessionId,
+      metadata: {},
+    })
+    if (!wasNewlyInserted) return
+    await OutboxRepository.insert(db, "bot_invocation:available", {
+      workspaceId: invocation.workspaceId,
+      botId: invocation.actorId,
+      invocationId: invocation.id,
+      requiredCapability: invocation.requiredCapability,
+      targetInstanceId: invocation.targetInstanceId,
+      targetRuntimeSessionId: invocation.targetRuntimeSessionId,
+      createdAt: invocation.createdAt.toISOString(),
+    })
+  }
+
+  async reconcileInvocationSource(params: {
+    workspaceId: string
+    sourceMessageId: string
+  }): Promise<Array<{ botId: string; streamId: string; rootStreamId: string; contentMarkdown: string }>> {
+    return withTransaction(this.pool, async (db) => {
+      const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+        workspaceId: params.workspaceId,
+        messageId: params.sourceMessageId,
+      })
+      if (!source || source.deleted) {
+        await this.cancelInvocationsForDeletedSourceInTransaction(db, params)
+        return []
+      }
+
+      const routes = await resolveCanonicalInvocationRoutes(db, source)
+      const dispatchable = routes.filter((route) => !route.missingLinkNotice)
+      const cancelled = await BotInvocationRepository.cancelActiveRoutesNotDesired(db, {
+        ...params,
+        sourceMessageRevision: source.revision,
+        desiredRoutes: dispatchable.map((route) => ({
+          actorType: "bot",
+          actorId: route.actorId,
+          trigger: route.trigger,
+        })),
+      })
+      await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
+      const orderedDispatchable = dispatchable.toSorted((left, right) => {
+        const leftKey = botInvocationActorSourceLockKey({
+          workspaceId: params.workspaceId,
+          sourceMessageId: params.sourceMessageId,
+          actorType: "bot",
+          actorId: left.actorId,
+        })
+        const rightKey = botInvocationActorSourceLockKey({
+          workspaceId: params.workspaceId,
+          sourceMessageId: params.sourceMessageId,
+          actorType: "bot",
+          actorId: right.actorId,
+        })
+        if (leftKey < rightKey) return -1
+        if (leftKey > rightKey) return 1
+        return 0
+      })
+      for (const route of orderedDispatchable) {
+        await this.insertCanonicalRoute(db, source, params.sourceMessageId, route)
+      }
+
+      return routes.flatMap((route) =>
+        route.missingLinkNotice
+          ? [
+              {
+                botId: route.actorId,
+                streamId: source.streamId,
+                rootStreamId: route.rootStreamId,
+                contentMarkdown: route.missingLinkNotice,
+              },
+            ]
+          : []
+      )
+    })
+  }
+
   async createInvocation(params: {
     workspaceId: string
     rootStreamId: string
@@ -638,6 +825,19 @@ export class BotRuntimeService {
       streamId: params.responseStreamId,
       principal: { kind: "bot", botId: params.actorId },
     })
+    const source =
+      params.trigger === "session-control"
+        ? null
+        : await MessageRepository.findInvocationSourceStateForShare(db, {
+            workspaceId: params.workspaceId,
+            messageId: params.sourceMessageId,
+          })
+    if (
+      params.trigger !== "session-control" &&
+      (!source || source.deleted || source.streamId !== params.activeStreamId)
+    ) {
+      throw new Error(`Invocation source is unavailable: ${params.sourceMessageId}`)
+    }
     const { invocation, wasNewlyInserted } = await BotInvocationRepository.insertIdempotent(db, {
       id: botInvocationId(),
       workspaceId: params.workspaceId,
@@ -649,7 +849,8 @@ export class BotRuntimeService {
       actorId: params.actorId,
       trigger: params.trigger,
       requiredCapability: params.requiredCapability,
-      promptMarkdown: params.promptMarkdown,
+      promptMarkdown: source ? buildCanonicalInvocationPrompt(source) : params.promptMarkdown,
+      sourceMessageRevision: source?.revision ?? 0,
       authorUserId: params.authorUserId,
       mentionedActorSlugs: params.mentionedActorSlugs ?? [],
       targetInstanceId: params.targetInstanceId ?? null,
@@ -781,58 +982,121 @@ export class BotRuntimeService {
       )
     }
 
-    return withTransaction(this.pool, async (db) => {
-      // Snapshot only: authority must lock the effective stream/root and grant
-      // before claimOne takes the invocation row lock. claimOne is then scoped
-      // to the same response stream; if this exact candidate lost a race it may
-      // claim the next FIFO row for that already-authorized stream, or no-op.
-      const candidate = await BotInvocationRepository.findNextClaimable(db, {
-        ...params,
-        maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
-      })
-      if (!candidate) return null
-
-      let authorityDenial: { details?: { reason?: string } } | null = null
-      try {
-        await assertStreamWritable(db, {
-          workspaceId: candidate.workspaceId,
-          streamId: candidate.responseStreamId,
-          principal: { kind: "bot", botId: candidate.actorId },
+    try {
+      return await withTransaction(this.pool, async (db) => {
+        // Snapshot only: authority must lock the effective stream/root and grant
+        // before claimOne takes the invocation row lock. claimOne is then scoped
+        // to the same response stream; if this exact candidate lost a race it may
+        // claim the next FIFO row for that already-authorized stream, or no-op.
+        const candidate = await BotInvocationRepository.findNextClaimable(db, {
+          ...params,
+          maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
         })
-      } catch (error) {
-        const denial = error as { code?: string; details?: { reason?: string } }
-        if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
-        authorityDenial = denial
-      }
+        if (!candidate) return null
 
-      const claimed = await BotInvocationRepository.claimOne(db, {
-        ...params,
-        responseStreamId: candidate.responseStreamId,
-        maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
-      })
-      if (!claimed) return null
-      if (authorityDenial) {
-        await BotInvocationRepository.failClaim(db, {
-          workspaceId: claimed.workspaceId,
-          botId: claimed.actorId,
-          invocationId: claimed.id,
-          instanceId: params.instanceId,
-          claimToken: params.claimToken,
-          errorMessage: `STREAM_READ_ONLY:${authorityDenial.details?.reason ?? "not_a_member"}`,
-        })
-        return null
-      }
+        let authorityDenial: { details?: { reason?: string } } | null = null
+        try {
+          await assertStreamWritable(db, {
+            workspaceId: candidate.workspaceId,
+            streamId: candidate.responseStreamId,
+            principal: { kind: "bot", botId: candidate.actorId },
+          })
+        } catch (error) {
+          const denial = error as { code?: string; details?: { reason?: string } }
+          if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+          authorityDenial = denial
+        }
 
-      // Siblings on the same bot need to stop racing this invocation. The
-      // narrow payload deliberately omits the winning instance — see
-      // `BotInvocationClaimedOutboxPayload`.
-      await OutboxRepository.insert(db, "bot_invocation:claimed", {
-        workspaceId: claimed.workspaceId,
-        botId: claimed.actorId,
-        invocationId: claimed.id,
+        for (;;) {
+          const claimed = await BotInvocationRepository.claimOne(db, {
+            ...params,
+            responseStreamId: candidate.responseStreamId,
+            maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+          })
+          if (!claimed) return null
+          let pinned = claimed
+          if (claimed.trigger !== "session-control") {
+            const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+              workspaceId: claimed.workspaceId,
+              messageId: claimed.sourceMessageId,
+            })
+            const cancelCandidate = async (reason: "source_deleted" | "routing_changed") => {
+              const cancelled = await BotInvocationRepository.cancelClaimedCandidate(db, {
+                workspaceId: claimed.workspaceId,
+                invocationId: claimed.id,
+                instanceId: params.instanceId,
+                claimToken: params.claimToken,
+                reason,
+              })
+              if (!cancelled) throw new ClaimCandidateFenceLost()
+              await this.terminalizeCancelledSessions(
+                db,
+                claimed.workspaceId,
+                [cancelled],
+                reason === "source_deleted" ? "deleted" : "superseded"
+              )
+            }
+            if (!source || source.deleted) {
+              await cancelCandidate(source?.deleted ? "source_deleted" : "routing_changed")
+              continue
+            }
+            // A bot that lost write authority fails below with the reason; the
+            // resolver would only drop it as undesired and hide why.
+            const promptMarkdown = authorityDenial
+              ? claimed.promptMarkdown
+              : (await resolveCanonicalInvocationRoutes(db, source)).find(
+                  (candidate) =>
+                    !candidate.missingLinkNotice &&
+                    candidate.actorId === claimed.actorId &&
+                    candidate.trigger === claimed.trigger &&
+                    candidate.activeStreamId === claimed.activeStreamId &&
+                    candidate.responseStreamId === claimed.responseStreamId &&
+                    candidate.targetInstanceId === claimed.targetInstanceId &&
+                    candidate.targetRuntimeSessionId === claimed.targetRuntimeSessionId
+                )?.promptMarkdown
+            if (promptMarkdown === undefined) {
+              await cancelCandidate("routing_changed")
+              continue
+            }
+            const refreshed = await BotInvocationRepository.pinClaimSource(db, {
+              workspaceId: claimed.workspaceId,
+              invocationId: claimed.id,
+              instanceId: params.instanceId,
+              claimToken: params.claimToken,
+              revision: source.revision,
+              promptMarkdown,
+            })
+            if (!refreshed) throw new ClaimCandidateFenceLost()
+            pinned = refreshed
+          }
+          // The pin above is what lets failClaim's source-revision fence match.
+          if (authorityDenial) {
+            await BotInvocationRepository.failClaim(db, {
+              workspaceId: pinned.workspaceId,
+              botId: pinned.actorId,
+              invocationId: pinned.id,
+              instanceId: params.instanceId,
+              claimToken: params.claimToken,
+              errorMessage: `STREAM_READ_ONLY:${authorityDenial.details?.reason ?? "not_a_member"}`,
+            })
+            return null
+          }
+
+          // Siblings on the same bot need to stop racing this invocation. The
+          // narrow payload deliberately omits the winning instance — see
+          // `BotInvocationClaimedOutboxPayload`.
+          await OutboxRepository.insert(db, "bot_invocation:claimed", {
+            workspaceId: pinned.workspaceId,
+            botId: pinned.actorId,
+            invocationId: pinned.id,
+          })
+          return pinned
+        }
       })
-      return claimed
-    })
+    } catch (error) {
+      if (error instanceof ClaimCandidateFenceLost) return null
+      throw error
+    }
   }
 
   async findActiveClaim(params: {
@@ -864,7 +1128,7 @@ export class BotRuntimeService {
       workspaceId: string
       botId: string
       invocationId: string
-      instanceId: string
+      instanceId?: string
       claimToken: string
     }
   ): Promise<BotInvocation | null> {
@@ -897,6 +1161,20 @@ export class BotRuntimeService {
     params: { workspaceId: string; botId: string; instanceId: string; runtimeSessionId: string }
   ): Promise<BotRuntimeSessionLink | null> {
     return BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, params)
+  }
+
+  async validateClaimSourceForCompletion(db: Querier, claim: BotInvocation): Promise<boolean> {
+    if (claim.trigger === "session-control") return claim.claimedSourceMessageRevision === 0
+    const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+      workspaceId: claim.workspaceId,
+      messageId: claim.sourceMessageId,
+    })
+    return Boolean(
+      source &&
+      !source.deleted &&
+      source.streamId === claim.activeStreamId &&
+      source.revision === claim.claimedSourceMessageRevision
+    )
   }
 
   async renewInvocationClaim(params: {

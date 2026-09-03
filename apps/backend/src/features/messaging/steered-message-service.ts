@@ -1,5 +1,5 @@
 import { HttpError } from "@threa/backend-common"
-import { collectMentionActorRefs } from "@threa/prosemirror"
+import { collectMentionActorRefs, collectMentionSlugs } from "@threa/prosemirror"
 import { BotInvocationCapabilities, BotInvocationTriggers, CommandKinds, MessageErrorCodes } from "@threa/types"
 import type { Querier } from "../../db"
 import { commandId as generateCommandId } from "../../lib/id"
@@ -10,18 +10,6 @@ import {
   type CommandAvailabilityService,
 } from "../commands"
 import type { Message } from "./repository"
-
-function collectMentionSlugs(content: Message["contentJson"]): string[] {
-  const slugs: string[] = []
-  const walk = (node: Message["contentJson"]): void => {
-    if (node.type === "mention" && typeof node.attrs?.slug === "string" && node.attrs.slug.length > 0) {
-      slugs.push(node.attrs.slug)
-    }
-    for (const child of node.content ?? []) walk(child)
-  }
-  walk(content)
-  return slugs
-}
 
 export class SteeredMessageService {
   constructor(

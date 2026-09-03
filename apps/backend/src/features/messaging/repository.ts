@@ -68,6 +68,19 @@ export interface Message {
   e2eVersion: number | null
 }
 
+export interface InvocationSourceState {
+  workspaceId: string
+  streamId: string
+  revision: number
+  deleted: boolean
+  contentJson: JSONContent
+  contentMarkdown: string
+  ciphertext: Buffer | null
+  envelope: unknown | null
+  authorId: string
+  authorType: AuthorType
+}
+
 export interface InsertMessageParams {
   id: string
   streamId: string
@@ -184,6 +197,34 @@ const QUALIFIED_SELECT_FIELDS = `
 `
 
 export const MessageRepository = {
+  async findInvocationSourceStateForShare(
+    db: Querier,
+    params: { workspaceId: string; messageId: string }
+  ): Promise<InvocationSourceState | null> {
+    const result = await db.query<MessageRow & { workspace_id: string }>(sql`
+      SELECT m.*, s.workspace_id, 0 AS reply_count
+      FROM messages m
+      JOIN streams s ON s.id = m.stream_id
+      WHERE m.id = ${params.messageId}
+        AND s.workspace_id = ${params.workspaceId}
+      FOR SHARE OF m
+    `)
+    const row = result.rows[0]
+    if (!row) return null
+    return {
+      workspaceId: row.workspace_id,
+      streamId: row.stream_id,
+      revision: row.revision,
+      deleted: row.deleted_at !== null,
+      contentJson: row.content_json,
+      contentMarkdown: row.content_markdown,
+      ciphertext: row.ciphertext,
+      envelope: row.envelope,
+      authorId: row.author_id,
+      authorType: row.author_type as AuthorType,
+    }
+  },
+
   async findByClientMessageId(db: Querier, streamId: string, clientMessageId: string): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
@@ -695,8 +736,8 @@ export const MessageRepository = {
   async softDelete(db: Querier, id: string): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
-      SET deleted_at = NOW()
-      WHERE id = ${id}
+      SET deleted_at = NOW(), revision = revision + 1
+      WHERE id = ${id} AND deleted_at IS NULL
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     if (!result.rows[0]) return null

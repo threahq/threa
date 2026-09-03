@@ -20,7 +20,7 @@ export {
 export { deriveContentMarkdown } from "./content"
 
 export { MessageRepository, REPLY_COUNT_SUBQUERY } from "./repository"
-export type { Message, InsertMessageParams } from "./repository"
+export type { Message, InsertMessageParams, InvocationSourceState } from "./repository"
 
 export { MessageVersionRepository, messageVersionKey } from "./version-repository"
 export type { MessageVersion, MessageVersionKey } from "./version-repository"

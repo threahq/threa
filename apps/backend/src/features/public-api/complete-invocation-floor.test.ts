@@ -94,7 +94,9 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     getLatestSequence: mock(() => Promise.resolve(7n)),
   } as unknown as EventService
   const activeClaim = { id: "binv_1", responseStreamId: "stream_1", status: "claimed" }
+  const validateClaimSourceForCompletion = mock(() => Promise.resolve(true))
   const botRuntimeService = {
+    validateClaimSourceForCompletion,
     findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
     findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
     findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
@@ -145,6 +147,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     createMessageInTransaction,
     completeSession,
     botRuntimeService,
+    validateClaimSourceForCompletion,
   }
 }
 
@@ -203,6 +206,23 @@ describe("completeBotInvocation synthesized-trace floor", () => {
     const completedEvent = insertEvent.mock.calls[0]?.[1] as unknown as { payload: Record<string, unknown> }
     expect(completedEvent.payload).toMatchObject({ stepCount: 1 })
     expect(emitted.filter((e) => e.event === "agent_session:step:completed")).toHaveLength(0)
+  })
+
+  it("writes no reply or synthesized trace when canonical input is stale", async () => {
+    const arranged = arrangeCompletion({ existingSteps: [] })
+    arranged.validateClaimSourceForCompletion.mockResolvedValue(false)
+
+    await expect(arranged.handlers.completeBotInvocation(arranged.req, createResponse())).rejects.toMatchObject({
+      status: 404,
+      code: "NOT_FOUND",
+    })
+
+    expect({
+      messages: arranged.createMessageInTransaction.mock.calls.length,
+      synthesizedSteps: arranged.appendStep.mock.calls.length,
+      completedSessions: arranged.completeSession.mock.calls.length,
+      lifecycleEvents: arranged.insertEvent.mock.calls.length,
+    }).toEqual({ messages: 0, synthesizedSteps: 0, completedSessions: 0, lifecycleEvents: 0 })
   })
 })
 

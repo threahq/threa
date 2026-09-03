@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { AuthorTypes } from "@threa/types"
 import { BotRuntimeService } from "./service"
 import {
   BOT_CLAIM_MAX_ATTEMPTS,
@@ -12,6 +13,10 @@ import {
 } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
+import { MessageRepository } from "../messaging"
+import { AgentSessionRepository, SessionStatuses } from "../agents"
+import { StreamEventRepository, StreamRepository } from "../streams"
+import * as routeResolver from "./invocation-route-resolver"
 import * as db from "../../db"
 import * as streamsModule from "../streams"
 
@@ -32,6 +37,11 @@ function makeInvocation(overrides: Partial<BotInvocation> = {}): BotInvocation {
     trigger: "active-scratchpad",
     requiredCapability: "active-scratchpad",
     promptMarkdown: "do a thing",
+    sourceMessageRevision: 1,
+    claimedSourceMessageRevision: null,
+    claimedInputUpdateMode: null,
+    cancellationReason: null,
+    availableAt: now,
     authorUserId: "usr_owner",
     mentionedActorSlugs: [],
     targetInstanceId: null,
@@ -72,6 +82,18 @@ describe("BotRuntimeService outbox emission", () => {
   describe("createInvocation", () => {
     it("emits bot_invocation:available when the row is freshly inserted", async () => {
       patchWithTransaction()
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 1,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "do a thing",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
       const inv = makeInvocation({ requiredCapability: "mentionable" })
       spyOn(BotInvocationRepository, "insertIdempotent").mockResolvedValue({
         invocation: inv,
@@ -108,6 +130,18 @@ describe("BotRuntimeService outbox emission", () => {
 
     it("does not emit when the row was an idempotent retry (ON CONFLICT)", async () => {
       patchWithTransaction()
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 1,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "x",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
       spyOn(BotInvocationRepository, "insertIdempotent").mockResolvedValue({
         invocation: makeInvocation(),
         wasNewlyInserted: false,
@@ -140,6 +174,35 @@ describe("BotRuntimeService outbox emission", () => {
       const claimSpy = spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(
         makeInvocation({ status: "claimed" })
       )
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 1,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "do a thing",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
+      spyOn(routeResolver, "resolveCanonicalInvocationRoutes").mockResolvedValue([
+        {
+          actorId: "bot_alice",
+          trigger: "active-scratchpad",
+          requiredCapability: "active-scratchpad",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_active",
+          responseStreamId: "stream_resp",
+          authorUserId: "usr_owner",
+          mentionedActorSlugs: [],
+          targetInstanceId: null,
+          targetRuntimeSessionId: null,
+          promptMarkdown: "do a thing",
+          missingLinkNotice: null,
+        },
+      ])
+      spyOn(BotInvocationRepository, "pinClaimSource").mockResolvedValue(makeInvocation({ status: "claimed" }))
       const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
       const service = new BotRuntimeService({ pool: fakePool })
@@ -206,6 +269,21 @@ describe("BotRuntimeService outbox emission", () => {
       spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
       spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
       spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(makeInvocation({ status: "claimed" }))
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 1,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "do a thing",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
+      const pin = spyOn(BotInvocationRepository, "pinClaimSource").mockResolvedValue(
+        makeInvocation({ status: "claimed", claimedSourceMessageRevision: 1 })
+      )
       const failClaim = spyOn(BotInvocationRepository, "failClaim").mockResolvedValue(
         makeInvocation({ status: "failed" })
       )
@@ -221,7 +299,7 @@ describe("BotRuntimeService outbox emission", () => {
         claimTtlSeconds: 60,
       })
 
-      expect(result).toBeNull()
+      expect({ result, pinned: pin.mock.calls.length }).toEqual({ result: null, pinned: 1 })
       expect(failClaim).toHaveBeenCalledWith(
         fakeQuerier,
         expect.objectContaining({
@@ -251,6 +329,327 @@ describe("BotRuntimeService outbox emission", () => {
       })
       expect(result).toBeNull()
       expect(insertSpy).not.toHaveBeenCalled()
+    })
+
+    it("cancels one stale route and stops when no other candidate exists", async () => {
+      patchWithTransaction()
+      spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
+      const candidate = makeInvocation({ status: "claimed", claimedByInstanceId: "inst_42", claimToken: "tok_1" })
+      const claim = spyOn(BotInvocationRepository, "claimOne")
+        .mockResolvedValueOnce(candidate)
+        .mockResolvedValueOnce(null)
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 2,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "route removed",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
+      spyOn(routeResolver, "resolveCanonicalInvocationRoutes").mockResolvedValue([])
+      const cancel = spyOn(BotInvocationRepository, "cancelClaimedCandidate").mockResolvedValue(
+        makeInvocation({ status: "cancelled", cancellationReason: "routing_changed" })
+      )
+      spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
+
+      const result = await new BotRuntimeService({ pool: fakePool }).claimNextInvocation({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeKind: "pi-local",
+        claimToken: "tok_1",
+        supportedCapabilities: ["active-scratchpad"],
+        claimTtlSeconds: 60,
+      })
+
+      expect({ result, claimCalls: claim.mock.calls.length, cancelCalls: cancel.mock.calls.length }).toEqual({
+        result: null,
+        claimCalls: 2,
+        cancelCalls: 1,
+      })
+    })
+
+    it("rolls back and stops if stale-candidate cancellation loses its claim fence", async () => {
+      patchWithTransaction()
+      spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
+      const claim = spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(
+        makeInvocation({ status: "claimed", claimedByInstanceId: "inst_42", claimToken: "tok_1" })
+      )
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue(null)
+      spyOn(routeResolver, "resolveCanonicalInvocationRoutes").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "cancelClaimedCandidate").mockResolvedValue(null)
+
+      const result = await new BotRuntimeService({ pool: fakePool }).claimNextInvocation({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeKind: "pi-local",
+        claimToken: "tok_1",
+        supportedCapabilities: ["active-scratchpad"],
+        claimTtlSeconds: 60,
+      })
+
+      expect({ result, claimCalls: claim.mock.calls.length }).toEqual({ result: null, claimCalls: 1 })
+    })
+
+    it("terminalizes an expired re-claim session when canonical deletion invalidates it", async () => {
+      patchWithTransaction()
+      spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
+      spyOn(BotInvocationRepository, "claimOne")
+        .mockResolvedValueOnce(
+          makeInvocation({ status: "claimed", claimedByInstanceId: "inst_42", claimToken: "tok_1" })
+        )
+        .mockResolvedValueOnce(null)
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 2,
+        deleted: true,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "deleted",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
+      spyOn(routeResolver, "resolveCanonicalInvocationRoutes").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "cancelClaimedCandidate").mockResolvedValue(
+        makeInvocation({ status: "cancelled", cancellationReason: "source_deleted" })
+      )
+      const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
+
+      await new BotRuntimeService({ pool: fakePool }).claimNextInvocation({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeKind: "pi-local",
+        claimToken: "tok_1",
+        supportedCapabilities: ["active-scratchpad"],
+        claimTtlSeconds: 60,
+      })
+
+      expect(updateStatus).toHaveBeenCalledWith(
+        fakeQuerier,
+        "inv_1",
+        SessionStatuses.DELETED,
+        expect.objectContaining({ onlyIfStatus: SessionStatuses.RUNNING })
+      )
+    })
+
+    it("refreshes a non-user claim with the canonical no-response wrapper", async () => {
+      patchWithTransaction()
+      spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
+      spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(
+        makeInvocation({ status: "claimed", claimedByInstanceId: "inst_42", claimToken: "tok_1" })
+      )
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 2,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "bot status",
+        ciphertext: null,
+        envelope: null,
+        authorId: "bot_other",
+        authorType: "bot",
+      })
+      const prompt =
+        "A non-user message was posted in your active Threa scratchpad.\n" +
+        "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE\n\n" +
+        "bot status"
+      spyOn(routeResolver, "resolveCanonicalInvocationRoutes").mockResolvedValue([
+        {
+          actorId: "bot_alice",
+          trigger: "active-scratchpad",
+          requiredCapability: "active-scratchpad",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_active",
+          responseStreamId: "stream_resp",
+          authorUserId: "bot_other",
+          mentionedActorSlugs: [],
+          targetInstanceId: null,
+          targetRuntimeSessionId: null,
+          promptMarkdown: prompt,
+          missingLinkNotice: null,
+        },
+      ])
+      const pin = spyOn(BotInvocationRepository, "pinClaimSource").mockResolvedValue(
+        makeInvocation({ status: "claimed", claimedSourceMessageRevision: 2, promptMarkdown: prompt })
+      )
+      spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const result = await new BotRuntimeService({ pool: fakePool }).claimNextInvocation({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeKind: "pi-local",
+        claimToken: "tok_1",
+        supportedCapabilities: ["active-scratchpad"],
+        claimTtlSeconds: 60,
+      })
+
+      expect({ returnedPrompt: result?.promptMarkdown, pinnedPrompt: pin.mock.calls[0]?.[1].promptMarkdown }).toEqual({
+        returnedPrompt: prompt,
+        pinnedPrompt: prompt,
+      })
+    })
+  })
+
+  describe("source reconciliation session lifecycle", () => {
+    it("deletion closes a running bot session and emits the existing deleted lifecycle", async () => {
+      patchWithTransaction()
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 2,
+        deleted: true,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "deleted",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
+      spyOn(BotInvocationRepository, "cancelActiveBySource").mockResolvedValue([
+        makeInvocation({ status: "cancelled", cancellationReason: "source_deleted" }),
+      ])
+      const completedAt = new Date("2026-05-26T12:01:00Z")
+      const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({
+        id: "inv_1",
+        streamId: "stream_resp",
+        personaId: "bot_alice",
+        status: SessionStatuses.DELETED,
+        completedAt,
+      } as never)
+      const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+      spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_resp", rootStreamId: "stream_root" } as never)
+      const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const notices = await new BotRuntimeService({ pool: fakePool }).reconcileInvocationSource({
+        workspaceId: "ws_1",
+        sourceMessageId: "msg_src",
+      })
+
+      expect(notices).toEqual([])
+      expect(updateStatus).toHaveBeenCalledWith(
+        fakeQuerier,
+        "inv_1",
+        SessionStatuses.DELETED,
+        expect.objectContaining({ onlyIfStatus: SessionStatuses.RUNNING })
+      )
+      expect(insertEvent).toHaveBeenCalledWith(
+        fakeQuerier,
+        expect.objectContaining({
+          eventType: "agent_session:deleted",
+          actorType: AuthorTypes.BOT,
+          payload: { sessionId: "inv_1", deletedAt: completedAt.toISOString() },
+        })
+      )
+      expect(insertOutbox).toHaveBeenCalledWith(
+        fakeQuerier,
+        "agent_session:deleted",
+        expect.objectContaining({ workspaceId: "ws_1", streamId: "stream_resp", rootStreamId: "stream_root" })
+      )
+    })
+
+    it("routing cancellation supersedes the session without inventing a wire event", async () => {
+      patchWithTransaction()
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 2,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "route removed",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
+      spyOn(routeResolver, "resolveCanonicalInvocationRoutes").mockResolvedValue([])
+      spyOn(BotInvocationRepository, "cancelActiveRoutesNotDesired").mockResolvedValue([
+        makeInvocation({ status: "cancelled", cancellationReason: "routing_changed" }),
+      ])
+      const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({
+        id: "inv_1",
+        status: SessionStatuses.SUPERSEDED,
+      } as never)
+      const insertEvent = spyOn(StreamEventRepository, "insert")
+      const insertOutbox = spyOn(OutboxRepository, "insert")
+
+      await new BotRuntimeService({ pool: fakePool }).reconcileInvocationSource({
+        workspaceId: "ws_1",
+        sourceMessageId: "msg_src",
+      })
+
+      expect(updateStatus).toHaveBeenCalledWith(
+        fakeQuerier,
+        "inv_1",
+        SessionStatuses.SUPERSEDED,
+        expect.objectContaining({ onlyIfStatus: SessionStatuses.RUNNING })
+      )
+      expect({
+        lifecycleEvents: insertEvent.mock.calls.length,
+        lifecycleOutbox: insertOutbox.mock.calls.length,
+      }).toEqual({
+        lifecycleEvents: 0,
+        lifecycleOutbox: 0,
+      })
+    })
+
+    it("inserts reconciled actors in canonical actor-source lock order", async () => {
+      patchWithTransaction()
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        workspaceId: "ws_1",
+        streamId: "stream_active",
+        revision: 2,
+        deleted: false,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "route actors",
+        ciphertext: null,
+        envelope: null,
+        authorId: "usr_owner",
+        authorType: "user",
+      })
+      spyOn(routeResolver, "resolveCanonicalInvocationRoutes").mockResolvedValue(
+        ["bot_zulu", "bot_alpha"].map((actorId) => ({
+          actorId,
+          trigger: "active-scratchpad" as const,
+          requiredCapability: "active-scratchpad" as const,
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_active",
+          responseStreamId: "stream_resp",
+          authorUserId: "usr_owner",
+          mentionedActorSlugs: [],
+          targetInstanceId: null,
+          targetRuntimeSessionId: null,
+          promptMarkdown: "route actors",
+          missingLinkNotice: null,
+        }))
+      )
+      spyOn(BotInvocationRepository, "cancelActiveRoutesNotDesired").mockResolvedValue([])
+      const insertInvocation = spyOn(BotInvocationRepository, "insertIdempotent").mockImplementation(
+        async (_db, params) => ({
+          invocation: makeInvocation({ actorId: params.actorId }),
+          wasNewlyInserted: false,
+        })
+      )
+
+      await new BotRuntimeService({ pool: fakePool }).reconcileInvocationSource({
+        workspaceId: "ws_1",
+        sourceMessageId: "msg_src",
+      })
+
+      expect(insertInvocation.mock.calls.map((call) => call[1].actorId)).toEqual(["bot_alpha", "bot_zulu"])
     })
   })
 

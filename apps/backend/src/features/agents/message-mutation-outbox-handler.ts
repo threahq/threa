@@ -11,7 +11,13 @@ import type { EventService } from "../messaging"
 import { MessageVersionRepository } from "../messaging"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
+import {
+  AgentSessionRepository,
+  SessionStatuses,
+  type AgentSession,
+  type AgentSessionCursor,
+} from "./session-repository"
+import { BotInvocationRepository } from "../bot-runtimes"
 
 export type AgentMessageMutationHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -147,7 +153,9 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
       return
     }
 
-    const latestSession = await AgentSessionRepository.findByTriggerMessage(this.db, payload.messageId)
+    const latestSession = await this.findLatestPersonaSession(payload.workspaceId, (cursor) =>
+      AgentSessionRepository.findByTriggerMessage(this.db, payload.messageId, cursor)
+    )
     if (latestSession) {
       await this.handleTriggerMessageEdit(payload, occurredAt, latestSession)
       return
@@ -213,7 +221,9 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
     payload: NormalizedMessageEditedPayload,
     occurredAt: Date
   ): Promise<void> {
-    const latestSession = await AgentSessionRepository.findLatestByStream(this.db, payload.streamId)
+    const latestSession = await this.findLatestPersonaSession(payload.workspaceId, (cursor) =>
+      AgentSessionRepository.findLatestByStream(this.db, payload.streamId, cursor)
+    )
     if (!latestSession) return
     if (latestSession.triggerMessageId === payload.messageId) return
     if (this.shouldSkipBySessionStatus(latestSession)) return
@@ -260,6 +270,19 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
       },
       logMessage: "Superseded session due to referenced message edit and dispatched rerun",
     })
+  }
+
+  private async findLatestPersonaSession(
+    workspaceId: string,
+    findNext: (cursor?: AgentSessionCursor) => Promise<AgentSession | null>
+  ): Promise<AgentSession | null> {
+    let cursor: AgentSessionCursor | undefined
+    while (true) {
+      const session = await findNext(cursor)
+      if (!session) return null
+      if (!(await BotInvocationRepository.isBotInvocationSession(this.db, workspaceId, session.id))) return session
+      cursor = { createdAt: session.createdAt, id: session.id }
+    }
   }
 
   private shouldSkipBySessionStatus(session: AgentSession): boolean {
@@ -337,6 +360,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
     if (sessions.length === 0) return
 
     for (const session of sessions) {
+      if (await BotInvocationRepository.isBotInvocationSession(this.db, payload.workspaceId, session.id)) continue
       const deletedAt = await this.markSessionDeleted(session, payload.workspaceId)
 
       await this.deleteSessionMessages(session, payload.workspaceId)

@@ -150,6 +150,11 @@ export interface AgentSessionStep {
   completedAt: Date | null
 }
 
+export interface AgentSessionCursor {
+  createdAt: Date
+  id: string
+}
+
 export interface AgentSessionProgressSnapshot {
   sessionId: string
   currentStepType: StepType | null
@@ -388,13 +393,18 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
-  async findByTriggerMessage(db: Querier, triggerMessageId: string): Promise<AgentSession | null> {
+  async findByTriggerMessage(
+    db: Querier,
+    triggerMessageId: string,
+    cursor?: AgentSessionCursor
+  ): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
         WHERE trigger_message_id = ${triggerMessageId}
-        ORDER BY created_at DESC
+          AND (${cursor?.createdAt ?? null}::timestamptz IS NULL OR (created_at, id) < (${cursor?.createdAt ?? null}, ${cursor?.id ?? null}))
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
       `
     )
@@ -687,13 +697,14 @@ export const AgentSessionRepository = {
    * Find the most recent session for a stream (regardless of status).
    * Used to check lastSeenSequence when deciding whether to dispatch a new job.
    */
-  async findLatestByStream(db: Querier, streamId: string): Promise<AgentSession | null> {
+  async findLatestByStream(db: Querier, streamId: string, cursor?: AgentSessionCursor): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
         WHERE stream_id = ${streamId}
-        ORDER BY created_at DESC
+          AND (${cursor?.createdAt ?? null}::timestamptz IS NULL OR (created_at, id) < (${cursor?.createdAt ?? null}, ${cursor?.id ?? null}))
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
       `
     )

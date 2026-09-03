@@ -192,9 +192,10 @@ describe("deferred generated output authority", () => {
         targetInstanceId: null,
         targetRuntimeSessionId: null,
         metadata: {},
+        sourceMessageRevision: trigger.revision,
       })
       await client.query(
-        "UPDATE bot_invocations SET status='claimed', claimed_by_instance_id=$2, claim_token=$3, claim_expires_at=NOW()+INTERVAL '5 minutes' WHERE id=$1",
+        "UPDATE bot_invocations SET status='claimed', claimed_by_instance_id=$2, claim_token=$3, claim_expires_at=NOW()+INTERVAL '5 minutes', claimed_source_message_revision=source_message_revision WHERE id=$1",
         [invocationId, instanceId, claimToken]
       )
       if (params.sealed) {

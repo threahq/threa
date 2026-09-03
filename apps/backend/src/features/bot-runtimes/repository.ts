@@ -13,8 +13,8 @@ import {
   type BotRuntimeSessionLinkStatus,
   type BotRuntimeStatus,
 } from "@threa/types"
-import type { QueryConfig } from "pg"
-import { composeSql, sql, type Querier } from "../../db"
+import type { Pool, QueryConfig } from "pg"
+import { composeSql, sql, withTransaction, type Querier } from "../../db"
 
 export type RuntimeSessionLinkStatus = BotRuntimeSessionLinkStatus
 
@@ -99,6 +99,11 @@ export interface BotInvocation {
   trigger: BotInvocationTrigger
   requiredCapability: BotInvocationCapability
   promptMarkdown: string
+  sourceMessageRevision: number
+  claimedSourceMessageRevision: number | null
+  claimedInputUpdateMode: string | null
+  cancellationReason: string | null
+  availableAt: Date
   authorUserId: string
   mentionedActorSlugs: string[]
   status: BotInvocationStatus
@@ -176,6 +181,11 @@ interface BotInvocationRow {
   trigger: string
   required_capability: string
   prompt_markdown: string
+  source_message_revision: number
+  claimed_source_message_revision: number | null
+  claimed_input_update_mode: string | null
+  cancellation_reason: string | null
+  available_at: Date
   author_user_id: string
   mentioned_actor_slugs: string[]
   status: string
@@ -196,6 +206,112 @@ interface BotInvocationRow {
 
 interface BotInvocationRowWithInsertMarker extends BotInvocationRow {
   was_newly_inserted: boolean
+}
+
+interface BotInvocationActorSourceRow {
+  workspace_id: string
+  source_message_id: string
+  actor_type: string
+  actor_id: string
+  trigger?: string
+}
+
+export interface BotInvocationSourceIdentity {
+  workspaceId: string
+  sourceMessageId: string
+}
+
+export interface BotInvocationActorSourceIdentity extends BotInvocationSourceIdentity {
+  actorType: string
+  actorId: string
+}
+
+export function botInvocationSourceLockKey(identity: BotInvocationSourceIdentity): string {
+  return ["bot_invocation_source", identity.workspaceId, identity.sourceMessageId].join("\u001f")
+}
+
+export function botInvocationActorSourceLockKey(identity: BotInvocationActorSourceIdentity): string {
+  return [
+    "bot_invocation_actor_source",
+    identity.workspaceId,
+    identity.sourceMessageId,
+    identity.actorType,
+    identity.actorId,
+  ].join("\u001f")
+}
+
+function isPoolQuerier(db: Querier): db is Pool {
+  return "connect" in db && typeof db.connect === "function"
+}
+
+async function withTransactionIfPool<T>(db: Querier, operation: (lockedDb: Querier) => Promise<T>): Promise<T> {
+  return isPoolQuerier(db) ? withTransaction(db, operation) : operation(db)
+}
+
+async function acquireSourceLocks(db: Querier, identities: BotInvocationSourceIdentity[]): Promise<void> {
+  const lockKeys = [...new Set(identities.map(botInvocationSourceLockKey))].sort()
+  for (const lockKey of lockKeys) {
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockKey])
+  }
+}
+
+async function acquireActorLocks(db: Querier, identities: BotInvocationActorSourceIdentity[]): Promise<void> {
+  const lockKeys = [...new Set(identities.map(botInvocationActorSourceLockKey))].sort()
+  for (const lockKey of lockKeys) {
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockKey])
+  }
+}
+
+async function acquireActorSourceLocks(db: Querier, identities: BotInvocationActorSourceIdentity[]): Promise<void> {
+  await acquireSourceLocks(db, identities)
+  await acquireActorLocks(db, identities)
+}
+
+function mapActorSourceIdentity(row: BotInvocationActorSourceRow): BotInvocationActorSourceIdentity {
+  return {
+    workspaceId: row.workspace_id,
+    sourceMessageId: row.source_message_id,
+    actorType: row.actor_type,
+    actorId: row.actor_id,
+  }
+}
+
+async function findInvocationActorSource(
+  db: Querier,
+  params: { workspaceId: string; botId: string; invocationId: string }
+): Promise<(BotInvocationActorSourceIdentity & { trigger: string }) | null> {
+  const result = await db.query<BotInvocationActorSourceRow & { trigger: string }>(sql`
+    SELECT workspace_id, source_message_id, actor_type, actor_id, trigger
+    FROM bot_invocations
+    WHERE id = ${params.invocationId}
+      AND workspace_id = ${params.workspaceId}
+      AND actor_type = 'bot'
+      AND actor_id = ${params.botId}
+  `)
+  const row = result.rows[0]
+  return row ? { ...mapActorSourceIdentity(row), trigger: row.trigger } : null
+}
+
+async function lockCanonicalInvocationSource(
+  db: Querier,
+  params: { workspaceId: string; botId: string; invocationId: string }
+): Promise<boolean> {
+  const result = await db.query<{ id: string }>(sql`
+    SELECT m.id
+    FROM bot_invocations i
+    JOIN messages m ON m.id = i.source_message_id
+    JOIN streams s ON s.id = m.stream_id
+    WHERE i.id = ${params.invocationId}
+      AND i.workspace_id = ${params.workspaceId}
+      AND i.actor_type = 'bot'
+      AND i.actor_id = ${params.botId}
+      AND s.workspace_id = i.workspace_id
+      AND m.stream_id = i.active_stream_id
+      AND m.deleted_at IS NULL
+      AND m.revision = i.claimed_source_message_revision
+    FOR SHARE OF m
+  `)
+  return result.rows.length > 0
 }
 
 const knownRuntimeKinds = new Set<string>(BOT_RUNTIME_KINDS)
@@ -285,6 +401,11 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
     trigger: row.trigger as BotInvocationTrigger,
     requiredCapability: row.required_capability as BotInvocationCapability,
     promptMarkdown: row.prompt_markdown,
+    sourceMessageRevision: row.source_message_revision,
+    claimedSourceMessageRevision: row.claimed_source_message_revision,
+    claimedInputUpdateMode: row.claimed_input_update_mode,
+    cancellationReason: row.cancellation_reason,
+    availableAt: row.available_at,
     authorUserId: row.author_user_id,
     mentionedActorSlugs: row.mentioned_actor_slugs,
     status: row.status as BotInvocationStatus,
@@ -827,6 +948,147 @@ function sealedStreamClaimGateSql(instanceId: string): QueryConfig {
 }
 
 export const BotInvocationRepository = {
+  async isBotInvocationSession(db: Querier, workspaceId: string, sessionId: string): Promise<boolean> {
+    const result = await db.query<{ exists: boolean }>(sql`
+      SELECT EXISTS (SELECT 1 FROM bot_invocations WHERE id = ${sessionId} AND workspace_id = ${workspaceId}) AS exists
+    `)
+    return result.rows[0]?.exists ?? false
+  },
+
+  async findDeletedSourceForRunningSession(
+    db: Querier,
+    params: { workspaceId: string; sessionId: string }
+  ): Promise<{ workspaceId: string; sourceMessageId: string } | null> {
+    const result = await db.query<{ workspace_id: string; source_message_id: string }>(sql`
+      SELECT i.workspace_id, i.source_message_id
+      FROM bot_invocations i
+      JOIN agent_sessions s ON s.id = i.id
+      WHERE i.id = ${params.sessionId}
+        AND i.workspace_id = ${params.workspaceId}
+        AND i.status = 'cancelled'
+        AND i.cancellation_reason = 'source_deleted'
+        AND s.status = 'running'
+    `)
+    const row = result.rows[0]
+    return row ? { workspaceId: row.workspace_id, sourceMessageId: row.source_message_id } : null
+  },
+
+  async findDeletedSourcesWithRunningSessions(
+    db: Querier,
+    limit: number
+  ): Promise<Array<{ workspaceId: string; sourceMessageId: string }>> {
+    const result = await db.query<{ workspace_id: string; source_message_id: string }>(sql`
+      SELECT DISTINCT i.workspace_id, i.source_message_id
+      FROM bot_invocations i
+      JOIN agent_sessions s ON s.id = i.id
+      WHERE i.status = 'cancelled'
+        AND i.cancellation_reason = 'source_deleted'
+        AND s.status = 'running'
+      ORDER BY i.workspace_id, i.source_message_id
+      LIMIT ${limit}
+    `)
+    return result.rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      sourceMessageId: row.source_message_id,
+    }))
+  },
+
+  async cancelActiveRoutesNotDesired(
+    db: Querier,
+    params: {
+      workspaceId: string
+      sourceMessageId: string
+      sourceMessageRevision: number
+      desiredRoutes: Array<{ actorType: string; actorId: string; trigger: string }>
+    }
+  ): Promise<BotInvocation[]> {
+    return withTransactionIfPool(db, async (lockedDb) => {
+      const sourceIdentity = { workspaceId: params.workspaceId, sourceMessageId: params.sourceMessageId }
+      // Every insert and terminal transition takes this coarser source lock
+      // before its actor lock. Take it before reading/cancelling active routes
+      // so a route-changing edit can never hold an invocation row while waiting
+      // on a completion that already holds the actor lock (INV-20).
+      await acquireSourceLocks(lockedDb, [sourceIdentity])
+      const active = await lockedDb.query<BotInvocationActorSourceRow>(sql`
+        SELECT DISTINCT workspace_id, source_message_id, actor_type, actor_id
+        FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND source_message_id = ${params.sourceMessageId}
+          AND status IN ('pending', 'claimed')
+      `)
+      await acquireActorLocks(lockedDb, [
+        ...active.rows.map(mapActorSourceIdentity),
+        ...params.desiredRoutes.map((route) => ({ ...sourceIdentity, ...route })),
+      ])
+      const result = await lockedDb.query<BotInvocationRow>(sql`
+        UPDATE bot_invocations i
+        SET status = 'cancelled', cancellation_reason = 'routing_changed', updated_at = NOW()
+        WHERE i.workspace_id = ${params.workspaceId}
+          AND i.source_message_id = ${params.sourceMessageId}
+          AND i.status IN ('pending', 'claimed')
+          AND i.trigger <> 'session-control'
+          AND i.source_message_revision < ${params.sourceMessageRevision}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(${JSON.stringify(params.desiredRoutes)}::jsonb) desired
+            WHERE desired ->> 'actorType' = i.actor_type
+              AND desired ->> 'actorId' = i.actor_id
+              AND desired ->> 'trigger' = i.trigger
+          )
+        RETURNING i.*
+      `)
+      return result.rows.map(mapInvocation)
+    })
+  },
+
+  async cancelClaimedCandidate(
+    db: Querier,
+    params: { workspaceId: string; invocationId: string; instanceId: string; claimToken: string; reason: string }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET status = 'cancelled', cancellation_reason = ${params.reason}, updated_at = NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId}
+        AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken}
+      RETURNING *
+    `)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async cancelActiveBySource(
+    db: Querier,
+    params: { workspaceId: string; sourceMessageId: string; reason: string }
+  ): Promise<BotInvocation[]> {
+    return withTransactionIfPool(db, async (lockedDb) => {
+      const sourceIdentity = { workspaceId: params.workspaceId, sourceMessageId: params.sourceMessageId }
+      await acquireSourceLocks(lockedDb, [sourceIdentity])
+      const active = await lockedDb.query<BotInvocationActorSourceRow>(sql`
+        SELECT DISTINCT workspace_id, source_message_id, actor_type, actor_id
+        FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND source_message_id = ${params.sourceMessageId}
+          AND status IN ('pending', 'claimed')
+      `)
+      await acquireActorLocks(lockedDb, active.rows.map(mapActorSourceIdentity))
+      const result = await lockedDb.query<BotInvocationRow>(sql`
+        WITH newly_cancelled AS (
+          UPDATE bot_invocations
+          SET status = 'cancelled', cancellation_reason = ${params.reason}, updated_at = NOW()
+          WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
+            AND status IN ('pending', 'claimed')
+          RETURNING *
+        )
+        SELECT * FROM newly_cancelled
+        UNION ALL
+        SELECT i.* FROM bot_invocations i
+        WHERE i.workspace_id = ${params.workspaceId} AND i.source_message_id = ${params.sourceMessageId}
+          AND i.status = 'cancelled' AND i.cancellation_reason = ${params.reason}
+          AND NOT EXISTS (SELECT 1 FROM newly_cancelled n WHERE n.id = i.id)
+      `)
+      return result.rows.map(mapInvocation)
+    })
+  },
+
   async insertIdempotent(
     db: Querier,
     params: Omit<
@@ -838,6 +1100,10 @@ export const BotInvocationRepository = {
       | "claimToken"
       | "claimExpiresAt"
       | "attempts"
+      | "claimedSourceMessageRevision"
+      | "claimedInputUpdateMode"
+      | "cancellationReason"
+      | "availableAt"
       | "errorMessage"
       | "createdAt"
       | "updatedAt"
@@ -849,13 +1115,65 @@ export const BotInvocationRepository = {
     // UPDATE, even when the UPDATE writes the same value. Lets callers (the
     // bot-runtime service) decide whether to emit `bot_invocation:available`
     // without paying for a pre-check round-trip.
-    const result =
-      await db.query<BotInvocationRowWithInsertMarker>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata)
-      VALUES (${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.sourceMessageId}, ${params.responseStreamId}, ${params.actorType}, ${params.actorId}, ${params.trigger}, ${params.requiredCapability}, ${params.promptMarkdown}, ${params.authorUserId}, ${params.mentionedActorSlugs}, ${params.targetInstanceId}, ${params.targetRuntimeSessionId}, ${params.metadata})
-      ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) WHERE status IN ('pending', 'claimed') DO UPDATE SET updated_at = bot_invocations.updated_at
-      RETURNING *, (xmax = 0) AS was_newly_inserted`)
-    const row = result.rows[0]!
-    return { invocation: mapInvocation(row), wasNewlyInserted: row.was_newly_inserted }
+    return withTransactionIfPool(db, async (lockedDb) => {
+      await acquireActorSourceLocks(lockedDb, [params])
+      const result =
+        await lockedDb.query<BotInvocationRowWithInsertMarker>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata, source_message_revision)
+        SELECT ${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.sourceMessageId}, ${params.responseStreamId}, ${params.actorType}, ${params.actorId}, ${params.trigger}, ${params.requiredCapability}, ${params.promptMarkdown}, ${params.authorUserId}, ${params.mentionedActorSlugs}, ${params.targetInstanceId}, ${params.targetRuntimeSessionId}, ${params.metadata}, ${params.sourceMessageRevision}
+        WHERE ${params.trigger} = 'session-control' OR NOT EXISTS (
+          SELECT 1 FROM bot_invocations terminal
+          WHERE terminal.workspace_id = ${params.workspaceId}
+            AND terminal.source_message_id = ${params.sourceMessageId}
+            AND terminal.actor_type = ${params.actorType}
+            AND terminal.actor_id = ${params.actorId}
+            AND terminal.status IN ('completed', 'failed', 'parked', 'expired')
+        )
+        ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) WHERE status IN ('pending', 'claimed') DO UPDATE SET
+          prompt_markdown = CASE
+            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.prompt_markdown
+            ELSE bot_invocations.prompt_markdown
+          END,
+          mentioned_actor_slugs = CASE
+            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.mentioned_actor_slugs
+            ELSE bot_invocations.mentioned_actor_slugs
+          END,
+          active_stream_id = CASE
+            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.active_stream_id
+            ELSE bot_invocations.active_stream_id
+          END,
+          response_stream_id = CASE
+            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.response_stream_id
+            ELSE bot_invocations.response_stream_id
+          END,
+          target_instance_id = CASE
+            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.target_instance_id
+            ELSE bot_invocations.target_instance_id
+          END,
+          target_runtime_session_id = CASE
+            WHEN bot_invocations.status = 'pending' THEN EXCLUDED.target_runtime_session_id
+            ELSE bot_invocations.target_runtime_session_id
+          END,
+          source_message_revision = EXCLUDED.source_message_revision,
+          attempts = CASE WHEN bot_invocations.status = 'claimed' THEN 0 ELSE bot_invocations.attempts END,
+          updated_at = NOW()
+        WHERE bot_invocations.source_message_revision < EXCLUDED.source_message_revision
+        RETURNING *, (xmax = 0) AS was_newly_inserted`)
+      const row = result.rows[0]
+      if (row) return { invocation: mapInvocation(row), wasNewlyInserted: row.was_newly_inserted }
+      const existing = await lockedDb.query<BotInvocationRow>(sql`
+        SELECT * FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
+          AND actor_type = ${params.actorType} AND actor_id = ${params.actorId}
+          AND (
+            (trigger = ${params.trigger} AND status IN ('pending', 'claimed'))
+            OR status IN ('completed', 'failed', 'parked', 'expired')
+          )
+        ORDER BY CASE WHEN status IN ('pending', 'claimed') THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 1
+      `)
+      if (!existing.rows[0]) throw new Error(`Active invocation conflict disappeared for ${params.sourceMessageId}`)
+      return { invocation: mapInvocation(existing.rows[0]), wasNewlyInserted: false }
+    })
   },
 
   async findNextClaimable(
@@ -886,6 +1204,7 @@ export const BotInvocationRepository = {
         AND (i.target_instance_id IS NULL OR i.target_instance_id = ${params.instanceId})
         AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
         AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+        AND i.available_at <= NOW()
         AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
         AND i.attempts < ${params.maxAttempts}
         AND ${sealedStreamClaimGateSql(params.instanceId)}
@@ -940,6 +1259,7 @@ export const BotInvocationRepository = {
           AND (i.target_instance_id IS NULL OR i.target_instance_id = ${params.instanceId})
           AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
           AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+          AND i.available_at <= NOW()
           AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
           AND i.attempts < ${params.maxAttempts}
           AND ${sealedStreamClaimGateSql(params.instanceId)}
@@ -948,10 +1268,40 @@ export const BotInvocationRepository = {
         LIMIT 1
       )
       UPDATE bot_invocations i
-      SET status = 'claimed', claimed_by_instance_id = ${params.instanceId}, claimed_runtime_session_id = ${params.runtimeSessionId ?? null}, claimed_runtime_session_claim_token = ${params.claimToken}, claim_token = ${params.claimToken}, claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, attempts = attempts + 1, updated_at = NOW()
+      SET status = 'claimed', claimed_by_instance_id = ${params.instanceId}, claimed_runtime_session_id = ${params.runtimeSessionId ?? null}, claimed_runtime_session_claim_token = ${params.claimToken}, claim_token = ${params.claimToken}, claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, attempts = attempts + 1, updated_at = NOW(),
+          claimed_source_message_revision = CASE WHEN i.trigger = 'session-control' THEN 0 ELSE NULL END,
+          claimed_input_update_mode = NULL
       FROM candidate
       WHERE i.id = candidate.id
       RETURNING i.*`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async pinClaimSource(
+    db: Querier,
+    params: {
+      workspaceId: string
+      invocationId: string
+      instanceId: string
+      claimToken: string
+      revision: number
+      promptMarkdown: string
+    }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET source_message_revision = ${params.revision},
+          claimed_source_message_revision = ${params.revision},
+          claimed_input_update_mode = NULL,
+          prompt_markdown = ${params.promptMarkdown},
+          updated_at = NOW()
+      WHERE id = ${params.invocationId}
+        AND workspace_id = ${params.workspaceId}
+        AND status = 'claimed'
+        AND claimed_by_instance_id = ${params.instanceId}
+        AND claim_token = ${params.claimToken}
+      RETURNING *
+    `)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
@@ -983,10 +1333,15 @@ export const BotInvocationRepository = {
     db: Querier,
     params: { workspaceId: string; botId: string; invocationId: string; instanceId?: string; claimToken: string }
   ): Promise<BotInvocation | null> {
-    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
-      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null}) AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
-      FOR UPDATE`)
-    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+    return withTransactionIfPool(db, async (lockedDb) => {
+      const identity = await findInvocationActorSource(lockedDb, params)
+      if (!identity) return null
+      await acquireActorSourceLocks(lockedDb, [identity])
+      const result = await lockedDb.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+        WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null}) AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
+        FOR UPDATE`)
+      return result.rows[0] ? mapInvocation(result.rows[0]) : null
+    })
   },
 
   async findCompletedForReplay(
@@ -1038,11 +1393,26 @@ export const BotInvocationRepository = {
     db: Querier,
     params: { workspaceId: string; botId: string; invocationId: string; instanceId?: string; claimToken: string }
   ): Promise<BotInvocation | null> {
-    const result =
-      await db.query<BotInvocationRow>(sql`UPDATE bot_invocations SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claim_token = ${params.claimToken} AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null}) AND claim_expires_at > NOW()
-      RETURNING *`)
-    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+    return withTransactionIfPool(db, async (lockedDb) => {
+      const identity = await findInvocationActorSource(lockedDb, params)
+      if (!identity) return null
+      await acquireActorSourceLocks(lockedDb, [identity])
+      if (identity.trigger !== "session-control" && !(await lockCanonicalInvocationSource(lockedDb, params)))
+        return null
+      const result =
+        await lockedDb.query<BotInvocationRow>(sql`UPDATE bot_invocations i SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+        WHERE i.id = ${params.invocationId} AND i.workspace_id = ${params.workspaceId} AND i.actor_type = 'bot' AND i.actor_id = ${params.botId} AND i.status = 'claimed' AND i.claim_token = ${params.claimToken} AND (${params.instanceId ?? null}::text IS NULL OR i.claimed_by_instance_id = ${params.instanceId ?? null}) AND i.claim_expires_at > NOW()
+          AND (i.trigger = 'session-control' OR EXISTS (
+            SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
+            WHERE m.id = i.source_message_id
+              AND s.workspace_id = i.workspace_id
+              AND m.stream_id = i.active_stream_id
+              AND m.deleted_at IS NULL
+              AND m.revision = i.claimed_source_message_revision
+          ))
+        RETURNING i.*`)
+      return result.rows[0] ? mapInvocation(result.rows[0]) : null
+    })
   },
 
   async failClaim(
@@ -1056,11 +1426,26 @@ export const BotInvocationRepository = {
       errorMessage: string
     }
   ): Promise<BotInvocation | null> {
-    const result =
-      await db.query<BotInvocationRow>(sql`UPDATE bot_invocations SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
-      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null}) AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
-      RETURNING *`)
-    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+    return withTransactionIfPool(db, async (lockedDb) => {
+      const identity = await findInvocationActorSource(lockedDb, params)
+      if (!identity) return null
+      await acquireActorSourceLocks(lockedDb, [identity])
+      if (identity.trigger !== "session-control" && !(await lockCanonicalInvocationSource(lockedDb, params)))
+        return null
+      const result =
+        await lockedDb.query<BotInvocationRow>(sql`UPDATE bot_invocations i SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
+        WHERE i.id = ${params.invocationId} AND i.workspace_id = ${params.workspaceId} AND i.actor_type = 'bot' AND i.actor_id = ${params.botId} AND i.status = 'claimed' AND (${params.instanceId ?? null}::text IS NULL OR i.claimed_by_instance_id = ${params.instanceId ?? null}) AND i.claim_token = ${params.claimToken} AND i.claim_expires_at > NOW()
+          AND (i.trigger = 'session-control' OR EXISTS (
+            SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
+            WHERE m.id = i.source_message_id
+              AND s.workspace_id = i.workspace_id
+              AND m.stream_id = i.active_stream_id
+              AND m.deleted_at IS NULL
+              AND m.revision = i.claimed_source_message_revision
+          ))
+        RETURNING i.*`)
+      return result.rows[0] ? mapInvocation(result.rows[0]) : null
+    })
   },
 
   /**
@@ -1078,16 +1463,70 @@ export const BotInvocationRepository = {
     db: Querier,
     params: { workspaceId: string; botId: string; maxAttempts: number }
   ): Promise<BotInvocation[]> {
-    const result = await db.query<BotInvocationRow>(sql`UPDATE bot_invocations
-      SET status = 'parked', error_message = COALESCE(error_message, 'Claim attempts exhausted without completion'), updated_at = NOW()
-      WHERE workspace_id = ${params.workspaceId}
-        AND actor_type = 'bot'
-        AND actor_id = ${params.botId}
-        AND status = 'claimed'
-        AND claim_expires_at < NOW()
-        AND attempts >= ${params.maxAttempts}
-      RETURNING *`)
-    return result.rows.map(mapInvocation)
+    return withTransactionIfPool(db, async (lockedDb) => {
+      const candidates = await lockedDb.query<BotInvocationActorSourceRow & { id: string; trigger: string }>(sql`
+        SELECT id, workspace_id, source_message_id, actor_type, actor_id, trigger
+        FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND actor_type = 'bot'
+          AND actor_id = ${params.botId}
+          AND status = 'claimed'
+          AND claim_expires_at < NOW()
+          AND attempts >= ${params.maxAttempts}
+      `)
+      if (candidates.rows.length === 0) return []
+
+      await acquireActorSourceLocks(lockedDb, candidates.rows.map(mapActorSourceIdentity))
+      const sessionControlIds = candidates.rows.filter((row) => row.trigger === "session-control").map((row) => row.id)
+      const messageCandidateIds = candidates.rows
+        .filter((row) => row.trigger !== "session-control")
+        .map((row) => row.id)
+      const canonicalMessageCandidates =
+        messageCandidateIds.length === 0
+          ? []
+          : (
+              await lockedDb.query<{ id: string }>(sql`
+                SELECT i.id
+                FROM bot_invocations i
+                JOIN messages m ON m.id = i.source_message_id
+                JOIN streams s ON s.id = m.stream_id
+                WHERE i.id = ANY(${messageCandidateIds})
+                  AND i.workspace_id = ${params.workspaceId}
+                  AND i.actor_type = 'bot'
+                  AND i.actor_id = ${params.botId}
+                  AND s.workspace_id = i.workspace_id
+                  AND m.stream_id = i.active_stream_id
+                  AND m.deleted_at IS NULL
+                  AND m.revision = i.claimed_source_message_revision
+                ORDER BY m.id, i.id
+                FOR SHARE OF m
+              `)
+            ).rows.map((row) => row.id)
+      const candidateIds = [...sessionControlIds, ...canonicalMessageCandidates]
+      if (candidateIds.length === 0) return []
+      const result = await lockedDb.query<BotInvocationRow>(sql`UPDATE bot_invocations
+        SET status = 'parked', error_message = COALESCE(error_message, 'Claim attempts exhausted without completion'), updated_at = NOW()
+        WHERE id = ANY(${candidateIds})
+          AND workspace_id = ${params.workspaceId}
+          AND actor_type = 'bot'
+          AND actor_id = ${params.botId}
+          AND status = 'claimed'
+          AND claim_expires_at < NOW()
+          AND attempts >= ${params.maxAttempts}
+          AND (
+            trigger = 'session-control'
+            OR EXISTS (
+              SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
+              WHERE m.id = bot_invocations.source_message_id
+                AND s.workspace_id = bot_invocations.workspace_id
+                AND m.stream_id = bot_invocations.active_stream_id
+                AND m.deleted_at IS NULL
+                AND m.revision = bot_invocations.claimed_source_message_revision
+            )
+          )
+        RETURNING *`)
+      return result.rows.map(mapInvocation)
+    })
   },
 
   /**

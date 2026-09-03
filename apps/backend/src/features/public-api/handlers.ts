@@ -620,7 +620,7 @@ async function buildSealedClaimContext(
       0
     ),
   ])
-  if (!trigger) {
+  if (!trigger || trigger.deletedAt) {
     throw new HttpError("Sealed claim trigger message is gone", { status: 409, code: "TRIGGER_MESSAGE_GONE" })
   }
   const priorMessages = surrounding.filter((m) => m.id !== invocation.sourceMessageId)
@@ -1506,8 +1506,20 @@ export function createPublicApiHandlers({
         sealedAck = await buildSessionControlSealedAck(pool, invocation, data.instanceId)
       }
 
+      let claimValidForSession = true
       if (!isSessionControl && bot && !bot.archivedAt) {
         await withTransaction(pool, async (client) => {
+          const currentClaim = await botRuntimeService.findActiveClaimForUpdate(client, {
+            workspaceId: invocation.workspaceId,
+            botId: invocation.actorId,
+            invocationId: invocation.id,
+            instanceId: data.instanceId,
+            claimToken: invocation.claimToken!,
+          })
+          if (!currentClaim || currentClaim.claimedSourceMessageRevision !== invocation.claimedSourceMessageRevision) {
+            claimValidForSession = false
+            return
+          }
           const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
           const session = await AgentSessionRepository.insertRunningOrSkip(client, {
             id: invocation.id,
@@ -1540,6 +1552,10 @@ export function createPublicApiHandlers({
             event: streamEvent,
           })
         })
+      }
+      if (!claimValidForSession) {
+        res.locals.auditSkip = true
+        return res.json({ data: null })
       }
       const context = await buildClaimContext(pool, invocation, verdict)
       res.json({
@@ -1997,6 +2013,9 @@ export function createPublicApiHandlers({
 
           // FAILED reaches the write path only after this active claim lock succeeds.
           const claim = await botRuntimeService.findActiveClaimForUpdateByToken(client, callbackParams)
+          if (claim && !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
+            throw invocationClaimNotFound()
+          }
           if (!claim) {
             assertSessionRunningOrCompleted(session)
             const replay = authorityLocked
@@ -2175,6 +2194,9 @@ export function createPublicApiHandlers({
           }
 
           const claim = await botRuntimeService.findActiveClaimForUpdate(client, callbackParams)
+          if (claim && !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
+            throw invocationClaimNotFound()
+          }
           if (!claim) {
             const replay = authorityLocked
               ? await botRuntimeService
