@@ -1473,13 +1473,9 @@ export class RemoteSession {
     }
     if (this.isClaimCancelled(invocation)) return
     const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
-    const currentParts = liveSwept.map((item) => {
-      if (!isSessionControlInvocation(item)) return item.promptMarkdown.trim() || "(empty message)"
-      const queued = parseSessionControlCommand(item)
-      return queued?.name === "steer" ? queued.args : ""
-    })
-    if (text) currentParts.push(text)
+    const currentParts = this.steerParts(liveSwept, text)
     if (currentParts.length === 0) {
+      await Promise.all(liveSwept.map((item) => this.completeNoResponse(item)))
       await this.completeAck(invocation, "Nothing to steer with; the turn continues.")
       return
     }
@@ -1593,13 +1589,17 @@ export class RemoteSession {
       swept.push(extra)
     }
     const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
-    const currentParts = liveSwept.map((item) => {
+    return { parts: this.steerParts(liveSwept, text), swept: liveSwept, interceptedCount }
+  }
+
+  private steerParts(liveSwept: ClaimedInvocation[], text: string): string[] {
+    const parts = liveSwept.map((item) => {
       if (!isSessionControlInvocation(item)) return item.promptMarkdown.trim() || "(empty message)"
       const queued = parseSessionControlCommand(item)
       return queued?.name === "steer" ? queued.args : ""
     })
-    if (text) currentParts.push(text)
-    return { parts: currentParts.filter(Boolean), swept: liveSwept, interceptedCount }
+    if (text) parts.push(text)
+    return parts.filter(Boolean)
   }
 
   /**

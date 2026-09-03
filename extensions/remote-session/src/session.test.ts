@@ -2765,6 +2765,52 @@ describe("steer into the running turn (native steer support)", () => {
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
+  test("a swept message cancelled during the steer step closes the remaining foldless command instead of steering empty text", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const message = makeInvocation({ id: "binv_q_msg", promptMarkdown: "fold me" })
+    const queued = [
+      makeInvocation({
+        id: "binv_q_model",
+        trigger: "session-control",
+        promptMarkdown: "/model opus",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_q", name: "model", args: "opus" } },
+      }),
+      message,
+    ]
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer", "model"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    // The only foldable part is cancelled while the steer step is being recorded,
+    // after the sweep already filtered parts once.
+    ;(transport as unknown as { recordSteps: () => Promise<void> }).recordSteps = async () => {
+      ;(session as unknown as { cancelledInvocations: WeakSet<ClaimedInvocation> }).cancelledInvocations.add(message)
+    }
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation(""))
+
+    expect({
+      steered,
+      sweptClose: calls.complete.find((entry) => entry.id === "binv_q_model")?.body.noResponse,
+      ack: calls.complete.find((entry) => entry.id === "binv_steer")?.body.finalMessageMarkdown,
+    }).toEqual({ steered: [], sweptClose: true, ack: expect.stringContaining("Nothing to steer with") })
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
   test("a swept message the intercept consumes is routed, not folded into the steer text", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -3515,7 +3561,9 @@ describe("invocation source controls", () => {
         if (id === "att_bad") throw new Error("per-file URL failure")
         return `https://signed.example/${id}`
       }
-    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response("ok")) as unknown as typeof fetch
+    )
     try {
       await claimDrain(session)
       const result = await fake.observations

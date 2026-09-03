@@ -365,7 +365,9 @@ describe("sealed claim hydration + delivery", () => {
     }
     const delivered: string[] = []
     const cwdSpy = spyOn(process, "cwd").mockReturnValue(cwd)
-    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encrypted.ciphertext))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response(encrypted.ciphertext)) as unknown as typeof fetch
+    )
     try {
       await startSealedTurn(
         {
@@ -399,7 +401,9 @@ describe("sealed claim hydration + delivery", () => {
       sizeBytes: 10,
     }
     const delivered: string[] = []
-    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encrypted.ciphertext))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response(encrypted.ciphertext)) as unknown as typeof fetch
+    )
     try {
       await startSealedTurn(
         { deliverTurn: async (turn) => void delivered.push(turn.content) },
@@ -429,7 +433,9 @@ describe("sealed claim hydration + delivery", () => {
     crypto.getRandomValues(nextSsk)
     const steered: string[] = []
     const interrupts: string[] = []
-    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(ciphertext.ciphertext))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response(ciphertext.ciphertext)) as unknown as typeof fetch
+    )
     try {
       const made = await startSealedTurn({
         sessionControl: {
@@ -478,7 +484,9 @@ describe("sealed claim hydration + delivery", () => {
     crypto.getRandomValues(nextSsk)
     const steered: string[] = []
     const cwdSpy = spyOn(process, "cwd").mockReturnValue(cwd)
-    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encryptedAttachment.ciphertext))
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response(encryptedAttachment.ciphertext)) as unknown as typeof fetch
+    )
     try {
       const made = await startSealedTurn({
         sessionControl: {
