@@ -3122,7 +3122,7 @@ async function completeInvocationWithMarkdown(
         releaseObservation(invocation)
         return false
       }
-      if (!String(error).includes("E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
+      if (!(error instanceof ThreaApiError && error.code === "E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
       if (!isCurrent()) return false
       try {
         await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {

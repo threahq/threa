@@ -2298,9 +2298,12 @@ describe("session-scoped lifecycle isolation", () => {
       claimExpiresAt: null,
     } as never)
 
-    const requests: string[] = []
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
-      requests.push(String(input))
+    const requests: Array<{ url: string; body: unknown }> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      requests.push({ url: String(input), body: typeof init?.body === "string" ? JSON.parse(init.body) : null })
       return new Response(JSON.stringify({ data: {} }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -2317,7 +2320,12 @@ describe("session-scoped lifecycle isolation", () => {
       expect(requests.length).toBe(0)
 
       await shutdown({ reason: "quit" }, context("parent"))
-      expect(requests.length > 0).toBe(true)
+      expect(requests.map((entry) => ({ path: new URL(entry.url).pathname, body: entry.body }))).toEqual([
+        {
+          path: "/api/v1/workspaces/ws_123/bot-invocations/binv_parent/fail",
+          body: { instanceId: "pi-parent", claimToken: "claim_1", errorMessage: "Pi session shut down" },
+        },
+      ])
 
       expect(readFileSync(sentinelPath, "utf8")).toBe(sentinel)
       const paths = __testing.storagePaths()
