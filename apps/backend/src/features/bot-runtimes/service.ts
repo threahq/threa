@@ -799,6 +799,7 @@ export class BotRuntimeService {
     params: { workspaceId: string; sourceMessageId: string },
     options: { locksHeld?: boolean; source?: InvocationSourceState | null } = {}
   ): Promise<Array<{ botId: string; streamId: string; rootStreamId: string; contentMarkdown: string }>> {
+    if (options.source === undefined && !options.locksHeld) await BotInvocationRepository.lockSource(db, params)
     const source =
       options.source === undefined
         ? await MessageRepository.findInvocationSourceStateForShare(db, {

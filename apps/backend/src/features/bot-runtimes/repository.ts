@@ -1044,6 +1044,11 @@ export const BotInvocationRepository = {
     return queryDeletedSourcesWithRunningSessions(db, { limit })
   },
 
+  /** Source lock first, actor locks second: the order every route insert and terminal transition takes. */
+  async lockSource(db: Querier, identity: BotInvocationSourceIdentity): Promise<void> {
+    await acquireSourceLocks(db, [identity])
+  },
+
   async cancelActiveRoutesNotDesired(
     db: Querier,
     params: {
