@@ -536,15 +536,15 @@ const sealedMessageSchema = z.object({
   envelope: sealedEnvelopeSchema,
 })
 
+const sealedWrapSchema = z.object({
+  keyGeneration: z.number().int().min(0),
+  wrapEnc: z.string(),
+  wrapCt: z.string(),
+})
+
 const sealedTurnContextSchema = z.object({
   callbackToken: z.string(),
-  wraps: z.array(
-    z.object({
-      keyGeneration: z.number().int().min(0),
-      wrapEnc: z.string(),
-      wrapCt: z.string(),
-    })
-  ),
+  wraps: z.array(sealedWrapSchema),
   history: z.array(
     sealedMessageSchema.extend({
       role: z.enum(["user", "assistant"]),
@@ -661,13 +661,7 @@ const invocationUpdateSchema = z.discriminatedUnion("delivery", [
     delivery: z.literal("sealed"),
     sourceRevision: z.number().int().min(0),
     prompt: sealedMessageSchema,
-    wraps: z.array(
-      z.object({
-        keyGeneration: z.number().int().min(0),
-        wrapEnc: z.string(),
-        wrapCt: z.string(),
-      })
-    ),
+    wraps: z.array(sealedWrapSchema),
     reply: z.object({ keyGeneration: z.number().int().min(0), senderId: z.string() }),
   }),
 ])
@@ -1082,6 +1076,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(renewedInvocationSchema),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",
@@ -1211,6 +1206,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(completedInvocationSchema).extend({ slots: slotMapSchema }),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",

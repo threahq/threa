@@ -4,7 +4,7 @@ import { AGENT_STEP_TYPES, BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_R
 import { HttpError } from "@threa/backend-common"
 import type { BotRuntimeService } from "./service"
 import { botRuntimeManifestSchema } from "./manifest-schema"
-import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
+import type { BotInvocation, BotInvocationCancellation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
 import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import type { BotApiKeyService } from "../public-api"
 import type { AccessLogService, AuditSubjectRef } from "../access-log"
@@ -688,13 +688,7 @@ export type BotHelloResponse =
       serverGeneratedAt: string
       availableInvocations: SerializedBotInvocation[]
       ownedClaims: SerializedBotInvocation[]
-      recentCancellations: {
-        invocationId: string
-        sourceRevision: number
-        reason: import("@threa/types").BotInvocationCancellationReason
-        targetInstanceId: string
-        targetRuntimeSessionId: string | null
-      }[]
+      recentCancellations: BotInvocationCancellation[]
       activeActorByStream: SerializedStreamActiveActor[]
       activeSessionLinks: SerializedBotSessionLink[]
     }

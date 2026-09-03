@@ -81,6 +81,7 @@ export function buildSealedTurnContext(inputs: BuildSealedTurnContextInputs): Se
     sourceRevision: 0,
   })
   if (!update) return null
+  // History spans older key generations; the update's wraps cover only trigger + current.
   const chosenWraps = wraps
     .filter((wrap) => wrap.recipientKind === "bot" && wrap.recipientKeyId === bikKeyId)
     .map((wrap) => ({ keyGeneration: wrap.keyGeneration, wrapEnc: wrap.wrapEnc, wrapCt: wrap.wrapCt }))

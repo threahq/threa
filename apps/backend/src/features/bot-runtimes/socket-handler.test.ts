@@ -3,7 +3,7 @@ import type { Server } from "socket.io"
 import { HttpError } from "@threa/backend-common"
 import type { BotRuntimeService } from "./service"
 import type { BotApiKeyService } from "../public-api"
-import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
+import type { BotInvocation, BotInvocationCancellation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
 import {
   attachBotNamespace,
   type BotHelloResponse,
@@ -69,7 +69,7 @@ function makeBootstrap(
   overrides: {
     available?: BotInvocation[]
     ownedClaims?: BotInvocation[]
-    recentCancellations?: never[]
+    recentCancellations?: BotInvocationCancellation[]
     activeActorByStream?: StreamActiveActor[]
     activeSessionLinks?: BotRuntimeSessionLink[]
     serverGeneratedAt?: Date

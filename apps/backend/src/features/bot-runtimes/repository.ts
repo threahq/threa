@@ -97,6 +97,20 @@ export interface BotInvocationCancellation {
   targetRuntimeSessionId: string | null
 }
 
+export function resolveControlTarget(
+  invocation: Pick<
+    BotInvocation,
+    "claimedByInstanceId" | "targetInstanceId" | "claimedRuntimeSessionId" | "targetRuntimeSessionId"
+  >
+): { targetInstanceId: string | null; targetRuntimeSessionId: string | null } {
+  return {
+    targetInstanceId: invocation.claimedByInstanceId ?? invocation.targetInstanceId,
+    targetRuntimeSessionId:
+      invocation.claimedRuntimeSessionId ??
+      (invocation.claimedByInstanceId == null ? invocation.targetRuntimeSessionId : null),
+  }
+}
+
 export interface BotInvocation {
   id: string
   workspaceId: string
@@ -1751,14 +1765,16 @@ export const BotInvocationRepository = {
     return {
       available: availableResult.rows.map(mapInvocation),
       ownedClaims: ownedClaimsResult.rows.map(mapInvocation),
-      recentCancellations: cancellationResult.rows.map((row) => ({
-        invocationId: row.id,
-        sourceRevision: row.source_message_revision,
-        reason: row.cancellation_reason as BotInvocationCancellationReason,
-        targetInstanceId: row.claimed_by_instance_id!,
-        targetRuntimeSessionId:
-          row.claimed_runtime_session_id ?? (row.claimed_by_instance_id == null ? row.target_runtime_session_id : null),
-      })),
+      recentCancellations: cancellationResult.rows.map(mapInvocation).map((invocation) => {
+        const target = resolveControlTarget(invocation)
+        return {
+          invocationId: invocation.id,
+          sourceRevision: invocation.sourceMessageRevision,
+          reason: invocation.cancellationReason!,
+          targetInstanceId: target.targetInstanceId!,
+          targetRuntimeSessionId: target.targetRuntimeSessionId,
+        }
+      }),
     }
   },
 }

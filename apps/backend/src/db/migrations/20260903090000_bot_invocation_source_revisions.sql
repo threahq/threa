@@ -45,3 +45,7 @@ CREATE UNIQUE INDEX idx_bot_invocations_active_source_actor_trigger
 CREATE INDEX idx_bot_invocations_active_source_cancellation
   ON bot_invocations (workspace_id, actor_id, source_message_id)
   WHERE status IN ('pending', 'claimed');
+
+CREATE INDEX idx_bot_invocations_cancelled_by_instance
+  ON bot_invocations (workspace_id, actor_id, claimed_by_instance_id, updated_at DESC)
+  WHERE status = 'cancelled' AND cancellation_reason IS NOT NULL;

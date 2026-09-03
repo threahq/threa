@@ -6,6 +6,7 @@
  * handlers.ts and routes.ts.
  */
 import { z } from "zod"
+// Deep import: the bot-runtimes barrel imports public-api, so the barrel would form a cycle here.
 import { botRuntimeManifestSchema } from "../bot-runtimes/manifest-schema"
 import {
   BOT_INVOCATION_CAPABILITIES,

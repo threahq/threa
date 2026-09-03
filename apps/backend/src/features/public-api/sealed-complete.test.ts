@@ -145,6 +145,7 @@ function arrange(
     insertOutbox,
     botRuntimeService,
     validateClaimSourceForCompletion,
+    reconcileStaleCompletionInTransaction,
     findSession,
   }
 }
@@ -316,7 +317,8 @@ describe("completeBotInvocationSealed", () => {
       completions: arranged.completeInvocationInTransaction.mock.calls.length,
       lifecycleEvents: arranged.insertEvent.mock.calls.length,
       lifecycleOutbox: arranged.insertOutbox.mock.calls.length,
-    }).toEqual({ messages: 0, completions: 0, lifecycleEvents: 0, lifecycleOutbox: 0 })
+      reconciled: arranged.reconcileStaleCompletionInTransaction.mock.calls.length,
+    }).toEqual({ messages: 0, completions: 0, lifecycleEvents: 0, lifecycleOutbox: 0, reconciled: 1 })
   })
 
   it("rejects a reply sealed under the wrong key generation (400)", async () => {

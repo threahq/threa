@@ -312,11 +312,19 @@ export class BroadcastHandler implements OutboxHandler {
       isOutboxEventType(event, "bot_invocation:input_updated") ||
       isOutboxEventType(event, "bot_invocation:cancelled")
     ) {
-      const payload = (
+      const parsed = (
         isOutboxEventType(event, "bot_invocation:cancelled")
           ? botInvocationCancelledPayloadSchema
           : botInvocationControlPayloadSchema
-      ).parse(event.payload)
+      ).safeParse(event.payload)
+      if (!parsed.success) {
+        logger.error(
+          { eventId: event.id, eventType: event.eventType, issues: parsed.error.issues },
+          "dispatchBotEvent: dropping malformed invocation control event"
+        )
+        return
+      }
+      const payload = parsed.data
       let room = `bot:${workspaceId}:bot:${payload.botId}`
       if (payload.targetInstanceId) room = `${room}:instance:${payload.targetInstanceId}`
       if (payload.targetRuntimeSessionId)

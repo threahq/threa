@@ -107,7 +107,7 @@ export interface BotRuntimeFixture {
  * Isolated database plus the standard bot-runtime fixture: a private
  * scratchpad, a bot carrying the runtime traits, one available runtime
  * instance per requested id, and the bot installed as the stream's active
- * actor. `cleanup` drains the fixture tables before dropping the database.
+ * actor. `cleanup` drops the database.
  */
 export async function seedBotRuntimeFixture(options: {
   label: string
@@ -162,17 +162,7 @@ export async function seedBotRuntimeFixture(options: {
     stream,
     author,
     bot,
-    cleanup: async () => {
-      await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
-      await pool.query("DELETE FROM bot_invocations WHERE workspace_id = $1", [workspace])
-      await pool.query("DELETE FROM bot_runtime_instances WHERE workspace_id = $1", [workspace])
-      await pool.query("DELETE FROM bot_channel_access WHERE workspace_id = $1", [workspace])
-      await pool.query("DELETE FROM stream_active_actors WHERE workspace_id = $1", [workspace])
-      await pool.query("DELETE FROM bots WHERE workspace_id = $1", [workspace])
-      await pool.query("DELETE FROM messages WHERE stream_id = $1", [stream])
-      await pool.query("DELETE FROM streams WHERE id = $1", [stream])
-      await isolated.cleanup()
-    },
+    cleanup: () => isolated.cleanup(),
   }
 }
 

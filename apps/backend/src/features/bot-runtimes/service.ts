@@ -27,7 +27,9 @@ import {
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
+  resolveControlTarget,
   type BotInvocation,
+  type BotInvocationCancellation,
   type BotRuntimeInstance,
   type BotRuntimeSessionLink,
   type StreamActiveActor,
@@ -658,10 +660,7 @@ export class BotRuntimeService {
         botId: invocation.actorId,
         invocationId: invocation.id,
         sourceRevision: invocation.sourceMessageRevision,
-        targetInstanceId: invocation.claimedByInstanceId ?? invocation.targetInstanceId,
-        targetRuntimeSessionId:
-          invocation.claimedRuntimeSessionId ??
-          (invocation.claimedByInstanceId == null ? invocation.targetRuntimeSessionId : null),
+        ...resolveControlTarget(invocation),
         reason: invocation.cancellationReason,
       })
     }
@@ -761,10 +760,7 @@ export class BotRuntimeService {
           botId: invocation.actorId,
           invocationId: invocation.id,
           sourceRevision: invocation.sourceMessageRevision,
-          targetInstanceId: invocation.claimedByInstanceId ?? invocation.targetInstanceId,
-          targetRuntimeSessionId:
-            invocation.claimedRuntimeSessionId ??
-            (invocation.claimedByInstanceId == null ? invocation.targetRuntimeSessionId : null),
+          ...resolveControlTarget(invocation),
         })
         return
       }
@@ -979,7 +975,7 @@ export class BotRuntimeService {
     serverGeneratedAt: Date
     available: BotInvocation[]
     ownedClaims: BotInvocation[]
-    recentCancellations: import("./repository").BotInvocationCancellation[]
+    recentCancellations: BotInvocationCancellation[]
     activeActorByStream: StreamActiveActor[]
     activeSessionLinks: BotRuntimeSessionLink[]
   }> {

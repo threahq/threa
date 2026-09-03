@@ -150,6 +150,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     completeSession,
     botRuntimeService,
     validateClaimSourceForCompletion,
+    reconcileStaleCompletionInTransaction,
   }
 }
 
@@ -224,7 +225,8 @@ describe("completeBotInvocation synthesized-trace floor", () => {
       synthesizedSteps: arranged.appendStep.mock.calls.length,
       completedSessions: arranged.completeSession.mock.calls.length,
       lifecycleEvents: arranged.insertEvent.mock.calls.length,
-    }).toEqual({ messages: 0, synthesizedSteps: 0, completedSessions: 0, lifecycleEvents: 0 })
+      reconciled: arranged.reconcileStaleCompletionInTransaction.mock.calls.length,
+    }).toEqual({ messages: 0, synthesizedSteps: 0, completedSessions: 0, lifecycleEvents: 0, reconciled: 1 })
   })
 })
 
