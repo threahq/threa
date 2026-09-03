@@ -54,6 +54,7 @@ export interface ClaimedInvocation {
   rootStreamId: string
   activeStreamId: string
   sourceMessageId: string
+  sourceRevision: number
   responseStreamId: string
   actor: { type: "bot"; id: string; slug: string }
   trigger: string
@@ -110,11 +111,15 @@ export class ThreaClient {
     // invocation as "channel shut down" (observed live 2026-08-10; same
     // pathogen as pi-remote's #1841).
     const controller = new AbortController()
+    const abortFromCaller = () => controller.abort(init?.signal?.reason)
+    if (init?.signal?.aborted) abortFromCaller()
+    else init?.signal?.addEventListener("abort", abortFromCaller, { once: true })
     const timeout = setTimeout(() => controller.abort(), this.opts.fetchTimeoutMs ?? FETCH_TIMEOUT_MS)
     try {
       return await this.requestWithin<T>(path, init, controller.signal)
     } finally {
       clearTimeout(timeout)
+      init?.signal?.removeEventListener("abort", abortFromCaller)
     }
   }
 
@@ -189,10 +194,11 @@ export class ThreaClient {
     return result.data
   }
 
-  async complete(invocationId: string, body: Record<string, unknown>): Promise<void> {
+  async complete(invocationId: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/complete`), {
       method: "POST",
       body: JSON.stringify(body),
+      signal,
     })
   }
 
@@ -248,12 +254,14 @@ export class ThreaClient {
   async completeSealed(
     invocationId: string,
     callbackToken: string,
-    body: { reply: SealedWireReply } | { noResponse: true }
+    body: ({ reply: SealedWireReply } | { noResponse: true }) & { sourceRevision: number },
+    signal?: AbortSignal
   ): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-complete`), {
       method: "POST",
       headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
       body: JSON.stringify(body),
+      signal,
     })
   }
 

@@ -17,6 +17,8 @@ import {
   serializeSealedPayload,
   type AttachmentRef,
   type BotRuntimeTransport,
+  type InvocationInputUpdate,
+  type ObserveClaimParams,
   type SealedPayloadExtras,
   type SealedReplyBody,
   type SealedStepFrame,
@@ -178,6 +180,15 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
       throw new Error("unexpected plaintext message fetch on a sealed turn")
     },
   }
+  const observations = new Map<
+    string,
+    {
+      params: ObserveClaimParams
+      unregistered: boolean
+      asyncUpdate(update: InvocationInputUpdate, signal?: AbortSignal): Promise<"applied" | "restart-required">
+      asyncCancel(): Promise<void>
+    }
+  >()
   const transport = {
     connect: async () => {},
     disconnect: () => {},
@@ -189,7 +200,26 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     recordSealedSteps: async (id: string, callbackToken: string, frames: SealedStepFrame[]) => {
       calls.sealedSteps.push({ id, callbackToken, frames })
     },
-    renewClaim: async () => ({ notFound: false, renewed: true }),
+    observeClaim: (params: ObserveClaimParams) => {
+      const record = {
+        params,
+        unregistered: false,
+        async asyncUpdate(update: InvocationInputUpdate, signal = new AbortController().signal) {
+          return await params.callbacks.onInputUpdated(update, signal)
+        },
+        async asyncCancel() {
+          await params.callbacks.onCancelled()
+        },
+      }
+      observations.set(params.invocationId, record)
+      return {
+        sync: async () => {},
+        unregister: () => {
+          record.unregistered = true
+        },
+        dispose: () => {},
+      }
+    },
     updatePresence: async () => {},
   }
   const session = new RemoteSession({
@@ -199,7 +229,7 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     runtime: RUNTIME,
     transport: transport as unknown as BotRuntimeTransport,
   })
-  return { session, calls, queue, uploads, control, completeSealedAttempts, sealedMessageAttempts }
+  return { session, calls, queue, uploads, control, completeSealedAttempts, sealedMessageAttempts, observations }
 }
 
 /** The owner's half of the ceremony: wrap a fresh SSK to the session's BIK and seal trigger + history under it. */
@@ -236,6 +266,7 @@ async function ownerBuildsSealedClaim(
     rootStreamId: ROOT_STREAM,
     activeStreamId: ROOT_STREAM,
     sourceMessageId: "msg_trigger",
+    sourceRevision: 1,
     responseStreamId: ROOT_STREAM,
     actor: { type: "bot", id: BOT_SENDER, slug: "claude" },
     trigger: "active-scratchpad",
@@ -280,6 +311,23 @@ async function startSealedTurn(delegate: Partial<RemoteSessionDelegate> = {}, pr
   made.queue.push(invocation)
   await drain(made.session)
   return { ...made, openSealed, openSealedPayload }
+}
+
+function sealedUpdate(replySsk: Uint8Array, overrides: Partial<InvocationInputUpdate> = {}): InvocationInputUpdate {
+  return {
+    sourceRevision: 2,
+    delivery: "sealed",
+    promptMarkdown: "updated",
+    attachmentRefs: [],
+    sealing: {
+      streamId: ROOT_STREAM,
+      replyKeyGeneration: 2,
+      replySenderId: BOT_SENDER,
+      replySsk,
+      callbackToken: "cbtok",
+    },
+    ...overrides,
+  }
 }
 
 describe("sealed claim hydration + delivery", () => {
@@ -339,6 +387,158 @@ describe("sealed claim hydration + delivery", () => {
     expect(new TextDecoder().decode(readFileSync(localPath))).toBe("the secret spec")
   })
 
+  test("keeps initial sealed attachment hydration best-effort", async () => {
+    const encrypted = await encryptAttachmentBytes(new TextEncoder().encode("ciphertext"))
+    const wrong = await encryptAttachmentBytes(new TextEncoder().encode("wrong key"))
+    const ref: AttachmentRef = {
+      attachmentId: "att_initial_bad",
+      key: wrong.key,
+      iv: wrong.iv,
+      filename: "secret.txt",
+      mimeType: "text/plain",
+      sizeBytes: 10,
+    }
+    const delivered: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encrypted.ciphertext))
+    try {
+      await startSealedTurn(
+        { deliverTurn: async (turn) => void delivered.push(turn.content) },
+        { attachmentRefs: [ref] }
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toContain("Please refactor the auth module")
+    expect(delivered[0]).not.toContain("secret.txt")
+  })
+
+  test("a failed sealed file in a live rebuild rejects the whole update", async () => {
+    const ciphertext = await encryptAttachmentBytes(new TextEncoder().encode("current ciphertext"))
+    const wrong = await encryptAttachmentBytes(new TextEncoder().encode("wrong key"))
+    const ref: AttachmentRef = {
+      attachmentId: "att_update_bad",
+      key: wrong.key,
+      iv: wrong.iv,
+      filename: "current.md",
+      mimeType: "text/markdown",
+      sizeBytes: 18,
+    }
+    const nextSsk = new Uint8Array(32)
+    crypto.getRandomValues(nextSsk)
+    const steered: string[] = []
+    const interrupts: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(ciphertext.ciphertext))
+    try {
+      const made = await startSealedTurn({
+        sessionControl: {
+          commands: ["steer"],
+          interrupt: () => {
+            interrupts.push("interrupt")
+            return true
+          },
+          steer: async (text) => {
+            steered.push(text)
+            return true
+          },
+          runCommand: async () => ({ ok: true, message: "ok" }),
+        },
+      })
+      expect(
+        await made.observations
+          .get("binv_sealed")!
+          .asyncUpdate(sealedUpdate(nextSsk, { promptMarkdown: "Use the replacement", attachmentRefs: [ref] }))
+      ).toBe("restart-required")
+      expect({ steered, interrupts, completeSealed: made.calls.completeSealed }).toEqual({
+        steered: [],
+        interrupts: ["interrupt"],
+        completeSealed: [],
+      })
+      await made.session.shutdown()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("a live sealed update replaces attachment refs, sealing generation, and completion revision before steering", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "sealed-update-"))
+    tempDirs.push(cwd)
+    const attachmentPlaintext = new TextEncoder().encode("updated secret")
+    const encryptedAttachment = await encryptAttachmentBytes(attachmentPlaintext)
+    const ref: AttachmentRef = {
+      attachmentId: "att_update",
+      key: encryptedAttachment.key,
+      iv: encryptedAttachment.iv,
+      filename: "updated.md",
+      mimeType: "text/markdown",
+      sizeBytes: attachmentPlaintext.length,
+    }
+    const nextSsk = new Uint8Array(32)
+    crypto.getRandomValues(nextSsk)
+    const steered: string[] = []
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(cwd)
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encryptedAttachment.ciphertext))
+    try {
+      const made = await startSealedTurn({
+        sessionControl: {
+          commands: ["stop", "steer"],
+          interrupt: () => true,
+          steer: async (text) => {
+            steered.push(text)
+            return true
+          },
+          runCommand: async () => ({ ok: true, message: "ok" }),
+        },
+      })
+      const observed = made.observations.get("binv_sealed")!
+      expect(
+        await observed.asyncUpdate(
+          sealedUpdate(nextSsk, { promptMarkdown: "Use the updated secret", attachmentRefs: [ref] })
+        )
+      ).toBe("applied")
+      expect(steered).toHaveLength(1)
+      expect(steered[0]).toContain("Use the updated secret")
+      expect(steered[0]).toContain("updated.md")
+      expect(
+        new TextDecoder().decode(
+          readFileSync(join(cwd, ".threa-attachments", "binv_sealed", "att_update", "updated.md"))
+        )
+      ).toBe("updated secret")
+
+      await made.session.recordSteps("binv_sealed", [{ stepType: "thinking", content: "new generation step" }])
+      const frame = made.calls.sealedSteps.at(-1)!.frames[0]!
+      expect(frame.envelope.keyGeneration).toBe(2)
+      expect(
+        parseSealedPayload(
+          await openMessageAsString({
+            key: nextSsk,
+            envelope: frame.envelope,
+            ciphertext: base64ToBytes(frame.ciphertext),
+          })
+        ).contentMarkdown
+      ).toBe("new generation step")
+
+      expect((await made.session.reply("binv_sealed", "updated answer")).ok).toBe(true)
+      const completion = made.calls.completeSealed.at(-1)!
+      expect(completion.body.sourceRevision).toBe(2)
+      const reply = completion.body.reply as SealedReplyBody
+      expect(
+        parseSealedPayload(
+          await openMessageAsString({
+            key: nextSsk,
+            envelope: reply.envelope,
+            ciphertext: base64ToBytes(reply.ciphertext),
+          })
+        ).contentMarkdown
+      ).toBe("updated answer")
+      expect(observed.unregistered).toBe(true)
+    } finally {
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("a malformed sealedContext fails the invocation with a scrubbed reason", async () => {
     const delivered: string[] = []
     const made = makeSealedSession({
@@ -351,9 +551,10 @@ describe("sealed claim hydration + delivery", () => {
 
     await drain(made.session)
 
-    expect(delivered).toHaveLength(0)
-    expect(made.calls.fail).toHaveLength(1)
-    expect(made.calls.fail[0]!.body.errorMessage).toBe("Sealed turn failed: malformed sealedContext")
+    expect({ delivered, failures: made.calls.fail.map((call) => call.body.errorMessage) }).toEqual({
+      delivered: [],
+      failures: ["Sealed turn failed: malformed sealedContext"],
+    })
   })
 })
 
@@ -703,7 +904,6 @@ describe("harness-created E2E scratchpad (two-phase create)", () => {
       updatePresence: async () => {},
       recordSteps: async () => {},
       recordSealedSteps: async () => {},
-      renewClaim: async () => ({ notFound: false, renewed: true }),
     }
     const session = new RemoteSession({
       config: { ...makeConfig(join(dir, "bik.json")), e2e: true },
@@ -732,8 +932,7 @@ describe("harness-created E2E scratchpad (two-phase create)", () => {
     expect(calls.createBodies[0]?.e2e).toEqual({ ownerKeyId: "uik_owner" })
     expect(calls.provisioned).toHaveLength(1)
     const { streamId, body } = calls.provisioned[0]!
-    expect(streamId).toBe(ROOT_STREAM)
-    expect(body.keyGeneration).toBe(0)
+    expect({ streamId, keyGeneration: body.keyGeneration }).toEqual({ streamId: ROOT_STREAM, keyGeneration: 0 })
     const wraps = body.wraps as Array<{
       recipientKind: string
       recipientKeyId: string
