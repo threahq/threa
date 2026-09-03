@@ -135,6 +135,21 @@ export const MessageVersionRepository = {
     return result.rows.map(mapRow)
   },
 
+  /**
+   * A version row holds the content that occupied its `version_number`
+   * revision, written when that revision was replaced — so the text a reader
+   * saw at revision N is version N, and the live message row is the newest
+   * revision, which has no version row yet.
+   */
+  async findByVersionNumbers(db: Querier, messageId: string, versionNumbers: number[]): Promise<MessageVersion[]> {
+    if (versionNumbers.length === 0) return []
+    const result = await db.query<MessageVersionRow>(sql`
+      SELECT * FROM message_versions
+      WHERE message_id = ${messageId} AND version_number = ANY(${versionNumbers})
+    `)
+    return result.rows.map(mapRow)
+  },
+
   async findLatestByMessageId(db: Querier, messageId: string): Promise<MessageVersion | null> {
     const result = await db.query<MessageVersionRow>(sql`
       SELECT * FROM message_versions

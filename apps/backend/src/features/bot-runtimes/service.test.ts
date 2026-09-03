@@ -63,6 +63,7 @@ function makeInvocation(overrides: Partial<BotInvocation> = {}): BotInvocation {
 
 function sourceState(overrides: Partial<InvocationSourceState> = {}): InvocationSourceState {
   return {
+    messageId: "msg_src",
     workspaceId: "ws_1",
     streamId: "stream_active",
     revision: 1,
@@ -253,6 +254,7 @@ describe("BotRuntimeService outbox emission", () => {
       spyOn(BotInvocationRepository, "findNextClaimable").mockResolvedValue(makeInvocation())
       spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(makeInvocation({ status: "claimed" }))
       spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({
+        messageId: "msg_src",
         workspaceId: "ws_1",
         streamId: "stream_active",
         revision: 1,

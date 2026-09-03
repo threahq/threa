@@ -2,9 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import type { Pool } from "pg"
 import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "./setup"
 import { AgentSessionRepository } from "../../src/features/agents"
-import { BotInvocationRepository, BotRuntimeService } from "../../src/features/bot-runtimes"
+import { BotInvocationRepository, BotRuntimeService, buildEditedSourcePrompt } from "../../src/features/bot-runtimes"
 import { MessageRepository, MessageVersionRepository } from "../../src/features/messaging"
-import { messageId, workspaceId } from "../../src/lib/id"
+import { messageId, messageVersionId, workspaceId } from "../../src/lib/id"
 
 describe("bot invocation canonical source mutations", () => {
   let sourceSequence = 0n
@@ -194,6 +194,55 @@ describe("bot invocation canonical source mutations", () => {
       [workspace, message.id]
     )
     expect(rows.rows).toEqual([{ prompt_markdown: "after", source_message_revision: 2, status: "pending" }])
+  })
+
+  test("an edit after a completed turn dispatches a fresh invocation carrying the answered wording", async () => {
+    const message = await source("before")
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    await pool.query(
+      "UPDATE bot_invocations SET status = 'completed' WHERE workspace_id = $1 AND source_message_id = $2",
+      [workspace, message.id]
+    )
+
+    await MessageVersionRepository.insert(pool, {
+      id: messageVersionId(),
+      messageId: message.id,
+      contentJson: testContentJson("before"),
+      contentMarkdown: "before",
+      editedBy: author,
+    })
+    await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+
+    const rows = await pool.query<{ status: string; source_message_revision: number; prompt_markdown: string }>(
+      `SELECT status, source_message_revision, prompt_markdown FROM bot_invocations
+       WHERE workspace_id = $1 AND source_message_id = $2 ORDER BY source_message_revision`,
+      [workspace, message.id]
+    )
+    const framed = buildEditedSourcePrompt("after", {
+      previousMarkdown: "before",
+      previousRevision: 1,
+      currentRevision: 2,
+    })
+    expect(rows.rows).toEqual([
+      { status: "completed", source_message_revision: 1, prompt_markdown: "before" },
+      { status: "pending", source_message_revision: 2, prompt_markdown: framed },
+    ])
+
+    const claimed = await service().claimNextInvocation({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: instance,
+      runtimeKind: "openclaw",
+      claimToken: "edit-rerun",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+    })
+    expect({ prompt: claimed?.promptMarkdown, revision: claimed?.claimedSourceMessageRevision }).toEqual({
+      prompt: framed,
+      revision: 2,
+    })
   })
 
   test("stale failure and parking cannot terminalize edited work before canonical reclaim", async () => {
