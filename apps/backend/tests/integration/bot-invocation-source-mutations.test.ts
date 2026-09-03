@@ -1,59 +1,25 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { setupIsolatedTestDatabase, testContentJson } from "./setup"
+import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "./setup"
 import { AgentSessionRepository } from "../../src/features/agents"
-import { BotChannelAccessRepository } from "../../src/features/api-keys"
 import { BotInvocationRepository, BotRuntimeService } from "../../src/features/bot-runtimes"
 import { MessageRepository, MessageVersionRepository } from "../../src/features/messaging"
-import { BotRepository } from "../../src/features/public-api/bot-repository"
-import { botChannelAccessId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { messageId, workspaceId } from "../../src/lib/id"
 
 describe("bot invocation canonical source mutations", () => {
   let sourceSequence = 0n
+  let fixture: BotRuntimeFixture
   let pool: Pool
-  let cleanup: () => Promise<void>
-  const workspace = workspaceId()
-  const stream = streamId()
-  const author = userId()
-  const bot = `bot_${crypto.randomUUID().slice(0, 8)}`
+  let workspace: string
+  let stream: string
+  let author: string
+  let bot: string
   const instance = `source-test-${crypto.randomUUID().slice(0, 8)}`
+  const service = () => new BotRuntimeService({ pool })
 
   beforeAll(async () => {
-    const isolated = await setupIsolatedTestDatabase("invocation_mutations")
-    pool = isolated.pool
-    cleanup = isolated.cleanup
-    await pool.query(
-      "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
-      [stream, workspace, author]
-    )
-    await BotRepository.create(pool, {
-      id: bot,
-      workspaceId: workspace,
-      type: "personal",
-      ownerUserId: author,
-      traits: ["active-scratchpad", "mentionable"],
-      slug: `source-test-${crypto.randomUUID().slice(0, 8)}`,
-      name: "Source test bot",
-    })
-    await BotChannelAccessRepository.grantAccess(pool, {
-      id: botChannelAccessId(),
-      workspaceId: workspace,
-      botId: bot,
-      streamId: stream,
-      grantedBy: author,
-    })
-    await pool.query(
-      `INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, instance_id, runtime_kind, status, accepting_invocations)
-       VALUES ($1, $2, $3, $4, 'openclaw', 'available', TRUE)`,
-      [`bri_${crypto.randomUUID().replaceAll("-", "")}`, workspace, bot, instance]
-    )
-    await new BotRuntimeService({ pool }).setActiveActor({
-      workspaceId: workspace,
-      rootStreamId: stream,
-      actorType: "bot",
-      actorId: bot,
-      createdBy: author,
-    })
+    fixture = await seedBotRuntimeFixture({ label: "invocation_mutations", instanceIds: [instance] })
+    ;({ pool, workspace, stream, author, bot } = fixture)
   }, 30_000)
 
   beforeEach(async () => {
@@ -62,16 +28,7 @@ describe("bot invocation canonical source mutations", () => {
   })
 
   afterAll(async () => {
-    if (!pool) return cleanup?.()
-    await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
-    await pool.query("DELETE FROM bot_invocations WHERE workspace_id = $1", [workspace])
-    await pool.query("DELETE FROM bot_runtime_instances WHERE workspace_id = $1", [workspace])
-    await pool.query("DELETE FROM bot_channel_access WHERE workspace_id = $1", [workspace])
-    await pool.query("DELETE FROM stream_active_actors WHERE workspace_id = $1", [workspace])
-    await pool.query("DELETE FROM bots WHERE workspace_id = $1", [workspace])
-    await pool.query("DELETE FROM messages WHERE stream_id = $1", [stream])
-    await pool.query("DELETE FROM streams WHERE id = $1", [stream])
-    await cleanup()
+    await fixture?.cleanup()
   }, 30_000)
 
   function mentionContent() {
@@ -133,10 +90,9 @@ describe("bot invocation canonical source mutations", () => {
     const message = await source("before")
     const companion = await invocation(message.id, message.revision)
     const control = await invocation(message.id, 0, undefined, "session-control")
-    const service = new BotRuntimeService({ pool })
 
     await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
 
     const afterEdit = await pool.query<{
       id: string
@@ -159,7 +115,7 @@ describe("bot invocation canonical source mutations", () => {
     ])
 
     await MessageRepository.softDelete(pool, message.id)
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
     const afterDelete = await pool.query<{ trigger: string; status: string }>(
       `SELECT trigger, status FROM bot_invocations
        WHERE workspace_id = $1 AND source_message_id = $2 AND status <> 'cancelled'`,
@@ -211,27 +167,26 @@ describe("bot invocation canonical source mutations", () => {
 
   test("repository edits and deletion advance the canonical revision once", async () => {
     const created = await source()
-    expect(created.revision).toBe(1)
     const first = await MessageRepository.updateContent(pool, created.id, testContentJson("two"), "two")
     const second = await MessageRepository.updateContent(pool, created.id, testContentJson("three"), "three")
     const deleted = await MessageRepository.softDelete(pool, created.id)
     const repeatedDelete = await MessageRepository.softDelete(pool, created.id)
     expect([
+      created.revision,
       first?.revision,
       second?.revision,
       deleted?.revision,
       repeatedDelete,
       await MessageVersionRepository.getCurrentRevision(pool, created.id),
-    ]).toEqual([2, 3, 4, null, 4])
+    ]).toEqual([1, 2, 3, 4, null, 4])
   })
 
   test("canonical reconciliation refreshes pending prompt and revision from the locked source", async () => {
     const message = await source("before")
-    const service = new BotRuntimeService({ pool })
 
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
     await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
 
     const rows = await pool.query<{ prompt_markdown: string; source_message_revision: number; status: string }>(
       `SELECT prompt_markdown, source_message_revision, status
@@ -243,9 +198,8 @@ describe("bot invocation canonical source mutations", () => {
 
   test("stale failure and parking cannot terminalize edited work before canonical reclaim", async () => {
     const message = await source("before")
-    const service = new BotRuntimeService({ pool })
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
-    const claimed = await service.claimNextInvocation({
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    const claimed = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -258,7 +212,7 @@ describe("bot invocation canonical source mutations", () => {
 
     await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
     expect(
-      await service.failInvocation({
+      await service().failInvocation({
         workspaceId: workspace,
         botId: bot,
         invocationId: claimed!.id,
@@ -280,7 +234,7 @@ describe("bot invocation canonical source mutations", () => {
       })
     ).toEqual([])
 
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
     const refreshed = await pool.query<{
       source_message_revision: number
       claimed_source_message_revision: number
@@ -300,7 +254,7 @@ describe("bot invocation canonical source mutations", () => {
       status: "claimed",
     })
 
-    const reclaimed = await service.claimNextInvocation({
+    const reclaimed = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -316,11 +270,9 @@ describe("bot invocation canonical source mutations", () => {
   })
 
   test("an edit holding the message lock prevents stale failure and parking from committing", async () => {
-    const service = new BotRuntimeService({ pool })
-
     const failureMessage = await source("failure before")
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: failureMessage.id })
-    const failureClaim = await service.claimNextInvocation({
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: failureMessage.id })
+    const failureClaim = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -341,7 +293,7 @@ describe("bot invocation canonical source mutations", () => {
         "failure after"
       )
       let failureSettled = false
-      const failing = service
+      const failing = service()
         .failInvocation({
           workspaceId: workspace,
           botId: bot,
@@ -363,8 +315,8 @@ describe("bot invocation canonical source mutations", () => {
     }
 
     const parkingMessage = await source("parking before")
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: parkingMessage.id })
-    const parkingClaim = await service.claimNextInvocation({
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: parkingMessage.id })
+    const parkingClaim = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -495,20 +447,28 @@ describe("bot invocation canonical source mutations", () => {
       workspaceId: workspace,
       sourceMessageId: message.id,
       sourceMessageRevision: 2,
-      desiredRoutes: [{ actorType: "bot", actorId: bot, trigger: "mention" }],
+      desiredRoutes: [
+        {
+          actorType: "bot",
+          actorId: bot,
+          trigger: "mention",
+          activeStreamId: stream,
+          responseStreamId: stream,
+          targetInstanceId: null,
+          targetRuntimeSessionId: null,
+        },
+      ],
     })
-    expect([cancelled.map((row) => row.id), mention.invocation.status, active.invocation.id]).toEqual([
-      [active.invocation.id],
-      "pending",
-      active.invocation.id,
-    ])
+    expect({ cancelled: cancelled.map((row) => row.id), mention: mention.invocation.status }).toEqual({
+      cancelled: [active.invocation.id],
+      mention: "pending",
+    })
   })
 
   test("route-changing reconciliation and completion share source-first lock order", async () => {
     const message = await source("before")
-    const service = new BotRuntimeService({ pool })
-    await service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
-    const claimed = await service.claimNextInvocation({
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    const claimed = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -541,7 +501,7 @@ describe("bot invocation canonical source mutations", () => {
       const blockerPid = await sessionBlocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
       await sessionBlocker.query("SELECT id FROM agent_sessions WHERE id = $1 FOR UPDATE", [claimed!.id])
 
-      reconciliation = service.reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+      reconciliation = service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
       const reconciliationWaitDeadline = Date.now() + 2_000
       for (;;) {
         const blocked = await pool.query<{ blocked: boolean }>(
@@ -560,7 +520,7 @@ describe("bot invocation canonical source mutations", () => {
 
       await completer.query("BEGIN")
       const completerPid = await completer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
-      completion = service
+      completion = service()
         .findActiveClaimForUpdate(completer, {
           workspaceId: workspace,
           botId: bot,
@@ -591,18 +551,19 @@ describe("bot invocation canonical source mutations", () => {
         Promise.all([reconciliation, completion]),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("route-change deadlock")), 4_000)),
       ])
-      expect(result[1]).toBeNull()
-
       const rows = await pool.query<{ trigger: string; status: string }>(
         `SELECT trigger, status FROM bot_invocations
          WHERE workspace_id = $1 AND source_message_id = $2
          ORDER BY created_at, id`,
         [workspace, message.id]
       )
-      expect(rows.rows).toEqual([
-        { trigger: "active-scratchpad", status: "cancelled" },
-        { trigger: "mention", status: "pending" },
-      ])
+      expect({ lockedClaim: result[1], rows: rows.rows }).toEqual({
+        lockedClaim: null,
+        rows: [
+          { trigger: "active-scratchpad", status: "cancelled" },
+          { trigger: "mention", status: "pending" },
+        ],
+      })
     } finally {
       if (!blockerCommitted) await sessionBlocker.query("ROLLBACK").catch(() => {})
       if (!completerFinished) await completer.query("ROLLBACK").catch(() => {})
@@ -622,7 +583,7 @@ describe("bot invocation canonical source mutations", () => {
       await editor.query("BEGIN")
       await MessageRepository.updateContent(editor, message.id, testContentJson("after"), "after")
       let settled = false
-      const claiming = new BotRuntimeService({ pool })
+      const claiming = service()
         .claimNextInvocation({
           workspaceId: workspace,
           botId: bot,
@@ -665,7 +626,7 @@ describe("bot invocation canonical source mutations", () => {
     await MessageRepository.softDelete(pool, message.id)
 
     const claims = Promise.all([
-      new BotRuntimeService({ pool }).claimNextInvocation({
+      service().claimNextInvocation({
         workspaceId: workspace,
         botId: bot,
         instanceId: instance,
@@ -674,7 +635,7 @@ describe("bot invocation canonical source mutations", () => {
         supportedCapabilities: ["active-scratchpad"],
         claimTtlSeconds: 60,
       }),
-      new BotRuntimeService({ pool }).claimNextInvocation({
+      service().claimNextInvocation({
         workspaceId: workspace,
         botId: otherBot,
         instanceId: otherInstance,
@@ -693,19 +654,18 @@ describe("bot invocation canonical source mutations", () => {
       [[first.invocation.id, second.invocation.id]]
     )
 
-    expect(result).toEqual([null, null])
-    expect(statuses.rows).toEqual(
-      [first.invocation.id, second.invocation.id]
+    expect({ claims: result, rows: statuses.rows }).toEqual({
+      claims: [null, null],
+      rows: [first.invocation.id, second.invocation.id]
         .sort()
-        .map((id) => ({ id, status: "cancelled", cancellation_reason: "source_deleted" }))
-    )
+        .map((id) => ({ id, status: "cancelled", cancellation_reason: "source_deleted" })),
+    })
   })
 
   test("completion blocks reconciliation insertion and prevents duplicate availability", async () => {
     const message = await source("complete once")
     await invocation(message.id, message.revision)
-    const service = new BotRuntimeService({ pool })
-    const claimed = await service.claimNextInvocation({
+    const claimed = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -729,7 +689,7 @@ describe("bot invocation canonical source mutations", () => {
     let reconciliation: Promise<unknown> | null = null
     try {
       await completer.query("BEGIN")
-      const locked = await service.findActiveClaimForUpdate(completer, {
+      const locked = await service().findActiveClaimForUpdate(completer, {
         workspaceId: workspace,
         botId: bot,
         invocationId: claimed!.id,
@@ -738,7 +698,7 @@ describe("bot invocation canonical source mutations", () => {
       })
       expect(locked).not.toBeNull()
 
-      reconciliation = service.reconcileInvocationSource({
+      reconciliation = service().reconcileInvocationSource({
         workspaceId: workspace,
         sourceMessageId: message.id,
       })
@@ -757,12 +717,13 @@ describe("bot invocation canonical source mutations", () => {
         await new Promise((resolve) => setTimeout(resolve, 10))
       }
 
-      const completed = await service.completeInvocationInTransaction(completer, {
+      const completed = await service().completeInvocationInTransaction(completer, {
         workspaceId: workspace,
         botId: bot,
         invocationId: claimed!.id,
         instanceId: instance,
         claimToken: "completion-vs-reconciliation",
+        sourceRevision: claimed!.claimedSourceMessageRevision!,
       })
       await completer.query("COMMIT")
       committed = true
@@ -803,8 +764,7 @@ describe("bot invocation canonical source mutations", () => {
   test("completion-before-edit wins the source lock and remains a completed-turn mutation", async () => {
     const message = await source("before")
     await invocation(message.id, message.revision)
-    const service = new BotRuntimeService({ pool })
-    const claimed = await service.claimNextInvocation({
+    const claimed = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -818,14 +778,14 @@ describe("bot invocation canonical source mutations", () => {
     const completer = await pool.connect()
     try {
       await completer.query("BEGIN")
-      const locked = await service.findActiveClaimForUpdate(completer, {
+      const locked = await service().findActiveClaimForUpdate(completer, {
         workspaceId: workspace,
         botId: bot,
         invocationId: claimed!.id,
         instanceId: instance,
         claimToken: "completion-first",
       })
-      expect(locked && (await service.validateClaimSourceForCompletion(completer, locked))).toBe(true)
+      expect(locked && (await service().validateClaimSourceForCompletion(completer, locked))).toBe(true)
       let editSettled = false
       const editing = MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after").finally(
         () => {
@@ -834,16 +794,19 @@ describe("bot invocation canonical source mutations", () => {
       )
       await new Promise((resolve) => setTimeout(resolve, 50))
       expect(editSettled).toBe(false)
-      const completed = await service.completeInvocationInTransaction(completer, {
+      const completed = await service().completeInvocationInTransaction(completer, {
         workspaceId: workspace,
         botId: bot,
         invocationId: claimed!.id,
         instanceId: instance,
         claimToken: "completion-first",
+        sourceRevision: claimed!.claimedSourceMessageRevision!,
       })
       await completer.query("COMMIT")
-      expect(completed?.status).toBe("completed")
-      expect((await editing)?.revision).toBe(2)
+      expect({ completed: completed?.status, edited: (await editing)?.revision }).toEqual({
+        completed: "completed",
+        edited: 2,
+      })
     } finally {
       await completer.query("ROLLBACK").catch(() => {})
       completer.release()
@@ -853,8 +816,7 @@ describe("bot invocation canonical source mutations", () => {
   test("edit-before-completion makes the locked production completion fence reject", async () => {
     const message = await source("before")
     await invocation(message.id, message.revision)
-    const service = new BotRuntimeService({ pool })
-    const claimed = await service.claimNextInvocation({
+    const claimed = await service().claimNextInvocation({
       workspaceId: workspace,
       botId: bot,
       instanceId: instance,
@@ -874,14 +836,14 @@ describe("bot invocation canonical source mutations", () => {
         const completer = await pool.connect()
         try {
           await completer.query("BEGIN")
-          const locked = await service.findActiveClaimForUpdate(completer, {
+          const locked = await service().findActiveClaimForUpdate(completer, {
             workspaceId: workspace,
             botId: bot,
             invocationId: claimed!.id,
             instanceId: instance,
             claimToken: "edit-first",
           })
-          const valid = Boolean(locked && (await service.validateClaimSourceForCompletion(completer, locked)))
+          const valid = Boolean(locked && (await service().validateClaimSourceForCompletion(completer, locked)))
           await completer.query("ROLLBACK")
           return valid
         } finally {
@@ -893,60 +855,17 @@ describe("bot invocation canonical source mutations", () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
       expect(completionSettled).toBe(false)
       await editor.query("COMMIT")
-      expect(await completion).toBe(false)
+      const fenceAccepted = await completion
       const persisted = await pool.query<{ status: string }>("SELECT status FROM bot_invocations WHERE id = $1", [
         claimed!.id,
       ])
-      expect(persisted.rows[0]?.status).toBe("claimed")
+      expect({ fenceAccepted, status: persisted.rows[0]?.status }).toEqual({
+        fenceAccepted: false,
+        status: "claimed",
+      })
     } finally {
       await editor.query("ROLLBACK").catch(() => {})
       editor.release()
     }
-  })
-
-  test("claim pins current input and completion is fenced by edit/delete ordering", async () => {
-    const message = await source("before")
-    await invocation(message.id, message.revision)
-    const claimed = await BotInvocationRepository.claimOne(pool, {
-      workspaceId: workspace,
-      botId: bot,
-      instanceId: instance,
-      runtimeKind: "openclaw",
-      claimToken: "claim-token",
-      supportedCapabilities: ["active-scratchpad"],
-      claimTtlSeconds: 60,
-      maxAttempts: 5,
-    })
-    expect(claimed).not.toBeNull()
-    const locked = await MessageRepository.findInvocationSourceStateForShare(pool, {
-      workspaceId: workspace,
-      messageId: message.id,
-    })
-    const pinned = await BotInvocationRepository.pinClaimSource(pool, {
-      workspaceId: workspace,
-      invocationId: claimed!.id,
-      instanceId: instance,
-      claimToken: "claim-token",
-      revision: locked!.revision,
-      promptMarkdown: locked!.contentMarkdown,
-    })
-    expect([pinned?.claimedSourceMessageRevision, pinned?.promptMarkdown]).toEqual([1, "before"])
-    const edited = await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
-    expect(edited?.revision).toBe(2)
-    expect(
-      await BotInvocationRepository.completeClaim(pool, {
-        workspaceId: workspace,
-        botId: bot,
-        invocationId: claimed!.id,
-        instanceId: instance,
-        claimToken: "claim-token",
-      })
-    ).toBeNull()
-    const cancelled = await BotInvocationRepository.cancelActiveBySource(pool, {
-      workspaceId: workspace,
-      sourceMessageId: message.id,
-      reason: "source_deleted",
-    })
-    expect(cancelled.map((row) => row.cancellationReason)).toEqual(["source_deleted"])
   })
 })

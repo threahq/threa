@@ -1440,6 +1440,19 @@ export const BotRuntimeStatuses = {
   ERROR: "error",
 } as const satisfies Record<string, BotRuntimeStatus>
 
+export const BOT_INPUT_UPDATE_MODES = ["live", "restart"] as const
+export type BotInputUpdateMode = (typeof BOT_INPUT_UPDATE_MODES)[number]
+
+export const BOT_INVOCATION_CANCELLATION_REASONS = [
+  "routing_changed",
+  "source_deleted",
+  "input_restart",
+  "adapter_restart_required",
+  "key_grant_lost",
+  "input_stale",
+] as const
+export type BotInvocationCancellationReason = (typeof BOT_INVOCATION_CANCELLATION_REASONS)[number]
+
 export const BOT_INVOCATION_STATUSES = [
   "pending",
   "claimed",

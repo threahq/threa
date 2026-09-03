@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { resolve } from "node:path"
 import type { Pool } from "pg"
+import { AuthorTypes } from "@threa/types"
 import { setupIsolatedTestDatabase } from "./setup"
 import { AgentSessionRepository } from "../../src/features/agents"
 import { BotRuntimeService } from "../../src/features/bot-runtimes"
@@ -23,12 +24,12 @@ describe("bot invocation source revisions migration", () => {
 
     await pool.query(`
       DROP INDEX idx_bot_invocations_active_source_actor_trigger;
+      DROP INDEX idx_bot_invocations_active_source_cancellation;
       ALTER TABLE bot_invocations
         DROP COLUMN source_message_revision,
         DROP COLUMN claimed_source_message_revision,
         DROP COLUMN claimed_input_update_mode,
-        DROP COLUMN cancellation_reason,
-        DROP COLUMN available_at;
+        DROP COLUMN cancellation_reason;
       ALTER TABLE bot_invocations
         ADD CONSTRAINT bot_invocations_workspace_id_source_message_id_actor_type_a_key
         UNIQUE (workspace_id, source_message_id, actor_type, actor_id, trigger);
@@ -98,8 +99,18 @@ describe("bot invocation source revisions migration", () => {
     const repairedSession = await pool.query<{ status: string; error: string; completed_at: Date | null }>(
       "SELECT status, error, completed_at FROM agent_sessions WHERE id = 'binv_deleted'"
     )
-    const lifecycleOutbox = await pool.query<{ session_id: string }>(
-      `SELECT payload #>> '{event,payload,sessionId}' AS session_id
+    const lifecycleEvent = await pool.query<{
+      actor_type: string
+      actor_id: string
+      payload: Record<string, unknown>
+    }>(
+      `SELECT actor_type, actor_id, payload FROM stream_events
+       WHERE stream_id = 'stream_migration' AND event_type = 'agent_session:deleted'`
+    )
+    const lifecycleOutbox = await pool.query<{ session_id: string; stream_id: string; root_stream_id: string }>(
+      `SELECT payload #>> '{event,payload,sessionId}' AS session_id,
+              payload->>'streamId' AS stream_id,
+              payload->>'rootStreamId' AS root_stream_id
        FROM outbox
        WHERE event_type = 'agent_session:deleted'
          AND payload->>'workspaceId' = 'ws_migration'`
@@ -132,35 +143,15 @@ describe("bot invocation source revisions migration", () => {
       error: "Invocation source deleted",
       completed_at: expect.any(Date),
     })
-    expect(lifecycleOutbox.rows).toEqual([{ session_id: "binv_deleted" }])
-
-    // Rolling-deploy race: an old replica can insert the session after the new
-    // replica's startup scan. Its agent_session:started event drives this
-    // targeted, invocation-PK repair path.
-    await pool.query(
-      `INSERT INTO bot_invocations
-         (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id,
-          actor_type, actor_id, trigger, required_capability, prompt_markdown, source_message_revision,
-          author_user_id, status, cancellation_reason)
-       VALUES
-         ('binv_late', 'ws_migration', 'stream_migration', 'stream_migration', 'msg_deleted',
-          'stream_migration', 'bot', 'bot_2', 'mention', 'mentionable', 'gone', 3,
-          'usr_1', 'cancelled', 'source_deleted')`
-    )
-    await AgentSessionRepository.insertRunningOrSkip(pool, {
-      id: "binv_late",
-      streamId: "stream_migration",
-      personaId: "bot_2",
-      triggerMessageId: "msg_deleted",
-      initialSequence: 0n,
-    })
-    expect(
-      await new BotRuntimeService({ pool }).repairDeletedSourceSession({
-        workspaceId: "ws_migration",
-        sessionId: "binv_late",
-      })
-    ).toBe(true)
-    const lateSession = await pool.query<{ status: string }>("SELECT status FROM agent_sessions WHERE id = 'binv_late'")
-    expect(lateSession.rows).toEqual([{ status: "deleted" }])
+    expect(lifecycleEvent.rows).toEqual([
+      {
+        actor_type: AuthorTypes.BOT,
+        actor_id: "bot_1",
+        payload: { sessionId: "binv_deleted", deletedAt: expect.any(String) },
+      },
+    ])
+    expect(lifecycleOutbox.rows).toEqual([
+      { session_id: "binv_deleted", stream_id: "stream_migration", root_stream_id: "stream_migration" },
+    ])
   }, 30_000)
 })

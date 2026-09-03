@@ -6,10 +6,13 @@
 import { Pool, type PoolClient } from "pg"
 import { createDatabasePool } from "../../src/db"
 import { createMigrator } from "../../src/db/migrations"
-import { userId } from "../../src/lib/id"
+import { botChannelAccessId, streamId, userId, workspaceId } from "../../src/lib/id"
 import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
 import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "../test-database"
+import { BotRuntimeService } from "../../src/features/bot-runtimes"
+import { BotRepository } from "../../src/features/public-api/bot-repository"
+import { BotChannelAccessRepository } from "../../src/features/api-keys"
 
 // Re-export production helpers for tests that need to persist data
 export { withClient, withTransaction } from "../../src/db"
@@ -87,6 +90,88 @@ export async function setupIsolatedTestDatabase(label: string): Promise<{ pool: 
       await pool.end()
       await adminPool.query(`DROP DATABASE ${databaseIdentifier} WITH (FORCE)`)
       await adminPool.end()
+    },
+  }
+}
+
+export interface BotRuntimeFixture {
+  pool: Pool
+  workspace: string
+  stream: string
+  author: string
+  bot: string
+  cleanup: () => Promise<void>
+}
+
+/**
+ * Isolated database plus the standard bot-runtime fixture: a private
+ * scratchpad, a bot carrying the runtime traits, one available runtime
+ * instance per requested id, and the bot installed as the stream's active
+ * actor. `cleanup` drains the fixture tables before dropping the database.
+ */
+export async function seedBotRuntimeFixture(options: {
+  label: string
+  instanceIds: string[]
+}): Promise<BotRuntimeFixture> {
+  const isolated = await setupIsolatedTestDatabase(options.label)
+  const pool = isolated.pool
+  const workspace = workspaceId()
+  const stream = streamId()
+  const author = userId()
+  const bot = `bot_${crypto.randomUUID().slice(0, 8)}`
+
+  await pool.query(
+    "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
+    [stream, workspace, author]
+  )
+  await BotRepository.create(pool, {
+    id: bot,
+    workspaceId: workspace,
+    type: "personal",
+    ownerUserId: author,
+    traits: ["active-scratchpad", "mentionable"],
+    slug: `bot-${crypto.randomUUID().slice(0, 8)}`,
+    name: "Runtime fixture bot",
+  })
+  await BotChannelAccessRepository.grantAccess(pool, {
+    id: botChannelAccessId(),
+    workspaceId: workspace,
+    botId: bot,
+    streamId: stream,
+    grantedBy: author,
+  })
+  for (const instanceId of options.instanceIds) {
+    await pool.query(
+      `INSERT INTO bot_runtime_instances
+         (id, workspace_id, bot_id, instance_id, runtime_kind, status, accepting_invocations, manifest)
+       VALUES ($1, $2, $3, $4, 'openclaw', 'available', TRUE, NULL)`,
+      [`bri_${crypto.randomUUID().replaceAll("-", "")}`, workspace, bot, instanceId]
+    )
+  }
+  await new BotRuntimeService({ pool }).setActiveActor({
+    workspaceId: workspace,
+    rootStreamId: stream,
+    actorType: "bot",
+    actorId: bot,
+    createdBy: author,
+  })
+
+  return {
+    pool,
+    workspace,
+    stream,
+    author,
+    bot,
+    cleanup: async () => {
+      await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
+      await pool.query("DELETE FROM bot_invocations WHERE workspace_id = $1", [workspace])
+      await pool.query("DELETE FROM bot_runtime_instances WHERE workspace_id = $1", [workspace])
+      await pool.query("DELETE FROM bot_channel_access WHERE workspace_id = $1", [workspace])
+      await pool.query("DELETE FROM stream_active_actors WHERE workspace_id = $1", [workspace])
+      await pool.query("DELETE FROM bots WHERE workspace_id = $1", [workspace])
+      await pool.query("DELETE FROM messages WHERE stream_id = $1", [stream])
+      await pool.query("DELETE FROM streams WHERE id = $1", [stream])
+      await isolated.cleanup()
     },
   }
 }

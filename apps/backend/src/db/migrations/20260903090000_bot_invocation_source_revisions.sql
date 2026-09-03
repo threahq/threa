@@ -10,8 +10,7 @@ ALTER TABLE bot_invocations
   ADD COLUMN source_message_revision INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN claimed_source_message_revision INTEGER,
   ADD COLUMN claimed_input_update_mode TEXT,
-  ADD COLUMN cancellation_reason TEXT,
-  ADD COLUMN available_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  ADD COLUMN cancellation_reason TEXT;
 
 UPDATE bot_invocations i
 SET source_message_revision = m.revision
@@ -41,4 +40,8 @@ ALTER TABLE bot_invocations
 
 CREATE UNIQUE INDEX idx_bot_invocations_active_source_actor_trigger
   ON bot_invocations (workspace_id, source_message_id, actor_type, actor_id, trigger)
+  WHERE status IN ('pending', 'claimed');
+
+CREATE INDEX idx_bot_invocations_active_source_cancellation
+  ON bot_invocations (workspace_id, actor_id, source_message_id)
   WHERE status IN ('pending', 'claimed');

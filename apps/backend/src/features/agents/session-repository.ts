@@ -563,6 +563,23 @@ export const AgentSessionRepository = {
     )
   },
 
+  async updateInvocationReplyKeyGeneration(
+    db: Querier,
+    params: { workspaceId: string; invocationId: string; replyKeyGeneration: number }
+  ): Promise<boolean> {
+    const result = await db.query(sql`
+      UPDATE agent_sessions session
+      SET reply_key_generation = ${params.replyKeyGeneration}
+      FROM bot_invocations invocation
+      WHERE session.id = ${params.invocationId}
+        AND session.status = ${SessionStatuses.RUNNING}
+        AND invocation.id = session.id
+        AND invocation.workspace_id = ${params.workspaceId}
+        AND invocation.status = 'claimed'
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
   async updateCurrentStep(db: Querier, id: string, stepNumber: number): Promise<void> {
     await db.query(
       sql`

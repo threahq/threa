@@ -81,7 +81,7 @@ import {
   parseRuntimeCommandInvocationMetadata,
 } from "../commands"
 import { HttpError } from "@threa/backend-common"
-import { invocationClaimNotFound } from "./errors"
+import { invocationClaimNotFound, invocationInputStale } from "./errors"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
@@ -506,6 +506,16 @@ async function resolveAuthorDisplayNames(
 
 /** Mirrors the enclave assignment's history cap (`MAX_HISTORY_MESSAGES`, enclave claim-service). */
 const CLAIM_CONTEXT_MAX_MESSAGES = 30
+
+/** A completion whose source moved on; produced inside the transaction, raised after it commits. */
+type StaleCompletion = { stale: true }
+
+function unwrapFreshCompletion<T extends object>(result: T | StaleCompletion): T {
+  if ("stale" in result) {
+    throw new HttpError("Invocation input is stale", { status: 409, code: "INVOCATION_INPUT_STALE" })
+  }
+  return result
+}
 
 /**
  * Hydrate the inline context handle for a freshly claimed invocation (N-4):
@@ -1096,6 +1106,7 @@ export function createPublicApiHandlers({
         status: data.status,
         acceptingInvocations: data.acceptingInvocations,
         capabilities: data.capabilities,
+        manifest: data.manifest ?? null,
         statusText: data.statusText,
         publicKey: data.publicKey,
         publicKeyId: data.publicKeyId,
@@ -1570,6 +1581,7 @@ export function createPublicApiHandlers({
           trigger: invocation.trigger,
           requiredCapability: invocation.requiredCapability,
           promptMarkdown: invocation.promptMarkdown,
+          sourceRevision: invocation.sourceMessageRevision,
           authorUserId: invocation.authorUserId,
           mentionedActorSlugs: invocation.mentionedActorSlugs,
           claimToken: invocation.claimToken!,
@@ -1593,6 +1605,8 @@ export function createPublicApiHandlers({
         instanceId: data.instanceId,
         claimToken: data.claimToken,
         claimTtlSeconds: data.claimTtlSeconds,
+        knownSourceRevision: data.knownSourceRevision,
+        restartRequiredRevision: data.restartRequiredRevision,
       })
       res.json({ data: renewed })
     },
@@ -1972,6 +1986,7 @@ export function createPublicApiHandlers({
       let completion:
         | { kind: "completed"; message: Message | null; sessionFinalized: boolean }
         | { kind: "replay"; replay: { invocationId: string; sessionId: string; message: Message | null } }
+        | { kind: "stale" }
       try {
         completion = await withTransaction(pool, async (client) => {
           const callbackParams = {
@@ -2013,8 +2028,12 @@ export function createPublicApiHandlers({
 
           // FAILED reaches the write path only after this active claim lock succeeds.
           const claim = await botRuntimeService.findActiveClaimForUpdateByToken(client, callbackParams)
-          if (claim && !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
-            throw invocationClaimNotFound()
+          if (
+            claim &&
+            !(await botRuntimeService.validateClaimSourceForCompletion(client, claim, data.sourceRevision))
+          ) {
+            await botRuntimeService.reconcileStaleCompletionInTransaction(client, claim)
+            return { kind: "stale" as const }
           }
           if (!claim) {
             assertSessionRunningOrCompleted(session)
@@ -2065,7 +2084,10 @@ export function createPublicApiHandlers({
               ).message
             : null
 
-          const completed = await botRuntimeService.completeInvocationInTransaction(client, callbackParams)
+          const completed = await botRuntimeService.completeInvocationInTransaction(client, {
+            ...callbackParams,
+            sourceRevision: data.sourceRevision ?? claim.claimedSourceMessageRevision!,
+          })
           if (!completed) throw invocationClaimNotFound()
 
           // Finalize the session lifecycle in the same transaction (INV-7), gated on
@@ -2109,6 +2131,7 @@ export function createPublicApiHandlers({
         throw error
       }
 
+      if (completion.kind === "stale") throw invocationInputStale()
       if (completion.kind === "replay") {
         res.json({
           data: {
@@ -2157,7 +2180,7 @@ export function createPublicApiHandlers({
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
       let denialSession: Awaited<ReturnType<typeof AgentSessionRepository.findById>> = null
-      const { completed, message, sessionFinalized, synthesizedSteps, replay } = await withTransaction(
+      const { completed, message, sessionFinalized, synthesizedSteps, replay, stale } = await withTransaction(
         pool,
         async (client) => {
           const callbackParams = {
@@ -2194,8 +2217,19 @@ export function createPublicApiHandlers({
           }
 
           const claim = await botRuntimeService.findActiveClaimForUpdate(client, callbackParams)
-          if (claim && !(await botRuntimeService.validateClaimSourceForCompletion(client, claim))) {
-            throw invocationClaimNotFound()
+          if (
+            claim &&
+            !(await botRuntimeService.validateClaimSourceForCompletion(client, claim, data.sourceRevision))
+          ) {
+            await botRuntimeService.reconcileStaleCompletionInTransaction(client, claim)
+            return {
+              completed: null,
+              message: null,
+              sessionFinalized: false,
+              synthesizedSteps: [],
+              replay: null,
+              stale: true as const,
+            }
           }
           if (!claim) {
             const replay = authorityLocked
@@ -2282,6 +2316,7 @@ export function createPublicApiHandlers({
             invocationId: req.params.invocationId,
             instanceId: data.instanceId,
             claimToken: data.claimToken,
+            sourceRevision: data.sourceRevision ?? claim.claimedSourceMessageRevision!,
           })
           if (!completed) throw invocationClaimNotFound()
           const runtimeCommand = parseRuntimeCommandInvocationMetadata(completed.metadata)
@@ -2377,6 +2412,7 @@ export function createPublicApiHandlers({
         }
         throw error
       })
+      if (stale) throw invocationInputStale()
       if (replay) {
         res.json({
           data: {

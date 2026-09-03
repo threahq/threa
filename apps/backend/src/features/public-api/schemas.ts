@@ -6,6 +6,7 @@
  * handlers.ts and routes.ts.
  */
 import { z } from "zod"
+import { botRuntimeManifestSchema } from "../bot-runtimes/manifest-schema"
 import {
   BOT_INVOCATION_CAPABILITIES,
   BOT_RUNTIME_KINDS,
@@ -135,6 +136,7 @@ export const upsertPresenceSchema = z
     status: z.enum(BOT_RUNTIME_STATUSES),
     acceptingInvocations: z.boolean(),
     capabilities: z.record(z.string(), z.unknown()).optional().default({}),
+    manifest: botRuntimeManifestSchema.nullable().optional(),
     statusText: z.string().max(200).optional(),
     ...botIdentityKeyFields,
   })
@@ -234,6 +236,8 @@ export const renewInvocationClaimSchema = z.object({
   instanceId: z.string().min(1).max(128),
   claimToken: z.string().min(1).max(256),
   claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
+  knownSourceRevision: z.number().int().min(0).optional(),
+  restartRequiredRevision: z.number().int().min(0).optional(),
 })
 
 // Citations a bot attaches to its reply. `url` is a plain bounded string (not a
@@ -263,6 +267,7 @@ export const completeInvocationSchema = z
   .object({
     instanceId: z.string().min(1).max(128),
     claimToken: z.string().min(1).max(256),
+    sourceRevision: z.number().int().min(0).optional(),
     finalMessageMarkdown: z.string().min(1).max(50_000).optional(),
     noResponse: z.boolean().optional(),
     sources: z.array(sourceItemSchema).max(50).optional(),
@@ -370,6 +375,7 @@ export const sendSealedInvocationMessageSchema = z.object({
 // fields, so neither `instanceId` nor `claimToken` appears here.
 export const completeSealedInvocationSchema = z
   .object({
+    sourceRevision: z.number().int().min(0).optional(),
     reply: z
       .object({
         messageId: z.string().min(1).max(128),

@@ -1,11 +1,19 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
+import { withClient } from "../../db"
 import type { Server } from "socket.io"
 import { withTransaction } from "../../db"
 import { HttpError } from "@threa/backend-common"
 import { invocationClaimNotFound } from "./errors"
-import { BotInvocationTriggers, BotRuntimeKinds } from "@threa/types"
+import {
+  BotInvocationTriggers,
+  BotRuntimeKinds,
+  type BotInvocationCancellationReason,
+  type InvocationInputUpdateWire,
+} from "@threa/types"
+import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
 import {
   assertManifestAllows,
+  type BotInvocation,
   type BotRuntimeInstance,
   type BotRuntimeService,
   type BotRuntimeWriteOps,
@@ -21,7 +29,10 @@ import {
   resolveRuntimeKindConfig,
 } from "../bot-runtimes"
 import { authorizeSealedCallback, finalizeSealedStep } from "./sealed-callbacks"
-import { E2eStreamsRepository } from "../e2e-streams"
+import { E2eStreamsRepository, StreamE2eKeyWrapsRepository, resolveSealingContext } from "../e2e-streams"
+import { MessageRepository } from "../messaging"
+import { BotRuntimeInstanceRepository } from "../bot-runtimes"
+import { buildSealedInputUpdate } from "./sealed-turn-context"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { AgentSessionRepository, failSessionWithLifecycleInTransaction, SessionStatuses } from "../agents"
 import { assertStreamWritable, StreamRepository } from "../streams"
@@ -35,6 +46,27 @@ export interface BotRuntimeWriteOpsDeps {
   io: Server
   botRuntimeService: BotRuntimeService
   botChannelService: BotChannelService
+}
+
+function cancelledRenewal(invocation: BotInvocation, reason: BotInvocationCancellationReason): RenewClaimResult {
+  return {
+    invocationId: invocation.id,
+    status: "cancelled",
+    claimExpiresAt: null,
+    sourceRevision: invocation.sourceMessageRevision,
+    reason,
+  }
+}
+
+async function withRenewalSerializationRetry<T>(pool: Pool, operation: (db: PoolClient) => Promise<T>) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await withClient(pool, operation)
+    } catch (error) {
+      if ((error as { code?: string }).code !== "40001" || attempt === 2) throw error
+    }
+  }
+  throw new Error("Invocation renewal retry exhausted without a result")
 }
 
 /**
@@ -111,6 +143,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         ...(params.capabilities ?? {}),
         ...(params.runtimeSessionId ? { runtimeSessionId: params.runtimeSessionId } : {}),
       },
+      manifest: params.manifest ?? null,
       statusText: sanitizeStatusText(params.statusText),
       publicKey: params.publicKey,
       publicKeyId: params.publicKeyId,
@@ -134,6 +167,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         // Invocation-side touch carries no BIK; preserve the key the live
         // session registered rather than clearing it on every poll tick.
         retainBik: true,
+        retainManifest: true,
       })
       await broadcastBotPresence(params.workspaceId, params.botId, presence)
     } catch (err) {
@@ -144,29 +178,102 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
     }
   }
 
+  /** The cancellation is the response, so it must outlive the renewal transaction. */
+  async function commitKeyGrantLossCancellation(db: PoolClient, control: BotInvocation): Promise<RenewClaimResult> {
+    const cancelled = await botRuntimeService.cancelOwnedClaimForKeyGrantLossInTransaction(db, control)
+    if (!cancelled) throw invocationClaimNotFound()
+    await db.query("COMMIT")
+    return cancelledRenewal(cancelled, "key_grant_lost")
+  }
+
   async function renewClaim(params: RenewClaimParams): Promise<RenewClaimResult> {
-    const renewed = await botRuntimeService.renewInvocationClaim({
-      workspaceId: params.workspaceId,
-      botId: params.botId,
-      invocationId: params.invocationId,
-      instanceId: params.instanceId,
-      claimToken: params.claimToken,
-      claimTtlSeconds: params.claimTtlSeconds,
+    const result = await withRenewalSerializationRetry(pool, async (db) => {
+      await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ")
+      try {
+        const renewed = await botRuntimeService.renewInvocationClaimInTransaction(db, params)
+        if (!renewed) throw invocationClaimNotFound()
+        if (renewed.status === "cancelled") {
+          await db.query("COMMIT")
+          return cancelledRenewal(renewed, renewed.cancellationReason ?? "routing_changed")
+        }
+
+        let update: InvocationInputUpdateWire | undefined
+        const sealing = await resolveSealingContext(db, {
+          workspaceId: renewed.workspaceId,
+          streamId: renewed.activeStreamId,
+          actor: { kind: "bot", botId: renewed.actorId },
+        })
+        const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
+        if (verdict.delivery === "denied") return await commitKeyGrantLossCancellation(db, renewed)
+        const needsUpdate =
+          params.knownSourceRevision != null && params.knownSourceRevision < renewed.sourceMessageRevision
+        if (needsUpdate && verdict.delivery === "plaintext") {
+          update = {
+            delivery: "plaintext",
+            sourceRevision: renewed.sourceMessageRevision,
+            promptMarkdown: renewed.promptMarkdown,
+            mentionedActorSlugs: renewed.mentionedActorSlugs,
+          }
+        } else if (needsUpdate) {
+          const instance = await BotRuntimeInstanceRepository.findByInstance(db, {
+            workspaceId: renewed.workspaceId,
+            botId: renewed.actorId,
+            instanceId: params.instanceId,
+          })
+          const e2e = await E2eStreamsRepository.getByStreamId(db, renewed.workspaceId, renewed.rootStreamId)
+          const wraps = await StreamE2eKeyWrapsRepository.listForStream(db, renewed.workspaceId, renewed.rootStreamId)
+          const trigger = await MessageRepository.findInvocationSourceStateForShare(db, {
+            workspaceId: renewed.workspaceId,
+            messageId: renewed.sourceMessageId,
+          })
+          if (
+            !trigger ||
+            trigger.deleted ||
+            trigger.streamId !== renewed.activeStreamId ||
+            trigger.revision !== renewed.sourceMessageRevision
+          ) {
+            throw new HttpError("Invocation control state changed; retry renewal", {
+              status: 409,
+              code: "INVOCATION_CONTROL_RETRY",
+            })
+          }
+          const sealedUpdate =
+            instance?.publicKeyId && e2e
+              ? (buildSealedInputUpdate({
+                  e2e,
+                  bikKeyId: instance.publicKeyId,
+                  wraps,
+                  trigger,
+                  replySenderId: renewed.actorId,
+                  sourceRevision: renewed.sourceMessageRevision,
+                }) ?? undefined)
+              : undefined
+          if (!sealedUpdate) return await commitKeyGrantLossCancellation(db, renewed)
+          update = sealedUpdate
+          const updatedSession = await AgentSessionRepository.updateInvocationReplyKeyGeneration(db, {
+            workspaceId: renewed.workspaceId,
+            invocationId: renewed.id,
+            replyKeyGeneration: sealedUpdate.reply.keyGeneration,
+          })
+          if (!updatedSession) {
+            throw new HttpError("Invocation session not found", { status: 409, code: "INVOCATION_CONTROL_RETRY" })
+          }
+        }
+        await db.query("COMMIT")
+        return {
+          invocationId: renewed.id,
+          status: "active" as const,
+          claimExpiresAt: renewed.claimExpiresAt!.toISOString(),
+          sourceRevision: renewed.sourceMessageRevision,
+          ...(update ? { update } : {}),
+        }
+      } catch (error) {
+        await db.query("ROLLBACK").catch(() => {})
+        throw error
+      }
     })
-    if (!renewed) throw invocationClaimNotFound()
-    // A claim renewal is the external runtime's liveness signal between trace
-    // steps. Bot invocations reuse the invocation id as the agent session id,
-    // so bump the session heartbeat too — otherwise a long-running turn that
-    // renews its claim but goes longer than orphan-session-cleanup's stale
-    // threshold without recording steps is falsely marked orphaned (FAILED)
-    // while it is in fact alive. No-ops for session-control invocations, which
-    // create no agent session.
     await AgentSessionRepository.updateHeartbeat(pool, params.invocationId)
-    return {
-      invocationId: renewed.id,
-      status: renewed.status,
-      claimExpiresAt: renewed.claimExpiresAt?.toISOString() ?? null,
-    }
+    return result
   }
 
   async function terminalizeTraceDenial(params: {

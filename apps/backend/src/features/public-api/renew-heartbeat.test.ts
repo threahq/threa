@@ -18,10 +18,11 @@ function createResponse(): Response {
 
 function arrangeRenew(renewed: unknown) {
   const updateHeartbeat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined as never)
-  const renewInvocationClaim = mock(() => Promise.resolve(renewed))
-  const botRuntimeService = { renewInvocationClaim } as unknown as PublicApiDeps["botRuntimeService"]
+  const renewInvocationClaimInTransaction = mock(() => Promise.resolve(renewed))
+  const botRuntimeService = { renewInvocationClaimInTransaction } as unknown as PublicApiDeps["botRuntimeService"]
 
-  const pool = { __pool: true } as unknown as PublicApiDeps["pool"]
+  const client = { query: mock(() => Promise.resolve({ rows: [] })), release: mock(() => {}) }
+  const pool = { connect: mock(() => Promise.resolve(client)) } as unknown as PublicApiDeps["pool"]
   const handlers = createPublicApiHandlers({
     eventService: {} as PublicApiDeps["eventService"],
     streamService: {} as PublicApiDeps["streamService"],

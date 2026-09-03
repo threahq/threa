@@ -1,4 +1,4 @@
-import type { SealedTurnContext, EnclaveStreamEnvelope } from "@threa/types"
+import type { InvocationInputUpdateWire, SealedTurnContext, EnclaveStreamEnvelope } from "@threa/types"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
 import type { Message } from "../messaging"
 
@@ -39,27 +39,51 @@ export interface BuildSealedTurnContextInputs {
   callbackToken: string
 }
 
+export interface BuildSealedInputUpdateInputs {
+  e2e: E2eStream
+  bikKeyId: string
+  wraps: StreamE2eKeyWrap[]
+  trigger: Pick<Message, "ciphertext" | "envelope">
+  replySenderId: string
+  sourceRevision: number
+}
+
+export function buildSealedInputUpdate(
+  inputs: BuildSealedInputUpdateInputs
+): Extract<InvocationInputUpdateWire, { delivery: "sealed" }> | null {
+  const { e2e, bikKeyId, wraps, trigger } = inputs
+  if (!trigger.ciphertext || !trigger.envelope) return null
+  const triggerGeneration = (trigger.envelope as EnclaveStreamEnvelope).keyGeneration
+  const requiredGenerations = new Set([triggerGeneration, e2e.currentKeyGeneration])
+  const chosen = wraps.filter(
+    (wrap) =>
+      wrap.recipientKind === "bot" && wrap.recipientKeyId === bikKeyId && requiredGenerations.has(wrap.keyGeneration)
+  )
+  if ([...requiredGenerations].some((generation) => !chosen.some((wrap) => wrap.keyGeneration === generation)))
+    return null
+  return {
+    delivery: "sealed",
+    sourceRevision: inputs.sourceRevision,
+    prompt: { ciphertext: trigger.ciphertext.toString("base64"), envelope: trigger.envelope as EnclaveStreamEnvelope },
+    wraps: chosen.map((wrap) => ({ keyGeneration: wrap.keyGeneration, wrapEnc: wrap.wrapEnc, wrapCt: wrap.wrapCt })),
+    reply: { keyGeneration: e2e.currentKeyGeneration, senderId: inputs.replySenderId },
+  }
+}
+
 export function buildSealedTurnContext(inputs: BuildSealedTurnContextInputs): SealedTurnContext | null {
   const { e2e, bikKeyId, wraps, trigger, priorMessages } = inputs
-  if (!trigger.ciphertext || !trigger.envelope) return null
-
-  const botWraps = wraps.filter((w) => w.recipientKind === "bot")
-  const currentGen = e2e.currentKeyGeneration
-  const triggerGen = (trigger.envelope as EnclaveStreamEnvelope).keyGeneration
-  const hasWrap = (generation: number) =>
-    botWraps.some((w) => w.recipientKeyId === bikKeyId && w.keyGeneration === generation)
-
-  // The claiming BIK must both open the prompt (its generation can lag `current`
-  // if the stream rotated after the turn was stored) and seal the reply (under
-  // `current`). The claim predicate already proved both against the same wraps
-  // table; this re-check guards the revoke/rotation race between claim and build.
-  if (!hasWrap(currentGen) || !hasWrap(triggerGen)) return null
-
-  // Send every wrap addressed to the claiming BIK (all generations) so it can
-  // also open older history; the bot skips any generation it has no wrap for.
-  const chosenWraps = botWraps
-    .filter((w) => w.recipientKeyId === bikKeyId)
-    .map((w) => ({ keyGeneration: w.keyGeneration, wrapEnc: w.wrapEnc, wrapCt: w.wrapCt }))
+  const update = buildSealedInputUpdate({
+    e2e,
+    bikKeyId,
+    wraps,
+    trigger,
+    replySenderId: inputs.replySenderId,
+    sourceRevision: 0,
+  })
+  if (!update) return null
+  const chosenWraps = wraps
+    .filter((wrap) => wrap.recipientKind === "bot" && wrap.recipientKeyId === bikKeyId)
+    .map((wrap) => ({ keyGeneration: wrap.keyGeneration, wrapEnc: wrap.wrapEnc, wrapCt: wrap.wrapCt }))
 
   const history = priorMessages
     .filter((m) => m.ciphertext && m.envelope)
@@ -74,11 +98,8 @@ export function buildSealedTurnContext(inputs: BuildSealedTurnContextInputs): Se
     callbackToken: inputs.callbackToken,
     wraps: chosenWraps,
     history,
-    prompt: {
-      ciphertext: trigger.ciphertext.toString("base64"),
-      envelope: trigger.envelope as EnclaveStreamEnvelope,
-    },
-    reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
+    prompt: update.prompt,
+    reply: update.reply,
     ...(inputs.triggerAuthorName
       ? {
           trigger: {
