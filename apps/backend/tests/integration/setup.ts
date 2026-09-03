@@ -120,41 +120,46 @@ export async function seedBotRuntimeFixture(options: {
   const author = userId()
   const bot = `bot_${crypto.randomUUID().slice(0, 8)}`
 
-  await pool.query(
-    "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
-    [stream, workspace, author]
-  )
-  await BotRepository.create(pool, {
-    id: bot,
-    workspaceId: workspace,
-    type: "personal",
-    ownerUserId: author,
-    traits: ["active-scratchpad", "mentionable"],
-    slug: `bot-${crypto.randomUUID().slice(0, 8)}`,
-    name: "Runtime fixture bot",
-  })
-  await BotChannelAccessRepository.grantAccess(pool, {
-    id: botChannelAccessId(),
-    workspaceId: workspace,
-    botId: bot,
-    streamId: stream,
-    grantedBy: author,
-  })
-  for (const instanceId of options.instanceIds) {
+  try {
     await pool.query(
-      `INSERT INTO bot_runtime_instances
-         (id, workspace_id, bot_id, instance_id, runtime_kind, status, accepting_invocations, manifest)
-       VALUES ($1, $2, $3, $4, 'openclaw', 'available', TRUE, NULL)`,
-      [`bri_${crypto.randomUUID().replaceAll("-", "")}`, workspace, bot, instanceId]
+      "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
+      [stream, workspace, author]
     )
+    await BotRepository.create(pool, {
+      id: bot,
+      workspaceId: workspace,
+      type: "personal",
+      ownerUserId: author,
+      traits: ["active-scratchpad", "mentionable"],
+      slug: `bot-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Runtime fixture bot",
+    })
+    await BotChannelAccessRepository.grantAccess(pool, {
+      id: botChannelAccessId(),
+      workspaceId: workspace,
+      botId: bot,
+      streamId: stream,
+      grantedBy: author,
+    })
+    for (const instanceId of options.instanceIds) {
+      await pool.query(
+        `INSERT INTO bot_runtime_instances
+           (id, workspace_id, bot_id, instance_id, runtime_kind, status, accepting_invocations, manifest)
+         VALUES ($1, $2, $3, $4, 'openclaw', 'available', TRUE, NULL)`,
+        [`bri_${crypto.randomUUID().replaceAll("-", "")}`, workspace, bot, instanceId]
+      )
+    }
+    await new BotRuntimeService({ pool }).setActiveActor({
+      workspaceId: workspace,
+      rootStreamId: stream,
+      actorType: "bot",
+      actorId: bot,
+      createdBy: author,
+    })
+  } catch (error) {
+    await isolated.cleanup()
+    throw error
   }
-  await new BotRuntimeService({ pool }).setActiveActor({
-    workspaceId: workspace,
-    rootStreamId: stream,
-    actorType: "bot",
-    actorId: bot,
-    createdBy: author,
-  })
 
   return {
     pool,

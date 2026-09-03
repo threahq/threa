@@ -507,16 +507,6 @@ async function resolveAuthorDisplayNames(
 /** Mirrors the enclave assignment's history cap (`MAX_HISTORY_MESSAGES`, enclave claim-service). */
 const CLAIM_CONTEXT_MAX_MESSAGES = 30
 
-/** A completion whose source moved on; produced inside the transaction, raised after it commits. */
-type StaleCompletion = { stale: true }
-
-function unwrapFreshCompletion<T extends object>(result: T | StaleCompletion): T {
-  if ("stale" in result) {
-    throw new HttpError("Invocation input is stale", { status: 409, code: "INVOCATION_INPUT_STALE" })
-  }
-  return result
-}
-
 /**
  * Hydrate the inline context handle for a freshly claimed invocation (N-4):
  * the last messages preceding the trigger, from the invocation's own stream,
