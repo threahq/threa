@@ -1326,7 +1326,7 @@ export class RemoteSession {
         claimToken: invocation.claimToken,
         sourceRevision,
         ...(body.markdown ? { finalMessageMarkdown: body.markdown } : { noResponse: true }),
-        ...(body.metadata ? { metadata: this.completionMetadata(invocation, body.metadata) } : {}),
+        ...(body.metadata ? { metadata: body.metadata } : {}),
       },
       signal
     )
@@ -1445,11 +1445,11 @@ export class RemoteSession {
         // "nothing to steer" acknowledgement.
         await this.completeTurn(invocation, {
           noResponse: true,
-          metadata: this.completionMetadata(invocation, {
+          metadata: {
             "remote.invocationId": invocation.id,
             "remote.sessionControl": "true",
             "remote.steered": "true",
-          }),
+          },
         })
         return
       }
@@ -1498,11 +1498,11 @@ export class RemoteSession {
     if (owner) this.unbindRunningOwner(owner.id, [invocation])
     await this.completeTurn(invocation, {
       noResponse: true,
-      metadata: this.completionMetadata(invocation, {
+      metadata: {
         "remote.invocationId": invocation.id,
         "remote.sessionControl": "true",
         "remote.steered": "true",
-      }),
+      },
     }).catch((error) => this.failAfterTerminalWrite(invocation, error, "steer completion"))
   }
 
@@ -1624,10 +1624,6 @@ export class RemoteSession {
     }
   }
 
-  private completionMetadata(invocation: ClaimedInvocation, remote: Record<string, unknown>): Record<string, unknown> {
-    return { ...invocation.metadata, ...remote }
-  }
-
   private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<boolean> {
     if (this.isClaimCancelled(invocation)) return false
     const signal = this.observedClaims.get(invocation.id)?.lifecycle.signal
@@ -1644,10 +1640,10 @@ export class RemoteSession {
           claimToken: invocation.claimToken,
           sourceRevision: invocation.sourceRevision,
           ...(sealedReply ? { sealedReply } : { finalMessageMarkdown: markdown }),
-          metadata: this.completionMetadata(invocation, {
+          metadata: {
             "remote.invocationId": invocation.id,
             "remote.sessionControl": "true",
-          }),
+          },
         },
         signal
       )
@@ -1683,10 +1679,10 @@ export class RemoteSession {
     try {
       await this.completeTurn(invocation, {
         noResponse: true,
-        metadata: this.completionMetadata(invocation, {
+        metadata: {
           "remote.invocationId": invocation.id,
           "remote.steered": "true",
-        }),
+        },
       })
     } catch (error) {
       await this.failAfterTerminalWrite(invocation, error, "no-response completion")

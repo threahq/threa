@@ -2066,7 +2066,6 @@ describe("session control via the actuator", () => {
     expect(calls.complete[0]?.body).toMatchObject({
       finalMessageMarkdown: "Set model to `opus`.",
       metadata: {
-        command: { executionKind: "bot-runtime", id: "cmd_1", name: "model", args: "opus" },
         "remote.invocationId": "binv_cmd",
         "remote.sessionControl": "true",
       },
@@ -2359,7 +2358,6 @@ describe("session control via the actuator", () => {
     expect(calls.complete[0]?.body).toMatchObject({
       sealedReply: { messageId: "msg_ack" },
       metadata: {
-        command,
         "remote.invocationId": "binv_sealed_ack",
         "remote.sessionControl": "true",
       },
