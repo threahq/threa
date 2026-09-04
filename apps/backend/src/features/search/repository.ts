@@ -120,6 +120,14 @@ function phrasePredicatesSql(phrases: string[]) {
   return predicates
 }
 
+/** Same quote characters the frontend's `parseSearchQuery` accepts; `"..."` in the query text means an exact phrase, as `websearch_to_tsquery` used to treat it. */
+const QUOTED_PHRASE_RE = /["“]([^"“”]+)["”]/g
+
+function withQuotedPhrases(query: string, phrases: string[]): string[] {
+  const quoted = Array.from(query.matchAll(QUOTED_PHRASE_RE), (m) => m[1].trim()).filter((p) => p.length > 0)
+  return Array.from(new Set([...phrases, ...quoted]))
+}
+
 /** `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one matching term surface a result. */
 function keywordTsquerySql(query: string) {
   return composeSql`replace(plainto_tsquery('english', ${query})::text, ' & ', ' | ')::tsquery`
@@ -199,13 +207,14 @@ export const SearchRepository = {
   },
 
   /**
-   * Full-text search using PostgreSQL tsvector with websearch syntax.
+   * Full-text search using PostgreSQL tsvector, OR-joined terms.
    * Supports quoted phrases for exact matching: "chicken wingz"
    * Results are ranked by ts_rank.
    * If query is empty, returns recent messages matching filters.
    */
   async fullTextSearch(db: Querier, params: FullTextSearchParams): Promise<SearchResult[]> {
-    const { query, phrases = [], streamIds, filters, limit } = params
+    const { query, streamIds, filters, limit } = params
+    const phrases = withQuotedPhrases(query, params.phrases ?? [])
 
     if (streamIds.length === 0) {
       return []
@@ -280,17 +289,8 @@ export const SearchRepository = {
    * RRF formula: score(d) = Σ(weight / (k + rank(d)))
    */
   async hybridSearch(db: Querier, params: HybridSearchParams): Promise<SearchResult[]> {
-    const {
-      query,
-      phrases = [],
-      embedding,
-      streamIds,
-      filters,
-      limit,
-      keywordWeight = 0.6,
-      semanticWeight = 0.4,
-      k = 60,
-    } = params
+    const { query, embedding, streamIds, filters, limit, keywordWeight = 0.6, semanticWeight = 0.4, k = 60 } = params
+    const phrases = withQuotedPhrases(query, params.phrases ?? [])
 
     if (streamIds.length === 0) {
       return []

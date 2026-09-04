@@ -392,4 +392,18 @@ describe("Message hybrid search retrieval", () => {
     })
     expect(phraseResult.results.map((r) => r.id)).toEqual([twoTermMatch.id])
   })
+
+  test("should treat a quoted span inside the query text as an exact phrase, matching the frontend parser", async () => {
+    const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
+    const { twoTermMatch } = await seedRailwayMessages(wsId, sid, uid)
+
+    const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+    const { results } = await service.search({
+      workspaceId: wsId,
+      permissions: await permissionsFor(wsId, uid),
+      query: 'railway "deploy failed"',
+    })
+
+    expect(results.map((r) => r.id)).toEqual([twoTermMatch.id])
+  })
 })
