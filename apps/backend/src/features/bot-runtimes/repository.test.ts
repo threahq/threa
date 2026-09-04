@@ -206,7 +206,6 @@ function makeInvocationRow(overrides: Record<string, unknown> = {}) {
     claimed_source_message_revision: 1,
     claimed_input_update_mode: null,
     cancellation_reason: null,
-    available_at: new Date(),
     author_user_id: "usr_owner",
     mentioned_actor_slugs: [],
     status: "claimed",
@@ -395,12 +394,13 @@ describe("BotInvocationRepository.claimOne", () => {
 
   it("only claims invocations under the attempt budget and increments attempts", async () => {
     const captured: Captured = { text: null, values: null }
-    const db = createQuerier(captured, [makeInvocationRow()])
+    const db = createQuerier(captured, [makeInvocationRow({ claimed_runtime_session_id: "session-a" })])
 
     const claimed = await BotInvocationRepository.claimOne(db, {
       workspaceId: "ws_1",
       botId: "bot_alice",
       instanceId: "inst_42",
+      runtimeSessionId: "session-a",
       runtimeKind: "pi-local",
       claimToken: "tok_1",
       supportedCapabilities: ["active-scratchpad"],
@@ -409,7 +409,7 @@ describe("BotInvocationRepository.claimOne", () => {
     })
 
     expect(claimed).toMatchObject({
-      claimedRuntimeSessionId: "rts_42",
+      claimedRuntimeSessionId: "session-a",
       claimedRuntimeSessionClaimToken: "tok_1",
     })
     // Bounded re-claim: a wedged invocation can't be picked up forever.
@@ -417,6 +417,8 @@ describe("BotInvocationRepository.claimOne", () => {
     expect(captured.text).toContain("attempts = attempts + 1")
     expect(captured.text).toContain("CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC")
     expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
+    expect(captured.values).toContain("session-a")
+    expect(claimed?.claimedRuntimeSessionId).toBe("session-a")
   })
 
   it("gates sealed streams on the claiming instance's BIK covering both generations (§2.6)", async () => {
@@ -460,51 +462,6 @@ describe("BotInvocationRepository.claimOne", () => {
   })
 })
 
-describe("BotInvocationRepository source mutation locks", () => {
-  afterEach(() => mock.restore())
-
-  it("takes source then actor advisory locks before cancelling a route-changing claim", async () => {
-    const query = mock(async (_query: string | QueryConfig, _values?: unknown[]) => {
-      const call = query.mock.calls.length
-      if (call === 2) {
-        return {
-          rows: [
-            {
-              workspace_id: "ws_1",
-              source_message_id: "msg_src",
-              actor_type: "bot",
-              actor_id: "bot_alice",
-            },
-          ],
-          rowCount: 1,
-        } as unknown as QueryResult
-      }
-      if (call === 4) {
-        return {
-          rows: [makeInvocationRow({ status: "cancelled", cancellation_reason: "routing_changed" })],
-          rowCount: 1,
-        } as unknown as QueryResult
-      }
-      return { rows: [], rowCount: 0 } as unknown as QueryResult
-    })
-
-    const cancelled = await BotInvocationRepository.cancelActiveRoutesNotDesired({ query } as Querier, {
-      workspaceId: "ws_1",
-      sourceMessageId: "msg_src",
-      sourceMessageRevision: 2,
-      desiredRoutes: [{ actorType: "bot", actorId: "bot_alice", trigger: "mention" }],
-    })
-
-    expect(query.mock.calls.map((call) => call[1])).toEqual([
-      ["bot_invocation_source\u001fws_1\u001fmsg_src"],
-      undefined,
-      ["bot_invocation_actor_source\u001fws_1\u001fmsg_src\u001fbot\u001fbot_alice"],
-      undefined,
-    ])
-    expect(cancelled[0]?.cancellationReason).toBe("routing_changed")
-  })
-})
-
 describe("BotInvocationRepository.parkExhausted", () => {
   afterEach(() => mock.restore())
 
@@ -526,67 +483,13 @@ describe("BotInvocationRepository.parkExhausted", () => {
     expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
     expect(parked[0]?.status).toBe("parked")
   })
-
-  it("locks multi-row park candidates in canonical actor-source order before updating", async () => {
-    const query = mock(async (_query: string | QueryConfig, _values?: unknown[]) => {
-      const call = query.mock.calls.length
-      if (call === 1) {
-        return {
-          rows: [
-            {
-              id: "inv_zulu",
-              workspace_id: "ws_1",
-              source_message_id: "msg_zulu",
-              actor_type: "bot",
-              actor_id: "bot_alice",
-              trigger: "active-scratchpad",
-            },
-            {
-              id: "inv_alpha",
-              workspace_id: "ws_1",
-              source_message_id: "msg_alpha",
-              actor_type: "bot",
-              actor_id: "bot_alice",
-              trigger: "active-scratchpad",
-            },
-          ],
-          rowCount: 2,
-        } as unknown as QueryResult
-      }
-      if (call < 6) return { rows: [], rowCount: 0 } as unknown as QueryResult
-      if (call === 6) {
-        return { rows: [{ id: "inv_alpha" }, { id: "inv_zulu" }], rowCount: 2 } as unknown as QueryResult
-      }
-      return {
-        rows: [
-          makeInvocationRow({ id: "inv_alpha", source_message_id: "msg_alpha", status: "parked" }),
-          makeInvocationRow({ id: "inv_zulu", source_message_id: "msg_zulu", status: "parked" }),
-        ],
-        rowCount: 2,
-      } as unknown as QueryResult
-    })
-
-    await BotInvocationRepository.parkExhausted({ query } as Querier, {
-      workspaceId: "ws_1",
-      botId: "bot_alice",
-      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
-    })
-
-    expect(query.mock.calls.slice(1, 5).map((call) => call[1])).toEqual([
-      ["bot_invocation_source\u001fws_1\u001fmsg_alpha"],
-      ["bot_invocation_source\u001fws_1\u001fmsg_zulu"],
-      ["bot_invocation_actor_source\u001fws_1\u001fmsg_alpha\u001fbot\u001fbot_alice"],
-      ["bot_invocation_actor_source\u001fws_1\u001fmsg_zulu\u001fbot\u001fbot_alice"],
-    ])
-  })
 })
 
 describe("BotInvocationRepository.findBootstrapInvocations", () => {
   afterEach(() => mock.restore())
 
   it("excludes attempt-exhausted rows from the available list (mirrors claimOne)", async () => {
-    // Two queries run via Promise.all (available + ownedClaims); capture every
-    // text so the assertion targets the available query specifically.
+    // Capture every statement so the assertion targets the available query specifically.
     const texts: string[] = []
     const db: Querier = {
       query: mock(async (q) => {

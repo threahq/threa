@@ -980,6 +980,34 @@
                     "propertyNames": { "type": "string" },
                     "additionalProperties": {}
                   },
+                  "manifest": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "output": {
+                            "type": "object",
+                            "properties": {
+                              "reply": { "default": true, "type": "boolean" },
+                              "trace": { "default": true, "type": "boolean" },
+                              "sources": { "default": false, "type": "boolean" }
+                            },
+                            "required": ["reply", "trace", "sources"],
+                            "additionalProperties": false
+                          },
+                          "input": {
+                            "type": "object",
+                            "properties": { "updates": { "type": "string", "enum": ["live", "restart"] } },
+                            "required": ["updates"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": ["output"],
+                        "additionalProperties": false
+                      },
+                      { "type": "null" }
+                    ]
+                  },
                   "statusText": { "type": "string", "maxLength": 200 },
                   "publicKey": {
                     "type": "string",
@@ -1661,6 +1689,7 @@
                               "enum": ["mentionable", "active-scratchpad", "session-control"]
                             },
                             "promptMarkdown": { "type": "string" },
+                            "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
                             "authorUserId": { "type": "string" },
                             "mentionedActorSlugs": { "type": "array", "items": { "type": "string" } },
                             "claimToken": { "type": "string" },
@@ -1807,6 +1836,7 @@
                             "trigger",
                             "requiredCapability",
                             "promptMarkdown",
+                            "sourceRevision",
                             "authorUserId",
                             "mentionedActorSlugs",
                             "claimToken",
@@ -1889,7 +1919,9 @@
                 "properties": {
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
-                  "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 }
+                  "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 },
+                  "knownSourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                  "restartRequiredRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
                 },
                 "required": ["instanceId", "claimToken", "claimTtlSeconds"],
                 "additionalProperties": false
@@ -1907,14 +1939,118 @@
                   "type": "object",
                   "properties": {
                     "data": {
-                      "type": "object",
-                      "properties": {
-                        "invocationId": { "type": "string" },
-                        "status": { "type": "string" },
-                        "claimExpiresAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
-                      },
-                      "required": ["invocationId", "status", "claimExpiresAt"],
-                      "additionalProperties": false
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "invocationId": { "type": "string" },
+                            "status": { "type": "string", "const": "active" },
+                            "claimExpiresAt": { "type": "string", "format": "date-time" },
+                            "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                            "update": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "delivery": { "type": "string", "const": "plaintext" },
+                                    "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                    "promptMarkdown": { "type": "string" },
+                                    "mentionedActorSlugs": { "type": "array", "items": { "type": "string" } }
+                                  },
+                                  "required": ["delivery", "sourceRevision", "promptMarkdown", "mentionedActorSlugs"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "delivery": { "type": "string", "const": "sealed" },
+                                    "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                    "prompt": {
+                                      "type": "object",
+                                      "properties": {
+                                        "ciphertext": { "type": "string" },
+                                        "envelope": {
+                                          "type": "object",
+                                          "properties": {
+                                            "v": { "type": "number" },
+                                            "keyGeneration": {
+                                              "type": "integer",
+                                              "minimum": 0,
+                                              "maximum": 9007199254740991
+                                            },
+                                            "iv": { "type": "string" },
+                                            "aad": { "type": "string" }
+                                          },
+                                          "required": ["v", "keyGeneration", "iv", "aad"],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "required": ["ciphertext", "envelope"],
+                                      "additionalProperties": false
+                                    },
+                                    "wraps": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "keyGeneration": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "wrapEnc": { "type": "string" },
+                                          "wrapCt": { "type": "string" }
+                                        },
+                                        "required": ["keyGeneration", "wrapEnc", "wrapCt"],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "reply": {
+                                      "type": "object",
+                                      "properties": {
+                                        "keyGeneration": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "senderId": { "type": "string" }
+                                      },
+                                      "required": ["keyGeneration", "senderId"],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": ["delivery", "sourceRevision", "prompt", "wraps", "reply"],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          },
+                          "required": ["invocationId", "status", "claimExpiresAt", "sourceRevision"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "invocationId": { "type": "string" },
+                            "status": { "type": "string", "const": "cancelled" },
+                            "claimExpiresAt": { "type": "null" },
+                            "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "routing_changed",
+                                "source_deleted",
+                                "input_restart",
+                                "adapter_restart_required",
+                                "key_grant_lost",
+                                "input_stale"
+                              ]
+                            }
+                          },
+                          "required": ["invocationId", "status", "claimExpiresAt", "sourceRevision", "reason"],
+                          "additionalProperties": false
+                        }
+                      ]
                     }
                   },
                   "required": ["data"],
@@ -1950,7 +2086,32 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
+          "404": { "description": "Resource not found" },
+          "409": {
+            "description": "Conflict: the resource is not in the state the operation requires",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -2731,6 +2892,7 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
+                  "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
                   "reply": {
                     "type": "object",
                     "properties": {
@@ -2896,6 +3058,7 @@
                 "properties": {
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
                   "finalMessageMarkdown": { "type": "string", "minLength": 1, "maxLength": 50000 },
                   "noResponse": { "type": "boolean" },
                   "sources": {
@@ -3106,7 +3269,32 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
+          "404": { "description": "Resource not found" },
+          "409": {
+            "description": "Conflict: the resource is not in the state the operation requires",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
         }
       }
     },

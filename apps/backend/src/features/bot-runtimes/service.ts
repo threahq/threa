@@ -12,18 +12,24 @@ import type {
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
-import { botInvocationId, botRuntimeInstanceId, botRuntimeSessionLinkId, streamActiveActorId } from "../../lib/id"
+import {
+  botInvocationId,
+  botRuntimeInstanceId,
+  botRuntimeSessionLinkId,
+  eventId,
+  streamActiveActorId,
+} from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { serializeBigInt } from "@threa/backend-common"
-import { eventId } from "../../lib/id"
 import {
   BOT_CLAIM_MAX_ATTEMPTS,
   BotInvocationRepository,
-  botInvocationActorSourceLockKey,
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
+  resolveControlTarget,
   type BotInvocation,
+  type BotInvocationCancellation,
   type BotRuntimeInstance,
   type BotRuntimeSessionLink,
   type StreamActiveActor,
@@ -120,6 +126,7 @@ export class BotRuntimeService {
     publicKeyId?: string | null
     mergeCapabilities?: boolean
     retainBik?: boolean
+    retainManifest?: boolean
   }): Promise<BotRuntimeInstance> {
     return BotRuntimeInstanceRepository.upsertPresence(this.pool, {
       id: botRuntimeInstanceId(),
@@ -137,6 +144,7 @@ export class BotRuntimeService {
       publicKeyId: params.publicKeyId,
       mergeCapabilities: params.mergeCapabilities,
       retainBik: params.retainBik,
+      retainManifest: params.retainManifest,
     })
   }
 
@@ -462,6 +470,7 @@ export class BotRuntimeService {
       // Session-link writes don't carry the runtime's BIK; keep the key the
       // live session registered via bot:hello rather than nulling it.
       retainBik: true,
+      retainManifest: true,
     })
   }
 
@@ -643,16 +652,38 @@ export class BotRuntimeService {
     }
   }
 
+  private async emitCancellationHints(db: Querier, invocations: BotInvocation[]): Promise<void> {
+    for (const invocation of invocations) {
+      if (invocation.status !== "cancelled" || !invocation.cancellationReason) continue
+      await OutboxRepository.insert(db, "bot_invocation:cancelled", {
+        workspaceId: invocation.workspaceId,
+        botId: invocation.actorId,
+        invocationId: invocation.id,
+        sourceRevision: invocation.sourceMessageRevision,
+        ...resolveControlTarget(invocation),
+        reason: invocation.cancellationReason,
+      })
+    }
+  }
+
   private async cancelInvocationsForDeletedSourceInTransaction(
     db: Querier,
-    params: { workspaceId: string; sourceMessageId: string }
+    params: { workspaceId: string; sourceMessageId: string },
+    options: { locksHeld?: boolean } = {}
   ): Promise<number> {
-    const cancelled = await BotInvocationRepository.cancelActiveBySource(db, {
-      ...params,
-      reason: "source_deleted",
-    })
-    await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "deleted")
-    return cancelled.length
+    const cancelled = await BotInvocationRepository.cancelActiveBySource(
+      db,
+      { ...params, reason: "source_deleted" },
+      options
+    )
+    await this.terminalizeCancelledSessions(
+      db,
+      params.workspaceId,
+      [...cancelled.transitioned, ...cancelled.sessionRepairCandidates],
+      "deleted"
+    )
+    await this.emitCancellationHints(db, cancelled.transitioned)
+    return cancelled.transitioned.length + cancelled.sessionRepairCandidates.length
   }
 
   async cancelInvocationsForDeletedSource(params: { workspaceId: string; sourceMessageId: string }): Promise<number> {
@@ -690,28 +721,68 @@ export class BotRuntimeService {
     db: Querier,
     source: InvocationSourceState,
     sourceMessageId: string,
-    route: CanonicalInvocationRoute
+    route: CanonicalInvocationRoute,
+    options: { locksHeld?: boolean } = {}
   ): Promise<void> {
-    const { invocation, wasNewlyInserted } = await BotInvocationRepository.insertIdempotent(db, {
-      id: botInvocationId(),
-      workspaceId: source.workspaceId,
-      rootStreamId: route.rootStreamId,
-      activeStreamId: route.activeStreamId,
-      sourceMessageId,
-      responseStreamId: route.responseStreamId,
-      actorType: "bot",
-      actorId: route.actorId,
-      trigger: route.trigger,
-      requiredCapability: route.requiredCapability,
-      promptMarkdown: route.promptMarkdown,
-      sourceMessageRevision: source.revision,
-      authorUserId: route.authorUserId,
-      mentionedActorSlugs: route.mentionedActorSlugs,
-      targetInstanceId: route.targetInstanceId,
-      targetRuntimeSessionId: route.targetRuntimeSessionId,
-      metadata: {},
-    })
-    if (!wasNewlyInserted) return
+    const { invocation, wasNewlyInserted, didAdvanceSourceRevision, routingDestinationChanged } =
+      await BotInvocationRepository.insertIdempotent(
+        db,
+        {
+          id: botInvocationId(),
+          workspaceId: source.workspaceId,
+          rootStreamId: route.rootStreamId,
+          activeStreamId: route.activeStreamId,
+          sourceMessageId,
+          responseStreamId: route.responseStreamId,
+          actorType: "bot",
+          actorId: route.actorId,
+          trigger: route.trigger,
+          requiredCapability: route.requiredCapability,
+          promptMarkdown: route.promptMarkdown,
+          sourceMessageRevision: source.revision,
+          authorUserId: route.authorUserId,
+          mentionedActorSlugs: route.mentionedActorSlugs,
+          targetInstanceId: route.targetInstanceId,
+          targetRuntimeSessionId: route.targetRuntimeSessionId,
+          metadata: {},
+        },
+        options
+      )
+    if (!wasNewlyInserted) {
+      if (routingDestinationChanged && invocation.status === "pending") {
+        await this.emitAvailabilityHint(db, invocation)
+        return
+      }
+      if (!didAdvanceSourceRevision || invocation.status !== "claimed") return
+      if (invocation.claimedInputUpdateMode === "live") {
+        await OutboxRepository.insert(db, "bot_invocation:input_updated", {
+          workspaceId: invocation.workspaceId,
+          botId: invocation.actorId,
+          invocationId: invocation.id,
+          sourceRevision: invocation.sourceMessageRevision,
+          ...resolveControlTarget(invocation),
+        })
+        return
+      }
+      if (invocation.claimedInputUpdateMode === "restart") {
+        const cancelled = await BotInvocationRepository.cancelClaim(db, {
+          workspaceId: invocation.workspaceId,
+          invocationId: invocation.id,
+          reason: "input_restart",
+          expectedSourceRevision: invocation.sourceMessageRevision,
+          bumpToRevision: invocation.sourceMessageRevision,
+        })
+        if (!cancelled) return
+        await this.terminalizeCancelledSessions(db, invocation.workspaceId, [cancelled], "superseded")
+        await this.emitCancellationHints(db, [cancelled])
+        await this.insertCanonicalRoute(db, source, sourceMessageId, route, { locksHeld: true })
+      }
+      return
+    }
+    await this.emitAvailabilityHint(db, invocation)
+  }
+
+  private async emitAvailabilityHint(db: Querier, invocation: BotInvocation): Promise<void> {
     await OutboxRepository.insert(db, "bot_invocation:available", {
       workspaceId: invocation.workspaceId,
       botId: invocation.actorId,
@@ -723,66 +794,68 @@ export class BotRuntimeService {
     })
   }
 
+  private async reconcileInvocationSourceInTransaction(
+    db: Querier,
+    params: { workspaceId: string; sourceMessageId: string },
+    options: { locksHeld?: boolean; source?: InvocationSourceState | null } = {}
+  ): Promise<Array<{ botId: string; streamId: string; rootStreamId: string; contentMarkdown: string }>> {
+    if (options.source === undefined && !options.locksHeld) await BotInvocationRepository.lockSource(db, params)
+    const source =
+      options.source === undefined
+        ? await MessageRepository.findInvocationSourceStateForShare(db, {
+            workspaceId: params.workspaceId,
+            messageId: params.sourceMessageId,
+          })
+        : options.source
+    if (!source || source.deleted) {
+      await this.cancelInvocationsForDeletedSourceInTransaction(db, params, options)
+      return []
+    }
+
+    const routes = await resolveCanonicalInvocationRoutes(db, source)
+    const dispatchable = routes.filter((route) => !route.missingLinkNotice)
+    const cancelled = await BotInvocationRepository.cancelActiveRoutesNotDesired(
+      db,
+      {
+        ...params,
+        sourceMessageRevision: source.revision,
+        desiredRoutes: dispatchable.map((route) => ({
+          actorId: route.actorId,
+          trigger: route.trigger,
+          activeStreamId: route.activeStreamId,
+          responseStreamId: route.responseStreamId,
+          targetInstanceId: route.targetInstanceId,
+          targetRuntimeSessionId: route.targetRuntimeSessionId,
+        })),
+      },
+      options
+    )
+    await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
+    await this.emitCancellationHints(db, cancelled)
+    const orderedDispatchable = dispatchable.toSorted((left, right) => left.actorId.localeCompare(right.actorId))
+    for (const route of orderedDispatchable) {
+      await this.insertCanonicalRoute(db, source, params.sourceMessageId, route, options)
+    }
+
+    return routes.flatMap((route) =>
+      route.missingLinkNotice
+        ? [
+            {
+              botId: route.actorId,
+              streamId: source.streamId,
+              rootStreamId: route.rootStreamId,
+              contentMarkdown: route.missingLinkNotice,
+            },
+          ]
+        : []
+    )
+  }
+
   async reconcileInvocationSource(params: {
     workspaceId: string
     sourceMessageId: string
   }): Promise<Array<{ botId: string; streamId: string; rootStreamId: string; contentMarkdown: string }>> {
-    return withTransaction(this.pool, async (db) => {
-      const source = await MessageRepository.findInvocationSourceStateForShare(db, {
-        workspaceId: params.workspaceId,
-        messageId: params.sourceMessageId,
-      })
-      if (!source || source.deleted) {
-        await this.cancelInvocationsForDeletedSourceInTransaction(db, params)
-        return []
-      }
-
-      const routes = await resolveCanonicalInvocationRoutes(db, source)
-      const dispatchable = routes.filter((route) => !route.missingLinkNotice)
-      const cancelled = await BotInvocationRepository.cancelActiveRoutesNotDesired(db, {
-        ...params,
-        sourceMessageRevision: source.revision,
-        desiredRoutes: dispatchable.map((route) => ({
-          actorType: "bot",
-          actorId: route.actorId,
-          trigger: route.trigger,
-        })),
-      })
-      await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
-      const orderedDispatchable = dispatchable.toSorted((left, right) => {
-        const leftKey = botInvocationActorSourceLockKey({
-          workspaceId: params.workspaceId,
-          sourceMessageId: params.sourceMessageId,
-          actorType: "bot",
-          actorId: left.actorId,
-        })
-        const rightKey = botInvocationActorSourceLockKey({
-          workspaceId: params.workspaceId,
-          sourceMessageId: params.sourceMessageId,
-          actorType: "bot",
-          actorId: right.actorId,
-        })
-        if (leftKey < rightKey) return -1
-        if (leftKey > rightKey) return 1
-        return 0
-      })
-      for (const route of orderedDispatchable) {
-        await this.insertCanonicalRoute(db, source, params.sourceMessageId, route)
-      }
-
-      return routes.flatMap((route) =>
-        route.missingLinkNotice
-          ? [
-              {
-                botId: route.actorId,
-                streamId: source.streamId,
-                rootStreamId: route.rootStreamId,
-                contentMarkdown: route.missingLinkNotice,
-              },
-            ]
-          : []
-      )
-    })
+    return withTransaction(this.pool, (db) => this.reconcileInvocationSourceInTransaction(db, params))
   }
 
   async createInvocation(params: {
@@ -874,17 +947,7 @@ export class BotRuntimeService {
     ) {
       throw new Error("Idempotent bot invocation identity mismatch")
     }
-    if (wasNewlyInserted) {
-      await OutboxRepository.insert(db, "bot_invocation:available", {
-        workspaceId: invocation.workspaceId,
-        botId: invocation.actorId,
-        invocationId: invocation.id,
-        requiredCapability: invocation.requiredCapability,
-        targetInstanceId: invocation.targetInstanceId,
-        targetRuntimeSessionId: invocation.targetRuntimeSessionId,
-        createdAt: invocation.createdAt.toISOString(),
-      })
-    }
+    if (wasNewlyInserted) await this.emitAvailabilityHint(db, invocation)
     return { invocation, wasNewlyInserted }
   }
 
@@ -913,6 +976,7 @@ export class BotRuntimeService {
     serverGeneratedAt: Date
     available: BotInvocation[]
     ownedClaims: BotInvocation[]
+    recentCancellations: BotInvocationCancellation[]
     activeActorByStream: StreamActiveActor[]
     activeSessionLinks: BotRuntimeSessionLink[]
   }> {
@@ -923,31 +987,30 @@ export class BotRuntimeService {
     return withClient(this.pool, async (db) => {
       await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
       try {
-        const [bootstrap, activeActorByStream, activeSessionLinks] = await Promise.all([
-          BotInvocationRepository.findBootstrapInvocations(db, {
-            workspaceId: params.workspaceId,
-            botId: params.botId,
-            instanceId: params.instanceId,
-            runtimeSessionId: params.runtimeSessionId ?? null,
-            supportedCapabilities: params.supportedCapabilities,
-            since,
-            maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
-          }),
-          StreamActiveActorRepository.findActiveForBot(db, {
-            workspaceId: params.workspaceId,
-            botId: params.botId,
-          }),
-          BotRuntimeSessionLinkRepository.findActiveByBotInstance(db, {
-            workspaceId: params.workspaceId,
-            botId: params.botId,
-            instanceId: params.instanceId,
-          }),
-        ])
+        const bootstrap = await BotInvocationRepository.findBootstrapInvocations(db, {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          instanceId: params.instanceId,
+          runtimeSessionId: params.runtimeSessionId ?? null,
+          supportedCapabilities: params.supportedCapabilities,
+          since,
+          maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+        })
+        const activeActorByStream = await StreamActiveActorRepository.findActiveForBot(db, {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+        })
+        const activeSessionLinks = await BotRuntimeSessionLinkRepository.findActiveByBotInstance(db, {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          instanceId: params.instanceId,
+        })
         await db.query("COMMIT")
         return {
           serverGeneratedAt: now,
           available: bootstrap.available,
           ownedClaims: bootstrap.ownedClaims,
+          recentCancellations: bootstrap.recentCancellations,
           activeActorByStream,
           activeSessionLinks,
         }
@@ -1031,7 +1094,7 @@ export class BotRuntimeService {
               messageId: claimed.sourceMessageId,
             })
             const cancelCandidate = async (reason: "source_deleted" | "routing_changed") => {
-              const cancelled = await BotInvocationRepository.cancelClaimedCandidate(db, {
+              const cancelled = await BotInvocationRepository.cancelClaim(db, {
                 workspaceId: claimed.workspaceId,
                 invocationId: claimed.id,
                 instanceId: params.instanceId,
@@ -1173,18 +1236,131 @@ export class BotRuntimeService {
     return BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, params)
   }
 
-  async validateClaimSourceForCompletion(db: Querier, claim: BotInvocation): Promise<boolean> {
-    if (claim.trigger === "session-control") return claim.claimedSourceMessageRevision === 0
+  async validateClaimSourceForCompletion(
+    db: Querier,
+    claim: BotInvocation,
+    suppliedRevision?: number
+  ): Promise<boolean> {
+    if (claim.trigger === "session-control")
+      return claim.claimedSourceMessageRevision === 0 && (suppliedRevision == null || suppliedRevision === 0)
     const source = await MessageRepository.findInvocationSourceStateForShare(db, {
       workspaceId: claim.workspaceId,
       messageId: claim.sourceMessageId,
     })
-    return Boolean(
-      source &&
-      !source.deleted &&
-      source.streamId === claim.activeStreamId &&
-      source.revision === claim.claimedSourceMessageRevision
+    if (!source || source.deleted || source.streamId !== claim.activeStreamId) return false
+    if (suppliedRevision == null) return source.revision === claim.claimedSourceMessageRevision
+    if (suppliedRevision === claim.claimedSourceMessageRevision) return source.revision === suppliedRevision
+    return (
+      claim.claimedInputUpdateMode === "live" &&
+      suppliedRevision > (claim.claimedSourceMessageRevision ?? -1) &&
+      suppliedRevision === source.revision
     )
+  }
+
+  async reconcileStaleCompletionInTransaction(db: Querier, claim: BotInvocation): Promise<void> {
+    const source =
+      claim.trigger === "session-control"
+        ? null
+        : await MessageRepository.findInvocationSourceStateForShare(db, {
+            workspaceId: claim.workspaceId,
+            messageId: claim.sourceMessageId,
+          })
+    if (claim.claimedByInstanceId == null || claim.claimToken == null || claim.claimedSourceMessageRevision == null)
+      return
+    const cancelled = await BotInvocationRepository.cancelClaim(db, {
+      workspaceId: claim.workspaceId,
+      botId: claim.actorId,
+      invocationId: claim.id,
+      reason: "input_stale",
+      instanceId: claim.claimedByInstanceId,
+      claimToken: claim.claimToken,
+      expectedClaimedRevision: claim.claimedSourceMessageRevision,
+      bumpToRevision: source?.revision ?? claim.sourceMessageRevision,
+    })
+    if (!cancelled) return
+    await this.terminalizeCancelledSessions(db, claim.workspaceId, [cancelled], "superseded")
+    await this.emitCancellationHints(db, [cancelled])
+    if (claim.trigger === "session-control") return
+    await this.reconcileInvocationSourceInTransaction(
+      db,
+      { workspaceId: claim.workspaceId, sourceMessageId: claim.sourceMessageId },
+      { locksHeld: true, source }
+    )
+  }
+
+  async renewInvocationClaimInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId: string
+      claimToken: string
+      claimTtlSeconds: number
+      knownSourceRevision?: number
+      restartRequiredRevision?: number
+    }
+  ): Promise<BotInvocation | null> {
+    let control = await BotInvocationRepository.findClaimControl(db, params)
+    if (!control) return null
+    if (control.status === "cancelled") return control
+    if (control.trigger !== "session-control") {
+      const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+        workspaceId: params.workspaceId,
+        messageId: control.sourceMessageId,
+      })
+      // `findClaimControl` owns the source and current-actor advisory locks, but
+      // reconciliation can discover other actors after opening the canonical
+      // source. Let the repositories acquire that complete actor set rather
+      // than pretending the one claim's actor lock covers every route.
+      await this.reconcileInvocationSourceInTransaction(
+        db,
+        { workspaceId: params.workspaceId, sourceMessageId: control.sourceMessageId },
+        { source }
+      )
+    }
+    control = await BotInvocationRepository.findClaimControl(db, params, { locksHeld: true })
+    if (!control || control.status === "cancelled") return control
+    if (
+      params.knownSourceRevision != null &&
+      (params.knownSourceRevision < (control.claimedSourceMessageRevision ?? 0) ||
+        params.knownSourceRevision > control.sourceMessageRevision)
+    )
+      return null
+    if (params.restartRequiredRevision != null) {
+      if (
+        control.claimedInputUpdateMode !== "live" ||
+        params.restartRequiredRevision !== control.sourceMessageRevision ||
+        params.restartRequiredRevision <= (control.claimedSourceMessageRevision ?? 0) ||
+        params.knownSourceRevision !== params.restartRequiredRevision
+      )
+        return null
+      const cancelled = await BotInvocationRepository.cancelClaim(db, {
+        workspaceId: params.workspaceId,
+        invocationId: params.invocationId,
+        reason: "adapter_restart_required",
+        instanceId: params.instanceId,
+        claimToken: params.claimToken,
+        expectedSourceRevision: params.restartRequiredRevision,
+        bumpToRevision: params.restartRequiredRevision,
+      })
+      if (!cancelled) return null
+      await this.terminalizeCancelledSessions(db, params.workspaceId, [cancelled], "superseded")
+      await this.emitCancellationHints(db, [cancelled])
+      if (cancelled.trigger !== "session-control") {
+        const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+          workspaceId: params.workspaceId,
+          messageId: cancelled.sourceMessageId,
+        })
+        await this.reconcileInvocationSourceInTransaction(
+          db,
+          { workspaceId: params.workspaceId, sourceMessageId: cancelled.sourceMessageId },
+          { locksHeld: true, source }
+        )
+      }
+      return cancelled
+    }
+    return BotInvocationRepository.renewClaim(db, params)
   }
 
   async renewInvocationClaim(params: {
@@ -1194,8 +1370,31 @@ export class BotRuntimeService {
     instanceId: string
     claimToken: string
     claimTtlSeconds: number
+    knownSourceRevision?: number
+    restartRequiredRevision?: number
   }): Promise<BotInvocation | null> {
-    return BotInvocationRepository.renewClaim(this.pool, params)
+    return withTransaction(this.pool, (db) => this.renewInvocationClaimInTransaction(db, params))
+  }
+
+  async cancelOwnedClaimForKeyGrantLossInTransaction(
+    db: Querier,
+    control: BotInvocation
+  ): Promise<BotInvocation | null> {
+    if (control.status !== "claimed" || control.claimedByInstanceId == null || control.claimToken == null)
+      return control
+    const cancelled = await BotInvocationRepository.cancelClaim(db, {
+      workspaceId: control.workspaceId,
+      invocationId: control.id,
+      reason: "key_grant_lost",
+      instanceId: control.claimedByInstanceId,
+      claimToken: control.claimToken,
+      expectedSourceRevision: control.sourceMessageRevision,
+      bumpToRevision: control.sourceMessageRevision,
+    })
+    if (!cancelled) return null
+    await this.terminalizeCancelledSessions(db, control.workspaceId, [cancelled], "superseded")
+    await this.emitCancellationHints(db, [cancelled])
+    return cancelled
   }
 
   async completeInvocation(params: {
@@ -1204,6 +1403,7 @@ export class BotRuntimeService {
     invocationId: string
     instanceId: string
     claimToken: string
+    sourceRevision: number
   }): Promise<BotInvocation | null> {
     return BotInvocationRepository.completeClaim(this.pool, params)
   }
@@ -1218,9 +1418,10 @@ export class BotRuntimeService {
       invocationId: string
       instanceId?: string
       claimToken: string
+      sourceRevision: number
     }
   ): Promise<BotInvocation | null> {
-    return BotInvocationRepository.completeClaim(db, params)
+    return BotInvocationRepository.completeClaim(db, params, { locksHeld: true })
   }
 
   async failInvocation(params: {

@@ -975,4 +975,77 @@ describe("BroadcastHandler", () => {
     expect(result?.status).toBe("error")
     expect(emitChains).toHaveLength(0)
   })
+
+  it("routes metadata-only invocation controls by session, instance, then bot and drops malformed payloads without stalling the batch", async () => {
+    const base = { workspaceId: "ws_1", botId: "bot_1", invocationId: "binv_1", sourceRevision: 2 }
+    const events = [
+      makeEvent(10n, "bot_invocation:input_updated", {
+        ...base,
+        targetInstanceId: "inst_1",
+        targetRuntimeSessionId: "sess_1",
+      }),
+      makeEvent(11n, "bot_invocation:input_updated", {
+        ...base,
+        targetInstanceId: "inst_1",
+        targetRuntimeSessionId: null,
+      }),
+      makeEvent(12n, "bot_invocation:cancelled", {
+        ...base,
+        targetInstanceId: null,
+        targetRuntimeSessionId: null,
+        reason: "source_deleted",
+      }),
+      makeEvent(13n, "bot_invocation:input_updated", {
+        ...base,
+        sourceRevision: -1,
+        promptMarkdown: "must not leak",
+        targetInstanceId: null,
+        targetRuntimeSessionId: null,
+      }),
+      makeEvent(14n, "bot_invocation:cancelled", {
+        ...base,
+        targetInstanceId: null,
+        targetRuntimeSessionId: null,
+        reason: "invented",
+      }),
+      makeEvent(15n, "bot_invocation:cancelled", {
+        ...base,
+        targetInstanceId: null,
+        targetRuntimeSessionId: null,
+        reason: "input_stale",
+      }),
+    ]
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue(events)
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(emitChains.filter((entry) => entry.eventType.startsWith("bot_invocation:"))).toEqual([
+      {
+        room: "bot:ws_1:bot:bot_1:session:sess_1",
+        eventType: "bot_invocation:input_updated",
+        payload: events[0]!.payload,
+        namespace: "/bot",
+      },
+      {
+        room: "bot:ws_1:bot:bot_1:instance:inst_1",
+        eventType: "bot_invocation:input_updated",
+        payload: events[1]!.payload,
+        namespace: "/bot",
+      },
+      {
+        room: "bot:ws_1:bot:bot_1",
+        eventType: "bot_invocation:cancelled",
+        payload: events[2]!.payload,
+        namespace: "/bot",
+      },
+      {
+        room: "bot:ws_1:bot:bot_1",
+        eventType: "bot_invocation:cancelled",
+        payload: events[5]!.payload,
+        namespace: "/bot",
+      },
+    ])
+    expect(JSON.stringify(emitChains)).not.toContain("must not leak")
+  })
 })

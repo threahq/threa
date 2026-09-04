@@ -3,7 +3,8 @@ import { z } from "zod"
 import { AGENT_STEP_TYPES, BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_RUNTIME_STATUSES } from "@threa/types"
 import { HttpError } from "@threa/backend-common"
 import type { BotRuntimeService } from "./service"
-import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
+import { botRuntimeManifestSchema } from "./manifest-schema"
+import type { BotInvocation, BotInvocationCancellation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
 import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import type { BotApiKeyService } from "../public-api"
 import type { AccessLogService, AuditSubjectRef } from "../access-log"
@@ -28,7 +29,7 @@ const runtimeSessionIdSchema = z
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/, "runtimeSessionId must be 1-64 chars of [A-Za-z0-9_-]")
 
-const helloSchema = z
+export const helloSchema = z
   .object({
     instanceId: instanceIdSchema,
     runtimeKind: z.enum(BOT_RUNTIME_KINDS),
@@ -41,15 +42,7 @@ const helloSchema = z
     // Once present, the verb boundary rejects any output it didn't declare. The
     // `output` object's fields default (reply+trace on, sources off), so sending
     // `manifest: { output: {} }` opts into enforcement at the default profile.
-    manifest: z
-      .object({
-        output: z.object({
-          reply: z.boolean().optional().default(true),
-          trace: z.boolean().optional().default(true),
-          sources: z.boolean().optional().default(false),
-        }),
-      })
-      .optional(),
+    manifest: botRuntimeManifestSchema.nullable().optional(),
     // ISO timestamp — server echoes the next cursor in the ack and the runtime
     // sends it back on the following hello so we only replay events the
     // runtime hasn't already seen.
@@ -91,6 +84,7 @@ export const presenceUpdateSchema = z
     status: z.enum(BOT_RUNTIME_STATUSES),
     acceptingInvocations: z.boolean(),
     capabilities: z.record(z.string(), z.unknown()).optional(),
+    manifest: botRuntimeManifestSchema.nullable().optional(),
     statusText: statusTextSchema,
     ...botIdentityKeyFields,
   })
@@ -106,6 +100,8 @@ export const invocationRenewSchema = z.object({
   instanceId: instanceIdSchema,
   claimToken: claimTokenSchema,
   claimTtlSeconds: claimTtlSecondsSchema,
+  knownSourceRevision: z.number().int().min(0).optional(),
+  restartRequiredRevision: z.number().int().min(0).optional(),
 })
 
 // WS frame for `bot:invocation:steps` — the batched form of
@@ -410,6 +406,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           serverGeneratedAt: bootstrap.serverGeneratedAt.toISOString(),
           availableInvocations: bootstrap.available.map(serializeInvocation),
           ownedClaims: bootstrap.ownedClaims.map(serializeInvocation),
+          recentCancellations: bootstrap.recentCancellations,
           activeActorByStream: bootstrap.activeActorByStream.map(serializeActiveActor),
           activeSessionLinks: bootstrap.activeSessionLinks.map(serializeSessionLink),
         }
@@ -469,6 +466,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           status: data.status,
           acceptingInvocations: data.acceptingInvocations,
           capabilities: data.capabilities,
+          manifest: data.manifest ?? null,
           statusText: data.statusText,
           publicKey: data.publicKey,
           publicKeyId: data.publicKeyId,
@@ -503,6 +501,8 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             instanceId: data.instanceId,
             claimToken: data.claimToken,
             claimTtlSeconds: data.claimTtlSeconds,
+            knownSourceRevision: data.knownSourceRevision,
+            restartRequiredRevision: data.restartRequiredRevision,
           })
           ack?.({ ok: true, data: { ...renewed } })
         } catch (err) {
@@ -643,6 +643,9 @@ export interface SerializedBotInvocation {
   trigger: string
   requiredCapability: string
   promptMarkdown: string
+  sourceRevision: number
+  claimedSourceRevision: number | null
+  claimedInputUpdateMode: string | null
   authorUserId: string
   mentionedActorSlugs: string[]
   targetInstanceId: string | null
@@ -685,6 +688,7 @@ export type BotHelloResponse =
       serverGeneratedAt: string
       availableInvocations: SerializedBotInvocation[]
       ownedClaims: SerializedBotInvocation[]
+      recentCancellations: BotInvocationCancellation[]
       activeActorByStream: SerializedStreamActiveActor[]
       activeSessionLinks: SerializedBotSessionLink[]
     }
@@ -726,6 +730,9 @@ function serializeInvocation(inv: BotInvocation): SerializedBotInvocation {
     trigger: inv.trigger,
     requiredCapability: inv.requiredCapability,
     promptMarkdown: inv.promptMarkdown,
+    sourceRevision: inv.sourceMessageRevision,
+    claimedSourceRevision: inv.claimedSourceMessageRevision,
+    claimedInputUpdateMode: inv.claimedInputUpdateMode,
     authorUserId: inv.authorUserId,
     mentionedActorSlugs: inv.mentionedActorSlugs,
     targetInstanceId: inv.targetInstanceId,

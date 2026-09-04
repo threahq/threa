@@ -9,6 +9,7 @@ import { z } from "zod"
 import {
   BOT_INVOCATION_CAPABILITIES,
   BOT_INVOCATION_TRIGGERS,
+  BOT_INVOCATION_CANCELLATION_REASONS,
   BOT_RUNTIME_KINDS,
   BOT_RUNTIME_STATUSES,
   BOT_TRAITS,
@@ -535,15 +536,15 @@ const sealedMessageSchema = z.object({
   envelope: sealedEnvelopeSchema,
 })
 
+const sealedWrapSchema = z.object({
+  keyGeneration: z.number().int().min(0),
+  wrapEnc: z.string(),
+  wrapCt: z.string(),
+})
+
 const sealedTurnContextSchema = z.object({
   callbackToken: z.string(),
-  wraps: z.array(
-    z.object({
-      keyGeneration: z.number().int().min(0),
-      wrapEnc: z.string(),
-      wrapCt: z.string(),
-    })
-  ),
+  wraps: z.array(sealedWrapSchema),
   history: z.array(
     sealedMessageSchema.extend({
       role: z.enum(["user", "assistant"]),
@@ -573,6 +574,7 @@ const claimedInvocationSchema = z.object({
   trigger: z.enum(BOT_INVOCATION_TRIGGERS),
   requiredCapability: z.enum(BOT_INVOCATION_CAPABILITIES),
   promptMarkdown: z.string(),
+  sourceRevision: z.number().int().min(0),
   authorUserId: z.string(),
   mentionedActorSlugs: z.array(z.string()),
   claimToken: z.string(),
@@ -648,7 +650,37 @@ const delegationAccessRequestSchema = z.object({
 
 const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
 const invocationStepSchema = z.object({ invocationId: z.string(), sessionId: z.string(), stepId: z.string() })
-const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
+const invocationUpdateSchema = z.discriminatedUnion("delivery", [
+  z.object({
+    delivery: z.literal("plaintext"),
+    sourceRevision: z.number().int().min(0),
+    promptMarkdown: z.string(),
+    mentionedActorSlugs: z.array(z.string()),
+  }),
+  z.object({
+    delivery: z.literal("sealed"),
+    sourceRevision: z.number().int().min(0),
+    prompt: sealedMessageSchema,
+    wraps: z.array(sealedWrapSchema),
+    reply: z.object({ keyGeneration: z.number().int().min(0), senderId: z.string() }),
+  }),
+])
+const renewedInvocationSchema = z.discriminatedUnion("status", [
+  z.object({
+    invocationId: z.string(),
+    status: z.literal("active"),
+    claimExpiresAt: z.string().datetime(),
+    sourceRevision: z.number().int().min(0),
+    update: invocationUpdateSchema.optional(),
+  }),
+  z.object({
+    invocationId: z.string(),
+    status: z.literal("cancelled"),
+    claimExpiresAt: z.null(),
+    sourceRevision: z.number().int().min(0),
+    reason: z.enum(BOT_INVOCATION_CANCELLATION_REASONS),
+  }),
+])
 const completedInvocationSchema = z.object({ invocationId: z.string(), message: messageSchema.nullable() })
 const sealedCompletedInvocationSchema = z.object({
   invocationId: z.string(),
@@ -1044,6 +1076,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(renewedInvocationSchema),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",
@@ -1173,6 +1206,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(completedInvocationSchema).extend({ slots: slotMapSchema }),
     canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "post",

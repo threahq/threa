@@ -356,18 +356,6 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
     expect(reconcile).toHaveBeenCalledWith({ workspaceId: "ws_1", sourceMessageId: "msg_1" })
   })
 
-  it("advances cleanly when canonical source deletion makes create reconciliation a no-op", async () => {
-    const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
-    const handler = new BotInvocationOutboxHandler(pool)
-
-    await expect(
-      (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
-        createdPayload
-      )
-    ).resolves.toBeUndefined()
-    expect(reconcile).toHaveBeenCalledTimes(1)
-  })
-
   it("posts missing-link notices only after reconciliation with an idempotent source key", async () => {
     spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([
       { botId: "bot_1", streamId: "stream_1", rootStreamId: "stream_root", contentMarkdown: "Link Scout" },

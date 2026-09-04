@@ -4,6 +4,8 @@ import {
   OutboxRepository,
   isOutboxEventType,
   type OutboxEvent,
+  botInvocationControlPayloadSchema,
+  botInvocationCancelledPayloadSchema,
   type BotInvocationAvailableOutboxPayload,
   type BotInvocationClaimedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
@@ -303,6 +305,31 @@ export class BroadcastHandler implements OutboxHandler {
       } else {
         botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
       }
+      return
+    }
+
+    if (
+      isOutboxEventType(event, "bot_invocation:input_updated") ||
+      isOutboxEventType(event, "bot_invocation:cancelled")
+    ) {
+      const parsed = (
+        isOutboxEventType(event, "bot_invocation:cancelled")
+          ? botInvocationCancelledPayloadSchema
+          : botInvocationControlPayloadSchema
+      ).safeParse(event.payload)
+      if (!parsed.success) {
+        logger.error(
+          { eventId: event.id, eventType: event.eventType, issues: parsed.error.issues },
+          "dispatchBotEvent: dropping malformed invocation control event"
+        )
+        return
+      }
+      const payload = parsed.data
+      let room = `bot:${workspaceId}:bot:${payload.botId}`
+      if (payload.targetInstanceId) room = `${room}:instance:${payload.targetInstanceId}`
+      if (payload.targetRuntimeSessionId)
+        room = `bot:${workspaceId}:bot:${payload.botId}:session:${payload.targetRuntimeSessionId}`
+      botNs.to(room).emit(event.eventType, payload)
       return
     }
 

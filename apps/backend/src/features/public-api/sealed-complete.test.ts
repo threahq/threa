@@ -106,6 +106,7 @@ function arrange(
   const getLatestSequence = mock(async () => 5n)
   const activeClaim = { id: "binv_1", responseStreamId: session.streamId, status: "claimed" }
   const validateClaimSourceForCompletion = mock(async () => true)
+  const reconcileStaleCompletionInTransaction = mock(async () => {})
   const completeInvocationInTransaction = mock(async (_db: unknown, _params: unknown) =>
     claimCompleted ? activeClaim : null
   )
@@ -115,6 +116,7 @@ function arrange(
     findActiveClaimForUpdateByToken: mock(async () => activeClaim),
     findCompletedInvocationForReplay: mock(async () => null),
     validateClaimSourceForCompletion,
+    reconcileStaleCompletionInTransaction,
     completeInvocationInTransaction,
   }
   const { io, emitted } = createEmitSpy()
@@ -143,6 +145,7 @@ function arrange(
     insertOutbox,
     botRuntimeService,
     validateClaimSourceForCompletion,
+    reconcileStaleCompletionInTransaction,
     findSession,
   }
 }
@@ -307,14 +310,15 @@ describe("completeBotInvocationSealed", () => {
         req({ reply: { messageId: "msg_reply", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE } }),
         res
       )
-    ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
+    ).rejects.toMatchObject({ status: 409, code: "INVOCATION_INPUT_STALE" })
 
     expect({
       messages: arranged.createMessageInTransaction.mock.calls.length,
       completions: arranged.completeInvocationInTransaction.mock.calls.length,
       lifecycleEvents: arranged.insertEvent.mock.calls.length,
       lifecycleOutbox: arranged.insertOutbox.mock.calls.length,
-    }).toEqual({ messages: 0, completions: 0, lifecycleEvents: 0, lifecycleOutbox: 0 })
+      reconciled: arranged.reconcileStaleCompletionInTransaction.mock.calls.length,
+    }).toEqual({ messages: 0, completions: 0, lifecycleEvents: 0, lifecycleOutbox: 0, reconciled: 1 })
   })
 
   it("rejects a reply sealed under the wrong key generation (400)", async () => {

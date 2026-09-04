@@ -1,4 +1,6 @@
 import { OutboxRepository as BaseOutboxRepository, type Querier } from "@threa/backend-common"
+import { z } from "zod"
+import { BOT_INVOCATION_CANCELLATION_REASONS } from "@threa/types"
 import type { Stream } from "../../features/streams"
 import type { StreamEvent } from "../../features/streams"
 import type { User } from "../../features/workspaces"
@@ -118,6 +120,8 @@ export type OutboxEventType =
   | "attachment:upload_status_changed"
   | "bot_invocation:available"
   | "bot_invocation:claimed"
+  | "bot_invocation:input_updated"
+  | "bot_invocation:cancelled"
   | "bot:active_actor_changed"
   | "bot:resync"
   | "bot:session_archived"
@@ -1112,6 +1116,21 @@ export interface BotInvocationAvailableOutboxPayload extends WorkspaceScopedPayl
   createdAt: string
 }
 
+export const botInvocationControlPayloadSchema = z.object({
+  workspaceId: z.string().min(1),
+  botId: z.string().min(1),
+  invocationId: z.string().min(1),
+  sourceRevision: z.number().int().min(0),
+  targetInstanceId: z.string().nullable(),
+  targetRuntimeSessionId: z.string().nullable(),
+})
+export const botInvocationCancelledPayloadSchema = botInvocationControlPayloadSchema.extend({
+  reason: z.enum(BOT_INVOCATION_CANCELLATION_REASONS),
+})
+
+export type BotInvocationControlOutboxPayload = z.infer<typeof botInvocationControlPayloadSchema>
+export type BotInvocationCancelledOutboxPayload = z.infer<typeof botInvocationCancelledPayloadSchema>
+
 export interface BotInvocationClaimedOutboxPayload extends WorkspaceScopedPayload {
   botId: string
   invocationId: string
@@ -1315,6 +1334,8 @@ export interface OutboxEventPayloadMap {
   "attachment:extraction_completed": AttachmentExtractionCompletedOutboxPayload
   "bot_invocation:available": BotInvocationAvailableOutboxPayload
   "bot_invocation:claimed": BotInvocationClaimedOutboxPayload
+  "bot_invocation:input_updated": BotInvocationControlOutboxPayload
+  "bot_invocation:cancelled": BotInvocationCancelledOutboxPayload
   "bot:active_actor_changed": BotActiveActorChangedOutboxPayload
   "bot:resync": BotResyncOutboxPayload
   "bot:session_archived": BotSessionArchivedOutboxPayload
@@ -1502,6 +1523,8 @@ export function isUserScopedEvent(event: OutboxEvent): event is OutboxEvent<User
 export type BotScopedEventType =
   | "bot_invocation:available"
   | "bot_invocation:claimed"
+  | "bot_invocation:input_updated"
+  | "bot_invocation:cancelled"
   | "bot:active_actor_changed"
   | "bot:resync"
   | "bot:session_archived"
@@ -1510,6 +1533,8 @@ export type BotScopedEventType =
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
   "bot_invocation:claimed",
+  "bot_invocation:input_updated",
+  "bot_invocation:cancelled",
   "bot:active_actor_changed",
   "bot:resync",
   "bot:session_archived",
