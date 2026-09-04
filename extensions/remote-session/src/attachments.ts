@@ -109,14 +109,26 @@ export function buildReplyAttachmentSection(uploaded: AttachmentSummary[], faile
 
 const DOWNLOAD_TIMEOUT_MS = 60_000
 
-export async function fetchAttachmentBytes(url: string, timeoutMs = DOWNLOAD_TIMEOUT_MS): Promise<Uint8Array> {
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  throw signal.reason instanceof Error ? signal.reason : new Error("attachment hydration aborted")
+}
+
+export async function fetchAttachmentBytes(
+  url: string,
+  timeoutMs = DOWNLOAD_TIMEOUT_MS,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
   // The url is a short-lived pre-signed storage URL, so it carries its own auth
   // — a plain fetch, not the bearer-authenticated client request. The timeout
   // signal spans headers AND arrayBuffer(): a stalled download body must reject,
   // not hang the channel (same pathogen as the client request bound).
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+  const timeout = AbortSignal.timeout(timeoutMs)
+  const response = await fetch(url, { signal: signal ? AbortSignal.any([timeout, signal]) : timeout })
   if (!response.ok) throw new Error(`download failed with ${response.status}`)
-  return new Uint8Array(await response.arrayBuffer())
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  throwIfAborted(signal)
+  return bytes
 }
 
 /**
@@ -135,22 +147,30 @@ export async function downloadInboundAttachments(
     cwd: string
     scanLimit: number
     log: (message: string) => void
+    /** Live canonical rebuilds fail instead of acknowledging a partial file set. */
+    strict?: boolean
+    signal?: AbortSignal
   }
 ): Promise<DownloadedAttachment[]> {
+  throwIfAborted(params.signal)
   const messages = await client.listStreamMessages(params.streamId, { limit: params.scanLimit })
+  throwIfAborted(params.signal)
   const selected = selectInboundAttachments(messages, params.sourceMessageId, params.contextMessageIds)
   if (selected.length === 0) return []
   const dir = join(params.cwd, ATTACHMENT_DIR, params.invocationId)
   const downloaded: DownloadedAttachment[] = []
   for (const item of selected) {
     try {
+      throwIfAborted(params.signal)
       const url = await client.getAttachmentDownloadUrl(item.attachment.id)
-      const bytes = await fetchAttachmentBytes(url)
+      const bytes = await fetchAttachmentBytes(url, DOWNLOAD_TIMEOUT_MS, params.signal)
       const localPath = attachmentLocalPath(dir, item.attachment.id, item.attachment.filename)
       mkdirSync(dirname(localPath), { recursive: true })
       writeFileSync(localPath, bytes)
+      throwIfAborted(params.signal)
       downloaded.push({ ...item, localPath })
     } catch (error) {
+      if (params.strict || params.signal?.aborted) throw error
       params.log(`attachment ${item.attachment.id} download failed: ${String(error)}`)
     }
   }
@@ -311,16 +331,22 @@ export async function downloadSealedInboundAttachments(
     invocationId: string
     cwd: string
     log: (message: string) => void
+    /** Live canonical rebuilds fail instead of acknowledging a partial file set. */
+    strict?: boolean
+    signal?: AbortSignal
   }
 ): Promise<DownloadedAttachment[]> {
+  throwIfAborted(params.signal)
   if (params.refs.length === 0) return []
   const dir = join(params.cwd, ATTACHMENT_DIR, params.invocationId)
   const downloaded: DownloadedAttachment[] = []
   for (const { ref, isSource } of params.refs) {
     try {
+      throwIfAborted(params.signal)
       const url = await client.getAttachmentDownloadUrl(ref.attachmentId)
-      const ciphertext = await fetchAttachmentBytes(url)
+      const ciphertext = await fetchAttachmentBytes(url, DOWNLOAD_TIMEOUT_MS, params.signal)
       const plaintext = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
+      throwIfAborted(params.signal)
       const localPath = attachmentLocalPath(dir, ref.attachmentId, ref.filename)
       mkdirSync(dirname(localPath), { recursive: true })
       writeFileSync(localPath, plaintext)
@@ -331,6 +357,7 @@ export async function downloadSealedInboundAttachments(
         localPath,
       })
     } catch (error) {
+      if (params.strict || params.signal?.aborted) throw error
       params.log(`sealed attachment ${ref.attachmentId} download failed: ${String(error)}`)
     }
   }

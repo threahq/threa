@@ -4,6 +4,7 @@ export {
   isSessionControlInvocation,
   formatInvocationContent,
   buildSteerContent,
+  effectiveRuntimeManifest,
   supportedCapabilitiesFor,
   claimCapabilitiesFor,
   runtimeCapabilitiesFor,

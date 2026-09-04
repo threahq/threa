@@ -34,10 +34,16 @@ export interface PostIntent {
 export type PlaintextCompletionBody = {
   instanceId: string
   claimToken: string
+  sourceRevision: number
   metadata: Record<string, unknown>
 } & ({ finalMessageMarkdown: string } | { noResponse: true })
 
-export type SealedCompletionBody = { reply: SealedReplyBody & { attachmentIds?: string[] } } | { noResponse: true }
+export type SealedCompletionBody = (
+  | { reply: SealedReplyBody & { attachmentIds?: string[] } }
+  | { noResponse: true }
+) & {
+  sourceRevision: number
+}
 
 export type PreparedCompletionWire =
   | { kind: "plaintext"; body: PlaintextCompletionBody }
@@ -77,6 +83,10 @@ export class TurnRoute {
   closing?: Promise<unknown>
   deadline?: ReturnType<typeof setTimeout>
   readonly pending = new Map<number, PreparedPost>()
+  /** Source-backed inputs folded into this turn; they close with it and fail with it. */
+  contributors: ClaimedInvocation[]
+  /** Aborts the completion on the wire when any folded source changes underneath it. */
+  readonly execution = new AbortController()
   /** FIFO tail: every post on this route runs behind it, in call order. */
   private tail: Promise<unknown> = Promise.resolve()
   /** Highest sequence handed out. Reserved before the write, so a failure spends it. */
@@ -95,8 +105,10 @@ export class TurnRoute {
     generation: number
     idleTimeoutMs: number
     onIdleDeadline: (route: TurnRoute, deadlineGeneration: number) => void
+    contributors?: ClaimedInvocation[]
   }) {
     this.invocation = options.invocation
+    this.contributors = [...(options.contributors ?? [])]
     this.order = options.order
     this.generation = options.generation
     this.idleTimeoutMs = options.idleTimeoutMs
@@ -157,6 +169,12 @@ export class TurnRoute {
   recordLandedPost(seq: number, prepared: PreparedPost): void {
     if (this.pending.get(seq) === prepared) this.pending.delete(seq)
     this.sentCount += 1
+  }
+
+  /** The source changed under a prepared body: never replay bytes sealed or revisioned against the old input. */
+  discardPrepared(): void {
+    this.pending.clear()
+    this.prepared = undefined
   }
 
   /** This session stopped speaking for the route's stream; pending retries and the deadline die with it. */
