@@ -69,6 +69,7 @@ export interface Message {
 }
 
 export interface InvocationSourceState {
+  messageId: string
   workspaceId: string
   streamId: string
   revision: number
@@ -212,6 +213,7 @@ export const MessageRepository = {
     const row = result.rows[0]
     if (!row) return null
     return {
+      messageId: row.id,
       workspaceId: row.workspace_id,
       streamId: row.stream_id,
       revision: row.revision,

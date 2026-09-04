@@ -1197,6 +1197,23 @@ export const BotInvocationRepository = {
     })
   },
 
+  async listCompletedTurnRevisionsBySource(
+    db: Querier,
+    params: { workspaceId: string; sourceMessageId: string; actorIds: string[] }
+  ): Promise<Map<string, number>> {
+    const result = await db.query<{ actor_id: string; revision: number }>(sql`
+      SELECT actor_id, MAX(source_message_revision) AS revision
+      FROM bot_invocations
+      WHERE workspace_id = ${params.workspaceId}
+        AND source_message_id = ${params.sourceMessageId}
+        AND actor_type = 'bot'
+        AND actor_id = ANY(${params.actorIds})
+        AND status = 'completed'
+      GROUP BY actor_id
+    `)
+    return new Map(result.rows.map((row) => [row.actor_id, Number(row.revision)]))
+  },
+
   async insertIdempotent(
     db: Querier,
     params: Omit<
@@ -1247,6 +1264,7 @@ export const BotInvocationRepository = {
             AND terminal.actor_type = ${params.actorType}
             AND terminal.actor_id = ${params.actorId}
             AND terminal.status IN ('completed', 'failed', 'parked', 'expired')
+            AND terminal.source_message_revision >= ${params.sourceMessageRevision}
         )
         ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) WHERE status IN ('pending', 'claimed') DO UPDATE SET
           prompt_markdown = CASE

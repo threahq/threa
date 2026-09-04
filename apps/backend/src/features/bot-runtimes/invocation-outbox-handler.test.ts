@@ -5,6 +5,7 @@ import { BotInvocationOutboxHandler } from "./invocation-outbox-handler"
 import { resolveCanonicalInvocationRoutes } from "./invocation-route-resolver"
 import { BotRuntimeService } from "./service"
 import {
+  BotInvocationRepository,
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
@@ -38,6 +39,7 @@ const docWithMention = (id: string, slug: string) => ({
 
 function source(overrides: Partial<InvocationSourceState> = {}): InvocationSourceState {
   return {
+    messageId: "msg_src",
     workspaceId: "ws_1",
     streamId: "stream_1",
     revision: 2,
@@ -80,6 +82,7 @@ beforeEach(() => {
     readOnly: false,
     readOnlyReason: null,
   })) as never)
+  spyOn(BotInvocationRepository, "listCompletedTurnRevisionsBySource").mockResolvedValue(new Map())
 })
 
 afterEach(() => mock.restore())

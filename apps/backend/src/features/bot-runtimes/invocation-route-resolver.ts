@@ -10,10 +10,11 @@ import {
 import type { Querier } from "../../db"
 import { logger } from "../../lib/logger"
 import { resolveSealingContext } from "../e2e-streams"
-import type { InvocationSourceState } from "../messaging"
+import { MessageVersionRepository, type InvocationSourceState } from "../messaging"
 import { BotRepository } from "../public-api"
 import { projectStreamForBot, StreamRepository, type Stream } from "../streams"
 import {
+  BotInvocationRepository,
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
@@ -45,6 +46,37 @@ export function buildCanonicalInvocationPrompt(source: InvocationSourceState): s
   ].join("\n")
 }
 
+export interface EditedSourceContext {
+  previousMarkdown: string
+  previousRevision: number
+  currentRevision: number
+}
+
+/**
+ * Frames a source edit that landed after the actor already completed a turn on
+ * it. The invocation is a fresh turn, so the runtime session still carries the
+ * previous answer — this only supplies what the edit changed and leaves the
+ * decision to the agent.
+ */
+export function buildEditedSourcePrompt(prompt: string, edit: EditedSourceContext): string {
+  const previous = edit.previousMarkdown
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n")
+  return [
+    prompt,
+    "",
+    "---",
+    "",
+    `You already answered this message. It was edited afterwards (revision ${edit.previousRevision} to ${edit.currentRevision}). What it said when you answered:`,
+    "",
+    previous,
+    "",
+    "The wording above the separator is current and is what the author now means; the quoted wording is obsolete.",
+    "Work out what the edit changes. If your previous answer no longer holds, answer the edited request directly. If it still holds, say so in a line instead of repeating it. Do not narrate the edit itself.",
+  ].join("\n")
+}
+
 async function allows(db: Querier, source: InvocationSourceState, stream: Stream, botId: string): Promise<boolean> {
   const viewer = await projectStreamForBot(db, { workspaceId: source.workspaceId, stream, botId })
   if (!viewer || viewer.readOnly) {
@@ -68,10 +100,69 @@ async function allows(db: Querier, source: InvocationSourceState, stream: Stream
   return false
 }
 
+/**
+ * Prompt framing lives here rather than at the reconcile call site because the
+ * claim path re-resolves routes and overwrites `prompt_markdown` with what this
+ * returns — anything added downstream of it is discarded before the runtime
+ * reads the turn.
+ */
 export async function resolveCanonicalInvocationRoutes(
   db: Querier,
   source: InvocationSourceState
 ): Promise<CanonicalInvocationRoute[]> {
+  return applyEditedSourceFraming(db, source, await resolveRoutes(db, source))
+}
+
+/**
+ * Per-actor framing for an edit that landed after that actor already completed
+ * a turn on this source. `message_versions` holds the text of each superseded
+ * revision, so the completed turn's revision resolves to exactly what that
+ * actor was answering.
+ */
+async function applyEditedSourceFraming(
+  db: Querier,
+  source: InvocationSourceState,
+  routes: CanonicalInvocationRoute[]
+): Promise<CanonicalInvocationRoute[]> {
+  if (source.revision <= 1 || routes.length === 0) return routes
+  const answered = await BotInvocationRepository.listCompletedTurnRevisionsBySource(db, {
+    workspaceId: source.workspaceId,
+    sourceMessageId: source.messageId,
+    actorIds: routes.map((route) => route.actorId),
+  })
+  const staleRevisions = [...new Set([...answered.values()].filter((revision) => revision < source.revision))]
+  if (staleRevisions.length === 0) return routes
+  const versions = await MessageVersionRepository.findByVersionNumbers(db, source.messageId, staleRevisions)
+  const markdownByRevision = new Map(versions.map((version) => [version.versionNumber, version.contentMarkdown]))
+  return routes.map((route) => {
+    const previousRevision = answered.get(route.actorId)
+    if (previousRevision === undefined || previousRevision >= source.revision) return route
+    const previousMarkdown = markdownByRevision.get(previousRevision)
+    if (previousMarkdown === undefined) {
+      logger.info(
+        {
+          workspaceId: source.workspaceId,
+          sourceMessageId: source.messageId,
+          actorId: route.actorId,
+          previousRevision,
+        },
+        "Rerunning an edited source without the answered wording: no message version row for that revision"
+      )
+      return route
+    }
+    if (previousMarkdown === source.contentMarkdown) return route
+    return {
+      ...route,
+      promptMarkdown: buildEditedSourcePrompt(route.promptMarkdown, {
+        previousMarkdown,
+        previousRevision,
+        currentRevision: source.revision,
+      }),
+    }
+  })
+}
+
+async function resolveRoutes(db: Querier, source: InvocationSourceState): Promise<CanonicalInvocationRoute[]> {
   if (source.deleted || source.authorType === AuthorTypes.SYSTEM) return []
   const stream = await StreamRepository.findByIdForWorkspace(db, source.streamId, source.workspaceId)
   if (!stream || stream.workspaceId !== source.workspaceId || stream.archivedAt) return []
