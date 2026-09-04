@@ -1,5 +1,5 @@
 import { AuthorTypes } from "@threa/types"
-import { sql } from "../../db"
+import { composeSql, sql } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 import { logger } from "../../lib/logger"
 import { MessageRepository, type Message } from "../messaging"
@@ -15,19 +15,28 @@ export type MessageEmbeddingChunk = { ids: string[] }
 
 /**
  * Same eligibility the live path applies (`EmbeddingHandler` + `createEmbeddingWorker`):
- * non-system, non-deleted, non-sealed, at least 10 chars of content. `messages`
- * has no `workspace_id` column, so the workspace filter joins through `streams` (INV-68).
+ * non-system, non-deleted, non-sealed, at least 10 chars of content. Shared via
+ * `composeSql` fragment nesting between `plan` and `processChunk`'s process-time
+ * recheck (INV-20) so the two can't drift.
+ */
+const ELIGIBLE_PREDICATE = sql`
+  NOT EXISTS (SELECT 1 FROM e2e_streams e WHERE e.stream_id = s.id)
+  AND m.deleted_at IS NULL
+  AND m.author_type <> ${AuthorTypes.SYSTEM}
+  AND length(btrim(m.content_markdown)) >= 10
+`
+
+/**
+ * `messages` has no `workspace_id` column, so the workspace filter joins through
+ * `streams` (INV-68).
  */
 export async function plan(ctx: BackfillContext, workspaceId: string): Promise<MessageEmbeddingChunk[]> {
-  const result = await ctx.pool.query<{ id: string }>(sql`
+  const result = await ctx.pool.query<{ id: string }>(composeSql`
     SELECT m.id
     FROM messages m
     JOIN streams s ON s.id = m.stream_id
     WHERE s.workspace_id = ${workspaceId}
-      AND NOT EXISTS (SELECT 1 FROM e2e_streams e WHERE e.stream_id = s.id)
-      AND m.deleted_at IS NULL
-      AND m.author_type <> ${AuthorTypes.SYSTEM}
-      AND length(btrim(m.content_markdown)) >= 10
+      AND ${ELIGIBLE_PREDICATE}
     ORDER BY m.id
   `)
   return chunkIds(result.rows.map((row) => row.id)).map((ids) => ({ ids }))
@@ -45,20 +54,34 @@ export async function processChunk(
   if (chunk.ids.length === 0) return { processed: 0 }
 
   const byId = await MessageRepository.findByIds(ctx.pool, chunk.ids)
+
+  // Recheck ELIGIBLE_PREDICATE at process time, workspace-scoped (INV-8): a
+  // message that lost eligibility since `plan` (deleted, its stream sealed)
+  // is dropped instead of being embedded on a stale assumption.
+  const eligible = await ctx.pool.query<{ id: string }>(composeSql`
+    SELECT m.id
+    FROM messages m
+    JOIN streams s ON s.id = m.stream_id
+    WHERE s.workspace_id = ${workspaceId}
+      AND m.id = ANY(${chunk.ids}::text[])
+      AND ${ELIGIBLE_PREDICATE}
+  `)
+  const eligibleIds = new Set(eligible.rows.map((row) => row.id))
   const messages = chunk.ids
     .map((id) => byId.get(id))
-    .filter((message): message is Message => message !== undefined && !message.deletedAt)
+    .filter((message): message is Message => message !== undefined && eligibleIds.has(message.id))
 
   const withText: Array<{ message: Message; text: string }> = []
   for (const message of messages) {
-    try {
-      const text = await loadMessageEmbeddingText(ctx.pool, message)
-      withText.push({ message, text })
-    } catch (error) {
-      // The message's stream can vanish between plan and process (e.g. a
-      // concurrent delete) — skip it rather than poisoning the whole chunk.
-      logger.warn({ messageId: message.id, error }, "message-embedding-backfill: skipping message")
+    const text = await loadMessageEmbeddingText(ctx.pool, workspaceId, message)
+    if (text === null) {
+      logger.warn(
+        { messageId: message.id, streamId: message.streamId },
+        "message-embedding-backfill: stream not found, skipping"
+      )
+      continue
     }
+    withText.push({ message, text })
   }
 
   let processed = 0
@@ -68,11 +91,14 @@ export async function processChunk(
       sub.map((entry) => entry.text),
       { workspaceId, functionId: "message-embedding-backfill" }
     )
-    await MessageRepository.updateEmbeddings(
+    processed += await MessageRepository.updateEmbeddings(
       ctx.pool,
-      sub.map((entry, index) => ({ id: entry.message.id, embedding: embeddings[index]! }))
+      sub.map((entry, index) => ({
+        id: entry.message.id,
+        revision: entry.message.revision,
+        embedding: embeddings[index]!,
+      }))
     )
-    processed += sub.length
   }
 
   return { processed }

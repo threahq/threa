@@ -3,6 +3,8 @@ import {
   ANCHOR_MAX_CHARS,
   CONTENT_MAX_CHARS,
   PRECEDING_MAX_CHARS,
+  SUMMARY_MAX_CHARS,
+  TOPIC_MAX_CHARS,
   buildMessageEmbeddingText,
 } from "./message-embedding-text"
 
@@ -11,6 +13,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "channel",
       streamName: "engineering",
+      topic: null,
+      summary: null,
       anchor: null,
       preceding: [],
       content: "ship it",
@@ -23,6 +27,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "thread",
       streamName: null,
+      topic: null,
+      summary: null,
       anchor: null,
       preceding: [],
       content: "yes, ship it",
@@ -35,6 +41,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "thread",
       streamName: null,
+      topic: null,
+      summary: null,
       anchor: "should we ship the search change today?",
       preceding: [],
       content: "yes, ship it",
@@ -47,6 +55,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "thread",
       streamName: null,
+      topic: null,
+      summary: null,
       anchor: "",
       preceding: [],
       content: "yes, ship it",
@@ -60,6 +70,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "thread",
       streamName: null,
+      topic: null,
+      summary: null,
       anchor,
       preceding: [],
       content: "yes, ship it",
@@ -72,6 +84,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "channel",
       streamName: "engineering",
+      topic: null,
+      summary: null,
       anchor: null,
       preceding: ["what do you think about the plan?", "any concerns?"],
       content: "yes, ship it",
@@ -84,6 +98,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "channel",
       streamName: "engineering",
+      topic: null,
+      summary: null,
       anchor: null,
       preceding: ["what do you think?", "", "any concerns?"],
       content: "yes, ship it",
@@ -97,6 +113,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "channel",
       streamName: "engineering",
+      topic: null,
+      summary: null,
       anchor: null,
       preceding: [long],
       content: "yes, ship it",
@@ -109,6 +127,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "channel",
       streamName: "engineering",
+      topic: null,
+      summary: null,
       anchor: null,
       preceding: ["msg 1", "msg 2", "msg 3", "msg 4", "msg 5"],
       content: "yes, ship it",
@@ -122,6 +142,8 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "channel",
       streamName: null,
+      topic: null,
+      summary: null,
       anchor: null,
       preceding: [],
       content,
@@ -134,11 +156,59 @@ describe("buildMessageEmbeddingText", () => {
     const text = buildMessageEmbeddingText({
       streamType: "thread",
       streamName: null,
+      topic: null,
+      summary: null,
       anchor: "should we ship the search change today?",
       preceding: ["I think so", "any blockers?"],
       content: "yes, ship it",
     })
 
     expect(text).toBe("thread\nshould we ship the search change today?\nI think so\nany blockers?\n\nyes, ship it")
+  })
+
+  it("should render the topic under the header", () => {
+    const text = buildMessageEmbeddingText({
+      streamType: "channel",
+      streamName: "engineering",
+      topic: "Shipping the search change",
+      summary: null,
+      anchor: null,
+      preceding: [],
+      content: "yes, ship it",
+    })
+
+    expect(text).toBe("channel: engineering\nShipping the search change\n\nyes, ship it")
+  })
+
+  it("should render the summary after the topic", () => {
+    const text = buildMessageEmbeddingText({
+      streamType: "channel",
+      streamName: "engineering",
+      topic: "Shipping the search change",
+      summary: "Whether to ship on Friday",
+      anchor: null,
+      preceding: [],
+      content: "yes, ship it",
+    })
+
+    expect(text).toBe("channel: engineering\nShipping the search change\nWhether to ship on Friday\n\nyes, ship it")
+  })
+
+  it("should truncate the topic to TOPIC_MAX_CHARS and the summary to SUMMARY_MAX_CHARS", () => {
+    const topic = "t".repeat(TOPIC_MAX_CHARS + 50)
+    const summary = "s".repeat(SUMMARY_MAX_CHARS + 50)
+    const text = buildMessageEmbeddingText({
+      streamType: "channel",
+      streamName: "engineering",
+      topic,
+      summary,
+      anchor: null,
+      preceding: [],
+      content: "yes, ship it",
+    })
+
+    expect(text).toBe(
+      `channel: engineering\n${"t".repeat(TOPIC_MAX_CHARS)}\n${"s".repeat(SUMMARY_MAX_CHARS)}\n\nyes, ship it`
+    )
   })
 })

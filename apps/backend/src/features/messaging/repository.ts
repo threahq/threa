@@ -841,17 +841,26 @@ export const MessageRepository = {
     `)
   },
 
-  /** Set-based batch update for a backfill (INV-56) — one statement per sub-batch, not a per-row loop. */
-  async updateEmbeddings(db: Querier, rows: Array<{ id: string; embedding: number[] }>): Promise<void> {
-    if (rows.length === 0) return
+  /**
+   * Set-based batch update for a backfill (INV-56) — one statement per sub-batch, not a
+   * per-row loop. CAS on `revision` (INV-66): a row edited between read and write keeps
+   * the newer content's turn instead of being overwritten with a stale embedding.
+   */
+  async updateEmbeddings(
+    db: Querier,
+    rows: Array<{ id: string; revision: number; embedding: number[] }>
+  ): Promise<number> {
+    if (rows.length === 0) return 0
     const ids = rows.map((row) => row.id)
+    const revisions = rows.map((row) => row.revision)
     const embeddingLiterals = rows.map((row) => `[${row.embedding.join(",")}]`)
-    await db.query(sql`
+    const result = await db.query(sql`
       UPDATE messages m
       SET embedding = v.embedding::vector
-      FROM UNNEST(${ids}::text[], ${embeddingLiterals}::text[]) AS v(id, embedding)
-      WHERE m.id = v.id
+      FROM UNNEST(${ids}::text[], ${revisions}::integer[], ${embeddingLiterals}::text[]) AS v(id, revision, embedding)
+      WHERE m.id = v.id AND m.revision = v.revision
     `)
+    return result.rowCount ?? 0
   },
 
   /**

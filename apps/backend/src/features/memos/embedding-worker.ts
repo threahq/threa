@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import { AuthorTypes } from "@threa/types"
 import type { EmbeddingJobData, JobHandler } from "../../lib/queue"
 import { MessageRepository } from "../messaging"
 import type { EmbeddingServiceLike } from "./embedding-service"
@@ -36,6 +37,11 @@ export function createEmbeddingWorker(deps: EmbeddingWorkerDeps): JobHandler<Emb
 
     if (message.contentMarkdown.trim().length < 10) {
       logger.debug({ messageId }, "Skipping embedding for very short message")
+      return
+    }
+
+    if (message.authorType === AuthorTypes.SYSTEM) {
+      logger.debug({ messageId }, "Skipping embedding for system message")
       return
     }
 

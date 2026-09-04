@@ -12,8 +12,9 @@ import { Pool } from "pg"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
-import { EventService } from "../../src/features/messaging"
+import { EventService, MessageRepository } from "../../src/features/messaging"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
+import { ConversationRepository } from "../../src/features/conversations"
 import {
   plan,
   processChunk,
@@ -21,8 +22,8 @@ import {
 } from "../../src/features/memos/message-embedding-backfill"
 import { buildMessageEmbeddingText } from "../../src/features/memos/message-embedding-text"
 import type { EmbeddingServiceLike, EmbeddingContext } from "../../src/features/memos"
-import { userEncryptionKeyId, workspaceId } from "../../src/lib/id"
-import { AuthorTypes, StreamTypes, Visibilities } from "@threa/types"
+import { conversationId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
+import { AuthorTypes, StreamTypes, TitleSources, Visibilities } from "@threa/types"
 
 const EMBEDDING_DIM = 1536
 
@@ -59,6 +60,8 @@ describe("message-embeddings-context backfill against the real schema", () => {
   let questionContent: string
   let replyId: string
   let replyContent: string
+  let outsideId: string
+  let outsideContent: string
   let shortId: string
   let deletedId: string
   let systemId: string
@@ -111,6 +114,29 @@ describe("message-embeddings-context backfill against the real schema", () => {
       ...testMessageContent(replyContent),
     })
     replyId = reply.id
+
+    // Primary-assigned into a conversation (below) so the "same context text"
+    // test can prove the reply embeds with the conversation's topic/summary
+    // and this one — never assigned — embeds with header + anchor + body only.
+    outsideContent = "an eligible message that no conversation ever claims"
+    const outside = await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: channelId,
+      authorId: ownerId,
+      authorType: AuthorTypes.USER,
+      ...testMessageContent(outsideContent),
+    })
+    outsideId = outside.id
+
+    const conversation = await ConversationRepository.insert(pool, {
+      id: conversationId(),
+      streamId: channelId,
+      workspaceId: wsId,
+      topicSummary: "Shipping the search change",
+      topicSummarySource: TitleSources.GENERATED,
+      summary: "Whether to ship on Friday",
+    })
+    await ConversationRepository.addPrimaryMessages(pool, wsId, conversation.id, [questionId, replyId], [ownerId])
 
     const short = await eventService.createMessage({
       workspaceId: wsId,
@@ -174,10 +200,10 @@ describe("message-embeddings-context backfill against the real schema", () => {
     await pool.end()
   })
 
-  test("plan returns exactly the two eligible message ids in one chunk", async () => {
+  test("plan returns exactly the three eligible message ids in one chunk", async () => {
     const chunks = await plan(ctx, wsId)
 
-    expect(chunks).toEqual([{ ids: [questionId, replyId] }])
+    expect(chunks).toEqual([{ ids: [questionId, replyId, outsideId] }])
   })
 
   test("processChunk embeds the eligible messages with the same context text the live path builds, and skips the rest", async () => {
@@ -185,23 +211,37 @@ describe("message-embeddings-context backfill against the real schema", () => {
     expect(chunks).toHaveLength(1)
 
     const result = await processChunk(ctx, wsId, chunks[0]!)
-    expect(result).toEqual({ processed: 2 })
+    expect(result).toEqual({ processed: 3 })
 
     const recordedTexts = fakeEmbeddingService.batches.flat()
+
     const expectedReplyText = buildMessageEmbeddingText({
       streamType: StreamTypes.CHANNEL,
       streamName: channelSlug,
+      topic: "Shipping the search change",
+      summary: "Whether to ship on Friday",
       anchor: null,
       preceding: [questionContent],
       content: replyContent,
     })
     expect(recordedTexts).toContain(expectedReplyText)
 
+    const expectedOutsideText = buildMessageEmbeddingText({
+      streamType: StreamTypes.CHANNEL,
+      streamName: channelSlug,
+      topic: null,
+      summary: null,
+      anchor: null,
+      preceding: [],
+      content: outsideContent,
+    })
+    expect(recordedTexts).toContain(expectedOutsideText)
+
     const embedded = await pool.query<{ id: string }>(
       "SELECT id FROM messages WHERE id = ANY($1) AND embedding IS NOT NULL",
-      [[questionId, replyId]]
+      [[questionId, replyId, outsideId]]
     )
-    expect(new Set(embedded.rows.map((row) => row.id))).toEqual(new Set([questionId, replyId]))
+    expect(new Set(embedded.rows.map((row) => row.id))).toEqual(new Set([questionId, replyId, outsideId]))
 
     const notEmbedded = await pool.query<{ id: string }>(
       "SELECT id FROM messages WHERE id = ANY($1) AND embedding IS NOT NULL",
@@ -226,7 +266,7 @@ describe("message-embeddings-context backfill against the real schema", () => {
     const chunks = await plan(ctx, wsId)
     const result = await processChunk(ctx, wsId, chunks[0]!)
 
-    expect(result).toEqual({ processed: 2 })
+    expect(result).toEqual({ processed: 3 })
   })
 
   test("skips a message whose stream vanished between plan and process, without poisoning the rest of the chunk", async () => {
@@ -291,5 +331,104 @@ describe("message-embeddings-context backfill against the real schema", () => {
       [[survivingMessage.id, vanishingMessage.id]]
     )
     expect(embedded.rows.map((row) => row.id)).toEqual([survivingMessage.id])
+  })
+
+  test("skips a message that lost eligibility between plan and process", async () => {
+    const staleWsId = workspaceId()
+    let staleOwnerId = ""
+    await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: staleWsId,
+        name: "Stale Eligibility WS",
+        slug: `stale-eligibility-ws-${staleWsId}`,
+        createdBy: staleWsId,
+      })
+      staleOwnerId = (await addTestMember(client, staleWsId, `owner-${staleWsId.slice(-8)}`)).id
+    })
+
+    const streamService = new StreamService(pool)
+    const eventService = new EventService(pool)
+
+    const channel = await streamService.create({
+      workspaceId: staleWsId,
+      type: StreamTypes.CHANNEL,
+      slug: `stale-eligibility-${staleWsId.slice(-8)}`,
+      visibility: Visibilities.PUBLIC,
+      createdBy: staleOwnerId,
+    })
+
+    const keep = await eventService.createMessage({
+      workspaceId: staleWsId,
+      streamId: channel.id,
+      authorId: staleOwnerId,
+      authorType: AuthorTypes.USER,
+      ...testMessageContent("this message stays eligible through processing"),
+    })
+    const dropContent = "this message is soft-deleted before processChunk runs"
+    const drop = await eventService.createMessage({
+      workspaceId: staleWsId,
+      streamId: channel.id,
+      authorId: staleOwnerId,
+      authorType: AuthorTypes.USER,
+      ...testMessageContent(dropContent),
+    })
+
+    const chunks = await plan(ctx, staleWsId)
+    expect(chunks).toEqual([{ ids: [keep.id, drop.id] }])
+
+    await pool.query("UPDATE messages SET deleted_at = NOW(), revision = revision + 1 WHERE id = $1", [drop.id])
+
+    const batchesBefore = fakeEmbeddingService.batches.length
+    const result = await processChunk(ctx, staleWsId, chunks[0]!)
+    expect(result).toEqual({ processed: 1 })
+
+    const recordedTexts = fakeEmbeddingService.batches.slice(batchesBefore).flat()
+    expect(recordedTexts.some((text) => text.includes(dropContent))).toBe(false)
+
+    const dropRow = await pool.query<{ embedding: string | null }>("SELECT embedding FROM messages WHERE id = $1", [
+      drop.id,
+    ])
+    expect(dropRow.rows[0]?.embedding).toBeNull()
+  })
+
+  test("does not overwrite an embedding when the row's revision moved", async () => {
+    const streamService = new StreamService(pool)
+    const eventService = new EventService(pool)
+
+    const channel = await streamService.create({
+      workspaceId: wsId,
+      type: StreamTypes.CHANNEL,
+      slug: `embed-revision-cas-${wsId.slice(-8)}`,
+      visibility: Visibilities.PUBLIC,
+      createdBy: ownerId,
+    })
+    const message = await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: channel.id,
+      authorId: ownerId,
+      authorType: AuthorTypes.USER,
+      ...testMessageContent("a message used to prove the CAS on revision"),
+    })
+
+    const staleResult = await MessageRepository.updateEmbeddings(pool, [
+      { id: message.id, revision: message.revision - 1, embedding: unitVector(0) },
+    ])
+    expect(staleResult).toBe(0)
+
+    const afterStale = await pool.query<{ embedding: string | null }>("SELECT embedding FROM messages WHERE id = $1", [
+      message.id,
+    ])
+    expect(afterStale.rows[0]?.embedding).toBeNull()
+
+    const currentResult = await MessageRepository.updateEmbeddings(pool, [
+      { id: message.id, revision: message.revision, embedding: unitVector(0) },
+    ])
+    expect(currentResult).toBe(1)
+
+    const afterCurrent = await pool.query<{ embedding: string | null }>(
+      "SELECT embedding FROM messages WHERE id = $1",
+      [message.id]
+    )
+    expect(afterCurrent.rows[0]?.embedding).not.toBeNull()
   })
 })
