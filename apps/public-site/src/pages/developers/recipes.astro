@@ -16,7 +16,6 @@ import CodeBlock from "../../components/CodeBlock.astro"
     { id: "sealed-agent", label: "Connect an encrypted agent" },
   ]}
 >
-  <p class="eyebrow">Recipes</p>
   <h1>Worked examples.</h1>
   <p class="lead">
     Each one is a real task. Set your credentials in the panel (top right) and the
@@ -32,7 +31,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="search memos"
+    label="Search memos"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
@@ -52,7 +51,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="memo with sources"
+    label="Memo with sources"
     code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/MEMO_ID \\
   -H "Authorization: Bearer {{apiKey}}"`}
   />
@@ -65,7 +64,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="list channels"
+    label="List channels"
     code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" \\
   -H "Authorization: Bearer {{apiKey}}"`}
     run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" }}
@@ -73,7 +72,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <p>Then post, reusing the same ID across retries:</p>
   <CodeBlock
     lang="bash"
-    label="post once"
+    label="Post once"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
@@ -91,7 +90,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="search messages"
+    label="Search messages"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
@@ -137,7 +136,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="heartbeat"
+    label="Heartbeat"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/bot-runtime/presence \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
@@ -257,7 +256,7 @@ async function loop() {
   </p>
   <CodeBlock
     lang="bash"
-    label="list open delegations"
+    label="List open delegations"
     code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" \\
   -H "Authorization: Bearer {{apiKey}}"`}
     run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" }}
@@ -270,7 +269,7 @@ async function loop() {
   </p>
   <CodeBlock
     lang="bash"
-    label="inspect"
+    label="Inspect"
     code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID" \\
   -H "Authorization: Bearer {{apiKey}}"`}
   />
@@ -286,7 +285,7 @@ async function loop() {
   </p>
   <CodeBlock
     lang="bash"
-    label="claim"
+    label="Claim"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/claim \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
@@ -305,7 +304,7 @@ async function loop() {
   </p>
   <CodeBlock
     lang="bash"
-    label="progress note"
+    label="Progress note"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/status \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "X-Threa-Callback-Token: CLAIM_TOKEN" \\
@@ -321,7 +320,7 @@ async function loop() {
   </p>
   <CodeBlock
     lang="bash"
-    label="release"
+    label="Release"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/release \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "X-Threa-Callback-Token: CLAIM_TOKEN"`}
@@ -337,7 +336,7 @@ async function loop() {
   </p>
   <CodeBlock
     lang="bash"
-    label="complete"
+    label="Complete"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/complete \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "X-Threa-Callback-Token: CLAIM_TOKEN" \\
@@ -449,7 +448,7 @@ export async function seal(ssk: Uint8Array, stream: string, id: string, sender: 
   </p>
   <CodeBlock
     lang="ts"
-    label="presence with a key"
+    label="Presence with a key"
     code={`const bik = await loadOrMakeBik() // makeBik(), then reuse across restarts
 await api("/bot-runtime/presence", {
   runtimeKind: "custom",
@@ -469,7 +468,7 @@ await api("/bot-runtime/presence", {
   </p>
   <CodeBlock
     lang="ts"
-    label="two-phase create"
+    label="Two-phase create"
     code={`// Owner's key. A 404 means they haven't set up encryption yet; tell the user.
 const { data: owner } = await get("/bot-runtime/owner-e2e-key") // { keyId, publicKey }
 
@@ -507,7 +506,7 @@ await api(\u0060/streams/\${link.rootStreamId}/e2e/key-wraps\u0060, { keyGenerat
   </p>
   <CodeBlock
     lang="ts"
-    label="open a sealed claim"
+    label="Open a sealed claim"
     code={`const { data: inv } = await api("/bot-invocations/claim", {
   runtimeKind: "custom",
   instanceId: INSTANCE,
@@ -535,7 +534,7 @@ const prompt = await open(promptSSK, sc.prompt.envelope, sc.prompt.ciphertext)
   </p>
   <CodeBlock
     lang="ts"
-    label="seal back"
+    label="Seal back"
     code={`const gen = sc.reply.keyGeneration
 const sender = sc.reply.senderId
 const ssk = ssks.get(gen)!

@@ -358,7 +358,9 @@ function bindRun(): void {
   })
 }
 
-/* Highlight the sidebar sub-section link for whatever's currently in view. */
+/* Highlight the sidebar sub-section link for whatever's currently in view, and
+   make sure its group is open. Nothing here ever closes a group: only the
+   reader does that, so a group they opened stays open while they scroll. */
 function bindSectionSpy(): void {
   const links = Array.from(document.querySelectorAll<HTMLElement>(".docs-side-sub a[data-section]"))
   if (!links.length) return
@@ -368,22 +370,12 @@ function bindSectionSpy(): void {
   if (!targets.length) return
 
   let activeId = ""
-  // Seed the accordion pointer with whichever group renders open, so jumping
-  // straight to another group closes it instead of leaving two open.
-  let autoGroup = document.querySelector<HTMLDetailsElement>(".docs-side-sub[data-collapsible] details.dss-group[open]")
   const setActive = (id: string) => {
     if (id === activeId) return
     activeId = id
     links.forEach((l) => l.classList.toggle("active", l.dataset.section === id))
-    // Accordion: the group you've scrolled into opens, and the one scrolling
-    // opened before it closes — so the list stays compact. Manual toggles of
-    // other groups are left alone.
-    const group = links.find((l) => l.dataset.section === id)?.closest<HTMLDetailsElement>("details.dss-group") ?? null
-    if (group && group !== autoGroup) {
-      if (autoGroup) autoGroup.open = false
-      group.open = true
-      autoGroup = group
-    }
+    const group = links.find((l) => l.dataset.section === id)?.closest<HTMLDetailsElement>("details.dss-group")
+    if (group && !group.open) group.open = true
   }
   const obs = new IntersectionObserver(
     (entries) => {
@@ -398,20 +390,44 @@ function bindSectionSpy(): void {
 }
 
 /* Collapsible sidebar groups (the API reference) use native <details>, so they
-   render collapsed without JS and don't flicker. When the page is deep-linked to
-   a section, open that section's group (and close the build default). Headers
-   toggle natively; the accordion-on-scroll lives in bindSectionSpy. */
+   render without JS and don't flicker. Which groups are open is the reader's
+   choice: every toggle is remembered per page in localStorage and restored on
+   the next visit, and a deep link additionally opens the group it points into. */
 function bindSubnavCollapse(): void {
   const sub = document.querySelector<HTMLElement>(".docs-side-sub[data-collapsible]")
   if (!sub) return
+  const groups = Array.from(sub.querySelectorAll<HTMLDetailsElement>("details.dss-group"))
+  const key = `threa:docs-side:${location.pathname}`
+  const labelOf = (g: HTMLDetailsElement) => g.querySelector("summary")?.textContent?.trim() ?? ""
+
+  let saved: Record<string, boolean> = {}
+  try {
+    saved = JSON.parse(localStorage.getItem(key) ?? "{}")
+  } catch {
+    saved = {}
+  }
+  groups.forEach((g) => {
+    const label = labelOf(g)
+    if (label in saved) g.open = saved[label]
+  })
+
   const hashId = location.hash.slice(1)
-  if (!hashId) return
-  const openGroup = sub
-    .querySelector<HTMLElement>(`a[data-section="${CSS.escape(hashId)}"]`)
-    ?.closest<HTMLDetailsElement>("details.dss-group")
-  if (!openGroup) return
-  sub.querySelectorAll<HTMLDetailsElement>("details.dss-group").forEach((g) => {
-    g.open = g === openGroup
+  if (hashId) {
+    const target = sub
+      .querySelector<HTMLElement>(`a[data-section="${CSS.escape(hashId)}"]`)
+      ?.closest<HTMLDetailsElement>("details.dss-group")
+    if (target) target.open = true
+  }
+
+  groups.forEach((g) => {
+    g.addEventListener("toggle", () => {
+      saved[labelOf(g)] = g.open
+      try {
+        localStorage.setItem(key, JSON.stringify(saved))
+      } catch {
+        // Storage can be unavailable (private mode, quota); the toggle still works for this visit.
+      }
+    })
   })
 }
 

@@ -40,7 +40,6 @@ const changelog: ChangelogEntry[] = changelogRaw
     { id: "changelog", label: "Changelog" },
   ]}
 >
-  <p class="eyebrow">Versioning</p>
   <h1>API versions.</h1>
   <p class="lead">
     Threa versions the API by date. Each key is pinned to a version when you
@@ -71,7 +70,7 @@ const changelog: ChangelogEntry[] = changelogRaw
   </p>
   <CodeBlock
     lang="bash"
-    label="override the pin for one request"
+    label="Override the pin for one request"
     code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Threa-Version: ${currentVersion}"`}
@@ -123,7 +122,7 @@ const changelog: ChangelogEntry[] = changelogRaw
   </p>
   <CodeBlock
     lang="ts"
-    label="detect that a newer version exists"
+    label="Detect that a newer version exists"
     code={`interface ApiVersionInfo {
   pinned: string | null
   resolved: string

@@ -17,7 +17,6 @@ import CodeBlock from "../../components/CodeBlock.astro"
     { id: "agents", label: "Using it from agents" },
   ]}
 >
-  <p class="eyebrow">CLI &amp; MCP</p>
   <h1>The threa command line.</h1>
   <p class="lead">
     <code>threa</code> wraps the public API as a command-line tool: search
@@ -37,7 +36,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="install from a checkout"
+    label="Install from a checkout"
     code={`git clone https://github.com/threahq/threa.git
 cd threa && bun install
 cd packages/cli && bun link   # puts a global \`threa\` on your PATH`}
@@ -58,7 +57,7 @@ cd packages/cli && bun link   # puts a global \`threa\` on your PATH`}
   </p>
   <CodeBlock
     lang="bash"
-    label="environment variables"
+    label="Environment variables"
     code={`export THREA_API_KEY=threa_uk_...
 export THREA_WORKSPACE_ID={{workspaceId}}
 threa whoami`}
@@ -85,7 +84,7 @@ threa whoami`}
   </p>
   <CodeBlock
     lang="bash"
-    label="the surface"
+    label="The endpoints"
     code={`threa whoami
 threa search "release plan" --what messages|memos|attachments
 threa streams list --type channel
@@ -149,7 +148,7 @@ threa mcp serve`}
   </p>
   <CodeBlock
     lang="bash"
-    label="register with Claude Code"
+    label="Register with Claude Code"
     code={`claude mcp add threa \\
   --env THREA_API_KEY=threa_uk_... \\
   --env THREA_WORKSPACE_ID={{workspaceId}} \\

@@ -15,7 +15,6 @@ import CodeBlock from "../../components/CodeBlock.astro"
     { id: "cors", label: "CORS" },
   ]}
 >
-  <p class="eyebrow">Operations</p>
   <h1>Running in production.</h1>
   <p class="lead">
     How errors come back, how paging works, how to send a message exactly once,
@@ -59,14 +58,14 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="first page"
+    label="First page"
     code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?limit=50" \\
   -H "Authorization: Bearer {{apiKey}}"`}
     run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?limit=50" }}
   />
   <CodeBlock
     lang="json"
-    label="response tail"
+    label="Response tail"
     code={`{
   "data": [ /* … */ ],
   "hasMore": true,
@@ -91,7 +90,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   </p>
   <CodeBlock
     lang="bash"
-    label="idempotent send"
+    label="Idempotent send"
     code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\

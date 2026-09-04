@@ -23,7 +23,6 @@ const scopes = [
   description="How Threa API authentication works: bearer keys, the user and bot key kinds, scopes, and how requests fail when a scope is missing."
   current="authentication"
 >
-  <p class="eyebrow">Authentication</p>
   <h1>Keys and scopes.</h1>
   <p class="lead">
     Every request carries a bearer token. The prefix decides whether you act as
@@ -35,7 +34,7 @@ const scopes = [
   <p>Send the key as a bearer token on every request:</p>
   <CodeBlock
     lang="bash"
-    label="authorization"
+    label="Authorization header"
     code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me \\
   -H "Authorization: Bearer {{apiKey}}"`}
     run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me" }}

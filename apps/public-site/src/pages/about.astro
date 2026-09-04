@@ -40,7 +40,7 @@ const schema = [
           </div>
           <nav class="nav-links">
             <a href="/">Product</a>
-            <a href="/developers">Developer</a>
+            <a href="/developers">Developers</a>
             <a href="/about" aria-current="page">About</a>
           </nav>
           <a class="nav-login" href={loginUrl}>Log in</a>
@@ -69,9 +69,6 @@ const schema = [
        ============================================================ -->
   <div class="frame warm">
     <div class="memo-shell">
-      <div class="section-meta">
-        <span>Why this exists in the first place</span>
-      </div>
       <h2>What I kept running into.</h2>
       <p class="lede about-why-lede">
         Three of them stuck around long enough that I did something about them.
@@ -79,7 +76,6 @@ const schema = [
 
       <div class="about-duo">
         <div class="about-q">
-          <span class="about-qnum">What gets lost</span>
           <h3>What did we say again?</h3>
           <p>
             Years of decisions and their reasoning pile up in workplace chat,
@@ -93,7 +89,6 @@ const schema = [
           </p>
         </div>
         <div class="about-q">
-          <span class="about-qnum">On your own terms</span>
           <h3>Tools are supposed to be yours.</h3>
           <p>
             Most tools want to become the platform you can't afford to leave, and
@@ -108,7 +103,6 @@ const schema = [
           </p>
         </div>
         <div class="about-q">
-          <span class="about-qnum">The chat part too</span>
           <h3>Chat could be so much nicer.</h3>
           <p>
             Nested threading, quoting, replying to one message in a busy room,
@@ -127,9 +121,6 @@ const schema = [
        ============================================================ -->
   <div class="frame">
     <div class="memo-shell is-centerpiece">
-      <div class="section-meta">
-        <span>Meet the team</span>
-      </div>
       <h2>I'm the team.</h2>
       <p class="lede">
         Hi, I'm Kristoffer. People have paid me to build software for over ten
@@ -151,9 +142,6 @@ const schema = [
        ============================================================ -->
   <div class="frame warm">
     <div class="memo-shell">
-      <div class="section-meta">
-        <span>How it's built</span>
-      </div>
       <h2>Built the way I want tools to work.</h2>
       <p class="lede about-built-lede">
         Good at its job, composable with everything else, and easy to step away
@@ -170,8 +158,8 @@ const schema = [
         The repo is public, so have a look.
       </p>
       <div class="about-cta-row">
-        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source <span class="arr">→</span></a>
-        <a class="os-cta" href="/developers/feature-requests">Request a feature <span class="arr">→</span></a>
+        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source on GitHub</a>
+        <a class="os-cta" href="/developers/feature-requests">Request a feature</a>
       </div>
     </div>
   </div>
@@ -196,11 +184,11 @@ const schema = [
     <div class="brand" style="gap:10px;">
       <svg style="width:18px;height:18px;color:hsl(var(--gold));"><use href="#threa-mark" /></svg>
       <span class="wordmark" style="font-size:11px;">Threa</span>
-      <span style="color:hsl(var(--muted));text-transform:none;letter-spacing:0;font-family:var(--font-display);font-size:12px;margin-left:6px;">· 2026</span>
+      <span class="year">2026</span>
     </div>
     <div class="ln">
       <a href="/">Product</a>
-      <a href="/developers">Developer</a>
+      <a href="/developers">Developers</a>
       <a href="/about">About</a>
     </div>
   </footer>
@@ -225,15 +213,6 @@ const schema = [
       margin-top: 24px;
     }
     .about-q { border-top: 1px solid hsl(var(--line)); padding-top: 20px; }
-    .about-qnum {
-      display: block;
-      margin-bottom: 12px;
-      font-family: var(--font-mono);
-      font-size: 10.5px;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: hsl(var(--gold));
-    }
     .about-q h3 {
       margin: 0 0 10px;
       font-family: var(--font-display);
@@ -258,16 +237,14 @@ const schema = [
       margin-top: 26px;
     }
     .about-links a {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: hsl(var(--gold-dim));
-      text-decoration: none;
-      border-bottom: 1px solid hsl(var(--gold) / 0.35);
-      padding-bottom: 2px;
+      font-size: 15px;
+      font-weight: 500;
+      color: hsl(var(--ink));
+      text-decoration: underline;
+      text-decoration-color: hsl(var(--gold) / 0.5);
+      text-underline-offset: 4px;
     }
-    .about-links a:hover { border-bottom-color: hsl(var(--gold)); color: hsl(var(--ink)); }
+    .about-links a:hover { text-decoration-color: hsl(var(--gold)); }
 
     /* Section 03 reads as personal process notes: left-aligned prose with a
        readable measure, and its "get involved" links sit under it. */

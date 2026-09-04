@@ -79,20 +79,16 @@ a {
   font-size: 12px;
 }
 .docs-nav .brand .tag {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: hsl(var(--gold));
-  margin-left: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--muted));
+  margin-left: 2px;
 }
 .docs-nav-links {
   display: flex;
   gap: 22px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 13.5px;
+  font-weight: 500;
 }
 .docs-nav-links a {
   color: hsl(var(--muted));
@@ -127,11 +123,9 @@ a {
   margin-bottom: 26px;
 }
 .docs-side-group h4 {
-  margin: 0 0 10px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 500;
   color: hsl(var(--muted));
   padding-left: 14px;
 }
@@ -195,10 +189,8 @@ a {
   padding: 0 12px;
   cursor: pointer;
   list-style: none;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
   color: hsl(var(--muted));
 }
 .dss-group-head::-webkit-details-marker {
@@ -246,10 +238,8 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 500;
   color: hsl(var(--ink-soft));
   background: hsl(var(--paper));
   border: 1px solid hsl(var(--line));
@@ -320,10 +310,8 @@ a {
   margin-bottom: 14px;
 }
 .pg-bar-title {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 14px;
+  font-weight: 600;
   color: hsl(var(--ink));
 }
 .pg-status {
@@ -367,10 +355,8 @@ a {
   min-width: 0;
 }
 .pg-field label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
   color: hsl(var(--muted));
 }
 .pg-field-input {
@@ -397,10 +383,8 @@ a {
   right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: hsl(var(--muted));
   background: none;
   border: none;
@@ -423,10 +407,8 @@ a {
   line-height: 1.4;
 }
 .pg-clear {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   color: hsl(var(--muted));
   background: none;
   border: 1px solid hsl(var(--line));
@@ -443,25 +425,6 @@ a {
 /* ---------- ARTICLE TYPOGRAPHY ---------- */
 .docs-article {
   max-width: 760px;
-}
-.docs-article .eyebrow {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: hsl(var(--gold));
-  margin: 0 0 12px;
-}
-/* Thread bead — the same diamond node the marketing sections carry. */
-.docs-article .eyebrow::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 10px;
-  transform: rotate(45deg);
-  background: hsl(var(--gold));
-  vertical-align: 1px;
 }
 .docs-article h1 {
   font-family: var(--font-display);
@@ -544,9 +507,8 @@ a {
 .note strong {
   display: block;
   margin-bottom: 3px;
-  font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 13.5px;
+  font-weight: 600;
   color: hsl(var(--ink));
   font-family: var(--font-mono);
 }
@@ -577,10 +539,8 @@ a {
   flex-wrap: wrap;
 }
 .pg-lang {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
   color: hsl(var(--muted));
   min-width: 0;
   overflow-wrap: anywhere;
@@ -590,10 +550,9 @@ a {
   gap: 6px;
 }
 .pg-btn {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
   padding: 4px 11px;
   border-radius: 4px;
   border: 1px solid hsl(var(--line));
@@ -811,10 +770,7 @@ a {
 }
 .docs-table th {
   text-align: left;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12.5px;
   color: hsl(var(--muted));
   font-weight: 500;
   padding: 8px 12px;
@@ -882,10 +838,8 @@ a {
   color: hsl(var(--ink));
 }
 .keytype .use strong {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 600;
   color: hsl(var(--muted));
   display: block;
   margin-bottom: 3px;
@@ -945,10 +899,8 @@ a {
   margin-bottom: 16px;
 }
 .fr-form label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 500;
   color: hsl(var(--muted));
 }
 .fr-form input,
@@ -1036,10 +988,8 @@ a {
   margin: 0 0 8px;
 }
 .api-recipes-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
   color: hsl(var(--muted));
 }
 .api-recipes a {
@@ -1065,10 +1015,7 @@ a {
   margin: 22px 0 6px;
 }
 .version-picker-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 13px;
   color: hsl(var(--muted));
 }
 .version-picker-list {
@@ -1099,9 +1046,8 @@ a {
   background: hsl(var(--gold) / 0.08);
 }
 .version-pick-tag {
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
   color: hsl(var(--muted));
 }
 .version-pick.current .version-pick-tag {
@@ -1170,10 +1116,8 @@ a {
   margin: 8px 0 4px;
 }
 .api-scopes-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
   color: hsl(var(--muted));
 }
 /* Required scopes — plain gold-tinted mono tokens, no chip. .api-scope is a
@@ -1199,10 +1143,8 @@ a {
   color: hsl(var(--muted));
 }
 .api-sub {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 600;
   color: hsl(var(--muted));
   margin: 18px 0 8px;
 }
@@ -1287,10 +1229,7 @@ a {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 13px;
   color: hsl(var(--muted));
 }
 .docs-foot-brand {
@@ -1306,16 +1245,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
-}
-.docs-foot-links li {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.docs-foot-links li + li::before {
-  content: "·";
-  color: hsl(var(--line));
+  gap: 6px 18px;
 }
 .docs-foot a {
   color: hsl(var(--muted));
