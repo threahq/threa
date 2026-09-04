@@ -2,6 +2,7 @@ import type { Pool } from "pg"
 import type { EmbeddingJobData, JobHandler } from "../../lib/queue"
 import { MessageRepository } from "../messaging"
 import type { EmbeddingServiceLike } from "./embedding-service"
+import { embedMessageWithContext } from "./message-embedding-text"
 import { logger } from "../../lib/logger"
 
 export interface EmbeddingWorkerDeps {
@@ -38,12 +39,7 @@ export function createEmbeddingWorker(deps: EmbeddingWorkerDeps): JobHandler<Emb
       return
     }
 
-    const embedding = await embeddingService.embed(message.contentMarkdown, {
-      workspaceId,
-      functionId: "message-embedding",
-    })
-
-    await MessageRepository.updateEmbedding(pool, messageId, embedding)
+    await embedMessageWithContext({ pool, embeddingService }, workspaceId, message)
 
     logger.info({ jobId: job.id, messageId }, "Embedding generated and stored")
   }

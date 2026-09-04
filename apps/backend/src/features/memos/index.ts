@@ -41,6 +41,16 @@ export {
 
 export { EMBEDDING_MODEL_ID } from "./embedding-config"
 
+export {
+  buildMessageEmbeddingText,
+  embedMessageWithContext,
+  ANCHOR_MAX_CHARS,
+  PRECEDING_MAX_CHARS,
+  PRECEDING_MAX_COUNT,
+  CONTENT_MAX_CHARS,
+} from "./message-embedding-text"
+export type { MessageEmbeddingTextInput, EmbedMessageWithContextDeps } from "./message-embedding-text"
+
 export { MemoService, resolveMemoScopeForStreamId } from "./service"
 export type {
   MemoServiceLike,
