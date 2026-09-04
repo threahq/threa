@@ -75,7 +75,7 @@ export async function embedMessageWithContext(
 
   const text = buildMessageEmbeddingText({
     streamType: stream.type,
-    streamName: stream.displayName,
+    streamName: stream.displayName ?? stream.slug,
     anchor,
     preceding,
     content: message.contentMarkdown,
