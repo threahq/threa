@@ -17,6 +17,7 @@ import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import type { AuthorType } from "@threa/types"
 import { ApiError } from "@/api"
+import type { MemoExplorerResult } from "@/api"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -32,6 +33,41 @@ const mockSearchState = {
   isLoading: false,
   search: vi.fn(),
   clear: vi.fn(),
+}
+
+const mockMemoSearchState = {
+  results: [] as MemoExplorerResult[],
+}
+
+const mockUseMemoSearch = vi.fn()
+
+function buildMemoResult(): MemoExplorerResult {
+  return {
+    memo: {
+      id: "memo_1",
+      workspaceId: "workspace_1",
+      memoType: "message",
+      sourceMessageId: "msg_1",
+      sourceConversationId: null,
+      title: "Launch decision",
+      abstract: "Approved launch plan",
+      keyPoints: [],
+      sourceMessageIds: ["msg_1"],
+      participantIds: ["user_1"],
+      knowledgeType: "decision",
+      tags: [],
+      parentMemoId: null,
+      status: "active",
+      version: 1,
+      revisionReason: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    },
+    distance: 0,
+    sourceStream: null,
+    rootStream: null,
+  } as unknown as MemoExplorerResult
 }
 
 function createTestQueryClient() {
@@ -152,6 +188,10 @@ function installSpies() {
       }) as unknown as ReturnType<typeof hooksModule.useSearch>
   )
 
+  vi.spyOn(hooksModule, "useMemoSearch").mockImplementation(
+    (...args) => mockUseMemoSearch(...args) as ReturnType<typeof hooksModule.useMemoSearch>
+  )
+
   vi.spyOn(mentionablesModule, "useMentionables").mockReturnValue({
     mentionables: [
       { id: "user_1", slug: "martin", name: "Martin", type: "user" },
@@ -205,6 +245,13 @@ describe("SidebarSearchPanel Integration Tests", () => {
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
+    mockMemoSearchState.results = []
+    mockUseMemoSearch.mockReset()
+    mockUseMemoSearch.mockImplementation(() => ({
+      data: { results: mockMemoSearchState.results },
+      isLoading: false,
+      error: null,
+    }))
     installSpies()
   })
 
@@ -651,6 +698,75 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.keyboard("{Enter}")
 
       expect(mockSearchState.search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
+    })
+  })
+
+  describe("memo matches", () => {
+    it("shows the compact Memories section above message results with matching links", async () => {
+      mockMemoSearchState.results = [buildMemoResult()]
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByText("Memories")).toBeInTheDocument()
+
+      const card = screen.getByText("Launch decision").closest("a")
+      expect(card).toHaveAttribute("href", "/w/workspace_1/memory?q=hello&memo=memo_1")
+
+      const seeAll = screen.getByRole("link", { name: "See all" })
+      expect(seeAll).toHaveAttribute("href", "/w/workspace_1/memory?q=hello")
+
+      // Memories renders above the message results in document order
+      await waitFor(() => expect(screen.getByText("#general")).toBeInTheDocument())
+      const html = document.body.innerHTML
+      expect(html.indexOf("Memories")).toBeGreaterThanOrEqual(0)
+      expect(html.indexOf("Memories")).toBeLessThan(html.indexOf("#general"))
+    })
+
+    it("opens the active MESSAGE result on Enter, never a memo", async () => {
+      mockMemoSearchState.results = [buildMemoResult()]
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await screen.findByText("Memories")
+      await waitFor(() => expect(screen.getByText(/from the search results/)).toBeInTheDocument())
+
+      await user.keyboard("{Enter}")
+
+      expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
+      expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringContaining("/memory"))
+    })
+
+    it("is absent, and skips the memo request, when the query carries from:@martin", async () => {
+      mockMemoSearchState.results = [buildMemoResult()]
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "from:@martin hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("@martin")).toBeInTheDocument()
+      })
+      await waitFor(() => expect(mockUseMemoSearch).toHaveBeenCalled())
+
+      expect(screen.queryByText("Memories")).not.toBeInTheDocument()
+      const lastCall = mockUseMemoSearch.mock.calls.at(-1)
+      expect(lastCall?.[2]).toEqual({ enabled: false })
     })
   })
 

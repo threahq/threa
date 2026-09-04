@@ -11,6 +11,8 @@ import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcu
 import type { SearchResultItem } from "@/api"
 import { useSearchPanel } from "./search-panel-context"
 import { useMessageSearch } from "./use-message-search"
+import { useMemoMatches } from "./use-memo-matches"
+import { MemoMatches } from "./memo-matches"
 import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
 import { SearchFilterMenu } from "./search-filter-menu"
@@ -33,6 +35,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     error,
     validationError,
     parsedFilters,
+    apiFilters,
     searchText,
     hasQuery,
     canSearchDeeper,
@@ -42,6 +45,12 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
+  const { memos, exploreHref } = useMemoMatches(workspaceId, {
+    searchText,
+    parsedFilters,
+    apiFilters,
+    hasQuery,
+  })
 
   const inputRef = useRef<RichInputRef>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -216,6 +225,12 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 <code className="rounded bg-muted px-1">in:#channel</code>,{" "}
                 <code className="rounded bg-muted px-1">before:2026-01-01</code>
               </p>
+            </div>
+          )}
+
+          {hasQuery && !displayError && (
+            <div className="px-1 pt-1">
+              <MemoMatches memos={memos} exploreHref={exploreHref} compact />
             </div>
           )}
 

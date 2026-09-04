@@ -1,6 +1,6 @@
 import { startTransition, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { ArrowLeft, Search, RefreshCw, Hash, MessageSquareQuote, Check, ChevronsUpDown } from "lucide-react"
+import { ArrowLeft, Search, RefreshCw, Check, ChevronsUpDown } from "lucide-react"
 import {
   KNOWLEDGE_TYPES,
   MEMO_SCOPES,
@@ -23,18 +23,13 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { RelativeTime } from "@/components/relative-time"
 import { SidebarToggle } from "@/components/layout"
-import {
-  KnowledgeTypeBadge,
-  MemoDetailContent,
-  formatStreamRef,
-  type MemoEditControls,
-} from "@/components/memo/memo-detail"
+import { MemoDetailContent, type MemoEditControls } from "@/components/memo/memo-detail"
+import { MemoResultItem } from "@/components/memo/memo-result-item"
 import { cn } from "@/lib/utils"
 import { isHiddenStreamType, streamLabel } from "@/lib/streams"
-import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
-import type { MemoExplorerResult, MemoUpdateRequest } from "@/api"
+import { memoLabel } from "@/lib/memo-display"
+import type { MemoUpdateRequest } from "@/api"
 
 const ALL_MEMO_TYPES = "all-memo-types"
 const ALL_KNOWLEDGE_TYPES = "all-knowledge-types"
@@ -62,73 +57,6 @@ function updateParams(
   }
 
   return next
-}
-
-function MemoResultItem({ result, isActive, href }: { result: MemoExplorerResult; isActive: boolean; href: string }) {
-  const sourceLabel = formatStreamRef(result.sourceStream)
-  const rootLabel = formatStreamRef(result.rootStream)
-  const config = getKnowledgeConfig(result.memo.knowledgeType)
-
-  return (
-    <Link
-      to={href}
-      className={cn(
-        // [overflow-wrap:anywhere] is inherited by descendants and collapses the
-        // intrinsic min-content of long unbreakable strings (URLs, hashes) so the
-        // Radix ScrollArea's display:table wrapper can't be forced wider than the
-        // viewport. `break-words` alone is insufficient — per spec it doesn't
-        // affect min-content calculation.
-        "group block overflow-hidden rounded-lg border-l-[3px] border border-l-transparent bg-card transition-all [overflow-wrap:anywhere]",
-        isActive
-          ? cn("border-primary/30 shadow-sm", config.accent)
-          : "border-border/50 hover:border-border hover:shadow-sm"
-      )}
-    >
-      <div className="min-w-0 px-3.5 py-3">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <h3 className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground line-clamp-2">
-            {result.memo.title}
-          </h3>
-          <RelativeTime
-            date={result.memo.updatedAt}
-            className="mt-0.5 shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
-          />
-        </div>
-
-        <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground line-clamp-2">{result.memo.abstract}</p>
-
-        <div className="mt-2.5 flex min-w-0 items-center gap-2">
-          <KnowledgeTypeBadge type={result.memo.knowledgeType} size="xs" />
-
-          {result.memo.tags.length > 0 && (
-            <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-              {result.memo.tags.slice(0, 2).map((tag) => (
-                <span
-                  key={tag}
-                  className="inline-flex min-w-0 items-center gap-0.5 text-[10px] text-muted-foreground/70"
-                >
-                  <Hash className="h-2.5 w-2.5 shrink-0" />
-                  <span className="truncate">{tag}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {(sourceLabel || rootLabel) && (
-          <div className="mt-2 flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground/60">
-            <MessageSquareQuote className="h-2.5 w-2.5 shrink-0" />
-            <span className="min-w-0 truncate">
-              {sourceLabel}
-              {sourceLabel && rootLabel && result.rootStream?.id !== result.sourceStream?.id && (
-                <span className="text-muted-foreground/40"> in {rootLabel}</span>
-              )}
-            </span>
-          </div>
-        )}
-      </div>
-    </Link>
-  )
 }
 
 function LoadingBar({ visible }: { visible: boolean }) {

@@ -8,6 +8,8 @@ import { SidebarToggle } from "@/components/layout"
 import { RichInput, SEARCH_TRIGGERS } from "@/components/quick-switcher/rich-input"
 import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
+import { useMemoMatches } from "@/components/search/use-memo-matches"
+import { MemoMatches } from "@/components/search/memo-matches"
 import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
@@ -68,6 +70,7 @@ export function SearchPage() {
     error,
     validationError,
     parsedFilters,
+    apiFilters,
     searchText,
     hasQuery,
     canSearchDeeper,
@@ -77,6 +80,12 @@ export function SearchPage() {
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
+  const { memos, exploreHref } = useMemoMatches(workspaceId ?? "", {
+    searchText,
+    parsedFilters,
+    apiFilters,
+    hasQuery,
+  })
 
   if (!workspaceId) {
     return null
@@ -162,6 +171,8 @@ export function SearchPage() {
               </p>
             </div>
           )}
+
+          {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} />}
 
           {hasQuery && isLoading && results.length === 0 && (
             <div className="flex flex-col gap-2 py-1">
