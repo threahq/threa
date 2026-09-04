@@ -13,6 +13,12 @@ arrive sealed: the extension decrypts the trigger + history locally, runs the
 turn, and seals every reply and trace step back under the stream key — the
 server only ever stores ciphertext.
 
+## Invocation edits and deletion
+
+The extension applies source-message edits to an active Pi turn as steering input. It rebuilds plaintext context and attachments from Threa; sealed turns decrypt updated attachment references locally. Completions carry the exact applied source revision, so stale output cannot replace a newer edit.
+
+Deleting the source or losing its claim aborts the active Pi turn and suppresses late trace and completion writes. The shared runtime client owns claim renewal and control synchronization. `/reload` saves active revisions and retry prompts, then re-registers each claim before resuming work.
+
 ## Trace detail
 
 Plaintext traces default to `traceMode: "headline"`. This records tool categories and safe file summaries but hides shell commands, file bodies, patches, and tool results.

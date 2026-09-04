@@ -1,9 +1,11 @@
 import { readHarnessLinks } from "@threa/harness-client"
+import { encryptAttachmentBytes } from "@threahq/bot-runtime-client"
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import threaRemote, { __testing } from "./threa-remote"
+import { attachmentRef, invocation, sealingState, type TestInvocation } from "./threa-remote.test-helpers"
 
 process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-test-"))
 // A harness-supervised shell exports this, and verifySupervisedRevival then
@@ -12,8 +14,11 @@ process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-
 delete process.env.THREA_EXPECTED_ROOT_STREAM_ID
 
 let testStorageDirectory: string
+let expectedRootStreamId: string | undefined
 
 beforeEach(async () => {
+  expectedRootStreamId = process.env.THREA_EXPECTED_ROOT_STREAM_ID
+  delete process.env.THREA_EXPECTED_ROOT_STREAM_ID
   await __testing.resetRuntimeForTesting()
   testStorageDirectory = mkdtempSync(join(tmpdir(), "pi-remote-test-"))
   await __testing.setStorageDirectoryForTesting(testStorageDirectory)
@@ -22,6 +27,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await __testing.resetRuntimeForTesting()
   rmSync(testStorageDirectory, { recursive: true, force: true })
+  if (expectedRootStreamId === undefined) delete process.env.THREA_EXPECTED_ROOT_STREAM_ID
+  else process.env.THREA_EXPECTED_ROOT_STREAM_ID = expectedRootStreamId
 })
 
 describe("Pi remote trace safety", () => {
@@ -2291,9 +2298,12 @@ describe("session-scoped lifecycle isolation", () => {
       claimExpiresAt: null,
     } as never)
 
-    const requests: string[] = []
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
-      requests.push(String(input))
+    const requests: Array<{ url: string; body: unknown }> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      requests.push({ url: String(input), body: typeof init?.body === "string" ? JSON.parse(init.body) : null })
       return new Response(JSON.stringify({ data: {} }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -2307,16 +2317,15 @@ describe("session-scoped lifecycle isolation", () => {
 
     try {
       await shutdown({ reason: "quit" }, context("workflow-child"))
-      expect({ claimActive: __testing.claimRenewTimerActive(), requestCount: requests.length }).toEqual({
-        claimActive: true,
-        requestCount: 0,
-      })
+      expect(requests.length).toBe(0)
 
       await shutdown({ reason: "quit" }, context("parent"))
-      expect({ claimActive: __testing.claimRenewTimerActive(), madeRequests: requests.length > 0 }).toEqual({
-        claimActive: false,
-        madeRequests: true,
-      })
+      expect(requests.map((entry) => ({ path: new URL(entry.url).pathname, body: entry.body }))).toEqual([
+        {
+          path: "/api/v1/workspaces/ws_123/bot-invocations/binv_parent/fail",
+          body: { instanceId: "pi-parent", claimToken: "claim_1", errorMessage: "Pi session shut down" },
+        },
+      ])
 
       expect(readFileSync(sentinelPath, "utf8")).toBe(sentinel)
       const paths = __testing.storagePaths()
@@ -2390,7 +2399,6 @@ describe("reload claim continuity", () => {
       await handlers.get("session_start")!({ reason: "reload" }, ctx)
       await Bun.sleep(30)
 
-      expect(requests.some((url) => url.includes("/api/workspaces/ws_123/config"))).toBe(true)
       expect(requests.some((url) => url.endsWith("/bot-invocations/claim"))).toBe(true)
     } finally {
       fetchSpy.mockRestore()
@@ -2584,7 +2592,7 @@ describe("reload claim continuity", () => {
     }
   })
 
-  test("restores, renews, and completes the in-flight claim after the extension cache is cleared", async () => {
+  test("restores, observes, and completes the in-flight claim after the extension cache is cleared", async () => {
     const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void>>()
     const pi = {
       registerCommand: () => {},
@@ -2631,7 +2639,11 @@ describe("reload claim continuity", () => {
       if (url.endsWith(`/api/workspaces/${config.workspaceId}/config`)) {
         return new Response("", { status: 404 })
       }
-      const data = url.endsWith("/bot-invocations/claim") ? null : {}
+      const data = url.endsWith("/bot-invocations/claim")
+        ? null
+        : url.endsWith("/bot-invocations/binv_reload/renew")
+          ? { status: "active", claimExpiresAt: new Date(Date.now() + 120_000).toISOString(), sourceRevision: 3 }
+          : {}
       return new Response(JSON.stringify({ data }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -2645,6 +2657,7 @@ describe("reload claim continuity", () => {
         activeStreamId: "stream_1",
         rootStreamId: "stream_1",
         sourceMessageId: "msg_1",
+        sourceRevision: 3,
         promptMarkdown: "keep working",
         claimToken: "claim_reload",
         claimedInstanceId: "pi-reload",
@@ -2661,10 +2674,11 @@ describe("reload claim continuity", () => {
 
       await handlers.get("session_start")!({ reason: "reload" }, ctx)
       expect(__testing.pendingInvocationId()).toBe("binv_reload")
-      expect(__testing.claimRenewTimerActive()).toBe(true)
       expect(writes.some((write) => write.url.endsWith("/bot-invocations/binv_reload/renew"))).toBe(true)
 
       idle = true
+      // The recovered Pi turn was already active when the extension reloaded;
+      // no second turn_start is required to own its remaining output.
       await handlers.get("agent_end")!(
         {
           messages: [
@@ -2679,10 +2693,10 @@ describe("reload claim continuity", () => {
       expect(completion?.body).toMatchObject({
         instanceId: "pi-reload",
         claimToken: "claim_reload",
+        sourceRevision: 3,
         finalMessageMarkdown: "Finished after reload.",
       })
       expect(__testing.pendingInvocationId()).toBeUndefined()
-      expect(__testing.claimRenewTimerActive()).toBe(false)
       expect(existsSync(snapshotPath)).toBe(false)
     } finally {
       fetchSpy.mockRestore()
@@ -2749,71 +2763,6 @@ describe("recovered completion retry", () => {
     } finally {
       fetchSpy.mockRestore()
     }
-  })
-})
-
-describe("claim renewal during a turn", () => {
-  const invocation = {
-    id: "binv_renew_1",
-    activeStreamId: "stream_a",
-    sourceMessageId: "msg_1",
-    promptMarkdown: "do the thing",
-    claimToken: "tok_1",
-    claimedInstanceId: "pi-test-1",
-    claimExpiresAt: null,
-  }
-
-  test("renew interval is comfortably inside the claim TTL", () => {
-    // Two consecutive missed renews must still leave the claim alive — the
-    // regression this guards: renewal riding on the 15-min WS backstop poll
-    // while the server-side claim TTL is 120s (any turn longer than the TTL
-    // lost its claim and the completion 404'd).
-    expect(__testing.CLAIM_RENEW_INTERVAL_MS * 3).toBeLessThanOrEqual(__testing.CLAIM_TTL_SECONDS * 1000)
-    expect(__testing.CLAIM_RENEW_INTERVAL_MS).toBeLessThan(__testing.WS_BACKSTOP_POLL_MS)
-  })
-
-  test("beginPendingInvocation starts the renew timer and clearing the turn stops it", () => {
-    expect(__testing.claimRenewTimerActive()).toBe(false)
-    __testing.beginPendingInvocation(invocation as never)
-    expect(__testing.claimRenewTimerActive()).toBe(true)
-    __testing.clearPendingForTesting()
-    expect(__testing.claimRenewTimerActive()).toBe(false)
-  })
-
-  test("renewActiveClaims posts a renew with the claim TTL for the pending invocation", async () => {
-    __testing.setConfigForTesting({
-      baseUrl: "https://app.threa.io",
-      workspaceId: "ws_123",
-      apiKey: "threa_bk_test",
-    })
-    __testing.beginPendingInvocation(invocation as never)
-    const renews: Array<Record<string, unknown>> = []
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
-      input: string | URL | Request,
-      init?: RequestInit
-    ) => {
-      const url = String(input)
-      if (url.endsWith(`/bot-invocations/${invocation.id}/renew`)) {
-        renews.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
-        return new Response(JSON.stringify({ data: {} }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        })
-      }
-      throw new Error(`unexpected fetch: ${url}`)
-    }) as typeof fetch)
-    try {
-      await __testing.renewActiveClaims()
-    } finally {
-      fetchSpy.mockRestore()
-    }
-    expect(renews).toEqual([
-      {
-        instanceId: "pi-test-1",
-        claimToken: "tok_1",
-        claimTtlSeconds: __testing.CLAIM_TTL_SECONDS,
-      },
-    ])
   })
 })
 
@@ -3027,6 +2976,1770 @@ describe("archived-scratchpad wind-down", () => {
     try {
       await __testing.probeArchiveState(ctx)
       expect(__testing.archivePendingRootStreamId()).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
+describe("invocation edit regressions", () => {
+  const runtimeSessionId = "runtime_matrix"
+
+  const deferred = <T = void>() => {
+    let resolve!: (value: T | PromiseLike<T>) => void
+    let reject!: (reason?: unknown) => void
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise
+      reject = rejectPromise
+    })
+    return { promise, resolve, reject }
+  }
+
+  const waitFor = async (predicate: () => boolean, label: string) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (predicate()) return
+      await Bun.sleep(1)
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+
+  const json = (data: unknown, status = 200) =>
+    new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } })
+
+  const context = (options: { idle?: boolean; branch?: unknown[]; abort?: () => void } = {}) =>
+    ({
+      sessionManager: {
+        getSessionId: () => runtimeSessionId,
+        getBranch: () => options.branch ?? [],
+      },
+      isIdle: () => options.idle ?? false,
+      abort: options.abort ?? (() => {}),
+      cwd: testStorageDirectory,
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        setStatus: () => {},
+        notify: () => {},
+        theme: { fg: (_tone: string, text: string) => text },
+      },
+    }) as any
+
+  const configure = (linked = false) => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_1",
+      apiKey: "key",
+      ...(linked
+        ? {
+            linkedSessions: {
+              [runtimeSessionId]: {
+                enabled: true,
+                instanceId: "pi-matrix",
+                runtimeSessionId,
+                rootStreamId: "stream_1",
+                activeStreamId: "stream_1",
+              },
+            },
+          }
+        : {}),
+    })
+  }
+
+  async function observe(
+    claim: ReturnType<typeof invocation>,
+    pi: Record<string, unknown>,
+    ctx: any,
+    options: {
+      initialState?: "unstarted" | "processing" | "running" | "recovery"
+      sync?: (callbacks: any) => Promise<void> | void
+      recordSteps?: (...args: any[]) => Promise<void>
+      updatePresence?: (...args: any[]) => Promise<void>
+    } = {}
+  ) {
+    let callbacks: any
+    let unregisters = 0
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        callbacks = params.callbacks
+        return {
+          sync: async () => options.sync?.(callbacks),
+          unregister: () => {
+            unregisters++
+          },
+        }
+      },
+      recordSteps: options.recordSteps ?? (async () => {}),
+      updatePresence: options.updatePresence ?? (async () => {}),
+      disconnect: () => {},
+    })
+    const active = await __testing.observeInvocation(
+      pi as never,
+      ctx,
+      claim as never,
+      options.initialState ?? "running"
+    )
+    return { active, callbacks, unregisters: () => unregisters }
+  }
+
+  const plaintextUpdate = (claim: TestInvocation, revision: number, promptMarkdown: string) => ({
+    invocationId: claim.id,
+    sourceMessageId: claim.sourceMessageId,
+    sourceRevision: revision,
+    delivery: "plaintext" as const,
+    promptMarkdown,
+    attachmentRefs: [],
+  })
+
+  const sourceMessage = (claim: TestInvocation, content: string, overrides: Record<string, unknown> = {}) => ({
+    id: claim.sourceMessageId,
+    authorType: "user",
+    sequence: "1",
+    content,
+    createdAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  })
+
+  const sourceMessages = (...messages: Array<Record<string, unknown>>) => json({ data: messages })
+
+  test("advertises the same live manifest for every presence status", () => {
+    configure()
+    const ctx = context()
+    const manifests = ["available", "busy", "offline", "error"].map(
+      (status) => (__testing.presenceBody(status as never, undefined, ctx) as any).manifest
+    )
+    expect(manifests).toEqual(Array(4).fill(__testing.piManifest))
+    expect(__testing.piManifest).toEqual({
+      output: { reply: true, trace: true, sources: false },
+      input: { updates: "live" },
+    })
+  })
+
+  test("initial sync applies the latest revision before processing and unregisters on cancellation", async () => {
+    configure()
+    const claim = invocation("binv_observed")
+    const ctx = context()
+    __testing.beginPendingInvocation(claim as never)
+    const events: string[] = []
+    let callbacks: any
+    let unregisters = 0
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        callbacks = params.callbacks
+        return {
+          sync: async () => {
+            events.push("sync")
+            expect(await callbacks.onInputUpdated(plaintextUpdate(claim, 2, "edited"))).toBe("applied")
+          },
+          unregister: () => {
+            unregisters++
+          },
+        }
+      },
+      disconnect: () => {},
+    })
+    const pi = { sendUserMessage: () => events.push("steer") }
+
+    expect(await __testing.observeInvocation(pi as never, ctx, claim as never)).toBe(true)
+    expect({ events, observed: __testing.observedInvocationCount() }).toEqual({ events: ["sync"], observed: 1 })
+    expect(__testing.pendingInvocationState()).toMatchObject({ sourceRevision: 2, promptMarkdown: "edited" })
+
+    await callbacks.onCancelled({ invocationId: claim.id, sourceRevision: 2, reason: "source_deleted" })
+    expect({
+      pending: __testing.pendingInvocationId(),
+      observed: __testing.observedInvocationCount(),
+      unregisters,
+    }).toEqual({ pending: undefined, observed: 0, unregisters: 1 })
+  })
+
+  test("initial claim loss returns no work and never injects", async () => {
+    configure()
+    const claim = invocation("binv_observed_lost")
+    __testing.beginPendingInvocation(claim as never)
+    let sends = 0
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => ({
+        sync: () => params.callbacks.onClaimLost(),
+        unregister: () => {},
+      }),
+      disconnect: () => {},
+    })
+
+    expect(
+      await __testing.observeInvocation({ sendUserMessage: () => sends++ } as never, context(), claim as never)
+    ).toBe(false)
+    expect({ sends, pending: __testing.pendingInvocationId() }).toEqual({ sends: 0, pending: undefined })
+  })
+
+  test("restart-required keeps the target observed until the cancellation handshake", async () => {
+    configure()
+    const claim = invocation("binv_restart")
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old full prompt" })
+    const ctx = context()
+    const sends: string[] = []
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, ctx)
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(json({ error: "context unavailable" }, 503))
+    try {
+      expect(await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "edited"))).toBe("restart-required")
+      expect({
+        sends,
+        unregisters: observation.unregisters(),
+        observed: __testing.observedInvocationCount(),
+      }).toEqual({ sends: [], unregisters: 0, observed: 1 })
+      await observation.callbacks.onCancelled({
+        invocationId: claim.id,
+        sourceRevision: 2,
+        reason: "adapter_restart_required",
+      })
+      expect({ unregisters: observation.unregisters(), observed: __testing.observedInvocationCount() }).toEqual({
+        unregisters: 1,
+        observed: 0,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("initial sync rewrites structured command metadata before command actuation", async () => {
+    configure()
+    const claim = {
+      ...invocation("binv_command_sync", 1, "/thinking low"),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: "cmd_thinking", name: "thinking", args: "low", executionKind: "bot-runtime" },
+      },
+    }
+    const ctx = context({ idle: true })
+    const observation = await observe(claim, {}, ctx, {
+      initialState: "unstarted",
+      sync: async (callbacks) => {
+        expect(await callbacks.onInputUpdated(plaintextUpdate(claim, 2, "/thinking high"))).toBe("applied")
+      },
+    })
+    let level = "low"
+    const writes: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).endsWith(`/bot-invocations/${claim.id}/complete`)) {
+        writes.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      }
+      return json({ data: {} })
+    })
+    try {
+      await __testing.handleSessionControlInvocation(
+        {
+          getThinkingLevel: () => level,
+          setThinkingLevel: (next: string) => {
+            level = next
+          },
+        } as never,
+        ctx,
+        claim as never
+      )
+      expect(level).toBe("high")
+      expect(writes).toEqual([
+        expect.objectContaining({ sourceRevision: 2, finalMessageMarkdown: expect.stringContaining("high") }),
+      ])
+      expect(observation.unregisters()).toBe(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("running structured steer update sends canonical args rather than stale command markdown", async () => {
+    configure()
+    const claim = {
+      ...invocation("binv_command_steer", 1, "/steer old direction"),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: "cmd_steer", name: "steer", args: "old direction", executionKind: "bot-runtime" },
+      },
+    }
+    const ctx = context({ idle: false })
+    const sends: string[] = []
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old direction" })
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, ctx, {
+      initialState: "running",
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/streams/stream_1/messages?"))
+        return sourceMessages(sourceMessage(claim, "/steer new direction"))
+      return json({ data: {} })
+    })
+    try {
+      expect(await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "/steer new direction"))).toBe(
+        "applied"
+      )
+      expect(sends).toEqual([expect.stringContaining("new direction")])
+      expect(sends[0]).not.toContain("/steer")
+      expect(sends[0]).not.toContain("old direction")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("combined reload synchronizes every contributor before a missed edit requests restart", async () => {
+    configure(true)
+    const primary = invocation("binv_reload_primary", 1, "primary old")
+    const secondary = invocation("binv_reload_secondary", 1, "secondary old")
+    const ctx = context({ idle: false })
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary old full",
+      steered: [{ invocation: secondary as never, retryPrompt: "secondary old steer" }],
+    })
+    __testing.savePendingSnapshot(ctx)
+    const snapshot = JSON.parse(readFileSync(__testing.pendingSnapshotPathForTesting(runtimeSessionId), "utf8")) as any
+    expect(snapshot.steered[0].retryPrompt).toBe("secondary old steer")
+
+    await __testing.resetRuntimeForTesting()
+    configure(true)
+    const sends: string[] = []
+    const unregisters = new Map<string, number>()
+    let secondaryCallbacks: any
+    let disposition: string | undefined
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        if (params.invocationId === secondary.id) secondaryCallbacks = params.callbacks
+        return {
+          sync: async () => {
+            if (params.invocationId === secondary.id) {
+              disposition = await params.callbacks.onInputUpdated(
+                plaintextUpdate(secondary, 2, "secondary edited during reload")
+              )
+            }
+          },
+          unregister: () => unregisters.set(params.invocationId, (unregisters.get(params.invocationId) ?? 0) + 1),
+        }
+      },
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+
+    await __testing.restorePendingAfterReload({ sendUserMessage: (text: string) => sends.push(text) } as never, ctx)
+    expect({ disposition, sends, pending: __testing.pendingInvocationId() }).toEqual({
+      disposition: "restart-required",
+      sends: [],
+      pending: undefined,
+    })
+    expect({ primary: unregisters.get(primary.id), secondary: unregisters.get(secondary.id) ?? 0 }).toEqual({
+      primary: 1,
+      secondary: 0,
+    })
+    await secondaryCallbacks.onCancelled({
+      invocationId: secondary.id,
+      sourceRevision: 2,
+      reason: "adapter_restart_required",
+    })
+    expect(unregisters.get(secondary.id)).toBe(1)
+  })
+
+  test("single-claim reload retry applies a missed edit before provider delivery", async () => {
+    configure(true)
+    const primary = invocation("binv_retry_primary", 1, "primary old")
+    const ctx = context({ idle: true })
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary old full",
+      waitingForRetry: true,
+      retryAt: Date.now() + 60_000,
+      retryAttempts: 1,
+    })
+    __testing.savePendingSnapshot(ctx)
+    await __testing.resetRuntimeForTesting()
+    configure(true)
+
+    const sends: string[] = []
+    const pi = { sendUserMessage: (text: string) => sends.push(text) }
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => ({
+        sync: () => params.callbacks.onInputUpdated(plaintextUpdate(primary, 2, "primary newest")),
+        unregister: () => {},
+      }),
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/streams/stream_1/messages?"))
+        return sourceMessages(sourceMessage(primary, "primary newest"))
+      return json({ data: {} })
+    })
+    try {
+      await __testing.restorePendingAfterReload(pi as never, ctx)
+      expect(sends).toEqual([])
+      expect(__testing.pendingRuntimeState()).toMatchObject({
+        waitingForRetry: true,
+        invocationPrompt: expect.stringContaining("primary newest"),
+        steered: [],
+      })
+      __testing.setPendingRuntimeForTesting({ waitingForRetry: true, retryAttempts: 1 })
+      await __testing.executeProviderRetry(pi as never, ctx, 1, __testing.sessionLifecycleGeneration())
+      expect(sends).toHaveLength(1)
+      expect(sends[0]).toContain("primary newest")
+      expect(sends[0]).not.toContain("primary old full")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("rate-limit retry composes the edited secondary prompt without replacing the primary", async () => {
+    configure(true)
+    const primary = invocation("binv_retry_composed_primary", 1, "primary source")
+    const secondary = invocation("binv_retry_composed_secondary", 1, "secondary old")
+    const ctx = context({ idle: true })
+    const callbacks = new Map<string, any>()
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        callbacks.set(params.invocationId, params.callbacks)
+        return { sync: async () => {}, unregister: () => {} }
+      },
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    const pi = { sendUserMessage: (_text: string) => {} }
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary canonical full prompt",
+      steered: [{ invocation: secondary as never, retryPrompt: "secondary old steer" }],
+      waitingForRetry: true,
+      retryAttempts: 1,
+    })
+    expect(await __testing.observeInvocation(pi as never, ctx, primary as never, "running")).toBe(true)
+    expect(await __testing.observeInvocation(pi as never, ctx, secondary as never, "running")).toBe(true)
+    const sends: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/streams/stream_1/messages?"))
+        return sourceMessages(
+          sourceMessage(primary, "primary source"),
+          sourceMessage(secondary, "secondary newest", { sequence: "2", createdAt: "2026-01-01T00:00:01Z" })
+        )
+      return json({ data: {} })
+    })
+    try {
+      expect(await callbacks.get(secondary.id).onInputUpdated(plaintextUpdate(secondary, 2, "secondary newest"))).toBe(
+        "applied"
+      )
+      expect(__testing.pendingRuntimeState()).toMatchObject({
+        invocationPrompt: "primary canonical full prompt",
+        steered: [{ retryPrompt: expect.stringContaining("secondary newest") }],
+      })
+      __testing.savePendingSnapshot(ctx)
+      const snapshot = JSON.parse(
+        readFileSync(__testing.pendingSnapshotPathForTesting(runtimeSessionId), "utf8")
+      ) as any
+      expect(snapshot.steered[0].retryPrompt).toContain("secondary newest")
+      await __testing.executeProviderRetry(
+        { sendUserMessage: (text: string) => sends.push(text) } as never,
+        ctx,
+        1,
+        __testing.sessionLifecycleGeneration()
+      )
+      expect(sends).toHaveLength(1)
+      expect(sends[0]).toContain("primary canonical full prompt")
+      expect(sends[0]).toContain("secondary newest")
+      expect(sends[0]).not.toContain("secondary old steer")
+      expect(sends[0]!.indexOf("primary canonical full prompt")).toBeLessThan(sends[0]!.indexOf("secondary newest"))
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("plaintext source claimed during retry stays revision-owned and edits its retry prompt", async () => {
+    configure(true)
+    const primary = invocation("binv_wait_primary", 1, "primary")
+    const contributor = invocation("binv_wait_plain", 3, "queued source")
+    const ctx = context({ idle: true })
+    const callbacks = new Map<string, any>()
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        callbacks.set(params.invocationId, params.callbacks)
+        return { sync: async () => {}, unregister: () => {} }
+      },
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary retry prompt",
+      waitingForRetry: true,
+      retryAt: Date.now() + 60_000,
+      retryAttempts: 1,
+    })
+    expect(await __testing.observeInvocation({} as never, ctx, primary as never, "running")).toBe(true)
+    expect(await __testing.observeInvocation({} as never, ctx, contributor as never, "processing")).toBe(true)
+    const terminalWrites: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes("/streams/stream_1/messages?"))
+        return sourceMessages(sourceMessage(contributor, "queued source", { sequence: "3" }))
+      if (url.endsWith("/complete") || url.endsWith("/fail")) terminalWrites.push(url)
+      return json({ data: {} })
+    })
+    try {
+      expect(
+        await __testing.prepareRetryWaitContributor(
+          {} as never,
+          ctx,
+          contributor as never,
+          __testing.sessionLifecycleGeneration()
+        )
+      ).toBe(true)
+      expect(__testing.pendingRuntimeState()).toMatchObject({
+        waitingForRetry: true,
+        steered: [{ id: contributor.id, sourceRevision: 3, retryPrompt: "queued source" }],
+      })
+      expect(terminalWrites).toEqual([])
+      expect(await callbacks.get(contributor.id).onInputUpdated(plaintextUpdate(contributor, 4, "queued edited"))).toBe(
+        "applied"
+      )
+      expect(__testing.pendingRuntimeState()).toMatchObject({
+        steered: [{ id: contributor.id, sourceRevision: 4, retryPrompt: expect.stringContaining("queued edited") }],
+      })
+      expect(__testing.observedInvocationStates()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: contributor.id, state: "running" })])
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("sealed source claimed during retry hydrates strictly and remains a contributor", async () => {
+    configure(true)
+    const primary = invocation("binv_wait_sealed_primary", 1, "primary")
+    const encrypted = await encryptAttachmentBytes(new TextEncoder().encode("sealed queued"))
+    const ref = attachmentRef("att_wait_sealed", encrypted, { filename: "queued.txt", sizeBytes: 13 })
+    const contributor = {
+      ...invocation("binv_wait_sealed", 2, "sealed queued source"),
+      sealing: sealingState(),
+      sealedHistoryContextText: "sealed history",
+      sealedContextText: "sealed history",
+      sealedSourceAttachmentRefs: [ref],
+      sealedHistoryAttachmentRefs: [],
+    }
+    const ctx = context({ idle: true })
+    __testing.setTransportForTesting({
+      observeClaim: () => ({ sync: async () => {}, unregister: () => {} }),
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary retry prompt",
+      waitingForRetry: true,
+      retryAt: Date.now() + 60_000,
+      retryAttempts: 1,
+    })
+    expect(await __testing.observeInvocation({} as never, ctx, primary as never, "running")).toBe(true)
+    expect(await __testing.observeInvocation({} as never, ctx, contributor as never, "processing")).toBe(true)
+    const requests: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.includes("/attachments/att_wait_sealed/url")) {
+        return json({ data: { url: "https://signed.test/wait-sealed" } })
+      }
+      if (url === "https://signed.test/wait-sealed") return new Response(encrypted.ciphertext)
+      return json({ data: {} })
+    })
+    try {
+      expect(
+        await __testing.prepareRetryWaitContributor(
+          {} as never,
+          ctx,
+          contributor as never,
+          __testing.sessionLifecycleGeneration()
+        )
+      ).toBe(true)
+      expect(__testing.pendingRuntimeState()).toMatchObject({
+        waitingForRetry: true,
+        steered: [{ id: contributor.id, retryPrompt: expect.stringContaining("queued.txt") }],
+      })
+      expect({
+        terminalWrites: requests.some((url) => url.endsWith("/sealed-complete") || url.endsWith("/fail")),
+        messageFetches: requests.some((url) => url.includes("/streams/") && url.includes("/messages")),
+      }).toEqual({ terminalWrites: false, messageFetches: false })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("retry firing during contributor preparation live-steers only that contributor", async () => {
+    configure(true)
+    const primary = invocation("binv_wait_race_primary", 1, "primary")
+    const contributor = invocation("binv_wait_race_contributor", 1, "contributor")
+    const ctx = context({ idle: true })
+    __testing.setTransportForTesting({
+      observeClaim: () => ({ sync: async () => {}, unregister: () => {} }),
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    const sends: Array<{ text: string; options: unknown }> = []
+    const pi = { sendUserMessage: (text: string, options?: unknown) => sends.push({ text, options }) }
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary retry prompt",
+      waitingForRetry: true,
+      retryAt: Date.now(),
+      retryAttempts: 1,
+    })
+    expect(await __testing.observeInvocation(pi as never, ctx, primary as never, "running")).toBe(true)
+    expect(await __testing.observeInvocation(pi as never, ctx, contributor as never, "processing")).toBe(true)
+    const contextGate = deferred<Response>()
+    let contextStarted = false
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/streams/stream_1/messages?")) {
+        contextStarted = true
+        return contextGate.promise
+      }
+      return json({ data: {} })
+    })
+    try {
+      const preparation = __testing.prepareRetryWaitContributor(
+        pi as never,
+        ctx,
+        contributor as never,
+        __testing.sessionLifecycleGeneration()
+      )
+      await waitFor(() => contextStarted, "retry contributor context")
+      await __testing.executeProviderRetry(pi as never, ctx, 1, __testing.sessionLifecycleGeneration())
+      contextGate.resolve(sourceMessages(sourceMessage(contributor, "contributor current", { sequence: "2" })))
+      expect(await preparation).toBe(true)
+      expect(sends).toEqual([
+        expect.objectContaining({ text: expect.stringContaining("primary retry prompt"), options: undefined }),
+        expect.objectContaining({ text: "contributor", options: { deliverAs: "steer" } }),
+      ])
+      expect(__testing.pendingRuntimeState()).toMatchObject({
+        waitingForRetry: false,
+        steered: [{ id: contributor.id }],
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("deletion while retry contributor context is blocked cancels the combined turn", async () => {
+    configure(true)
+    const primary = invocation("binv_wait_delete_primary", 1, "primary")
+    const contributor = invocation("binv_wait_delete_contributor", 1, "delete queued")
+    const ctx = context({ idle: true })
+    let callbacks: any
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        if (params.invocationId === contributor.id) callbacks = params.callbacks
+        return { sync: async () => {}, unregister: () => {} }
+      },
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    const sends: string[] = []
+    const pi = { sendUserMessage: (text: string) => sends.push(text) }
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary retry prompt",
+      waitingForRetry: true,
+      retryAt: Date.now() + 60_000,
+      retryAttempts: 1,
+    })
+    expect(await __testing.observeInvocation(pi as never, ctx, primary as never, "running")).toBe(true)
+    expect(await __testing.observeInvocation(pi as never, ctx, contributor as never, "processing")).toBe(true)
+    const contextGate = deferred<Response>()
+    let contextStarted = false
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/streams/stream_1/messages?")) {
+        contextStarted = true
+        return contextGate.promise
+      }
+      return json({ data: {} })
+    })
+    try {
+      const preparation = __testing.prepareRetryWaitContributor(
+        pi as never,
+        ctx,
+        contributor as never,
+        __testing.sessionLifecycleGeneration()
+      )
+      await waitFor(() => contextStarted, "blocked contributor context")
+      await callbacks.onCancelled({
+        invocationId: contributor.id,
+        sourceRevision: contributor.sourceRevision,
+        reason: "source_deleted",
+      })
+      contextGate.resolve(sourceMessages(sourceMessage(contributor, "delete queued", { sequence: "2" })))
+      expect(await preparation).toBe(false)
+      expect({ sends, pending: __testing.pendingInvocationId() }).toEqual({ sends: [], pending: undefined })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("reload resumes contributor terminalization without repeating primary provider completion", async () => {
+    configure(true)
+    const primary = invocation("binv_close_reload_primary", 1, "primary")
+    const contributor = invocation("binv_close_reload_contributor", 1, "contributor")
+    const ctx = context({ idle: true })
+    __testing.setTransportForTesting({
+      observeClaim: () => ({ sync: async () => {}, unregister: () => {} }),
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary prompt",
+      steered: [{ invocation: contributor as never, retryPrompt: "contributor prompt" }],
+    })
+    expect(await __testing.observeInvocation({} as never, ctx, primary as never, "running")).toBe(true)
+    expect(await __testing.observeInvocation({} as never, ctx, contributor as never, "running")).toBe(true)
+    let primaryResponses = 0
+    let contributorWrites = 0
+    const firstFetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith(`/bot-invocations/${primary.id}/complete`)) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        if (body.finalMessageMarkdown) primaryResponses++
+        return json({ data: {} })
+      }
+      if (
+        url.endsWith(`/bot-invocations/${contributor.id}/complete`) ||
+        url.endsWith(`/bot-invocations/${contributor.id}/fail`)
+      ) {
+        contributorWrites++
+        return json({ error: "temporary" }, 503)
+      }
+      return json({ data: {} })
+    })
+    try {
+      await __testing.completePending("primary answer", ctx)
+      expect(__testing.pendingRuntimeState()).toMatchObject({ primaryCompleted: true, terminalWriteOwners: 1 })
+      const snapshot = JSON.parse(
+        readFileSync(__testing.pendingSnapshotPathForTesting(runtimeSessionId), "utf8")
+      ) as Record<string, unknown>
+      expect(snapshot.primaryCompleted).toBe(true)
+    } finally {
+      firstFetch.mockRestore()
+    }
+    await __testing.resetRuntimeForTesting()
+    configure(true)
+    __testing.setTransportForTesting({
+      observeClaim: () => ({ sync: async () => {}, unregister: () => {} }),
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    const secondFetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith(`/bot-invocations/${primary.id}/complete`)) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        if (body.finalMessageMarkdown) primaryResponses++
+      }
+      if (url.endsWith(`/bot-invocations/${contributor.id}/complete`)) contributorWrites++
+      return json({ data: {} })
+    })
+    try {
+      await __testing.restorePendingAfterReload({} as never, ctx)
+      expect({ primaryResponses, pending: __testing.pendingInvocationId() }).toEqual({
+        primaryResponses: 1,
+        pending: undefined,
+      })
+      expect(contributorWrites).toBeGreaterThan(1)
+    } finally {
+      secondFetch.mockRestore()
+    }
+  })
+
+  test("reload recovered-completion edit rejects old output and waits for cancellation", async () => {
+    configure(true)
+    const claim = invocation("binv_recovered_edit", 1, "old prompt")
+    const ctx = context({
+      idle: true,
+      branch: [
+        { type: "message", message: { role: "user", content: "old full prompt" } },
+        { type: "message", message: { role: "assistant", content: "old answer" } },
+      ],
+    })
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old full prompt" })
+    __testing.savePendingSnapshot(ctx)
+    await __testing.resetRuntimeForTesting()
+    configure(true)
+
+    let callbacks: any
+    let disposition: string | undefined
+    let unregisters = 0
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => {
+        callbacks = params.callbacks
+        return {
+          sync: async () => {
+            disposition = await callbacks.onInputUpdated(plaintextUpdate(claim, 2, "edited after completion"))
+          },
+          unregister: () => unregisters++,
+        }
+      },
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    const writes: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      writes.push(String(input))
+      return json({ data: {} })
+    })
+    try {
+      await __testing.restorePendingAfterReload({ sendUserMessage: () => writes.push("send") } as never, ctx)
+      expect({
+        disposition,
+        pending: __testing.pendingInvocationId(),
+        unregisters,
+        actuated: writes.some((write) => write.includes("/complete") || write === "send"),
+      }).toEqual({ disposition: "restart-required", pending: undefined, unregisters: 0, actuated: false })
+      await callbacks.onCancelled({ invocationId: claim.id, sourceRevision: 2, reason: "adapter_restart_required" })
+      expect(unregisters).toBe(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("reload cancellation discards the snapshot without injecting or completing", async () => {
+    configure(true)
+    const claim = invocation("binv_reload_cancel")
+    const ctx = context({ idle: false })
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old full prompt" })
+    __testing.savePendingSnapshot(ctx)
+    await __testing.resetRuntimeForTesting()
+    configure(true)
+    let unregisters = 0
+    const sends: string[] = []
+    __testing.setTransportForTesting({
+      observeClaim: (params: any) => ({
+        sync: () => params.callbacks.onCancelled({ invocationId: claim.id, reason: "source_deleted" }),
+        unregister: () => unregisters++,
+      }),
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    await __testing.restorePendingAfterReload({ sendUserMessage: (text: string) => sends.push(text) } as never, ctx)
+    expect({
+      sends,
+      pending: __testing.pendingInvocationId(),
+      observed: __testing.observedInvocationCount(),
+      unregisters,
+    }).toEqual({ sends: [], pending: undefined, observed: 0, unregisters: 1 })
+  })
+
+  for (const scenario of [
+    {
+      name: "a retry blocked by an edit defers and injects only the newest prompt",
+      id: "binv_retry_race",
+      gate: "recordSteps" as const,
+      gateEveryCall: false,
+      waitLabel: "blocked retry trace",
+      oldPrompt: "old primary prompt",
+      newPrompt: "new primary prompt",
+    },
+    {
+      name: "a retry blocked in heartbeat waits for an overlapping edit before delivery",
+      id: "binv_retry_heartbeat",
+      gate: "updatePresence" as const,
+      gateEveryCall: true,
+      waitLabel: "retry heartbeat",
+      oldPrompt: "old heartbeat prompt",
+      newPrompt: "new heartbeat prompt",
+    },
+  ]) {
+    test(scenario.name, async () => {
+      configure()
+      const claim = invocation(scenario.id)
+      const ctx = context()
+      const blockGate = deferred<void>()
+      const contextGate = deferred<Response>()
+      let blockedCalls = 0
+      const sends: string[] = []
+      __testing.beginPendingInvocation(claim as never)
+      __testing.setPendingRuntimeForTesting({
+        invocationPrompt: scenario.oldPrompt,
+        waitingForRetry: true,
+        retryAttempts: 1,
+      })
+      const blocked = async () => {
+        blockedCalls++
+        if (scenario.gateEveryCall || blockedCalls === 1) await blockGate.promise
+      }
+      const observation = await observe(
+        claim,
+        { sendUserMessage: (text: string) => sends.push(text) },
+        ctx,
+        scenario.gate === "recordSteps" ? { recordSteps: blocked } : { updatePresence: blocked }
+      )
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        if (String(input).includes("/streams/stream_1/messages?")) return contextGate.promise
+        return json({ data: {} })
+      })
+      try {
+        const retry = __testing.executeProviderRetry(
+          { sendUserMessage: (text: string) => sends.push(text) } as never,
+          ctx,
+          1,
+          __testing.sessionLifecycleGeneration()
+        )
+        await waitFor(() => blockedCalls >= 1, scenario.waitLabel)
+        const update = observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, scenario.newPrompt))
+        blockGate.resolve()
+        await retry
+        contextGate.resolve(sourceMessages(sourceMessage(claim, scenario.newPrompt)))
+        expect(await update).toBe("applied")
+        await waitFor(() => sends.length === 1, "deferred retry delivery")
+        expect(sends[0]).toContain(scenario.newPrompt)
+        expect(sends[0]).not.toContain(scenario.oldPrompt)
+      } finally {
+        fetchSpy.mockRestore()
+      }
+    })
+  }
+
+  test("cancellation while a fired retry is blocked injects nothing", async () => {
+    configure()
+    const claim = invocation("binv_retry_cancel")
+    const ctx = context()
+    const traceGate = deferred<void>()
+    let traceStarted = false
+    const sends: string[] = []
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "delete me", waitingForRetry: true, retryAttempts: 1 })
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, ctx, {
+      recordSteps: async () => {
+        traceStarted = true
+        await traceGate.promise
+      },
+    })
+    const retry = __testing.executeProviderRetry(
+      { sendUserMessage: (text: string) => sends.push(text) } as never,
+      ctx,
+      1,
+      __testing.sessionLifecycleGeneration()
+    )
+    await waitFor(() => traceStarted, "retry trace")
+    await observation.callbacks.onCancelled({ invocationId: claim.id, reason: "source_deleted" })
+    traceGate.resolve()
+    await retry
+    await Bun.sleep(20)
+    expect({ sends, pending: __testing.pendingInvocationId() }).toEqual({ sends: [], pending: undefined })
+  })
+
+  test("old message capture overlapping an edit cannot populate the replacement output", async () => {
+    configure(true)
+    const claim = invocation("binv_output_message")
+    const ctx = context()
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
+    const sends: string[] = []
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: any, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: (text: string) => sends.push(text),
+    }
+    threaRemote(pi as never)
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old full prompt" })
+    const oldTraceGate = deferred<void>()
+    let traceCalls = 0
+    const observation = await observe(claim, pi, ctx, {
+      recordSteps: async () => {
+        traceCalls++
+        if (traceCalls === 1) await oldTraceGate.promise
+      },
+    })
+    const completions: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.includes("/streams/stream_1/messages?")) return sourceMessages(sourceMessage(claim, "new prompt"))
+      if (url.endsWith(`/bot-invocations/${claim.id}/complete`)) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      }
+      return json({ data: {} })
+    })
+    try {
+      __testing.armPendingOutputForTesting()
+      await handlers.get("turn_start")!({ turnIndex: 0 }, ctx)
+      const oldMessage = handlers.get("message_end")!({ message: { role: "assistant", content: "old answer" } }, ctx)
+      await waitFor(() => traceCalls === 1, "old message trace")
+      expect(await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "new prompt"))).toBe("applied")
+      await handlers.get("turn_start")!({ turnIndex: 1 }, ctx)
+      oldTraceGate.resolve()
+      await oldMessage
+      await handlers.get("message_end")!({ message: { role: "assistant", content: "new answer" } }, ctx)
+      await handlers.get("agent_end")!({ messages: [] }, ctx)
+      expect(completions).toEqual([expect.objectContaining({ sourceRevision: 2, finalMessageMarkdown: "new answer" })])
+      expect(JSON.stringify(completions)).not.toContain("old answer")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("a steer stranded by an errored assistant message settles at agent_end", async () => {
+    configure(true)
+    const claim = invocation("binv_stranded_steer")
+    const ctx = context({ idle: false })
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: any, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: () => {},
+    }
+    threaRemote(pi as never)
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "full prompt" })
+    await observe(claim, pi, ctx, { initialState: "running" })
+    const completions: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).endsWith(`/bot-invocations/${claim.id}/complete`)) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      }
+      return json({ data: {} })
+    })
+    try {
+      __testing.armPendingOutputForTesting()
+      await handlers.get("turn_start")!({ turnIndex: 0 }, ctx)
+      await handlers.get("message_end")!({ message: { role: "assistant", content: "before the steer" } }, ctx)
+      __testing.armPendingOutputForTesting()
+      await handlers.get("agent_end")!(
+        { messages: [{ role: "assistant", stopReason: "error", errorMessage: "provider exploded", content: [] }] },
+        ctx
+      )
+      expect({ completions, pending: __testing.pendingRuntimeState().invocationPrompt }).toEqual({
+        completions: [expect.objectContaining({ finalMessageMarkdown: expect.stringContaining("provider exploded") })],
+        pending: undefined,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("old provider settlement cannot complete after a newer turn starts", async () => {
+    configure(true)
+    const claim = invocation("binv_output_provider")
+    const ctx = context()
+    const handlers = new Map<string, (event: any, ctx: any) => Promise<void>>()
+    const pi = {
+      registerCommand: () => {},
+      on: (event: string, handler: (event: any, ctx: any) => Promise<void>) => handlers.set(event, handler),
+      sendUserMessage: () => {},
+    }
+    threaRemote(pi as never)
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old full prompt" })
+    const oldSettlementGate = deferred<void>()
+    let traceCalls = 0
+    const observation = await observe(claim, pi, ctx, {
+      recordSteps: async () => {
+        traceCalls++
+        if (traceCalls === 1) await oldSettlementGate.promise
+      },
+    })
+    const completions: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.includes("/streams/stream_1/messages?")) return sourceMessages(sourceMessage(claim, "edited prompt"))
+      if (url.endsWith(`/bot-invocations/${claim.id}/complete`)) {
+        completions.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      }
+      return json({ data: {} })
+    })
+    try {
+      __testing.armPendingOutputForTesting()
+      await handlers.get("turn_start")!({ turnIndex: 0 }, ctx)
+      await handlers.get("after_provider_response")!({ status: 500, headers: {} }, ctx)
+      const oldEnd = handlers.get("agent_end")!({ messages: [] }, ctx)
+      await waitFor(() => traceCalls === 1, "old provider settlement trace")
+      expect(await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "edited prompt"))).toBe("applied")
+      await handlers.get("turn_start")!({ turnIndex: 1 }, ctx)
+      oldSettlementGate.resolve()
+      await oldEnd
+      expect(completions).toEqual([])
+      await handlers.get("message_end")!({ message: { role: "assistant", content: "new provider answer" } }, ctx)
+      await handlers.get("agent_end")!({ messages: [] }, ctx)
+      expect(completions).toEqual([
+        expect.objectContaining({ sourceRevision: 2, finalMessageMarkdown: "new provider answer" }),
+      ])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("plaintext update attachment failure restarts without steering", async () => {
+    configure()
+    const claim = invocation("binv_plain_attachment")
+    const sends: string[] = []
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old" })
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, context())
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes("/streams/stream_1/messages?"))
+        return sourceMessages(
+          sourceMessage(claim, "edited", {
+            attachments: [{ id: "att_bad", filename: "bad.txt", mimeType: "text/plain", sizeBytes: 3 }],
+          })
+        )
+      if (url.includes("/attachments/att_bad/url")) return json({ data: { url: "https://signed.test/bad" } })
+      if (url === "https://signed.test/bad") return new Response("bad", { status: 503 })
+      return json({ data: {} })
+    })
+    try {
+      expect(await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "edited"))).toBe("restart-required")
+      expect(sends).toEqual([])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("deletion aborts a sealed update blocked in attachment rebuild before steering", async () => {
+    configure()
+    const encrypted = await encryptAttachmentBytes(new TextEncoder().encode("deleted secret"))
+    const ref = attachmentRef("att_deleted_update", encrypted, { filename: "deleted.txt", sizeBytes: 14 })
+    const sealing = sealingState()
+    const claim = {
+      ...invocation("binv_abort_rebuild"),
+      sealing,
+      sealedHistoryContextText: "history",
+      sealedContextText: "history",
+      sealedSourceAttachmentRefs: [],
+    }
+    const ctx = context({ idle: false })
+    const sends: string[] = []
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old sealed prompt" })
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, ctx)
+    const objectGate = deferred<Response>()
+    let objectStarted = false
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes("/attachments/att_deleted_update/url")) {
+        return json({ data: { url: "https://signed.test/deleted-update" } })
+      }
+      if (url === "https://signed.test/deleted-update") {
+        objectStarted = true
+        return objectGate.promise
+      }
+      return json({ data: {} })
+    })
+    const controller = new AbortController()
+    try {
+      const update = observation.callbacks.onInputUpdated(
+        {
+          invocationId: claim.id,
+          sourceMessageId: claim.sourceMessageId,
+          sourceRevision: 2,
+          delivery: "sealed",
+          promptMarkdown: "must not actuate",
+          attachmentRefs: [ref],
+          sealing,
+        },
+        controller.signal
+      )
+      await waitFor(() => objectStarted, "sealed update object fetch")
+      controller.abort()
+      objectGate.resolve(new Response(encrypted.ciphertext))
+      expect(await update).toBe("restart-required")
+      expect({
+        sends,
+        pending: __testing.pendingInvocationId(),
+        observed: __testing.observedInvocationCount(),
+      }).toEqual({
+        sends: [],
+        pending: undefined,
+        observed: 0,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("deletion observed at the final context await prevents the steer send", async () => {
+    configure()
+    const claim = invocation("binv_abort_before_steer")
+    const sends: string[] = []
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old" })
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, context())
+    const controller = new AbortController()
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (!String(input).includes("/streams/stream_1/messages?")) return json({ data: {} })
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => {
+          controller.abort()
+          return { data: [sourceMessage(claim, "deleted before steer")] }
+        },
+      } as Response
+    })
+    try {
+      expect(
+        await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "deleted before steer"), controller.signal)
+      ).toBe("restart-required")
+      expect({ sends, pending: __testing.pendingInvocationId() }).toEqual({ sends: [], pending: undefined })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("sealed source replacement and removal never retain the old source path", async () => {
+    configure()
+    const encrypted = await encryptAttachmentBytes(new TextEncoder().encode("new sealed file"))
+    const newRef = attachmentRef("att_new", encrypted, { filename: "new.txt", sizeBytes: 15 })
+    const sealing = sealingState()
+    const claim = {
+      ...invocation("binv_sealed_replace"),
+      sealing,
+      sealedHistoryContextText: "immutable history only",
+      sealedContextText: "immutable history only\n\nold.txt → /old/source/path",
+      sealedSteerContextText: "old.txt → /old/source/path",
+      sealedSourceAttachmentRefs: [],
+    }
+    const sends: string[] = []
+    __testing.beginPendingInvocation(claim as never)
+    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old sealed prompt" })
+    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, context())
+    const requests: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.includes("/attachments/att_new/url")) return json({ data: { url: "https://signed.test/new" } })
+      if (url === "https://signed.test/new") return new Response(encrypted.ciphertext)
+      return json({ data: {} })
+    })
+    try {
+      expect(
+        await observation.callbacks.onInputUpdated({
+          invocationId: claim.id,
+          sourceMessageId: claim.sourceMessageId,
+          sourceRevision: 2,
+          delivery: "sealed",
+          promptMarkdown: "sealed edited with new file",
+          attachmentRefs: [newRef],
+          sealing,
+        })
+      ).toBe("applied")
+      expect(sends.at(-1)).toContain("new.txt")
+      expect(sends.at(-1)).not.toContain("old.txt")
+      expect(
+        await observation.callbacks.onInputUpdated({
+          invocationId: claim.id,
+          sourceMessageId: claim.sourceMessageId,
+          sourceRevision: 3,
+          delivery: "sealed",
+          promptMarkdown: "sealed edited without a file",
+          attachmentRefs: [],
+          sealing,
+        })
+      ).toBe("applied")
+      expect(sends.at(-1)).toContain("sealed edited without a file")
+      expect(sends.at(-1)).not.toContain("new.txt")
+      expect(__testing.pendingInvocationState()).toMatchObject({
+        sealedHistoryContextText: "immutable history only",
+        sealedContextText: "immutable history only",
+      })
+      expect(requests.some((url) => url.includes("/streams/") && url.includes("/messages"))).toBe(false)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("restarting a standalone control preserves an unrelated provider retry", async () => {
+    configure()
+    const primary = invocation("binv_waiting_primary", 4, "primary canonical")
+    const control = {
+      ...invocation("binv_waiting_control", 1, "/thinking high"),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: "cmd_waiting", name: "thinking", args: "high", executionKind: "bot-runtime" },
+      },
+    }
+    const ctx = context({ idle: true })
+    __testing.beginPendingInvocation(primary as never)
+    __testing.setPendingRuntimeForTesting({
+      invocationPrompt: "primary canonical full prompt",
+      waitingForRetry: true,
+      retryAt: Date.now() + 60_000,
+      retryAttempts: 2,
+      carryOns: ["keep this carry-on"],
+    })
+    const primaryObservation = await observe(primary, {}, ctx, { initialState: "running" })
+    const traceGate = deferred<void>()
+    let traceStarted = false
+    const controlObservation = await observe(control, {}, ctx, {
+      initialState: "processing",
+      recordSteps: async () => {
+        traceStarted = true
+        await traceGate.promise
+      },
+    })
+    const handling = __testing.handleSessionControlInvocation(
+      {
+        getThinkingLevel: () => "low",
+        setThinkingLevel: () => {},
+      } as never,
+      ctx,
+      control as never
+    )
+    await waitFor(() => traceStarted, "standalone control trace")
+    expect(await controlObservation.callbacks.onInputUpdated(plaintextUpdate(control, 2, "/thinking xhigh"))).toBe(
+      "restart-required"
+    )
+    traceGate.resolve()
+    await handling
+    expect(__testing.pendingInvocationState()).toMatchObject({ id: primary.id, sourceRevision: 4 })
+    expect(__testing.pendingRuntimeState()).toMatchObject({
+      waitingForRetry: true,
+      invocationPrompt: "primary canonical full prompt",
+    })
+    expect(__testing.observedInvocationStates()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: primary.id, state: "running", restartRequested: false }),
+        expect.objectContaining({ id: control.id, state: "processing", restartRequested: true }),
+      ])
+    )
+    expect(primaryObservation.unregisters()).toBe(0)
+    await controlObservation.callbacks.onCancelled({
+      invocationId: control.id,
+      sourceRevision: 2,
+      reason: "adapter_restart_required",
+    })
+    expect(controlObservation.unregisters()).toBe(1)
+    expect(__testing.pendingInvocationId()).toBe(primary.id)
+    expect(__testing.pendingRuntimeState()).toMatchObject({ waitingForRetry: true })
+    expect(__testing.observedInvocationStates()).toEqual([
+      expect.objectContaining({ id: primary.id, state: "running", restartRequested: false }),
+    ])
+    expect(primaryObservation.unregisters()).toBe(0)
+  })
+
+  // Both shell-control regressions need the same blocked-helper-trace setup: a
+  // /shell control observed in `processing`, parked inside its second trace
+  // write while `handleSessionControlInvocation` is in flight.
+  const blockedShellControl = async (id: string, commandId: string, markerName: string) => {
+    const marker = join(testStorageDirectory, markerName)
+    const claim = {
+      ...invocation(id, 1, `/shell touch ${marker}`),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: commandId, name: "shell", args: `touch ${marker}`, executionKind: "bot-runtime" },
+      },
+    }
+    const counters = { aborts: 0 }
+    const ctx = context({ idle: false, abort: () => counters.aborts++ })
+    const helperTraceGate = deferred<void>()
+    let traceCalls = 0
+    const observation = await observe(claim, {}, ctx, {
+      initialState: "processing",
+      recordSteps: async () => {
+        traceCalls++
+        if (traceCalls === 2) await helperTraceGate.promise
+      },
+    })
+    const requests: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      requests.push(String(input))
+      return json({ data: {} })
+    })
+    const handling = __testing.handleSessionControlInvocation({} as never, ctx, claim as never)
+    await waitFor(() => traceCalls === 2, "shell helper trace")
+    const terminalWrites = () => requests.some((url) => url.endsWith("/complete") || url.endsWith("/fail"))
+    return { claim, marker, counters, observation, handling, helperTraceGate, terminalWrites, fetchSpy }
+  }
+
+  test("cancelling a shell control while its helper trace is blocked prevents actuation", async () => {
+    configure()
+    const shell = await blockedShellControl("binv_control_cancel", "cmd_shell", "must-not-exist")
+    try {
+      await shell.observation.callbacks.onCancelled({ invocationId: shell.claim.id, reason: "source_deleted" })
+      shell.helperTraceGate.resolve()
+      await shell.handling
+      expect({
+        exists: existsSync(shell.marker),
+        aborts: shell.counters.aborts,
+        unregisters: shell.observation.unregisters(),
+        terminalWrites: shell.terminalWrites(),
+      }).toEqual({ exists: false, aborts: 1, unregisters: 1, terminalWrites: false })
+    } finally {
+      shell.fetchSpy.mockRestore()
+    }
+  })
+
+  test("editing a shell control while its helper trace is blocked requests restart without actuation", async () => {
+    configure()
+    const shell = await blockedShellControl("binv_control_restart", "cmd_shell_restart", "restart-must-not-exist")
+    try {
+      expect(
+        await shell.observation.callbacks.onInputUpdated(
+          plaintextUpdate(shell.claim, 2, `/shell touch ${shell.marker}`)
+        )
+      ).toBe("restart-required")
+      expect(shell.observation.unregisters()).toBe(0)
+      shell.helperTraceGate.resolve()
+      await shell.handling
+      expect({
+        exists: existsSync(shell.marker),
+        aborts: shell.counters.aborts,
+        terminalWrites: shell.terminalWrites(),
+      }).toEqual({ exists: false, aborts: 0, terminalWrites: false })
+      await shell.observation.callbacks.onCancelled({
+        invocationId: shell.claim.id,
+        sourceRevision: 2,
+        reason: "adapter_restart_required",
+      })
+      expect(shell.observation.unregisters()).toBe(1)
+    } finally {
+      shell.fetchSpy.mockRestore()
+    }
+  })
+
+  test("successful observed reload acknowledgement still queues the reload handoff", async () => {
+    configure()
+    const claim = {
+      ...invocation("binv_observed_reload", 0, "/reload"),
+      requiredCapability: "session-control",
+      metadata: { command: { id: "cmd_reload", name: "reload", args: "", executionKind: "bot-runtime" } },
+    }
+    const ctx = context({ idle: true })
+    const followUps: Array<{ text: string; options: unknown }> = []
+    const pi = { sendUserMessage: (text: string, options: unknown) => followUps.push({ text, options }) }
+    const observation = await observe(claim, pi, ctx, { initialState: "processing" })
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(json({ data: {} }))
+    try {
+      await __testing.handleSessionControlInvocation(pi as never, ctx, claim as never)
+      expect(followUps).toEqual([{ text: "/threa-remote-reload", options: { deliverAs: "followUp" } }])
+      expect({ unregisters: observation.unregisters(), reloadPending: __testing.reloadPending() }).toEqual({
+        unregisters: 1,
+        reloadPending: true,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("successful observed reconnect acknowledgement still starts the prepared handoff", async () => {
+    configure(true)
+    const claim = {
+      ...invocation("binv_observed_reconnect", 0, "/reconnect"),
+      requiredCapability: "session-control",
+      metadata: { command: { id: "cmd_reconnect", name: "reconnect", args: "", executionKind: "bot-runtime" } },
+    }
+    const ctx = context({ idle: true })
+    const observation = await observe(claim, {}, ctx, { initialState: "processing" })
+    let starts = 0
+    process.env.TMUX_PANE = "%pi-matrix"
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(json({ data: {} }))
+    try {
+      await __testing.runReconnectCommand(
+        claim as never,
+        "",
+        ctx,
+        {
+          available: () => true,
+          prepare: () => () => {
+            starts++
+          },
+          complete: __testing.completeInvocationWithMarkdown,
+          heartbeat: async () => {},
+        } as never,
+        () => __testing.observedInvocationCount() > 0
+      )
+      expect({ starts, unregisters: observation.unregisters() }).toEqual({ starts: 1, unregisters: 1 })
+    } finally {
+      delete process.env.TMUX_PANE
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("successful sealed ack and E2E no-response fallback both release observation ownership", async () => {
+    configure()
+    const ctx = context({ idle: true })
+    const sealedClaim = invocation("binv_sealed_ack")
+    const sealedObservation = await observe(sealedClaim, {}, ctx, { initialState: "processing" })
+    const fallbackClaim = { ...invocation("binv_e2e_fallback"), sealedAck: { invalid: true } }
+    const fallbackObservation = await observe(fallbackClaim, {}, ctx, { initialState: "processing" })
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith("/complete")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        bodies.push(body)
+        if (body.finalMessageMarkdown) {
+          return new Response(JSON.stringify({ error: { code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" } }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          })
+        }
+      }
+      return json({ data: {} })
+    })
+    try {
+      expect(
+        await __testing.completeInvocationWithMarkdown(sealedClaim as never, "sealed ack", ctx, {
+          sealAck: async () => ({ messageId: "sealed_ack", ciphertext: "cipher", envelope: {} }) as never,
+        })
+      ).toBe(true)
+      expect(await __testing.completeInvocationWithMarkdown(fallbackClaim as never, "fallback ack", ctx)).toBe(false)
+      expect({
+        sealed: sealedObservation.unregisters(),
+        fallback: fallbackObservation.unregisters(),
+        noResponseFallback: bodies.some((body) => body.noResponse === true),
+      }).toEqual({ sealed: 1, fallback: 1, noResponseFallback: true })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  for (const scenario of [
+    { delivery: "plaintext", id: "binv_no_response_fallback", terminal: "complete", sealed: false },
+    { delivery: "sealed", id: "binv_sealed_no_response_fallback", terminal: "sealed-complete", sealed: true },
+  ]) {
+    test(`${scenario.delivery} no-response 503 falls back to fail before releasing ownership`, async () => {
+      configure()
+      const claim = invocation(scenario.id, 1, "original", scenario.sealed ? { sealing: sealingState() } : {})
+      const observation = await observe(claim, {}, context({ idle: true }))
+      const writes: string[] = []
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input)
+        writes.push(url)
+        if (url.endsWith(`/bot-invocations/${claim.id}/${scenario.terminal}`)) {
+          expect(observation.unregisters()).toBe(0)
+          return json({ error: "temporary" }, 503)
+        }
+        if (url.endsWith(`/bot-invocations/${claim.id}/fail`)) {
+          expect(observation.unregisters()).toBe(0)
+          return json({ data: { status: "failed" } })
+        }
+        return json({ data: {} })
+      })
+      try {
+        expect(await __testing.completeInvocationNoResponse(claim as never)).toBe(true)
+        expect({
+          writes: writes.map((url) => url.split("/").at(-1)),
+          unregisters: observation.unregisters(),
+          observed: __testing.observedInvocationCount(),
+        }).toEqual({ writes: [scenario.terminal, "fail"], unregisters: 1, observed: 0 })
+      } finally {
+        fetchSpy.mockRestore()
+      }
+    })
+  }
+
+  test("transient fail retries keep contributor ownership until terminal success", async () => {
+    configure()
+    const claim = invocation("binv_terminal_retry")
+    const observation = await observe(claim, {}, context({ idle: true }))
+    let failCalls = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith(`/bot-invocations/${claim.id}/complete`)) return json({ error: "temporary" }, 503)
+      if (url.endsWith(`/bot-invocations/${claim.id}/fail`)) {
+        failCalls++
+        expect(observation.unregisters()).toBe(0)
+        return failCalls < 3 ? json({ error: "temporary" }, 503) : json({ data: { status: "failed" } })
+      }
+      return json({ data: {} })
+    })
+    try {
+      expect(await __testing.completeInvocationNoResponse(claim as never)).toBe(true)
+      expect({ failCalls, unregisters: observation.unregisters() }).toEqual({ failCalls: 3, unregisters: 1 })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("cancellation during contributor fail retry stops writes and releases once", async () => {
+    configure()
+    const claim = invocation("binv_terminal_retry_cancel")
+    const observation = await observe(claim, {}, context({ idle: true }))
+    const failGate = deferred<Response>()
+    let failCalls = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith(`/bot-invocations/${claim.id}/complete`)) return json({ error: "temporary" }, 503)
+      if (url.endsWith(`/bot-invocations/${claim.id}/fail`)) {
+        failCalls++
+        return failGate.promise
+      }
+      return json({ data: {} })
+    })
+    try {
+      const closing = __testing.completeInvocationNoResponse(claim as never)
+      await waitFor(() => failCalls === 1, "contributor fail write")
+      await observation.callbacks.onCancelled({
+        invocationId: claim.id,
+        sourceRevision: claim.sourceRevision,
+        reason: "source_deleted",
+      })
+      failGate.resolve(json({ error: "temporary" }, 503))
+      expect(await closing).toBe(false)
+      await Bun.sleep(40)
+      expect({
+        failCalls,
+        unregisters: observation.unregisters(),
+        owners: __testing.pendingRuntimeState().terminalWriteOwners,
+      }).toEqual({
+        failCalls: 1,
+        unregisters: 1,
+        owners: 0,
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("structured stale control completion performs no fallback fail and releases once", async () => {
+    configure()
+    const claim = {
+      ...invocation("binv_control_stale", 9, "/thinking high"),
+      requiredCapability: "session-control",
+      metadata: {
+        command: { id: "cmd_thinking", name: "thinking", args: "high", executionKind: "bot-runtime" },
+      },
+    }
+    const ctx = context({ idle: true })
+    const observation = await observe(claim, {}, ctx, { initialState: "processing" })
+    let level = "low"
+    let completeCalls = 0
+    let failCalls = 0
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith(`/bot-invocations/${claim.id}/complete`)) {
+        completeCalls++
+        return new Response(JSON.stringify({ error: { code: "INVOCATION_INPUT_STALE" } }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.endsWith(`/bot-invocations/${claim.id}/fail`)) failCalls++
+      return json({ data: {} })
+    })
+    try {
+      await __testing.handleSessionControlInvocation(
+        {
+          getThinkingLevel: () => level,
+          setThinkingLevel: (next: string) => {
+            level = next
+          },
+        } as never,
+        ctx,
+        claim as never
+      )
+      expect({ completeCalls, failCalls, unregisters: observation.unregisters(), level }).toEqual({
+        completeCalls: 1,
+        failCalls: 0,
+        unregisters: 1,
+        level: "high",
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("sealed initial sync installs newest refs before any attachment fetch", async () => {
+    configure()
+    const oldEncrypted = await encryptAttachmentBytes(new TextEncoder().encode("old"))
+    const newEncrypted = await encryptAttachmentBytes(new TextEncoder().encode("new"))
+    const oldRef = attachmentRef("att_old", oldEncrypted, { sizeBytes: 3 })
+    const newRef = attachmentRef("att_newest", newEncrypted, { sizeBytes: 3 })
+    const sealing = sealingState({ replyKeyGeneration: 2 })
+    const claim = {
+      ...invocation("binv_sealed_sync"),
+      sealing,
+      sealedHistoryContextText: "history",
+      sealedContextText: "history",
+      sealedSourceAttachmentRefs: [oldRef],
+      sealedHistoryAttachmentRefs: [],
+    }
+    const fetched: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      fetched.push(url)
+      if (url.includes("/attachments/att_newest/url")) return json({ data: { url: "https://signed.test/newest" } })
+      if (url === "https://signed.test/newest") return new Response(newEncrypted.ciphertext)
+      if (url.includes("/attachments/att_old/url")) return json({ data: { url: "https://signed.test/old" } })
+      if (url === "https://signed.test/old") return new Response(oldEncrypted.ciphertext)
+      return json({ data: {} })
+    })
+    try {
+      const observation = await observe(claim, {}, context(), {
+        initialState: "unstarted",
+        sync: async (callbacks) => {
+          expect(fetched).toEqual([])
+          expect(
+            await callbacks.onInputUpdated({
+              invocationId: claim.id,
+              sourceMessageId: claim.sourceMessageId,
+              sourceRevision: 2,
+              delivery: "sealed",
+              promptMarkdown: "newest sealed prompt",
+              attachmentRefs: [newRef],
+              sealing,
+            })
+          ).toBe("applied")
+          expect(fetched).toEqual([])
+        },
+      })
+      expect(observation.active).toBe(true)
+      await __testing.prepareSealedClaim(claim as never, context())
+      expect({
+        newest: fetched.some((url) => url.includes("att_newest")),
+        old: fetched.some((url) => url.includes("att_old")),
+        contents: readFileSync(
+          join(testStorageDirectory, ".threa-attachments", claim.id, "att_newest", "att_newest.txt"),
+          "utf8"
+        ),
+      }).toEqual({ newest: true, old: false, contents: "new" })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("sealed attachment cancellation during object fetch writes no decrypted file", async () => {
+    configure()
+    const encrypted = await encryptAttachmentBytes(new TextEncoder().encode("secret"))
+    const ref = attachmentRef("att_cancelled", encrypted, { filename: "cancelled.txt", sizeBytes: 6 })
+    const claim = {
+      ...invocation("binv_sealed_cancel"),
+      sealing: sealingState(),
+      sealedHistoryContextText: "history",
+      sealedSourceAttachmentRefs: [ref],
+      sealedHistoryAttachmentRefs: [],
+    }
+    const objectGate = deferred<Response>()
+    let objectFetchStarted = false
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes("/attachments/att_cancelled/url")) {
+        return json({ data: { url: "https://signed.test/cancelled" } })
+      }
+      if (url === "https://signed.test/cancelled") {
+        objectFetchStarted = true
+        return objectGate.promise
+      }
+      return json({ data: {} })
+    })
+    try {
+      const observation = await observe(claim, {}, context(), { initialState: "unstarted" })
+      const preparation = __testing.prepareSealedClaim(claim as never, context())
+      await waitFor(() => objectFetchStarted, "sealed object fetch")
+      await observation.callbacks.onCancelled({ invocationId: claim.id, reason: "source_deleted" })
+      objectGate.resolve(new Response(encrypted.ciphertext))
+      await expect(preparation).rejects.toThrow("invocation changed")
+      expect({
+        wrote: existsSync(join(testStorageDirectory, ".threa-attachments", claim.id, "att_cancelled", "cancelled.txt")),
+        unregisters: observation.unregisters(),
+      }).toEqual({ wrote: false, unregisters: 1 })
     } finally {
       fetchSpy.mockRestore()
     }
