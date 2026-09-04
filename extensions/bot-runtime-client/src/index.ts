@@ -1,4 +1,10 @@
 export { BotRuntimeTransport } from "./transport"
+export type {
+  InvocationCancellation,
+  InvocationInputUpdate,
+  ObserveClaimParams,
+  ObservedClaimHandle,
+} from "./invocation-control"
 export {
   ARCHIVE_RESTORE_GRACE_MS,
   ARCHIVE_RESTORE_PROBE_MS,

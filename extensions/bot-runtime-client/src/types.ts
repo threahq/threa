@@ -1,3 +1,5 @@
+import type { InvocationControlScheduler } from "./invocation-control"
+
 /**
  * The ack the `/bot` write events return. `ok: true` means the server persisted
  * the write; `ok: false` carries a `code` (`NOT_FOUND`, `FORBIDDEN`,
@@ -33,7 +35,10 @@ export interface BotRuntimeHello {
   acceptingInvocations?: boolean
   supportedCapabilities: string[]
   capabilities?: Record<string, unknown>
-  manifest?: { output: { reply?: boolean; trace?: boolean; sources?: boolean } }
+  manifest?: {
+    output: { reply?: boolean; trace?: boolean; sources?: boolean }
+    input?: { updates: "live" | "restart" }
+  }
   /** ISO cursor echoed from the previous hello ack so the bootstrap only replays unseen events. */
   sinceCursor?: string
   /**
@@ -96,6 +101,12 @@ export interface BotRuntimeTransportOptions {
   reconnectionDelayMaxMs?: number
   /** HTTP fallback request timeout. Default 30s. */
   fetchTimeoutMs?: number
+  /** Observed-claim retry/poll cadence. Default 5s. */
+  controlRetryDelayMs?: number
+  /** Earliest observed-claim renewal delay. Default 1s. */
+  controlMinRenewDelayMs?: number
+  /** Optional observed-claim timer scheduler for deterministic hosts/tests. */
+  controlScheduler?: InvocationControlScheduler
   /**
    * How long a socket may sit disconnected before `connect()` tears it down and
    * redials from a fresh ws hint. Default 3 min. Socket.IO's own retry loop
