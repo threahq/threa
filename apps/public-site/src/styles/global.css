@@ -566,8 +566,9 @@ body {
 .composer-input::-webkit-input-placeholder {
   color: hsl(var(--muted));
 }
-/* When the mention pill is in, hide the placeholder so it doesn't
-     read as "@ariadneMessage #api-v3" — toggled by the JS driver. */
+/* While the mention message is being typed (prefix, pill, or suffix
+     on screen), hide the placeholder so it doesn't read as
+     "shit, uh 🤷Type a message" — toggled by the JS driver. */
 .composer-editor.has-mention .composer-input::placeholder {
   opacity: 0;
 }
@@ -1081,19 +1082,24 @@ body {
 }
 
 /* Composer typing:
-       30%   — mention pill snaps in as a unit (steps(1) instant jump)
-       30-47% — " do you know?" types out (driven by JS so the caret can
+       25-31% — "shit, uh 🤷" types out before the pill (JS-driven)
+       33%    — mention pill snaps in as a unit (steps(1) instant jump)
+       34-37% — " ?" types after the pill (driven by JS so the caret can
                 follow the visible glyphs naturally)
-       49%   — send fires → both clear */
+       49%    — send fires → everything clears */
+.composer-typed {
+  flex: 0 0 auto;
+  white-space: pre;
+}
 .composer-mention-wrap {
   animation: pop-mention var(--cycle) steps(1) 1 forwards;
 }
 @keyframes pop-mention {
   0%,
-  29.9% {
+  32.9% {
     max-width: 0;
   }
-  30%,
+  33%,
   48.9% {
     max-width: 100px;
   }
@@ -1112,11 +1118,11 @@ body {
   /* Idle/disabled = faded gold (the real product's disabled primary
        button), arms to full gold while content is typed. */
   0%,
-  29.9% {
+  24.9% {
     background: hsl(var(--send-idle-bg));
     color: hsl(var(--send-idle-fg));
   }
-  30%,
+  25%,
   48.9% {
     background: hsl(var(--send-armed-bg));
     color: hsl(var(--send-armed-fg));

@@ -49,8 +49,8 @@ const schema = [
             Team chat with a memory underneath. When your team settles
             something, the decision and the why stay attached to the messages,
             so when the question comes back in three months there's an answer
-            instead of a re-litigation. I built this because Slack had eaten
-            too many of mine.
+            instead of a re-litigation. I built this because chat kept eating
+            mine.
           </p>
           <div class="actions">
             <a class="cta" href="#waitlist">Join the waitlist</a>
@@ -78,7 +78,7 @@ const schema = [
                   <span class="tl-name">Maya Reyes</span>
                   <span class="tl-time" data-time="maya">Friday 14:03</span>
                 </div>
-                <div class="tl-text">ok picking the auth refactor back up next sprint. anyone remember why we paused it in march</div>
+                <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
               </div>
             </div>
 
@@ -103,7 +103,7 @@ const schema = [
                   <span class="tl-name">Alex Park</span>
                   <span class="tl-time" data-time="alex">Friday 14:05</span>
                 </div>
-                <div class="tl-text"><span class="mention">@ariadne</span> do you know?</div>
+                <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
               </div>
             </div>
 
@@ -167,6 +167,7 @@ const schema = [
                  the right (the "More" button only exists there). -->
             <div class="composer" aria-label="Message composer">
               <div class="composer-editor">
+                <span class="composer-typed" aria-hidden="true"></span>
                 <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@ariadne</span></span>
                 <input
                   class="composer-input"
@@ -178,7 +179,8 @@ const schema = [
                   inputmode="none"
                   placeholder="Type a message..."
                   aria-label="Message"
-                  data-trail=" do you know?"
+                  data-pre="shit, uh 🤷"
+                  data-trail=" ?"
                 />
               </div>
               <div class="composer-bar">
@@ -226,7 +228,7 @@ const schema = [
       </li>
       <li>
         <h3>Open source</h3>
-        <p>The whole product is public under the MIT license. Not because I expect you to self-host it, but because when something breaks you can read the code and fix it instead of waiting on me. <a href="https://github.com/threahq/threa">It's on GitHub.</a></p>
+        <p>The whole product is public. It's MIT licensed so you can help fixing what I broke. <a href="https://github.com/threahq/threa">It's on GitHub.</a></p>
       </li>
     </ul>
   </div>
@@ -260,7 +262,7 @@ const schema = [
           <div class="tl-avatar av-maya">MR</div>
           <div class="tl-body">
             <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
-            <div class="tl-text">ok picking the auth refactor back up next sprint. anyone remember why we paused it in march</div>
+            <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
           </div>
           <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
         </div>
@@ -289,7 +291,7 @@ const schema = [
           <div class="tl-avatar av-alex">AP</div>
           <div class="tl-body">
             <div class="tl-head-line"><span class="tl-name">Alex Park</span><span class="tl-time">14:05</span></div>
-            <div class="tl-text"><span class="mention">@ariadne</span> do you know?</div>
+            <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
           </div>
           <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
         </div>
@@ -338,7 +340,7 @@ const schema = [
                 <div class="tl-avatar av-maya">MR</div>
                 <div class="tl-body">
                   <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
-                  <div class="tl-text">ok picking the auth refactor back up next sprint. anyone remember why we paused it in march</div>
+                  <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
                 </div>
                 <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
               </div>
@@ -354,7 +356,7 @@ const schema = [
                 <div class="tl-avatar av-alex">AP</div>
                 <div class="tl-body">
                   <div class="tl-head-line"><span class="tl-name">Alex Park</span><span class="tl-time">14:05</span></div>
-                  <div class="tl-text"><span class="mention">@ariadne</span> do you know?</div>
+                  <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
                 </div>
                 <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
               </div>
@@ -475,7 +477,7 @@ const schema = [
                 <span class="c-name">Maya Reyes</span>
                 <span class="c-time">Mar 12 · 11:44</span>
               </div>
-              <div class="c-text">fair. let's hold v3 then. what do you need from us before sign-off</div>
+              <div class="c-text">Fair. Let's hold v3 then. What do you need from us before sign-off?</div>
             </div>
           </div>
 
@@ -560,7 +562,7 @@ const schema = [
                   <span class="r-name">Maya Reyes</span>
                   <span class="r-time">May 7 · 09:12</span>
                 </div>
-                <div class="r-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. what was the hold on again</div>
+                <div class="r-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. What was the hold on again?</div>
               </div>
             </div>
 
@@ -860,18 +862,29 @@ const schema = [
        rather than a slow demo loop. */
     const editor = document.querySelector('.composer-editor')
     const input = document.querySelector('.composer-input')
+    const typed = document.querySelector('.composer-typed')
+    const preText = input?.dataset.pre ?? ''
     const trailText = input?.dataset.trail ?? ''
-    /* 30% — mention pill snaps in, typing begins
-       36% — finished typing " do you know?" (~85ms/char)
-       49% — send fires, input clears, mention pill collapses */
-    const mentionInPct = 30, typeStartPct = 30, typeEndPct = 36, clearPct = 49
+    /* 25-31% — "shit, uh 🤷" types out before the pill (the real input
+                 keeps the caret riding at the end of the typed text)
+       33% — mention pill snaps in
+       34-37% — " ?" types after the pill (~85ms/char)
+       49% — send fires, everything clears, pill collapses */
+    const preStartPct = 25, preEndPct = 31, mentionInPct = 33, typeStartPct = 34, typeEndPct = 37, clearPct = 49
+    let lastPre = -1
     let lastChars = -1
     let focused = false
     const updateInput = (t) => {
-      if (!input || !editor) return
+      if (!input || !editor || !typed) return
       const pct = (t / cycle) * 100
-      const mentionIn = pct >= mentionInPct && pct < clearPct
-      editor.classList.toggle('has-mention', mentionIn)
+      editor.classList.toggle('has-mention', pct >= preStartPct && pct < clearPct)
+      let pre
+      if (pct < preStartPct) pre = 0
+      else if (pct < preEndPct) {
+        const p = (pct - preStartPct) / (preEndPct - preStartPct)
+        pre = Math.floor(p * preText.length)
+      } else if (pct < clearPct) pre = preText.length
+      else pre = 0
       let chars
       if (pct < typeStartPct) chars = 0
       else if (pct < typeEndPct) {
@@ -879,6 +892,10 @@ const schema = [
         chars = Math.floor(p * trailText.length)
       } else if (pct < clearPct) chars = trailText.length
       else chars = 0
+      if (pre !== lastPre) {
+        typed.textContent = preText.slice(0, pre)
+        lastPre = pre
+      }
       if (chars !== lastChars) {
         input.value = trailText.slice(0, chars)
         lastChars = chars
