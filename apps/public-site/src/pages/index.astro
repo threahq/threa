@@ -863,8 +863,10 @@ const schema = [
     const editor = document.querySelector('.composer-editor')
     const input = document.querySelector('.composer-input')
     const typed = document.querySelector('.composer-typed')
-    const preText = input?.dataset.pre ?? ''
-    const trailText = input?.dataset.trail ?? ''
+    /* Array.from iterates code points, so the 🤷 surrogate pair can't be
+       split across animation frames. */
+    const preChars = Array.from(input?.dataset.pre ?? '')
+    const trailChars = Array.from(input?.dataset.trail ?? '')
     /* 25-31% — "shit, uh 🤷" types out before the pill (the real input
                  keeps the caret riding at the end of the typed text)
        33% — mention pill snaps in
@@ -882,22 +884,22 @@ const schema = [
       if (pct < preStartPct) pre = 0
       else if (pct < preEndPct) {
         const p = (pct - preStartPct) / (preEndPct - preStartPct)
-        pre = Math.floor(p * preText.length)
-      } else if (pct < clearPct) pre = preText.length
+        pre = Math.floor(p * preChars.length)
+      } else if (pct < clearPct) pre = preChars.length
       else pre = 0
       let chars
       if (pct < typeStartPct) chars = 0
       else if (pct < typeEndPct) {
         const p = (pct - typeStartPct) / (typeEndPct - typeStartPct)
-        chars = Math.floor(p * trailText.length)
-      } else if (pct < clearPct) chars = trailText.length
+        chars = Math.floor(p * trailChars.length)
+      } else if (pct < clearPct) chars = trailChars.length
       else chars = 0
       if (pre !== lastPre) {
-        typed.textContent = preText.slice(0, pre)
+        typed.textContent = preChars.slice(0, pre).join('')
         lastPre = pre
       }
       if (chars !== lastChars) {
-        input.value = trailText.slice(0, chars)
+        input.value = trailChars.slice(0, chars).join('')
         lastChars = chars
       }
       /* Focus once on first frame so the browser-drawn caret is visible
