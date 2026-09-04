@@ -106,8 +106,6 @@ export interface HybridSearchParams {
   keywordWeight?: number
   semanticWeight?: number
   k?: number
-  /** Max L2 distance for semantic results; only messages with distance < this are included. */
-  semanticDistanceThreshold: number
 }
 
 function escapeLike(value: string): string {
@@ -120,6 +118,11 @@ function phrasePredicatesSql(phrases: string[]) {
     predicates = composeSql`${predicates} AND m.content_markdown ILIKE '%' || ${escapeLike(phrase)} || '%'`
   }
   return predicates
+}
+
+/** `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one matching term surface a result. */
+function keywordTsquerySql(query: string) {
+  return composeSql`replace(plainto_tsquery('english', ${query})::text, ' & ', ' | ')::tsquery`
 }
 
 export const SearchRepository = {
@@ -251,12 +254,12 @@ export const SearchRepository = {
         m.metadata,
         m.edited_at,
         m.created_at,
-        ts_rank(m.search_vector, websearch_to_tsquery('english', ${query})) as rank
+        ts_rank(m.search_vector, ${keywordTsquerySql(query)}) as rank
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
       WHERE m.stream_id = ANY(${streamIds})
         AND m.deleted_at IS NULL
-        AND m.search_vector @@ websearch_to_tsquery('english', ${query})
+        AND m.search_vector @@ ${keywordTsquerySql(query)}
         ${phrasePredicatesSql(phrases)}
         AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
         AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
@@ -287,7 +290,6 @@ export const SearchRepository = {
       keywordWeight = 0.6,
       semanticWeight = 0.4,
       k = 60,
-      semanticDistanceThreshold,
     } = params
 
     if (streamIds.length === 0) {
@@ -300,7 +302,10 @@ export const SearchRepository = {
     const internalLimit = 50
 
     const result = await db.query<SearchResultRow>(composeSql`
-      WITH keyword_ranked AS (
+      WITH keyword_query AS (
+        SELECT ${keywordTsquerySql(query)} AS q
+      ),
+      keyword_ranked AS (
         SELECT
           m.id,
           m.stream_id,
@@ -313,12 +318,13 @@ export const SearchRepository = {
           m.metadata,
           m.edited_at,
           m.created_at,
-          ROW_NUMBER() OVER (ORDER BY ts_rank(m.search_vector, websearch_to_tsquery('english', ${query})) DESC) as rank
+          ROW_NUMBER() OVER (ORDER BY ts_rank(m.search_vector, kq.q, 1) DESC) as rank
         FROM messages m
         JOIN streams s ON m.stream_id = s.id
+        CROSS JOIN keyword_query kq
         WHERE m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
-          AND m.search_vector @@ websearch_to_tsquery('english', ${query})
+          AND m.search_vector @@ kq.q
           ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
@@ -345,7 +351,6 @@ export const SearchRepository = {
         WHERE m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
           AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold}
           ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
