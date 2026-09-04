@@ -14,7 +14,7 @@ const schema = [
     name: "Threa",
     url: site.href,
     description:
-      "Team chat with memory at its core: decisions and their reasoning become searchable memos linked to the conversation. Open source and self-hostable, with a public REST API and bot runtime for connecting your own agents.",
+      "Team chat with memory at its core: decisions and their reasoning become searchable memos linked to the conversation. Open source, with a public REST API and bot runtime for connecting your own agents.",
     applicationCategory: "BusinessApplication",
     operatingSystem: "Web",
     softwareHelp: { "@type": "CreativeWork", url: new URL("/developers", site).href },
@@ -46,9 +46,11 @@ const schema = [
             Chat that remembers the decisions.
           </h1>
           <p class="lede">
-            Channels, threads, and DMs for your team, with a memory underneath.
-            Decisions and the reasons behind them stay attached to the
-            conversation, so they're still there when the question comes back.
+            Team chat with a memory underneath. When your team settles
+            something, the decision and the why stay attached to the messages,
+            so when the question comes back in three months there's an answer
+            instead of a re-litigation. I built this because Slack had eaten
+            too many of mine.
           </p>
           <div class="actions">
             <a class="cta" href="#waitlist">Join the waitlist</a>
@@ -76,7 +78,7 @@ const schema = [
                   <span class="tl-name">Maya Reyes</span>
                   <span class="tl-time" data-time="maya">Friday 14:03</span>
                 </div>
-                <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+                <div class="tl-text">ok picking the auth refactor back up next sprint. anyone remember why we paused it in march</div>
               </div>
             </div>
 
@@ -88,7 +90,7 @@ const schema = [
                   <span class="tl-name">Jordan Lee</span>
                   <span class="tl-time" data-time="jordan">Friday 14:04</span>
                 </div>
-                <div class="tl-text">I'm pretty sure there were open concerns but I can't find the thread.</div>
+                <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
               </div>
             </div>
 
@@ -142,7 +144,7 @@ const schema = [
                     <div class="q-name">Jordan Lee</div>
                     <div class="q-time">Mar 12 · 11:42</div>
                   </div>
-                  <div class="q-body">"Hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. Can we pause this until I've reviewed the design?"</div>
+                  <div class="q-body">"hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design"</div>
                 </div>
 
                 <div class="tl-text" style="margin-top:8px;">Original thread in <span class="ref-pill">#api-v3</span>.</div>
@@ -219,12 +221,12 @@ const schema = [
         <p>Threa keeps decisions and context as short memos linked to the messages they came from. Ask Ariadne, or search, and get the memo with its sources.</p>
       </li>
       <li>
-        <h3>Bring the agent you already use</h3>
+        <h3>Plug in your own agent</h3>
         <p>Claude Code, Codex, Pi, or one you wrote. Connect it as a bot and it reads the room, answers mentions, and posts its work back.</p>
       </li>
       <li>
-        <h3>Open source, yours to run</h3>
-        <p>The whole product is public under the MIT license. <a href="https://github.com/threahq/threa">Read it on GitHub</a>, fork it, or host it yourself.</p>
+        <h3>Open source</h3>
+        <p>The whole product is public under the MIT license. Not because I expect you to self-host it, but because when something breaks you can read the code and fix it instead of waiting on me. <a href="https://github.com/threahq/threa">It's on GitHub.</a></p>
       </li>
     </ul>
   </div>
@@ -258,7 +260,7 @@ const schema = [
           <div class="tl-avatar av-maya">MR</div>
           <div class="tl-body">
             <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
-            <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+            <div class="tl-text">ok picking the auth refactor back up next sprint. anyone remember why we paused it in march</div>
           </div>
           <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
         </div>
@@ -267,7 +269,7 @@ const schema = [
           <div class="tl-avatar av-sam">SP</div>
           <div class="tl-body">
             <div class="tl-head-line"><span class="tl-name">Sam Patel</span><span class="tl-time">14:04</span></div>
-            <div class="tl-text">Empty states for the board are on staging now. The board one especially came out nice.</div>
+            <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
             <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
           </div>
           <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
@@ -277,7 +279,7 @@ const schema = [
           <div class="tl-avatar av-jordan">JL</div>
           <div class="tl-body">
             <div class="tl-head-line"><span class="tl-name">Jordan Lee</span><span class="tl-time">14:05</span></div>
-            <div class="tl-text">There were open concerns but I can't find the thread.</div>
+            <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
             <div class="board-prov"><svg><use href="#icon-layers"/></svg><span>continues <span class="topic">Auth refactor: pause or push?</span></span><span class="sep">·</span><span>2m</span></div>
           </div>
           <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
@@ -336,7 +338,7 @@ const schema = [
                 <div class="tl-avatar av-maya">MR</div>
                 <div class="tl-body">
                   <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
-                  <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+                  <div class="tl-text">ok picking the auth refactor back up next sprint. anyone remember why we paused it in march</div>
                 </div>
                 <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
               </div>
@@ -344,7 +346,7 @@ const schema = [
                 <div class="tl-avatar av-jordan">JL</div>
                 <div class="tl-body">
                   <div class="tl-head-line"><span class="tl-name">Jordan Lee</span><span class="tl-time">14:05</span></div>
-                  <div class="tl-text">There were open concerns but I can't find the thread.</div>
+                  <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
                 </div>
                 <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
               </div>
@@ -400,7 +402,7 @@ const schema = [
                 <div class="tl-avatar av-sam">SP</div>
                 <div class="tl-body">
                   <div class="tl-head-line"><span class="tl-name">Sam Patel</span><span class="tl-time">14:04</span></div>
-                  <div class="tl-text">Empty states for the board are on staging now. The board one especially came out nice.</div>
+                  <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
                   <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
                 </div>
                 <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
@@ -421,12 +423,12 @@ const schema = [
      ============================================================ -->
 <div class="frame">
   <div class="memo-shell">
-    <h2>Conversation becomes memory.</h2>
+    <h2>Decisions get kept. Lunch orders don't.</h2>
     <p class="lede">
-      Threa reads the conversation, picks out the decisions and context worth
-      keeping, and saves them as short memos linked to the messages they came
-      from. When the question comes up again, Ariadne finds the memo and the
-      conversation behind it.
+      Threa reads the conversation, keeps the lines where the team settled
+      something, and saves them as short memos linked to the messages they
+      came from. When the question comes up again, Ariadne finds the memo and
+      the conversation behind it.
     </p>
 
     <div class="memory-flow">
@@ -449,7 +451,7 @@ const schema = [
                 <span class="c-name">Sam Patel</span>
                 <span class="c-time">Mar 12 · 11:38</span>
               </div>
-              <div class="c-text">Lunch order: pasta or pizza, last call.</div>
+              <div class="c-text">lunch order, pasta or pizza. last call</div>
             </div>
           </div>
 
@@ -461,7 +463,7 @@ const schema = [
                 <span class="c-name">Jordan Lee</span>
                 <span class="c-time">Mar 12 · 11:42</span>
               </div>
-              <div class="c-text">Hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. Can we pause this until I've reviewed the design?</div>
+              <div class="c-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design</div>
             </div>
           </div>
 
@@ -473,7 +475,7 @@ const schema = [
                 <span class="c-name">Maya Reyes</span>
                 <span class="c-time">Mar 12 · 11:44</span>
               </div>
-              <div class="c-text">Fair. Let's hold v3 then. What do you need from us before sign-off?</div>
+              <div class="c-text">fair. let's hold v3 then. what do you need from us before sign-off</div>
             </div>
           </div>
 
@@ -485,7 +487,7 @@ const schema = [
                 <span class="c-name">Jordan Lee</span>
                 <span class="c-time">Mar 12 · 11:46</span>
               </div>
-              <div class="c-text">A walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th.</div>
+              <div class="c-text">a walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th</div>
             </div>
           </div>
 
@@ -497,7 +499,7 @@ const schema = [
                 <span class="c-name">Sam Patel</span>
                 <span class="c-time">Mar 12 · 11:47</span>
               </div>
-              <div class="c-text">Pizza it is, ordering now.</div>
+              <div class="c-text">pizza it is, ordering now</div>
             </div>
           </div>
 
@@ -558,7 +560,7 @@ const schema = [
                   <span class="r-name">Maya Reyes</span>
                   <span class="r-time">May 7 · 09:12</span>
                 </div>
-                <div class="r-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. What was the hold on again?</div>
+                <div class="r-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. what was the hold on again</div>
               </div>
             </div>
 
@@ -639,7 +641,7 @@ const schema = [
         <p class="lede">
           The frontend, backend, control plane, and infrastructure are all
           public, and the public repo is the one we deploy. Read exactly how
-          Threa works, fork it, or run it yourself.
+          Threa works, fork it, or run it yourself. Do whatever.
         </p>
 
         <div class="os-tenets">
@@ -654,14 +656,14 @@ const schema = [
             <h4>MIT licensed</h4>
             <p>
               Fork it, change the product, or run your own version on the same
-              code we ship.
+              code we ship. I won't take it personally.
             </p>
           </div>
           <div class="os-tenet">
             <h4>Built in the open</h4>
             <p>
               Design docs, implementation plans, and the feature list are
-              public too.
+              public too. Embarrassing drafts included.
             </p>
           </div>
         </div>
@@ -684,35 +686,19 @@ const schema = [
   <div class="memo-shell byo-shell">
     <h2>Bring the agent you already use.</h2>
     <p class="lede">
-      Threa ships with Ariadne, useful from day one. You probably also have an
-      agent set up the way you like it. Connect that agent as a Threa bot. It can
-      stay on your laptop behind NAT, answer mentions, search messages, memos,
-      and attachments, and post its work back into the conversation.
+      Threa ships with Ariadne, and she's useful from day one. But you probably
+      already have an agent set up the way you like it, with your codebase and
+      your context. Connect that one as a Threa bot instead of starting over
+      with mine. It can even stay on your laptop behind NAT.
     </p>
-
-    <div class="os-tenets">
-      <div class="os-tenet">
-        <h4>Ask it in the room</h4>
-        <p>
-          Mention the bot in a channel. The runtime hands the request to your
-          local agent and posts the reply under the bot's own name.
-        </p>
-      </div>
-      <div class="os-tenet">
-        <h4>Let it look things up</h4>
-        <p>
-          Your agent can search messages by text or meaning, read memos and
-          attachments, and follow a memo back to the messages it came from.
-        </p>
-      </div>
-      <div class="os-tenet">
-        <h4>Hand it the work</h4>
-        <p>
-          Delegate a task, follow its progress in the stream, and get the
-          finished work back where the team can see it.
-        </p>
-      </div>
-    </div>
+    <p class="lede byo-lede">
+      Mention the bot in a channel and the runtime hands the request to your
+      local agent, then posts the reply under the bot's name. It can search
+      messages by text or meaning, read memos and attachments, and follow a
+      memo back to the conversation it came from. It can also take whole
+      tasks. You delegate, watch it work in the stream, and the finished thing
+      lands where the team can see it.
+    </p>
 
     <p class="byo-works">
       Works today with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot
