@@ -44,13 +44,12 @@ export interface EmbedMessageWithContextDeps {
   embeddingService: EmbeddingServiceLike
 }
 
-export async function embedMessageWithContext(
-  deps: EmbedMessageWithContextDeps,
-  workspaceId: string,
-  message: Message
-): Promise<void> {
-  const { pool, embeddingService } = deps
-
+/**
+ * Loads the stream/anchor/preceding-message context around `message` and
+ * renders it through `buildMessageEmbeddingText`. Shared by the live embedding
+ * path (`embedMessageWithContext`) and the backfill so both embed identical text.
+ */
+export async function loadMessageEmbeddingText(pool: Pool, message: Message): Promise<string> {
   const stream = await StreamRepository.findById(pool, message.streamId)
   if (!stream) {
     throw new Error(`Stream ${message.streamId} not found for message ${message.id}`)
@@ -73,13 +72,23 @@ export async function embedMessageWithContext(
     .filter((candidate) => candidate.id !== message.id && candidate.authorType !== AuthorTypes.SYSTEM)
     .map((candidate) => candidate.contentMarkdown)
 
-  const text = buildMessageEmbeddingText({
+  return buildMessageEmbeddingText({
     streamType: stream.type,
     streamName: stream.displayName ?? stream.slug,
     anchor,
     preceding,
     content: message.contentMarkdown,
   })
+}
+
+export async function embedMessageWithContext(
+  deps: EmbedMessageWithContextDeps,
+  workspaceId: string,
+  message: Message
+): Promise<void> {
+  const { pool, embeddingService } = deps
+
+  const text = await loadMessageEmbeddingText(pool, message)
 
   const embedding = await embeddingService.embed(text, {
     workspaceId,

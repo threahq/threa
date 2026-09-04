@@ -102,6 +102,7 @@ import {
   createEmbeddingWorker,
   createMemoBatchCheckWorker,
   createMemoBatchProcessWorker,
+  registerMessageEmbeddingBackfill,
 } from "./features/memos"
 import {
   ConversationService,
@@ -1532,6 +1533,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMentionBackfill()
   registerMessageReferencePinsBackfill()
   registerStreamContextBackfill()
+  registerMessageEmbeddingBackfill({ embeddingService })
   registerGithubInstallationBackfill({ workspaceIntegrationService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
     tier: QueueTiers.LIGHT,

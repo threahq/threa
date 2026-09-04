@@ -841,6 +841,19 @@ export const MessageRepository = {
     `)
   },
 
+  /** Set-based batch update for a backfill (INV-56) — one statement per sub-batch, not a per-row loop. */
+  async updateEmbeddings(db: Querier, rows: Array<{ id: string; embedding: number[] }>): Promise<void> {
+    if (rows.length === 0) return
+    const ids = rows.map((row) => row.id)
+    const embeddingLiterals = rows.map((row) => `[${row.embedding.join(",")}]`)
+    await db.query(sql`
+      UPDATE messages m
+      SET embedding = v.embedding::vector
+      FROM UNNEST(${ids}::text[], ${embeddingLiterals}::text[]) AS v(id, embedding)
+      WHERE m.id = v.id
+    `)
+  },
+
   /**
    * Find messages from threads anchored on the given anchor ids, keyed by
    * anchorId in chronological order. Anchors may be message ids (`msg_…`) or
