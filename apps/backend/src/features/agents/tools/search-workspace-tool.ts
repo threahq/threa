@@ -100,6 +100,15 @@ export function createSearchMessagesTool(deps: WorkspaceToolDeps) {
   return defineAgentTool({
     name: "search_messages",
     categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_MESSAGES],
+    promptBlock: `## Searching Messages
+
+You have a \`search_messages\` tool. It rewrites a plain-language query into alternative phrasings, searches keyword and meaning together, and reranks the results, so it works best when the query describes what the user is looking for rather than guessing the words they used.
+
+- Write the query as a description of the thing: who was involved, what it was about, what happened. Do not compress it into keywords.
+- The user often remembers a direction, not details. Search with their description as given, then, if results are thin, search again from a different angle: what the conversation would have been about, what someone would have written at the time, or a related topic they mentioned.
+- Do at least two differently phrased searches before concluding something is not there. When you still come up empty, say what you searched for so the user can correct the direction.
+- Set \`exact=true\` only for literal strings (error messages, ids, quoted text). Use \`stream\` only when the user names a channel or the conversation makes it obvious.
+- For broad recall ("what did we decide about…", "have I talked about…") prefer \`workspace_research\`, which searches messages, memos and attachments together and follows up on its own.`,
     description: `Search for messages in the workspace knowledge base. Use this to find:
 - Previous discussions about a topic
 - Specific information mentioned in past conversations
