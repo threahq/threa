@@ -4,7 +4,7 @@ import { logger } from "../../lib/logger"
 import { MEMO_RERANKER_MODEL_ID, MEMO_RERANKER_TEMPERATURE, MEMO_RERANKER_TIMEOUT_MS, memoRerankSchema } from "./config"
 
 export interface RerankCandidate {
-  title: string
+  title?: string
   abstract: string
 }
 
@@ -27,6 +27,9 @@ export interface RerankerLike {
 
 export interface RerankerServiceConfig {
   ai: AI
+  /** Noun phrase describing the candidates, e.g. "knowledge memos", "chat messages". */
+  subject: string
+  functionId: string
   model?: string
   timeoutMs?: number
 }
@@ -56,13 +59,17 @@ export function sanitizeOrder(proposed: number[], n: number): number[] {
   return ordered
 }
 
-export class MemoReranker implements RerankerLike {
+export class Reranker implements RerankerLike {
   private readonly ai: AI
+  private readonly subject: string
+  private readonly functionId: string
   private readonly model: string
   private readonly timeoutMs: number
 
   constructor(config: RerankerServiceConfig) {
     this.ai = config.ai
+    this.subject = config.subject
+    this.functionId = config.functionId
     this.model = config.model ?? MEMO_RERANKER_MODEL_ID
     this.timeoutMs = config.timeoutMs ?? MEMO_RERANKER_TIMEOUT_MS
   }
@@ -73,14 +80,14 @@ export class MemoReranker implements RerankerLike {
     const controller = new AbortController()
     const timer = setTimeout(() => {
       try {
-        controller.abort(new DOMException("memo rerank timeout", "TimeoutError"))
+        controller.abort(new DOMException("rerank timeout", "TimeoutError"))
       } catch {
-        controller.abort(new Error("memo rerank timeout"))
+        controller.abort(new Error("rerank timeout"))
       }
     }, this.timeoutMs)
 
     try {
-      const list = candidates.map((c, i) => `[${i}] ${c.title}\n${c.abstract}`).join("\n\n")
+      const list = candidates.map((c, i) => `[${i}] ${[c.title, c.abstract].filter(Boolean).join("\n")}`).join("\n\n")
 
       const costContext: CostContext = {
         workspaceId: context.workspaceId,
@@ -94,7 +101,7 @@ export class MemoReranker implements RerankerLike {
         temperature: MEMO_RERANKER_TEMPERATURE,
         abortSignal: controller.signal,
         telemetry: {
-          functionId: "memo-rerank",
+          functionId: this.functionId,
           metadata: { candidateCount: candidates.length },
         },
         context: costContext,
@@ -102,7 +109,7 @@ export class MemoReranker implements RerankerLike {
           {
             role: "system",
             content:
-              "You re-rank candidate knowledge memos by relevance to a search query. " +
+              `You re-rank candidate ${this.subject} by relevance to a search query. ` +
               "Return only an `order` array of the candidate indices, most relevant first. " +
               "Include every index exactly once.",
           },
@@ -116,9 +123,9 @@ export class MemoReranker implements RerankerLike {
       return sanitizeOrder(value.order, candidates.length)
     } catch (error) {
       if (isAbortError(error)) {
-        logger.debug({ workspaceId: context.workspaceId }, "Memo rerank timed out; using pre-rerank order")
+        logger.debug({ workspaceId: context.workspaceId }, "Rerank timed out; using pre-rerank order")
       } else {
-        logger.warn({ error, workspaceId: context.workspaceId }, "Memo rerank failed; using pre-rerank order")
+        logger.warn({ error, workspaceId: context.workspaceId }, "Rerank failed; using pre-rerank order")
       }
       return identityOrder(candidates.length)
     } finally {

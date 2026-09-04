@@ -20,6 +20,8 @@ export interface SearchRequest {
   filters?: SearchFilters
   /** Use exact substring matching (ILIKE) instead of full-text/semantic search */
   exact?: boolean
+  /** Rewrite the query into variants and rerank; slower, costs two model calls. */
+  deep?: boolean
 }
 
 export interface SearchResultItem {
@@ -49,6 +51,7 @@ export async function searchMessages(workspaceId: string, request: SearchRequest
     after: request.filters?.after,
     exact: request.exact,
     limit: request.limit,
+    deep: request.deep,
   }
 
   return api.post<SearchResponse>(`/api/workspaces/${workspaceId}/search`, body)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { ArrowLeft, Search as SearchIcon } from "lucide-react"
+import { ArrowLeft, Search as SearchIcon, Sparkles } from "lucide-react"
 import { SidebarShell } from "@/components/layout/sidebar/sidebar-shell"
 import { RichInput, SEARCH_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
 import { Button } from "@/components/ui/button"
@@ -27,10 +27,8 @@ import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mo
 export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate()
   const { query, setQuery, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } = useSearchPanel()
-  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery } = useMessageSearch(
-    workspaceId,
-    query
-  )
+  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery, searchDeeper } =
+    useMessageSearch(workspaceId, query)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
@@ -81,7 +79,10 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
   const openActiveResult = (withModifier: boolean) => {
     const active = results.find((r) => r.id === activeResultId) ?? results[0]
-    if (!active) return
+    if (!active) {
+      if (hasQuery) searchDeeper()
+      return
+    }
     setActiveResultId(active.id)
     const href = `/w/${workspaceId}/s/${active.streamId}?m=${active.id}`
     if (withModifier) {
@@ -170,7 +171,19 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                   ? "No results"
                   : `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`}
               </p>
-              <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-[11px]"
+                  type="button"
+                  onClick={searchDeeper}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Search deeper
+                </Button>
+                <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
+              </div>
             </div>
           )}
         </div>

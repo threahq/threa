@@ -106,7 +106,8 @@ export function createSearchMessagesTool(deps: WorkspaceToolDeps) {
 - Context about decisions or plans
 
 Set exact=true to find literal phrase matches (useful for error messages, IDs, or quoted text).
-Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed slug (#general).`,
+Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed slug (#general).
+Semantic searches are rewritten into alternative phrasings and reranked, so describe what you remember in plain words rather than guessing exact wording.`,
     inputSchema: SearchMessagesSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -136,6 +137,7 @@ Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed s
           filters: input.stream ? { streamIds: filterStreamIds } : undefined,
           limit: 10,
           exact: input.exact,
+          deep: !input.exact,
         })
 
         const enriched = await enrichMessageSearchResults(db, workspaceId, searchResults)

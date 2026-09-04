@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Search as SearchIcon } from "lucide-react"
+import { ArrowLeft, Search as SearchIcon, Sparkles } from "lucide-react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -62,10 +62,8 @@ export function SearchPage() {
     }
   }, [])
 
-  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery } = useMessageSearch(
-    workspaceId ?? "",
-    localQuery
-  )
+  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery, searchDeeper } =
+    useMessageSearch(workspaceId ?? "", localQuery)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
@@ -91,6 +89,7 @@ export function SearchPage() {
               <RichInput
                 value={localQuery}
                 onChange={handleQueryChange}
+                onSubmit={searchDeeper}
                 triggers={SEARCH_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
@@ -114,7 +113,13 @@ export function SearchPage() {
             className="h-7"
           />
           {hasQuery && !isLoading && !displayError && (
-            <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} size="touch" className="ml-auto" />
+            <div className="ml-auto flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="h-9" type="button" onClick={searchDeeper}>
+                <Sparkles className="h-3.5 w-3.5" />
+                Search deeper
+              </Button>
+              <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} size="touch" />
+            </div>
           )}
         </div>
       </header>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useSearch } from "@/hooks"
 import { localStartOfDayISO } from "@/lib/dates"
 import {
@@ -26,6 +26,12 @@ export interface MessageSearchState {
   searchText: string
   /** True when the query contains anything searchable. */
   hasQuery: boolean
+  /**
+   * Runs a deep search (query rewrite + rerank) immediately, bypassing the
+   * as-you-type debounce. Deep search is explicit — never triggered on a
+   * keystroke, only on user intent (Enter, the "Search deeper" button).
+   */
+  searchDeeper: () => void
 }
 
 /**
@@ -133,6 +139,8 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   const phrasesRef = useRef(phrases)
   phrasesRef.current = phrases
 
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
     if (!hasQuery || hasTooManyPhrases) {
       clear()
@@ -146,9 +154,18 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
         void search(semanticText, filtersRef.current)
       }
     }, SEARCH_DEBOUNCE_MS)
+    debounceTimerRef.current = timer
 
     return () => clearTimeout(timer)
   }, [hasQuery, hasTooManyPhrases, semanticText, filtersKey, phrasesKey, search, clear])
+
+  const searchDeeper = useCallback(() => {
+    if (!hasQuery || hasTooManyPhrases) return
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    void search(semanticText, filtersRef.current, phrasesRef.current.length > 0 ? phrasesRef.current : undefined, {
+      deep: true,
+    })
+  }, [hasQuery, hasTooManyPhrases, semanticText, search])
 
   return {
     results,
@@ -158,5 +175,6 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     parsedFilters,
     searchText,
     hasQuery,
+    searchDeeper,
   }
 }

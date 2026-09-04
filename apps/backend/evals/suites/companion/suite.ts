@@ -62,9 +62,9 @@ import {
   ContextBagRepository,
 } from "../../../src/features/agents"
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
-import { SearchService } from "../../../src/features/search"
+import { SearchService, SearchQueryExpander } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
-import { EmbeddingService, MemoExplorerService, MemoReranker } from "../../../src/features/memos"
+import { EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
 import { MessageRepository } from "../../../src/features/messaging"
@@ -362,11 +362,13 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     const searchService = new SearchService({
       pool: ctx.pool,
       embeddingService,
+      queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
+      reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
     })
     const memoExplorerService = new MemoExplorerService({
       pool: ctx.pool,
       embeddingService,
-      reranker: new MemoReranker({ ai: ctx.ai }),
+      reranker: new Reranker({ ai: ctx.ai, subject: "knowledge memos", functionId: "memo-rerank" }),
     })
 
     // Stub Socket.io server for tracing - evals don't need real-time updates

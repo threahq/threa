@@ -563,6 +563,49 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
       expect(mockSearchState.search).toHaveBeenCalledWith("hello", { status: ["active", "archived"] })
     })
+
+    it("runs a deep search from the Search deeper button when results are present", async () => {
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("#general")).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole("button", { name: /search deeper/i }))
+
+      expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", { status: ["active", "archived"] }, undefined, {
+        deep: true,
+      })
+    })
+
+    it("runs a deep search on Enter when there are no results", async () => {
+      mockSearchState.results = []
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("No results")).toBeInTheDocument()
+      })
+
+      await user.keyboard("{Enter}")
+
+      expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", { status: ["active", "archived"] }, undefined, {
+        deep: true,
+      })
+      expect(mockNavigate).not.toHaveBeenCalled()
+    })
   })
 
   describe("filter syntax", () => {

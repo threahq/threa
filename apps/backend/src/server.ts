@@ -86,11 +86,11 @@ import {
 } from "./features/dynamic-naming"
 import { AttachmentService, createAttachmentUploadSweepWorker } from "./features/attachments"
 import { MessageFormatter } from "./lib/ai/message-formatter"
-import { SearchService } from "./features/search"
+import { SearchService, SearchQueryExpander, StubQueryExpander } from "./features/search"
 import {
   MemoService,
   MemoExplorerService,
-  MemoReranker,
+  Reranker,
   StubReranker,
   StubMemoService,
   MemoClassifier,
@@ -362,8 +362,14 @@ export async function startServer(): Promise<ServerInstance> {
   const userE2eKeysService = new UserE2eKeysService(pool)
 
   const embeddingService = config.useStubAI ? new StubEmbeddingService() : new EmbeddingService({ ai })
-  const memoReranker = config.useStubAI ? new StubReranker() : new MemoReranker({ ai })
-  const searchService = new SearchService({ pool, embeddingService })
+  const memoReranker = config.useStubAI
+    ? new StubReranker()
+    : new Reranker({ ai, subject: "knowledge memos", functionId: "memo-rerank" })
+  const queryExpander = config.useStubAI ? new StubQueryExpander() : new SearchQueryExpander({ ai })
+  const messageReranker = config.useStubAI
+    ? new StubReranker()
+    : new Reranker({ ai, subject: "chat messages", functionId: "search-rerank" })
+  const searchService = new SearchService({ pool, embeddingService, queryExpander, reranker: messageReranker })
   const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
 
   // Tiered concurrency budgets: each tier has its own in-flight cap so slow
