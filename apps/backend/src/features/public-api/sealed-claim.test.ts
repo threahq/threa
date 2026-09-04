@@ -57,6 +57,7 @@ function sealedMessage(overrides: Partial<Message>): Message {
     ciphertext: Buffer.from("ct"),
     envelope: TRIGGER_ENVELOPE,
     e2eVersion: 2,
+    revision: 1,
     ...overrides,
   } as Message
 }
@@ -157,6 +158,7 @@ function arrangeSealedClaim(params: {
 
   const botRuntimeService = {
     claimNextInvocation: mock(() => Promise.resolve(invocation)),
+    findActiveClaimForUpdate: mock(() => Promise.resolve(invocation)),
     upsertPresenceFromBotKey: mock(() => Promise.resolve(null)),
   } as unknown as PublicApiDeps["botRuntimeService"]
   const eventService = {
@@ -261,6 +263,25 @@ describe("claimBotInvocation sealed delivery", () => {
     const sessionParams = insertSession.mock.calls[0]?.[1] as Record<string, unknown>
     expect(sessionParams.callbackTokenHash).toBe(hashCallbackToken("tok_1"))
     expect(sessionParams.replyKeyGeneration).toBe(3)
+  })
+
+  it("rejects a soft-deleted sealed trigger before building context or assigning a session", async () => {
+    const { handlers, req, insertSession, findSurrounding } = arrangeSealedClaim({
+      trigger: sealedMessage({ id: "msg_trigger", deletedAt: new Date("2026-06-12T08:30:00Z") }),
+    })
+    const { res } = createResponse()
+
+    await expect(handlers.claimBotInvocation(req, res)).rejects.toMatchObject({
+      status: 409,
+      code: "TRIGGER_MESSAGE_GONE",
+    })
+    expect({
+      surroundingReads: findSurrounding.mock.calls.length,
+      sessionInserts: insertSession.mock.calls.length,
+    }).toEqual({
+      surroundingReads: 1,
+      sessionInserts: 0,
+    })
   })
 
   it("fails the claim loudly when the claiming instance has no registered identity key (INV-11)", async () => {

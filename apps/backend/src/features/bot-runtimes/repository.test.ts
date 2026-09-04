@@ -202,6 +202,11 @@ function makeInvocationRow(overrides: Record<string, unknown> = {}) {
     trigger: "active-scratchpad",
     required_capability: "active-scratchpad",
     prompt_markdown: "do a thing",
+    source_message_revision: 1,
+    claimed_source_message_revision: 1,
+    claimed_input_update_mode: null,
+    cancellation_reason: null,
+    available_at: new Date(),
     author_user_id: "usr_owner",
     mentioned_actor_slugs: [],
     status: "claimed",
@@ -455,6 +460,51 @@ describe("BotInvocationRepository.claimOne", () => {
   })
 })
 
+describe("BotInvocationRepository source mutation locks", () => {
+  afterEach(() => mock.restore())
+
+  it("takes source then actor advisory locks before cancelling a route-changing claim", async () => {
+    const query = mock(async (_query: string | QueryConfig, _values?: unknown[]) => {
+      const call = query.mock.calls.length
+      if (call === 2) {
+        return {
+          rows: [
+            {
+              workspace_id: "ws_1",
+              source_message_id: "msg_src",
+              actor_type: "bot",
+              actor_id: "bot_alice",
+            },
+          ],
+          rowCount: 1,
+        } as unknown as QueryResult
+      }
+      if (call === 4) {
+        return {
+          rows: [makeInvocationRow({ status: "cancelled", cancellation_reason: "routing_changed" })],
+          rowCount: 1,
+        } as unknown as QueryResult
+      }
+      return { rows: [], rowCount: 0 } as unknown as QueryResult
+    })
+
+    const cancelled = await BotInvocationRepository.cancelActiveRoutesNotDesired({ query } as Querier, {
+      workspaceId: "ws_1",
+      sourceMessageId: "msg_src",
+      sourceMessageRevision: 2,
+      desiredRoutes: [{ actorType: "bot", actorId: "bot_alice", trigger: "mention" }],
+    })
+
+    expect(query.mock.calls.map((call) => call[1])).toEqual([
+      ["bot_invocation_source\u001fws_1\u001fmsg_src"],
+      undefined,
+      ["bot_invocation_actor_source\u001fws_1\u001fmsg_src\u001fbot\u001fbot_alice"],
+      undefined,
+    ])
+    expect(cancelled[0]?.cancellationReason).toBe("routing_changed")
+  })
+})
+
 describe("BotInvocationRepository.parkExhausted", () => {
   afterEach(() => mock.restore())
 
@@ -475,6 +525,59 @@ describe("BotInvocationRepository.parkExhausted", () => {
     expect(captured.text).toContain("COALESCE(error_message,")
     expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
     expect(parked[0]?.status).toBe("parked")
+  })
+
+  it("locks multi-row park candidates in canonical actor-source order before updating", async () => {
+    const query = mock(async (_query: string | QueryConfig, _values?: unknown[]) => {
+      const call = query.mock.calls.length
+      if (call === 1) {
+        return {
+          rows: [
+            {
+              id: "inv_zulu",
+              workspace_id: "ws_1",
+              source_message_id: "msg_zulu",
+              actor_type: "bot",
+              actor_id: "bot_alice",
+              trigger: "active-scratchpad",
+            },
+            {
+              id: "inv_alpha",
+              workspace_id: "ws_1",
+              source_message_id: "msg_alpha",
+              actor_type: "bot",
+              actor_id: "bot_alice",
+              trigger: "active-scratchpad",
+            },
+          ],
+          rowCount: 2,
+        } as unknown as QueryResult
+      }
+      if (call < 6) return { rows: [], rowCount: 0 } as unknown as QueryResult
+      if (call === 6) {
+        return { rows: [{ id: "inv_alpha" }, { id: "inv_zulu" }], rowCount: 2 } as unknown as QueryResult
+      }
+      return {
+        rows: [
+          makeInvocationRow({ id: "inv_alpha", source_message_id: "msg_alpha", status: "parked" }),
+          makeInvocationRow({ id: "inv_zulu", source_message_id: "msg_zulu", status: "parked" }),
+        ],
+        rowCount: 2,
+      } as unknown as QueryResult
+    })
+
+    await BotInvocationRepository.parkExhausted({ query } as Querier, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+    })
+
+    expect(query.mock.calls.slice(1, 5).map((call) => call[1])).toEqual([
+      ["bot_invocation_source\u001fws_1\u001fmsg_alpha"],
+      ["bot_invocation_source\u001fws_1\u001fmsg_zulu"],
+      ["bot_invocation_actor_source\u001fws_1\u001fmsg_alpha\u001fbot\u001fbot_alice"],
+      ["bot_invocation_actor_source\u001fws_1\u001fmsg_zulu\u001fbot\u001fbot_alice"],
+    ])
   })
 })
 

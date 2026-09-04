@@ -167,6 +167,7 @@ describe("public API E2E-stream plaintext gate", () => {
       fn({})) as never)
     const activeClaim = { id: "claim_1", responseStreamId: "stream_1", status: "claimed" }
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
       findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
       findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
@@ -229,6 +230,7 @@ describe("public API E2E-stream plaintext gate", () => {
       status: "claimed",
     }
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
       findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
       findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
@@ -274,6 +276,7 @@ describe("public API E2E-stream plaintext gate", () => {
     const createMessageInTransaction = mock(() => Promise.resolve({ id: "msg_ack" }))
     const activeClaim = { id: "claim_1", responseStreamId: "stream_1", status: "claimed" }
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
       findCompletedInvocationForReplay: mock(() => Promise.resolve(null)),
       findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
@@ -318,6 +321,7 @@ describe("public API E2E-stream plaintext gate", () => {
       status: "claimed",
     }
     const botRuntimeService = {
+      validateClaimSourceForCompletion: mock(() => Promise.resolve(true)),
       findInvocationForCallback: mock(() => Promise.resolve(activeClaim)),
       findActiveClaimForUpdate: mock(() => Promise.resolve(activeClaim)),
     } as unknown as PublicApiDeps["botRuntimeService"]

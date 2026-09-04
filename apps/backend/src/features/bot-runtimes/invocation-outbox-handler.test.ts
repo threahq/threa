@@ -1,284 +1,252 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
+import { AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 import { BotInvocationOutboxHandler } from "./invocation-outbox-handler"
+import { resolveCanonicalInvocationRoutes } from "./invocation-route-resolver"
 import { BotRuntimeService } from "./service"
-import { ExternalTurnDriver } from "./external-turn-driver"
 import {
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
 } from "./repository"
-import { StreamRepository } from "../streams"
+import { createStreamReadOnlyError, StreamRepository } from "../streams"
 import * as streamsModule from "../streams"
-import * as dbModule from "../../db"
 import { BotRepository } from "../public-api/bot-repository"
-import { EventService } from "../messaging"
+import { EventService, type InvocationSourceState } from "../messaging"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import * as e2eStreams from "../e2e-streams"
-import * as outbox from "../../lib/outbox"
-import { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 
-beforeEach(() => {
-  spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({}))
-  spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
-})
-
-afterEach(() => mock.restore())
-
-const runProcessMessageCreated = async (payload: unknown): Promise<void> => {
-  const handler = new BotInvocationOutboxHandler({} as Pool)
-  // processMessageCreated is private; exercise it directly with a raw payload.
-  await (handler as unknown as { processMessageCreated(p: unknown): Promise<void> }).processMessageCreated(payload)
-}
-
-const userMessagePayload = (params: { contentMarkdown: string; contentJson?: unknown }) => ({
-  workspaceId: "ws_1",
-  streamId: "stream_1",
-  event: {
-    id: "evt_1",
-    sequence: "1",
-    actorType: "user",
-    actorId: "usr_1",
-    payload: {
-      messageId: "msg_1",
-      contentMarkdown: params.contentMarkdown,
-      ...(params.contentJson !== undefined && { contentJson: params.contentJson }),
-    },
-  },
-})
+const pool = {} as Pool
 
 const docWithText = (text: string) => ({
   type: "doc",
   content: [{ type: "paragraph", content: [{ type: "text", text }] }],
 })
 
-// The ingestion resolver has already rewritten `attrs.id` to a prefixed actor
-// id by the time this handler runs (INV-64); the slug is a display label only.
-const docWithMention = (params: { id: string; slug: string; mentionType: string }) => ({
+const docWithMention = (id: string, slug: string) => ({
   type: "doc",
   content: [
     {
       type: "paragraph",
       content: [
-        { type: "mention", attrs: { id: params.id, slug: params.slug, mentionType: params.mentionType } },
+        { type: "mention", attrs: { id, slug, mentionType: "bot" } },
         { type: "text", text: " hi" },
       ],
     },
   ],
 })
 
-describe("BotInvocationOutboxHandler E2E delivery verdict", () => {
-  it("skips an active-scratchpad bot on an E2E stream before any side effect — no invocation, no plaintext notice", async () => {
-    spyOn(outbox, "parseMessagePayload").mockReturnValue({
-      streamId: "stream_1",
-      workspaceId: "ws_1",
-      event: {
-        actorId: "usr_1",
-        actorType: "user",
-        payload: { messageId: "msg_1", contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN, contentJson: null },
-      },
-    } as never)
-    spyOn(StreamRepository, "findById").mockResolvedValue({
-      id: "stream_1",
-      workspaceId: "ws_1",
-      archivedAt: null,
-      rootStreamId: null,
-      type: "scratchpad",
-      e2eEnabled: true,
-    } as never)
-    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
-      actorType: "bot",
-      actorId: "bot_1",
-    } as never)
-    spyOn(BotRepository, "findById").mockResolvedValue({
-      id: "bot_1",
-      slug: "scout",
-      name: "Scout",
-      archivedAt: null,
-      traits: ["active-scratchpad"],
-    } as never)
-    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
-    spyOn(E2eStreamActorsRepository, "listForStream").mockResolvedValue([])
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
-      invocation: { id: "inv_1" },
-      wasNewlyInserted: true,
-    } as never)
-    // The missing-link notice would be a plaintext system message — on an E2E
-    // stream the verdict gate must fire before that write (INV-E1).
-    const createMessage = spyOn(EventService.prototype, "createGeneratedMessage").mockResolvedValue(undefined as never)
-    const findActiveLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
-
-    await runProcessMessageCreated({})
-
-    expect(createInvocation).not.toHaveBeenCalled()
-    expect(createMessage).not.toHaveBeenCalled()
-    expect(findActiveLink).not.toHaveBeenCalled()
-  })
-})
-
-describe("BotInvocationOutboxHandler stream lifecycle", () => {
-  it("stream:archived ends the stream's runtime session links", async () => {
-    const endSpy = spyOn(BotRuntimeService.prototype, "endSessionsForArchivedStream").mockResolvedValue(1)
-    const handler = new BotInvocationOutboxHandler({} as Pool)
-
-    await (handler as unknown as { processStreamArchived(p: unknown): Promise<void> }).processStreamArchived({
-      workspaceId: "ws_1",
-      streamId: "stream_root",
-    })
-
-    expect(endSpy).toHaveBeenCalledWith({ workspaceId: "ws_1", rootStreamId: "stream_root" })
-  })
-
-  it("stream:unarchived restores the links the archive ended", async () => {
-    const restoreSpy = spyOn(BotRuntimeService.prototype, "restoreSessionsForUnarchivedStream").mockResolvedValue(1)
-    const handler = new BotInvocationOutboxHandler({} as Pool)
-
-    await (handler as unknown as { processStreamUnarchived(p: unknown): Promise<void> }).processStreamUnarchived({
-      workspaceId: "ws_1",
-      streamId: "stream_root",
-    })
-
-    expect(restoreSpy).toHaveBeenCalledWith({ workspaceId: "ws_1", rootStreamId: "stream_root" })
-  })
-})
-
-describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => {
-  const channelStream = {
-    id: "stream_1",
+function source(overrides: Partial<InvocationSourceState> = {}): InvocationSourceState {
+  return {
     workspaceId: "ws_1",
-    archivedAt: null,
-    rootStreamId: null,
-    type: "channel",
-    e2eEnabled: false,
+    streamId: "stream_1",
+    revision: 2,
+    deleted: false,
+    contentJson: docWithText("hello"),
+    contentMarkdown: "hello",
+    ciphertext: null,
+    envelope: null,
+    authorId: "usr_1",
+    authorType: AuthorTypes.USER,
+    ...overrides,
   }
+}
 
-  it("selects a mentioned bot by its resolved id and still carries the slug on the protocol field", async () => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
-    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    const findInvocableByIds = spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([
-      { id: "bot_1", slug: "аріадна", name: "Аріадна", archivedAt: null, traits: ["mentionable"] },
+const channel = {
+  id: "stream_1",
+  workspaceId: "ws_1",
+  archivedAt: null,
+  rootStreamId: null,
+  type: "channel",
+  e2eEnabled: false,
+}
+
+const scratchpad = { ...channel, type: "scratchpad" }
+const activeBot = {
+  id: "bot_1",
+  slug: "scout",
+  name: "Scout",
+  archivedAt: null,
+  traits: ["active-scratchpad"],
+}
+
+beforeEach(() => {
+  spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  spyOn(streamsModule, "projectStreamForBot").mockImplementation((async (
+    _db: unknown,
+    params: { stream: unknown }
+  ) => ({
+    ...(params.stream as object),
+    readOnly: false,
+    readOnlyReason: null,
+  })) as never)
+})
+
+afterEach(() => mock.restore())
+
+describe("resolveCanonicalInvocationRoutes", () => {
+  it("selects mentioned bots by resolved id and preserves display slugs", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(channel as never)
+    const findInvocable = spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([
+      { id: "bot_1", slug: "аріадна", archivedAt: null, traits: ["mentionable"] },
     ] as never)
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
-      invocation: { id: "inv_1" },
-      wasNewlyInserted: true,
-    } as never)
 
-    await runProcessMessageCreated(
-      userMessagePayload({
-        contentMarkdown: "@аріадна hi",
-        contentJson: docWithMention({ id: "bot_1", slug: "аріадна", mentionType: "bot" }),
-      })
+    const routes = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({ contentJson: docWithMention("bot_1", "аріадна"), contentMarkdown: "@аріадна hi" })
     )
 
-    expect(findInvocableByIds).toHaveBeenCalledWith({} as Pool, "ws_1", "usr_1", ["bot_1"])
-    expect(createInvocation).toHaveBeenCalledWith(
+    expect(findInvocable).toHaveBeenCalledWith(pool, "ws_1", "usr_1", ["bot_1"])
+    expect(routes).toEqual([
       expect.objectContaining({
         actorId: "bot_1",
         trigger: "mention",
         mentionedActorSlugs: ["аріадна"],
-      })
-    )
+        promptMarkdown: "@аріадна hi",
+      }),
+    ])
   })
 
-  it("skips dispatch when a mentioned bot loses its grant after selection", async () => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
-    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  it("drops a mentioned bot that can no longer write to the stream", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(channel as never)
     spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([
-      { id: "bot_1", slug: "scout", name: "Scout", archivedAt: null, traits: ["mentionable"] },
+      { id: "bot_1", slug: "scout", archivedAt: null, traits: ["mentionable"] },
     ] as never)
-    const authority = spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
-      streamsModule.createStreamReadOnlyError("not_a_member")
+    const project = spyOn(streamsModule, "projectStreamForBot").mockResolvedValue({
+      ...channel,
+      readOnly: true,
+      readOnlyReason: "not_a_member",
+    } as never)
+
+    const routes = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({ contentJson: docWithMention("bot_1", "scout"), contentMarkdown: "@scout hi" })
     )
-    const dispatchTurn = spyOn(ExternalTurnDriver.prototype, "dispatchTurn").mockResolvedValue({
-      invocationId: "inv_1",
-      status: "dispatched",
+
+    expect(project).toHaveBeenCalledWith(pool, { workspaceId: "ws_1", stream: channel, botId: "bot_1" })
+    expect(routes).toEqual([])
+  })
+
+  it("drops the active bot and its missing-link notice when the stream is not writable for it", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
+    } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
+    spyOn(streamsModule, "projectStreamForBot").mockResolvedValue(null as never)
+    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
+
+    const routes = await resolveCanonicalInvocationRoutes(pool, source())
+
+    expect({ routes, linkLookups: findLink.mock.calls.length }).toEqual({ routes: [], linkLookups: 0 })
+  })
+
+  it("ignores unresolved mention ids and @-shaped plain text", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(channel as never)
+    const findInvocable = spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([] as never)
+
+    const unresolved = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({ contentJson: docWithMention("scout", "scout"), contentMarkdown: "@scout hi" })
+    )
+    const plain = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({ contentJson: docWithText("ping @scout"), contentMarkdown: "ping @scout" })
+    )
+
+    expect({ unresolved, plain, invocableLookups: findInvocable.mock.calls.length }).toEqual({
+      unresolved: [],
+      plain: [],
+      invocableLookups: 0,
     })
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
-      invocation: { id: "inv_1" },
-      wasNewlyInserted: true,
-    } as never)
+  })
 
-    await runProcessMessageCreated(
-      userMessagePayload({
-        contentMarkdown: "@scout hi",
-        contentJson: docWithMention({ id: "bot_1", slug: "scout", mentionType: "bot" }),
+  it("keeps E2E content server-blind and denies dispatch before session-link lookup", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
+    } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(E2eStreamActorsRepository, "listForStream").mockResolvedValue([])
+    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
+
+    const routes = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({
+        contentJson: docWithText(E2E_PLACEHOLDER_CONTENT_MARKDOWN),
+        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
       })
     )
 
-    expect(authority).toHaveBeenCalledWith(
-      expect.anything(),
+    expect({ routes, linkLookups: findLink.mock.calls.length }).toEqual({ routes: [], linkLookups: 0 })
+  })
+
+  it("preserves required-link notices and link-free runtime routing", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
+    } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
+    const instances = spyOn(BotRuntimeInstanceRepository, "findLatestForBots")
+
+    instances.mockResolvedValue(new Map([["bot_1", { runtimeKind: "pi-local" }]]) as never)
+    const required = await resolveCanonicalInvocationRoutes(pool, source())
+    instances.mockResolvedValue(new Map([["bot_1", { runtimeKind: "openclaw" }]]) as never)
+    const linkFree = await resolveCanonicalInvocationRoutes(pool, source())
+
+    expect(required).toEqual([
+      expect.objectContaining({ actorId: "bot_1", missingLinkNotice: expect.stringContaining("not linked") }),
+    ])
+    expect(linkFree).toEqual([
       expect.objectContaining({
-        workspaceId: "ws_1",
-        streamId: "stream_1",
-        principal: { kind: "bot", botId: "bot_1" },
-      })
-    )
-    expect(dispatchTurn).not.toHaveBeenCalled()
-    expect(createInvocation).not.toHaveBeenCalled()
+        actorId: "bot_1",
+        trigger: "active-scratchpad",
+        targetInstanceId: null,
+        targetRuntimeSessionId: null,
+        missingLinkNotice: null,
+      }),
+    ])
   })
 
-  it("ignores an unresolved (bare-slug) mention node — selection never runs", async () => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
-    const findInvocableByIds = spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([] as never)
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
-      invocation: { id: "inv_1" },
-      wasNewlyInserted: true,
+  it("targets a thread link and falls back to the root link", async () => {
+    const thread = { ...scratchpad, id: "stream_thread", rootStreamId: "stream_root", type: "thread" }
+    const root = { ...scratchpad, id: "stream_root" }
+    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(
+      async (_db, id) => (id === "stream_thread" ? thread : root) as never
+    )
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
     } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
+    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ instanceId: "inst_1", runtimeSessionId: "runtime_1" } as never)
 
-    await runProcessMessageCreated(
-      userMessagePayload({
-        contentMarkdown: "@scout hi",
-        contentJson: docWithMention({ id: "scout", slug: "scout", mentionType: "bot" }),
-      })
-    )
+    const routes = await resolveCanonicalInvocationRoutes(pool, source({ streamId: "stream_thread" }))
 
-    expect(findInvocableByIds).not.toHaveBeenCalled()
-    expect(createInvocation).not.toHaveBeenCalled()
+    expect(findLink.mock.calls.map((call) => call[1])).toEqual([
+      { workspaceId: "ws_1", botId: "bot_1", rootStreamId: "stream_root", activeStreamId: "stream_thread" },
+      { workspaceId: "ws_1", botId: "bot_1", rootStreamId: "stream_root", activeStreamId: "stream_root" },
+    ])
+    expect(routes).toEqual([
+      expect.objectContaining({
+        rootStreamId: "stream_root",
+        activeStreamId: "stream_thread",
+        responseStreamId: "stream_thread",
+        targetInstanceId: "inst_1",
+        targetRuntimeSessionId: "runtime_1",
+      }),
+    ])
   })
 
-  it("ignores @-shaped plain text that has no mention node", async () => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
-    const findInvocableByIds = spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([] as never)
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
-      invocation: { id: "inv_1" },
-      wasNewlyInserted: true,
-    } as never)
-
-    await runProcessMessageCreated(
-      userMessagePayload({ contentMarkdown: "ping @scout", contentJson: docWithText("ping @scout") })
-    )
-
-    expect(findInvocableByIds).not.toHaveBeenCalled()
-    expect(createInvocation).not.toHaveBeenCalled()
-  })
-})
-
-describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () => {
-  const scratchpadStream = {
-    id: "stream_1",
-    workspaceId: "ws_1",
-    archivedAt: null,
-    rootStreamId: null,
-    type: "scratchpad",
-    e2eEnabled: false,
-  }
-
-  const activeBot = {
-    id: "bot_1",
-    slug: "scout",
-    name: "Scout",
-    archivedAt: null,
-    traits: ["active-scratchpad"],
-  }
-
-  const setupActiveScratchpad = (params: {
-    instance: { runtimeKind: string } | null
-  }): {
-    createInvocation: ReturnType<typeof spyOn>
-    createMessage: ReturnType<typeof spyOn>
-  } => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpadStream as never)
-    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  it("suppresses active routing for another mentioned actor but allows the explicitly mentioned active bot", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",
@@ -286,180 +254,197 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
     spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
     spyOn(BotRuntimeInstanceRepository, "findLatestForBots").mockResolvedValue(
-      (params.instance ? new Map([["bot_1", params.instance]]) : new Map()) as never
+      new Map([["bot_1", { runtimeKind: "openclaw" }]]) as never
     )
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
-      invocation: { id: "inv_1" },
-      wasNewlyInserted: true,
+    spyOn(BotRepository, "findInvocableByIds").mockImplementation(
+      async (_db, _workspaceId, _authorId, ids) =>
+        (ids.includes("bot_2")
+          ? [{ id: "bot_2", slug: "other", archivedAt: null, traits: ["mentionable"] }]
+          : [activeBot]) as never
+    )
+
+    const other = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({ contentJson: docWithMention("bot_2", "other"), contentMarkdown: "@other hi" })
+    )
+    const explicit = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({ contentJson: docWithMention("bot_1", "scout"), contentMarkdown: "@scout hi" })
+    )
+
+    expect(other).toEqual([expect.objectContaining({ actorId: "bot_2", trigger: "mention" })])
+    expect(explicit).toEqual([expect.objectContaining({ actorId: "bot_1", trigger: "active-scratchpad" })])
+  })
+
+  it("preserves the non-user wrapper and never parses non-user mentions", async () => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
     } as never)
-    const createMessage = spyOn(EventService.prototype, "createGeneratedMessage").mockResolvedValue(undefined as never)
-    return { createInvocation, createMessage }
-  }
+    spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
+    spyOn(BotRuntimeInstanceRepository, "findLatestForBots").mockResolvedValue(
+      new Map([["bot_1", { runtimeKind: "openclaw" }]]) as never
+    )
+    const findInvocable = spyOn(BotRepository, "findInvocableByIds")
 
-  const plainUserMessage = userMessagePayload({ contentMarkdown: "hello", contentJson: docWithText("hello") })
-
-  it("posts the Pi notice and skips dispatch when an unlinked pi-local bot is active", async () => {
-    const { createInvocation, createMessage } = setupActiveScratchpad({ instance: { runtimeKind: "pi-local" } })
-
-    await runProcessMessageCreated(plainUserMessage)
-
-    expect(createInvocation).not.toHaveBeenCalled()
-    expect(createMessage).toHaveBeenCalledWith(
-      { kind: "bot", botId: "bot_1" },
-      expect.objectContaining({
-        contentMarkdown: "**Scout is not linked to this scratchpad.** Run `/remote-control` in Pi to link a session.",
-        metadata: { "bot_runtime.notice": "missing_session_link" },
+    const routes = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({
+        authorType: AuthorTypes.PERSONA,
+        authorId: "persona_1",
+        contentJson: docWithMention("bot_2", "other"),
+        contentMarkdown: "@other status",
       })
     )
-  })
 
-  it("skips a missing-link notice when bot authority changed after selection", async () => {
-    const { createInvocation, createMessage } = setupActiveScratchpad({ instance: { runtimeKind: "pi-local" } })
-    createMessage.mockRejectedValue(streamsModule.createStreamReadOnlyError("not_a_member"))
-
-    await expect(runProcessMessageCreated(plainUserMessage)).resolves.toBeUndefined()
-
-    expect(createMessage).toHaveBeenCalledWith(
-      { kind: "bot", botId: "bot_1" },
-      expect.objectContaining({ metadata: { "bot_runtime.notice": "missing_session_link" } })
-    )
-    expect(createInvocation).not.toHaveBeenCalled()
-  })
-
-  it("defaults to the pi-local policy when the bot has no runtime instance", async () => {
-    const { createInvocation, createMessage } = setupActiveScratchpad({ instance: null })
-
-    await runProcessMessageCreated(plainUserMessage)
-
-    expect(createInvocation).not.toHaveBeenCalled()
-    expect(createMessage).toHaveBeenCalledWith(
-      { kind: "bot", botId: "bot_1" },
-      expect.objectContaining({ metadata: { "bot_runtime.notice": "missing_session_link" } })
+    expect(findInvocable).not.toHaveBeenCalled()
+    expect(routes[0]?.promptMarkdown).toBe(
+      "A non-user message was posted in your active Threa scratchpad.\n" +
+        "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE\n\n" +
+        "@other status"
     )
   })
 
-  it("dispatches an untargeted invocation without a notice for a link-free runtime kind", async () => {
-    const { createInvocation, createMessage } = setupActiveScratchpad({ instance: { runtimeKind: "openclaw" } })
+  it("ignores system messages and allows the sealed verdict", async () => {
+    expect(await resolveCanonicalInvocationRoutes(pool, source({ authorType: AuthorTypes.SYSTEM }))).toEqual([])
 
-    await runProcessMessageCreated(plainUserMessage)
-
-    expect(createMessage).not.toHaveBeenCalled()
-    expect(createInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actorId: "bot_1",
-        trigger: "active-scratchpad",
-        targetInstanceId: null,
-        targetRuntimeSessionId: null,
-      })
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
+    } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
+    spyOn(BotRuntimeInstanceRepository, "findLatestForBots").mockResolvedValue(
+      new Map([["bot_1", { runtimeKind: "openclaw" }]]) as never
     )
-  })
-
-  it("dispatches an untargeted invocation without a notice for an unlinked custom runtime (linking is optional)", () => {
-    const { createInvocation, createMessage } = setupActiveScratchpad({ instance: { runtimeKind: "custom" } })
-
-    return runProcessMessageCreated(plainUserMessage).then(() => {
-      expect(createMessage).not.toHaveBeenCalled()
-      expect(createInvocation).toHaveBeenCalledWith(
-        expect.objectContaining({ actorId: "bot_1", trigger: "active-scratchpad", targetRuntimeSessionId: null })
-      )
-    })
-  })
-
-  it("dispatches when the verdict is sealed — the gate's sealed arm enqueues the turn (Phase 2.4)", async () => {
-    const { createInvocation } = setupActiveScratchpad({ instance: { runtimeKind: "openclaw" } })
-    // Force the sealed verdict — the policy switch is off in production, so this
-    // is the only way to reach the gate's sealed arm. Without it (the gate
-    // allowing plaintext alone) this dispatch would be denied.
     spyOn(e2eStreams, "resolveSealingContext").mockResolvedValue({
       streamIsE2e: true,
       actorHasGrant: true,
       externalSealedDelivery: true,
     })
 
-    await runProcessMessageCreated(plainUserMessage)
+    expect(await resolveCanonicalInvocationRoutes(pool, source())).toEqual([
+      expect.objectContaining({ actorId: "bot_1", trigger: "active-scratchpad" }),
+    ])
+  })
+})
 
-    expect(createInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({ actorId: "bot_1", trigger: "active-scratchpad" })
+describe("BotInvocationOutboxHandler canonical reconciliation", () => {
+  const createdPayload = {
+    workspaceId: "ws_1",
+    streamId: "stream_1",
+    event: {
+      id: "evt_1",
+      sequence: "1",
+      actorType: "user",
+      actorId: "usr_1",
+      payload: { messageId: "msg_1", contentMarkdown: "stale", contentJson: docWithText("stale") },
+    },
+  }
+
+  it("passes only source identity so an old payload cannot stamp stale content", async () => {
+    const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
+    const handler = new BotInvocationOutboxHandler(pool)
+
+    await (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
+      createdPayload
     )
+
+    expect(reconcile).toHaveBeenCalledWith({ workspaceId: "ws_1", sourceMessageId: "msg_1" })
   })
 
-  // Reproduces the prod feedback loop: the missing-link notice is itself a
-  // system-authored message:created event, so without the system guard the
-  // handler answers its own notice with another notice, forever.
-  it("ignores a system-authored message — no notice, no dispatch", async () => {
-    const { createInvocation, createMessage } = setupActiveScratchpad({
-      instance: { runtimeKind: "claude-code-channel" },
-    })
+  it("advances cleanly when canonical source deletion makes create reconciliation a no-op", async () => {
+    const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
+    const handler = new BotInvocationOutboxHandler(pool)
 
-    await runProcessMessageCreated({
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      event: {
-        id: "evt_2",
-        sequence: "2",
-        actorType: "system",
-        actorId: "system",
-        payload: {
-          messageId: "msg_2",
-          contentMarkdown: "**Scout is not linked to this scratchpad.** Start Claude Code…",
-          contentJson: docWithText("Scout is not linked to this scratchpad."),
-        },
-      },
-    })
-
-    expect(createMessage).not.toHaveBeenCalled()
-    expect(createInvocation).not.toHaveBeenCalled()
+    await expect(
+      (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
+        createdPayload
+      )
+    ).resolves.toBeUndefined()
+    expect(reconcile).toHaveBeenCalledTimes(1)
   })
 
-  it("posts the Claude Code channel notice and skips dispatch when an unlinked claude-code-channel bot is active", async () => {
-    const { createInvocation, createMessage } = setupActiveScratchpad({
-      instance: { runtimeKind: "claude-code-channel" },
-    })
+  it("posts missing-link notices only after reconciliation with an idempotent source key", async () => {
+    spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([
+      { botId: "bot_1", streamId: "stream_1", rootStreamId: "stream_root", contentMarkdown: "Link Scout" },
+    ])
+    const createMessage = spyOn(EventService.prototype, "createGeneratedMessage").mockResolvedValue(undefined as never)
+    const handler = new BotInvocationOutboxHandler(pool)
 
-    await runProcessMessageCreated(plainUserMessage)
+    await (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
+      createdPayload
+    )
 
-    expect(createInvocation).not.toHaveBeenCalled()
     expect(createMessage).toHaveBeenCalledWith(
       { kind: "bot", botId: "bot_1" },
       expect.objectContaining({
-        contentMarkdown: expect.stringContaining("Claude Code with the Threa channel"),
-        metadata: { "bot_runtime.notice": "missing_session_link" },
+        contentMarkdown: "Link Scout",
+        clientMessageId: "bot-runtime-unlinked:stream_root:msg_1",
       })
     )
   })
 
-  // The active bot carries only `active-scratchpad` (not `mentionable`), so it is
-  // never picked up by the mentionable-bot loop. Alongside a mentioned persona it
-  // would normally be filtered out — it dispatches only because the gate matches
-  // the active bot's resolved id against the mentioned ids (INV-64), not its slug.
-  it("dispatches the active bot when it is explicitly mentioned by its resolved id", async () => {
-    const { createInvocation } = setupActiveScratchpad({ instance: { runtimeKind: "openclaw" } })
-    spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([activeBot] as never)
+  it("swallows a notice the bot can no longer post (authority changed after reconciliation)", async () => {
+    spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([
+      { botId: "bot_1", streamId: "stream_1", rootStreamId: "stream_root", contentMarkdown: "Link Scout" },
+    ])
+    spyOn(EventService.prototype, "createGeneratedMessage").mockRejectedValue(createStreamReadOnlyError("not_a_member"))
+    const handler = new BotInvocationOutboxHandler(pool)
 
-    const mentionDoc = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            { type: "mention", attrs: { id: "bot_1", slug: "scout", mentionType: "bot" } },
-            { type: "mention", attrs: { id: "persona_helper", slug: "helper", mentionType: "persona" } },
-            { type: "text", text: " hi" },
-          ],
-        },
-      ],
+    await expect(
+      (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
+        createdPayload
+      )
+    ).resolves.toBeUndefined()
+  })
+
+  it("routes deletion through the same canonical reconciliation service", async () => {
+    const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
+    const handler = new BotInvocationOutboxHandler(pool)
+
+    await (handler as unknown as { processMessageDeleted(payload: unknown): Promise<void> }).processMessageDeleted({
+      workspaceId: "ws_1",
+      messageId: "msg_1",
+    })
+
+    expect(reconcile).toHaveBeenCalledWith({ workspaceId: "ws_1", sourceMessageId: "msg_1" })
+  })
+
+  it("repairs a migration-cancelled session if an old replica starts it after startup", async () => {
+    const repair = spyOn(BotRuntimeService.prototype, "repairDeletedSourceSession").mockResolvedValue(true)
+    const handler = new BotInvocationOutboxHandler(pool)
+
+    await (
+      handler as unknown as { processAgentSessionStarted(payload: unknown): Promise<void> }
+    ).processAgentSessionStarted({
+      workspaceId: "ws_1",
+      event: { payload: { sessionId: "binv_late" } },
+    })
+
+    expect(repair).toHaveBeenCalledWith({ workspaceId: "ws_1", sessionId: "binv_late" })
+  })
+})
+
+describe("BotInvocationOutboxHandler stream lifecycle", () => {
+  it("ends and restores runtime session links", async () => {
+    const end = spyOn(BotRuntimeService.prototype, "endSessionsForArchivedStream").mockResolvedValue(1)
+    const restore = spyOn(BotRuntimeService.prototype, "restoreSessionsForUnarchivedStream").mockResolvedValue(1)
+    const handler = new BotInvocationOutboxHandler(pool)
+    const privateHandler = handler as unknown as {
+      processStreamArchived(payload: unknown): Promise<void>
+      processStreamUnarchived(payload: unknown): Promise<void>
     }
 
-    await runProcessMessageCreated(
-      userMessagePayload({ contentMarkdown: "@scout @helper hi", contentJson: mentionDoc })
-    )
+    await privateHandler.processStreamArchived({ workspaceId: "ws_1", streamId: "stream_root" })
+    await privateHandler.processStreamUnarchived({ workspaceId: "ws_1", streamId: "stream_root" })
 
-    expect(createInvocation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actorId: "bot_1",
-        trigger: "active-scratchpad",
-        mentionedActorSlugs: ["scout", "helper"],
-      })
-    )
+    expect({ end: end.mock.calls[0]?.[0], restore: restore.mock.calls[0]?.[0] }).toEqual({
+      end: { workspaceId: "ws_1", rootStreamId: "stream_root" },
+      restore: { workspaceId: "ws_1", rootStreamId: "stream_root" },
+    })
   })
 })

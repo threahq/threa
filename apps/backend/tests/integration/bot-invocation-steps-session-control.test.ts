@@ -108,10 +108,12 @@ describe("recordSteps on a session-control claim", () => {
       targetInstanceId: null,
       targetRuntimeSessionId: null,
       metadata: {},
+      sourceMessageRevision: 0,
     })
     await pool.query(
       `UPDATE bot_invocations
-       SET status = 'claimed', claimed_by_instance_id = $2, claim_token = $3, claim_expires_at = NOW() + interval '60 seconds'
+       SET status = 'claimed', claimed_by_instance_id = $2, claim_token = $3, claim_expires_at = NOW() + interval '60 seconds',
+           claimed_source_message_revision = source_message_revision
        WHERE id = $1`,
       [id, instanceId, claimToken]
     )
