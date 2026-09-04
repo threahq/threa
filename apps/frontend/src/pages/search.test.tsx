@@ -112,6 +112,7 @@ describe("SearchPage", () => {
     await waitFor(() => {
       expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
     })
+    expect(search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
   })
 
   it("runs a deep search on Enter without waiting for the debounce", async () => {

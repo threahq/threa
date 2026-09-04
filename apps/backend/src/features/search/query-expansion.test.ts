@@ -7,7 +7,7 @@ describe("SearchQueryExpander", () => {
   it("returns cleaned variants: trimmed, deduped, original query dropped", async () => {
     const generateObject = mock(async () => ({
       value: {
-        variants: ["  Deploy pipeline broke  ", "deploy pipeline broke", "railway build failed", "query text", ""],
+        variants: ["  Deploy pipeline broke  ", "Deploy pipeline broke", "railway build failed", "query text", ""],
       },
     }))
     const expander = new SearchQueryExpander({ ai: { generateObject } as never })
@@ -37,7 +37,10 @@ describe("SearchQueryExpander", () => {
       const variants = await expander.expand("some query", { workspaceId: "ws_1" })
 
       expect(variants).toEqual([])
-      expect(warn).toHaveBeenCalled()
+      expect(warn).toHaveBeenCalledWith(
+        { error: expect.any(Error), workspaceId: "ws_1" },
+        "Search query expansion failed; using original query only"
+      )
     } finally {
       warn.mockRestore()
     }

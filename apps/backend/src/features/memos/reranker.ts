@@ -87,7 +87,9 @@ export class Reranker implements RerankerLike {
     }, this.timeoutMs)
 
     try {
-      const list = candidates.map((c, i) => `[${i}] ${[c.title, c.abstract].filter(Boolean).join("\n")}`).join("\n\n")
+      const list = candidates
+        .map((candidate, index) => `[${index}] ${[candidate.title, candidate.abstract].filter(Boolean).join("\n")}`)
+        .join("\n\n")
 
       const costContext: CostContext = {
         workspaceId: context.workspaceId,

@@ -27,8 +27,17 @@ import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mo
 export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate()
   const { query, setQuery, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } = useSearchPanel()
-  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery, searchDeeper } =
-    useMessageSearch(workspaceId, query)
+  const {
+    results,
+    isLoading,
+    error,
+    validationError,
+    parsedFilters,
+    searchText,
+    hasQuery,
+    canSearchDeeper,
+    searchDeeper,
+  } = useMessageSearch(workspaceId, query)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
@@ -80,7 +89,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const openActiveResult = (withModifier: boolean) => {
     const active = results.find((r) => r.id === activeResultId) ?? results[0]
     if (!active) {
-      if (hasQuery) searchDeeper()
+      searchDeeper()
       return
     }
     setActiveResultId(active.id)
@@ -172,16 +181,18 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                   : `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`}
               </p>
               <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-1.5 text-[11px]"
-                  type="button"
-                  onClick={searchDeeper}
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  Search deeper
-                </Button>
+                {canSearchDeeper && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-[11px]"
+                    type="button"
+                    onClick={searchDeeper}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Search deeper
+                  </Button>
+                )}
                 <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
               </div>
             </div>

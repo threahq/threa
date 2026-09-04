@@ -96,16 +96,13 @@ export class SearchQueryExpander implements QueryExpanderLike {
 }
 
 function sanitizeVariants(variants: string[], originalQuery: string): string[] {
-  const normalizedOriginal = originalQuery.trim().toLowerCase()
-  const seen = new Set<string>([normalizedOriginal])
+  const seen = new Set<string>([originalQuery.trim()])
   const cleaned: string[] = []
 
   for (const variant of variants) {
     const trimmed = variant.trim()
-    if (!trimmed) continue
-    const key = trimmed.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
     cleaned.push(trimmed)
     if (cleaned.length >= SEARCH_EXPANSION_MAX_VARIANTS) break
   }

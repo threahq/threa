@@ -186,7 +186,8 @@ describe("SearchService deep mode", () => {
   })
 
   test("applies the reranker's returned order and keeps the un-reranked tail in fused order", async () => {
-    const results = Array.from({ length: 5 }, (_, i) => fakeResult(`msg_${i}`))
+    const total = SEARCH_RERANK_CANDIDATE_LIMIT + 5
+    const results = Array.from({ length: total }, (_, i) => fakeResult(`msg_${i}`))
     spyOn(SearchRepository, "hybridSearch").mockResolvedValue(results)
     // Reverse the head.
     const rerank = mock(async (_q: string, candidates: unknown[]) =>
@@ -202,10 +203,15 @@ describe("SearchService deep mode", () => {
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "q",
       deep: true,
-      limit: 10,
+      limit: total,
     })
 
-    expect(searchResults.map((r) => r.id)).toEqual(["msg_4", "msg_3", "msg_2", "msg_1", "msg_0"])
+    const reversedHead = results
+      .slice(0, SEARCH_RERANK_CANDIDATE_LIMIT)
+      .reverse()
+      .map((r) => r.id)
+    const tail = results.slice(SEARCH_RERANK_CANDIDATE_LIMIT).map((r) => r.id)
+    expect(searchResults.map((r) => r.id)).toEqual([...reversedHead, ...tail])
   })
 
   test("deep: true with exact: true goes straight to exactSearch and never calls the expander", async () => {

@@ -12,10 +12,10 @@ import { userId, workspaceId, streamId } from "../../src/lib/id"
 const EMBEDDING_DIMS = 1536
 
 /** Unit basis vector: 1.0 at index i, 0 elsewhere. */
-function unit(i: number): number[] {
-  const v = new Array(EMBEDDING_DIMS).fill(0)
-  v[i] = 1
-  return v
+function unit(index: number): number[] {
+  const vector = new Array(EMBEDDING_DIMS).fill(0)
+  vector[index] = 1
+  return vector
 }
 
 /** Fake embedding service returning a fixed vector for every text, batched or single. */
@@ -152,7 +152,8 @@ describe("Message deep search retrieval", () => {
     expect(results.map((r) => r.id)).not.toContain(c.id)
 
     expect(reranker.calls).toHaveLength(1)
-    const { candidates } = reranker.calls[0]!
+    const { query, candidates, context } = reranker.calls[0]!
+    expect({ query, context }).toEqual({ query: "deploy failed", context: { workspaceId: wsId } })
     const abstractByMessageId: Record<string, string> = { [a.id]: a.contentMarkdown, [b.id]: b.contentMarkdown }
     expect(candidates.map((cand) => cand.abstract).sort()).toEqual(Object.values(abstractByMessageId).sort())
 

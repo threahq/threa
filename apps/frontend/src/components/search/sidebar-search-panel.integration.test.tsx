@@ -606,6 +606,26 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
       expect(mockNavigate).not.toHaveBeenCalled()
     })
+
+    it("offers no deep search for a filter-only query: no button, and Enter stays on the fast path", async () => {
+      mockSearchState.results = []
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "before:2026-06-19")
+
+      await waitFor(() => {
+        expect(screen.getByText("No results")).toBeInTheDocument()
+      })
+      expect(screen.queryByRole("button", { name: /search deeper/i })).toBeNull()
+
+      await user.keyboard("{Enter}")
+
+      expect(mockSearchState.search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
+    })
   })
 
   describe("filter syntax", () => {

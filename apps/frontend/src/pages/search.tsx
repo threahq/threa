@@ -62,8 +62,17 @@ export function SearchPage() {
     }
   }, [])
 
-  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery, searchDeeper } =
-    useMessageSearch(workspaceId ?? "", localQuery)
+  const {
+    results,
+    isLoading,
+    error,
+    validationError,
+    parsedFilters,
+    searchText,
+    hasQuery,
+    canSearchDeeper,
+    searchDeeper,
+  } = useMessageSearch(workspaceId ?? "", localQuery)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
@@ -114,10 +123,12 @@ export function SearchPage() {
           />
           {hasQuery && !isLoading && !displayError && (
             <div className="ml-auto flex items-center gap-1">
-              <Button variant="ghost" size="sm" className="h-9" type="button" onClick={searchDeeper}>
-                <Sparkles className="h-3.5 w-3.5" />
-                Search deeper
-              </Button>
+              {canSearchDeeper && (
+                <Button variant="ghost" size="sm" className="h-9" type="button" onClick={searchDeeper}>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Search deeper
+                </Button>
+              )}
               <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} size="touch" />
             </div>
           )}

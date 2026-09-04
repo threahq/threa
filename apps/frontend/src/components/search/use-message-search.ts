@@ -26,6 +26,8 @@ export interface MessageSearchState {
   searchText: string
   /** True when the query contains anything searchable. */
   hasQuery: boolean
+  /** Deep mode needs text to rewrite; filter-only and phrase-only input stays on the fast path. */
+  canSearchDeeper: boolean
   /**
    * Runs a deep search (query rewrite + rerank) immediately, bypassing the
    * as-you-type debounce. Deep search is explicit — never triggered on a
@@ -125,6 +127,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   }, [parsedFilters, users, personas, bots, streams])
 
   const hasQuery = searchText.trim().length > 0 || phrases.length > 0 || parsedFilters.length > 0
+  const canSearchDeeper = hasQuery && !hasTooManyPhrases && semanticText.trim().length > 0
 
   // `users`/`streams` come from live queries that produce a NEW array on every
   // workspace IndexedDB write (incoming messages, presence, …), which gives
@@ -160,12 +163,12 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   }, [hasQuery, hasTooManyPhrases, semanticText, filtersKey, phrasesKey, search, clear])
 
   const searchDeeper = useCallback(() => {
-    if (!hasQuery || hasTooManyPhrases) return
+    if (!canSearchDeeper) return
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     void search(semanticText, filtersRef.current, phrasesRef.current.length > 0 ? phrasesRef.current : undefined, {
       deep: true,
     })
-  }, [hasQuery, hasTooManyPhrases, semanticText, search])
+  }, [canSearchDeeper, semanticText, search])
 
   return {
     results,
@@ -175,6 +178,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     parsedFilters,
     searchText,
     hasQuery,
+    canSearchDeeper,
     searchDeeper,
   }
 }
