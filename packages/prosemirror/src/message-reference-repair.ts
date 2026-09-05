@@ -49,14 +49,16 @@ function nodeOffsets(node: PositionedNode): { start: number; end: number } | nul
   return start === undefined || end === undefined ? null : { start, end }
 }
 
-const CHARACTER_REFERENCE = /&#\d{1,7};|&#x[0-9a-fA-F]{1,6};|&[a-zA-Z][a-zA-Z0-9]{1,31};/
+const CHARACTER_REFERENCE = /^&#\d{1,7};|^&#x[0-9a-fA-F]{1,6};|^&[a-zA-Z][a-zA-Z0-9]{1,31};/
+const ESCAPABLE_PUNCTUATION = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/
 
 /** Raw source index for each decoded character of a text value; null when decoding does not align. */
 function decodeOffsets(raw: string): number[] | null {
   const offsets: number[] = []
   let index = 0
   while (index < raw.length) {
-    if (raw[index] === "\\" && index + 1 < raw.length) {
+    // CommonMark keeps a backslash literal unless it precedes ASCII punctuation.
+    if (raw[index] === "\\" && index + 1 < raw.length && ESCAPABLE_PUNCTUATION.test(raw[index + 1])) {
       offsets.push(index)
       index += 2
       continue
@@ -85,7 +87,10 @@ function collectTextReplacements(markdown: string, node: PositionedNode, replace
   for (const match of node.value.matchAll(BARE_MESSAGE_ID)) {
     const start = span.start + decodedOffsets[match.index]
     const end = span.start + decodedOffsets[match.index + match[0].length - 1] + 1
-    if (end - start !== match[0].length) continue
+    // The offset map is heuristic; only splice when it provably landed on the
+    // raw id bytes. Anything else skips the match rather than risk corrupting
+    // the message (regression from the Opus review of #2053).
+    if (markdown.slice(start, end) !== match[0]) continue
     replacements.push({
       start,
       end,

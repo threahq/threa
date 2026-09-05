@@ -178,13 +178,14 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   const sharedMessage = href ? parseSharedMessageHref(href) : null
   const quote = href ? parseQuoteHref(href) : null
   const messagePointer = sharedMessage ?? quote
-  if (
-    messagePointer &&
-    isIdShaped(messagePointer.streamId, "stream_") &&
-    isIdShaped(messagePointer.messageId, "msg_")
-  ) {
+  if (messagePointer) {
     const authoredLabel = extractTextFromChildren(children)
     const label = BARE_MESSAGE_ID.test(authoredLabel) ? "Message" : authoredLabel
+    // Parsed but not id-shaped: the target would be junk. Render inert text —
+    // never the dead custom-protocol anchor the external branch would produce.
+    if (!isIdShaped(messagePointer.streamId, "stream_") || !isIdShaped(messagePointer.messageId, "msg_")) {
+      return <span>{label}</span>
+    }
     if (!workspaceId) return <span>{label}</span>
 
     const target = sharedMessage?.conversationId

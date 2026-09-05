@@ -991,8 +991,14 @@ export class AgentRuntime {
     pending: { content: string; sources: SourceItem[] },
     sent: { ids: string[]; contents: string[] }
   ): Promise<number> {
+    // Repair is cosmetic: a failed lookup must not discard a completed reply
+    // (same judgment as strip-inaccessible-refs — lose the pointer, not the
+    // response). Fall back to the unrepaired body and let the next turn try.
     const content = this.config.repairMessageContent
-      ? await this.config.repairMessageContent(pending.content)
+      ? await this.config.repairMessageContent(pending.content).catch((error) => {
+          logger.warn({ error }, "Message reference repair failed; sending unrepaired content")
+          return pending.content
+        })
       : pending.content
     const sendResult = await this.config.sendMessage({ content, sources: pending.sources })
     const operation = sendResult.operation ?? "created"

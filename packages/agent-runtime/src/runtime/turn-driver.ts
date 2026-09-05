@@ -241,7 +241,10 @@ export interface TurnDispatchReceipt {
  * realized later, by durable verb handlers, against the same projection layer.
  * Each edge names its realizing verb or declares itself unsupported with a
  * renderable reason — keyed off `TurnSink` so a new sink edge forces every
- * dispatched driver to take a position on it.
+ * dispatched driver to take a position on it. `repairMessageContent` is the
+ * deliberate exemption: it is an in-loop cosmetic normalizer, not a durable
+ * sink edge, and dispatched drivers only need it once their replayed contents
+ * are repaired upstream (never today), so it is excluded rather than forced.
  */
 export type TurnSinkResolution = {
   readonly [Edge in Exclude<keyof Required<TurnSink>, "repairMessageContent">]:

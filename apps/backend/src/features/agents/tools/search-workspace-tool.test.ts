@@ -158,7 +158,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
       createdAt,
     } as unknown as Message
     const list = spyOn(MessageRepository, "list").mockResolvedValue([message])
-    const streams = spyOn(StreamRepository, "findByIds").mockResolvedValue([
+    const streams = spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([
       { id: "stream_1", type: "channel", displayName: "General", slug: "general" } as Stream,
     ])
     const users = spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_1", name: "Kris" } as never])

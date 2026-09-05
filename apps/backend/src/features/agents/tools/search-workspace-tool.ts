@@ -495,7 +495,7 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
 
         const [messages, streams] = await Promise.all([
           MessageRepository.list(db, resolved.id, { limit }).then((m) => m.reverse()),
-          StreamRepository.findByIds(db, [resolved.id]),
+          StreamRepository.findByIdsInWorkspace(db, workspaceId, [resolved.id]),
         ])
         const stream = streams[0]
         const streamName = stream?.displayName ?? stream?.slug ?? stream?.type ?? null

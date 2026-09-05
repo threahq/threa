@@ -72,9 +72,12 @@ describe("MarkdownContent inline message pointers", () => {
   it("should not navigate a pointer whose segments are not id-shaped", () => {
     renderMarkdown("See [thing](shared-message:foo/bar) here.")
 
-    // Falls through to the ordinary external-link branch: renders as text/anchor
-    // but never as a navigable in-app chip built from junk segments.
+    // Inert text, not a navigable chip and not the dead custom-protocol anchor
+    // the external branch would otherwise render.
     expect(document.querySelector('[data-type="shared-message"]')).toBeNull()
+    const anchor = screen.queryByRole("link", { name: "thing" })
+    expect(anchor).toBeNull()
+    expect(screen.getByText("thing").tagName).toBe("SPAN")
   })
 
   it("should leave an inline pointer inert without a workspace route", () => {
