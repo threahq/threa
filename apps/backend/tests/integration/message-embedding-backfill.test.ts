@@ -9,7 +9,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
+import { setupIsolatedTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { EventService, MessageRepository } from "../../src/features/messaging"
@@ -49,6 +49,7 @@ function makeFakeEmbeddingService(): EmbeddingServiceLike & { batches: string[][
 
 describe("message-embeddings-context backfill against the real schema", () => {
   let pool: Pool
+  let cleanupDatabase: () => Promise<void>
   let ctx: MessageEmbeddingBackfillContext
   let fakeEmbeddingService: EmbeddingServiceLike & { batches: string[][] }
 
@@ -68,7 +69,9 @@ describe("message-embeddings-context backfill against the real schema", () => {
   let sealedMessageId: string
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    const isolated = await setupIsolatedTestDatabase("message_embedding_backfill")
+    pool = isolated.pool
+    cleanupDatabase = isolated.cleanup
     fakeEmbeddingService = makeFakeEmbeddingService()
     ctx = { pool, embeddingService: fakeEmbeddingService }
 
@@ -197,7 +200,7 @@ describe("message-embeddings-context backfill against the real schema", () => {
   })
 
   afterAll(async () => {
-    await pool.end()
+    await cleanupDatabase()
   })
 
   test("plan returns exactly the three eligible message ids in one chunk", async () => {
