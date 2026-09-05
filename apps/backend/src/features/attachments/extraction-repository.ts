@@ -237,13 +237,17 @@ export const AttachmentExtractionRepository = {
   },
 
   /** Rows whose config was set in the meantime (a re-extraction re-detects) are left alone (INV-20). */
-  async fillMissingSearchConfigs(client: Querier, rows: Array<{ id: string; searchConfig: string }>): Promise<number> {
+  async fillMissingSearchConfigs(
+    client: Querier,
+    workspaceId: string,
+    rows: Array<{ id: string; searchConfig: string }>
+  ): Promise<number> {
     if (rows.length === 0) return 0
     const result = await client.query(sql`
       UPDATE attachment_extractions e
       SET search_config = v.search_config
       FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.searchConfig)}::text[]) AS v(id, search_config)
-      WHERE e.id = v.id AND e.search_config IS NULL
+      WHERE e.id = v.id AND e.workspace_id = ${workspaceId} AND e.search_config IS NULL
     `)
     return result.rowCount ?? 0
   },

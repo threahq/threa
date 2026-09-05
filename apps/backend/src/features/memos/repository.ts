@@ -773,13 +773,17 @@ export const MemoRepository = {
   },
 
   /** Rows whose config was set in the meantime (an edit re-detects) are left alone (INV-20). */
-  async fillMissingSearchConfigs(db: Querier, rows: Array<{ id: string; searchConfig: string }>): Promise<number> {
+  async fillMissingSearchConfigs(
+    db: Querier,
+    workspaceId: string,
+    rows: Array<{ id: string; searchConfig: string }>
+  ): Promise<number> {
     if (rows.length === 0) return 0
     const result = await db.query(sql`
       UPDATE memos m
       SET search_config = v.search_config
       FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.searchConfig)}::text[]) AS v(id, search_config)
-      WHERE m.id = v.id AND m.search_config IS NULL
+      WHERE m.id = v.id AND m.workspace_id = ${workspaceId} AND m.search_config IS NULL
     `)
     return result.rowCount ?? 0
   },

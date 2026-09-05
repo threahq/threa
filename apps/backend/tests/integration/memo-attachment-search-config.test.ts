@@ -26,6 +26,10 @@ import {
 import { userId, workspaceId, streamId, messageId, memoId, attachmentId, extractionId } from "../../src/lib/id"
 import { AttachmentSafetyStatuses } from "@threa/types"
 
+function fakeEmbeddingService(): EmbeddingServiceLike {
+  return { embed: async () => new Array(1536).fill(0), embedBatch: async () => [] }
+}
+
 const SWEDISH_ABSTRACT = "Jag har skickat fakturorna nu, säg till om något saknas"
 const ENGLISH_ABSTRACT = "The invoices were sent this morning, tell me if anything is missing"
 
@@ -71,7 +75,7 @@ describe("Per-row text-search config for memos and attachments", () => {
     function makeExplorer() {
       return new MemoExplorerService({
         pool,
-        embeddingService: { embed: async () => new Array(1536).fill(0) } as unknown as EmbeddingServiceLike,
+        embeddingService: fakeEmbeddingService(),
         reranker: undefined,
       })
     }

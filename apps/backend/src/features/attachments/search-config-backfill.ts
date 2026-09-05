@@ -34,6 +34,7 @@ export async function processChunk(
   `)
   const processed = await AttachmentExtractionRepository.fillMissingSearchConfigs(
     ctx.pool,
+    workspaceId,
     result.rows.map((row) => ({
       id: row.id,
       searchConfig: detectSearchConfig(extractionSearchText({ summary: row.summary, fullText: row.full_text })),

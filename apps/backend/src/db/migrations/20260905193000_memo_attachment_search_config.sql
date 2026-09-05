@@ -24,3 +24,6 @@ ALTER TABLE attachment_extractions ALTER COLUMN search_vector
   SET EXPRESSION AS (
     to_tsvector(text_search_config(search_config), COALESCE(summary, '') || ' ' || COALESCE(full_text, ''))
   );
+
+-- SET EXPRESSION drops the column's planner statistics.
+ANALYZE attachment_extractions;

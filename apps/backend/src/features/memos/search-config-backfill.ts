@@ -30,6 +30,7 @@ export async function processChunk(
   )
   const processed = await MemoRepository.fillMissingSearchConfigs(
     ctx.pool,
+    workspaceId,
     result.rows.map((row) => ({
       id: row.id,
       searchConfig: detectSearchConfig(
