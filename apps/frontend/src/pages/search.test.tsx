@@ -134,4 +134,25 @@ describe("SearchPage", () => {
 
     expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), undefined, { deep: true })
   })
+
+  it("keeps the Search deeper button in place, disabled, while the deep search runs", async () => {
+    search.mockImplementation(async () => {
+      vi.spyOn(hooksModule, "useSearch").mockReturnValue({
+        results: [mockSearchResultsList[1]!, mockSearchResultsList[0]!],
+        isLoading: true,
+        error: null,
+        search,
+        clear,
+      } as unknown as ReturnType<typeof hooksModule.useSearch>)
+    })
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(screen.getByRole("button", { name: /search deeper/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /search deeper/i })).toBeDisabled()
+    })
+    expect(screen.getByRole("radio", { name: "Ranked results" })).toBeInTheDocument()
+  })
 })

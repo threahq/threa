@@ -1,6 +1,6 @@
 export { createSearchHandlers, serializeSearchResult } from "./handlers"
 export { resolveUserAccessibleStreamIds } from "./access"
-export { SearchService, fuseRankedLists } from "./service"
+export { SearchService } from "./service"
 export { SearchRepository } from "./repository"
 export { hybridWeightsForQuery } from "./config"
 export { SearchQueryExpander } from "./query-expansion"
@@ -14,4 +14,3 @@ export type {
   SearchServiceDependencies,
   ArchiveStatus,
 } from "./service"
-export type { QueryExpanderLike, QueryExpansionContext, QueryExpanderServiceConfig } from "./query-expansion"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearch } from "@/hooks"
 import { localStartOfDayISO } from "@/lib/dates"
 import {
@@ -28,11 +28,9 @@ export interface MessageSearchState {
   hasQuery: boolean
   /** Deep mode needs text to rewrite; filter-only and phrase-only input stays on the fast path. */
   canSearchDeeper: boolean
-  /**
-   * Runs a deep search (query rewrite + rerank) immediately, bypassing the
-   * as-you-type debounce. Deep search is explicit — never triggered on a
-   * keystroke, only on user intent (Enter, the "Search deeper" button).
-   */
+  /** True while a deep search is in flight; the as-you-type search never sets it. */
+  isSearchingDeeper: boolean
+  /** Runs a deep search (query rewrite + rerank) now, skipping the debounce. Only user intent calls this. */
   searchDeeper: () => void
 }
 
@@ -143,6 +141,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   phrasesRef.current = phrases
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [deepRequested, setDeepRequested] = useState(false)
 
   useEffect(() => {
     if (!hasQuery || hasTooManyPhrases) {
@@ -151,6 +150,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     }
 
     const timer = setTimeout(() => {
+      setDeepRequested(false)
       if (phrasesRef.current.length > 0) {
         void search(semanticText, filtersRef.current, phrasesRef.current)
       } else {
@@ -165,6 +165,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   const searchDeeper = useCallback(() => {
     if (!canSearchDeeper) return
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    setDeepRequested(true)
     void search(semanticText, filtersRef.current, phrasesRef.current.length > 0 ? phrasesRef.current : undefined, {
       deep: true,
     })
@@ -179,6 +180,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     searchText,
     hasQuery,
     canSearchDeeper,
+    isSearchingDeeper: deepRequested && isLoading,
     searchDeeper,
   }
 }

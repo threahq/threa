@@ -2,7 +2,6 @@ import type { AI, CostContext } from "@threa/agent-runtime"
 import { isAbortError } from "@threa/agent-runtime"
 import { logger } from "../../lib/logger"
 import {
-  SEARCH_EXPANSION_MAX_VARIANTS,
   SEARCH_EXPANSION_MODEL_ID,
   SEARCH_EXPANSION_SYSTEM_PROMPT,
   SEARCH_EXPANSION_TEMPERATURE,
@@ -104,7 +103,6 @@ function sanitizeVariants(variants: string[], originalQuery: string): string[] {
     if (!trimmed || seen.has(trimmed)) continue
     seen.add(trimmed)
     cleaned.push(trimmed)
-    if (cleaned.length >= SEARCH_EXPANSION_MAX_VARIANTS) break
   }
 
   return cleaned

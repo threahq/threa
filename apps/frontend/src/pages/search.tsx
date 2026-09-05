@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Search as SearchIcon, Sparkles } from "lucide-react"
+import { ArrowLeft, Loader2, Search as SearchIcon, Sparkles } from "lucide-react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -71,6 +71,7 @@ export function SearchPage() {
     searchText,
     hasQuery,
     canSearchDeeper,
+    isSearchingDeeper,
     searchDeeper,
   } = useMessageSearch(workspaceId ?? "", localQuery)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
@@ -121,11 +122,22 @@ export function SearchPage() {
             onQueryChange={handleQueryChange}
             className="h-7"
           />
-          {hasQuery && !isLoading && !displayError && (
+          {hasQuery && !displayError && (
             <div className="ml-auto flex items-center gap-1">
               {canSearchDeeper && (
-                <Button variant="ghost" size="sm" className="h-9" type="button" onClick={searchDeeper}>
-                  <Sparkles className="h-3.5 w-3.5" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9"
+                  type="button"
+                  disabled={isLoading}
+                  onClick={searchDeeper}
+                >
+                  {isSearchingDeeper ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
                   Search deeper
                 </Button>
               )}

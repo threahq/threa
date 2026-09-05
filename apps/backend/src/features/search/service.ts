@@ -215,11 +215,6 @@ export class SearchService {
     return { results, excludedE2eStreamCount }
   }
 
-  /**
-   * Non-deep search: embed the query, then a single full-text or hybrid
-   * search. Factored out of `search` so deep mode can fall back to exactly
-   * this path when its embedding batch fails.
-   */
   private async singleQuerySearch(params: {
     query: string
     phrases: string[]
@@ -267,10 +262,6 @@ export class SearchService {
     })
   }
 
-  /**
-   * Deep search: rewrite the query into variants, run hybrid search per
-   * variant, fuse by reciprocal rank, and rerank the top window.
-   */
   private async deepSearch(args: {
     normalizedQuery: string
     phrases: string[]

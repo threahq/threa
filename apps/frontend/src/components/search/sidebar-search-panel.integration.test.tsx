@@ -585,6 +585,32 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
     })
 
+    it("keeps the result row and disables Search deeper while the deep search runs", async () => {
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.search.mockImplementation(async () => {
+        mockSearchState.isLoading = true
+      })
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("#general")).toBeInTheDocument()
+      })
+      mockSearchState.isLoading = false
+
+      await user.click(screen.getByRole("button", { name: /search deeper/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /search deeper/i })).toBeDisabled()
+      })
+      expect(screen.getByText(/results? in/)).toBeInTheDocument()
+    })
+
     it("runs a deep search on Enter when there are no results", async () => {
       mockSearchState.results = []
 

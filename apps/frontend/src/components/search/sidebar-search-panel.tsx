@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { ArrowLeft, Search as SearchIcon, Sparkles } from "lucide-react"
+import { ArrowLeft, Loader2, Search as SearchIcon, Sparkles } from "lucide-react"
 import { SidebarShell } from "@/components/layout/sidebar/sidebar-shell"
 import { RichInput, SEARCH_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
 import { Button } from "@/components/ui/button"
@@ -36,6 +36,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     searchText,
     hasQuery,
     canSearchDeeper,
+    isSearchingDeeper,
     searchDeeper,
   } = useMessageSearch(workspaceId, query)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
@@ -54,6 +55,11 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const streamCount = useMemo(() => new Set(results.map((r) => r.streamId)).size, [results])
+  const emptySummary = isLoading ? "Searching…" : "No results"
+  const resultSummary =
+    results.length > 0
+      ? `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`
+      : emptySummary
   const searchBinding = getEffectiveKeyBinding("openSearch", preferences?.keyboardShortcuts ?? {})
 
   const handleResultSelect = useCallback(
@@ -173,13 +179,9 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
           </div>
 
-          {hasQuery && !isLoading && !displayError && (
+          {hasQuery && !displayError && (
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 px-3 pb-2">
-              <p className="min-w-0 truncate text-[11px] tabular-nums text-muted-foreground">
-                {results.length === 0
-                  ? "No results"
-                  : `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`}
-              </p>
+              <p className="min-w-0 truncate text-[11px] tabular-nums text-muted-foreground">{resultSummary}</p>
               <div className="flex items-center gap-1">
                 {canSearchDeeper && (
                   <Button
@@ -187,9 +189,14 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                     size="sm"
                     className="h-6 px-1.5 text-[11px]"
                     type="button"
+                    disabled={isLoading}
                     onClick={searchDeeper}
                   >
-                    <Sparkles className="h-3.5 w-3.5" />
+                    {isSearchingDeeper ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
                     Search deeper
                   </Button>
                 )}
