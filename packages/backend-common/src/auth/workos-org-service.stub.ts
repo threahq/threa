@@ -30,6 +30,14 @@ export class StubWorkosOrgService implements WorkosOrgService {
    * it via `setOrganizationMemberships`.
    */
   private membershipsByOrg = new Map<string, WorkosOrganizationMembership[]>()
+  private invitations = new Map<
+    string,
+    {
+      state: "pending" | "accepted" | "revoked" | "expired"
+      expiresAt: Date
+      params: { organizationId?: string; email: string; inviterUserId: string; roleSlug?: string }
+    }
+  >()
   /**
    * Test helper: records every `sendInvitation` call by the returned id so
    * tests can assert the exact role/org/email that landed at WorkOS.
@@ -77,12 +85,14 @@ export class StubWorkosOrgService implements WorkosOrgService {
         acceptedUserId: null,
       })
     }
-    this.sentInvitations.set(id, {
+    const storedParams = {
       ...(params.organizationId ? { organizationId: params.organizationId } : {}),
       email: params.email,
       inviterUserId: params.inviterUserId,
       ...(params.roleSlug ? { roleSlug: params.roleSlug } : {}),
-    })
+    }
+    this.sentInvitations.set(id, storedParams)
+    this.invitations.set(id, { state: "pending", expiresAt, params: storedParams })
     logger.info(
       { invitationId: id, email: params.email, roleSlug: params.roleSlug },
       "Stub: Sent invitation (no email)"
@@ -90,7 +100,15 @@ export class StubWorkosOrgService implements WorkosOrgService {
     return { id, expiresAt }
   }
 
+  async getInvitation(invitationId: string) {
+    const invitation = this.invitations.get(invitationId)
+    if (!invitation) throw new Error(`Stub: Invitation ${invitationId} not found`)
+    return { id: invitationId, state: invitation.state, expiresAt: invitation.expiresAt }
+  }
+
   async revokeInvitation(invitationId: string): Promise<void> {
+    const invitation = this.invitations.get(invitationId)
+    if (invitation) invitation.state = "revoked"
     const existing = this.appInvitations.find((i) => i.id === invitationId)
     if (existing) {
       existing.state = "revoked"
@@ -101,16 +119,16 @@ export class StubWorkosOrgService implements WorkosOrgService {
   }
 
   async resendInvitation(invitationId: string): Promise<{ id: string; expiresAt: Date }> {
-    const existing = this.appInvitations.find((i) => i.id === invitationId)
-    if (!existing) {
-      const id = `inv_stub_${ulid()}`
-      return { id, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
+    const invitation = this.invitations.get(invitationId)
+    if (!invitation) throw new Error(`Stub: Invitation ${invitationId} not found`)
+    invitation.state = "revoked"
+    const existing = this.appInvitations.find((item) => item.id === invitationId)
+    if (existing) {
+      existing.state = "revoked"
+      existing.revokedAt = new Date().toISOString()
+      existing.updatedAt = existing.revokedAt
     }
-    // Mirror the real service: mark the old as revoked and create a new one.
-    existing.state = "revoked"
-    existing.revokedAt = new Date().toISOString()
-    existing.updatedAt = existing.revokedAt
-    const fresh = await this.sendInvitation({ email: existing.email, inviterUserId: "stub" })
+    const fresh = await this.sendInvitation(invitation.params)
     logger.info({ oldInvitationId: invitationId, newInvitationId: fresh.id }, "Stub: Resent invitation")
     return fresh
   }
