@@ -35,8 +35,8 @@ describe("filterChannels", () => {
     expect(filterChannels(ITEMS, "#pi").map((item) => item.id)).toEqual(["stream_pizza"])
   })
 
-  it("offers nothing for the bare `##`, so an h2 marker still sends on Enter", () => {
-    expect(filterChannels(ITEMS, "#")).toEqual([])
+  it("lists every channel for the bare `##`, so the narrowed scope is visible", () => {
+    expect(filterChannels(ITEMS, "#").map((item) => item.id)).toEqual(["stream_pizza", "stream_general"])
   })
 
   it("matches a scratchpad on its display name, not just the folded slug", () => {

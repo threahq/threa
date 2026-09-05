@@ -89,8 +89,10 @@ async function typeByKey(text: string) {
   }
 }
 
-const pickHighlighted = () =>
-  editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+const pressKey = (key: string) =>
+  editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+
+const pickHighlighted = () => pressKey("Enter")
 
 /** Every text and chip in the doc, in order. */
 function docText() {
@@ -143,9 +145,11 @@ describe("# stream trigger", () => {
     expect(screen.queryByText("Pi remote control")).not.toBeInTheDocument()
   })
 
-  it("offers nothing for a bare `##`, so an h2 marker survives Enter", async () => {
+  it("shows the channels for a bare `##` but arms no row, so an h2 marker survives Enter", async () => {
     await type("##")
-    expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    expect(screen.getByRole("listbox")).toBeInTheDocument()
+    expect(screen.getByText("pizza")).toBeInTheDocument()
+    expect(screen.queryAllByRole("option", { selected: true })).toEqual([])
 
     await act(async () => {
       pickHighlighted()
@@ -156,6 +160,24 @@ describe("# stream trigger", () => {
     // survives and the paragraph split (the composer binds send to that key).
     expect(docText().trim()).toBe("##")
     expect(editor!.getJSON().content?.[0].content?.[0]).toMatchObject({ type: "text", text: "##" })
+  })
+
+  it("arms the first row on ArrowDown, so a bare `##` is still pickable by keyboard", async () => {
+    await type("##")
+    await act(async () => {
+      pressKey("ArrowDown")
+    })
+    await settle()
+
+    await act(async () => {
+      pickHighlighted()
+    })
+    await settle()
+
+    expect(editor!.getJSON().content?.[0].content?.[0]).toMatchObject({
+      type: "channelLink",
+      attrs: { id: "stream_pizza", slug: "pizza" },
+    })
   })
 
   it("leaves a stream with no name out of the list", async () => {

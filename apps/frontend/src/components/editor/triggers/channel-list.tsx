@@ -11,6 +11,8 @@ interface ChannelListProps {
   clientRect: (() => DOMRect | null) | null
   command: (item: ChannelItem) => void
   placement?: Placement
+  /** Show the rows but arm none, so Enter still reaches the editor. */
+  deferSelection?: boolean
 }
 
 function ChannelItemContent({ item }: { item: ChannelItem }) {
@@ -34,7 +36,7 @@ function ChannelItemContent({ item }: { item: ChannelItem }) {
  * Shows available channels and scratchpads with keyboard navigation.
  */
 export const ChannelList = forwardRef<ChannelListRef, ChannelListProps>(function ChannelList(
-  { items, clientRect, command, placement },
+  { items, clientRect, command, placement, deferSelection },
   ref
 ) {
   return (
@@ -47,6 +49,7 @@ export const ChannelList = forwardRef<ChannelListRef, ChannelListProps>(function
       ariaLabel="Stream suggestions"
       renderItem={(item) => <ChannelItemContent item={item} />}
       placement={placement}
+      deferSelection={deferSelection}
     />
   )
 })

@@ -28,10 +28,6 @@ export function parseChannelQuery(query: string): { channelsOnly: boolean; term:
  */
 export function filterChannels(items: ChannelItem[], query: string): ChannelItem[] {
   const { channelsOnly, term } = parseChannelQuery(query)
-  // A bare `##` is also a markdown h2 marker. Offering the whole channel list
-  // there would let Enter pick one instead of sending, so the narrowed scope
-  // stays silent until a term is typed — the bare `#` already opens on channels.
-  if (channelsOnly && !term.trim()) return []
   const scope = channelsOnly ? items.filter((item) => item.type === "channel") : items
   return rankMatches(scope, term, (item) => ({ labels: item.name ? [item.slug, item.name] : [item.slug] }))
 }
@@ -77,7 +73,22 @@ export function useChannelSuggestion() {
       items: ChannelItem[]
       clientRect: (() => DOMRect | null) | null
       command: (item: ChannelItem) => void
-    }) => <ChannelList ref={props.ref} items={props.items} clientRect={props.clientRect} command={props.command} />,
+      query: string
+    }) => {
+      // A bare `##` is also a markdown h2 marker. The rows show so the user
+      // knows the scope narrowed and to keep typing, but none is armed, so
+      // Enter still sends the message instead of picking a channel.
+      const { channelsOnly, term } = parseChannelQuery(props.query)
+      return (
+        <ChannelList
+          ref={props.ref}
+          items={props.items}
+          clientRect={props.clientRect}
+          command={props.command}
+          deferSelection={channelsOnly && !term.trim()}
+        />
+      )
+    },
     []
   )
 
