@@ -243,16 +243,21 @@ describe("SocketEventGate", () => {
     }
   })
 
-  it("a buffered handler failure is logged, the splice finishes and the gate reopens", async () => {
+  it("keeps a failed buffered event and later IDs paused until recovery", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     try {
       const socket = new FakeSocket()
       const applied: string[] = []
-      const gate = new SocketEventGate(WS, { onApplied: (syncId) => applied.push(syncId) })
+      const onRecoveryRequired = vi.fn()
+      let rejectFirst = true
+      const gate = new SocketEventGate(WS, {
+        onApplied: (syncId) => applied.push(syncId),
+        onRecoveryRequired,
+      })
       gate.attach(asSocket(socket))
       const seen: string[] = []
       gate.on("message:created", async (payload: unknown) => {
-        if ((payload as { syncId: string }).syncId === "1") throw new Error("boom")
+        if (rejectFirst && (payload as { syncId: string }).syncId === "1") throw new Error("boom")
       })
       gate.on("message:created", (payload: unknown) => {
         seen.push((payload as { syncId: string }).syncId)
@@ -265,8 +270,15 @@ describe("SocketEventGate", () => {
       socket.trigger("message:created", { workspaceId: WS, syncId: "3" })
       await new Promise((resolve) => setTimeout(resolve, 0))
 
-      expect(seen).toEqual(["1", "2", "3"])
-      expect(applied).toEqual(["1", "2", "3"])
+      expect({ seen, applied, recoveryRequests: onRecoveryRequired.mock.calls.length }).toEqual({
+        seen: ["1"],
+        applied: [],
+        recoveryRequests: 1,
+      })
+
+      rejectFirst = false
+      await gate.resume(() => true)
+      expect({ seen, applied }).toEqual({ seen: ["1", "1", "2", "3"], applied: ["1", "2", "3"] })
       expect(errorSpy).toHaveBeenCalledWith(
         "Sync buffered handler failed",
         expect.objectContaining({ eventType: "message:created", syncId: "1" })
@@ -276,22 +288,44 @@ describe("SocketEventGate", () => {
     }
   })
 
-  it("falls back to immediate application when the pause buffer overflows", () => {
+  it("does not acknowledge events beyond an overflowed gap before recovery", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
     try {
-      const gate = new SocketEventGate(WS, { bufferLimit: 1 })
+      const applied: string[] = []
+      const gate = new SocketEventGate(WS, { bufferLimit: 1, onApplied: (syncId) => applied.push(syncId) })
       const socket = new FakeSocket()
       const handler = vi.fn()
       gate.on("message:created", handler)
       gate.attach(asSocket(socket))
 
       gate.pause()
-      socket.trigger("message:created", { workspaceId: WS, syncId: "1" })
-      socket.trigger("message:created", { workspaceId: WS, syncId: "2" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "11" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "13" })
 
-      // First buffered, second passed through live.
-      expect(handler.mock.calls).toEqual([[{ workspaceId: WS, syncId: "2" }]])
-      expect(warnSpy).toHaveBeenCalled()
+      expect({ handlerCalls: handler.mock.calls, applied }).toEqual({ handlerCalls: [], applied: [] })
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it("renews recovery ownership on repeated overflow without forwarding events", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const onRecoveryRequired = vi.fn()
+    try {
+      const gate = new SocketEventGate(WS, { bufferLimit: 1, onRecoveryRequired })
+      const socket = new FakeSocket()
+      const handler = vi.fn()
+      gate.on("message:created", handler)
+      gate.attach(asSocket(socket))
+
+      gate.pause()
+      for (const syncId of ["1", "2", "3", "4"]) {
+        socket.trigger("message:created", { workspaceId: WS, syncId })
+      }
+
+      expect(handler).not.toHaveBeenCalled()
+      expect(onRecoveryRequired).toHaveBeenCalledTimes(2)
+      expect(warnSpy).toHaveBeenCalledTimes(1)
     } finally {
       warnSpy.mockRestore()
     }

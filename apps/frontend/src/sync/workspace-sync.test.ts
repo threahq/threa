@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { db } from "@/db"
+import { db, getActiveDb, ThreaDatabase } from "@/db"
+import { setActiveDb } from "@/db/database"
+import { bumpAccountGeneration } from "@/db/event-writes"
+import { getActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
 import { liveQuery } from "dexie"
 import { QueryClient } from "@tanstack/react-query"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -706,6 +709,66 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     )
 
     expect((await db.streams.get(streamId))?.id).toBe(streamId)
+  })
+
+  it("keeps reconnect stream writes and call publication in their original account", async () => {
+    const accountA = getActiveDb()
+    const accountB = new ThreaDatabase(`reconnect_account_b_${Date.now()}`)
+    await accountB.open()
+    const streamId = "stream_account_a"
+    const bootstrap = makeStreamBootstrap(streamId, {
+      events: [
+        {
+          id: "evt_account_a",
+          streamId,
+          sequence: "1",
+          eventType: "message_created",
+          payload: { messageId: "msg_account_a", contentMarkdown: "Account A" },
+          actorId: "user_1",
+          actorType: "user",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      latestSequence: "1",
+      readState: { lastReadEventId: "evt_account_a", lastReadSequence: "1", lastReadAt: null },
+      activeCall: {
+        callId: "call_account_a",
+        mode: "audio_only",
+        participantCount: 1,
+        participantUserIds: ["user_1"],
+        selfLiveParticipant: true,
+      },
+    })
+    const bulkGet = accountA.events.bulkGet.bind(accountA.events)
+    const switchDuringApply = vi.spyOn(accountA.events, "bulkGet").mockImplementationOnce((keys) => {
+      bumpAccountGeneration()
+      setActiveDb(accountB)
+      __resetActiveCallsStore()
+      return bulkGet(keys)
+    })
+    try {
+      await applyReconnectBootstrapBatch(
+        "ws_1",
+        makeBootstrap(),
+        new Map([[streamId, bootstrap]]),
+        new Set(),
+        new Set()
+      )
+      expect({
+        switched: switchDuringApply.mock.calls.length > 0,
+        events: await accountB.events.toArray(),
+        streams: await accountB.streams.toArray(),
+        readState: await accountB.streamReadState.toArray(),
+        slots: await accountB.slots.toArray(),
+        call: getActiveCall("ws_1", "call_account_a"),
+      }).toEqual({ switched: true, events: [], streams: [], readState: [], slots: [], call: null })
+    } finally {
+      switchDuringApply.mockRestore()
+      setActiveDb(accountA)
+      bumpAccountGeneration()
+      __resetActiveCallsStore()
+      await accountB.delete()
+    }
   })
 
   it("applies stream terminal events after seeding the reconnect running set", async () => {

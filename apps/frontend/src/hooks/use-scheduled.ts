@@ -8,7 +8,8 @@ import { useSyncEngine, useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useBatchedValue } from "@/stores/apply-window"
-import { db, type CachedScheduledMessage } from "@/db"
+import { db, getActiveDb, type CachedScheduledMessage, type AccountWriteContext } from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import { enqueueOperation } from "@/sync/operation-queue"
 import { isPermanentApiError } from "@/api"
 import type {
@@ -143,8 +144,11 @@ export async function replaceScheduledPage(
   rows: ScheduledMessageView[],
   fetchStartedAt: number,
   hasMore: boolean,
-  streamId?: string
+  streamId?: string,
+  account: AccountWriteContext = { generation: getAccountGeneration(), database: getActiveDb() }
 ): Promise<void> {
+  if (getAccountGeneration() !== account.generation) return
+  const { database } = account
   const pendingIndexKey = streamId
     ? "[workspaceId+streamId+status+_scheduledForMs]"
     : "[workspaceId+status+_scheduledForMs]"
@@ -154,7 +158,7 @@ export async function replaceScheduledPage(
     ? []
     : await (async () => {
         const collection = streamId
-          ? db.scheduledMessages
+          ? database.scheduledMessages
               .where(indexKey)
               .between(
                 [workspaceId, streamId, status, -Infinity],
@@ -162,7 +166,7 @@ export async function replaceScheduledPage(
                 true,
                 true
               )
-          : db.scheduledMessages
+          : database.scheduledMessages
               .where(indexKey)
               .between([workspaceId, status, -Infinity], [workspaceId, status, Infinity], true, true)
         const existing = await collection.toArray()
@@ -172,9 +176,11 @@ export async function replaceScheduledPage(
           .map((row) => row.id)
       })()
 
-  await db.transaction("rw", db.scheduledMessages, async () => {
-    if (toDelete.length > 0) await db.scheduledMessages.bulkDelete(toDelete)
-    if (rows.length > 0) await db.scheduledMessages.bulkPut(rows.map((row) => toCached(row)))
+  if (getAccountGeneration() !== account.generation) return
+  await database.transaction("rw", database.scheduledMessages, async () => {
+    if (getAccountGeneration() !== account.generation) return
+    if (toDelete.length > 0) await database.scheduledMessages.bulkDelete(toDelete)
+    if (rows.length > 0) await database.scheduledMessages.bulkPut(rows.map((row) => toCached(row)))
   })
 }
 
@@ -195,8 +201,17 @@ export function useScheduledList(workspaceId: string, status: ScheduledMessageSt
     queryKey: scheduledKeys.list(workspaceId, status, streamId),
     queryFn: async () => {
       const fetchStartedAt = Date.now()
+      const account = { generation: getAccountGeneration(), database: getActiveDb() }
       const res = await scheduledService.list(workspaceId, { status, streamId, limit: 50 })
-      await replaceScheduledPage(workspaceId, status, res.scheduled, fetchStartedAt, res.nextCursor !== null, streamId)
+      await replaceScheduledPage(
+        workspaceId,
+        status,
+        res.scheduled,
+        fetchStartedAt,
+        res.nextCursor !== null,
+        streamId,
+        account
+      )
       return res
     },
     // INV-53: when a SyncEngine is mounted, a socket reconnect runs
