@@ -302,12 +302,6 @@ describe("briefRuntimeSession", () => {
     beforeAll(async () => {
       e2eFixture = await seedBotRuntimeFixture({ label: "session_brief_e2e", instanceIds: ["e2e-instance"] })
       ;({ pool: e2ePool, workspace: e2eWorkspace, stream: e2eRoot, author: e2eAuthor, bot: e2eBot } = e2eFixture)
-      await E2eStreamsRepository.markStreamE2e(e2ePool, {
-        streamId: e2eRoot,
-        workspaceId: e2eWorkspace,
-        ownerUserId: e2eAuthor,
-        ownerUserKeyId: "e2ek_test",
-      })
     }, 30_000)
 
     afterAll(async () => {
@@ -339,6 +333,15 @@ describe("briefRuntimeSession", () => {
         anchorId: anchor.id,
         displayName: "Sub work",
         traits: ["active-scratchpad"],
+      })
+      // Encrypted after the attach: attach refuses an E2E root outright, so this
+      // is the sequence that actually reaches the brief with one — a scratchpad
+      // the owner turned on encryption for while its thread session was running.
+      await E2eStreamsRepository.markStreamE2e(e2ePool, {
+        streamId: e2eRoot,
+        workspaceId: e2eWorkspace,
+        ownerUserId: e2eAuthor,
+        ownerUserKeyId: "e2ek_test",
       })
 
       const beforeCount = await e2ePool.query<{ count: string }>(
