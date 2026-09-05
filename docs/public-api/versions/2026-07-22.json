@@ -1115,6 +1115,7 @@
         "operationId": "createBotRuntimeSession",
         "summary": "Create or link a bot runtime session",
         "tags": ["Bot runtimes"],
+        "description": "Creates a fresh scratchpad session by default. Pass `attachTo` to link the session to a new thread under an existing scratchpad the bot already has access to instead.",
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -1149,7 +1150,16 @@
                     "additionalProperties": false
                   },
                   "ifArchived": { "type": "string", "enum": ["wait", "replace"] },
-                  "ifMissing": { "type": "string", "enum": ["create", "error"] }
+                  "ifMissing": { "type": "string", "enum": ["create", "error"] },
+                  "attachTo": {
+                    "type": "object",
+                    "properties": {
+                      "rootStreamId": { "type": "string", "minLength": 1 },
+                      "anchorId": { "type": "string", "minLength": 1 }
+                    },
+                    "required": ["rootStreamId", "anchorId"],
+                    "additionalProperties": false
+                  }
                 },
                 "required": ["runtimeKind", "instanceId", "runtimeSessionId", "displayName"],
                 "additionalProperties": false

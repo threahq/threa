@@ -1,0 +1,130 @@
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import type { Request, Response } from "express"
+import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
+import { BotRepository } from "./bot-repository"
+import { E2eStreamsRepository } from "../e2e-streams"
+import * as db from "../../db"
+
+function personalBot(ownerUserId: string) {
+  return { id: "bot_1", workspaceId: "ws_1", type: "personal", ownerUserId, archivedAt: null } as never
+}
+
+function createResponse() {
+  let body: unknown
+  const res = {} as Response
+  res.status = mock(() => res) as unknown as Response["status"]
+  res.json = mock((payload: unknown) => {
+    body = payload
+    return res
+  }) as unknown as Response["json"]
+  return { res, body: () => body }
+}
+
+function createHandlers(botRuntimeService: Record<string, unknown>) {
+  const deps: PublicApiDeps = {
+    eventService: {} as PublicApiDeps["eventService"],
+    streamService: {} as PublicApiDeps["streamService"],
+    searchService: {} as PublicApiDeps["searchService"],
+    featureFlagService: {} as PublicApiDeps["featureFlagService"],
+    memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
+    attachmentService: {} as PublicApiDeps["attachmentService"],
+    botChannelService: {} as PublicApiDeps["botChannelService"],
+    botRuntimeService: botRuntimeService as unknown as PublicApiDeps["botRuntimeService"],
+    labelService: {} as PublicApiDeps["labelService"],
+    labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
+    pool: {} as PublicApiDeps["pool"],
+    io: {} as PublicApiDeps["io"],
+  }
+  return createPublicApiHandlers(deps)
+}
+
+function attachRequest() {
+  return {
+    workspaceId: "ws_1",
+    body: {
+      runtimeKind: "claude-code-channel",
+      instanceId: "inst_1",
+      runtimeSessionId: "sess_1",
+      displayName: "Claude Code - threa",
+      attachTo: { rootStreamId: "stream_root", anchorId: "msg_1" },
+    },
+    params: {},
+    query: {},
+    botApiKey: { id: "bkey_1", botId: "bot_1" },
+  } as unknown as Request
+}
+
+describe("createBotRuntimeSession attachTo", () => {
+  afterEach(() => mock.restore())
+
+  it("routes attachTo to attachRuntimeSessionToThread and never mints a fresh scratchpad", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    const createLinkedScratchpadSession = mock(() => Promise.reject(new Error("must not create a new scratchpad")))
+    const attachRuntimeSessionToThread = mock(() =>
+      Promise.resolve({
+        link: {
+          id: "brsl_1",
+          rootStreamId: "stream_root",
+          activeStreamId: "stream_thread",
+          runtimeSessionId: "sess_1",
+        },
+        stream: { id: "stream_thread", e2eEnabled: false },
+      })
+    )
+    const handlers = createHandlers({
+      findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+      attachRuntimeSessionToThread,
+      createLinkedScratchpadSession,
+    })
+    const cap = createResponse()
+
+    await handlers.createBotRuntimeSession(attachRequest(), cap.res)
+
+    expect(attachRuntimeSessionToThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        botId: "bot_1",
+        ownerUserId: "usr_owner",
+        rootStreamId: "stream_root",
+        anchorId: "msg_1",
+      })
+    )
+    expect(createLinkedScratchpadSession).not.toHaveBeenCalled()
+    expect(cap.body()).toMatchObject({
+      data: {
+        linkId: "brsl_1",
+        rootStreamId: "stream_root",
+        activeStreamId: "stream_thread",
+        runtimeSessionId: "sess_1",
+      },
+    })
+  })
+
+  it("identity reuse wins before the attachTo branch is reached", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as never))
+    const attachRuntimeSessionToThread = mock(() => Promise.reject(new Error("must not be called")))
+    const repairBotTraitsInTransaction = mock(() => Promise.resolve())
+    const handlers = createHandlers({
+      findActivePiRemoteSession: mock(() =>
+        Promise.resolve({
+          id: "brsl_existing",
+          rootStreamId: "stream_existing_root",
+          activeStreamId: "stream_existing_active",
+          runtimeSessionId: "sess_1",
+        })
+      ),
+      attachRuntimeSessionToThread,
+      repairBotTraitsInTransaction,
+    })
+    const cap = createResponse()
+
+    await handlers.createBotRuntimeSession(attachRequest(), cap.res)
+
+    expect(attachRuntimeSessionToThread).not.toHaveBeenCalled()
+    expect(cap.body()).toMatchObject({
+      data: { linkId: "brsl_existing", rootStreamId: "stream_existing_root", activeStreamId: "stream_existing_active" },
+    })
+  })
+})

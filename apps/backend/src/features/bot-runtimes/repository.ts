@@ -659,6 +659,38 @@ export const BotRuntimeSessionLinkRepository = {
   },
 
   /**
+   * Same insert as `upsert`, but an ACTIVE link on (workspace, bot, root,
+   * active) is never replaced: the conflicting row is left alone and null
+   * comes back. The unique index serializes concurrent inserts, so two
+   * callers racing for the same stream cannot both win (INV-20). Ended or
+   * archived rows are revived like `upsert` does.
+   */
+  async upsertUnlessActive(
+    db: Querier,
+    params: {
+      id: string
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+      rootStreamId: string
+      activeStreamId: string
+      linkedBy: string
+      metadata?: Record<string, unknown>
+    }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result =
+      await db.query<BotRuntimeSessionLinkRow>(sql`INSERT INTO bot_runtime_session_links (id, workspace_id, bot_id, runtime_kind, instance_id, runtime_session_id, root_stream_id, active_stream_id, linked_by, metadata, last_seen_at)
+      VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.runtimeSessionId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.linkedBy}, ${params.metadata ?? {}}, NOW())
+      ON CONFLICT (workspace_id, bot_id, root_stream_id, active_stream_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, instance_id = EXCLUDED.instance_id, runtime_session_id = EXCLUDED.runtime_session_id, linked_by = EXCLUDED.linked_by, status = 'active', metadata = EXCLUDED.metadata, last_seen_at = NOW(), updated_at = NOW()
+      WHERE bot_runtime_session_links.status <> 'active'
+      RETURNING *`)
+    const row = result.rows[0]
+    return row ? mapSessionLink(row) : null
+  },
+
+  /**
    * End every active link rooted at a stream (its scratchpad was archived) and
    * return the ended rows so the caller can notify each runtime. Writes the
    * recoverable 'archived' status — not terminal 'ended' — so a later

@@ -985,6 +985,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     path: "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions",
     operationId: "createBotRuntimeSession",
     summary: "Create or link a bot runtime session",
+    description:
+      "Creates a fresh scratchpad session by default. Pass `attachTo` to link the session to a new thread under an existing scratchpad the bot already has access to instead.",
     tags: ["Bot runtimes"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
     parameters: [workspaceIdParam],

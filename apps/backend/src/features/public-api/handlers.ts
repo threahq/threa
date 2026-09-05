@@ -1169,6 +1169,32 @@ export function createPublicApiHandlers({
         })
       }
 
+      if (data.attachTo) {
+        const attached = await botRuntimeService.attachRuntimeSessionToThread({
+          workspaceId: req.workspaceId!,
+          botId: bot.id,
+          ownerUserId: bot.ownerUserId,
+          runtimeKind: data.runtimeKind,
+          instanceId: data.instanceId,
+          runtimeSessionId: data.runtimeSessionId,
+          rootStreamId: data.attachTo.rootStreamId,
+          anchorId: data.attachTo.anchorId,
+          displayName: data.displayName,
+          localCwd: data.localCwd,
+          traits: requiredRuntimeTraits,
+        })
+        return res.json({
+          data: {
+            linkId: attached.link.id,
+            rootStreamId: attached.link.rootStreamId,
+            activeStreamId: attached.link.activeStreamId,
+            runtimeSessionId: attached.link.runtimeSessionId,
+            streamUrlPath: `/w/${req.workspaceId!}/s/${attached.stream.id}`,
+            e2eEnabled: attached.stream.e2eEnabled === true,
+          },
+        })
+      }
+
       // Archive→unarchive reattach: the runtime re-issues session-create with
       // the same identity after its link was archive-ended. Revive that link
       // (same scratchpad) rather than minting a duplicate; while the scratchpad
