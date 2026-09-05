@@ -2968,6 +2968,12 @@ export function StreamContent({
   useEffect(() => {
     if (!canStartHighlightClear) return
     const timer = setTimeout(() => {
+      // setSearchParams edits this render's snapshot, and a click's navigation
+      // can still be committing under startTransition when the timer fires:
+      // the URL already moved on (say to `?panel=`) but this effect's cleanup
+      // has not run. Writing the snapshot back would erase that navigation.
+      // Skip; the re-render that lands it restarts the countdown.
+      if (window.location.search !== location.search) return
       setSearchParams(
         (prev) => {
           prev.delete("m")
@@ -2977,7 +2983,7 @@ export function StreamContent({
       )
     }, 3000)
     return () => clearTimeout(timer)
-  }, [canStartHighlightClear, setSearchParams])
+  }, [canStartHighlightClear, location.search, setSearchParams])
 
   // Per-row read-state gating signal: the read pointer's sequence. null while
   // the read state is unresolved or the pointer is outside the loaded window —

@@ -29,6 +29,15 @@ export function useExternalThreadDraftPromotion({
 }: ExternalThreadDraftPromotionOptions): void {
   const syncEngine = useOptionalSyncEngine()
   const promotionRef = useRef<string | null>(null)
+  // The relocation below outlives a panel the user closes mid-flight; its
+  // navigation must not reopen what they just closed.
+  const unmountedRef = useRef(false)
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!isDraft || !anchorId || !externalThreadId || promotionRef.current === externalThreadId) return
@@ -44,7 +53,7 @@ export function useExternalThreadDraftPromotion({
         await relocateLoadedDraft(workspaceId, fromScope, toScope)
         await rescopeScopeDrafts(workspaceId, fromScope, toScope)
         syncEngine?.kickOperationQueue()
-        onPromoted(externalThreadId)
+        if (!unmountedRef.current) onPromoted(externalThreadId)
       } catch (error) {
         promotionRef.current = null
         setIsSending(false)

@@ -52,6 +52,35 @@ describe("useExternalThreadDraftPromotion", () => {
     expect(kickOperationQueue).toHaveBeenCalledOnce()
   })
 
+  it("should not navigate when the panel unmounted before relocation finished", async () => {
+    let finishRelocation!: () => void
+    vi.mocked(draftMessageModule.relocateLoadedDraft).mockReturnValue(
+      new Promise((resolve) => {
+        finishRelocation = () => resolve(null)
+      })
+    )
+
+    const { unmount } = renderHook(() =>
+      useExternalThreadDraftPromotion({
+        workspaceId: "ws_1",
+        isDraft: true,
+        anchorId: "event_card",
+        externalThreadId: "stream_thread",
+        flushDraft,
+        setIsSending,
+        onPromoted,
+      })
+    )
+
+    await waitFor(() => expect(draftMessageModule.relocateLoadedDraft).toHaveBeenCalledOnce())
+    unmount()
+    finishRelocation()
+
+    await waitFor(() => expect(draftMessageModule.rescopeScopeDrafts).toHaveBeenCalledOnce())
+    await waitFor(() => expect(kickOperationQueue).toHaveBeenCalledOnce())
+    expect(onPromoted).not.toHaveBeenCalled()
+  })
+
   it("keeps the draft panel open when relocation fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {})
     vi.mocked(draftMessageModule.relocateLoadedDraft).mockRejectedValue(new Error("IDB failed"))
