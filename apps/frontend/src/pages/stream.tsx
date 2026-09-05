@@ -287,7 +287,10 @@ export function StreamPage() {
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
   if (stream) {
-    streamName = pendingName ?? decryptedStreamName ?? streamLabel(stream)
+    // An unnamed scratchpad takes the same fallback the draft branch below and
+    // the sidebar use, so promoting a draft doesn't retitle the header from
+    // "New scratchpad" to "Untitled" before the generated name lands.
+    streamName = pendingName ?? decryptedStreamName ?? streamLabel(stream, isScratchpad ? "sidebar" : "generic")
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }

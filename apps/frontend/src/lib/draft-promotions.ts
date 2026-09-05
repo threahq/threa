@@ -66,6 +66,11 @@ export function getDraftPromotionStream(realStreamId: string): Stream | null {
   return promotionsByRealStreamId.get(realStreamId)?.stream ?? null
 }
 
+/**
+ * Drop the handoff rows once the real stream's own window carries them. Keyed
+ * by the real id only: the draft id's window resolves from the pre-move
+ * snapshot, so releasing there would strip the rows the real view still needs.
+ */
 export function releaseDraftPromotionEvents(realStreamId: string): void {
   const promotion = promotionsByRealStreamId.get(realStreamId)
   if (promotion) delete promotion.events

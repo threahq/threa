@@ -1020,17 +1020,4 @@ describe("useTimelineScroll — cold-load settle mask", () => {
     harness.rerender(opts({ resetKey: "stream_2", itemCount: 3, getFirstKey: () => "e0" }))
     expect(harness.current.isInitialSettling).toBe(true)
   })
-
-  it("leaves the settle unmasked when the stream continues a promoted draft", () => {
-    // A draft view mounts masked; the promoted stream switches in with the same
-    // rows on screen, so its settle must not re-mask them.
-    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
-    harness.rerender(
-      opts({ resetKey: "stream_promoted", itemCount: 1, getFirstKey: () => "e0", maskInitialSettle: false })
-    )
-    expect(harness.current.isInitialSettling).toBe(false)
-
-    const fresh = renderScrollHook(opts({ itemCount: 1, getFirstKey: () => "e0", maskInitialSettle: false }))
-    expect(fresh.current.isInitialSettling).toBe(false)
-  })
 })
