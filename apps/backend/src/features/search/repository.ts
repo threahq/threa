@@ -263,7 +263,7 @@ export const SearchRepository = {
         m.metadata,
         m.edited_at,
         m.created_at,
-        ts_rank(m.search_vector, ${keywordTsquerySql(query)}) as rank
+        ts_rank(m.search_vector, ${keywordTsquerySql(query)}, 1) as rank
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
       WHERE m.stream_id = ANY(${streamIds})
