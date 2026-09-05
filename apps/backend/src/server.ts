@@ -183,6 +183,7 @@ import {
   stripInaccessibleAgentRefs,
 } from "./features/agents"
 import { EmojiUsageHandler } from "./features/emoji"
+import { AnalyticsOutboxHandler } from "./features/analytics"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
 import { SyncService, SyncLogReconciliationWorker, SyncHeartbeatWorker, SyncLogRetentionWorker } from "./features/sync"
@@ -1683,6 +1684,7 @@ export async function startServer(): Promise<ServerInstance> {
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const dynamicNamingHandler = new DynamicNamingOutboxHandler(pool, dynamicNamingScheduler, dynamicNamingService)
   const emojiUsageHandler = new EmojiUsageHandler(pool)
+  const analyticsOutboxHandler = config.posthog ? new AnalyticsOutboxHandler(pool, analyticsReporter) : null
   const embeddingHandler = new EmbeddingHandler(pool, jobQueue)
   const boundaryExtractionHandler = new BoundaryExtractionHandler(pool, jobQueue)
   const memoAccumulatorHandler = new MemoAccumulatorHandler(pool)
@@ -1740,6 +1742,7 @@ export async function startServer(): Promise<ServerInstance> {
     ...(callRingPushHandler ? [callRingPushHandler] : []),
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
     ...(githubRouteSyncHandler ? [githubRouteSyncHandler] : []),
+    ...(analyticsOutboxHandler ? [analyticsOutboxHandler] : []),
   ]
 
   for (const handler of outboxHandlers) {

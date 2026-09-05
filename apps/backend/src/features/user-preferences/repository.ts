@@ -102,4 +102,16 @@ export const UserPreferencesRepository = {
       WHERE user_id = ${userId}
     `)
   },
+
+  async findOverrideForUsers(db: Querier, userIds: string[], key: string): Promise<Map<string, unknown>> {
+    if (userIds.length === 0) return new Map()
+
+    const result = await db.query<Pick<PreferenceOverrideRow, "user_id" | "value">>(sql`
+      SELECT user_id, value
+      FROM user_preference_overrides
+      WHERE user_id = ANY(${userIds})
+        AND key = ${key}
+    `)
+    return new Map(result.rows.map((row) => [row.user_id, row.value]))
+  },
 }

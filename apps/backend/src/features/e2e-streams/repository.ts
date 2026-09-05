@@ -155,6 +155,21 @@ export const E2eStreamsRepository = {
       : null
   },
 
+  /**
+   * Which of `streamIds` are E2E, in one query (INV-56). Threads under an E2E
+   * root carry their own row, so a thread id resolves without walking to the root.
+   */
+  async findE2eStreamIds(db: Querier, workspaceId: string, streamIds: string[]): Promise<Set<string>> {
+    if (streamIds.length === 0) return new Set()
+
+    const result = await db.query<{ stream_id: string }>(sql`
+      SELECT stream_id
+      FROM e2e_streams
+      WHERE workspace_id = ${workspaceId} AND stream_id = ANY(${streamIds})
+    `)
+    return new Set(result.rows.map((row) => row.stream_id))
+  },
+
   async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {
     const result = await db.query<E2eStreamRow>(sql`
       SELECT ${sql.raw(COLUMNS)}, (name_ciphertext IS NOT NULL) AS has_sealed_name
