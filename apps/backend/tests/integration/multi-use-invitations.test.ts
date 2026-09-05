@@ -226,7 +226,15 @@ describe("multi-use invitation lifecycle", () => {
     await expect(fixture.service.claimLinkByToken(created.token, email)).resolves.toEqual({
       alreadyMember: { workspaceId: fixture.workspaceId },
     })
-    const child = await InvitationRepository.findLinkChild(fixture.pool, created.invitation.id, email)
+    const child = await InvitationRepository.findLinkChild(
+      fixture.pool,
+      fixture.workspaceId,
+      created.invitation.id,
+      email
+    )
+    expect(
+      await InvitationRepository.findLinkChild(fixture.pool, workspaceId(), created.invitation.id, email)
+    ).toBeNull()
     expect(child).toMatchObject({ email, status: "pending", parentLinkId: created.invitation.id })
     const event = await fixture.pool.query<{ payload: Record<string, unknown> }>(
       `SELECT payload FROM outbox
@@ -482,6 +490,44 @@ describe("multi-use invitation lifecycle", () => {
     })
   })
 
+  test("should retry missing claim state and skip an invalid root target", async () => {
+    const calls: unknown[] = []
+    const handler = new TestShadowSyncHandler(
+      fixture.pool,
+      { notifyInvitationLinkClaimed: async (params: unknown) => calls.push(params) } as unknown as ControlPlaneClient,
+      "local"
+    )
+    const event = {
+      id: 1n,
+      eventType: "invitation:link-claimed",
+      createdAt: new Date(),
+      payload: {
+        workspaceId: fixture.workspaceId,
+        email: identity(39).email,
+        role: "member",
+        invitationId: "inv_missing",
+      },
+    } as OutboxEvent
+    await expect(handler.process(event)).rejects.toThrow("Invitation inv_missing not found for link-claimed delivery")
+    await expect(
+      handler.process({
+        ...event,
+        payload: { ...event.payload, invitationId: "inv_child", parentInvitationId: "inv_missing_parent" },
+      } as OutboxEvent)
+    ).rejects.toThrow("Invitation parent inv_missing_parent not found for link-claimed delivery")
+
+    const emailInvitation = await InvitationRepository.insert(fixture.pool, {
+      id: invitationId(),
+      workspaceId: fixture.workspaceId,
+      email: identity(38).email,
+      role: "member",
+      invitedBy: fixture.inviterId,
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    await handler.process({ ...event, payload: { ...event.payload, invitationId: emailInvitation.id } } as OutboxEvent)
+    expect(calls).toEqual([])
+  })
+
   test("should keep queued and replayed legacy root claims on the legacy shadow protocol", async () => {
     const token = "legacy-outbox-token"
     const id = invitationId()
@@ -594,7 +640,7 @@ describe("multi-use invitation lifecycle", () => {
           userName: "Pending Attacker",
         },
       } as OutboxEvent)
-    ).rejects.toThrow("does not match regional state")
+    ).rejects.toThrow("member is not visible for accepted delivery")
     expect(calls).toHaveLength(1)
   })
 
@@ -655,6 +701,9 @@ describe("multi-use invitation lifecycle", () => {
       expiresAt: null,
     })
     expect(revived).toMatchObject({ id, role: "admin", maxUses: 1, expiresAt: null, status: "pending" })
+    await expect(
+      InvitationRepository.claimLegacyAdminLink(fixture.pool, workspaceId(), id, "wrong-workspace@example.com")
+    ).resolves.toBeNull()
 
     await expect(fixture.service.claimLinkByToken(token, "first-admin@example.com")).resolves.toEqual({
       invitationId: id,
@@ -665,7 +714,9 @@ describe("multi-use invitation lifecycle", () => {
     await expect(fixture.service.claimLinkByToken(token, "second-admin@example.com")).rejects.toMatchObject({
       code: "INVITATION_EXHAUSTED",
     })
-    expect(await InvitationRepository.findLinkChild(fixture.pool, id, "first-admin@example.com")).toBeNull()
+    expect(
+      await InvitationRepository.findLinkChild(fixture.pool, fixture.workspaceId, id, "first-admin@example.com")
+    ).toBeNull()
 
     await expect(
       fixture.service.updateLink({ workspaceId: fixture.workspaceId, invitationId: id, maxUses: null })

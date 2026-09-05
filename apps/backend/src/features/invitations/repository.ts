@@ -146,11 +146,11 @@ export const InvitationRepository = {
     return mapRow(result.rows[0])
   },
 
-  async claimLegacyAdminLink(db: Querier, id: string, email: string): Promise<Invitation | null> {
+  async claimLegacyAdminLink(db: Querier, workspaceId: string, id: string, email: string): Promise<Invitation | null> {
     const result = await db.query<{ id: string }>(sql`
       UPDATE workspace_invitations
       SET email = ${email}
-      WHERE id = ${id}
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
         AND kind = 'link'
         AND parent_link_id IS NULL
         AND role = 'admin'
@@ -162,10 +162,15 @@ export const InvitationRepository = {
     return result.rows[0] ? findById(db, result.rows[0].id) : null
   },
 
-  async findLinkChild(db: Querier, parentLinkId: string, email: string): Promise<Invitation | null> {
+  async findLinkChild(
+    db: Querier,
+    workspaceId: string,
+    parentLinkId: string,
+    email: string
+  ): Promise<Invitation | null> {
     const result = await db.query<{ id: string }>(sql`
       SELECT id FROM workspace_invitations
-      WHERE parent_link_id = ${parentLinkId} AND lower(email) = lower(${email})
+      WHERE workspace_id = ${workspaceId} AND parent_link_id = ${parentLinkId} AND lower(email) = lower(${email})
     `)
     return result.rows[0] ? findById(db, result.rows[0].id) : null
   },

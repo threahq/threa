@@ -174,7 +174,7 @@ describe("InvitationService.claimLinkByToken", () => {
     await expect(service.claimLinkByToken("token", "new@example.com")).resolves.toEqual({
       invitationId: "inv_root",
     })
-    expect(claimLegacyAdmin).toHaveBeenCalledWith(client, "inv_root", "new@example.com")
+    expect(claimLegacyAdmin).toHaveBeenCalledWith(client, "ws_1", "inv_root", "new@example.com")
     expect(insertChild).not.toHaveBeenCalled()
   })
 

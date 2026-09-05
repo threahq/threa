@@ -366,7 +366,7 @@ export class InvitationService {
         if (parent.email) {
           child = parent
         } else {
-          const claimed = await InvitationRepository.claimLegacyAdminLink(client, parent.id, email)
+          const claimed = await InvitationRepository.claimLegacyAdminLink(client, parent.workspaceId, parent.id, email)
           if (!claimed) throw new InvitationLinkError("INVITATION_EXHAUSTED")
           child = claimed
         }
@@ -376,7 +376,8 @@ export class InvitationService {
         if (parent.email && !legacyClaim && parent.maxUses === 1 && parent.acceptanceConsumesCapacity !== false) {
           throw new InvitationLinkError("INVITATION_EXHAUSTED")
         }
-        const existingChild = legacyClaim ?? (await InvitationRepository.findLinkChild(client, parent.id, email))
+        const existingChild =
+          legacyClaim ?? (await InvitationRepository.findLinkChild(client, parent.workspaceId, parent.id, email))
         if (!existingChild) assertLinkAvailable(parent)
         child =
           existingChild ??
@@ -388,13 +389,18 @@ export class InvitationService {
       }
       const inviterWorkosUserId =
         (await this.getInviterWorkosUserId(parent.workspaceId, parent.invitedBy, client)) ?? undefined
+      const { parentInvitationId, expiresAt, maxUses, useCount, revision } = linkState(parent)
       await OutboxRepository.insert(client, "invitation:link-claimed", {
         workspaceId: parent.workspaceId,
         invitationId: child.id,
         email,
         role: parent.role,
         inviterWorkosUserId,
-        ...linkState(parent),
+        parentInvitationId,
+        expiresAt,
+        maxUses,
+        useCount,
+        revision,
       })
       const memberMatches = await UserRepository.findEmails(client, parent.workspaceId, [email])
       if (memberMatches.has(email)) return { alreadyMember: { workspaceId: parent.workspaceId } }
