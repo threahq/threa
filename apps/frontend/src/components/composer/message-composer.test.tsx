@@ -14,6 +14,7 @@ import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
 import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
+import * as analyticsModule from "@/lib/analytics/posthog"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 import { useReportScheduledCount } from "./stashed-drafts-open-context"
 
@@ -57,9 +58,10 @@ const MockRichEditor = forwardRef<
     ariaLabel?: string
     ariaDescribedBy?: string
     onRequestFileUpload?: () => void
+    onFocus?: () => void
   }
 >(function MockRichEditor(
-  { value, onChange, onSubmit, placeholder, disabled, ariaLabel, ariaDescribedBy, onRequestFileUpload },
+  { value, onChange, onSubmit, placeholder, disabled, ariaLabel, ariaDescribedBy, onRequestFileUpload, onFocus },
   ref
 ) {
   capturedRequestFileUpload = onRequestFileUpload
@@ -118,6 +120,7 @@ const MockRichEditor = forwardRef<
         disabled={disabled}
         aria-label={ariaLabel}
         aria-describedby={ariaDescribedBy}
+        onFocus={onFocus}
       />
     </div>
   )
@@ -538,6 +541,28 @@ describe("MessageComposer", () => {
       await userEvent.click(button)
 
       expect(onSubmit).toHaveBeenCalled()
+    })
+  })
+
+  describe("composer_opened analytics", () => {
+    it("should capture composer_opened when the editor gains focus", () => {
+      const capture = vi.spyOn(analyticsModule, "capture").mockImplementation(() => {})
+      render(<MessageComposer {...defaultProps} />)
+
+      fireEvent.focus(screen.getByTestId("rich-editor"))
+
+      expect(capture).toHaveBeenCalledWith("composer_opened")
+    })
+
+    it("should not capture composer_opened again when the editor is focused a second time in the same mount", () => {
+      const capture = vi.spyOn(analyticsModule, "capture").mockImplementation(() => {})
+      render(<MessageComposer {...defaultProps} />)
+
+      fireEvent.focus(screen.getByTestId("rich-editor"))
+      fireEvent.blur(screen.getByTestId("rich-editor"))
+      fireEvent.focus(screen.getByTestId("rich-editor"))
+
+      expect(capture).toHaveBeenCalledTimes(1)
     })
   })
 

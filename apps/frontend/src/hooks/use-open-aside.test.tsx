@@ -6,6 +6,7 @@ import { spyOnExport } from "@/test"
 import * as streamsModule from "./use-streams"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
 import { useOpenAside } from "./use-open-aside"
+import * as analyticsModule from "@/lib/analytics/posthog"
 
 const HOST_PATH = "/w/ws_1/s/stream_host"
 
@@ -54,5 +55,16 @@ describe("useOpenAside", () => {
     await opening
 
     expect(getAsideState()).toBeNull()
+  })
+
+  it("should capture aside_opened with the origin kind when the hook is called", async () => {
+    const capture = vi.spyOn(analyticsModule, "capture").mockImplementation(() => {})
+    const { result } = renderHook(() => useOpenAside("ws_1"), { wrapper: ({ children }) => wrapper(children) })
+
+    const opening = result.current({ kind: "stream", hostStreamId: "stream_host" })
+    resolveCreate({ id: "stream_aside" })
+    await opening
+
+    expect(capture.mock.calls[0]).toEqual(["aside_opened", { kind: "stream" }])
   })
 })

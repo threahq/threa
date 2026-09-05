@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { ChevronDown, ChevronRight, Hash, MessageSquareQuote } from "lucide-react"
 import { Link } from "react-router-dom"
+import { capture } from "@/lib/analytics/posthog"
 import { RelativeTime } from "@/components/relative-time"
 import { Skeleton } from "@/components/ui/skeleton"
 import { KnowledgeTypeBadge, formatStreamRef } from "@/components/memo/memo-detail"
@@ -48,7 +49,7 @@ export function MemoResultItem({
           : "border-border/50 hover:border-border hover:shadow-sm"
       )}
     >
-      <Link to={href} className="block min-w-0 px-3.5 pt-3 pb-2">
+      <Link to={href} onClick={() => capture("memo_opened")} className="block min-w-0 px-3.5 pt-3 pb-2">
         <div className="flex min-w-0 items-start justify-between gap-2">
           <h3 className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground line-clamp-2">
             {memo.title}
