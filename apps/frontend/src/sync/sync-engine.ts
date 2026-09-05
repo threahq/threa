@@ -463,6 +463,22 @@ export class SyncEngine {
     void this.runCatchUp("resume")
   }
 
+  /**
+   * A soft pull-to-refresh. Runs the sweep a first connect runs: a fresh
+   * workspace snapshot (the service worker copy bypassed) and the visible
+   * streams' deltas commit and publish inside one apply window, then the sync
+   * log replays from the cursor before this resolves, so the pull indicator
+   * stays up until the last write has landed. The slim resume path would land
+   * each visible stream on its own render and never refetch the snapshot; a
+   * pull is the user asking for the whole picture at once.
+   */
+  async refreshAfterPull(): Promise<void> {
+    if (this.isDestroyed) return
+    this.beginCatchUpCycle()
+    await this.runBootstrap(true, { forceFull: true })
+    await this.runCatchUp("pull")
+  }
+
   async refreshVisibleEventReads(): Promise<void> {
     if (this.isDestroyed) return
     try {

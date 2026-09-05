@@ -2542,6 +2542,30 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 
+  it("runs the full sweep and the catch-up on a pull-to-refresh", async () => {
+    const deps = makeReconnectDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    engine.setCurrentStreamId("stream_1")
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalled())
+    deps.workspaceService.bootstrap.mockClear()
+    deps.streamService.bootstrap.mockClear()
+    vi.mocked(deps.syncService.catchUp).mockClear()
+
+    await engine.refreshAfterPull()
+
+    // A pull is the first-connect sweep on demand: fresh snapshot (service
+    // worker copy bypassed) plus the open stream's delta, then the log replay,
+    // all before the pull resolves; the window is closed by then.
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledWith("ws_1", { fresh: true })
+    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: expect.any(String) })
+    expect(deps.syncService.catchUp).toHaveBeenCalled()
+    expect(isApplyWindowOpen()).toBe(false)
+    engine.destroy()
+  })
+
   it("forces a full bootstrap on resume when catch-up reports below the retention floor", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
