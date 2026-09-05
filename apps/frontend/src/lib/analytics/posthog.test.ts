@@ -138,6 +138,21 @@ describe("analytics client lifecycle", () => {
     expect(eu.captureException).not.toHaveBeenCalled()
   })
 
+  it("should stay inert instead of crashing the app when the SDK throws on init", () => {
+    const root = {
+      init: vi.fn(() => {
+        throw new Error("storage blocked")
+      }),
+    } as unknown as AnalyticsRoot
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    expect(() => startAnalytics(params, root)).not.toThrow()
+    expect(() => captureException(new Error("boom"))).not.toThrow()
+    expect(consoleError).toHaveBeenCalled()
+
+    consoleError.mockRestore()
+  })
+
   it("should no-op when starting again with the same target", () => {
     const root = createFakeRoot()
 

@@ -74,6 +74,20 @@ interface ActiveAnalytics extends StartAnalyticsParams {
 
 let active: ActiveAnalytics | null = null
 
+/**
+ * Every call into posthog-js goes through here. These run inside render-path
+ * effects, and a browser that blocks storage or an extension that patches fetch
+ * can make the SDK throw — reporting a crash must never cause one. The backend
+ * reporter guards its own SDK the same way.
+ */
+function guard(what: string, action: () => void): void {
+  try {
+    action()
+  } catch (error) {
+    console.error(`[Analytics] ${what} failed:`, error)
+  }
+}
+
 export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot = posthog): void {
   if (
     active &&
@@ -84,42 +98,47 @@ export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot
     return
   }
 
-  // One instance per project token. posthog-js ignores a second `init` on an
-  // instance it has already loaded, so a user who moves from an EU workspace to
-  // a US one in the same tab would otherwise keep writing US activity into the
-  // EU project. `api_host` is fixed at init, and travels with the token.
-  const client = root.init(
-    params.token,
-    {
-      api_host: params.host,
-      autocapture: false,
-      capture_pageview: false,
-      capture_pageleave: false,
-      disable_session_recording: true,
-      capture_exceptions: true,
-      persistence: "localStorage+cookie",
-      before_send: sanitizeUrlProperties,
-    },
-    `threa_${params.token}`
-  )
+  guard("start", () => {
+    // One instance per project token. posthog-js ignores a second `init` on an
+    // instance it has already loaded, so a user who moves from an EU workspace to
+    // a US one in the same tab would otherwise keep writing US activity into the
+    // EU project. `api_host` is fixed at init, and travels with the token.
+    const client = root.init(
+      params.token,
+      {
+        api_host: params.host,
+        autocapture: false,
+        capture_pageview: false,
+        capture_pageleave: false,
+        disable_session_recording: true,
+        capture_exceptions: true,
+        persistence: "localStorage+cookie",
+        before_send: sanitizeUrlProperties,
+      },
+      `threa_${params.token}`
+    )
 
-  stopAnalytics()
-  client.opt_in_capturing()
-  client.identify(params.distinctId)
-  client.group("workspace", params.workspaceId)
+    stopAnalytics()
+    client.opt_in_capturing()
+    client.identify(params.distinctId)
+    client.group("workspace", params.workspaceId)
 
-  active = { ...params, client }
+    active = { ...params, client }
+  })
 }
 
 export function stopAnalytics(): void {
   if (!active) return
   const { client } = active
   active = null
-  client.reset()
-  client.opt_out_capturing()
+  guard("stop", () => {
+    client.reset()
+    client.opt_out_capturing()
+  })
 }
 
 export function captureException(error: unknown, properties?: Record<string, unknown>): void {
-  if (!active) return
-  active.client.captureException(error, properties)
+  const current = active
+  if (!current) return
+  guard("captureException", () => current.client.captureException(error, properties))
 }
