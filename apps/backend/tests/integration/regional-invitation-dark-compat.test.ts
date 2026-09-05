@@ -109,6 +109,9 @@ describe("regional invitation dark compatibility", () => {
     const candidate = identity(1)
 
     await expect(fixture.service.claimLinkByToken(created.token, candidate.email)).resolves.toEqual({})
+    expect(await InvitationRepository.hasLinkChildren(fixture.pool, fixture.workspaceId, created.invitation.id)).toBe(
+      false
+    )
     await expect(fixture.service.acceptInvitation(created.invitation.id, candidate)).resolves.toBe(fixture.workspaceId)
     expect(await InvitationRepository.findById(fixture.pool, created.invitation.id)).toMatchObject({
       email: candidate.email,
