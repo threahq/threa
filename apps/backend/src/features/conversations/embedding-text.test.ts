@@ -4,7 +4,6 @@ import {
   SUMMARY_MAX_CHARS,
   TOPIC_MAX_CHARS,
   buildConversationEmbeddingText,
-  hashConversationEmbeddingText,
   isConversationEmbeddable,
 } from "./embedding-text"
 
@@ -36,14 +35,5 @@ describe("buildConversationEmbeddingText", () => {
       opening: "o".repeat(OPENING_MAX_CHARS + 50),
     })
     expect(text.split("\n").map((line) => line.length)).toEqual([TOPIC_MAX_CHARS, SUMMARY_MAX_CHARS, OPENING_MAX_CHARS])
-  })
-})
-
-describe("hashConversationEmbeddingText", () => {
-  it("changes when any line changes and is stable otherwise", () => {
-    const a = hashConversationEmbeddingText("topic\nsummary")
-    expect(hashConversationEmbeddingText("topic\nsummary")).toBe(a)
-    expect(hashConversationEmbeddingText("topic\nsummary!")).not.toBe(a)
-    expect(a).toMatch(/^[0-9a-f]{64}$/)
   })
 })

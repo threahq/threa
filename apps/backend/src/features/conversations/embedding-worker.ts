@@ -2,13 +2,9 @@ import type { Pool } from "pg"
 import type { ConversationEmbeddingJobData, JobHandler } from "../../lib/queue"
 import { logger } from "../../lib/logger"
 import { E2eStreamsRepository } from "../e2e-streams"
-import type { EmbeddingServiceLike } from "../memos"
+import { hashEmbeddingText, type EmbeddingServiceLike } from "../memos"
 import { ConversationRepository } from "./repository"
-import {
-  hashConversationEmbeddingText,
-  isConversationEmbeddable,
-  loadConversationEmbeddingTexts,
-} from "./embedding-text"
+import { isConversationEmbeddable, loadConversationEmbeddingTexts } from "./embedding-text"
 
 export interface ConversationEmbeddingWorkerDeps {
   pool: Pool
@@ -48,7 +44,7 @@ export function createConversationEmbeddingWorker(
     }
 
     const text = (await loadConversationEmbeddingTexts(pool, [conversation])).get(conversation.id) ?? ""
-    const sourceHash = hashConversationEmbeddingText(text)
+    const sourceHash = hashEmbeddingText(text)
     const storedHashes = await ConversationRepository.findEmbeddingSourceHashes(pool, workspaceId, [conversation.id])
     const expectedSourceHash = storedHashes.get(conversation.id) ?? null
     if (expectedSourceHash === sourceHash) {

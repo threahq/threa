@@ -12,17 +12,13 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
-import {
-  ConversationRepository,
-  createConversationEmbeddingWorker,
-  hashConversationEmbeddingText,
-} from "../../src/features/conversations"
+import { ConversationRepository, createConversationEmbeddingWorker } from "../../src/features/conversations"
 import {
   plan,
   processChunk,
   type ConversationEmbeddingBackfillContext,
 } from "../../src/features/conversations/embedding-backfill"
-import type { EmbeddingServiceLike, EmbeddingContext } from "../../src/features/memos"
+import { hashEmbeddingText, type EmbeddingServiceLike, type EmbeddingContext } from "../../src/features/memos"
 import { conversationId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
 import { AuthorTypes, StreamTypes, TitleSources, Visibilities } from "@threa/types"
 
@@ -205,7 +201,7 @@ describe("conversation-embeddings backfill and worker against the real schema", 
 
     const row = await readEmbeddingRow(pool, summarizedId)
     expect(row.embedding).not.toBeNull()
-    expect(row.embedding_source_hash).toBe(hashConversationEmbeddingText(expectedText))
+    expect(row.embedding_source_hash).toBe(hashEmbeddingText(expectedText))
 
     // Ineligible rows stay untouched
     for (const id of [unsummarizedId, emptyId, sealedId]) {
@@ -240,7 +236,7 @@ describe("conversation-embeddings backfill and worker against the real schema", 
 
     const row = await readEmbeddingRow(pool, summarizedId)
     expect(row.embedding_source_hash).toBe(
-      hashConversationEmbeddingText(`Choosing the launch date\nDecided to wait for mobile.\n${openingText}`)
+      hashEmbeddingText(`Choosing the launch date\nDecided to wait for mobile.\n${openingText}`)
     )
   })
 
@@ -258,7 +254,7 @@ describe("conversation-embeddings backfill and worker against the real schema", 
           {
             id: summarizedId,
             embedding: unitVector(3),
-            sourceHash: hashConversationEmbeddingText(newer),
+            sourceHash: hashEmbeddingText(newer),
             expectedSourceHash: stored,
           },
         ])
@@ -279,9 +275,9 @@ describe("conversation-embeddings backfill and worker against the real schema", 
     )
     expect(await readEmbeddingRow(pool, summarizedId)).toEqual({
       embedding: `[${unitVector(3).join(",")}]`,
-      embedding_source_hash: hashConversationEmbeddingText(newer),
+      embedding_source_hash: hashEmbeddingText(newer),
     })
-    expect(hashConversationEmbeddingText(observed)).not.toBe(hashConversationEmbeddingText(newer))
+    expect(hashEmbeddingText(observed)).not.toBe(hashEmbeddingText(newer))
 
     // The retry sees the newer text already stored and does nothing
     const before = embeddingService.singles.length
@@ -304,7 +300,7 @@ describe("conversation-embeddings backfill and worker against the real schema", 
           {
             id: summaryOnlyId,
             embedding: unitVector(5),
-            sourceHash: hashConversationEmbeddingText(newer),
+            sourceHash: hashEmbeddingText(newer),
             expectedSourceHash: stored,
           },
         ])
@@ -316,7 +312,7 @@ describe("conversation-embeddings backfill and worker against the real schema", 
     expect(result).toEqual({ processed: 0 })
     expect(await readEmbeddingRow(pool, summaryOnlyId)).toEqual({
       embedding: `[${unitVector(5).join(",")}]`,
-      embedding_source_hash: hashConversationEmbeddingText(newer),
+      embedding_source_hash: hashEmbeddingText(newer),
     })
 
     const rerun = await processChunk(ctx, wsId, { ids: [summaryOnlyId] })

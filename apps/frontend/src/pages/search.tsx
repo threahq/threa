@@ -80,8 +80,6 @@ export function SearchPage() {
     searchDeeper,
   } = useMessageSearch(workspaceId ?? "", localQuery)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
-  const resultCount = results.length + conversations.length
-  const hasResults = resultCount > 0
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
   const { memos, exploreHref } = useMemoMatches(workspaceId ?? "", {
@@ -90,7 +88,7 @@ export function SearchPage() {
     apiFilters,
     hasQuery,
   })
-  const resultCount = results.length + memos.length
+  const resultCount = results.length + memos.length + conversations.length
   const hasResults = resultCount > 0
 
   if (!workspaceId) {

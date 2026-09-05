@@ -230,11 +230,6 @@ export class SearchService {
     return { results, conversations, excludedE2eStreamCount }
   }
 
-  /**
-   * Non-deep message leg: a single full-text or hybrid search with the
-   * already-computed query embedding. Deep mode falls back to exactly this
-   * path when its variant embedding batch fails.
-   */
   private async singleQuerySearch(params: {
     normalizedQuery: string
     embedding: number[]

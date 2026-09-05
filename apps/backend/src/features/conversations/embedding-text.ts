@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import type { Querier } from "../../db"
 import { MessageRepository } from "../messaging"
 import type { Conversation } from "./repository"
@@ -34,10 +33,6 @@ export function buildConversationEmbeddingText(input: ConversationEmbeddingTextI
   if (hasText(input.summary)) lines.push(input.summary.trim().slice(0, SUMMARY_MAX_CHARS))
   if (hasText(input.opening)) lines.push(input.opening.trim().slice(0, OPENING_MAX_CHARS))
   return lines.join("\n")
-}
-
-export function hashConversationEmbeddingText(text: string): string {
-  return createHash("sha256").update(text).digest("hex")
 }
 
 /**

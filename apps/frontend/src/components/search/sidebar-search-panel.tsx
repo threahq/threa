@@ -45,8 +45,6 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     searchDeeper,
   } = useMessageSearch(workspaceId, query)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
-  const resultCount = results.length + conversations.length
-  const hasResults = resultCount > 0
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
   const { memos, exploreHref } = useMemoMatches(workspaceId, {
@@ -55,7 +53,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     apiFilters,
     hasQuery,
   })
-  const resultCount = results.length + memos.length
+  const resultCount = results.length + memos.length + conversations.length
   const hasResults = resultCount > 0
 
   const inputRef = useRef<RichInputRef>(null)

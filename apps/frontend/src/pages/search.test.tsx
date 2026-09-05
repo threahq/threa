@@ -203,6 +203,7 @@ describe("SearchPage", () => {
     search.mockImplementation(async () => {
       vi.spyOn(hooksModule, "useSearch").mockReturnValue({
         results: [mockSearchResultsList[1]!, mockSearchResultsList[0]!],
+        conversations: [],
         isLoading: true,
         error: null,
         search,
@@ -238,7 +239,7 @@ describe("SearchPage", () => {
       mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
       vi.spyOn(hooksModule, "useSearch").mockImplementation(
         () =>
-          ({ results: [], isLoading: false, error: null, search, clear }) as unknown as ReturnType<
+          ({ results: [], conversations: [], isLoading: false, error: null, search, clear }) as unknown as ReturnType<
             typeof hooksModule.useSearch
           >
       )

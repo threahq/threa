@@ -57,13 +57,7 @@ export { ConversationRepository } from "./repository"
 
 export { ConversationEmbeddingHandler } from "./embedding-outbox-handler"
 export { createConversationEmbeddingWorker } from "./embedding-worker"
-export { registerConversationEmbeddingBackfill, CONVERSATION_EMBEDDING_BACKFILL_NAME } from "./embedding-backfill"
-export {
-  buildConversationEmbeddingText,
-  hashConversationEmbeddingText,
-  isConversationEmbeddable,
-  loadConversationEmbeddingTexts,
-} from "./embedding-text"
+export { registerConversationEmbeddingBackfill } from "./embedding-backfill"
 export {
   MessageConversationStateRepository,
   MESSAGE_CONVERSATION_STATES,

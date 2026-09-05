@@ -12,8 +12,6 @@ import {
 import { E2eStreamsRepository } from "../e2e-streams"
 import { isConversationEmbeddable } from "./embedding-text"
 
-export type ConversationEmbeddingHandlerConfig = DebouncedOutboxHandlerConfig
-
 /**
  * Enqueues `CONVERSATION_EMBEDDING_GENERATE` when a conversation is created or
  * updated with a topic summary or summary. Pure status fades from the
@@ -23,7 +21,7 @@ export type ConversationEmbeddingHandlerConfig = DebouncedOutboxHandlerConfig
 export class ConversationEmbeddingHandler extends DebouncedOutboxHandler {
   private readonly jobQueue: QueueManager
 
-  constructor(db: Pool, jobQueue: QueueManager, config?: ConversationEmbeddingHandlerConfig) {
+  constructor(db: Pool, jobQueue: QueueManager, config?: DebouncedOutboxHandlerConfig) {
     super(db, { listenerId: "conversation-embedding", ...config })
     this.jobQueue = jobQueue
   }

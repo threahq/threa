@@ -5,12 +5,6 @@ import { useStreamName } from "@/hooks/use-stream-name"
 import { cn } from "@/lib/utils"
 import type { ConversationSearchResult } from "@/api"
 
-/**
- * Top conversation matches for a search query: whole discussions whose topic
- * matched semantically, rendered as their own group above message results on
- * the search page and sidebar search panel. Renders nothing when the leg
- * returned no hits (exact and keyword-only searches never produce any).
- */
 export function ConversationMatches({
   workspaceId,
   conversations,
@@ -25,9 +19,7 @@ export function ConversationMatches({
 
   return (
     <div className="mb-3 border-b border-border/50 pb-3">
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Conversations</span>
-      </div>
+      <p className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">Conversations</p>
       <ul className="flex flex-col gap-1.5">
         {conversations.map((conversation) => (
           <li key={conversation.id}>
@@ -84,7 +76,7 @@ function ConversationMatchItem({
         )}
 
         <div className="mt-2 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground/70">
-          <span className="truncate">{streamName}</span>
+          <span className="min-w-0 truncate">{streamName}</span>
           <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
             <MessagesSquare className="h-2.5 w-2.5" />
             {conversation.messageCount} {conversation.messageCount === 1 ? "message" : "messages"}

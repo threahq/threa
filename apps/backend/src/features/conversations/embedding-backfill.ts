@@ -1,10 +1,8 @@
 import { composeSql, sql } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
-import type { EmbeddingServiceLike } from "../memos"
+import { hashEmbeddingText, type EmbeddingServiceLike } from "../memos"
 import { ConversationRepository } from "./repository"
-import { hashConversationEmbeddingText, loadConversationEmbeddingTexts } from "./embedding-text"
-
-export const CONVERSATION_EMBEDDING_BACKFILL_NAME = "conversation-embeddings"
+import { loadConversationEmbeddingTexts } from "./embedding-text"
 
 const EMBED_SUB_BATCH_SIZE = 100
 
@@ -63,7 +61,7 @@ export async function processChunk(
 
   const pending = conversations.flatMap((conversation) => {
     const text = texts.get(conversation.id) ?? ""
-    const sourceHash = hashConversationEmbeddingText(text)
+    const sourceHash = hashEmbeddingText(text)
     const expectedSourceHash = storedHashes.get(conversation.id) ?? null
     return expectedSourceHash === sourceHash ? [] : [{ id: conversation.id, text, sourceHash, expectedSourceHash }]
   })
@@ -92,7 +90,7 @@ export async function processChunk(
 
 export function registerConversationEmbeddingBackfill(deps: { embeddingService: EmbeddingServiceLike }): void {
   registerBackfill<ConversationEmbeddingChunk>({
-    name: CONVERSATION_EMBEDDING_BACKFILL_NAME,
+    name: "conversation-embeddings",
     plan,
     processChunk: (ctx, workspaceId, chunk) =>
       processChunk({ ...ctx, embeddingService: deps.embeddingService }, workspaceId, chunk),
