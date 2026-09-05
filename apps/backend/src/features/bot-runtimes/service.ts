@@ -792,7 +792,7 @@ export class BotRuntimeService {
     if (!this.eventService) throw new Error("briefRuntimeSession requires eventService")
     const eventService = this.eventService
     return withTransaction(this.pool, async (db) => {
-      const link = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(db, {
+      const link = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, {
         workspaceId: params.workspaceId,
         botId: params.botId,
         instanceId: params.instanceId,
@@ -1150,7 +1150,10 @@ export class BotRuntimeService {
       actorId: params.actorId,
       trigger: params.trigger,
       requiredCapability: params.requiredCapability,
-      promptMarkdown: source ? buildCanonicalInvocationPrompt(source) : params.promptMarkdown,
+      promptMarkdown:
+        source && !(UNROUTED_BOT_INVOCATION_TRIGGERS as readonly BotInvocationTrigger[]).includes(params.trigger)
+          ? buildCanonicalInvocationPrompt(source)
+          : params.promptMarkdown,
       sourceMessageRevision: source?.revision ?? 0,
       authorUserId: params.authorUserId,
       mentionedActorSlugs: params.mentionedActorSlugs ?? [],
@@ -1306,7 +1309,7 @@ export class BotRuntimeService {
           })
           if (!claimed) return null
           let pinned = claimed
-          if (!(UNROUTED_BOT_INVOCATION_TRIGGERS as readonly BotInvocationTrigger[]).includes(claimed.trigger)) {
+          if (claimed.trigger !== BotInvocationTriggers.SESSION_CONTROL) {
             const source = await MessageRepository.findInvocationSourceStateForShare(db, {
               workspaceId: claimed.workspaceId,
               messageId: claimed.sourceMessageId,
@@ -1332,19 +1335,22 @@ export class BotRuntimeService {
               continue
             }
             // A bot that lost write authority fails below with the reason; the
-            // resolver would only drop it as undesired and hide why.
-            const promptMarkdown = authorityDenial
-              ? claimed.promptMarkdown
-              : (await resolveCanonicalInvocationRoutes(db, source)).find(
-                  (candidate) =>
-                    !candidate.missingLinkNotice &&
-                    candidate.actorId === claimed.actorId &&
-                    candidate.trigger === claimed.trigger &&
-                    candidate.activeStreamId === claimed.activeStreamId &&
-                    candidate.responseStreamId === claimed.responseStreamId &&
-                    candidate.targetInstanceId === claimed.targetInstanceId &&
-                    candidate.targetRuntimeSessionId === claimed.targetRuntimeSessionId
-                )?.promptMarkdown
+            // resolver would only drop it as undesired and hide why. An unrouted
+            // trigger has no canonical route to re-resolve at all.
+            const promptMarkdown =
+              authorityDenial ||
+              (UNROUTED_BOT_INVOCATION_TRIGGERS as readonly BotInvocationTrigger[]).includes(claimed.trigger)
+                ? claimed.promptMarkdown
+                : (await resolveCanonicalInvocationRoutes(db, source)).find(
+                    (candidate) =>
+                      !candidate.missingLinkNotice &&
+                      candidate.actorId === claimed.actorId &&
+                      candidate.trigger === claimed.trigger &&
+                      candidate.activeStreamId === claimed.activeStreamId &&
+                      candidate.responseStreamId === claimed.responseStreamId &&
+                      candidate.targetInstanceId === claimed.targetInstanceId &&
+                      candidate.targetRuntimeSessionId === claimed.targetRuntimeSessionId
+                  )?.promptMarkdown
             if (promptMarkdown === undefined) {
               await cancelCandidate("routing_changed")
               continue

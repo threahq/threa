@@ -97,6 +97,7 @@ describe("briefRuntimeSession", () => {
       trigger: "brief",
       requiredCapability: "active-scratchpad",
       status: "pending",
+      promptMarkdown: "brief content",
       authorUserId: author,
       targetInstanceId: link.instanceId,
       targetRuntimeSessionId: link.runtimeSessionId,
@@ -147,6 +148,82 @@ describe("briefRuntimeSession", () => {
       claimToken: "claim-target",
     })
     expect(byTarget).toMatchObject({ id: briefed!.invocation.id, status: "claimed" })
+  })
+
+  test("the targeted runtime claims a brief, keeps the caller's prompt, and completes it", async () => {
+    await attachThread("target-instance", "target-session")
+    const briefed = await service().briefRuntimeSession({
+      workspaceId: workspace,
+      botId: bot,
+      ownerUserId: author,
+      instanceId: "target-instance",
+      runtimeSessionId: "target-session",
+      contentJson: testContentJson("brief content"),
+      contentMarkdown: "brief content",
+    })
+    expect(briefed).not.toBeNull()
+
+    const claimed = await service().claimNextInvocation({
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "openclaw",
+      instanceId: "target-instance",
+      runtimeSessionId: "target-session",
+      claimToken: "claim-target",
+      claimTtlSeconds: 60,
+      supportedCapabilities: ["active-scratchpad"],
+    })
+    expect(claimed).toMatchObject({ id: briefed!.invocation.id, status: "claimed", promptMarkdown: "brief content" })
+
+    const pin = await pool.query<{ claimed_source_message_revision: number | null }>(
+      "SELECT claimed_source_message_revision FROM bot_invocations WHERE workspace_id = $1 AND id = $2",
+      [workspace, briefed!.invocation.id]
+    )
+    const revision = pin.rows[0]!.claimed_source_message_revision
+    expect(revision).not.toBeNull()
+
+    const completed = await service().completeInvocation({
+      workspaceId: workspace,
+      botId: bot,
+      invocationId: briefed!.invocation.id,
+      instanceId: "target-instance",
+      claimToken: "claim-target",
+      sourceRevision: revision!,
+    })
+    expect(completed).toMatchObject({ id: briefed!.invocation.id, status: "completed" })
+  })
+
+  test("the brief waits on a locked link so a concurrent end cannot strand it", async () => {
+    await attachThread("target-instance", "target-session")
+    const holder = await pool.connect()
+    let settled = false
+    try {
+      await holder.query("BEGIN")
+      await holder.query(
+        "SELECT id FROM bot_runtime_session_links WHERE workspace_id = $1 AND runtime_session_id = $2 FOR UPDATE",
+        [workspace, "target-session"]
+      )
+      const brief = service()
+        .briefRuntimeSession({
+          workspaceId: workspace,
+          botId: bot,
+          ownerUserId: author,
+          instanceId: "target-instance",
+          runtimeSessionId: "target-session",
+          contentJson: testContentJson("brief content"),
+          contentMarkdown: "brief content",
+        })
+        .then((result) => {
+          settled = true
+          return result
+        })
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      expect(settled).toBe(false)
+      await holder.query("ROLLBACK")
+      expect(await brief).not.toBeNull()
+    } finally {
+      holder.release()
+    }
   })
 
   test("the outbox route reconcile leaves the brief invocation pending", async () => {
