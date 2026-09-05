@@ -102,7 +102,7 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
     expect(result?.memo.abstract).toBe("New abstract")
     expect(embed).toHaveBeenCalledTimes(1)
     expect(embeddingSpy).toHaveBeenCalledTimes(1)
-    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), MEMO_ID, {
+    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, MEMO_ID, {
       title: undefined,
       abstract: "New abstract",
       keyPoints: undefined,

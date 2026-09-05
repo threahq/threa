@@ -695,7 +695,7 @@ export const MemoRepository = {
     return mapRowToMemo(result.rows[0])
   },
 
-  async update(db: Querier, id: string, params: UpdateMemoParams): Promise<Memo | null> {
+  async update(db: Querier, workspaceId: string, id: string, params: UpdateMemoParams): Promise<Memo | null> {
     const updates: string[] = []
     const values: unknown[] = []
     let paramIndex = 1
@@ -750,7 +750,8 @@ export const MemoRepository = {
     }
 
     if (updates.length === 0) {
-      return this.findById(db, id)
+      const memo = await this.findById(db, id)
+      return memo && memo.workspaceId === workspaceId ? memo : null
     }
 
     // Card ordering: every field update bumps the card version so a
@@ -758,12 +759,12 @@ export const MemoRepository = {
     // pre-update edit payload (ms `updatedAt` ties; this cannot).
     updates.push(`card_version = card_version + 1`)
     updates.push(`updated_at = NOW()`)
-    values.push(id)
+    values.push(id, workspaceId)
 
     const query = `
       UPDATE memos
       SET ${updates.join(", ")}
-      WHERE id = $${paramIndex}
+      WHERE id = $${paramIndex} AND workspace_id = $${paramIndex + 1}
       RETURNING ${SELECT_FIELDS}
     `
 

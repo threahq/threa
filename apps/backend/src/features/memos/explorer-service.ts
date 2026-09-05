@@ -266,7 +266,7 @@ export class MemoExplorerService {
         : null
 
     const updated = await withTransaction(this.pool, async (client) => {
-      const row = await MemoRepository.update(client, memoId, {
+      const row = await MemoRepository.update(client, workspaceId, memoId, {
         title: fields.title,
         abstract: fields.abstract,
         keyPoints: fields.keyPoints,
