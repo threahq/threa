@@ -262,11 +262,25 @@ describe("message-embeddings-context backfill against the real schema", () => {
     })
   })
 
-  test("re-running processChunk on the same chunk succeeds and reports the same count", async () => {
+  test("re-running processChunk on the same chunk embeds nothing: every stored hash already matches", async () => {
     const chunks = await plan(ctx, wsId)
+    const before = await pool.query<{ id: string; embedding: string; embedding_source_hash: string }>(
+      "SELECT id, embedding::text AS embedding, embedding_source_hash FROM messages WHERE id = ANY($1) ORDER BY id",
+      [chunks[0]!.ids]
+    )
+    const batchesBefore = fakeEmbeddingService.batches.length
+
     const result = await processChunk(ctx, wsId, chunks[0]!)
 
-    expect(result).toEqual({ processed: 3 })
+    const after = await pool.query<{ id: string; embedding: string; embedding_source_hash: string }>(
+      "SELECT id, embedding::text AS embedding, embedding_source_hash FROM messages WHERE id = ANY($1) ORDER BY id",
+      [chunks[0]!.ids]
+    )
+    expect({ result, batches: fakeEmbeddingService.batches.length, rows: after.rows }).toEqual({
+      result: { processed: 0 },
+      batches: batchesBefore,
+      rows: before.rows,
+    })
   })
 
   test("skips a message whose stream vanished between plan and process, without poisoning the rest of the chunk", async () => {
@@ -391,14 +405,14 @@ describe("message-embeddings-context backfill against the real schema", () => {
     expect(dropRow.rows[0]?.embedding).toBeNull()
   })
 
-  test("does not overwrite an embedding when the row's revision moved", async () => {
+  test("writes only when the stored source hash still equals the one observed before embedding", async () => {
     const streamService = new StreamService(pool)
     const eventService = new EventService(pool)
 
     const channel = await streamService.create({
       workspaceId: wsId,
       type: StreamTypes.CHANNEL,
-      slug: `embed-revision-cas-${wsId.slice(-8)}`,
+      slug: `embed-hash-cas-${wsId.slice(-8)}`,
       visibility: Visibilities.PUBLIC,
       createdBy: ownerId,
     })
@@ -407,28 +421,42 @@ describe("message-embeddings-context backfill against the real schema", () => {
       streamId: channel.id,
       authorId: ownerId,
       authorType: AuthorTypes.USER,
-      ...testMessageContent("a message used to prove the CAS on revision"),
+      ...testMessageContent("a message used to prove the CAS on the source hash"),
+    })
+    const readRow = async () => {
+      const row = await pool.query<{ embedding: string | null; embedding_source_hash: string | null }>(
+        "SELECT embedding::text AS embedding, embedding_source_hash FROM messages WHERE id = $1",
+        [message.id]
+      )
+      return row.rows[0]
+    }
+
+    const first = await MessageRepository.updateEmbeddings(pool, [
+      { id: message.id, embedding: unitVector(0), sourceHash: "hash-a", expectedSourceHash: null },
+    ])
+    expect({ first, row: await readRow() }).toEqual({
+      first: 1,
+      row: { embedding: `[${unitVector(0).join(",")}]`, embedding_source_hash: "hash-a" },
     })
 
-    const staleResult = await MessageRepository.updateEmbeddings(pool, [
-      { id: message.id, revision: message.revision - 1, embedding: unitVector(0) },
+    const stale = await MessageRepository.updateEmbeddings(pool, [
+      { id: message.id, embedding: unitVector(1), sourceHash: "hash-b", expectedSourceHash: null },
     ])
-    expect(staleResult).toBe(0)
-
-    const afterStale = await pool.query<{ embedding: string | null }>("SELECT embedding FROM messages WHERE id = $1", [
-      message.id,
+    const same = await MessageRepository.updateEmbeddings(pool, [
+      { id: message.id, embedding: unitVector(1), sourceHash: "hash-a", expectedSourceHash: "hash-a" },
     ])
-    expect(afterStale.rows[0]?.embedding).toBeNull()
+    expect({ stale, same, row: await readRow() }).toEqual({
+      stale: 0,
+      same: 0,
+      row: { embedding: `[${unitVector(0).join(",")}]`, embedding_source_hash: "hash-a" },
+    })
 
-    const currentResult = await MessageRepository.updateEmbeddings(pool, [
-      { id: message.id, revision: message.revision, embedding: unitVector(0) },
+    const current = await MessageRepository.updateEmbeddings(pool, [
+      { id: message.id, embedding: unitVector(1), sourceHash: "hash-b", expectedSourceHash: "hash-a" },
     ])
-    expect(currentResult).toBe(1)
-
-    const afterCurrent = await pool.query<{ embedding: string | null }>(
-      "SELECT embedding FROM messages WHERE id = $1",
-      [message.id]
-    )
-    expect(afterCurrent.rows[0]?.embedding).not.toBeNull()
+    expect({ current, row: await readRow() }).toEqual({
+      current: 1,
+      row: { embedding: `[${unitVector(1).join(",")}]`, embedding_source_hash: "hash-b" },
+    })
   })
 })

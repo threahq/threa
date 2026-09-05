@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { Pool } from "pg"
 import type { StreamType } from "@threa/types"
 import { AuthorTypes, StreamTypes } from "@threa/types"
@@ -9,12 +10,12 @@ import type { EmbeddingServiceLike } from "./embedding-service"
 
 export const ANCHOR_MAX_CHARS = 300
 export const PRECEDING_MAX_CHARS = 200
-export const PRECEDING_MAX_COUNT = 3
+const PRECEDING_MAX_COUNT = 3
 export const CONTENT_MAX_CHARS = 8000
 export const TOPIC_MAX_CHARS = 200
 export const SUMMARY_MAX_CHARS = 400
 
-export interface MessageEmbeddingTextInput {
+interface MessageEmbeddingTextInput {
   streamType: StreamType
   streamName: string | null
   topic: string | null
@@ -53,7 +54,11 @@ export function buildMessageEmbeddingText(input: MessageEmbeddingTextInput): str
   return lines.join("\n")
 }
 
-export interface EmbedMessageWithContextDeps {
+export function hashEmbeddingText(text: string): string {
+  return createHash("sha256").update(text).digest("hex")
+}
+
+interface EmbedMessageWithContextDeps {
   pool: Pool
   embeddingService: EmbeddingServiceLike
 }
@@ -125,10 +130,23 @@ export async function embedMessageWithContext(
     return
   }
 
+  const sourceHash = hashEmbeddingText(text)
+  const expectedSourceHash =
+    (await MessageRepository.findEmbeddingSourceHashes(pool, [message.id])).get(message.id) ?? null
+  if (expectedSourceHash === sourceHash) {
+    logger.debug({ messageId: message.id }, "Skipping embedding: text unchanged since last embed")
+    return
+  }
+
   const embedding = await embeddingService.embed(text, {
     workspaceId,
     functionId: "message-embedding",
   })
 
-  await MessageRepository.updateEmbedding(pool, message.id, embedding)
+  const written = await MessageRepository.updateEmbeddings(pool, [
+    { id: message.id, embedding, sourceHash, expectedSourceHash },
+  ])
+  if (written === 0) {
+    throw new Error(`Embedding for ${message.id} lost to a concurrent write; retrying against the newer text`)
+  }
 }

@@ -88,6 +88,6 @@ export type { MemoBatchWorkerDeps } from "./batch-worker"
 export { createEmbeddingWorker } from "./embedding-worker"
 export type { EmbeddingWorkerDeps } from "./embedding-worker"
 
-export { registerMessageEmbeddingBackfill, MESSAGE_EMBEDDING_BACKFILL_NAME } from "./message-embedding-backfill"
+export { registerMessageEmbeddingBackfill } from "./message-embedding-backfill"
 
 export { createMemoHandlers } from "./handlers"

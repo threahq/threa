@@ -4,9 +4,7 @@ import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/back
 import { logger } from "../../lib/logger"
 import { MessageRepository, type Message } from "../messaging"
 import type { EmbeddingServiceLike } from "./embedding-service"
-import { loadMessageEmbeddingText } from "./message-embedding-text"
-
-export const MESSAGE_EMBEDDING_BACKFILL_NAME = "message-embeddings-context"
+import { hashEmbeddingText, loadMessageEmbeddingText } from "./message-embedding-text"
 
 /** The embeddings API caps tokens per request, and a chunk can hold up to 500 messages of up to 8k chars each. */
 const EMBED_SUB_BATCH_SIZE = 100
@@ -71,7 +69,8 @@ export async function processChunk(
     .map((id) => byId.get(id))
     .filter((message): message is Message => message !== undefined && eligibleIds.has(message.id))
 
-  const withText: Array<{ message: Message; text: string }> = []
+  const storedHashes = await MessageRepository.findEmbeddingSourceHashes(ctx.pool, chunk.ids)
+  const withText: Array<{ message: Message; text: string; sourceHash: string; expectedSourceHash: string | null }> = []
   for (const message of messages) {
     const text = await loadMessageEmbeddingText(ctx.pool, workspaceId, message)
     if (text === null) {
@@ -81,7 +80,10 @@ export async function processChunk(
       )
       continue
     }
-    withText.push({ message, text })
+    const sourceHash = hashEmbeddingText(text)
+    const expectedSourceHash = storedHashes.get(message.id) ?? null
+    if (expectedSourceHash === sourceHash) continue
+    withText.push({ message, text, sourceHash, expectedSourceHash })
   }
 
   let processed = 0
@@ -95,8 +97,9 @@ export async function processChunk(
       ctx.pool,
       sub.map((entry, index) => ({
         id: entry.message.id,
-        revision: entry.message.revision,
         embedding: embeddings[index]!,
+        sourceHash: entry.sourceHash,
+        expectedSourceHash: entry.expectedSourceHash,
       }))
     )
   }
@@ -106,7 +109,7 @@ export async function processChunk(
 
 export function registerMessageEmbeddingBackfill(deps: { embeddingService: EmbeddingServiceLike }): void {
   registerBackfill<MessageEmbeddingChunk>({
-    name: MESSAGE_EMBEDDING_BACKFILL_NAME,
+    name: "message-embeddings-context",
     plan,
     processChunk: (ctx, workspaceId, chunk) =>
       processChunk({ ...ctx, embeddingService: deps.embeddingService }, workspaceId, chunk),
