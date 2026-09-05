@@ -71,7 +71,11 @@ import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threa/backend-commo
 import { PartitionMaintenanceWorker } from "@threa/backend-common"
 import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
 import { StreamService, StreamBriefService } from "./features/streams"
-import { EventService, registerMessageReferencePinsBackfill } from "./features/messaging"
+import {
+  EventService,
+  registerMessageReferencePinsBackfill,
+  registerMessageSearchConfigBackfill,
+} from "./features/messaging"
 import {
   DynamicNamingConversationTarget,
   DynamicNamingEvaluator,
@@ -1548,6 +1552,7 @@ export async function startServer(): Promise<ServerInstance> {
   // so a redelivered plan/chunk job can always resolve its definition by name.
   registerMentionBackfill()
   registerMessageReferencePinsBackfill()
+  registerMessageSearchConfigBackfill()
   registerStreamContextBackfill()
   registerMessageEmbeddingBackfill({ embeddingService })
   registerConversationEmbeddingBackfill({ embeddingService })
