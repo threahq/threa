@@ -1044,8 +1044,6 @@ export const MemoRepository = {
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     const embeddingLiteral = `[${embedding.join(",")}]`
-    const tsvector = MEMO_TSVECTOR
-    const rowConfig = MEMO_ROW_CONFIG
     const streamJoins = sql.raw(`
       LEFT JOIN messages msg ON m.source_message_id = msg.id
       LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id
@@ -1067,7 +1065,7 @@ export const MemoRepository = {
         SELECT
           m.id,
           ROW_NUMBER() OVER (
-            ORDER BY ts_rank(${tsvector}, websearch_to_tsquery(${rowConfig}, ${query})) DESC
+            ORDER BY ts_rank(${MEMO_TSVECTOR}, websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})) DESC
           ) as rank
         FROM memos m
         ${streamJoins}
@@ -1085,7 +1083,7 @@ export const MemoRepository = {
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
-          AND ${tsvector} @@ websearch_to_tsquery(${rowConfig}, ${query})
+          AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
         LIMIT ${internalLimit}
       ),
       semantic_ranked AS (

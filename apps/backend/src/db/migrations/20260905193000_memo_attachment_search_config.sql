@@ -20,7 +20,6 @@ ALTER TABLE attachment_extractions ADD COLUMN search_config TEXT;
 -- for a maintenance_work_mem-sized shared-memory segment, which prod's
 -- /dev/shm cannot hold (SQLSTATE 53100, the #2037 crash loop).
 SET LOCAL max_parallel_maintenance_workers = 0;
-SET LOCAL maintenance_work_mem = '256MB';
 ALTER TABLE attachment_extractions ALTER COLUMN search_vector
   SET EXPRESSION AS (
     to_tsvector(text_search_config(search_config), COALESCE(summary, '') || ' ' || COALESCE(full_text, ''))

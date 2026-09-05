@@ -107,6 +107,7 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
       abstract: "New abstract",
       keyPoints: undefined,
       tags: undefined,
+      searchConfig: "english",
     })
   })
 
