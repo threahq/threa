@@ -18,16 +18,6 @@ import {
   type InviteLinkSettingsValue,
 } from "./invite-link-settings-fields"
 
-function valuesFor(invitation: WorkspaceInvitation): InviteLinkSettingsValue {
-  const isLegacyAdminLink = invitation.role === "admin"
-  return {
-    unlimited: isLegacyAdminLink ? false : invitation.maxUses === null,
-    maxUses: isLegacyAdminLink ? "1" : String(invitation.maxUses ?? Math.max(invitation.useCount, 1)),
-    neverExpires: invitation.expiresAt === null,
-    expiresAt: isoToLocalDateTime(invitation.expiresAt),
-  }
-}
-
 export function buildInviteLinkPatch(
   invitation: WorkspaceInvitation,
   value: InviteLinkSettingsValue
@@ -43,12 +33,6 @@ export function buildInviteLinkPatch(
     value.expiresAt === isoToLocalDateTime(invitation.expiresAt)
   if (!expiryControlsUnchanged) patch.expiresAt = value.neverExpires ? null : localDateTimeToIso(value.expiresAt)
   return patch
-}
-
-function errorMessage(error: unknown): string | null {
-  if (!error) return null
-  if (error instanceof Error) return error.message
-  return "Failed to update link."
 }
 
 export function EditInviteLinkDialog({
@@ -70,8 +54,8 @@ export function EditInviteLinkDialog({
   const openedInvitationRef = useRef<WorkspaceInvitation | null>(null)
 
   const mutation = useMutation({
-    mutationFn: ({ target, value }: { target: WorkspaceInvitation; value: InviteLinkSettingsValue }) =>
-      invitationsApi.updateLink(workspaceId, target.id, buildInviteLinkPatch(target, value)),
+    mutationFn: ({ invitationId, patch }: { invitationId: string; patch: UpdateInvitationLinkInput }) =>
+      invitationsApi.updateLink(workspaceId, invitationId, patch),
   })
 
   useEffect(() => {
@@ -86,7 +70,13 @@ export function EditInviteLinkDialog({
     if (invitation && openedInvitationRef.current?.id !== invitation.id) {
       generationRef.current += 1
       openedInvitationRef.current = { ...invitation }
-      setSettings(valuesFor(invitation))
+      const isLegacyAdminLink = invitation.role === "admin"
+      setSettings({
+        unlimited: isLegacyAdminLink ? false : invitation.maxUses === null,
+        maxUses: isLegacyAdminLink ? "1" : String(invitation.maxUses ?? Math.max(invitation.useCount, 1)),
+        neverExpires: invitation.expiresAt === null,
+        expiresAt: isoToLocalDateTime(invitation.expiresAt),
+      })
       setValidationError(null)
       mutation.reset()
     }
@@ -97,7 +87,8 @@ export function EditInviteLinkDialog({
   const submit = () => {
     const original = openedInvitationRef.current
     if (!original) return
-    if (Object.keys(buildInviteLinkPatch(original, settings)).length === 0) {
+    const patch = buildInviteLinkPatch(original, settings)
+    if (Object.keys(patch).length === 0) {
       onOpenChange(false)
       return
     }
@@ -106,7 +97,7 @@ export function EditInviteLinkDialog({
     if (error) return
     const generation = generationRef.current
     mutation.mutate(
-      { target: original, value: settings },
+      { invitationId: original.id, patch },
       {
         onSuccess: () => {
           if (generation !== generationRef.current) return
@@ -127,7 +118,7 @@ export function EditInviteLinkDialog({
           <InviteLinkSettingsFields value={settings} onChange={setSettings} role={invitation.role} />
           {(validationError || mutation.error) && (
             <p role="alert" className="text-sm text-destructive">
-              {validationError ?? errorMessage(mutation.error)}
+              {validationError ?? (mutation.error instanceof Error ? mutation.error.message : "Failed to update link.")}
             </p>
           )}
           <ResponsiveDialogFooter>

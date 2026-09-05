@@ -34,12 +34,6 @@ function buildJoinUrl(token: string): string {
   return `${window.location.origin}/join/${token}`
 }
 
-function errorMessage(error: unknown): string | null {
-  if (!error) return null
-  if (error instanceof Error) return error.message
-  return "Failed to create link."
-}
-
 function initialSettings(): InviteLinkSettingsValue {
   return { unlimited: false, maxUses: "1", neverExpires: false, expiresAt: defaultInviteExpiry() }
 }
@@ -162,7 +156,8 @@ export function CreateInviteLinkDialog({
             </div>
             {(validationError || createMutation.error) && (
               <p role="alert" className="text-sm text-destructive">
-                {validationError ?? errorMessage(createMutation.error)}
+                {validationError ??
+                  (createMutation.error instanceof Error ? createMutation.error.message : "Failed to create link.")}
               </p>
             )}
             <ResponsiveDialogFooter>
