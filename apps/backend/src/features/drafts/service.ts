@@ -5,6 +5,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { draftId } from "../../lib/id"
 import { DraftsRepository, type Draft } from "./repository"
 import { toDraftView } from "./view"
+import { repairPromotedDraftScopes } from "./promotion"
 
 interface DraftsServiceDeps {
   pool: Pool
@@ -276,10 +277,19 @@ export class DraftsService {
     })
   }
 
-  /** Bootstrap seed for the author's devices (INV-53) — every live draft. */
+  /**
+   * Bootstrap seed for the author's devices (INV-53) — every live draft. Repairs
+   * first: a draft still scoped to a client draft id whose scratchpad has since
+   * been promoted is re-pointed onto the real stream before it is returned, so
+   * a device that lost the promotion's re-scope loads a live draft, not one
+   * addressed to a scratchpad that no longer exists.
+   */
   async list(params: { workspaceId: string; userId: string }): Promise<DraftView[]> {
-    const rows = await DraftsRepository.listByUser(this.pool, params.workspaceId, params.userId)
-    return rows.map(toDraftView)
+    return withTransaction(this.pool, async (client) => {
+      await repairPromotedDraftScopes(client, params)
+      const rows = await DraftsRepository.listByUser(client, params.workspaceId, params.userId)
+      return rows.map(toDraftView)
+    })
   }
 
   private async finishUpsert(client: PoolClient, row: Draft, split: boolean): Promise<UpsertDraftResult> {

@@ -82,6 +82,14 @@ interface CreateStreamInputBase {
    * categories. Persisted to `stream_policies` in the create transaction.
    */
   allowedToolCategories?: ToolPrivacyPolicy
+  /**
+   * Scratchpads only: the client draft id (`draft_…`) this scratchpad is
+   * promoted from. Makes the create idempotent per caller — a retry or a
+   * concurrent duplicate returns the stream already minted for the draft — and
+   * re-points the drafts composed under `stream:{draftId}` onto the new stream
+   * in the same transaction.
+   */
+  draftId?: string
 }
 
 /**

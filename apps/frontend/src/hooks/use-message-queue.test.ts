@@ -210,6 +210,68 @@ describe("useMessageQueue", () => {
     expect(mockMarkSent).toHaveBeenCalledWith("temp_abc")
   })
 
+  it("hands the moved optimistic row to the UI before the draft rows are removed", async () => {
+    const order: string[] = []
+    mockStreamCreate.mockResolvedValue({ id: "stream_real_pad", workspaceId: "ws_1", type: "scratchpad" })
+    vi.spyOn(dbModule.db.events, "get").mockResolvedValue({
+      id: "temp_pad",
+      workspaceId: "ws_1",
+      streamId: "draft_pad",
+      sequence: "1700",
+      _sequenceNum: 1700,
+      eventType: "message_created",
+      payload: {},
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      _status: "pending",
+      _cachedAt: 0,
+    } as never)
+    const emitted: unknown[] = []
+    vi.spyOn(draftPromotionsModule, "emitDraftPromoted").mockImplementation((promotion) => {
+      order.push("emit")
+      emitted.push(promotion)
+    })
+    vi.spyOn(dbModule.db.draftScratchpads, "delete").mockImplementation((async () => {
+      order.push("deleteDraft")
+    }) as never)
+    mockDelete.mockImplementation((id: string) => {
+      order.push("deleteQueueRow")
+      mockPendingMessages = mockPendingMessages.filter((m) => m.clientId !== id)
+      return Promise.resolve()
+    })
+    mockEventsUpdate.mockImplementation((_id: string, changes: Record<string, unknown>) => {
+      if ("_sentAt" in changes) order.push("markSentAt")
+      return Promise.resolve(1)
+    })
+    mockPendingMessages = [
+      {
+        clientId: "temp_pad",
+        workspaceId: "ws_1",
+        streamId: "draft_pad",
+        draftId: "draft_pad",
+        content: "Hello",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+        streamCreation: { type: "scratchpad" },
+      } as unknown as MockPendingMessage,
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await waitFor(() => expect(mockMarkSent).toHaveBeenCalledWith("temp_pad"))
+
+    expect(emitted).toEqual([
+      {
+        draftId: "draft_pad",
+        realStreamId: "stream_real_pad",
+        workspaceId: "ws_1",
+        events: [expect.objectContaining({ id: "temp_pad", streamId: "stream_real_pad", _sequenceNum: 1700 })],
+      },
+    ])
+    expect(order).toEqual(["emit", "deleteDraft", "markSentAt", "deleteQueueRow"])
+  })
+
   it("re-scopes card-thread stashes from the canonical anchor when promoting", async () => {
     mockStreamCreate.mockResolvedValue({
       id: "stream_real_thread",

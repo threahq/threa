@@ -945,9 +945,9 @@ export const StreamRepository = {
   ): Promise<{ stream: Stream; created: boolean }> {
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
-        id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, visibility,
+        id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
         parent_stream_id, parent_anchor_id, root_stream_id,
-        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, purpose, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -958,6 +958,7 @@ export const StreamRepository = {
         ${params.displayNameUpdatedByUserId ?? null},
         ${params.slug ?? null},
         ${params.description ?? null},
+        ${params.descriptionJson ? JSON.stringify(params.descriptionJson) : null},
         ${params.visibility ?? "private"},
         ${params.parentStreamId ?? null},
         ${params.parentAnchorId ?? null},
@@ -965,6 +966,7 @@ export const StreamRepository = {
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
         ${params.memoryMode ?? "auto"},
+        ${params.purpose ?? null},
         ${params.uniquenessKey},
         ${params.createdBy}
       )

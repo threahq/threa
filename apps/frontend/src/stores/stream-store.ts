@@ -2,6 +2,7 @@ import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
+import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
 import { getPerfCapture } from "@/lib/perf/capture"
 import {
   findSharedRowWorkspace,
@@ -377,13 +378,22 @@ export function useStreamEvents(
   // Both reads must be stamped for the current stream before anything is
   // returned: a union built from one fresh and one stale range is a window with
   // a hole in it, which INV-61's contiguity gate would read as a real gap.
-  if (streamId && (resultStreamId !== streamId || (bounded && tailStreamId !== streamId))) {
-    return undefined
-  }
+  const resolved = !streamId || (resultStreamId === streamId && (!bounded || tailStreamId === streamId))
+  // A draft→real promotion moves the optimistic rows onto the real id before the
+  // real view mounts. Until its live query resolves (and, for the draft id, once
+  // the rows have moved away), paint those rows so neither view shows a skeleton
+  // or an empty state for a message the user just sent.
+  const handoff = streamId ? getDraftPromotionEvents(streamId) : null
+  useEffect(() => {
+    if (streamId && resolved && handoff) releaseDraftPromotionEvents(streamId)
+  }, [streamId, resolved, handoff])
+
+  if (!resolved) return handoff ?? undefined
   if (!union || !streamId) return union
+  if (handoff && union.length === 0) return handoff
 
   const prev = prevRef.current
-  const shared = shareEventIdentities(prev?.streamId === streamId ? prev.array : null, union)
+  const shared = shareEventIdentities(prev?.streamId === streamId ? prev.array : handoff, union)
   if (shared !== prev?.array) {
     prevRef.current = { streamId, array: shared }
   }

@@ -69,6 +69,7 @@ import {
   TitleSources,
 } from "@threa/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
+import { draftStreamUniquenessKey, repairPromotedDraftScopes } from "../drafts"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { DynamicNamingStateRepository } from "../dynamic-naming/state-repository"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
@@ -103,6 +104,8 @@ const createScratchpadParamsSchema = z.object({
   // System-purpose marker for non-user-facing scratchpads (e.g. a persona-editor
   // test workbench). Omitted for ordinary scratchpads.
   purpose: streamPurposeSchema.optional(),
+  /** Client draft id the scratchpad is promoted from; keys the idempotent create. */
+  draftId: z.string().optional(),
 })
 
 /**
@@ -229,6 +232,7 @@ const createStreamParamsSchema = z.object({
   conversationId: z.string().optional(),
   memberIds: z.array(z.string()).optional(),
   createdBy: z.string(),
+  draftId: z.string().optional(),
 })
 
 export type CreateStreamParams = z.infer<typeof createStreamParamsSchema>
@@ -504,6 +508,7 @@ export class StreamService {
           contextBag: params.contextBag,
           e2e: params.e2e,
           allowedToolCategories: params.allowedToolCategories,
+          draftId: params.draftId,
         })
       case StreamTypes.CHANNEL:
         if (!params.slug) {
@@ -569,7 +574,7 @@ export class StreamService {
       Boolean(params.companionPersonaId)
     const memoryMode = params.memoryMode ?? (hasCompanion ? MemoryModes.OFF : MemoryModes.AUTO)
 
-    const stream = await StreamRepository.insert(db, {
+    const insertParams = {
       id,
       workspaceId: params.workspaceId,
       type: StreamTypes.SCRATCHPAD,
@@ -584,7 +589,27 @@ export class StreamService {
       memoryMode,
       purpose: params.purpose,
       createdBy: params.createdBy,
-    })
+    }
+
+    // A promotion from a client draft is idempotent per (owner, draft id): a
+    // retried or concurrently duplicated create finds the scratchpad the first
+    // one minted instead of minting another. Same primitive as DM find-or-create.
+    const { stream, created } = params.draftId
+      ? await StreamRepository.insertOrFindByUniquenessKey(db, {
+          ...insertParams,
+          uniquenessKey: draftStreamUniquenessKey(params.createdBy, params.draftId),
+        })
+      : { stream: await StreamRepository.insert(db, insertParams), created: true }
+
+    if (!created) {
+      if (stream.type !== StreamTypes.SCRATCHPAD) {
+        throw new Error(`Draft ${params.draftId} is already promoted to non-scratchpad stream ${stream.id}`)
+      }
+      // The first create already wrote members, policy and outbox. Drafts pushed
+      // under the draft scope since then still follow it here.
+      await repairPromotedDraftScopes(db, { workspaceId: params.workspaceId, userId: params.createdBy })
+      return stream
+    }
 
     await StreamMemberRepository.insert(db, id, params.createdBy)
 
@@ -637,6 +662,14 @@ export class StreamService {
     // actor is attributed — a description with no actor stays silent.
     if (stream.description && params.descriptionActor) {
       await this.emitDescriptionSet(db, stream, params.descriptionActor.id, params.descriptionActor.type)
+    }
+
+    // The drafts composed in the unpromoted scratchpad follow it onto the real
+    // stream in this transaction (after `stream:created`, so devices learn the
+    // stream before drafts point at it). Client-side re-scoping is the same
+    // move again and converges on its lineage match.
+    if (params.draftId) {
+      await repairPromotedDraftScopes(db, { workspaceId: params.workspaceId, userId: params.createdBy })
     }
 
     return stream

@@ -84,6 +84,10 @@ async function promoteDraft(
       parentStreamId: creation.parentStreamId,
       parentAnchorId: creation.parentAnchorId ?? creation.parentMessageId,
       allowedToolCategories: creation.allowedToolCategories,
+      // The server keys a scratchpad promotion by this id, so a retry whose
+      // first response was lost (before `promotedStreamId` below could land)
+      // gets the same stream back instead of minting a duplicate.
+      ...(creation.type === StreamTypes.SCRATCHPAD && next.draftId ? { draftId: next.draftId } : {}),
     })
     realStreamId = newStream.id
 
@@ -127,17 +131,23 @@ async function promoteDraft(
 
   // Move the optimistic event from draft streamId to real streamId
   const optimisticEvent = await db.events.get(next.clientId)
-  if (optimisticEvent) {
-    await db.events.put({
-      ...optimisticEvent,
-      streamId: realStreamId,
-      _sequenceNum: sequenceToNum(optimisticEvent.sequence),
-    })
-  }
+  const movedEvent = optimisticEvent
+    ? { ...optimisticEvent, streamId: realStreamId, _sequenceNum: sequenceToNum(optimisticEvent.sequence) }
+    : undefined
+  if (movedEvent) await db.events.put(movedEvent)
 
   // Subscribe to the real stream's socket room before sending so we catch
   // the message:created event for the optimistic swap
   void syncEngine.subscribeStream(realStreamId)
+
+  // Hand the UI over while the draft rows still exist: the draft view keeps its
+  // header and message until the real view has mounted with the same rows.
+  emitDraftPromoted({
+    draftId: draftStreamId,
+    realStreamId,
+    workspaceId: next.workspaceId,
+    events: movedEvent ? [movedEvent] : [],
+  })
 
   // For threads, swap the anchor's threadId from the draft panel ID to the real
   // thread stream. The replyCount was already bumped at queue time so we don't
@@ -167,13 +177,6 @@ async function promoteDraft(
     await rescopeScopeDrafts(next.workspaceId, fromScope, draftStreamScope(realStreamId))
     syncEngine.kickOperationQueue()
   }
-
-  // Notify UI to navigate from draft to real stream
-  emitDraftPromoted({
-    draftId: draftStreamId,
-    realStreamId,
-    workspaceId: next.workspaceId,
-  })
 
   return realStreamId
 }
@@ -319,6 +322,10 @@ export function useMessageQueue(): void {
           }
         }
 
+        // Marked before the queue row goes: a bootstrap applied between the two
+        // writes would otherwise read the optimistic row as stale and drop it
+        // ahead of the socket echo.
+        await db.events.update(next.clientId, { _sentAt: Date.now() })
         await db.pendingMessages.delete(next.clientId)
 
         // Do NOT delete the optimistic event from db.events here.

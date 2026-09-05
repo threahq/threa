@@ -293,6 +293,57 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect(await db.events.get("evt_A")).toBeDefined()
   })
 
+  it("keeps a sent optimistic row whose send landed after the bootstrap fetch started", async () => {
+    const streamId = "stream_sent_after_fetch"
+    const fetchStartedAt = Date.now() - 1_000
+    await db.events.put({
+      id: "temp_sent_unechoed",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "message_created",
+      payload: {},
+      actorId: null,
+      actorType: null,
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _sentAt: fetchStartedAt + 500,
+      _cachedAt: Date.now(),
+    })
+
+    const bootstrap = makeBootstrap([makeEvent({ id: "evt_A", streamId, sequence: "100" })], streamId)
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
+
+    expect(await db.events.get("temp_sent_unechoed")).toMatchObject({ streamId, _status: "pending" })
+    expect(await db.events.get("evt_A")).toBeDefined()
+  })
+
+  it("removes a sent optimistic row a later bootstrap fetch no longer carries", async () => {
+    const streamId = "stream_sent_before_fetch"
+    const fetchStartedAt = Date.now()
+    await db.events.put({
+      id: "temp_sent_stale",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "message_created",
+      payload: {},
+      actorId: null,
+      actorType: null,
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _sentAt: fetchStartedAt - 5_000,
+      _cachedAt: Date.now(),
+    })
+
+    const bootstrap = makeBootstrap([makeEvent({ id: "evt_A", streamId, sequence: "100" })], streamId)
+    await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
+
+    expect(await db.events.get("temp_sent_stale")).toBeUndefined()
+  })
+
   it("preserves payload fields from a socket update when the bootstrap omits them", async () => {
     // Backend bootstrap takes getThreadsWithReplyCounts and getThreadSummaries
     // as separate non-transactional snapshots. If a reply commits between

@@ -13,10 +13,18 @@
  * coupling for no practical benefit.
  */
 
+import type { CachedEvent } from "@/db"
+
 export interface DraftPromotion {
   draftId: string
   realStreamId: string
   workspaceId: string
+  /**
+   * The optimistic rows moved onto the real stream. Read by `useStreamEvents`
+   * under both ids so the handoff paints them before the real id's live query
+   * resolves; released once it has.
+   */
+  events?: CachedEvent[]
 }
 
 type Listener = (promotion: DraftPromotion) => void
@@ -38,6 +46,17 @@ export function getPromotedStreamId(draftId: string): string | null {
 
 export function getDraftPromotionSource(realStreamId: string): string | null {
   return promotionsByRealStreamId.get(realStreamId)?.draftId ?? null
+}
+
+/** Handoff rows for a promotion the given draft or real stream id belongs to. */
+export function getDraftPromotionEvents(streamId: string): CachedEvent[] | null {
+  const promotion = promotionsByRealStreamId.get(streamId) ?? promotionsByDraftId.get(streamId)
+  return promotion?.events && promotion.events.length > 0 ? promotion.events : null
+}
+
+export function releaseDraftPromotionEvents(realStreamId: string): void {
+  const promotion = promotionsByRealStreamId.get(realStreamId)
+  if (promotion) delete promotion.events
 }
 
 export function waitForDraftPromotion(

@@ -24,6 +24,7 @@ import {
 import { makeCachedStream } from "@/test/workspace-rows"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 import { requestStreamEventReadRefresh } from "./stream-event-read-refresh"
+import { emitDraftPromoted, getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
 
 const WORKSPACE_ID = "ws_1"
@@ -868,6 +869,41 @@ describe("bounded timeline read — tail and prefix", () => {
     expect(computeTimelineHoles(union)).toEqual([
       { afterEventId: `evt_${STREAM}_14`, afterSequence: "14", missingCount: 1 },
     ])
+  })
+})
+
+describe("useStreamEvents across a draft promotion", () => {
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("paints the moved rows under the real id before its live query resolves, then releases them", async () => {
+    const draftId = "draft_promo_hook"
+    const realId = "stream_promo_hook"
+    const moved: CachedEvent = { ...makeRealEvent(realId, String(Date.now())), id: "temp_promo", _status: "pending" }
+    await db.events.put(moved)
+    emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
+
+    const { result } = renderHook(() => useStreamEvents(realId, null))
+
+    expect(result.current?.map((event) => event.id)).toEqual(["temp_promo"])
+    await waitFor(() => expect(getDraftPromotionEvents(realId)).toBeNull())
+    expect(result.current?.map((event) => event.id)).toEqual(["temp_promo"])
+  })
+
+  it("keeps the draft id painted after its rows moved onto the real stream", async () => {
+    const draftId = "draft_promo_moved"
+    const realId = "stream_promo_moved"
+    const moved: CachedEvent = { ...makeRealEvent(realId, String(Date.now())), id: "temp_moved", _status: "pending" }
+    await db.events.put(moved)
+    emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
+
+    const { result } = renderHook(() => useStreamEvents(draftId, null))
+
+    await waitFor(() => expect(result.current).toBeDefined())
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(result.current?.map((event) => event.id)).toEqual(["temp_moved"])
+    expect(getDraftPromotionEvents(draftId)).toEqual([moved])
   })
 })
 
