@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AgentToolNames, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threa/types"
 import { buildToolSet, type ToolSetConfig } from "./tool-set"
+import type { WorkspaceToolDeps } from "../tools/tool-deps"
 
 const preferences: UserPreferences = {
   ...DEFAULT_USER_PREFERENCES,
@@ -45,5 +46,47 @@ describe("update_user_settings availability", () => {
     const tool = built.find((t) => t.name === AgentToolNames.UPDATE_USER_SETTINGS)
 
     expect(tool?.config.promptBlock).toContain("update_user_settings")
+  })
+})
+
+const workspace: WorkspaceToolDeps = {
+  db: {} as WorkspaceToolDeps["db"],
+  workspaceId: "ws_1",
+  accessibleStreamIds: ["stream_1"],
+  invokingUserId: "usr_1",
+  searchService: {} as WorkspaceToolDeps["searchService"],
+  storage: {} as WorkspaceToolDeps["storage"],
+  attachmentService: {} as WorkspaceToolDeps["attachmentService"],
+  memoExplorer: {} as WorkspaceToolDeps["memoExplorer"],
+}
+
+describe("search_messages prompt guidance", () => {
+  test("carries its own prompt prose only when built", () => {
+    const built = buildToolSet({ enabledTools: null, workspace })
+    const tool = built.find((t) => t.name === AgentToolNames.SEARCH_MESSAGES)
+
+    expect(tool?.config.promptBlock).toContain("## Searching Messages")
+    expect(tool?.config.promptBlock).toContain(
+      "Write the query as a description of the thing: who was involved, what it was about, what happened. Do not compress it into keywords."
+    )
+    expect(tool?.config.promptBlock).toContain(
+      "Do at least two differently phrased searches before concluding something is not there"
+    )
+    expect(tool?.config.promptBlock).toContain("Set `exact=true` only for literal strings")
+  })
+
+  test("is absent without workspace deps", () => {
+    expect(toolNames({})).not.toContain(AgentToolNames.SEARCH_MESSAGES)
+  })
+})
+
+describe("workspace_research prompt guidance", () => {
+  test("tells the model to pass the user's own description rather than keywords", () => {
+    const built = buildToolSet({ enabledTools: null, runWorkspaceAgent: async () => ({}) as never })
+    const tool = built.find((t) => t.name === "workspace_research")
+
+    expect(tool?.config.promptBlock).toContain(
+      "The user describes what they want by direction rather than detail — pass their description in their own words, with any names, places or time hints they gave, instead of reducing it to keywords"
+    )
   })
 })

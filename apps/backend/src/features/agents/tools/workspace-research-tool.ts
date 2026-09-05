@@ -56,6 +56,7 @@ Use workspace_research when:
 - The user references past decisions, conversations, or people in this workspace
 - The user asks about a specific project, document, or file they've shared
 - Answering correctly requires information that lives in workspace history (not general knowledge)
+- The user describes what they want by direction rather than detail — pass their description in their own words, with any names, places or time hints they gave, instead of reducing it to keywords
 
 Do NOT use workspace_research for:
 - Greetings, small talk, or acknowledgments (e.g. "hi", "thanks", "pie")
