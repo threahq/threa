@@ -19,7 +19,7 @@ export function ChannelLinkView({ node }: ReactNodeViewProps) {
   const parts = streamChipParts(target?.type ?? StreamTypes.CHANNEL, target?.label ?? slug)
 
   return (
-    <NodeViewWrapper as="span" data-type="channelLink">
+    <NodeViewWrapper as="span" data-type="channelLink" data-id={id} data-slug={slug}>
       <InAppLinkChip icon={parts.icon} prefix={parts.prefix} label={parts.label} />
     </NodeViewWrapper>
   )

@@ -22,7 +22,7 @@ function Harness({ attrs }: { attrs: { id: string; slug: string } }) {
 }
 
 function mountChip(attrs: { id: string; slug: string }) {
-  render(
+  return render(
     <ChannelLinkProvider workspaceId="ws_1" streams={STREAMS}>
       <Harness attrs={attrs} />
     </ChannelLinkProvider>
@@ -55,5 +55,17 @@ describe("# chip in the composer", () => {
     mountChip({ id: "stream_gone", slug: "ghost" })
 
     expect(await screen.findByText("#ghost")).toBeInTheDocument()
+  })
+
+  // A node view replaces the editor DOM, so the identity `renderHTML` would have
+  // emitted is only there if the wrapper carries it — and the composer's own
+  // paste/serialize specs locate chips by `data-id`.
+  it("keeps the node's identity attributes on the chip in the editor DOM", async () => {
+    const { container } = mountChip({ id: "stream_pi", slug: "pi-remote-control" })
+
+    await screen.findByText("Pi remote control")
+    const chip = container.querySelector("[data-type='channelLink']")
+    expect(chip?.getAttribute("data-id")).toBe("stream_pi")
+    expect(chip?.getAttribute("data-slug")).toBe("pi-remote-control")
   })
 })
