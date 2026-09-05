@@ -194,7 +194,7 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   if (isOutboxEventType(event, "stream:created")) {
     const payload = event.payload as StreamCreatedOutboxPayload
     if (payload.stream.parentAnchorId && payload.stream.type === StreamTypes.THREAD) {
-      return [streamGroup(payload.streamId)]
+      return [streamGroup(payload.deliverToStreamId ?? payload.streamId)]
     }
     if (payload.stream.type === StreamTypes.DM && payload.dmUserIds?.length === 2) {
       return [...new Set(payload.dmUserIds)].map(userGroup)

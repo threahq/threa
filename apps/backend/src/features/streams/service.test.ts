@@ -736,7 +736,8 @@ describe("StreamService.createThread (via create)", () => {
       "stream:created",
       expect.objectContaining({
         workspaceId: "ws_1",
-        streamId: "stream_channel",
+        streamId: thread.id,
+        deliverToStreamId: "stream_channel",
       })
     )
   })

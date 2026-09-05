@@ -251,7 +251,8 @@ describe("BroadcastHandler", () => {
   it("should emit stream:created thread to parent stream room", async () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
-      streamId: "stream_parent",
+      streamId: "stream_thread",
+      deliverToStreamId: "stream_parent",
       stream: { id: "stream_thread", type: "thread", parentAnchorId: "msg_1" },
     })
 
@@ -271,7 +272,8 @@ describe("BroadcastHandler", () => {
   it("should emit event-anchored stream:created to the parent stream room", async () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
-      streamId: "stream_parent",
+      streamId: "stream_thread",
+      deliverToStreamId: "stream_parent",
       stream: { id: "stream_thread", type: "thread", parentAnchorId: "event_call" },
     })
 

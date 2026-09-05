@@ -2063,7 +2063,8 @@ export class EventService {
       if (created) {
         await OutboxRepository.insert(client, "stream:created", {
           workspaceId: params.workspaceId,
-          streamId: params.sourceStreamId,
+          streamId: projectedDestinationThread.id,
+          deliverToStreamId: params.sourceStreamId,
           stream: projectedDestinationThread,
         })
       }
