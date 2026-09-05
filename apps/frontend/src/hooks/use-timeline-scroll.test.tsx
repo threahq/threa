@@ -149,9 +149,28 @@ describe("useTimelineScroll — tail replace", () => {
     harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "e60" }))
     expect(scrollToIndex).not.toHaveBeenCalled()
 
-    // A sweep lands a gap: same count, different newest row.
-    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "e70" }))
-    expect(scrollToIndex).toHaveBeenCalledWith(50, expect.objectContaining({ align: "end" }))
+    // A sweep lands a gap: several rows arrive below the old tail at once.
+    harness.rerender(opts({ itemCount: 55, getFirstKey: () => "e10", getLastKey: () => "e70" }))
+    expect(scrollToIndex).toHaveBeenCalledWith(54, expect.objectContaining({ align: "end" }))
+  })
+
+  it("ignores an own send's echo swapping the last row's key in place", () => {
+    // The optimistic row carries a client id; the socket echo replaces it with
+    // the event id. Same count, same first row, new last key — no row arrives
+    // below the old tail, so nothing is unmeasured and re-requesting the last
+    // index only lands virtua's deferred scroll a few px above the true bottom,
+    // which the dead-band dock then visibly glides back down (the send bounce).
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    // The optimistic row appends.
+    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "client_abc" }))
+    scrollToIndex.mockClear()
+
+    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "e60" }))
+    expect(scrollToIndex).not.toHaveBeenCalled()
   })
 
   it("does not re-request the tail for a reader who scrolled away", () => {
