@@ -61,6 +61,7 @@ import {
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
 import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
+import { useCapturePageviews } from "@/lib/analytics/use-capture-pageviews"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
@@ -488,6 +489,7 @@ export function WorkspaceLayout() {
   const streams = useWorkspaceStreams(workspaceId ?? "")
 
   usePersistLastLocation(workspaceId)
+  useCapturePageviews()
 
   // Remember the workspace the user is in so the `/` entry route can redirect
   // straight here on a returning launch (renders from IndexedDB) instead of
