@@ -746,7 +746,7 @@ export function registerWorkspaceSocketHandlers(
   // entries through these same handlers — so no blanket `savedKeys`/
   // `scheduledKeys` invalidation is needed here.
 
-  const handleStreamCreated = (payload: StreamPayload) => {
+  const handleStreamCreated = async (payload: StreamPayload) => {
     // A system-purpose stream (e.g. a persona-editor test scratchpad) is a real,
     // fully-functional stream, but not a sidebar entry: the editor mounts it
     // directly (StreamContent runs its own subscribe+bootstrap), so the workspace
@@ -829,7 +829,7 @@ export function registerWorkspaceSocketHandlers(
       refs.subscribeStream(payload.stream.id)
     }
 
-    void db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers], async () => {
+    await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers], async () => {
       const now = Date.now()
 
       // Cache to IndexedDB — skip other users' scratchpads to avoid stale
@@ -865,7 +865,7 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
-  const handleStreamUpdated = (payload: StreamPayload) => {
+  const handleStreamUpdated = async (payload: StreamPayload) => {
     // For DMs the backend sends displayName: null (the name is derived from
     // the peer user on the frontend). Preserve whatever name is already cached.
     const isDmWithNullName = payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
@@ -918,7 +918,7 @@ export function registerWorkspaceSocketHandlers(
     // to preserve cached fields not carried by the Stream payload, notably the
     // last-message preview and notification level. For DMs, also preserve the
     // resolved displayName since the backend sends null.
-    void db.transaction("rw", db.streams, async () => {
+    await db.transaction("rw", db.streams, async () => {
       const old = await db.streams.get(payload.stream.id)
       if (!old) return
       const merged = mergeStreamByTitleRevision(old, payload.stream)
@@ -930,7 +930,7 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
-  const handleStreamArchived = (payload: StreamPayload) => {
+  const handleStreamArchived = async (payload: StreamPayload) => {
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as StreamBootstrap
@@ -950,14 +950,14 @@ export function registerWorkspaceSocketHandlers(
 
     // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
     // missing row (swept while archived) is restored rather than silently lost.
-    void upsertStreamRow(payload.stream)
+    await upsertStreamRow(payload.stream)
     // The board gates on each card's own `rootArchived`, so the cards this
     // stream covers must carry the new verdict or they keep showing until a
     // refetch.
-    void setBoardRootArchived(workspaceId, payload.stream.id, true)
+    await setBoardRootArchived(workspaceId, payload.stream.id, true)
   }
 
-  const handleStreamUnarchived = (payload: StreamPayload) => {
+  const handleStreamUnarchived = async (payload: StreamPayload) => {
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as StreamBootstrap
@@ -985,11 +985,11 @@ export function registerWorkspaceSocketHandlers(
 
     // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
     // missing row (swept while archived) is restored rather than silently lost.
-    void upsertStreamRow(payload.stream)
-    void setBoardRootArchived(workspaceId, payload.stream.id, false)
+    await upsertStreamRow(payload.stream)
+    await setBoardRootArchived(workspaceId, payload.stream.id, false)
   }
 
-  const handleWorkspaceUserAdded = (payload: WorkspaceUserAddedPayload) => {
+  const handleWorkspaceUserAdded = async (payload: WorkspaceUserAddedPayload) => {
     const now = Date.now()
     const { user } = payload
 
@@ -1001,13 +1001,13 @@ export function registerWorkspaceSocketHandlers(
       return withWorkspaceUsers(old, updatedUsers)
     })
 
-    db.workspaceUsers.put({
+    await db.workspaceUsers.put({
       ...toWorkspaceUser(user),
       _cachedAt: now,
     })
   }
 
-  const handleWorkspaceUserRemoved = (payload: WorkspaceUserRemovedPayload) => {
+  const handleWorkspaceUserRemoved = async (payload: WorkspaceUserRemovedPayload) => {
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as WorkspaceBootstrap
@@ -1018,10 +1018,10 @@ export function registerWorkspaceSocketHandlers(
       )
     })
 
-    db.workspaceUsers.delete(payload.removedUserId)
+    await db.workspaceUsers.delete(payload.removedUserId)
   }
 
-  const handleWorkspaceUserUpdated = (payload: WorkspaceUserUpdatedPayload) => {
+  const handleWorkspaceUserUpdated = async (payload: WorkspaceUserUpdatedPayload) => {
     const now = Date.now()
     const { user } = payload
 
@@ -1038,13 +1038,13 @@ export function registerWorkspaceSocketHandlers(
     // Update IndexedDB and the in-memory cache so a freshly-mounted reader's
     // first synchronous render (before useLiveQuery resolves) sees this update.
     const cachedUser = { ...toWorkspaceUser(user), _cachedAt: now }
-    db.workspaceUsers.put(cachedUser)
+    await db.workspaceUsers.put(cachedUser)
     upsertWorkspaceUserInCache(workspaceId, cachedUser)
   }
 
   // Handle stream read (from other sessions of the same user)
   // Backend marks ALL stream activity as read (mentions + message notifications)
-  const handleStreamRead = (payload: StreamReadPayload) => {
+  const handleStreamRead = async (payload: StreamReadPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
     const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
@@ -1080,7 +1080,7 @@ export function registerWorkspaceSocketHandlers(
       }
     }
 
-    db.transaction("rw", [db.streamReadState], async () => {
+    await db.transaction("rw", [db.streamReadState], async () => {
       const now = Date.now()
       const existingRow = await db.streamReadState.get(`${workspaceId}:${payload.streamId}`)
       // Same legacy guard as the cache merge above: a sequence-less event never
@@ -1106,7 +1106,7 @@ export function registerWorkspaceSocketHandlers(
   // Handle a read-pointer SET ("mark as unread") — from this or another session
   // of the same user. Mirrors the pointer backward and SETs the unread count;
   // never dismisses notifications (this re-unreads, it doesn't clear).
-  const handleStreamReadSet = (payload: StreamReadSetPayload) => {
+  const handleStreamReadSet = async (payload: StreamReadSetPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
     commitCounter((state) =>
@@ -1129,7 +1129,7 @@ export function registerWorkspaceSocketHandlers(
       (old) => (old ? { ...old, readState: frontier } : old)
     )
 
-    db.transaction("rw", [db.streamReadState], async () => {
+    await db.transaction("rw", [db.streamReadState], async () => {
       const now = Date.now()
       const existingRow = await db.streamReadState.get(`${workspaceId}:${payload.streamId}`)
       await putReadStateIdb(
@@ -1173,7 +1173,7 @@ export function registerWorkspaceSocketHandlers(
   }
 
   // Handle all streams read (from other sessions of the same user)
-  const handleStreamReadAll = (payload: StreamsReadAllPayload) => {
+  const handleStreamReadAll = async (payload: StreamsReadAllPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
     // Counter fold (absolute read positions + overlay clearing) and the
@@ -1191,7 +1191,7 @@ export function registerWorkspaceSocketHandlers(
       batch.applyCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
       batch.applyReadAllFrontiers(payload.frontiers)
     } else {
-      void commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers)
+      await commitReadAll(queryClient, workspaceId, payload.reads, payload.frontiers)
     }
 
     // Standalone frontier (read cutover): read_all carries ordinals, no event
@@ -1200,7 +1200,7 @@ export function registerWorkspaceSocketHandlers(
     // instead of restoring a pre-read_all snapshot (same touched-at rule the
     // counter triple gets via commitCounter). Without the stamp the snapshot
     // regresses the frontier until the next bootstrap re-fetches it.
-    void db.transaction("rw", [db.streamReadState], async () => {
+    await db.transaction("rw", [db.streamReadState], async () => {
       const now = Date.now()
       const rowIds = payload.streamIds.map((streamId) => `${workspaceId}:${streamId}`)
       const rows = (await db.streamReadState.bulkGet(rowIds)).filter((row) => row !== undefined)
@@ -1221,7 +1221,7 @@ export function registerWorkspaceSocketHandlers(
   // Handle a notification-level change made in another session of this user.
   // Keeps the mute/notify badge live across tabs/devices (the reconnect merge
   // in setMutedState otherwise leaves it stale until the next reconnect).
-  const handleStreamNotificationLevelUpdated = (payload: StreamNotificationLevelUpdatedPayload) => {
+  const handleStreamNotificationLevelUpdated = async (payload: StreamNotificationLevelUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
     // The sidebar / quick-switcher / share mute badges render from
@@ -1261,7 +1261,7 @@ export function registerWorkspaceSocketHandlers(
     // Persist to IDB so both the membership and the muted set survive a remount
     // without a re-bootstrap. `db.unreadState` is the live source the badge
     // hooks observe; `db.streamMemberships` backs the settings dialog.
-    void db.transaction("rw", [db.streamMemberships, db.streams, db.unreadState], async () => {
+    await db.transaction("rw", [db.streamMemberships, db.streams, db.unreadState], async () => {
       const now = Date.now()
       const membershipId = `${workspaceId}:${payload.streamId}`
       const membership = await db.streamMemberships.get(membershipId)
@@ -1483,7 +1483,7 @@ export function registerWorkspaceSocketHandlers(
     })
 
   // Handle stream display name updated (from auto-naming service)
-  const handleStreamDisplayNameUpdated = (payload: StreamDisplayNameUpdatedPayload) => {
+  const handleStreamDisplayNameUpdated = async (payload: StreamDisplayNameUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     const mergeTitle = <T extends Partial<Stream>>(old: T): T =>
       mergeStreamByTitleRevision(old, {
@@ -1513,14 +1513,14 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    void db.transaction("rw", [db.streams], async () => {
+    await db.transaction("rw", [db.streams], async () => {
       const old = await db.streams.get(payload.streamId)
       if (!old) return
       await db.streams.update(payload.streamId, { ...mergeTitle(old), _cachedAt: Date.now() })
     })
   }
 
-  const handleStreamMemberAdded = (payload: {
+  const handleStreamMemberAdded = async (payload: {
     workspaceId: string
     streamId: string
     memberId: string
@@ -1545,7 +1545,7 @@ export function registerWorkspaceSocketHandlers(
         if (exists) return old
         return { ...old, bots: [...(old.bots ?? []), bot] }
       })
-      db.bots.put({ ...bot, _cachedAt: Date.now() })
+      await db.bots.put({ ...bot, _cachedAt: Date.now() })
     }
 
     // Update stream bootstrap members list (humans) or botMemberIds (bots)
@@ -1577,6 +1577,7 @@ export function registerWorkspaceSocketHandlers(
     })
 
     // If the added member is the current user, add to streamMemberships + sidebar
+    const writes: Promise<unknown>[] = []
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
       const currentUser = refs.getCurrentUser()
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
@@ -1588,18 +1589,20 @@ export function registerWorkspaceSocketHandlers(
 
       if (!membershipExists) {
         const now = Date.now()
-        db.streamMemberships.put({
-          id: `${workspaceId}:${payload.streamId}`,
-          workspaceId,
-          streamId: payload.streamId,
-          memberId: payload.memberId,
-          notificationLevel: null,
-          joinedAt: new Date().toISOString(),
-          _cachedAt: now,
-        })
+        writes.push(
+          db.streamMemberships.put({
+            id: `${workspaceId}:${payload.streamId}`,
+            workspaceId,
+            streamId: payload.streamId,
+            memberId: payload.memberId,
+            notificationLevel: null,
+            joinedAt: new Date().toISOString(),
+            _cachedAt: now,
+          })
+        )
       }
       if (!streamExists) {
-        db.streams.put({ ...payload.stream, _cachedAt: Date.now() })
+        writes.push(db.streams.put({ ...payload.stream, _cachedAt: Date.now() }))
       }
 
       return {
@@ -1622,9 +1625,10 @@ export function registerWorkspaceSocketHandlers(
     if (shouldSubscribeStream) {
       refs.subscribeStream(payload.streamId)
     }
+    await Promise.all(writes)
   }
 
-  const handleStreamMemberRemoved = (payload: { workspaceId: string; streamId: string; memberId: string }) => {
+  const handleStreamMemberRemoved = async (payload: { workspaceId: string; streamId: string; memberId: string }) => {
     if (payload.workspaceId !== workspaceId) return
 
     // Update stream bootstrap members list (humans) and botMemberIds (bots)
@@ -1656,35 +1660,37 @@ export function registerWorkspaceSocketHandlers(
 
     // If the removed member is the current user, remove from streamMemberships
     // and remove private streams from sidebar (no longer visible)
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      const currentUser = refs.getCurrentUser()
-      const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
-      if (!currentMember || payload.memberId !== currentMember.id) return old
+    const old = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    if (!old) return
+    const currentUser = refs.getCurrentUser()
+    const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
+    if (!currentMember || payload.memberId !== currentMember.id) return
 
-      db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`)
-      db.streamReadState.delete(`${workspaceId}:${payload.streamId}`)
-
-      const removedStream = old.streams?.find((s) => s.id === payload.streamId)
-      const shouldRemoveFromSidebar = removedStream?.visibility === "private"
-      if (shouldRemoveFromSidebar) {
-        db.streams.delete(payload.streamId)
-        void deleteStreamSlots(db, payload.streamId)
-        // The cards this stream contributed are unreadable now — drop them
-        // rather than leave them rendering off the cache.
-        void removeBoardConversationsForStream(workspaceId, payload.streamId)
-      }
-
-      return {
-        ...old,
-        streamMemberships: old.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
-        streams: shouldRemoveFromSidebar ? old.streams?.filter((s) => s.id !== payload.streamId) : old.streams,
-      }
+    const removedStream = old.streams?.find((s) => s.id === payload.streamId)
+    const shouldRemoveFromSidebar = removedStream?.visibility === "private"
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), {
+      ...old,
+      streamMemberships: old.streamMemberships.filter((m: StreamMember) => m.streamId !== payload.streamId),
+      streams: shouldRemoveFromSidebar ? old.streams?.filter((s) => s.id !== payload.streamId) : old.streams,
     })
+
+    await Promise.all([
+      db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`),
+      db.streamReadState.delete(`${workspaceId}:${payload.streamId}`),
+      ...(shouldRemoveFromSidebar
+        ? [
+            db.streams.delete(payload.streamId),
+            deleteStreamSlots(db, payload.streamId),
+            // The cards this stream contributed are unreadable now — drop them
+            // rather than leave them rendering off the cache.
+            removeBoardConversationsForStream(workspaceId, payload.streamId),
+          ]
+        : []),
+    ])
   }
 
   // Handle user preferences updated (from other sessions of the same user)
-  const handleUserPreferencesUpdated = (payload: UserPreferencesUpdatedPayload) => {
+  const handleUserPreferencesUpdated = async (payload: UserPreferencesUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
@@ -1695,7 +1701,7 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    db.userPreferences.put({
+    await db.userPreferences.put({
       ...payload.preferences,
       id: workspaceId,
       workspaceId,
@@ -1704,7 +1710,7 @@ export function registerWorkspaceSocketHandlers(
   }
 
   // Handle sidebar config updated (from other sessions of the same user)
-  const handleSidebarConfigUpdated = (payload: SidebarConfigUpdatedPayload) => {
+  const handleSidebarConfigUpdated = async (payload: SidebarConfigUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
     // Normalize at the write boundary so an event from a not-yet-upgraded
@@ -1718,7 +1724,7 @@ export function registerWorkspaceSocketHandlers(
     })
 
     // Write to IDB so the IDB-backed sidebar store hook reacts immediately.
-    db.sidebarConfigs.put({
+    await db.sidebarConfigs.put({
       id: workspaceId,
       workspaceId,
       config,
@@ -1743,27 +1749,27 @@ export function registerWorkspaceSocketHandlers(
   // The patched layers are also written back to the persisted metadata row so a
   // warm restart before the next bootstrap repaints the live value, not a stale
   // one — the whole point of persisting layers is first-render correctness.
-  const patchFeatureFlagLayers = (nextLayers: (old: WorkspaceBootstrap) => FeatureFlagLayers) => {
+  const patchFeatureFlagLayers = async (nextLayers: (old: WorkspaceBootstrap) => FeatureFlagLayers) => {
     const patched = updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
       ...old,
       featureFlags: nextLayers(old),
     }))
     if (!patched) return
     const layers = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.featureFlags
-    if (layers) void db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
+    if (layers) await db.workspaceMetadata.update(workspaceId, { featureFlags: layers })
   }
 
-  const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
+  const handleFeatureFlagsUpdated = async (payload: FeatureFlagsUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    patchFeatureFlagLayers((old) => ({ workspace: old.featureFlags?.workspace ?? {}, user: payload.overrides }))
+    await patchFeatureFlagLayers((old) => ({ workspace: old.featureFlags?.workspace ?? {}, user: payload.overrides }))
   }
 
-  const handleFeatureFlagsWorkspaceUpdated = (payload: FeatureFlagsWorkspaceUpdatedPayload) => {
+  const handleFeatureFlagsWorkspaceUpdated = async (payload: FeatureFlagsWorkspaceUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    patchFeatureFlagLayers((old) => ({ workspace: payload.overrides, user: old.featureFlags?.user ?? {} }))
+    await patchFeatureFlagLayers((old) => ({ workspace: payload.overrides, user: old.featureFlags?.user ?? {} }))
   }
 
-  const handleBotCreated = (payload: { workspaceId: string; bot: Bot }) => {
+  const handleBotCreated = async (payload: { workspaceId: string; bot: Bot }) => {
     if (payload.workspaceId !== workspaceId) return
 
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
@@ -1772,10 +1778,10 @@ export function registerWorkspaceSocketHandlers(
       return { ...old, bots: [...(old.bots ?? []), payload.bot] }
     })
 
-    db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
+    await db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
   }
 
-  const handleBotUpdated = (payload: { workspaceId: string; bot: Bot }) => {
+  const handleBotUpdated = async (payload: { workspaceId: string; bot: Bot }) => {
     if (payload.workspaceId !== workspaceId) return
 
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
@@ -1786,7 +1792,7 @@ export function registerWorkspaceSocketHandlers(
       return { ...old, bots: [...(old.bots ?? []), payload.bot] }
     })
 
-    db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
+    await db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
   }
 
   // An admin committed a persona (built-in agent) config override. Workspace-
@@ -1797,7 +1803,11 @@ export function registerWorkspaceSocketHandlers(
   // `db.personas` via `useWorkspacePersonas`, and the bootstrap cache keeps the
   // list in sync for the next seed. The editor's own config query is refetched
   // so a concurrent admin's change is reflected.
-  const handleAgentConfigUpdated = (payload: { workspaceId: string; agentId: string; persona: PersonaListItem }) => {
+  const handleAgentConfigUpdated = async (payload: {
+    workspaceId: string
+    agentId: string
+    persona: PersonaListItem
+  }) => {
     if (payload.workspaceId !== workspaceId) return
 
     const { id, slug, name, description, avatarEmoji, avatarUrl, model, status } = payload.persona
@@ -1818,13 +1828,9 @@ export function registerWorkspaceSocketHandlers(
       return { ...old, personas: [...personas, synthesized] }
     })
     // Upsert into IDB: update the display fields if present, else insert the synthesized row.
-    void db.personas.get(id).then((existing) => {
-      if (existing) {
-        void db.personas.update(id, { ...patch, _cachedAt: Date.now() })
-        return
-      }
-      void db.personas.put(synthesized)
-    })
+    const existing = await db.personas.get(id)
+    if (existing) await db.personas.update(id, { ...patch, _cachedAt: Date.now() })
+    else await db.personas.put(synthesized)
 
     queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, payload.agentId) })
     queryClient.invalidateQueries({ queryKey: personaKeys.list(workspaceId) })
@@ -2022,17 +2028,17 @@ export function registerWorkspaceSocketHandlers(
 
   // Saved messages — write-through to IDB and invalidate TanStack caches so
   // cross-device saves reflect on every open tab without a refresh.
-  const handleSavedUpserted = (payload: SavedUpsertedPayload) => {
+  const handleSavedUpserted = async (payload: SavedUpsertedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    void persistSavedRows(workspaceId, [payload.saved])
+    await persistSavedRows(workspaceId, [payload.saved])
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "saved") })
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "done") })
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "archived") })
   }
 
-  const handleSavedDeleted = (payload: SavedDeletedPayload) => {
+  const handleSavedDeleted = async (payload: SavedDeletedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    void removeSavedRow(payload.savedId)
+    await removeSavedRow(payload.savedId)
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "saved") })
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "done") })
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "archived") })
@@ -2040,26 +2046,26 @@ export function registerWorkspaceSocketHandlers(
 
   // Board hide/mute changed on another device — patch the exclusion store so the
   // reactive board re-filters with no refetch.
-  const handleBoardHideChanged = (payload: BoardConversationHideChangedPayload) => {
+  const handleBoardHideChanged = async (payload: BoardConversationHideChangedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     if (payload.active)
-      void putHidden(workspaceId, payload.conversationId, payload.hiddenAt ? Date.parse(payload.hiddenAt) : Date.now())
-    else void deleteHidden(payload.conversationId)
+      await putHidden(workspaceId, payload.conversationId, payload.hiddenAt ? Date.parse(payload.hiddenAt) : Date.now())
+    else await deleteHidden(payload.conversationId)
   }
 
-  const handleBoardMuteChanged = (payload: BoardStreamMuteChangedPayload) => {
+  const handleBoardMuteChanged = async (payload: BoardStreamMuteChangedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    if (payload.active) void putMuted(workspaceId, payload.streamId)
-    else void deleteMuted(payload.streamId)
+    if (payload.active) await putMuted(workspaceId, payload.streamId)
+    else await deleteMuted(payload.streamId)
   }
 
-  const handleSavedReminderFired = (payload: SavedReminderFiredPayload) => {
+  const handleSavedReminderFired = async (payload: SavedReminderFiredPayload) => {
     if (payload.workspaceId !== workspaceId) return
     // Update the cached row so the badge flips to "reminded" immediately. The
     // persistent surface is the Activity feed (backend emits `activity:created`
     // for the saved_reminder row) — we deliberately don't pop a toast here so
     // there's one canonical notification path.
-    void persistSavedRows(workspaceId, [payload.saved])
+    await persistSavedRows(workspaceId, [payload.saved])
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "saved") })
   }
 
@@ -2075,47 +2081,45 @@ export function registerWorkspaceSocketHandlers(
   // Scheduled messages — write-through to IDB and invalidate TanStack lists
   // so the To send / Sent tabs and the per-stream composer popover reflect
   // cross-tab and cross-device state without a refresh.
-  const handleScheduledUpserted = (payload: ScheduledMessageUpsertedPayload) => {
+  const handleScheduledUpserted = async (payload: ScheduledMessageUpsertedPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    void (async () => {
-      // If the row carries a clientMessageId, sweep any optimistic placeholder
-      // sharing that key — the operation queue's `replaceLocalScheduledRow`
-      // already does this when the POST returns, but a socket event can race
-      // ahead of the executor and we don't want both rows visible briefly.
-      const cmid = payload.scheduled.clientMessageId
-      if (cmid) {
-        const stale = await db.scheduledMessages
-          .where("workspaceId")
-          .equals(workspaceId)
-          .filter((row) => row._localOnly === true && row.id !== payload.scheduled.id && row.clientMessageId === cmid)
-          .toArray()
-        if (stale.length > 0) {
-          await db.scheduledMessages.bulkDelete(stale.map((row) => row.id))
-        }
+    // If the row carries a clientMessageId, sweep any optimistic placeholder
+    // sharing that key — the operation queue's `replaceLocalScheduledRow`
+    // already does this when the POST returns, but a socket event can race
+    // ahead of the executor and we don't want both rows visible briefly.
+    const cmid = payload.scheduled.clientMessageId
+    if (cmid) {
+      const stale = await db.scheduledMessages
+        .where("workspaceId")
+        .equals(workspaceId)
+        .filter((row) => row._localOnly === true && row.id !== payload.scheduled.id && row.clientMessageId === cmid)
+        .toArray()
+      if (stale.length > 0) {
+        await db.scheduledMessages.bulkDelete(stale.map((row) => row.id))
       }
-      await persistScheduledRows([payload.scheduled])
-      queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
-    })()
+    }
+    await persistScheduledRows([payload.scheduled])
+    queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
   }
 
-  const handleScheduledSent = (payload: ScheduledMessageSentPayload) => {
+  const handleScheduledSent = async (payload: ScheduledMessageSentPayload) => {
     if (payload.workspaceId !== workspaceId) return
     // Persist the (now status='sent') row so the Sent tab picks it up; the
     // live message itself has already been broadcast through the standard
     // message:created path so the in-stream timeline updates separately.
-    void persistScheduledRows([payload.scheduled])
+    await persistScheduledRows([payload.scheduled])
     queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
   }
 
-  const handleScheduledCancelled = (payload: ScheduledMessageCancelledPayload) => {
+  const handleScheduledCancelled = async (payload: ScheduledMessageCancelledPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    void removeScheduledRow(payload.scheduledId)
+    await removeScheduledRow(payload.scheduledId)
     queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
   }
 
   // Labels — every label is owner-scoped, so these arrive only in the owning
   // actor's user room. The receiving client just writes the row.
-  const handleLabelUpserted = (payload: LabelUpsertedPayload) => {
+  const handleLabelUpserted = async (payload: LabelUpsertedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     const { label } = payload
     const now = Date.now()
@@ -2129,10 +2133,10 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    void db.labels.put({ ...label, _cachedAt: now })
+    await db.labels.put({ ...label, _cachedAt: now })
   }
 
-  const handleLabelDeleted = (payload: LabelDeletedPayload) => {
+  const handleLabelDeleted = async (payload: LabelDeletedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     const { labelId } = payload
 
@@ -2145,7 +2149,7 @@ export function registerWorkspaceSocketHandlers(
       labelAssignments: (old.labelAssignments ?? []).filter((a) => a.labelId !== labelId),
     }))
 
-    void db.transaction("rw", [db.labels, db.labelAssignments], async () => {
+    await db.transaction("rw", [db.labels, db.labelAssignments], async () => {
       await db.labels.delete(labelId)
       const assignmentIds = await db.labelAssignments.where("labelId").equals(labelId).primaryKeys()
       if (assignmentIds.length > 0) {
@@ -2166,7 +2170,7 @@ export function registerWorkspaceSocketHandlers(
     a.resourceId === b.resourceId &&
     a.userId === b.userId
 
-  const handleLabelAssigned = (payload: LabelAssignedPayload) => {
+  const handleLabelAssigned = async (payload: LabelAssignedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     const { assignment } = payload
 
@@ -2181,10 +2185,10 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    void db.labelAssignments.put(assignmentToCached(assignment))
+    await db.labelAssignments.put(assignmentToCached(assignment))
   }
 
-  const handleLabelUnassigned = (payload: LabelUnassignedPayload) => {
+  const handleLabelUnassigned = async (payload: LabelUnassignedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     const { labelId, resourceType, resourceId, userId } = payload
 
@@ -2195,19 +2199,19 @@ export function registerWorkspaceSocketHandlers(
       ),
     }))
 
-    void db.labelAssignments.delete(assignmentId(workspaceId, resourceType, resourceId, labelId, userId))
+    await db.labelAssignments.delete(assignmentId(workspaceId, resourceType, resourceId, labelId, userId))
   }
 
   // Drafts (Stage 3) — user-scoped, so these arrive only in the author's own
   // room. Apply is drift-aware (splits locally on a collision with unpushed
   // edits); see draft-sync.ts. The store layer (IDB + draft-store cache), not
   // the TanStack workspace bootstrap, is the draft read model.
-  const handleDraftUpserted = (payload: DraftUpsertedPayload) => {
-    void applyDraftUpserted(payload, workspaceId)
+  const handleDraftUpserted = async (payload: DraftUpsertedPayload) => {
+    await applyDraftUpserted(payload, workspaceId)
   }
 
-  const handleDraftDeleted = (payload: DraftDeletedPayload) => {
-    void applyDraftDeleted(payload, workspaceId)
+  const handleDraftDeleted = async (payload: DraftDeletedPayload) => {
+    await applyDraftDeleted(payload, workspaceId)
   }
 
   // Conversation events feed the board's IDB store, the board's read authority
@@ -2221,13 +2225,13 @@ export function registerWorkspaceSocketHandlers(
   // reopen) but only refetch the ones with active observers now. The viewer's own
   // sends are already reflected optimistically, and reconcile when their echo
   // merges here.
-  const handleConversationUpserted = (payload: {
+  const handleConversationUpserted = async (payload: {
     workspaceId: string
     conversation: ConversationWithStaleness
     settlingMessageIds?: string[]
   }) => {
     if (payload.workspaceId !== workspaceId) return
-    void mergeBoardConversation(payload.conversation.id, payload.conversation, payload.settlingMessageIds).then(
+    await mergeBoardConversation(payload.conversation.id, payload.conversation, payload.settlingMessageIds).then(
       (merged) => {
         if (merged) return
         queryClient.invalidateQueries({
@@ -2329,13 +2333,13 @@ export function registerWorkspaceSocketHandlers(
     removeActiveCall(workspaceId, payload.callId)
   }
 
-  const handleConversationMessageAssigned = (payload: {
+  const handleConversationMessageAssigned = async (payload: {
     workspaceId: string
     streamId: string
     conversationId: string
   }) => {
     if (payload.workspaceId !== workspaceId) return
-    void addBoardConversationStream(payload.conversationId, payload.streamId)
+    await addBoardConversationStream(payload.conversationId, payload.streamId)
   }
 
   socket.on("stream:created", handleStreamCreated)

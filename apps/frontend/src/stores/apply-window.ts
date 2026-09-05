@@ -17,8 +17,11 @@ import { useRef, useSyncExternalStore } from "react"
  * why the gate is global and event-type-agnostic rather than per handler: a new
  * handler needs no awareness of it.
  *
- * Refcounted (begin/end nest) so overlapping windows are safe; a watchdog
- * force-closes a stuck window so a missed `end` can never strand the UI frozen.
+ * Refcounted (begin/end nest) so overlapping windows are safe. There is no
+ * timer: a window closes only when its opener closes it. A stuck refresh is
+ * cancelled by its request timeout, which unwinds to the opener's finally and
+ * leaves the old state on screen. Force-closing on a clock would paint a
+ * half-applied refresh, the exact state the window exists to hide.
  *
  * Global (not workspace-keyed) on purpose: `workspace-layout` mounts exactly one
  * `SyncEngine` at a time (it recreates the engine on workspace change and the
@@ -28,13 +31,7 @@ import { useRef, useSyncExternalStore } from "react"
  * workspace's replay would freeze another's reads.
  */
 let depth = 0
-let watchdog: ReturnType<typeof setTimeout> | null = null
 const listeners = new Set<() => void>()
-
-// Long enough to cover a real catch-up replay (bounded by the collapse threshold
-// to a few hundred entries — sub-second), short enough that a leaked window
-// self-heals quickly rather than stranding the UI frozen.
-const APPLY_WINDOW_WATCHDOG_MS = 5_000
 
 // Notify only on the closed↔open transitions that matter to readers (depth
 // 0↔1), never on a nested bump (1↔2): `useApplyWindowOpen` snapshots the boolean,
@@ -46,34 +43,13 @@ function notifyTransition(): void {
 
 export function beginApplyWindow(): void {
   depth += 1
-  // Arm the watchdog once, on the open transition — not on nested begins, so a
-  // (mis)nested caller can't keep pushing the deadline out and stranding the UI
-  // frozen. The bound is "≤5s from first open", which any real replay clears.
-  if (depth === 1) {
-    if (watchdog) clearTimeout(watchdog)
-    watchdog = setTimeout(forceCloseApplyWindow, APPLY_WINDOW_WATCHDOG_MS)
-    notifyTransition()
-  }
+  if (depth === 1) notifyTransition()
 }
 
 export function endApplyWindow(): void {
   if (depth === 0) return
   depth -= 1
-  if (depth === 0) {
-    if (watchdog) {
-      clearTimeout(watchdog)
-      watchdog = null
-    }
-    notifyTransition()
-  }
-}
-
-function forceCloseApplyWindow(): void {
-  if (depth === 0) return
-  console.warn("Apply window watchdog fired; force-closing", { depth })
-  depth = 0
-  watchdog = null
-  notifyTransition()
+  if (depth === 0) notifyTransition()
 }
 
 export function isApplyWindowOpen(): boolean {
@@ -117,9 +93,5 @@ export function useBatchedValue<T>(value: T): T {
 export function resetApplyWindow(): void {
   const wasOpen = depth > 0
   depth = 0
-  if (watchdog) {
-    clearTimeout(watchdog)
-    watchdog = null
-  }
   if (wasOpen) notifyTransition()
 }

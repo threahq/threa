@@ -27,6 +27,7 @@ export const PERF_MARK_NAMES = [
   "catchup.replay",
   "catchup.collapse",
   "catchup.serialReplay",
+  "catchup.abandoned",
   "stream.subscriptions",
   "store.tableSubscriptions",
   "actors.lookupBuild",

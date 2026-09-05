@@ -51,18 +51,42 @@ describe("SocketEventGate", () => {
     expect(streamHandler).toHaveBeenCalledWith(payload)
   })
 
-  it("reports applied syncIds for this workspace's live events and ignores the rest", () => {
+  it("reports applied syncIds for this workspace's live events once their handlers land", async () => {
     const applied: string[] = []
     const gate = new SocketEventGate(WS, { onApplied: (syncId) => applied.push(syncId) })
     const socket = new FakeSocket()
-    gate.on("message:created", vi.fn())
+    const pendingWrites: Array<() => void> = []
+    gate.on("message:created", () => new Promise<void>((resolve) => pendingWrites.push(resolve)))
     gate.attach(asSocket(socket))
 
     socket.trigger("message:created", { workspaceId: WS, syncId: "7" })
     socket.trigger("message:created", { workspaceId: "ws_other", syncId: "9" })
     socket.trigger("message:created", { workspaceId: WS })
 
+    // The cursor advances only after the handler's write commits; reporting on
+    // dispatch would let a crash between the two skip the entry on reload.
+    expect(applied).toEqual([])
+    for (const commit of pendingWrites) commit()
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(applied).toEqual(["7"])
+  })
+
+  it("does not report a live event whose handler rejected", async () => {
+    const applied: string[] = []
+    const gate = new SocketEventGate(WS, { onApplied: (syncId) => applied.push(syncId) })
+    const socket = new FakeSocket()
+    gate.on("message:created", async () => {
+      throw new Error("idb boom")
+    })
+    gate.attach(asSocket(socket))
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    socket.trigger("message:created", { workspaceId: WS, syncId: "7" })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(applied).toEqual([])
+    expect(errorSpy).toHaveBeenCalledWith("Sync live handler failed", expect.anything())
+    errorSpy.mockRestore()
   })
 
   it("buffers this workspace's syncId-bearing events while paused and passes others through", () => {
@@ -175,23 +199,45 @@ describe("SocketEventGate", () => {
     expect(seen).toEqual(["15", "20"])
   })
 
-  it("dispatch awaits all handlers and survives a rejecting one", async () => {
+  it("dispatch runs every handler, then rejects with the failures", async () => {
+    const gate = new SocketEventGate(WS)
+    let settled = false
+    gate.on("saved:upserted", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      settled = true
+    })
+    gate.on("saved:upserted", async () => {
+      throw new Error("boom")
+    })
+
+    await expect(gate.dispatch("saved:upserted", { workspaceId: WS })).rejects.toMatchObject({
+      errors: [expect.objectContaining({ message: "boom" })],
+    })
+    expect(settled).toBe(true)
+  })
+
+  it("a live handler failure is logged and does not stall delivery", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     try {
+      const socket = new FakeSocket()
       const gate = new SocketEventGate(WS)
-      let settled = false
-      gate.on("saved:upserted", async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5))
-        settled = true
-      })
-      gate.on("saved:upserted", async () => {
+      gate.attach(asSocket(socket))
+      const seen: string[] = []
+      gate.on("message:created", async () => {
         throw new Error("boom")
       })
+      gate.on("message:created", (payload: unknown) => {
+        seen.push((payload as { syncId: string }).syncId)
+      })
 
-      await gate.dispatch("saved:upserted", { workspaceId: WS })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "7" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
 
-      expect(settled).toBe(true)
-      expect(errorSpy).toHaveBeenCalled()
+      expect(seen).toEqual(["7"])
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Sync live handler failed",
+        expect.objectContaining({ eventType: "message:created" })
+      )
     } finally {
       errorSpy.mockRestore()
     }
