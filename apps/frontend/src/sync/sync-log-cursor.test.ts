@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { db } from "@/db"
-import { SyncLogCursor, syncLogCursorKey } from "./sync-log-cursor"
+import { acknowledgeSnapshotCursorInCurrentTransaction, SyncLogCursor, syncLogCursorKey } from "./sync-log-cursor"
 
 const WORKSPACE_ID = "ws_cursor_test"
 const KEY = syncLogCursorKey(WORKSPACE_ID)
@@ -62,6 +62,26 @@ describe("SyncLogCursor", () => {
     await ahead.load()
     expect(ahead.get()).toBe("80")
     ahead.dispose()
+  })
+
+  it("acknowledges a snapshot durably without rewinding a newer cursor", async () => {
+    await db.syncCursors.put({ key: KEY, cursor: "50", updatedAt: Date.now() })
+
+    await db.transaction("rw", db.syncCursors, async () => {
+      expect(await acknowledgeSnapshotCursorInCurrentTransaction(WORKSPACE_ID, "40")).toBe("50")
+    })
+
+    expect(await persistedCursor()).toBe("50")
+  })
+
+  it("adopts a cursor already committed with snapshot rows without scheduling another write", async () => {
+    const cursor = new SyncLogCursor(WORKSPACE_ID)
+    await db.syncCursors.put({ key: KEY, cursor: "70", updatedAt: Date.now() })
+
+    cursor.acknowledgeDurable("70")
+
+    expect(cursor.get()).toBe("70")
+    cursor.dispose()
   })
 
   it("persists pending advances on flush", async () => {

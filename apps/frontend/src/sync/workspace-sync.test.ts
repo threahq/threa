@@ -157,6 +157,79 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     ])
   })
 
+  it("rolls back snapshot rows and stale removals when cleanup fails", async () => {
+    const fetchStartedAt = Date.now()
+    await db.workspaces.put({ ...makeBootstrap().workspace, name: "Cached workspace", _cachedAt: fetchStartedAt - 10 })
+    await db.streams.put({ ...makeStream("stream_stale"), _cachedAt: fetchStartedAt - 10 })
+    await db.labels.put({
+      id: "label_stale",
+      workspaceId: "ws_1",
+      creatorActorType: "user",
+      creatorUserId: "user_1",
+      name: "Stale",
+      slug: "stale",
+      color: "blue",
+      emoji: null,
+      description: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      archivedAt: null,
+      _cachedAt: fetchStartedAt - 10,
+    })
+    const deleteSpy = vi.spyOn(db.labels, "bulkDelete").mockRejectedValueOnce(new Error("cleanup failed"))
+
+    await expect(
+      applyWorkspaceBootstrap(
+        "ws_1",
+        makeBootstrap({ workspace: { ...makeBootstrap().workspace, name: "Fresh workspace" } }),
+        fetchStartedAt
+      )
+    ).rejects.toThrow("cleanup failed")
+
+    expect(await db.workspaces.get("ws_1")).toMatchObject({ name: "Cached workspace" })
+    expect(await db.streams.get("stream_stale")).toBeDefined()
+    expect(await db.labels.get("label_stale")).toBeDefined()
+    deleteSpy.mockRestore()
+  })
+
+  it("rolls back reconnect rows and stale removals when cleanup fails", async () => {
+    const fetchStartedAt = Date.now()
+    await db.workspaces.put({ ...makeBootstrap().workspace, name: "Cached workspace", _cachedAt: fetchStartedAt - 10 })
+    await db.streams.put({ ...makeStream("stream_stale"), _cachedAt: fetchStartedAt - 10 })
+    await db.labels.put({
+      id: "label_stale",
+      workspaceId: "ws_1",
+      creatorActorType: "user",
+      creatorUserId: "user_1",
+      name: "Stale",
+      slug: "stale",
+      color: "blue",
+      emoji: null,
+      description: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      archivedAt: null,
+      _cachedAt: fetchStartedAt - 10,
+    })
+    const deleteSpy = vi.spyOn(db.labels, "bulkDelete").mockRejectedValueOnce(new Error("cleanup failed"))
+
+    await expect(
+      applyReconnectBootstrapBatch(
+        "ws_1",
+        makeBootstrap({ workspace: { ...makeBootstrap().workspace, name: "Fresh workspace" } }),
+        new Map(),
+        new Set(),
+        new Set(),
+        fetchStartedAt
+      )
+    ).rejects.toThrow("cleanup failed")
+
+    expect(await db.workspaces.get("ws_1")).toMatchObject({ name: "Cached workspace" })
+    expect(await db.streams.get("stream_stale")).toBeDefined()
+    expect(await db.labels.get("label_stale")).toBeDefined()
+    deleteSpy.mockRestore()
+  })
+
   it("removes stale streams not in bootstrap", async () => {
     const fetchStartedAt = Date.now() - 1000 // fetch started 1s ago
 

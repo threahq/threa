@@ -37,6 +37,11 @@ import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
 import type { WorkspaceBootstrap } from "@threa/types"
 
+type BootstrapOutcome =
+  | { status: "success"; snapshotHead?: string }
+  | { status: "cancelled" }
+  | { status: "error"; error: unknown }
+
 interface SyncEngineDeps {
   workspaceId: string
   syncStatus: SyncStatusStore
@@ -138,12 +143,13 @@ export class SyncEngine {
   private subscribedStreams = new Set<string>()
   private streamHandlerCleanups = new Map<string, () => void>()
   private workspaceHandlerCleanup: (() => void) | null = null
-  private activeBootstrap: Promise<void> | null = null
-  private queuedReconnectBootstrap: Promise<void> | null = null
+  private activeBootstrap: Promise<BootstrapOutcome> | null = null
+  private queuedReconnectBootstrap: Promise<BootstrapOutcome> | null = null
   /** Whether the queued reconnect bootstrap must run as a full snapshot. A
    *  below-floor `forceFull` request arriving while a slim reconnect is already
    *  queued upgrades the queued run rather than being collapsed away. */
   private queuedReconnectForceFull = false
+  private queuedReconnectAcknowledgeCursor = false
   private activeStreamRefreshes = new Map<string, Promise<void>>()
   /** Single-flighted display-only HTTP warm fetches (see warmStreamOverHttp).
    *  Kept separate from activeStreamRefreshes: a warm fetch performs no room
@@ -204,6 +210,10 @@ export class SyncEngine {
   private pendingHeartbeatHead: bigint | null = null
   private heartbeatCleanup: (() => void) | null = null
   private operationQueueRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private snapshotRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private snapshotRecoveryCycle: number | null = null
+  private snapshotRecoveryAttempts = 0
+  private snapshotRecoveryRequired = false
 
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
@@ -238,6 +248,7 @@ export class SyncEngine {
     this.eventGate = deps.syncService
       ? new SocketEventGate(this.workspaceId, {
           onApplied: (syncId) => this.syncLogCursor?.advance(syncId),
+          onOverflow: () => this.handleGateOverflow(),
         })
       : null
   }
@@ -389,7 +400,7 @@ export class SyncEngine {
       }
     )
 
-    await this.runBootstrap(isReconnect)
+    await this.runBootstrap(isReconnect, { acknowledgeCursor: !isReconnect })
 
     // A reconnect catches up the visible + board streams inside runBootstrap (via
     // getVisibleServerStreamIds); a first connect deliberately does not. But the
@@ -670,6 +681,10 @@ export class SyncEngine {
     this.subscribedStreams.clear()
     if (this.operationQueueRetryTimer) clearTimeout(this.operationQueueRetryTimer)
     this.operationQueueRetryTimer = null
+    if (this.snapshotRecoveryTimer) clearTimeout(this.snapshotRecoveryTimer)
+    this.snapshotRecoveryTimer = null
+    this.snapshotRecoveryCycle = null
+    this.snapshotRecoveryRequired = false
     this.socket = null
     // Dispose without flushing or splicing — destroy can be an account switch
     // that repoints the shared db proxy, and neither the cursor nor buffered
@@ -685,7 +700,13 @@ export class SyncEngine {
   // Internal
   // =========================================================================
 
-  private async bootstrapWorkspace(_isReconnect: boolean, forceFull = false): Promise<void> {
+  private async bootstrapWorkspace(
+    _isReconnect: boolean,
+    forceFull = false,
+    acknowledgeCursor = false
+  ): Promise<BootstrapOutcome> {
+    if (this.isDestroyed) return { status: "cancelled" }
+
     // Reconnect slimming: catch-up replay (which runs right after this)
     // re-seeds every workspace-scoped projection through the gate-registered
     // handlers, so re-fetching the full workspace snapshot on every reconnect
@@ -695,8 +716,7 @@ export class SyncEngine {
     // cases keep the full snapshot. `eventGate` is present iff a sync service is
     // wired, so it stands in for "catch-up will run".
     if (_isReconnect && !forceFull && this.eventGate) {
-      await this.slimReconnectBootstrap()
-      return
+      return this.slimReconnectBootstrap()
     }
 
     const { workspaceId, syncStatus, queryClient, workspaceService, streamService } = this.deps
@@ -777,6 +797,7 @@ export class SyncEngine {
           }
         }
 
+        if (this.isDestroyed) return { status: "cancelled" }
         const { workspaceBootstrap: appliedWorkspaceBootstrap, streamBootstraps: appliedStreamBootstraps } =
           await applyReconnectBootstrapBatch(
             workspaceId,
@@ -784,8 +805,10 @@ export class SyncEngine {
             successfulStreamBootstraps,
             staleStreamIds,
             terminalStreamIds,
-            fetchStartedAt
+            fetchStartedAt,
+            this.eventGate && acknowledgeCursor ? workspaceBootstrap.syncHead : undefined
           )
+        if (this.isDestroyed) return { status: "cancelled" }
         bootstrap = appliedWorkspaceBootstrap
 
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
@@ -849,11 +872,17 @@ export class SyncEngine {
         // mounts. Any await above (the fetch, the cache probe, the reveal wait)
         // can outlive that switch, so bail before writing — otherwise this stale
         // bootstrap lands in the newly-active account's IDB and cache.
-        if (this.isDestroyed) return
+        if (this.isDestroyed) return { status: "cancelled" }
 
         // Write to IDB (source of truth); the returned bootstrap carries the
         // per-stream-merged counter fields so the cache write below matches IDB.
-        const applied = await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
+        const applied = await applyWorkspaceBootstrap(
+          workspaceId,
+          bootstrap,
+          fetchStartedAt,
+          this.eventGate && acknowledgeCursor ? bootstrap.syncHead : undefined
+        )
+        if (this.isDestroyed) return { status: "cancelled" }
         bootstrap = applied.bootstrap
 
         // Write to TanStack cache (bridge for coordinated-loading, sidebar loading/error).
@@ -872,16 +901,6 @@ export class SyncEngine {
         stopPublish()
         if (replaced) getPerfCapture().mark("bootstrap.cachePublish", 1)
 
-        // Cold-boot single bootstrap: this first-connect snapshot is the
-        // authority for everything <= its sync head (read-before-stamp on the
-        // backend). Jump the cursor there so the catch-up that runs next sees no
-        // gap — otherwise a stale cursor persisted from a prior session makes
-        // catch-up collapse the gap into a SECOND full bootstrap. Reconnects are
-        // excluded: their cursor marks the disconnect window catch-up must heal.
-        if (!_isReconnect && this.eventGate && bootstrap.syncHead) {
-          this.syncLogCursor?.advance(bootstrap.syncHead)
-          this.noteSeenHead(bootstrap.syncHead)
-        }
         // Snapshot applied: no pending cold snapshot can be masked any more, so
         // catch-up's fallback seed may read head again from here on.
         if (!_isReconnect) this.coldSnapshotSettled = true
@@ -894,6 +913,12 @@ export class SyncEngine {
       // On reconnect, cleanupStreamHandlers() already cleared the old handlers,
       // so these are fresh registrations.
       await this.subscribeMemberStreams(bootstrap.streamMemberships.map((sm) => sm.streamId))
+      if (this.isDestroyed) return { status: "cancelled" }
+      if (this.eventGate && acknowledgeCursor && bootstrap.syncHead) {
+        this.syncLogCursor?.acknowledgeDurable(bootstrap.syncHead)
+        this.noteSeenHead(bootstrap.syncHead)
+      }
+      return { status: "success", snapshotHead: bootstrap.syncHead }
     } catch (error) {
       this.lastWorkspaceError = error
       // No snapshot landed, so none can be masked: release the seed guard or a
@@ -923,6 +948,7 @@ export class SyncEngine {
         // Propagate to TanStack so coordinated-loading shows the error
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), undefined)
       }
+      return this.isDestroyed ? { status: "cancelled" } : { status: "error", error }
     }
   }
 
@@ -943,7 +969,7 @@ export class SyncEngine {
    * so the IDB writes here land before catch-up applies its delta and before
    * buffered live events splice in on top — newest state wins, no regression.
    */
-  private async slimReconnectBootstrap(): Promise<void> {
+  private async slimReconnectBootstrap(): Promise<BootstrapOutcome> {
     const { workspaceId, syncStatus } = this.deps
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
 
@@ -958,21 +984,23 @@ export class SyncEngine {
       if (this.socket) {
         await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
       }
-      if (this.isDestroyed) return
+      if (this.isDestroyed) return { status: "cancelled" }
 
       // Per-stream message deltas: each refresh owns its own status + error
       // handling, and they run in parallel.
       await Promise.all(this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)))
-      if (this.isDestroyed) return
+      if (this.isDestroyed) return { status: "cancelled" }
 
       await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
-      if (this.isDestroyed) return
+      if (this.isDestroyed) return { status: "cancelled" }
 
       this.lastWorkspaceError = null
       syncStatus.set(`workspace:${workspaceId}`, "synced")
+      return { status: "success" }
     } catch (error) {
       this.lastWorkspaceError = error
       syncStatus.set(`workspace:${workspaceId}`, "stale")
+      return this.isDestroyed ? { status: "cancelled" } : { status: "error", error }
     }
   }
 
@@ -982,9 +1010,15 @@ export class SyncEngine {
    *   deltas). The below-floor catch-up fallback sets this:
    *   a cursor below the retained sync-log floor has no log to replay, so only
    *   the full snapshot is authoritative for everything `<= head`.
+   * A counter-only repair must leave the cursor alone: workspace bootstrap does
+   * not contain the saved, scheduled, activity, or conversation list projections.
    */
-  private runBootstrap(isReconnect: boolean, opts?: { forceFull?: boolean }): Promise<void> {
+  private runBootstrap(
+    isReconnect: boolean,
+    opts?: { forceFull?: boolean; acknowledgeCursor?: boolean }
+  ): Promise<BootstrapOutcome> {
     const forceFull = opts?.forceFull ?? false
+    const acknowledgeCursor = opts?.acknowledgeCursor ?? false
     if (this.activeBootstrap) {
       // If a reconnect arrives while a non-reconnect bootstrap (e.g.
       // retryWorkspace) is in flight, we can't mutate the in-flight request
@@ -1000,28 +1034,38 @@ export class SyncEngine {
         // so a below-floor forceFull arriving after a slim reconnect is queued
         // upgrades the single queued run to a full snapshot.
         if (forceFull) this.queuedReconnectForceFull = true
+        if (acknowledgeCursor) this.queuedReconnectAcknowledgeCursor = true
         if (!this.queuedReconnectBootstrap) {
-          const chained = this.activeBootstrap
-            .catch(() => {
-              // Swallow — the follow-up reconnect will retry whatever failed.
+          const chained = this.activeBootstrap.then(() => {
+            const queuedForceFull = this.queuedReconnectForceFull
+            const queuedAcknowledgeCursor = this.queuedReconnectAcknowledgeCursor
+            this.queuedReconnectBootstrap = null
+            this.queuedReconnectForceFull = false
+            this.queuedReconnectAcknowledgeCursor = false
+            return this.runBootstrap(true, {
+              forceFull: queuedForceFull,
+              acknowledgeCursor: queuedAcknowledgeCursor,
             })
-            .then(() => {
-              const queuedForceFull = this.queuedReconnectForceFull
-              this.queuedReconnectBootstrap = null
-              this.queuedReconnectForceFull = false
-              return this.runBootstrap(true, { forceFull: queuedForceFull })
-            })
+          })
           this.queuedReconnectBootstrap = chained
         }
       }
       return this.queuedReconnectBootstrap ?? this.activeBootstrap
     }
 
-    const bootstrapPromise = this.bootstrapWorkspace(isReconnect, forceFull).finally(() => {
-      if (this.activeBootstrap === bootstrapPromise) {
-        this.activeBootstrap = null
-      }
-    })
+    const bootstrapPromise = this.bootstrapWorkspace(isReconnect, forceFull, acknowledgeCursor)
+      .catch((error): BootstrapOutcome => {
+        if (this.isDestroyed) return { status: "cancelled" }
+        this.lastWorkspaceError = error
+        this.deps.syncStatus.set(`workspace:${this.workspaceId}`, "stale")
+        console.error("Workspace bootstrap recovery failed", { workspaceId: this.workspaceId, error })
+        return { status: "error", error }
+      })
+      .finally(() => {
+        if (this.activeBootstrap === bootstrapPromise) {
+          this.activeBootstrap = null
+        }
+      })
 
     this.activeBootstrap = bootstrapPromise
     return bootstrapPromise
@@ -1370,6 +1414,46 @@ export class SyncEngine {
     this.catchUpCycle += 1
   }
 
+  private handleGateOverflow(): void {
+    if (this.isDestroyed) return
+    this.deps.syncStatus.set(`workspace:${this.workspaceId}`, "stale")
+    this.snapshotRecoveryRequired = true
+    this.beginCatchUpCycle()
+    this.scheduleSnapshotRecovery(this.catchUpCycle, 0)
+  }
+
+  private async recoverSnapshot(cycle: number): Promise<string | null> {
+    this.snapshotRecoveryRequired = true
+    this.invalidateReplayHealedQueries()
+    const outcome = await this.runBootstrap(true, { forceFull: true, acknowledgeCursor: true })
+    if (outcome.status === "success" && outcome.snapshotHead) {
+      if (cycle === this.catchUpCycle) {
+        this.snapshotRecoveryRequired = false
+        this.snapshotRecoveryAttempts = 0
+      }
+      return outcome.snapshotHead
+    }
+    if (outcome.status !== "cancelled") this.scheduleSnapshotRecovery(cycle)
+    return null
+  }
+
+  private scheduleSnapshotRecovery(cycle: number, delay?: number): void {
+    if (this.isDestroyed) return
+    if (this.snapshotRecoveryTimer) {
+      if (this.snapshotRecoveryCycle === cycle) return
+      clearTimeout(this.snapshotRecoveryTimer)
+    }
+    const retryDelay = delay ?? Math.min(5_000, 250 * 2 ** this.snapshotRecoveryAttempts)
+    this.snapshotRecoveryAttempts += 1
+    this.snapshotRecoveryCycle = cycle
+    this.snapshotRecoveryTimer = setTimeout(() => {
+      this.snapshotRecoveryTimer = null
+      this.snapshotRecoveryCycle = null
+      if (this.isDestroyed || cycle !== this.catchUpCycle) return
+      void this.runCatchUp("snapshot-retry")
+    }, retryDelay)
+  }
+
   /**
    * Active mode, on connect: load the persisted cursor and, when it is unset
    * and no cold snapshot is pending, seed it from head. Errors are non-fatal:
@@ -1544,6 +1628,12 @@ export class SyncEngine {
     const stopReplay = capture.time("catchup.replay")
 
     try {
+      if (this.snapshotRecoveryRequired) {
+        const snapshotHead = await this.recoverSnapshot(cycle)
+        if (snapshotHead) appliedThrough = BigInt(snapshotHead)
+        return
+      }
+
       await cursorStore.load()
       const cursorBefore = cursorStore.get()
       if (cursorBefore === null) {
@@ -1574,33 +1664,16 @@ export class SyncEngine {
         if (this.isDestroyed) return
         head = response.head
         if (response.requiresBootstrap) {
-          // The cursor is below the workspace's retained sync-log floor:
-          // retention pruned the entries this run would replay, so the log
-          // can't heal the gap. Jump the cursor to head and re-bootstrap —
-          // the workspace snapshot is the authority for everything <= head.
-          // Read-before-stamp holds: response.head was read before the
-          // bootstrap fired here, so the stamped cursor is a lower bound of
-          // the upcoming snapshot (the race falls on the duplicate side). The
-          // splice (appliedThrough = head) then drops buffered events <= head,
-          // which the snapshot already covers, and applies only those above it.
+          // Retention pruned the entries this run needs. Only a successfully
+          // committed snapshot may acknowledge the missing interval.
           console.info("Sync catch-up below retention floor; re-bootstrapping", {
             workspaceId: this.workspaceId,
             trigger,
             cursorBefore,
             head: response.head,
           })
-          cursorStore.advance(response.head)
-          this.noteSeenHead(response.head)
-          appliedThrough = BigInt(response.head)
-          // forceFull: the cursor is below the retained floor, so catch-up has
-          // no entries to replay — only the full workspace snapshot is
-          // authoritative for everything <= head. The slim reconnect path
-          // (per-stream deltas only) would leave the rest stale. Await it so the
-          // snapshot lands BEFORE the finally's gate.resume splices buffered live
-          // events (syncId > head) on top — a fire-and-forget bootstrap could
-          // finish after the splice and overwrite (regress) events above head.
-          this.invalidateReplayHealedQueries()
-          await this.runBootstrap(true, { forceFull: true })
+          const snapshotHead = await this.recoverSnapshot(cycle)
+          if (snapshotHead) appliedThrough = BigInt(snapshotHead)
           return
         }
         if (response.entries.length === 0) {
@@ -1614,19 +1687,8 @@ export class SyncEngine {
           break
         }
 
-        // A large gap heals faster and without the trickle by collapsing to one
-        // atomic snapshot rather than replaying every missed entry through the
-        // live handlers (see CATCHUP_COLLAPSE_THRESHOLD). Only the FIRST page
-        // decides (pages === 0) — once entries have been applied, finish the
-        // replay rather than re-fetch and re-apply. The mechanics mirror the
-        // below-floor branch exactly: jump the cursor to head (the snapshot owns
-        // everything <= head), record the head as seen, bound the resume splice
-        // at head, and force a full bootstrap. Read-before-stamp holds — head was
-        // read before the bootstrap fires, so the snapshot is a lower bound and
-        // the splice drops only buffered events the snapshot already covers. The
-        // bootstrap is awaited so its snapshot lands BEFORE the finally's
-        // gate.resume splices the buffered events on top — fire-and-forget would
-        // let the snapshot finish after the splice and regress events above head.
+        // Only the first page may collapse. Once replay starts, it finishes
+        // rather than fetching and applying the same entries twice.
         if (pages === 0 && response.entries.length >= CATCHUP_COLLAPSE_THRESHOLD) {
           capture.mark("catchup.collapse", response.entries.length)
           console.info("Sync catch-up gap large; collapsing to a full bootstrap", {
@@ -1636,11 +1698,8 @@ export class SyncEngine {
             head: response.head,
             firstPageEntries: response.entries.length,
           })
-          cursorStore.advance(response.head)
-          this.noteSeenHead(response.head)
-          appliedThrough = BigInt(response.head)
-          this.invalidateReplayHealedQueries()
-          await this.runBootstrap(true, { forceFull: true })
+          const snapshotHead = await this.recoverSnapshot(cycle)
+          if (snapshotHead) appliedThrough = BigInt(snapshotHead)
           return
         }
 
@@ -1721,7 +1780,7 @@ export class SyncEngine {
       // gate paused and let that cycle's own run (chained by runCatchUp) do
       // the splice. Buffered events at or below the applied position were
       // already applied from the log.
-      if (!this.isDestroyed && this.catchUpCycle === cycle) {
+      if (!this.snapshotRecoveryRequired && !this.isDestroyed && this.catchUpCycle === cycle) {
         const through = appliedThrough
         await gate.resume((_eventType, syncId) => through === null || syncId > through)
       }

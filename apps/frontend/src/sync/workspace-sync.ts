@@ -37,6 +37,7 @@ import { seedActiveCalls, upsertActiveCall, removeActiveCall } from "@/stores/ac
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
 import type { CallStartedEventPayload } from "@threa/types"
 import type { SyncEventSource } from "./socket-event-gate"
+import { acknowledgeSnapshotCursorInCurrentTransaction } from "./sync-log-cursor"
 import type { QueryClient } from "@tanstack/react-query"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import { streamKeys } from "@/hooks/use-streams"
@@ -2611,6 +2612,8 @@ function reuseIfUnchanged<T>(previous: T[] | undefined, merged: T[], writeCount:
 }
 
 interface TableDeletions {
+  streamIds: string[]
+  membershipIds: string[]
   streams: number
   users: number
   memberships: number
@@ -2624,6 +2627,8 @@ interface TableDeletions {
 }
 
 const NO_TABLE_DELETIONS: TableDeletions = {
+  streamIds: [],
+  membershipIds: [],
   streams: 0,
   users: 0,
   memberships: 0,
@@ -2647,7 +2652,8 @@ function mapArchivedStreamRows(
 export async function applyWorkspaceBootstrap(
   workspaceId: string,
   bootstrap: WorkspaceBootstrap,
-  fetchStartedAt?: number
+  fetchStartedAt?: number,
+  snapshotHead?: string
 ): Promise<AppliedWorkspaceBootstrap> {
   const now = Date.now()
   const capture = getPerfCapture()
@@ -2676,6 +2682,7 @@ export async function applyWorkspaceBootstrap(
 
   let rowsWritten = 0
   let rowsSkipped = 0
+  let deletions = NO_TABLE_DELETIONS
 
   const workspaceRow = { ...bootstrap.workspace, _cachedAt: now }
   const userRows = bootstrap.users.map((u) => ({ ...u, _cachedAt: now }))
@@ -2756,6 +2763,8 @@ export async function applyWorkspaceBootstrap(
       db.userPreferences,
       db.sidebarConfigs,
       db.workspaceMetadata,
+      db.slots,
+      db.syncCursors,
     ],
     async () => {
       const stopPreRead = capture.time("bootstrap.preRead")
@@ -2972,6 +2981,15 @@ export async function applyWorkspaceBootstrap(
       } else {
         effectiveSidebarConfig = existingSidebar.config
       }
+
+      if (fetchStartedAt !== undefined) {
+        const stopCleanup = capture.time("bootstrap.cleanup")
+        deletions = await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
+        stopCleanup()
+      }
+      if (snapshotHead !== undefined) {
+        await acknowledgeSnapshotCursorInCurrentTransaction(workspaceId, snapshotHead)
+      }
     }
   )
 
@@ -2979,20 +2997,7 @@ export async function applyWorkspaceBootstrap(
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
 
-  // Clean up stale entities: anything in IDB for this workspace that
-  // wasn't in the bootstrap AND was written before this bootstrap.
-  // Entities with _cachedAt >= now were written concurrently by socket
-  // handlers and must be preserved.
-  // Use the pre-fetch timestamp for stale cleanup. Entities written by
-  // socket handlers DURING the fetch have _cachedAt > fetchStartedAt and
-  // survive. Only truly stale entities (from before we started fetching)
-  // are removed. If no fetchStartedAt provided, skip cleanup entirely.
-  let deletions = NO_TABLE_DELETIONS
-  if (fetchStartedAt !== undefined) {
-    const stopCleanup = capture.time("bootstrap.cleanup")
-    deletions = await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
-    stopCleanup()
-  }
+  removeCleanupConfirmations(workspaceId, deletions)
 
   // Populate in-memory cache so useLiveQuery hooks return real data on first
   // synchronous render (the default value). Without this, every component sees
@@ -3102,7 +3107,8 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>,
   staleStreamIds: Set<string>,
   terminalStreamIds: Set<string>,
-  fetchStartedAt?: number
+  fetchStartedAt?: number,
+  snapshotHead?: string
 ): Promise<{
   workspaceBootstrap: WorkspaceBootstrap
   streamBootstraps: Map<string, StreamBootstrap>
@@ -3111,6 +3117,7 @@ export async function applyReconnectBootstrapBatch(
   const capture = getPerfCapture()
   let rowsWritten = 0
   let rowsSkipped = 0
+  let swept = NO_TABLE_DELETIONS
 
   const [localStreams, localMemberships, localReadStates, localUnreadState] = await Promise.all([
     db.streams.where("workspaceId").equals(workspaceId).toArray(),
@@ -3241,6 +3248,7 @@ export async function applyReconnectBootstrapBatch(
       db.pendingMessages,
       db.pendingOperations,
       db.slots,
+      db.syncCursors,
     ],
     async () => {
       const [
@@ -3397,6 +3405,14 @@ export async function applyReconnectBootstrapBatch(
         await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, fetchStartedAt)
       }
 
+      if (fetchStartedAt !== undefined) {
+        swept = await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
+      }
+
+      if (snapshotHead !== undefined) {
+        await acknowledgeSnapshotCursorInCurrentTransaction(workspaceId, snapshotHead)
+      }
+
       if (terminalStreamIds.size > 0) {
         const terminalIds = Array.from(terminalStreamIds)
         const terminalRowIds = terminalIds.map((streamId) => `${workspaceId}:${streamId}`)
@@ -3406,9 +3422,6 @@ export async function applyReconnectBootstrapBatch(
           db.streamReadState.bulkDelete(terminalRowIds),
           deleteSlotsForStreams(db, terminalIds),
         ])
-        removeRowConfirmations(workspaceId, "streams", terminalIds)
-        removeRowConfirmations(workspaceId, "streamMemberships", terminalRowIds)
-        removeRowConfirmations(workspaceId, "streamReadState", terminalRowIds)
       }
     }
   )
@@ -3416,10 +3429,13 @@ export async function applyReconnectBootstrapBatch(
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
 
-  const swept =
-    fetchStartedAt !== undefined
-      ? await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
-      : NO_TABLE_DELETIONS
+  removeCleanupConfirmations(workspaceId, swept)
+  const terminalIds = Array.from(terminalStreamIds)
+  const terminalRowIds = terminalIds.map((streamId) => `${workspaceId}:${streamId}`)
+  removeRowConfirmations(workspaceId, "streams", terminalIds)
+  removeRowConfirmations(workspaceId, "streamMemberships", terminalRowIds)
+  removeRowConfirmations(workspaceId, "streamReadState", terminalRowIds)
+
   const terminalCount = terminalStreamIds.size
   const deletions: TableDeletions = {
     ...swept,
@@ -3600,9 +3616,6 @@ async function cleanupStaleEntities(
     deleteStale(db.labelAssignments, "workspaceId", workspaceId, bootstrapLabelAssignmentIds, now),
   ])
 
-  removeRowConfirmations(workspaceId, "streams", staleStreamIds)
-  removeRowConfirmations(workspaceId, "streamMemberships", staleMembershipIds)
-
   const streams = staleStreamIds.length
   const users = staleUserIds.length
   const memberships = staleMembershipIds.length
@@ -3612,6 +3625,8 @@ async function cleanupStaleEntities(
   const labels = staleLabelIds.length
   const labelAssignments = staleLabelAssignmentIds.length
   return {
+    streamIds: staleStreamIds,
+    membershipIds: staleMembershipIds,
     streams,
     users,
     memberships,
@@ -3622,6 +3637,13 @@ async function cleanupStaleEntities(
     labels,
     labelAssignments,
     total: streams + users + memberships + dmPeers + personas + bots + labels + labelAssignments,
+  }
+}
+
+function removeCleanupConfirmations(workspaceId: string, deletions: TableDeletions): void {
+  if (deletions.streamIds.length > 0) removeRowConfirmations(workspaceId, "streams", deletions.streamIds)
+  if (deletions.membershipIds.length > 0) {
+    removeRowConfirmations(workspaceId, "streamMemberships", deletions.membershipIds)
   }
 }
 

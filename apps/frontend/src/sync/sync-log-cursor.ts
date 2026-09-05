@@ -6,6 +6,22 @@ export function syncLogCursorKey(workspaceId: string): string {
   return `${workspaceId}:sync-log`
 }
 
+export async function acknowledgeSnapshotCursorInCurrentTransaction(
+  workspaceId: string,
+  syncId: string
+): Promise<string> {
+  const key = syncLogCursorKey(workspaceId)
+  const candidate = parseSyncId(syncId, "snapshot")
+  if (candidate === null) throw new Error("Snapshot returned an invalid sync head")
+  const existing = await db.syncCursors.get(key)
+  const persisted = existing ? parseSyncId(existing.cursor, "snapshot-existing") : null
+  const acknowledged = persisted !== null && persisted > candidate ? persisted : candidate
+  if (persisted === null || acknowledged > persisted) {
+    await db.syncCursors.put({ key, cursor: acknowledged.toString(), updatedAt: Date.now() })
+  }
+  return acknowledged.toString()
+}
+
 /**
  * Parses a sync id off the wire or out of IDB. Malformed input (a rogue
  * payload, a corrupted row) is ignored loudly instead of throwing — a throw
@@ -81,6 +97,12 @@ export class SyncLogCursor {
       this.persistTimer = null
       void this.persist()
     }, this.debounceMs)
+  }
+
+  acknowledgeDurable(syncId: string): void {
+    if (this.disposed) return
+    const candidate = parseSyncId(syncId, "durable-acknowledgement")
+    if (candidate !== null && (this.value === null || candidate > this.value)) this.value = candidate
   }
 
   /** Persists any pending advance immediately. */

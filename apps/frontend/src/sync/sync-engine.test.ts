@@ -6,12 +6,16 @@ import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { conversationKeys } from "@/hooks/use-conversations"
+import { savedKeys } from "@/hooks/use-saved"
+import { scheduledKeys } from "@/hooks/use-scheduled"
+import { activityKeys } from "@/hooks/use-activity"
 import { db } from "@/db"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
   type SyncCatchUpResponse,
+  type SavedUpsertedPayload,
 } from "@threa/types"
 
 import {
@@ -1203,6 +1207,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     // page. The connect bootstrap runs first; the fallback fires a second.
     const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
     const deps = makeActiveDeps(catchUp)
+    deps.workspaceService.bootstrap.mockImplementation(async () => ({ ...makeWorkspaceBootstrap(), syncHead: "500" }))
     const engine = new SyncEngine(deps)
 
     await engine.onConnect(asSocket(new MockSocket()))
@@ -1227,6 +1232,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     )
     const catchUp = vi.fn().mockResolvedValue({ entries: bigPage, head: "5000" })
     const deps = makeActiveDeps(catchUp)
+    deps.workspaceService.bootstrap.mockImplementation(async () => ({ ...makeWorkspaceBootstrap(), syncHead: "5000" }))
     const engine = new SyncEngine(deps)
     const applyWindow = trackApplyWindow()
     const invalidateSpy = vi.spyOn(deps.queryClient, "invalidateQueries")
@@ -1261,6 +1267,178 @@ describe("SyncEngine sync cursor (active mode)", () => {
     applyWindow.stop()
     expect(applyWindow.transitions).toEqual([])
     expect(isApplyWindowOpen()).toBe(false)
+    engine.destroy()
+  })
+
+  it.each([
+    ["below-floor", { entries: [], head: "500", requiresBootstrap: true }],
+    [
+      "collapsed",
+      {
+        entries: Array.from({ length: CATCHUP_COLLAPSE_THRESHOLD }, (_, i) =>
+          userAddedEntry(String(11 + i), `collapsed_${i}`)
+        ),
+        head: "500",
+      },
+    ],
+  ] as const)("keeps the gap buffered and retries when %s snapshot recovery fails", async (_kind, response) => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let rejectRecovery: ((reason: Error) => void) | undefined
+    const catchUp = vi.fn().mockResolvedValueOnce(response).mockRejectedValue(new Error("catch-up still offline"))
+    const deps = makeActiveDeps(catchUp)
+    let bootstrapCall = 0
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      bootstrapCall += 1
+      if (bootstrapCall === 1) {
+        return {
+          ...makeWorkspaceBootstrap(),
+          syncHead: "10",
+          workspace: { ...makeWorkspaceBootstrap().workspace, name: "Cached" },
+        }
+      }
+      if (bootstrapCall === 2) {
+        return new Promise<WorkspaceBootstrap>((_resolve, reject) => {
+          rejectRecovery = reject
+        })
+      }
+      return {
+        ...makeWorkspaceBootstrap(),
+        syncHead: "500",
+        workspace: { ...makeWorkspaceBootstrap().workspace, name: "Recovered" },
+      }
+    })
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(rejectRecovery).toBeDefined())
+    socket.trigger("workspace_user:added", userAddedLivePayload("501", "user_buffered"))
+    rejectRecovery!(new Error("snapshot failed"))
+
+    await vi.waitFor(() => expect(engine.lastWorkspaceError).toEqual(new Error("snapshot failed")))
+    expect(engine.getSyncCursor()).toBe("10")
+    expect(deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.workspace.name).toBe(
+      "Cached"
+    )
+    expect(await db.workspaceUsers.get("user_buffered")).toBeUndefined()
+
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("501"), { timeout: 2_000 })
+    expect((await db.workspaces.get("ws_1"))?.name).toBe("Recovered")
+    expect(await db.workspaceUsers.get("user_buffered")).toBeDefined()
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(3)
+    engine.destroy()
+  })
+
+  it("should continue queued recovery when reading the cached fallback fails", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce(emptyPage("10"))
+      .mockResolvedValueOnce({ entries: [], head: "500", requiresBootstrap: true })
+      .mockResolvedValue(emptyPage("500"))
+    const deps = makeActiveDeps(catchUp)
+    let rejectRefresh: ((error: Error) => void) | undefined
+    deps.workspaceService.bootstrap
+      .mockResolvedValueOnce({ ...makeWorkspaceBootstrap(), syncHead: "10" })
+      .mockImplementationOnce(() => new Promise<WorkspaceBootstrap>((_resolve, reject) => (rejectRefresh = reject)))
+      .mockResolvedValue({ ...makeWorkspaceBootstrap(), syncHead: "500" })
+    const engine = new SyncEngine(deps)
+    try {
+      await engine.onConnect(asSocket(new MockSocket()))
+      await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
+      markInitialRevealComplete("ws_1")
+      engine.retryWorkspace()
+      await vi.waitFor(() => expect(rejectRefresh).toBeDefined())
+      const resumed = engine.refreshAfterConnectivityResume()
+      vi.spyOn(db.workspaces, "get").mockRejectedValueOnce(new Error("cached fallback failed"))
+      rejectRefresh!(new Error("network failed"))
+      await resumed
+      await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("500"))
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(3)
+      expect((await db.syncCursors.get("ws_1:sync-log"))?.cursor).toBe("500")
+    } finally {
+      engine.destroy()
+    }
+  })
+
+  it("cancels a late recovery snapshot after destroy", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
+    const deps = makeActiveDeps(catchUp)
+    let bootstrapCall = 0
+    let resolveRecovery: ((value: WorkspaceBootstrap) => void) | undefined
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      bootstrapCall += 1
+      if (bootstrapCall === 1) {
+        return {
+          ...makeWorkspaceBootstrap(),
+          syncHead: "10",
+          workspace: { ...makeWorkspaceBootstrap().workspace, name: "Cached" },
+        }
+      }
+      return new Promise<WorkspaceBootstrap>((resolve) => (resolveRecovery = resolve))
+    })
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+    await vi.waitFor(() => expect(resolveRecovery).toBeDefined())
+    engine.destroy()
+    resolveRecovery!({
+      ...makeWorkspaceBootstrap(),
+      syncHead: "500",
+      workspace: { ...makeWorkspaceBootstrap().workspace, name: "Too late" },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(await db.workspaces.get("ws_1")).toMatchObject({ name: "Cached" })
+    expect((await db.syncCursors.get("ws_1:sync-log"))?.cursor).toBe("10")
+    expect(deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.workspace.name).toBe(
+      "Cached"
+    )
+  })
+
+  it("forces a snapshot after gate overflow and resumes newer buffered events on top", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveCatchUp: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveCatchUp = resolve)))
+      .mockResolvedValue(emptyPage("500"))
+    const deps = makeActiveDeps(catchUp)
+    let bootstrapCall = 0
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      bootstrapCall += 1
+      return { ...makeWorkspaceBootstrap(), syncHead: bootstrapCall === 1 ? "10" : "3000" }
+    })
+    const replayOnlyQueries = {
+      saved: savedKeys.all,
+      scheduled: scheduledKeys.all,
+      activity: activityKeys.all,
+      conversations: conversationKeys.workspaceLists("ws_1"),
+    }
+    for (const key of Object.values(replayOnlyQueries)) deps.queryClient.setQueryData(key, [])
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveCatchUp).toBeDefined())
+    for (let syncId = 11; syncId <= 2_011; syncId += 1) {
+      socket.trigger("workspace_user:added", userAddedLivePayload(String(syncId), `overflow_${syncId}`))
+    }
+    socket.trigger("workspace_user:added", userAddedLivePayload("5010", "user_after_overflow"))
+    resolveCatchUp!(emptyPage("10"))
+
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2))
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_after_overflow")).toBeDefined())
+    expect(engine.getSyncCursor()).toBe("5010")
+    expect(
+      Object.fromEntries(
+        Object.entries(replayOnlyQueries).map(([name, key]) => [
+          name,
+          deps.queryClient.getQueryState(key)?.isInvalidated,
+        ])
+      )
+    ).toEqual({ saved: true, scheduled: true, activity: true, conversations: true })
     engine.destroy()
   })
 
@@ -1689,6 +1867,68 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     errorSpy.mockRestore()
     engine.destroy()
+  })
+
+  it("should leave replay-only events fetchable after a counter repair snapshot", async () => {
+    const savedId = "saved_counter_repair"
+    const payload: SavedUpsertedPayload = {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      saved: {
+        id: savedId,
+        workspaceId: "ws_1",
+        userId: "member_1",
+        messageId: null,
+        streamId: null,
+        conversationId: null,
+        status: "saved",
+        title: "Saved while disconnected",
+        note: null,
+        remindAt: null,
+        reminderSentAt: null,
+        savedAt: new Date().toISOString(),
+        statusChangedAt: new Date().toISOString(),
+        message: null,
+        unavailableReason: null,
+      },
+    }
+    let savedWhileDisconnected = false
+    const catchUp = vi.fn(async (_workspaceId: string, params: { after: string }) => {
+      if (!savedWhileDisconnected) return emptyPage("10")
+      return params.after === "10"
+        ? { entries: [{ syncId: "11", eventType: "saved:upserted", payload }], head: "11" }
+        : emptyPage("11")
+    })
+    const deps = makeCounterDeps(catchUp)
+    const bootstrap = await deps.workspaceService.bootstrap()
+    deps.workspaceService.bootstrap
+      .mockClear()
+      .mockResolvedValueOnce({ ...bootstrap, syncHead: "10" })
+      .mockResolvedValue({
+        ...bootstrap,
+        syncHead: "11",
+        workspace: { ...bootstrap.workspace, name: "Counter repaired" },
+      })
+    const engine = new SyncEngine(deps)
+    try {
+      await engine.onConnect(asSocket(new MockSocket()))
+      await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
+      savedWhileDisconnected = true
+      const liveBatch = (
+        engine as unknown as { liveCommitBatch: { applyCounter: (mutate: (state: never) => never) => void } }
+      ).liveCommitBatch
+      liveBatch.applyCounter(() => {
+        throw new Error("counter fold failed")
+      })
+      await vi.waitFor(async () => expect((await db.workspaces.get("ws_1"))?.name).toBe("Counter repaired"))
+      expect(engine.getSyncCursor()).toBe("10")
+      expect((await db.syncCursors.get("ws_1:sync-log"))?.cursor).toBe("10")
+      await engine.refreshAfterConnectivityResume()
+      await vi.waitFor(async () => expect((await db.savedMessages.get(savedId))?.title).toBe(payload.saved.title))
+    } finally {
+      engine.destroy()
+      await db.savedMessages.delete(savedId)
+    }
   })
 
   it("a failed live-commit flush forces the same full snapshot reseed as a failed catch-up flush", async () => {
@@ -2218,6 +2458,7 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
     const deps = { ...makeReconnectDeps(), syncService: { catchUp } }
+    deps.workspaceService.bootstrap.mockImplementation(async () => ({ ...makeWorkspaceBootstrap(), syncHead: "500" }))
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 
@@ -2269,6 +2510,7 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
     const deps = { ...makeReconnectDeps(), syncService: { catchUp } }
+    deps.workspaceService.bootstrap.mockImplementation(async () => ({ ...makeWorkspaceBootstrap(), syncHead: "500" }))
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 

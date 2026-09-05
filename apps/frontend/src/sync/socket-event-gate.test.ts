@@ -197,10 +197,11 @@ describe("SocketEventGate", () => {
     }
   })
 
-  it("falls back to immediate application when the pause buffer overflows", () => {
+  it("drops the bounded buffer and requests a snapshot instead of applying overflow out of order", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const onOverflow = vi.fn()
     try {
-      const gate = new SocketEventGate(WS, { bufferLimit: 1 })
+      const gate = new SocketEventGate(WS, { bufferLimit: 1, onOverflow })
       const socket = new FakeSocket()
       const handler = vi.fn()
       gate.on("message:created", handler)
@@ -209,9 +210,11 @@ describe("SocketEventGate", () => {
       gate.pause()
       socket.trigger("message:created", { workspaceId: WS, syncId: "1" })
       socket.trigger("message:created", { workspaceId: WS, syncId: "2" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "3" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "4" })
 
-      // First buffered, second passed through live.
-      expect(handler.mock.calls).toEqual([[{ workspaceId: WS, syncId: "2" }]])
+      expect(handler).not.toHaveBeenCalled()
+      expect(onOverflow).toHaveBeenCalledTimes(2)
       expect(warnSpy).toHaveBeenCalled()
     } finally {
       warnSpy.mockRestore()

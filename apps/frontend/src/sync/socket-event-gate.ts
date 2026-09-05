@@ -22,12 +22,7 @@ interface BufferedEvent {
   syncId: bigint
 }
 
-/**
- * Soft cap on the pause buffer. Catch-up pauses for seconds at most; a
- * workspace producing this many live events in that window is far outside
- * normal load, and falling back to immediate (live) application there merely
- * reverts to today's delivery semantics for the overflow.
- */
+/** A dropped buffer requires an authoritative snapshot before live delivery can resume. */
 const DEFAULT_BUFFER_LIMIT = 2_000
 
 /**
@@ -65,6 +60,7 @@ export class SocketEventGate implements SyncEventSource {
     private readonly workspaceId: string,
     private readonly opts: {
       onApplied?: (syncId: string) => void
+      onOverflow?: () => void
       bufferLimit?: number
     } = {}
   ) {}
@@ -211,13 +207,15 @@ export class SocketEventGate implements SyncEventSource {
           this.buffer.push({ eventType, payload, syncId })
           return
         }
+        this.buffer = []
         if (!this.overflowWarned) {
           this.overflowWarned = true
-          console.warn("Sync gate buffer overflow — applying live events immediately", {
+          console.warn("Sync gate buffer overflow; forcing an authoritative snapshot", {
             workspaceId: this.workspaceId,
           })
         }
-        // Fall through: overflow reverts to live (immediate) application.
+        this.opts.onOverflow?.()
+        return
       }
     }
 
