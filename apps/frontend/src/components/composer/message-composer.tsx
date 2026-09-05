@@ -1071,13 +1071,18 @@ export function MessageComposer({
   // hosted picker (registered via context — the picker is a slot node).
   const stashedDraftsOpenRef = useRef<(() => void) | null>(null)
   const scheduledMessagesOpenRef = useRef<(() => void) | null>(null)
+  // The picker owns the pending list; the phone foot hides its trigger, so it
+  // publishes the count here for the "+" to wear.
+  const [scheduledCount, setScheduledCount] = useState(0)
+  const reportScheduledCount = useCallback((count: number | null) => setScheduledCount(count ?? 0), [])
   const stashedDraftsBridge = useMemo<StashedDraftsComposerBridge>(
     () => ({
       openRef: stashedDraftsOpenRef,
       openScheduledRef: scheduledMessagesOpenRef,
+      reportScheduledCount,
       focusComposer: () => richEditorRef.current?.focus(),
     }),
-    []
+    [reportScheduledCount]
   )
   const composerEmpty = isEmptyContent(content) && pendingAttachments.length === 0
 
@@ -1738,7 +1743,9 @@ export function MessageComposer({
                           onAttach: handleAttachClick,
                           onOpenAside,
                           onSchedule: scheduledMessagesTrigger ? () => scheduledMessagesOpenRef.current?.() : undefined,
+                          scheduledCount,
                           onOpenDrafts: stashedDraftsTrigger ? () => stashedDraftsOpenRef.current?.() : undefined,
+                          draftCount: stashedDrafts?.drafts.length ?? 0,
                         }}
                         side={actionSide}
                         trailingContent={

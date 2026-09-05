@@ -25,7 +25,7 @@ import { ScheduledActionDrawer } from "@/components/scheduled/scheduled-action-d
 import { ScheduledActions } from "@/components/scheduled/scheduled-actions"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
-import { useRegisterScheduledMessagesOpen } from "./stashed-drafts-open-context"
+import { useRegisterScheduledMessagesOpen, useReportScheduledCount } from "./stashed-drafts-open-context"
 import { useComposerAnchor } from "./use-composer-anchor"
 
 interface ScheduledMessagesPickerProps {
@@ -114,6 +114,9 @@ export function ScheduledMessagesPicker({
   const workSchedule = useEffectiveWorkSchedule(workspaceId)
 
   const count = items.length
+  // The phone foot hides this trigger and shows presence on its "+" instead,
+  // so the count has to travel up to the composer.
+  useReportScheduledCount(count)
   // Re-anchor relative-time labels each time the popover opens.
   const now = useMemo(() => new Date(), [open])
 

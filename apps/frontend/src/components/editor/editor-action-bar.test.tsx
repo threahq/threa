@@ -176,6 +176,40 @@ describe("action side", () => {
       editorEl.remove()
     })
 
+    it("names what is waiting on the + and counts it on the rows", async () => {
+      const user = userEvent.setup()
+      renderBar({
+        formatFoot: folded(),
+        footMenu: {
+          onAttach: vi.fn(),
+          onSchedule: vi.fn(),
+          scheduledCount: 1,
+          onOpenDrafts: vi.fn(),
+          draftCount: 2,
+        },
+      })
+
+      await user.click(screen.getByRole("button", { name: "More (2 saved drafts, 1 scheduled)" }))
+      expect(screen.getByRole("button", { name: "Drafts (2 saved)" })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Schedule (1 pending)" })).toBeInTheDocument()
+    })
+
+    it("stays unmarked when nothing is waiting, and ignores counts for rows it doesn't offer", async () => {
+      const user = userEvent.setup()
+      const { rerender } = renderBar({
+        formatFoot: folded(),
+        footMenu: { onAttach: vi.fn(), onSchedule: vi.fn(), scheduledCount: 0, onOpenDrafts: vi.fn(), draftCount: 0 },
+      })
+
+      await user.click(screen.getByRole("button", { name: "More" }))
+      expect(screen.getByRole("button", { name: "Drafts" })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Schedule" })).toBeInTheDocument()
+
+      // A foot without a Drafts row must not grow a dot for drafts it can't reach.
+      rerender({ footMenu: { onAttach: vi.fn(), draftCount: 3 } })
+      expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument()
+    })
+
     it("disables the + menu rows along with the bar", async () => {
       const user = userEvent.setup()
       renderBar({ formatFoot: folded(), footMenu: { onAttach: vi.fn(), onSchedule: vi.fn() }, disabled: true })

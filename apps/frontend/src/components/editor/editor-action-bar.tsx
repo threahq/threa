@@ -54,7 +54,12 @@ export interface EditorFootMenu {
   onAttach?: () => void
   onOpenAside?: () => void
   onSchedule?: () => void
+  /** Pending sends for this stream. The picker's trigger is off-screen in the
+   *  foot, so its presence dot rides the "+" and its count rides the row. */
+  scheduledCount?: number
   onOpenDrafts?: () => void
+  /** Saved drafts in this composer's pile; same reason as `scheduledCount`. */
+  draftCount?: number
 }
 
 const MARKS_SLIDE_MS = 200
@@ -382,15 +387,20 @@ function FootMenu({
   onAttach,
   onOpenAside,
   onSchedule,
+  scheduledCount = 0,
   onOpenDrafts,
+  draftCount = 0,
 }: FootMenuProps) {
   const [open, setOpen] = useState(false)
-  const row = (label: string, icon: ReactNode, action: () => void) => (
+  const row = (label: string, icon: ReactNode, action: () => void, badge?: { count: number; label: string }) => (
     <Button
       type="button"
       variant="ghost"
       size="sm"
       disabled={disabled}
+      // The count replaces the content-derived accessible name, so the label
+      // has to ride inside it.
+      aria-label={badge ? `${label} (${badge.label})` : undefined}
       className="h-9 w-full justify-start gap-2 px-2 text-sm"
       onPointerDown={(e) => e.preventDefault()}
       onClick={() => {
@@ -400,8 +410,16 @@ function FootMenu({
     >
       {icon}
       {label}
+      {badge && <span className="ml-auto text-xs tabular-nums text-muted-foreground">{badge.count}</span>}
     </Button>
   )
+  // What the menu holds, named for the trigger. Only rows the menu actually
+  // offers count: a foot without a Drafts row must not grow a dot for drafts
+  // it can't reach.
+  const waiting = [
+    onOpenDrafts && draftCount > 0 ? `${draftCount} saved draft${draftCount === 1 ? "" : "s"}` : null,
+    onSchedule && scheduledCount > 0 ? `${scheduledCount} scheduled` : null,
+  ].filter((part): part is string => part !== null)
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -409,12 +427,20 @@ function FootMenu({
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="More"
-          className={cn("h-7 w-7 shrink-0", open && "bg-accent text-accent-foreground")}
+          aria-label={waiting.length > 0 ? `More (${waiting.join(", ")})` : "More"}
+          className={cn("relative h-7 w-7 shrink-0", open && "bg-accent text-accent-foreground")}
           onPointerDown={(e) => e.preventDefault()}
           disabled={disabled}
         >
           <Plus className="h-4 w-4" />
+          {waiting.length > 0 && (
+            // Same presence dot the drafts/scheduled triggers wear on desktop —
+            // the counts themselves are on the rows behind it.
+            <span
+              className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-muted-foreground/60 pointer-events-none"
+              aria-hidden
+            />
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -429,8 +455,20 @@ function FootMenu({
       >
         {onAttach && row("Attach files", <Paperclip className="h-4 w-4" />, onAttach)}
         {onOpenAside && row("Open an aside", <MessageSquareDashed className="h-4 w-4" />, onOpenAside)}
-        {onSchedule && row("Schedule", <CalendarClock className="h-4 w-4" />, onSchedule)}
-        {onOpenDrafts && row("Drafts", <FileEdit className="h-4 w-4" />, onOpenDrafts)}
+        {onSchedule &&
+          row(
+            "Schedule",
+            <CalendarClock className="h-4 w-4" />,
+            onSchedule,
+            scheduledCount > 0 ? { count: scheduledCount, label: `${scheduledCount} pending` } : undefined
+          )}
+        {onOpenDrafts &&
+          row(
+            "Drafts",
+            <FileEdit className="h-4 w-4" />,
+            onOpenDrafts,
+            draftCount > 0 ? { count: draftCount, label: `${draftCount} saved` } : undefined
+          )}
         {onMobileExpandedChange &&
           row(
             mobileExpanded ? "Minimize editor" : "Expand editor",
