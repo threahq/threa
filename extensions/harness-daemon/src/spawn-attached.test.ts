@@ -122,7 +122,7 @@ describe("runAttachedSpawn", () => {
     expect(result).toBe(RESULT)
   })
 
-  test("an unreadable brief file reports and dies before spawn runs", async () => {
+  test("an unreadable brief file reports, removes the file, and dies before spawn runs", async () => {
     const failure = new Error("ENOENT: no such file")
     const { deps, recorded } = makeDeps({ readBriefResult: failure })
 
@@ -133,6 +133,23 @@ describe("runAttachedSpawn", () => {
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/missing.md",
       "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: ENOENT: no such file",
+      "unlinkBrief:/tmp/missing.md",
+    ])
+  })
+
+  test("a spawn result with no identity reports the undelivered brief instead of dying silently", async () => {
+    const { instanceId: _instanceId, ...withoutIdentity } = RESULT
+    const { deps, recorded } = makeDeps({ spawnResult: withoutIdentity })
+
+    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
+      "spawned agent has no instanceId to brief"
+    )
+
+    expect(recorded.calls).toEqual([
+      "readBrief:/tmp/brief.md",
+      "spawn:fix-sidebar",
+      "postToRoot:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: spawned agent has no instanceId to brief",
+      "unlinkBrief:/tmp/brief.md",
     ])
   })
 

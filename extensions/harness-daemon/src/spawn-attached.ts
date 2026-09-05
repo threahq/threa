@@ -37,9 +37,9 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
   if (!options.attach) die("runAttachedSpawn requires options.attach")
   const rootStreamId = options.attach.rootStreamId
 
-  // Set once the file is read: from there on the prompt is in memory and the file has no
-  // second reader, so it goes whichever way this ends. Leaving it would strand the user's
-  // prompt in tmpdir forever — the launcher unref'd and cannot clean up.
+  // Claimed before the read, not after it: the file is this process's to remove
+  // whichever way the spawn ends. Leaving it would strand the user's prompt in
+  // tmpdir forever — the launcher unref'd and cannot clean up.
   let briefPath: string | undefined
   try {
     let content: string | undefined
@@ -47,8 +47,8 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
     try {
       // Read before spawning: an unreadable or blank brief must create nothing (INV-11).
       if (options.briefFile) {
-        content = deps.readBrief(options.briefFile)
         briefPath = options.briefFile
+        content = deps.readBrief(briefPath)
         if (!content.trim()) die(`--brief-file ${briefPath} is empty`)
       }
       result = await deps.spawn(options)
@@ -58,9 +58,9 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
     }
 
     if (content !== undefined) {
-      const instanceId = result.instanceId ?? die("spawned agent has no instanceId to brief")
-      const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
       try {
+        const instanceId = result.instanceId ?? die("spawned agent has no instanceId to brief")
+        const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
         await deps.brief({ instanceId, runtimeSessionId, content })
       } catch (error) {
         await reportToRoot(
