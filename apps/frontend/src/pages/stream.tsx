@@ -81,7 +81,7 @@ export function StreamPage() {
   const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
+  const { isPanelOpen, closePanel, setFocusedPane } = usePanel()
   const {
     containerRef,
     panelWidth,
@@ -967,7 +967,7 @@ export function StreamPage() {
 
         {mobileTakeover ? (
           <div className={layout.panel}>
-            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
           </div>
         ) : (
           <ThreadPanelSlot
@@ -987,7 +987,7 @@ export function StreamPage() {
             onResizeKeyDown={handleResizeKeyDown}
             inert={asideStage}
           >
-            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>
         )}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />

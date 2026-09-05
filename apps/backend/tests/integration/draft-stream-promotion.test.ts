@@ -68,9 +68,15 @@ describe("draft stream promotion", () => {
     const members = await StreamMemberRepository.list(pool, { streamId: first.id })
     expect(members.map((member) => member.memberId)).toEqual([owner])
     const created = (await OutboxRepository.fetchAfterId(pool, baseline)).filter(
-      (event) => event.eventType === "stream:created" && event.payload.streamId === first.id
+      (event) => event.eventType === "stream:created"
     )
-    expect(created).toHaveLength(1)
+    expect(created.map((event) => event.payload)).toEqual([
+      {
+        workspaceId: wsId,
+        streamId: first.id,
+        stream: expect.objectContaining({ id: first.id, type: "scratchpad", createdBy: owner }),
+      },
+    ])
   })
 
   test("a retried create returns the existing scratchpad without a second stream:created", async () => {

@@ -16,7 +16,9 @@ interface PanelHostProps {
  * through this, so either surface can open either kind. Keyed on the panel id so
  * switching targets remounts cleanly — except a draft thread promoted to its real
  * stream, which keeps the draft's key so the panel carries its state across the
- * handoff instead of remounting.
+ * handoff instead of remounting. Hosts must not key this element themselves: an
+ * outer `key={panelId}` unmounts the whole host on promotion, before the key
+ * below can preserve anything.
  */
 export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()

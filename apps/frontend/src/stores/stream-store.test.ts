@@ -886,9 +886,11 @@ describe("useStreamEvents across a draft promotion", () => {
 
     const { result } = renderHook(() => useStreamEvents(realId, null))
 
-    expect(result.current?.map((event) => event.id)).toEqual(["temp_promo"])
+    // Spread off the window's `__streamId`/`__tailFloor` stamps so the rows
+    // themselves are what gets compared.
+    expect(result.current?.map((event) => ({ ...event }))).toEqual([moved])
     await waitFor(() => expect(getDraftPromotionEvents(realId)).toBeNull())
-    expect(result.current?.map((event) => event.id)).toEqual(["temp_promo"])
+    expect(result.current?.map((event) => ({ ...event }))).toEqual([moved])
   })
 
   it("holds the handoff while the real id's own window is still empty", async () => {
