@@ -173,19 +173,19 @@ export class SocketEventGate implements SyncEventSource {
 
   /**
    * Invokes every registered handler for `eventType` with `payload`, awaiting
-   * them all. Used by the catch-up loop (log entries) and the resume splice;
-   * a rejecting handler is logged and skipped — same net effect as a live
-   * handler throwing today, and the entry is not redelivered either way.
+   * them all. Used by the catch-up loop (log entries) and the resume splice.
+   * Every handler runs even when one rejects; the rejections are then rethrown
+   * so the caller decides: catch-up fails the entry (the cursor stays below it
+   * and the next run retries it), the live path logs and moves on.
    */
   async dispatch(eventType: string, payload: unknown): Promise<void> {
     const set = this.handlers.get(eventType)
     if (!set || set.size === 0) return
     const snapshot = Array.from(set)
     const results = await Promise.allSettled(snapshot.map(async (handler) => handler(payload)))
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.error("Sync catch-up handler failed", { eventType, error: result.reason })
-      }
+    const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `${failures.length} of ${snapshot.length} handlers failed for ${eventType}`)
     }
   }
 
@@ -223,7 +223,9 @@ export class SocketEventGate implements SyncEventSource {
 
     // Live path: apply immediately without awaiting (matches raw socket
     // delivery), advancing the cursor for syncId-bearing payloads.
-    void this.dispatch(eventType, args[0])
+    this.dispatch(eventType, args[0]).catch((error: unknown) => {
+      console.error("Sync live handler failed", { eventType, error })
+    })
     if (payload && payload.workspaceId === this.workspaceId && typeof payload.syncId === "string") {
       this.opts.onApplied?.(payload.syncId)
     }

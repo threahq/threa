@@ -175,23 +175,45 @@ describe("SocketEventGate", () => {
     expect(seen).toEqual(["15", "20"])
   })
 
-  it("dispatch awaits all handlers and survives a rejecting one", async () => {
+  it("dispatch runs every handler, then rejects with the failures", async () => {
+    const gate = new SocketEventGate(WS)
+    let settled = false
+    gate.on("saved:upserted", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      settled = true
+    })
+    gate.on("saved:upserted", async () => {
+      throw new Error("boom")
+    })
+
+    await expect(gate.dispatch("saved:upserted", { workspaceId: WS })).rejects.toMatchObject({
+      errors: [expect.objectContaining({ message: "boom" })],
+    })
+    expect(settled).toBe(true)
+  })
+
+  it("a live handler failure is logged and does not stall delivery", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     try {
+      const socket = new FakeSocket()
       const gate = new SocketEventGate(WS)
-      let settled = false
-      gate.on("saved:upserted", async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5))
-        settled = true
-      })
-      gate.on("saved:upserted", async () => {
+      gate.attach(asSocket(socket))
+      const seen: string[] = []
+      gate.on("message:created", async () => {
         throw new Error("boom")
       })
+      gate.on("message:created", (payload: unknown) => {
+        seen.push((payload as { syncId: string }).syncId)
+      })
 
-      await gate.dispatch("saved:upserted", { workspaceId: WS })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "7" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
 
-      expect(settled).toBe(true)
-      expect(errorSpy).toHaveBeenCalled()
+      expect(seen).toEqual(["7"])
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Sync live handler failed",
+        expect.objectContaining({ eventType: "message:created" })
+      )
     } finally {
       errorSpy.mockRestore()
     }

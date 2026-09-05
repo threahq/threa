@@ -1337,12 +1337,97 @@ describe("SyncEngine sync cursor (active mode)", () => {
     expect(oneWorkspaceList.length).toBeGreaterThan(wsPrefix.length)
     expect(oneWorkspaceList.slice(0, wsPrefix.length)).toEqual([...wsPrefix])
     expect(conversationKeys.workspaceList("ws_2", {}).slice(0, wsPrefix.length)).not.toEqual([...wsPrefix])
-    // Collapsing re-derives via the (already atomic) bootstrap, so it never opens
-    // a replay apply-window.
+    // The apply window covers the whole run, snapshot included, so the batched
+    // hooks re-read once after the bootstrap has landed.
     applyWindow.stop()
-    expect(applyWindow.transitions).toEqual([])
+    expect(applyWindow.transitions).toEqual([true, false])
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
+  })
+
+  it("holds the apply window open while the collapse bootstrap lands", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const bigPage = Array.from({ length: CATCHUP_COLLAPSE_THRESHOLD }, (_, i) =>
+      userAddedEntry(String(11 + i), `user_${i}`)
+    )
+    const catchUp = vi.fn().mockResolvedValue({ entries: bigPage, head: "5000" })
+    const deps = makeActiveDeps(catchUp)
+    const bootstrap = deps.workspaceService.bootstrap
+    const windowOpenDuringBootstrap: boolean[] = []
+    deps.workspaceService.bootstrap = vi.fn(async (...args: Parameters<typeof bootstrap>) => {
+      windowOpenDuringBootstrap.push(isApplyWindowOpen())
+      return bootstrap(...args)
+    })
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("5000"))
+    // First call is the connect bootstrap (before catch-up); the second is the
+    // collapse, which must run behind the window so its snapshot paints together
+    // with the run's close.
+    expect(windowOpenDuringBootstrap).toEqual([false, true])
+    expect(isApplyWindowOpen()).toBe(false)
+    engine.destroy()
+  })
+
+  it("keeps the cursor at the last applied entry when the collapse bootstrap fails", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const bigPage = Array.from({ length: CATCHUP_COLLAPSE_THRESHOLD }, (_, i) =>
+      userAddedEntry(String(11 + i), `user_${i}`)
+    )
+    const catchUp = vi.fn().mockResolvedValue({ entries: bigPage, head: "5000" })
+    const deps = makeActiveDeps(catchUp)
+    const bootstrap = deps.workspaceService.bootstrap
+    let calls = 0
+    deps.workspaceService.bootstrap = vi.fn(async (...args: Parameters<typeof bootstrap>) => {
+      calls += 1
+      if (calls === 1) return bootstrap(...args)
+      throw new Error("snapshot fetch failed")
+    })
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const engine = new SyncEngine(deps)
+    try {
+      await engine.onConnect(asSocket(new MockSocket()))
+
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith("Sync catch-up failed", expect.anything()))
+      // Advancing to head before the snapshot landed would leave a cursor above
+      // state the app never received, and advance never rewinds. Staying at 10
+      // lets the next heartbeat retry the collapse.
+      expect(engine.getSyncCursor()).toBe("10")
+      expect(isApplyWindowOpen()).toBe(false)
+    } finally {
+      errorSpy.mockRestore()
+      engine.destroy()
+    }
+  })
+
+  it("fails the run and stops advancing when a replayed entry's handler rejects", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({ entries: [userAddedEntry("11", "user_c"), userAddedEntry("12", "user_d")], head: "12" })
+      .mockResolvedValue(emptyPage("12"))
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+    // A hook-mounted handler whose write fails on the second entry: the first
+    // entry's cursor advance sticks, the second does not, and the run reports
+    // the failure instead of skipping the entry and moving on.
+    engine.getLiveEventSource()!.on("workspace_user:added", async (payload: { user: { id: string } }) => {
+      if (payload.user.id === "user_d") throw new Error("write failed")
+    })
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      await engine.onConnect(asSocket(new MockSocket()))
+
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith("Sync catch-up failed", expect.anything()))
+      expect(engine.getSyncCursor()).toBe("11")
+      expect(await db.workspaceUsers.get("user_c")).toBeDefined()
+      expect(isApplyWindowOpen()).toBe(false)
+    } finally {
+      errorSpy.mockRestore()
+      engine.destroy()
+    }
   })
 
   it("replays a small catch-up gap through the live handlers without collapsing", async () => {

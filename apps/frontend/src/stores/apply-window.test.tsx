@@ -44,22 +44,15 @@ describe("apply window gate", () => {
     expect(transitions).toEqual([true, false])
   })
 
-  it("force-closes a stranded window via the watchdog", () => {
+  it("stays open until its opener closes it, however long that takes", () => {
+    // A clock-driven close would paint a half-applied refresh. A stuck refresh
+    // is cancelled by its request timeout instead, which reaches the opener's
+    // own endApplyWindow.
     vi.useFakeTimers()
     beginApplyWindow()
+    act(() => vi.advanceTimersByTime(60_000))
     expect(isApplyWindowOpen()).toBe(true)
-    act(() => vi.advanceTimersByTime(5_000))
-    expect(isApplyWindowOpen()).toBe(false)
-  })
-
-  it("does not push the watchdog deadline out on a nested begin", () => {
-    vi.useFakeTimers()
-    beginApplyWindow() // arms the 5s watchdog at depth 1
-    act(() => vi.advanceTimersByTime(3_000))
-    beginApplyWindow() // nested (depth 2) — must NOT re-arm and extend the deadline
-    act(() => vi.advanceTimersByTime(2_000)) // 5s total since the FIRST open
-    // Fires 5s from the first open regardless of the nested begin; a re-arming
-    // watchdog would have reset to t=8s and still be open here.
+    endApplyWindow()
     expect(isApplyWindowOpen()).toBe(false)
   })
 })

@@ -1490,14 +1490,43 @@ export class SyncEngine {
    * skipped — without this an already-open Saved / Scheduled / Activity view
    * would sit stale until it remounts (and the board feed would keep last
    * session's cards). Invalidation is a no-op for unmounted
-   * queries (they refetch on next mount) and refetches the open ones.
+   * queries (they refetch on next mount); the returned promise settles once
+   * the mounted ones have refetched, so the caller can land them together
+   * with the snapshot.
    */
-  private invalidateReplayHealedQueries(): void {
+  private refetchReplayHealedQueries(): Promise<unknown> {
     const { queryClient } = this.deps
-    queryClient.invalidateQueries({ queryKey: savedKeys.all })
-    queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
-    queryClient.invalidateQueries({ queryKey: activityKeys.all })
-    queryClient.invalidateQueries({ queryKey: conversationKeys.workspaceLists(this.workspaceId) })
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: savedKeys.all }),
+      queryClient.invalidateQueries({ queryKey: scheduledKeys.all }),
+      queryClient.invalidateQueries({ queryKey: activityKeys.all }),
+      queryClient.invalidateQueries({ queryKey: conversationKeys.workspaceLists(this.workspaceId) }),
+    ])
+  }
+
+  /**
+   * Heals a gap the log cannot replay (below the retention floor, or too
+   * large to trickle) with one full workspace snapshot. `head` was read
+   * BEFORE the snapshot is fetched, so the snapshot covers everything at or
+   * below it (read-before-stamp; the race falls on the duplicate side).
+   *
+   * The cursor moves to `head` only AFTER the snapshot has landed:
+   * bootstrapWorkspace swallows its failure into lastWorkspaceError, and
+   * advance never rewinds, so stamping first would leave a cursor above
+   * state the app never received and nothing would ever refetch it. On
+   * failure the cursor stays at the last applied entry and the next
+   * heartbeat retries the run.
+   */
+  private async healGapWithSnapshot(head: string): Promise<bigint> {
+    await Promise.all([this.runBootstrap(true, { forceFull: true }), this.refetchReplayHealedQueries()])
+    if (this.isDestroyed || this.lastWorkspaceError !== null) {
+      throw new Error("Forced bootstrap did not land; cursor left at the last applied entry", {
+        cause: this.lastWorkspaceError,
+      })
+    }
+    this.syncLogCursor?.advance(head)
+    this.noteSeenHead(head)
+    return BigInt(head)
   }
 
   /**
@@ -1529,14 +1558,6 @@ export class SyncEngine {
     // — live behavior.
     let appliedThrough: bigint | null = null
 
-    // Opened the first time this run applies replayed entries (see
-    // beginApplyWindow): holds the reactive read layer steady so the sidebar,
-    // badges, memberships and drafts paint the replay's FINAL state once when it
-    // closes instead of trickling per entry. Not opened for an empty page or a
-    // collapse-to-bootstrap (the snapshot already lands atomically). Closed in
-    // the finally, so a throw or early return can never strand it open.
-    let applyWindowOpen = false
-
     // Counter and preview updates replayed below fold into this batch (via the
     // handlers' getCatchUpBatch) instead of writing per-entry, so the
     // unread/activity badges and the activity-sorted sidebar paint the final
@@ -1559,7 +1580,14 @@ export class SyncEngine {
 
     const capture = getPerfCapture()
     const stopReplay = capture.time("catchup.replay")
+    let fetched = 0
 
+    // Holds the reactive read layer steady for the whole run (see
+    // beginApplyWindow) so the sidebar, badges, memberships and drafts paint
+    // the run's FINAL state once when it closes, whether that state came from
+    // replayed entries or from a snapshot the run collapsed to. Closed in the
+    // finally, so a throw or early return can never strand it open.
+    beginApplyWindow()
     try {
       await cursorStore.load()
       const cursorBefore = cursorStore.get()
@@ -1579,7 +1607,6 @@ export class SyncEngine {
       appliedThrough = BigInt(cursorBefore)
       let head = cursorBefore
       let pages = 0
-      let fetched = 0
       const byEventType: Record<string, number> = {}
 
       while (pages < MAX_CATCHUP_PAGES) {
@@ -1592,32 +1619,19 @@ export class SyncEngine {
         head = response.head
         if (response.requiresBootstrap) {
           // The cursor is below the workspace's retained sync-log floor:
-          // retention pruned the entries this run would replay, so the log
-          // can't heal the gap. Jump the cursor to head and re-bootstrap —
-          // the workspace snapshot is the authority for everything <= head.
-          // Read-before-stamp holds: response.head was read before the
-          // bootstrap fired here, so the stamped cursor is a lower bound of
-          // the upcoming snapshot (the race falls on the duplicate side). The
-          // splice (appliedThrough = head) then drops buffered events <= head,
-          // which the snapshot already covers, and applies only those above it.
+          // retention pruned the entries this run would replay, so only the
+          // full workspace snapshot can heal the gap (the slim reconnect path
+          // re-fetches per-stream deltas only). Awaited so the snapshot lands
+          // BEFORE the finally's gate.resume splices buffered live events
+          // (syncId > head) on top; the splice drops buffered events <= head,
+          // which the snapshot already covers.
           console.info("Sync catch-up below retention floor; re-bootstrapping", {
             workspaceId: this.workspaceId,
             trigger,
             cursorBefore,
             head: response.head,
           })
-          cursorStore.advance(response.head)
-          this.noteSeenHead(response.head)
-          appliedThrough = BigInt(response.head)
-          // forceFull: the cursor is below the retained floor, so catch-up has
-          // no entries to replay — only the full workspace snapshot is
-          // authoritative for everything <= head. The slim reconnect path
-          // (per-stream deltas only) would leave the rest stale. Await it so the
-          // snapshot lands BEFORE the finally's gate.resume splices buffered live
-          // events (syncId > head) on top — a fire-and-forget bootstrap could
-          // finish after the splice and overwrite (regress) events above head.
-          this.invalidateReplayHealedQueries()
-          await this.runBootstrap(true, { forceFull: true })
+          appliedThrough = await this.healGapWithSnapshot(response.head)
           return
         }
         if (response.entries.length === 0) {
@@ -1635,15 +1649,8 @@ export class SyncEngine {
         // atomic snapshot rather than replaying every missed entry through the
         // live handlers (see CATCHUP_COLLAPSE_THRESHOLD). Only the FIRST page
         // decides (pages === 0) — once entries have been applied, finish the
-        // replay rather than re-fetch and re-apply. The mechanics mirror the
-        // below-floor branch exactly: jump the cursor to head (the snapshot owns
-        // everything <= head), record the head as seen, bound the resume splice
-        // at head, and force a full bootstrap. Read-before-stamp holds — head was
-        // read before the bootstrap fires, so the snapshot is a lower bound and
-        // the splice drops only buffered events the snapshot already covers. The
-        // bootstrap is awaited so its snapshot lands BEFORE the finally's
-        // gate.resume splices the buffered events on top — fire-and-forget would
-        // let the snapshot finish after the splice and regress events above head.
+        // replay rather than re-fetch and re-apply. Same mechanics as the
+        // below-floor branch above.
         if (pages === 0 && response.entries.length >= CATCHUP_COLLAPSE_THRESHOLD) {
           capture.mark("catchup.collapse", response.entries.length)
           console.info("Sync catch-up gap large; collapsing to a full bootstrap", {
@@ -1653,23 +1660,8 @@ export class SyncEngine {
             head: response.head,
             firstPageEntries: response.entries.length,
           })
-          cursorStore.advance(response.head)
-          this.noteSeenHead(response.head)
-          appliedThrough = BigInt(response.head)
-          this.invalidateReplayHealedQueries()
-          await this.runBootstrap(true, { forceFull: true })
+          appliedThrough = await this.healGapWithSnapshot(response.head)
           return
-        }
-
-        // Committed to replaying this page (not collapsing): hold the reactive
-        // read layer steady for the whole replay so every batched store hook
-        // re-reads once on close instead of once per entry. Idempotent — opened
-        // on the first applied page and kept open across subsequent pages. MUST
-        // stay below the collapse/empty returns above: opening on a collapsed or
-        // empty page would freeze the UI and then settle mid-bootstrap.
-        if (!applyWindowOpen) {
-          beginApplyWindow()
-          applyWindowOpen = true
         }
 
         if (pages === 0) capture.mark("catchup.serialReplay", response.entries.length)
@@ -1706,6 +1698,12 @@ export class SyncEngine {
           truncated: pages >= MAX_CATCHUP_PAGES,
         })
       }
+    } catch (error) {
+      // The cursor stopped at the last entry that applied, so the next
+      // heartbeat retries from there; the window closes below and the UI
+      // shows what had landed, never a half-applied entry.
+      capture.mark("catchup.abandoned", fetched)
+      throw error
     } finally {
       // Commit the coalesced counters + previews once, BEFORE the resume splice,
       // so the badges and sidebar jump straight to the catch-up's final state
@@ -1746,8 +1744,7 @@ export class SyncEngine {
       // Release the held read layer last — after the batch flush AND the resume
       // splice have written — so the one re-read every batched hook does on close
       // reflects the replay's final state plus the spliced live events together.
-      // Unconditional (even on destroy/throw) so the window never strands open.
-      if (applyWindowOpen) endApplyWindow()
+      endApplyWindow()
       stopReplay()
     }
   }
