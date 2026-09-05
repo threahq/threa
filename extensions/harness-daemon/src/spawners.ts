@@ -34,20 +34,6 @@ export function configuredThreaBaseUrl(config: ThreaChannelConfig): string {
   return (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
 }
 
-export interface ThreadSessionLinkBody {
-  runtimeKind: string
-  instanceId: string
-  runtimeSessionId: string
-  displayName: string
-  localCwd: string
-  attachTo: { rootStreamId: string; anchorId: string }
-}
-
-export interface ThreadSessionLink {
-  rootStreamId: string
-  activeStreamId: string
-}
-
 /** A missing credential dies (INV-11) before either spawner creates a tmux window. */
 export function requireThreadSessionTarget(config: ThreaChannelConfig, purpose: string): ThreaTarget {
   const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
@@ -58,8 +44,15 @@ export function requireThreadSessionTarget(config: ThreaChannelConfig, purpose: 
 
 export async function prelinkThreadSession(
   target: ThreaTarget,
-  body: ThreadSessionLinkBody
-): Promise<ThreadSessionLink> {
+  body: {
+    runtimeKind: string
+    instanceId: string
+    runtimeSessionId: string
+    displayName: string
+    localCwd: string
+    attachTo: { rootStreamId: string; anchorId: string }
+  }
+): Promise<{ rootStreamId: string; activeStreamId: string }> {
   const response = await postThrea(target, "/bot-runtime/sessions", body)
   if (!response.ok) die(`harnessd: could not link thread session: ${await failureExcerpt(response)}`)
   const json = (await response.json()) as { data?: { rootStreamId?: string; activeStreamId?: string } }

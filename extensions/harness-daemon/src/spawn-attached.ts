@@ -5,18 +5,16 @@ import { postScratchpadNotice } from "./oom"
 import { failureExcerpt, postThrea } from "./threa-http"
 import type { SpawnOptions, SpawnResult } from "./types"
 
-export interface AttachedSpawnDeps {
-  spawn: (options: SpawnOptions) => Promise<SpawnResult>
-  readBrief: (path: string) => string
-  unlinkBrief: (path: string) => void
-  brief: (body: { instanceId: string; runtimeSessionId: string; content: string }) => Promise<void>
+export interface RootReporterDeps {
   postToRoot: (rootStreamId: string, content: string) => Promise<void>
   log: (message: string) => void
 }
 
-export interface RootReporterDeps {
-  postToRoot: (rootStreamId: string, content: string) => Promise<void>
-  log: (message: string) => void
+export interface AttachedSpawnDeps extends RootReporterDeps {
+  spawn: (options: SpawnOptions) => Promise<SpawnResult>
+  readBrief: (path: string) => string
+  unlinkBrief: (path: string) => void
+  brief: (body: { instanceId: string; runtimeSessionId: string; content: string }) => Promise<void>
 }
 
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))

@@ -187,7 +187,7 @@ function sharedDirectoryClaimants(
   ]
 }
 
-export type WindowDecision =
+type WindowDecision =
   | { kind: "none" }
   /** Forget the record, destroy nothing: the directory's ownership is in doubt. */
   | { kind: "drain"; reason: string }
@@ -195,7 +195,7 @@ export type WindowDecision =
   | { kind: "refuse"; status: ReapStatus; reason: string }
 
 /** What {@link windDownLinkedWorktree} needs decided about the pane before it may destroy anything. */
-export type WindDownWindow = { kind: "none" } | { kind: "kill"; pane: LocalTmuxPane }
+type WindDownWindow = { kind: "none" } | { kind: "kill"; pane: LocalTmuxPane }
 
 /** The slice of {@link ReapDeps} {@link decideWindow} reads, so `done` can apply the same vetoes without faking a reap. */
 export type WindowDecisionDeps = Pick<ReapDeps, "links" | "identities" | "claudeProcessesIn" | "canonicalPath">

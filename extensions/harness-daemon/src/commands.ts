@@ -59,6 +59,7 @@ import {
   type RuntimePreflightResult,
   type ScratchpadStatus,
 } from "./resume"
+import type { ThreaTarget } from "./threa-http"
 import { attachedTmuxSession, capturePane, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { createVanishedPaneSweep } from "./vanished"
@@ -143,11 +144,6 @@ export async function spawnAgent(options: SpawnOptions): Promise<SpawnResult> {
     })
     if (result.output) process.stdout.write(result.output)
     console.log(`harnessd: recorded ${id}`)
-    if (options.attach) {
-      console.log(
-        `harnessd: attached instance=${result.instanceId} session=${result.runtimeSessionId} root=${options.attach.rootStreamId} thread=${result.activeStreamId}`
-      )
-    }
     return result
   } catch (error) {
     const { output: _output, ...partial } = error instanceof RuntimeSpawnError ? error.partial : {}
@@ -163,7 +159,7 @@ export async function spawnAgent(options: SpawnOptions): Promise<SpawnResult> {
 }
 
 /** The first Threa target the local configs and environment agree on, for a pass that must talk to the server. */
-export function threaTarget(purpose: string): { baseUrl: string; workspaceId: string; apiKey: string } {
+export function threaTarget(purpose: string): ThreaTarget {
   const targetFor = (config: { baseUrl?: string; workspaceId?: string; apiKey?: string }) => {
     const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
     const apiKey = process.env.THREA_API_KEY || config.apiKey
