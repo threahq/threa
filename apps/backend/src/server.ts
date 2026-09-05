@@ -18,9 +18,9 @@ import {
   StubApiKeyService,
   SessionCookies,
   sessionCookieConfigFromEnv,
-  PostHogErrorReporter,
-  DisabledErrorReporter,
-  type ErrorReporter,
+  PostHogAnalyticsReporter,
+  DisabledAnalyticsReporter,
+  type AnalyticsReporter,
 } from "@threa/backend-common"
 import { BotChannelService } from "./features/api-keys"
 import { UserApiKeyService as UserApiKeyServiceImpl } from "./features/user-api-keys"
@@ -285,7 +285,7 @@ export interface ServerInstance {
   poolMonitor: PoolMonitor
   port: number
   fastShutdown: boolean
-  errorReporter: ErrorReporter
+  analyticsReporter: AnalyticsReporter
   stop: () => Promise<void>
 }
 
@@ -832,9 +832,9 @@ export async function startServer(): Promise<ServerInstance> {
   const giphyService = new GiphyService({ config: config.giphy })
 
   const isProduction = process.env.NODE_ENV === "production"
-  const errorReporter: ErrorReporter = config.posthog
-    ? new PostHogErrorReporter({ config: config.posthog, service: "backend", region: config.region })
-    : new DisabledErrorReporter()
+  const analyticsReporter: AnalyticsReporter = config.posthog
+    ? new PostHogAnalyticsReporter({ config: config.posthog, service: "backend", region: config.region })
+    : new DisabledAnalyticsReporter()
   const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction })
   const server = createServer(app)
   // Node closes idle keep-alive connections after 5s by default; a client that
@@ -933,7 +933,7 @@ export async function startServer(): Promise<ServerInstance> {
     controlPlaneClient,
     costService,
     accessLogService,
-    errorReporter,
+    analyticsReporter,
     posthog: config.posthog,
   })
 
@@ -1911,7 +1911,7 @@ export async function startServer(): Promise<ServerInstance> {
         server.close((err) => (err ? reject(err) : resolve()))
       })
     }
-    await errorReporter.shutdown()
+    await analyticsReporter.shutdown()
     logger.info("Closing database pools...")
     // Final responses/disconnects fire-and-forget audit rows; bounded drain so
     // they don't lose the race against pool.end().
@@ -1930,7 +1930,7 @@ export async function startServer(): Promise<ServerInstance> {
     poolMonitor,
     port: config.port,
     fastShutdown: config.fastShutdown,
-    errorReporter,
+    analyticsReporter,
     stop,
   }
 }

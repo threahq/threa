@@ -85,7 +85,7 @@ import {
   type AuthService,
   type SessionCookies,
   type ApiKeyService,
-  type ErrorReporter,
+  type AnalyticsReporter,
   type PostHogConfig,
 } from "@threa/backend-common"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./middleware/public-api-auth"
@@ -208,7 +208,7 @@ interface Dependencies {
   controlPlaneClient: ControlPlaneClient | null
   costService: AICostServiceLike
   accessLogService: AccessLogService
-  errorReporter: ErrorReporter
+  analyticsReporter: AnalyticsReporter
   posthog: PostHogConfig | null
 }
 
@@ -279,7 +279,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ai,
     controlPlaneClient,
     accessLogService,
-    errorReporter,
+    analyticsReporter,
     posthog,
   } = deps
 
@@ -2044,5 +2044,5 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // ships un-logged access.
   assertAuditCoverage(app)
 
-  app.use(createErrorHandler({ errorReporter }))
+  app.use(createErrorHandler({ analyticsReporter }))
 }

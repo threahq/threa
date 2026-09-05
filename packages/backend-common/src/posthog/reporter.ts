@@ -7,21 +7,31 @@ export interface ExceptionContext {
   properties?: Record<string, unknown>
 }
 
-export interface ErrorReporter {
+export interface AnalyticsEvent {
+  distinctId: string
+  event: string
+  properties?: Record<string, unknown>
+  groups?: Record<string, string>
+}
+
+export interface AnalyticsReporter {
   captureException(error: unknown, context?: ExceptionContext): void
+  captureEvent(event: AnalyticsEvent): void
   /** Flushes queued events; resolves within the bound even if the transport hangs. */
   shutdown(): Promise<void>
 }
 
-export class DisabledErrorReporter implements ErrorReporter {
+export class DisabledAnalyticsReporter implements AnalyticsReporter {
   captureException(_error: unknown, _context?: ExceptionContext): void {}
+
+  captureEvent(_event: AnalyticsEvent): void {}
 
   async shutdown(): Promise<void> {}
 }
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000
 
-export class PostHogErrorReporter implements ErrorReporter {
+export class PostHogAnalyticsReporter implements AnalyticsReporter {
   private readonly client: PostHog
   private readonly service: string
   private readonly region: string | null
@@ -59,6 +69,19 @@ export class PostHogErrorReporter implements ErrorReporter {
       })
     } catch (reportingError) {
       logger.warn({ err: reportingError }, "PostHog captureException failed")
+    }
+  }
+
+  captureEvent(event: AnalyticsEvent): void {
+    try {
+      this.client.capture({
+        distinctId: event.distinctId,
+        event: event.event,
+        properties: { service: this.service, region: this.region, ...event.properties },
+        groups: event.groups,
+      })
+    } catch (reportingError) {
+      logger.warn({ err: reportingError }, "PostHog capture failed")
     }
   }
 

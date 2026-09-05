@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { gunzipSync } from "node:zlib"
 import type { PostHogOptions } from "posthog-node"
-import { DisabledErrorReporter, PostHogErrorReporter } from "./error-reporter"
+import { DisabledAnalyticsReporter, PostHogAnalyticsReporter } from "./reporter"
 
 type FetchFn = NonNullable<PostHogOptions["fetch"]>
 type FetchOptions = Parameters<FetchFn>[1]
@@ -30,18 +30,23 @@ function okResponse(): FetchResponse {
   return { status: 200, text: async () => "", json: async () => ({}) } as FetchResponse
 }
 
-describe("PostHogErrorReporter", () => {
+function createRecordingReporter(): { reporter: PostHogAnalyticsReporter; requests: RecordedRequest[] } {
+  const requests: RecordedRequest[] = []
+  const reporter = new PostHogAnalyticsReporter({
+    config: { projectToken: "phc_test", host: "https://eu.i.posthog.com" },
+    service: "backend",
+    region: "eu-north-1",
+    fetch: async (url, options) => {
+      requests.push({ url, options })
+      return okResponse()
+    },
+  })
+  return { reporter, requests }
+}
+
+describe("PostHogAnalyticsReporter", () => {
   test("should send a captured exception with distinct id and properties to the configured host", async () => {
-    const requests: RecordedRequest[] = []
-    const reporter = new PostHogErrorReporter({
-      config: { projectToken: "phc_test", host: "https://eu.i.posthog.com" },
-      service: "backend",
-      region: "eu-north-1",
-      fetch: async (url, options) => {
-        requests.push({ url, options })
-        return okResponse()
-      },
-    })
+    const { reporter, requests } = createRecordingReporter()
 
     reporter.captureException(new Error("boom"), { distinctId: "user_1", properties: { path: "/x" } })
     await reporter.shutdown()
@@ -69,8 +74,40 @@ describe("PostHogErrorReporter", () => {
     expect(event.properties.$process_person_profile).toBe(false)
   })
 
+  test("should send a captured event with distinct id, properties and workspace group to the configured host", async () => {
+    const { reporter, requests } = createRecordingReporter()
+
+    reporter.captureEvent({
+      distinctId: "usr_1",
+      event: "message_sent",
+      properties: { workspaceId: "ws_1", streamId: "stream_1", messageId: "msg_1" },
+      groups: { workspace: "ws_1" },
+    })
+    await reporter.shutdown()
+
+    expect(requests.length).toBeGreaterThan(0)
+    const request = requests[requests.length - 1]!
+    const body = parseCapturedBody(request.options.body, request.options.headers as Record<string, string>) as {
+      batch: Array<{ event: string; distinct_id: string; properties: Record<string, unknown> }>
+    }
+
+    expect(body.batch.length).toBe(1)
+    expect(body.batch[0]).toMatchObject({
+      event: "message_sent",
+      distinct_id: "usr_1",
+      properties: {
+        service: "backend",
+        region: "eu-north-1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        messageId: "msg_1",
+        $groups: { workspace: "ws_1" },
+      },
+    })
+  })
+
   test("should resolve shutdown within the bound when the transport hangs", async () => {
-    const reporter = new PostHogErrorReporter({
+    const reporter = new PostHogAnalyticsReporter({
       config: { projectToken: "phc_test", host: "https://eu.i.posthog.com" },
       service: "backend",
       region: null,
@@ -88,11 +125,12 @@ describe("PostHogErrorReporter", () => {
   })
 })
 
-describe("DisabledErrorReporter", () => {
-  test("should no-op captureException and resolve shutdown", async () => {
-    const reporter = new DisabledErrorReporter()
+describe("DisabledAnalyticsReporter", () => {
+  test("should no-op captureException, captureEvent and resolve shutdown", async () => {
+    const reporter = new DisabledAnalyticsReporter()
 
     expect(() => reporter.captureException(new Error("boom"), { distinctId: "user_1" })).not.toThrow()
+    expect(() => reporter.captureEvent({ distinctId: "usr_1", event: "message_sent" })).not.toThrow()
     await expect(reporter.shutdown()).resolves.toBeUndefined()
   })
 })

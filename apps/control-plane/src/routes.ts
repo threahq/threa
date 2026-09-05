@@ -7,7 +7,7 @@ import {
   createErrorHandler,
   type AuthService,
   type SessionCookies,
-  type ErrorReporter,
+  type AnalyticsReporter,
   StubAuthService,
 } from "@threa/backend-common"
 import { createControlPlaneAuthHandlers, createAuthStubHandlers } from "./features/auth"
@@ -55,7 +55,7 @@ interface Dependencies {
   workosDedicatedRedirectHosts: string[]
   rateLimits: RateLimitConfig
   githubWebhookSecret: string | null
-  errorReporter: ErrorReporter
+  analyticsReporter: AnalyticsReporter
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -294,5 +294,5 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.put("/internal/integration-routes", internalAuth, integrationRoutes.register)
   app.delete("/internal/integration-routes", internalAuth, integrationRoutes.unregister)
 
-  app.use(createErrorHandler({ errorReporter: deps.errorReporter }))
+  app.use(createErrorHandler({ analyticsReporter: deps.analyticsReporter }))
 }

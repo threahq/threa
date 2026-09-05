@@ -43,8 +43,8 @@ export type { RateLimitOptions } from "./middleware/rate-limit"
 
 export { loadPostHogConfig } from "./posthog/config"
 export type { PostHogConfig } from "./posthog/config"
-export { PostHogErrorReporter, DisabledErrorReporter } from "./posthog/error-reporter"
-export type { ErrorReporter, ExceptionContext } from "./posthog/error-reporter"
+export { PostHogAnalyticsReporter, DisabledAnalyticsReporter } from "./posthog/reporter"
+export type { AnalyticsReporter, AnalyticsEvent, ExceptionContext } from "./posthog/reporter"
 
 export { logger } from "./logger"
 export { extractWorkspaceIdFromGithubInstallState } from "./github-install-state"
