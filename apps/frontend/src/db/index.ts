@@ -2,6 +2,8 @@ export {
   db,
   ThreaDatabase,
   accountDbName,
+  getActiveDb,
+  type AccountWriteContext,
   clearAllCachedData,
   clearPendingMessages,
   sequenceToNum,

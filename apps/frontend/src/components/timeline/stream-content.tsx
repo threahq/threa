@@ -944,6 +944,7 @@ export function StreamContent({
     holes,
     isLoading,
     isConfirmedEmpty,
+    isResolved,
     error,
     fetchOlderEvents,
     hasOlderEvents,
@@ -1680,6 +1681,9 @@ export function StreamContent({
   // across a stamp, so programmatic jumps stay read gaps while user flings
   // sweep — see SWEEP_LINK_MS.
   const programmaticScrollAtRef = useRef(0)
+  // The row a positional landing placed at the top, handed to useLastSeenEvent
+  // so its first scan after the reveal sweeps from there (see sweepOriginRef).
+  const sweepOriginRef = useRef<string | null>(null)
 
   const {
     listRef,
@@ -1701,6 +1705,8 @@ export function StreamContent({
   } = useTimelineScroll({
     itemCount: useVirtualized ? visibleItems.length : 0,
     getFirstKey: () => (useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[0]) : null),
+    getLastKey: () =>
+      useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[visibleItems.length - 1]) : null,
     resetKey: streamId,
     skipInitialScroll,
     isJumpMode,
@@ -2422,6 +2428,7 @@ export function StreamContent({
     lastReadSequence: frontierLastReadSequence,
     enabled: autoMarkEnabled,
     programmaticScrollAtRef,
+    sweepOriginRef,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, {
     enabled: autoMarkEnabled,
@@ -2620,7 +2627,11 @@ export function StreamContent({
   const handleJumpToLatest = useCallback(() => {
     // Explicit "go to latest": abandon any pending navigation — a
     // late-resolving jump would otherwise re-enter jump mode and scroll back
-    // to the abandoned target, overriding this click.
+    // to the abandoned target, overriding this click. Revoke a marker landing's
+    // unread sweep handoff too: if the click beats read tracking's first arm,
+    // that stale origin would link the marker to the tail after the jump stamp
+    // and mark the skipped block read.
+    sweepOriginRef.current = null
     cancelPendingJump()
     pendingScrollTarget.current = null
     searchNavPhaseRef.current = "idle"
@@ -2785,6 +2796,7 @@ export function StreamContent({
         : scrollToMessage(target.id, { align: "start", onFirstSettle: revealIfCurrent })
     if (engaged) {
       holdSettleForRestore()
+      sweepOriginRef.current = target.id
       // Seed the detached-viewport guard: content resizes between engage and
       // the refine loop's first settle must re-target the landing, not slide
       // the viewport.
@@ -3187,7 +3199,9 @@ export function StreamContent({
                         {...batchPointerHandlers}
                       >
                         <div ref={plainContentRef}>
-                          {isThread && anchorEvent && parentStreamId && (
+                          {/* The plain scroller has no settle mask: hold the anchor until the
+                              replies' first read lands so both paint in one frame. */}
+                          {isResolved && !isLoading && isThread && anchorEvent && parentStreamId && (
                             <ThreadParentEvent
                               event={anchorEvent}
                               workspaceId={workspaceId}

@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react
 import { createElement, type ReactNode } from "react"
 import type { SavedMessageView } from "@threa/types"
 import { db } from "@/db"
+import { getActiveDb, setActiveDb, ThreaDatabase } from "@/db/database"
+import { bumpAccountGeneration } from "@/db/event-writes"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { persistSavedRows, replaceSavedPage, savedKeys, useSavedList } from "./use-saved"
@@ -272,6 +274,41 @@ describe("useSavedList refetchOnReconnect (sync mode gate)", () => {
     })
 
     await waitFor(() => expect(listFn).toHaveBeenCalledTimes(2))
+  })
+
+  it("does not persist a delayed account A response after switching to account B", async () => {
+    mockEngine(true)
+    const accountA = getActiveDb()
+    const accountB = new ThreaDatabase(`threa_test_saved_account_b_${Date.now()}`)
+    let resolveList: ((value: { saved: SavedMessageView[]; nextCursor: null }) => void) | undefined
+    listFn.mockImplementationOnce(
+      () => new Promise<{ saved: SavedMessageView[]; nextCursor: null }>((resolve) => (resolveList = resolve))
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    renderHook(() => useSavedList(WORKSPACE_ID, "saved"), { wrapper })
+
+    try {
+      await waitFor(() => expect(resolveList).toBeDefined())
+      bumpAccountGeneration()
+      setActiveDb(accountB)
+      resolveList!({ saved: [makeView({ id: "saved_account_a", messageId: "msg_account_a" })], nextCursor: null })
+      await waitFor(() =>
+        expect(queryClient.getQueryState(savedKeys.list(WORKSPACE_ID, "saved"))?.status).toBe("success")
+      )
+
+      expect({
+        accountA: await accountA.savedMessages.get("saved_account_a"),
+        accountB: await accountB.savedMessages.get("saved_account_a"),
+      }).toEqual({ accountA: undefined, accountB: undefined })
+    } finally {
+      setActiveDb(accountA)
+      bumpAccountGeneration()
+      queryClient.clear()
+      accountB.close()
+      await accountB.delete()
+    }
   })
 })
 

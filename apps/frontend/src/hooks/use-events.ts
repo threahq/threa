@@ -6,6 +6,7 @@ import { db, sequenceToNum } from "@/db"
 import { putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
+import { useBatchedValue } from "@/stores/apply-window"
 import { isTerminalBootstrapError, shouldSuppressBootstrapError } from "@/lib/query-load-state"
 import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/contiguity"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
@@ -787,26 +788,56 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     return idbEvents[idbEvents.length - 1].sequence
   }, [idbEvents, bootstrap?.latestSequence])
 
+  // The window is held at the output, not at the bootstrap: the floor keeps
+  // flowing so the IndexedDB re-reads a sweep triggers start inside the window,
+  // and the timeline releases its old window in the same render as the sidebar.
+  // Every rendered flag is held together with the rows: an error banner, a
+  // fetch spinner or the jump-mode chrome flipping mid-window is a third state.
+  const held = useBatchedValue(
+    useMemo(
+      () => ({
+        events,
+        holes,
+        isLoading,
+        isConfirmedEmpty,
+        isResolved: idbResolved,
+        hasOlderEvents,
+        latestSequence,
+        error: suppressBootstrapError ? null : error,
+        isFetchingOlder,
+        hasNewerEvents,
+        isFetchingNewer,
+        isJumpMode: !!jumpState,
+      }),
+      [
+        events,
+        holes,
+        isLoading,
+        isConfirmedEmpty,
+        idbResolved,
+        hasOlderEvents,
+        latestSequence,
+        suppressBootstrapError,
+        error,
+        isFetchingOlder,
+        hasNewerEvents,
+        isFetchingNewer,
+        jumpState,
+      ]
+    ),
+    streamId
+  )
+
   return {
-    events,
-    holes,
-    isLoading,
-    isConfirmedEmpty,
-    error: suppressBootstrapError ? null : error,
+    ...held,
     fetchOlderEvents,
-    hasOlderEvents,
-    isFetchingOlder,
     fetchNewerEvents,
-    hasNewerEvents,
-    isFetchingNewer,
     jumpToEvent,
     jumpToEventByDate,
     exitJumpMode,
     cancelPendingJump,
     currentJumpGeneration,
-    isJumpMode: !!jumpState,
     addEvent,
     updateEvent,
-    latestSequence,
   }
 }

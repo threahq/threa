@@ -1,6 +1,6 @@
-import { db, sequenceToNum, type CachedEvent } from "@/db"
+import { db, getActiveDb, sequenceToNum, type CachedEvent, type ThreaDatabase, type AccountWriteContext } from "@/db"
 import { mergeStreamByTitleRevision } from "@/lib/title-merge"
-import { isNoOpRewrite, putEventsBounded } from "@/db/event-writes"
+import { getAccountGeneration, isNoOpRewrite, putEventsBounded } from "@/db/event-writes"
 import {
   StreamTypes,
   THREAD_ANCHORABLE_EVENT_TYPES,
@@ -114,7 +114,11 @@ export function toCachedStreamBootstrap(
   }
 }
 
-async function resolveUnknownOptimisticAnchors(streamId: string): Promise<void> {
+async function resolveUnknownOptimisticAnchors(
+  streamId: string,
+  database: ThreaDatabase = getActiveDb()
+): Promise<void> {
+  const db = database
   const unresolved = (await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()).filter(
     (event) => event.streamId === streamId && event._anchorSequenceNum == null
   )
@@ -145,8 +149,10 @@ export async function bumpLaterOptimisticAnchors(
   streamId: string,
   confirmedOptimisticSequence: number,
   confirmedPersistedSequence: number,
-  confirmedOptimisticId: string
+  confirmedOptimisticId: string,
+  database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
+  const db = database
   await db.events
     .where("_status")
     .anyOf(["pending", "failed", "editing"])
@@ -228,7 +234,12 @@ function getBootstrapWindowCeiling(events: StreamEvent[], latestSequence: string
  * after this bootstrap's fetch started: the response then predates the message,
  * and the socket echo (or a later bootstrap) still owns the swap.
  */
-async function cleanupStaleOptimisticEvents(streamId: string, fetchStartedAt?: number): Promise<void> {
+async function cleanupStaleOptimisticEvents(
+  streamId: string,
+  database: ThreaDatabase,
+  fetchStartedAt?: number
+): Promise<void> {
+  const db = database
   const tempEvents = await db.events
     .where("streamId")
     .equals(streamId)
@@ -251,7 +262,12 @@ async function cleanupStaleOptimisticEvents(streamId: string, fetchStartedAt?: n
   }
 }
 
-async function pruneBootstrapReplaceWindow(streamId: string, bootstrap: StreamBootstrap): Promise<void> {
+async function pruneBootstrapReplaceWindow(
+  streamId: string,
+  bootstrap: StreamBootstrap,
+  database: ThreaDatabase
+): Promise<void> {
+  const db = database
   const bootstrapEventIds = new Set(bootstrap.events.map((event) => event.id))
   const bootstrapWindowFloor = getBootstrapWindowFloor(bootstrap.events)
   if (bootstrapWindowFloor === null) return
@@ -289,12 +305,14 @@ async function writeBootstrapEventsAndStream(
   streamId: string,
   bootstrap: StreamBootstrap,
   now: number,
-  fetchStartedAt?: number
+  fetchStartedAt: number | undefined,
+  account: AccountWriteContext
 ): Promise<StreamReadFrontier | undefined> {
-  await cleanupStaleOptimisticEvents(streamId, fetchStartedAt)
+  const db = account.database
+  await cleanupStaleOptimisticEvents(streamId, db, fetchStartedAt)
 
   if (bootstrap.syncMode !== "append") {
-    await pruneBootstrapReplaceWindow(streamId, bootstrap)
+    await pruneBootstrapReplaceWindow(streamId, bootstrap, db)
   }
 
   // Persist the bootstrap's slot carrier in the same transaction as its events.
@@ -449,7 +467,7 @@ async function writeBootstrapEventsAndStream(
     }
 
     await putEventsBounded(db.events, toWrite)
-    await resolveUnknownOptimisticAnchors(streamId)
+    await resolveUnknownOptimisticAnchors(streamId, db)
 
     // Real rows are in place (bulkPut above, or already present via a skipped
     // rewrite) — now drop the optimistic copies and their outbox entries so a
@@ -460,12 +478,13 @@ async function writeBootstrapEventsAndStream(
         streamId,
         optimistic._sequenceNum,
         sequenceToNum(realEvent.sequence),
-        optimistic.id
+        optimistic.id,
+        db
       )
       await db.events.delete(optimistic.id)
       await db.pendingMessages.delete(optimistic.id)
       const plaintext = readPlaintextContent(optimistic.payload)
-      if (plaintext && isEncryptedPayload(realEvent.payload)) {
+      if (plaintext && isEncryptedPayload(realEvent.payload) && getAccountGeneration() === account.generation) {
         seedDecryption(realEvent.id, plaintext)
       }
     }
@@ -474,7 +493,8 @@ async function writeBootstrapEventsAndStream(
         streamId,
         optimistic._sequenceNum,
         sequenceToNum(realEvent.sequence),
-        optimistic.id
+        optimistic.id,
+        db
       )
       await db.events.bulkDelete([optimistic.id, `${optimistic.id}:failed`])
       const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
@@ -486,14 +506,14 @@ async function writeBootstrapEventsAndStream(
     }
   }
 
-  await applyBootstrapThreadStates(streamId, bootstrap, now)
+  await applyBootstrapThreadStates(streamId, bootstrap, now, db)
 
   // Merge stream metadata without destroying fields that only exist on the
   // workspace bootstrap's StreamWithPreview (e.g. lastMessagePreview, which
   // is the sidebar's activity sort key). Use update() for existing records
   // and fall back to put() if the stream doesn't exist in IDB yet.
   const stream = preserveDmDisplayName(bootstrap.stream)
-  const preservedReadState = await persistBootstrapReadState(workspaceId, streamId, bootstrap, now, fetchStartedAt)
+  const preservedReadState = await persistBootstrapReadState(workspaceId, streamId, bootstrap, now, fetchStartedAt, db)
   // A preserved local frontier is what the envelope must carry into the
   // per-stream query cache (callers write it via `toCachedStreamBootstrap`
   // after this returns) — same reflect-the-preserved-local-value precedent as
@@ -551,8 +571,10 @@ async function persistBootstrapReadState(
   streamId: string,
   bootstrap: StreamBootstrap,
   now: number,
-  fetchStartedAt?: number
+  fetchStartedAt: number | undefined,
+  database: ThreaDatabase
 ): Promise<StreamReadFrontier | undefined> {
+  const db = database
   if (bootstrap.readState === undefined) return undefined
   const existingRow = await db.streamReadState.get(`${workspaceId}:${streamId}`)
   if (
@@ -568,7 +590,8 @@ async function persistBootstrapReadState(
         workspaceId,
         streamId,
         { lastReadEventId: null, lastReadSequence: null, lastReadAt: null },
-        now
+        now,
+        db
       )
     }
     return undefined
@@ -580,7 +603,7 @@ async function persistBootstrapReadState(
   const incomingSeq = incoming.lastReadSequence != null ? BigInt(incoming.lastReadSequence) : null
   const storedSeq = existingRow?.lastReadSequence != null ? BigInt(existingRow.lastReadSequence) : null
   if (!existingRow || storedSeq == null || incomingSeq == null || incomingSeq >= storedSeq) {
-    await putReadStateIdb(workspaceId, streamId, incoming, now)
+    await putReadStateIdb(workspaceId, streamId, incoming, now, db)
   }
   return undefined
 }
@@ -599,7 +622,13 @@ async function persistBootstrapReadState(
  */
 type BootstrapThreadState = NonNullable<StreamBootstrap["threadStates"]>[number]
 
-async function applyBootstrapThreadStates(streamId: string, bootstrap: StreamBootstrap, now: number): Promise<void> {
+async function applyBootstrapThreadStates(
+  streamId: string,
+  bootstrap: StreamBootstrap,
+  now: number,
+  database: ThreaDatabase
+): Promise<void> {
+  const db = database
   if (!bootstrap.threadStates || bootstrap.threadStates.length === 0) return
 
   const snapshotMs = bootstrap.snapshotAt ? Date.parse(bootstrap.snapshotAt) : null
@@ -694,6 +723,8 @@ export async function applyStreamBootstrap(
   bootstrap: StreamBootstrap,
   options?: StreamBootstrapApplyOptions
 ): Promise<void> {
+  const account = { database: getActiveDb(), generation: getAccountGeneration() }
+  const db = account.database
   const now = Date.now()
   let preservedReadState: StreamReadFrontier | undefined
   let appliedUnreadCount = false
@@ -706,7 +737,8 @@ export async function applyStreamBootstrap(
         streamId,
         bootstrap,
         now,
-        options?.fetchStartedAt
+        options?.fetchStartedAt,
+        account
       )
       const unreadState = await db.unreadState.get(workspaceId)
       const touchedAt = unreadState?.counterTouchedAt?.[streamId]
@@ -733,6 +765,7 @@ export async function applyStreamBootstrap(
       }
     }
   )
+  if (getAccountGeneration() !== account.generation) return
   if (preservedReadState && options?.queryClient) {
     mergeReadStateIntoBootstrapCache(options.queryClient, workspaceId, streamId, preservedReadState)
   }
@@ -758,6 +791,7 @@ export async function applyStreamBootstrap(
       )
     }
   }
+  if (getAccountGeneration() !== account.generation) return
   seedStreamActiveCall(workspaceId, streamId, bootstrap)
   reconcileStreamBootstrapAgentActivity(workspaceId, bootstrap)
 }
@@ -809,10 +843,12 @@ export async function applyStreamBootstrapInCurrentTransaction(
   streamId: string,
   bootstrap: StreamBootstrap,
   now = Date.now(),
-  fetchStartedAt?: number
+  fetchStartedAt?: number,
+  account: AccountWriteContext = { database: getActiveDb(), generation: getAccountGeneration() }
 ): Promise<void> {
-  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now, fetchStartedAt)
-  seedStreamActiveCall(workspaceId, streamId, bootstrap)
+  if (getAccountGeneration() !== account.generation) return
+  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now, fetchStartedAt, account)
+  if (getAccountGeneration() === account.generation) seedStreamActiveCall(workspaceId, streamId, bootstrap)
 }
 
 // ============================================================================

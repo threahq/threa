@@ -55,10 +55,10 @@ function useDraftCacheSignal(workspaceId: string | undefined): number {
   )
 }
 
-function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[], cached: T[]): T[] {
-  const live = useLiveQuery(queryFn, deps, cached) ?? []
+function useArrayStoreHook<T>(workspaceId: string | undefined, queryFn: () => Promise<T[]> | T[], cached: T[]): T[] {
+  const live = useLiveQuery(queryFn, [workspaceId], cached) ?? []
   const resolved = live.length === 0 && cached.length > 0 ? cached : live
-  return useBatchedValue(resolved)
+  return useBatchedValue(resolved, workspaceId)
 }
 
 export function hasSeededDraftCache(workspaceId: string): boolean {
@@ -111,8 +111,8 @@ export function useDraftScratchpadsFromStore(workspaceId: string | undefined): D
   useDraftCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.scratchpads.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
+    workspaceId,
     () => (workspaceId ? db.draftScratchpads.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
     cached
   )
 }
@@ -121,8 +121,8 @@ export function useDraftsFromStore(workspaceId: string | undefined): CachedDraft
   useDraftCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.drafts.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
+    workspaceId,
     () => (workspaceId ? db.drafts.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
     cached
   )
 }
@@ -131,8 +131,8 @@ export function useComposerLoadedFromStore(workspaceId: string | undefined): Com
   useDraftCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.loaded.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
+    workspaceId,
     () => (workspaceId ? db.composerLoaded.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
     cached
   )
 }

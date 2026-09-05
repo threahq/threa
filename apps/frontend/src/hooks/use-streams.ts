@@ -19,7 +19,7 @@ import type {
 } from "@threa/types"
 import type { CreateStreamInput, UpdateStreamInput } from "@/api"
 import { workspaceKeys } from "./use-workspaces"
-import { useSyncEngine } from "@/sync/sync-engine"
+import { useOptionalSyncEngine, useSyncEngine } from "@/sync/sync-engine"
 import { mergeStreamByTitleRevision, persistStreamByTitleRevision } from "@/lib/title-merge"
 
 export const streamKeys = {
@@ -67,6 +67,7 @@ export function useStreamBootstrap(workspaceId: string, streamId: string, option
   const socket = useSocket()
   const streamService = useStreamService()
   const queryClient = useQueryClient()
+  const syncEngine = useOptionalSyncEngine()
 
   // Check if this query has already errored - don't re-enable if so
   // This prevents continuous refetching when a stream doesn't exist
@@ -82,6 +83,11 @@ export function useStreamBootstrap(workspaceId: string, streamId: string, option
         throw new Error("Socket not available for stream subscription")
       }
       await joinRoomBestEffort(socket, `ws:${workspaceId}:stream:${streamId}`, "StreamBootstrap")
+
+      // A first connect applies this window with the workspace sweep; fetching
+      // here too would paint it a second time on its own.
+      const swept = await (syncEngine?.claimStreamBootstrap(streamId) ?? null)
+      if (swept) return swept
 
       const fetchStartedAt = Date.now()
       const bootstrap = await streamService.bootstrap(workspaceId, streamId)

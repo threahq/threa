@@ -6,7 +6,9 @@ import {
   isApplyWindowOpen,
   resetApplyWindow,
   subscribeApplyWindow,
+  trackPendingRead,
   useBatchedValue,
+  whenReadsSettled,
 } from "./apply-window"
 
 describe("apply window gate", () => {
@@ -44,22 +46,15 @@ describe("apply window gate", () => {
     expect(transitions).toEqual([true, false])
   })
 
-  it("force-closes a stranded window via the watchdog", () => {
+  it("stays open until its opener closes it, however long that takes", () => {
+    // A clock-driven close would paint a half-applied refresh. A stuck refresh
+    // is cancelled by its request timeout instead, which reaches the opener's
+    // own endApplyWindow.
     vi.useFakeTimers()
     beginApplyWindow()
+    act(() => vi.advanceTimersByTime(60_000))
     expect(isApplyWindowOpen()).toBe(true)
-    act(() => vi.advanceTimersByTime(5_000))
-    expect(isApplyWindowOpen()).toBe(false)
-  })
-
-  it("does not push the watchdog deadline out on a nested begin", () => {
-    vi.useFakeTimers()
-    beginApplyWindow() // arms the 5s watchdog at depth 1
-    act(() => vi.advanceTimersByTime(3_000))
-    beginApplyWindow() // nested (depth 2) — must NOT re-arm and extend the deadline
-    act(() => vi.advanceTimersByTime(2_000)) // 5s total since the FIRST open
-    // Fires 5s from the first open regardless of the nested begin; a re-arming
-    // watchdog would have reset to t=8s and still be open here.
+    endApplyWindow()
     expect(isApplyWindowOpen()).toBe(false)
   })
 })
@@ -96,5 +91,105 @@ describe("useBatchedValue", () => {
 
     act(() => endApplyWindow())
     expect(result.current).toBe("c")
+  })
+
+  it("takes the new key's value inside a window instead of holding the previous key's", () => {
+    const { result, rerender } = renderHook(({ value, key }) => useBatchedValue(value, key), {
+      initialProps: { value: "a1", key: "stream_a" },
+    })
+
+    act(() => beginApplyWindow())
+    rerender({ value: "b1", key: "stream_b" })
+    expect(result.current).toBe("b1")
+    rerender({ value: "b2", key: "stream_b" })
+    expect(result.current).toBe("b1")
+
+    act(() => endApplyWindow())
+    expect(result.current).toBe("b2")
+  })
+
+  it("passes values through for a host that mounts inside a window, until its first closed render", () => {
+    act(() => beginApplyWindow())
+    const { result, rerender } = renderHook(({ value }) => useBatchedValue(value), {
+      initialProps: { value: "loading" },
+    })
+    // No pre-window value exists to hold; freezing here would pin a timeline
+    // opened mid-sweep on its loading state until the sweep closes.
+    rerender({ value: "rows" })
+    expect(result.current).toBe("rows")
+
+    act(() => endApplyWindow())
+    expect(result.current).toBe("rows")
+    act(() => beginApplyWindow())
+    rerender({ value: "more rows" })
+    expect(result.current).toBe("rows")
+    act(() => endApplyWindow())
+    expect(result.current).toBe("more rows")
+  })
+})
+
+describe("whenReadsSettled", () => {
+  beforeEach(() => {
+    resetApplyWindow()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    resetApplyWindow()
+  })
+
+  async function settles(promise: Promise<void>, withinMs: number): Promise<boolean> {
+    return Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), withinMs)),
+    ])
+  }
+
+  it("resolves right away when no read is pending", async () => {
+    expect(await settles(whenReadsSettled(), 100)).toBe(true)
+  })
+
+  it("waits for a tracked read to release", async () => {
+    const release = trackPendingRead()
+    const settled = whenReadsSettled()
+    expect(await settles(settled, 30)).toBe(false)
+    release()
+    expect(await settles(settled, 100)).toBe(true)
+  })
+
+  it("ignores a release from before a reset", async () => {
+    const stale = trackPendingRead()
+    resetApplyWindow()
+    const release = trackPendingRead()
+    stale()
+    const settled = whenReadsSettled()
+    expect(await settles(settled, 30)).toBe(false)
+    release()
+    expect(await settles(settled, 100)).toBe(true)
+  })
+
+  it("counts a release once, however many times it is called", async () => {
+    const releaseFirst = trackPendingRead()
+    const releaseSecond = trackPendingRead()
+    releaseFirst()
+    releaseFirst()
+    const settled = whenReadsSettled()
+    expect(await settles(settled, 30)).toBe(false)
+    releaseSecond()
+    expect(await settles(settled, 100)).toBe(true)
+  })
+
+  it("releases on the deadline when a reader never settles", async () => {
+    vi.useFakeTimers()
+    trackPendingRead()
+    let settled = false
+    const pending = whenReadsSettled().then(() => {
+      settled = true
+    })
+    await vi.advanceTimersByTimeAsync(1_900)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(200)
+    await pending
+    expect(settled).toBe(true)
   })
 })

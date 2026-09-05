@@ -25,8 +25,8 @@ interface BufferedEvent {
 /**
  * Soft cap on the pause buffer. Catch-up pauses for seconds at most; a
  * workspace producing this many live events in that window is far outside
- * normal load, and falling back to immediate (live) application there merely
- * reverts to today's delivery semantics for the overflow.
+ * normal load. Overflow requests an authoritative recovery while keeping live
+ * delivery paused.
  */
 const DEFAULT_BUFFER_LIMIT = 2_000
 
@@ -65,6 +65,7 @@ export class SocketEventGate implements SyncEventSource {
     private readonly workspaceId: string,
     private readonly opts: {
       onApplied?: (syncId: string) => void
+      onRecoveryRequired?: () => void
       bufferLimit?: number
     } = {}
   ) {}
@@ -123,6 +124,11 @@ export class SocketEventGate implements SyncEventSource {
     return this
   }
 
+  /** Whether any live event is waiting for the next resume splice. */
+  hasBuffered(): boolean {
+    return this.buffer.length > 0
+  }
+
   /** Start buffering this workspace's syncId-bearing live events. */
   pause(): void {
     if (this.disposed) return
@@ -162,7 +168,17 @@ export class SocketEventGate implements SyncEventSource {
         }
         const event = batch[i]
         if (!applyIf(event.eventType, event.syncId, event.payload)) continue
-        await this.dispatch(event.eventType, event.payload)
+        try {
+          await this.dispatch(event.eventType, event.payload)
+        } catch (error) {
+          console.error("Sync buffered handler failed", {
+            eventType: event.eventType,
+            syncId: event.syncId.toString(),
+            error,
+          })
+          this.retainForRecovery(batch.slice(i))
+          return
+        }
         this.opts.onApplied?.(event.syncId.toString())
       }
     }
@@ -173,19 +189,19 @@ export class SocketEventGate implements SyncEventSource {
 
   /**
    * Invokes every registered handler for `eventType` with `payload`, awaiting
-   * them all. Used by the catch-up loop (log entries) and the resume splice;
-   * a rejecting handler is logged and skipped — same net effect as a live
-   * handler throwing today, and the entry is not redelivered either way.
+   * them all. Used by the catch-up loop (log entries) and the resume splice.
+   * Every handler runs even when one rejects; the rejections are then rethrown
+   * so the caller decides: catch-up fails the entry, the live path logs it,
+   * and the resume splice keeps the failed suffix buffered for recovery.
    */
   async dispatch(eventType: string, payload: unknown): Promise<void> {
     const set = this.handlers.get(eventType)
     if (!set || set.size === 0) return
     const snapshot = Array.from(set)
     const results = await Promise.allSettled(snapshot.map(async (handler) => handler(payload)))
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.error("Sync catch-up handler failed", { eventType, error: result.reason })
-      }
+    const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `${failures.length} of ${snapshot.length} handlers failed for ${eventType}`)
     }
   }
 
@@ -211,22 +227,37 @@ export class SocketEventGate implements SyncEventSource {
           this.buffer.push({ eventType, payload, syncId })
           return
         }
+        this.buffer = []
         if (!this.overflowWarned) {
           this.overflowWarned = true
-          console.warn("Sync gate buffer overflow — applying live events immediately", {
+          console.warn("Sync gate buffer overflow; forcing an authoritative snapshot", {
             workspaceId: this.workspaceId,
           })
         }
-        // Fall through: overflow reverts to live (immediate) application.
+        this.opts.onRecoveryRequired?.()
+        return
       }
     }
 
-    // Live path: apply immediately without awaiting (matches raw socket
-    // delivery), advancing the cursor for syncId-bearing payloads.
-    void this.dispatch(eventType, args[0])
-    if (payload && payload.workspaceId === this.workspaceId && typeof payload.syncId === "string") {
-      this.opts.onApplied?.(payload.syncId)
-    }
+    // Live path: apply without awaiting (matches raw socket delivery). The
+    // cursor advances only once the handlers have landed: reported before,
+    // a handler whose write failed would have moved the cursor past an entry
+    // the app never received, and advance never rewinds.
+    const applied = payload && payload.workspaceId === this.workspaceId && typeof payload.syncId === "string"
+    this.dispatch(eventType, args[0]).then(
+      () => {
+        if (applied) this.opts.onApplied?.(payload.syncId as string)
+      },
+      (error: unknown) => {
+        console.error("Sync live handler failed", { eventType, error })
+      }
+    )
+  }
+
+  private retainForRecovery(events: BufferedEvent[]): void {
+    const limit = this.opts.bufferLimit ?? DEFAULT_BUFFER_LIMIT
+    this.buffer = [...events, ...this.buffer].slice(0, limit)
+    this.opts.onRecoveryRequired?.()
   }
 }
 

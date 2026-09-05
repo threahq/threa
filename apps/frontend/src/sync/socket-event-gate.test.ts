@@ -51,18 +51,42 @@ describe("SocketEventGate", () => {
     expect(streamHandler).toHaveBeenCalledWith(payload)
   })
 
-  it("reports applied syncIds for this workspace's live events and ignores the rest", () => {
+  it("reports applied syncIds for this workspace's live events once their handlers land", async () => {
     const applied: string[] = []
     const gate = new SocketEventGate(WS, { onApplied: (syncId) => applied.push(syncId) })
     const socket = new FakeSocket()
-    gate.on("message:created", vi.fn())
+    const pendingWrites: Array<() => void> = []
+    gate.on("message:created", () => new Promise<void>((resolve) => pendingWrites.push(resolve)))
     gate.attach(asSocket(socket))
 
     socket.trigger("message:created", { workspaceId: WS, syncId: "7" })
     socket.trigger("message:created", { workspaceId: "ws_other", syncId: "9" })
     socket.trigger("message:created", { workspaceId: WS })
 
+    // The cursor advances only after the handler's write commits; reporting on
+    // dispatch would let a crash between the two skip the entry on reload.
+    expect(applied).toEqual([])
+    for (const commit of pendingWrites) commit()
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(applied).toEqual(["7"])
+  })
+
+  it("does not report a live event whose handler rejected", async () => {
+    const applied: string[] = []
+    const gate = new SocketEventGate(WS, { onApplied: (syncId) => applied.push(syncId) })
+    const socket = new FakeSocket()
+    gate.on("message:created", async () => {
+      throw new Error("idb boom")
+    })
+    gate.attach(asSocket(socket))
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    socket.trigger("message:created", { workspaceId: WS, syncId: "7" })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(applied).toEqual([])
+    expect(errorSpy).toHaveBeenCalledWith("Sync live handler failed", expect.anything())
+    errorSpy.mockRestore()
   })
 
   it("buffers this workspace's syncId-bearing events while paused and passes others through", () => {
@@ -175,44 +199,133 @@ describe("SocketEventGate", () => {
     expect(seen).toEqual(["15", "20"])
   })
 
-  it("dispatch awaits all handlers and survives a rejecting one", async () => {
+  it("dispatch runs every handler, then rejects with the failures", async () => {
+    const gate = new SocketEventGate(WS)
+    let settled = false
+    gate.on("saved:upserted", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      settled = true
+    })
+    gate.on("saved:upserted", async () => {
+      throw new Error("boom")
+    })
+
+    await expect(gate.dispatch("saved:upserted", { workspaceId: WS })).rejects.toMatchObject({
+      errors: [expect.objectContaining({ message: "boom" })],
+    })
+    expect(settled).toBe(true)
+  })
+
+  it("a live handler failure is logged and does not stall delivery", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     try {
+      const socket = new FakeSocket()
       const gate = new SocketEventGate(WS)
-      let settled = false
-      gate.on("saved:upserted", async () => {
-        await new Promise((resolve) => setTimeout(resolve, 5))
-        settled = true
-      })
-      gate.on("saved:upserted", async () => {
+      gate.attach(asSocket(socket))
+      const seen: string[] = []
+      gate.on("message:created", async () => {
         throw new Error("boom")
       })
+      gate.on("message:created", (payload: unknown) => {
+        seen.push((payload as { syncId: string }).syncId)
+      })
 
-      await gate.dispatch("saved:upserted", { workspaceId: WS })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "7" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
 
-      expect(settled).toBe(true)
-      expect(errorSpy).toHaveBeenCalled()
+      expect(seen).toEqual(["7"])
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Sync live handler failed",
+        expect.objectContaining({ eventType: "message:created" })
+      )
     } finally {
       errorSpy.mockRestore()
     }
   })
 
-  it("falls back to immediate application when the pause buffer overflows", () => {
+  it("keeps a failed buffered event and later IDs paused until recovery", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const socket = new FakeSocket()
+      const applied: string[] = []
+      const onRecoveryRequired = vi.fn()
+      let rejectFirst = true
+      const gate = new SocketEventGate(WS, {
+        onApplied: (syncId) => applied.push(syncId),
+        onRecoveryRequired,
+      })
+      gate.attach(asSocket(socket))
+      const seen: string[] = []
+      gate.on("message:created", async (payload: unknown) => {
+        if (rejectFirst && (payload as { syncId: string }).syncId === "1") throw new Error("boom")
+      })
+      gate.on("message:created", (payload: unknown) => {
+        seen.push((payload as { syncId: string }).syncId)
+      })
+
+      gate.pause()
+      socket.trigger("message:created", { workspaceId: WS, syncId: "2" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "1" })
+      await gate.resume(() => true)
+      socket.trigger("message:created", { workspaceId: WS, syncId: "3" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect({ seen, applied, recoveryRequests: onRecoveryRequired.mock.calls.length }).toEqual({
+        seen: ["1"],
+        applied: [],
+        recoveryRequests: 1,
+      })
+
+      rejectFirst = false
+      await gate.resume(() => true)
+      expect({ seen, applied }).toEqual({ seen: ["1", "1", "2", "3"], applied: ["1", "2", "3"] })
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Sync buffered handler failed",
+        expect.objectContaining({ eventType: "message:created", syncId: "1" })
+      )
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it("does not acknowledge events beyond an overflowed gap before recovery", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
     try {
-      const gate = new SocketEventGate(WS, { bufferLimit: 1 })
+      const applied: string[] = []
+      const gate = new SocketEventGate(WS, { bufferLimit: 1, onApplied: (syncId) => applied.push(syncId) })
       const socket = new FakeSocket()
       const handler = vi.fn()
       gate.on("message:created", handler)
       gate.attach(asSocket(socket))
 
       gate.pause()
-      socket.trigger("message:created", { workspaceId: WS, syncId: "1" })
-      socket.trigger("message:created", { workspaceId: WS, syncId: "2" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "11" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "13" })
 
-      // First buffered, second passed through live.
-      expect(handler.mock.calls).toEqual([[{ workspaceId: WS, syncId: "2" }]])
-      expect(warnSpy).toHaveBeenCalled()
+      expect({ handlerCalls: handler.mock.calls, applied }).toEqual({ handlerCalls: [], applied: [] })
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it("renews recovery ownership on repeated overflow without forwarding events", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const onRecoveryRequired = vi.fn()
+    try {
+      const gate = new SocketEventGate(WS, { bufferLimit: 1, onRecoveryRequired })
+      const socket = new FakeSocket()
+      const handler = vi.fn()
+      gate.on("message:created", handler)
+      gate.attach(asSocket(socket))
+
+      gate.pause()
+      for (const syncId of ["1", "2", "3", "4"]) {
+        socket.trigger("message:created", { workspaceId: WS, syncId })
+      }
+
+      expect(handler).not.toHaveBeenCalled()
+      expect(onRecoveryRequired).toHaveBeenCalledTimes(2)
+      expect(warnSpy).toHaveBeenCalledTimes(1)
     } finally {
       warnSpy.mockRestore()
     }

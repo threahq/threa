@@ -1,6 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import type { AuthorType, ConversationIntent, JSONContent } from "@threa/types"
+import { detectSearchConfig } from "../../lib/text-search-config"
 import type { MoveEventSequenceUpdate } from "../streams"
 
 interface MessageRow {
@@ -488,7 +489,7 @@ export const MessageRepository = {
     const result = await db.query<MessageRow>(sql`
       INSERT INTO messages (
         id, stream_id, sequence, author_id, author_type,
-        content_json, content_markdown, client_message_id, sent_via, metadata,
+        content_json, content_markdown, search_config, client_message_id, sent_via, metadata,
         conversation_intent, ciphertext, envelope, e2e_version
       )
       VALUES (
@@ -499,6 +500,7 @@ export const MessageRepository = {
         ${params.authorType},
         ${JSON.stringify(params.contentJson)},
         ${params.contentMarkdown},
+        ${detectSearchConfig(params.contentMarkdown)},
         ${clientMessageId},
         ${sentVia},
         ${JSON.stringify(metadata)},
@@ -723,7 +725,8 @@ export const MessageRepository = {
   ): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
-      SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown}, edited_at = NOW(),
+      SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown},
+          search_config = ${detectSearchConfig(contentMarkdown)}, edited_at = NOW(),
           revision = GREATEST(
             revision + 1,
             (SELECT COALESCE(MAX(version_number), 0) + 1 FROM message_versions WHERE message_id = messages.id)
@@ -864,6 +867,18 @@ export const MessageRepository = {
       WHERE m.id = v.id
         AND m.embedding_source_hash IS NOT DISTINCT FROM v.expected_hash
         AND m.embedding_source_hash IS DISTINCT FROM v.source_hash
+    `)
+    return result.rowCount ?? 0
+  },
+
+  /** Rows whose config was set in the meantime (an edit re-detects) are left alone (INV-20). */
+  async fillMissingSearchConfigs(db: Querier, rows: Array<{ id: string; searchConfig: string }>): Promise<number> {
+    if (rows.length === 0) return 0
+    const result = await db.query(sql`
+      UPDATE messages m
+      SET search_config = v.search_config
+      FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.searchConfig)}::text[]) AS v(id, search_config)
+      WHERE m.id = v.id AND m.search_config IS NULL
     `)
     return result.rowCount ?? 0
   },

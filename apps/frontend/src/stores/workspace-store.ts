@@ -369,7 +369,7 @@ function useArrayStoreHook<K extends WorkspaceTableKey>(
   cached: WorkspaceTableRowTypes[K][]
 ): WorkspaceTableRowTypes[K][] {
   const live = useWorkspaceTable(workspaceId, tableKey)
-  return useBatchedValue(live ?? cached)
+  return useBatchedValue(live ?? cached, workspaceId)
 }
 
 function useSingletonStoreHook<K extends WorkspaceTableKey>(
@@ -380,7 +380,7 @@ function useSingletonStoreHook<K extends WorkspaceTableKey>(
   const rows = useWorkspaceTable(workspaceId, tableKey)
   const live = rows ? rows[0] : cached
   const resolved = live === undefined && cached !== undefined ? cached : live
-  return useBatchedValue(resolved)
+  return useBatchedValue(resolved, workspaceId)
 }
 
 export function useWorkspaceFromStore(workspaceId: string | undefined): CachedWorkspace | undefined {

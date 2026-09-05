@@ -1687,6 +1687,16 @@ export function setActiveDb(instance: ThreaDatabase): void {
   activeDb = instance
 }
 
+export interface AccountWriteContext {
+  generation: number
+  database: ThreaDatabase
+}
+
+/** Capture the concrete account database before an asynchronous write. */
+export function getActiveDb(): ThreaDatabase {
+  return activeDb
+}
+
 // Shared handle every feature imports as `import { db } from "@/db"`. Every
 // access resolves against the *current* active instance, so an account switch
 // (a `setActiveDb` call + keyed remount) atomically redirects all reads/writes

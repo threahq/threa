@@ -17,8 +17,11 @@ import { useRef, useSyncExternalStore } from "react"
  * why the gate is global and event-type-agnostic rather than per handler: a new
  * handler needs no awareness of it.
  *
- * Refcounted (begin/end nest) so overlapping windows are safe; a watchdog
- * force-closes a stuck window so a missed `end` can never strand the UI frozen.
+ * Refcounted (begin/end nest) so overlapping windows are safe. There is no
+ * timer: a window closes only when its opener closes it. A stuck refresh is
+ * cancelled by its request timeout, which unwinds to the opener's finally and
+ * leaves the old state on screen. Force-closing on a clock would paint a
+ * half-applied refresh, the exact state the window exists to hide.
  *
  * Global (not workspace-keyed) on purpose: `workspace-layout` mounts exactly one
  * `SyncEngine` at a time (it recreates the engine on workspace change and the
@@ -28,13 +31,7 @@ import { useRef, useSyncExternalStore } from "react"
  * workspace's replay would freeze another's reads.
  */
 let depth = 0
-let watchdog: ReturnType<typeof setTimeout> | null = null
 const listeners = new Set<() => void>()
-
-// Long enough to cover a real catch-up replay (bounded by the collapse threshold
-// to a few hundred entries — sub-second), short enough that a leaked window
-// self-heals quickly rather than stranding the UI frozen.
-const APPLY_WINDOW_WATCHDOG_MS = 5_000
 
 // Notify only on the closed↔open transitions that matter to readers (depth
 // 0↔1), never on a nested bump (1↔2): `useApplyWindowOpen` snapshots the boolean,
@@ -46,34 +43,13 @@ function notifyTransition(): void {
 
 export function beginApplyWindow(): void {
   depth += 1
-  // Arm the watchdog once, on the open transition — not on nested begins, so a
-  // (mis)nested caller can't keep pushing the deadline out and stranding the UI
-  // frozen. The bound is "≤5s from first open", which any real replay clears.
-  if (depth === 1) {
-    if (watchdog) clearTimeout(watchdog)
-    watchdog = setTimeout(forceCloseApplyWindow, APPLY_WINDOW_WATCHDOG_MS)
-    notifyTransition()
-  }
+  if (depth === 1) notifyTransition()
 }
 
 export function endApplyWindow(): void {
   if (depth === 0) return
   depth -= 1
-  if (depth === 0) {
-    if (watchdog) {
-      clearTimeout(watchdog)
-      watchdog = null
-    }
-    notifyTransition()
-  }
-}
-
-function forceCloseApplyWindow(): void {
-  if (depth === 0) return
-  console.warn("Apply window watchdog fired; force-closing", { depth })
-  depth = 0
-  watchdog = null
-  notifyTransition()
+  if (depth === 0) notifyTransition()
 }
 
 export function isApplyWindowOpen(): boolean {
@@ -101,25 +77,78 @@ export function useApplyWindowOpen(): boolean {
  * value when it closes. Outside a window this is a pass-through — zero behavior
  * change for live operation, which is the overwhelming common case.
  *
- * The ref is written during render on purpose: it caches the last value seen
- * while the window was closed (the pre-window value to freeze on), is derived
- * deterministically from `value`, and never schedules a render — the same
+ * A `resetKey` change (the stream or workspace the value belongs to) takes the
+ * current value even inside a window: the hook's host stays mounted across a
+ * navigation, so the held value would otherwise be the previous key's.
+ *
+ * A host that mounts while a window is open has no pre-window value to hold;
+ * it passes values through until its first render with the window closed,
+ * otherwise a timeline opened mid-sweep would freeze on its loading state.
+ *
+ * The refs are written during render on purpose: they cache the last value seen
+ * while the window was closed (the pre-window value to freeze on), are derived
+ * deterministically from `value`, and never schedule a render — the same
  * structural-sharing pattern the stream store uses.
  */
-export function useBatchedValue<T>(value: T): T {
+export function useBatchedValue<T>(value: T, resetKey?: unknown): T {
   const open = useApplyWindowOpen()
   const held = useRef(value)
-  if (!open) held.current = value
-  return open ? held.current : value
+  const heldKey = useRef(resetKey)
+  const primed = useRef(false)
+  if (!open || !primed.current || heldKey.current !== resetKey) {
+    held.current = value
+    heldKey.current = resetKey
+  }
+  if (!open) primed.current = true
+  return held.current
+}
+
+/**
+ * Readers with asynchronous reads (the timeline's IndexedDB live queries)
+ * register in-flight work here so a sweep can hold its window open until the
+ * reads its writes triggered have landed. The synchronous store hooks need
+ * none of this: they re-read on the close transition itself.
+ */
+let pendingReads = 0
+// A release from before a reset must not decrement the new count.
+let readsEpoch = 0
+
+export function trackPendingRead(): () => void {
+  pendingReads += 1
+  const epoch = readsEpoch
+  let released = false
+  return () => {
+    if (released || epoch !== readsEpoch) return
+    released = true
+    pendingReads -= 1
+  }
+}
+
+const READS_SETTLE_DEADLINE_MS = 2000
+
+/**
+ * Resolves once no tracked read has been pending across two consecutive
+ * macrotask turns. Two, because a live query re-run is scheduled a microtask
+ * after the write commits, and a re-run that starts a chained read (the tail
+ * re-latch) is only visible one turn later. The deadline bounds a reader that
+ * never settles; by the time this is awaited the sweep's writes are committed,
+ * so releasing on the deadline paints complete data, unlike a clock on the
+ * window itself, which could paint a half-applied refresh.
+ */
+export async function whenReadsSettled(): Promise<void> {
+  const deadline = Date.now() + READS_SETTLE_DEADLINE_MS
+  let quietTurns = 0
+  while (quietTurns < 2 && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    quietTurns = pendingReads === 0 ? quietTurns + 1 : 0
+  }
 }
 
 /** Test/teardown escape hatch: reset to the closed, depth-0 state. */
 export function resetApplyWindow(): void {
   const wasOpen = depth > 0
   depth = 0
-  if (watchdog) {
-    clearTimeout(watchdog)
-    watchdog = null
-  }
+  pendingReads = 0
+  readsEpoch += 1
   if (wasOpen) notifyTransition()
 }

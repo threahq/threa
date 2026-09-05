@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query"
 import type { StreamBootstrap, StreamReadFrontier, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threa/types"
-import { db, type CachedStreamReadState } from "@/db"
+import { db, getActiveDb, type CachedStreamReadState, type ThreaDatabase } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { applyStreamReadMessages, applyStreamsReadAllOrdinals, dropMessageActivities } from "./unread-counters"
@@ -15,9 +15,10 @@ export async function putReadStateIdb(
   workspaceId: string,
   streamId: string,
   fields: StreamReadFrontier,
-  now = Date.now()
+  now = Date.now(),
+  database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
-  await db.streamReadState.put({
+  await database.streamReadState.put({
     id: `${workspaceId}:${streamId}`,
     workspaceId,
     streamId,
