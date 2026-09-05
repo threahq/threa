@@ -5,7 +5,7 @@ import type {
   ToolVerificationStatus,
   TraceSource,
 } from "@threa/types"
-import { AgentSessionStatuses, AgentStepTypes } from "@threa/types"
+import { AgentSessionStatuses, AgentStepTypes, BotInvocationStatuses } from "@threa/types"
 import { isUniqueViolation } from "@threa/backend-common"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
@@ -605,8 +605,9 @@ export const AgentSessionRepository = {
   },
 
   /**
-   * Find sessions that are running but have stale heartbeats.
-   * These are candidates for recovery/retry.
+   * Running sessions with a stale heartbeat, minus those whose bot invocation
+   * (same id) still holds a live claim lease: a runtime that keeps renewing is
+   * alive even when its renew cadence is slower than the heartbeat threshold.
    */
   async findOrphaned(db: Querier, staleThresholdSeconds: number = 60): Promise<AgentSession[]> {
     const result = await db.query<SessionRow>(
@@ -615,6 +616,12 @@ export const AgentSessionRepository = {
         FROM agent_sessions
         WHERE status = ${SessionStatuses.RUNNING}
           AND heartbeat_at < NOW() - INTERVAL '1 second' * ${staleThresholdSeconds}
+          AND NOT EXISTS (
+            SELECT 1 FROM bot_invocations
+            WHERE bot_invocations.id = agent_sessions.id
+              AND bot_invocations.status = ${BotInvocationStatuses.CLAIMED}
+              AND bot_invocations.claim_expires_at > NOW()
+          )
       `
     )
     return result.rows.map(mapRowToSession)
