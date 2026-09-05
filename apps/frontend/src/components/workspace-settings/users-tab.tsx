@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
-import { Check, ChevronDown, Copy, KeyRound, Link as LinkIcon, Mail, MoreHorizontal } from "lucide-react"
+import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom"
+import { Check, ChevronDown, Copy, KeyRound, Link as LinkIcon, Mail, MoreHorizontal, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import {
   roleDisplayName,
@@ -27,6 +28,7 @@ import { invitationsApi, invitationKeys } from "@/api/invitations"
 import { ApiError } from "@/api/client"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useFormattedDate } from "@/hooks"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useChangeWorkspaceMemberRole, useRemoveWorkspaceMember } from "@/hooks/use-workspace-member-management"
 import { hasPermission } from "@/lib/permissions"
@@ -35,6 +37,7 @@ import { useUser } from "@/auth"
 type WorkspaceUserRow = ReturnType<typeof useWorkspaceUsers>[number]
 import { InviteDialog } from "./invite-dialog"
 import { CreateInviteLinkDialog } from "./create-invite-link-dialog"
+import { EditInviteLinkDialog } from "./edit-invite-link-dialog"
 
 function CopyLinkLabel({ isCopied, tokenInMemory }: { isCopied: boolean; tokenInMemory: boolean }) {
   if (isCopied) {
@@ -86,11 +89,61 @@ function memberErrorMessage(err: unknown, fallback: string): string {
   }
 }
 
+const INVITE_LINK_PARAM = "invite-link"
+
+function invitationErrorMessage(error: unknown, fallback: string): string {
+  if (ApiError.isApiError(error)) return error.message
+  if (error instanceof Error) return error.message
+  return fallback
+}
+
+function linkState(expired: boolean, exhausted: boolean): string {
+  if (expired) return "Expired"
+  if (exhausted) return "Exhausted"
+  return "Active"
+}
+
+export function PendingEmailInvitationDetails({
+  email,
+  role,
+  expiresAt,
+  formatDate,
+}: {
+  email: string | null
+  role: WorkspaceRoleSlug
+  expiresAt: string | null
+  formatDate: (date: Date) => string
+}) {
+  return (
+    <div className="min-w-0 space-y-1">
+      <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-sm">
+        <Mail className="h-3.5 w-3.5" />
+        {email}
+      </span>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className="capitalize">
+          {role}
+        </Badge>
+        <span className="text-xs text-muted-foreground">
+          {expiresAt ? `Expires ${formatDate(new Date(expiresAt))}` : "Never expires"}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 export function UsersTab({ workspaceId }: UsersTabProps) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const navigationType = useNavigationType()
+  const isMobile = useIsMobile()
   const [emailInviteOpen, setEmailInviteOpen] = useState(false)
-  const [linkInviteOpen, setLinkInviteOpen] = useState(false)
+  const selectedLink = searchParams.get(INVITE_LINK_PARAM)
   const [copiedInvitationId, setCopiedInvitationId] = useState<string | null>(null)
   const [memberToRemove, setMemberToRemove] = useState<WorkspaceUserRow | null>(null)
+  const ownedLinkEntryRef = useRef(false)
+  const locationKeyRef = useRef<string | null>(null)
 
   // Tokens are returned exactly once at create time; we keep them in-memory so
   // the admin can copy the link from the pending list. Refreshing the page
@@ -130,7 +183,40 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
     onSuccess: () => invitationsQuery.refetch(),
   })
 
-  const pendingInvitations = (invitationsQuery.data ?? []).filter((i) => i.status === "pending")
+  const invitations = invitationsQuery.data ?? []
+  const pendingEmailInvitations = invitations.filter(
+    (invitation) => invitation.kind === "email" && invitation.status === "pending"
+  )
+  const linkInvitations = invitations.filter(
+    (invitation) => invitation.kind === "link" && invitation.status !== "revoked"
+  )
+  const editedInvitation = linkInvitations.find((invitation) => invitation.id === selectedLink) ?? null
+
+  useEffect(() => {
+    if (location.key === locationKeyRef.current) return
+    locationKeyRef.current = location.key
+    if (!selectedLink) ownedLinkEntryRef.current = false
+    else if (navigationType !== "REPLACE") {
+      ownedLinkEntryRef.current =
+        navigationType === "PUSH" &&
+        (location.state as { inviteLinkPopsToClose?: boolean } | null)?.inviteLinkPopsToClose === true
+    }
+  }, [location.key, location.state, navigationType, selectedLink])
+
+  const setLinkOverlay = (value: string | null) => {
+    if (!value && !isMobile && ownedLinkEntryRef.current) {
+      ownedLinkEntryRef.current = false
+      navigate(-1)
+      return
+    }
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set(INVITE_LINK_PARAM, value)
+    else next.delete(INVITE_LINK_PARAM)
+    setSearchParams(next, {
+      replace: !value || isMobile,
+      state: value && !isMobile ? { ...(location.state ?? {}), inviteLinkPopsToClose: true } : location.state,
+    })
+  }
 
   const handleCopy = async (invitationId: string) => {
     const token = tokensRef.current.get(invitationId)
@@ -140,7 +226,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
       setCopiedInvitationId(invitationId)
       setTimeout(() => setCopiedInvitationId(null), 2000)
     } catch {
-      // Clipboard API can fail in insecure contexts — ignore silently.
+      toast.error("Could not copy the invite link")
     }
   }
 
@@ -160,13 +246,19 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
               <Mail className="mr-2 h-4 w-4" />
               <span>Invite by email</span>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setLinkInviteOpen(true)}>
+            <DropdownMenuItem onClick={() => setLinkOverlay("create")}>
               <LinkIcon className="mr-2 h-4 w-4" />
               <span>Create invite link</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {invitationsQuery.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          {invitationErrorMessage(invitationsQuery.error, "Failed to load invitations")}
+        </p>
+      )}
 
       <div className="space-y-2">
         {users.map((user) => {
@@ -247,89 +339,63 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
         })}
       </div>
 
-      {pendingInvitations.length > 0 && (
+      {linkInvitations.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-medium">Pending invitations ({pendingInvitations.length})</h3>
+          <h3 className="text-sm font-medium">Invite links ({linkInvitations.length})</h3>
           <div className="space-y-2">
-            {pendingInvitations.map((invitation) => {
-              const isLink = invitation.kind === "link"
+            {linkInvitations.map((invitation) => {
               const tokenInMemory = tokensRef.current.has(invitation.id)
-              const isCopied = copiedInvitationId === invitation.id
-
-              const unclaimedLink = isLink && !invitation.email
+              const exhausted = invitation.maxUses !== null && invitation.useCount >= invitation.maxUses
+              const expired = invitation.expiresAt !== null && new Date(invitation.expiresAt).getTime() <= Date.now()
+              const state = linkState(expired, exhausted)
               return (
                 <div
                   key={invitation.id}
-                  className={`relative flex flex-col gap-2 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between ${
-                    unclaimedLink ? "border-l-2 border-l-primary/60 bg-gradient-to-r from-primary/5 to-transparent" : ""
-                  }`}
+                  className="flex flex-col gap-2 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-                      {unclaimedLink ? (
-                        <span className="inline-flex items-center gap-1.5 truncate text-sm font-medium">
-                          <LinkIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
-                          Invite link
-                          {tokenInMemory && (
-                            <span className="text-[10px] uppercase tracking-[0.16em] text-primary/80">live</span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 truncate text-sm">
-                          {isLink ? (
-                            <LinkIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          ) : (
-                            <Mail className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          )}
-                          <span className="truncate">{invitation.email}</span>
-                        </span>
-                      )}
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Badge variant="outline" className="capitalize">
-                          {invitation.role}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {invitation.expiresAt
-                            ? `Expires ${formatDate(new Date(invitation.expiresAt))}`
-                            : "Never expires"}
-                        </span>
-                      </div>
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+                        <LinkIcon className="h-3.5 w-3.5 text-primary" />
+                        Invite link
+                      </span>
+                      <Badge variant="outline">{state}</Badge>
+                      <Badge variant="outline" className="capitalize">
+                        {invitation.role}
+                      </Badge>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      {invitation.useCount} of {invitation.maxUses ?? "unlimited"} joined ·{" "}
+                      {invitation.expiresAt ? `Expires ${formatDate(new Date(invitation.expiresAt))}` : "Never expires"}
+                    </p>
                     {invitation.note && (
-                      <p
-                        className="truncate pl-5 text-xs text-muted-foreground before:mr-1.5 before:text-muted-foreground/60 before:content-['—']"
-                        title={invitation.note}
-                      >
+                      <p className="truncate text-xs text-muted-foreground" title={invitation.note}>
                         {invitation.note}
                       </p>
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    {isLink ? (
-                      <Button
-                        size="sm"
-                        variant={tokenInMemory ? "outline" : "ghost"}
-                        onClick={() => handleCopy(invitation.id)}
-                        disabled={!tokenInMemory}
-                        title={tokenInMemory ? "Copy link to clipboard" : "Link only available right after creation"}
-                        className={tokenInMemory ? "gap-1" : "gap-1 text-muted-foreground"}
-                      >
-                        <CopyLinkLabel isCopied={isCopied} tokenInMemory={tokenInMemory} />
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => resendMutation.mutate(invitation.id)}
-                        disabled={resendMutation.isPending}
-                      >
-                        Resend
-                      </Button>
-                    )}
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => revokeMutation.mutate(invitation.id)}
+                      onClick={() => handleCopy(invitation.id)}
+                      disabled={!tokenInMemory}
+                      title={tokenInMemory ? "Copy link" : "Link only available after creation"}
+                    >
+                      <CopyLinkLabel isCopied={copiedInvitationId === invitation.id} tokenInMemory={tokenInMemory} />
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setLinkOverlay(invitation.id)}>
+                      <Pencil className="mr-1 h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        revokeMutation.mutate(invitation.id, {
+                          onError: (error) => toast.error(invitationErrorMessage(error, "Failed to revoke link")),
+                        })
+                      }
                       disabled={revokeMutation.isPending}
                     >
                       Revoke
@@ -342,6 +408,48 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
         </div>
       )}
 
+      {pendingEmailInvitations.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">Pending invitations ({pendingEmailInvitations.length})</h3>
+          {pendingEmailInvitations.map((invitation) => (
+            <div key={invitation.id} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+              <PendingEmailInvitationDetails
+                email={invitation.email}
+                role={invitation.role}
+                expiresAt={invitation.expiresAt}
+                formatDate={formatDate}
+              />
+              <div className="flex shrink-0 gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    resendMutation.mutate(invitation.id, {
+                      onError: (error) => toast.error(invitationErrorMessage(error, "Failed to resend invitation")),
+                    })
+                  }
+                  disabled={resendMutation.isPending}
+                >
+                  Resend
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    revokeMutation.mutate(invitation.id, {
+                      onError: (error) => toast.error(invitationErrorMessage(error, "Failed to revoke invitation")),
+                    })
+                  }
+                  disabled={revokeMutation.isPending}
+                >
+                  Revoke
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <InviteDialog
         workspaceId={workspaceId}
         open={emailInviteOpen}
@@ -350,14 +458,17 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
       />
       <CreateInviteLinkDialog
         workspaceId={workspaceId}
-        open={linkInviteOpen}
-        onOpenChange={setLinkInviteOpen}
-        onSuccess={() => {
-          invitationsQuery.refetch()
-        }}
-        onTokenCreated={(invitationId, token) => {
-          tokensRef.current.set(invitationId, token)
-        }}
+        open={selectedLink === "create"}
+        onOpenChange={(open) => !open && setLinkOverlay(null)}
+        onSuccess={() => invitationsQuery.refetch()}
+        onTokenCreated={(invitationId, token) => tokensRef.current.set(invitationId, token)}
+      />
+      <EditInviteLinkDialog
+        workspaceId={workspaceId}
+        invitation={editedInvitation}
+        open={editedInvitation !== null}
+        onOpenChange={(open) => !open && setLinkOverlay(null)}
+        onSuccess={() => invitationsQuery.refetch()}
       />
 
       <AlertDialog open={memberToRemove != null} onOpenChange={(open) => !open && setMemberToRemove(null)}>

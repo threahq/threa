@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Ban, Hourglass, Mail, SearchX, Unlink2, type LucideIcon } from "lucide-react"
+import { Ban, Hourglass, Mail, SearchX, UsersRound, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -14,6 +14,7 @@ type LookupErrorCode =
   | "INVITATION_NOT_FOUND"
   | "INVITATION_REVOKED"
   | "INVITATION_EXPIRED"
+  | "INVITATION_EXHAUSTED"
   | "INVITATION_ALREADY_CLAIMED"
 
 interface LookupErrorCopy {
@@ -39,9 +40,14 @@ const LOOKUP_ERROR_COPY: Record<LookupErrorCode, LookupErrorCopy> = {
     icon: Hourglass,
   },
   INVITATION_ALREADY_CLAIMED: {
-    title: "Link already used",
-    body: "This invitation link has already been claimed. Ask for a fresh one if you still need access.",
-    icon: Unlink2,
+    title: "Invite link already used",
+    body: "Ask the workspace admin for a new link.",
+    icon: UsersRound,
+  },
+  INVITATION_EXHAUSTED: {
+    title: "Invitation link is full",
+    body: "This link has reached its join limit. Ask the workspace admin to update it or send a new one.",
+    icon: UsersRound,
   },
 }
 
@@ -179,7 +185,7 @@ export function JoinPage() {
             You're invited to <span className="text-primary">{data.workspaceName}</span>
           </h1>
           <p className="text-sm text-muted-foreground">
-            {data.expiresAt ? `Invite link · expires ${formatDisplayDate(new Date(data.expiresAt))}` : "Invite link"}
+            {data.expiresAt ? `Expires ${formatDisplayDate(new Date(data.expiresAt))}` : "This link does not expire"}
           </p>
         </div>
 
