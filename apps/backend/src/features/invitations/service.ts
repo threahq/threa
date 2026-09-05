@@ -326,7 +326,7 @@ export class InvitationService {
       const root = await InvitationRepository.findRootByTokenHashForUpdate(client, tokenHash)
       if (!root) throw new InvitationLinkError("INVITATION_NOT_FOUND")
 
-      const hasChildren = await InvitationRepository.hasLinkChildren(client, root.id)
+      const hasChildren = await InvitationRepository.hasLinkChildren(client, root.workspaceId, root.id)
       if (root.maxUses !== 1 || root.expiresAt === null || hasChildren) {
         throw new InvitationLinkError("INVITATION_ROLLOUT_UNAVAILABLE")
       }
@@ -336,7 +336,7 @@ export class InvitationService {
         throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
       }
 
-      const claimed = await InvitationRepository.claimLegacyLinkById(client, root.id, email)
+      const claimed = await InvitationRepository.claimLegacyLinkById(client, root.workspaceId, root.id, email)
       if (!claimed) throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
       const inviterWorkosUserId =
         (await this.getInviterWorkosUserId(claimed.workspaceId, claimed.invitedBy, client)) ?? undefined

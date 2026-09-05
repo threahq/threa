@@ -47,6 +47,7 @@ describe("regional invitation dark compatibility API", () => {
     expect(accepted).toEqual(expect.objectContaining({ status: 200, data: { workspaceId: workspace.id } }))
 
     const listed = await admin.get<{ invitations: WorkspaceInvitation[] }>(path)
+    expect(listed.data.invitations.filter((invitation) => invitation.email === email)).toHaveLength(1)
     expect(listed.data.invitations.find((invitation) => invitation.id === created.data.invitation.id)).toMatchObject({
       email,
       status: "accepted",

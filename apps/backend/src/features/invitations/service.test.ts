@@ -98,8 +98,8 @@ describe("InvitationService.claimLinkByToken", () => {
     const service = new InvitationService({} as never, {} as never)
 
     await expect(service.claimLinkByToken("token", " New@Example.COM ")).resolves.toEqual({})
-    expect(claimLegacy.mock.calls[0]?.[1]).toBe("inv_root")
-    expect(claimLegacy.mock.calls[0]?.[2]).toBe("new@example.com")
+    expect(hasChildren.mock.calls[0]?.slice(1)).toEqual(["ws_1", "inv_root"])
+    expect(claimLegacy.mock.calls[0]?.slice(1)).toEqual(["ws_1", "inv_root", "new@example.com"])
     expect(insertOutbox.mock.calls.find((call) => call[1] === "invitation:link-claimed")?.[2]).toEqual({
       workspaceId: "ws_1",
       invitationId: "inv_root",

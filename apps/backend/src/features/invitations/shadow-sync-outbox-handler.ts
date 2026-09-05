@@ -75,7 +75,11 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
       const { invitationId, parentInvitationId, email, inviterWorkosUserId } = event.payload
       if (!parentInvitationId || parentInvitationId === invitationId) {
         const root = await InvitationRepository.findById(this.db, invitationId)
-        if (!root || root.kind !== "link" || root.parentLinkId) return
+        if (!root) throw new Error(`Invitation ${invitationId} not found for link-claimed delivery`)
+        if (root.kind !== "link" || root.parentLinkId) {
+          logger.warn({ invitationId }, "Link claim target is not a root link, skipping")
+          return
+        }
         await this.controlPlaneClient.notifyInvitationLinkClaimed({
           parentInvitationId: root.id,
           email,
@@ -85,7 +89,7 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
       }
 
       const parent = await InvitationRepository.findById(this.db, parentInvitationId)
-      if (!parent) return
+      if (!parent) throw new Error(`Invitation parent ${parentInvitationId} not found for link-claimed delivery`)
       await this.controlPlaneClient.notifyInvitationLinkClaimed({
         parentInvitationId,
         childInvitationId: invitationId,
@@ -98,15 +102,18 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
       })
     } else if (isOutboxEventType(event, "invitation:accepted")) {
       const invitation = await InvitationRepository.findById(this.db, event.payload.invitationId)
-      if (
-        !invitation ||
-        !invitation.acceptedAt ||
-        invitation.workspaceId !== event.payload.workspaceId ||
-        !invitation.email ||
-        invitation.email.toLowerCase() !== event.payload.email.toLowerCase() ||
-        !(await UserRepository.isMember(this.db, invitation.workspaceId, event.payload.workosUserId))
-      ) {
-        throw new Error(`Invitation acceptance ${event.payload.invitationId} does not match regional state`)
+      if (!invitation) throw new Error(`Invitation ${event.payload.invitationId} not found for accepted delivery`)
+      if (!invitation.acceptedAt) {
+        throw new Error(`Invitation ${event.payload.invitationId} is not accepted for accepted delivery`)
+      }
+      if (invitation.workspaceId !== event.payload.workspaceId) {
+        throw new Error(`Invitation ${event.payload.invitationId} workspace does not match accepted delivery`)
+      }
+      if (!invitation.email || invitation.email.toLowerCase() !== event.payload.email.toLowerCase()) {
+        throw new Error(`Invitation ${event.payload.invitationId} email does not match accepted delivery`)
+      }
+      if (!(await UserRepository.isMember(this.db, invitation.workspaceId, event.payload.workosUserId))) {
+        throw new Error(`Invitation ${event.payload.invitationId} member is not visible for accepted delivery`)
       }
       const parentId = invitation.parentLinkId ?? (invitation.kind === "link" ? invitation.id : null)
       const parent = parentId ? await InvitationRepository.findById(this.db, parentId) : null

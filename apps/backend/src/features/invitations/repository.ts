@@ -172,20 +172,21 @@ export const InvitationRepository = {
     return result.rows[0] ? findById(db, result.rows[0].id) : null
   },
 
-  async hasLinkChildren(db: Querier, parentLinkId: string): Promise<boolean> {
+  async hasLinkChildren(db: Querier, workspaceId: string, parentLinkId: string): Promise<boolean> {
     const result = await db.query(sql`
       SELECT 1 FROM workspace_invitations
-      WHERE parent_link_id = ${parentLinkId}
+      WHERE workspace_id = ${workspaceId} AND parent_link_id = ${parentLinkId}
       LIMIT 1
     `)
     return result.rows.length > 0
   },
 
-  async claimLegacyLinkById(db: Querier, id: string, email: string): Promise<Invitation | null> {
+  async claimLegacyLinkById(db: Querier, workspaceId: string, id: string, email: string): Promise<Invitation | null> {
     const result = await db.query<{ id: string }>(sql`
       UPDATE workspace_invitations
       SET email = ${email}
       WHERE id = ${id}
+        AND workspace_id = ${workspaceId}
         AND kind = 'link'
         AND parent_link_id IS NULL
         AND status = 'pending'
@@ -193,7 +194,9 @@ export const InvitationRepository = {
         AND max_uses = 1
         AND expires_at > NOW()
         AND NOT EXISTS (
-          SELECT 1 FROM workspace_invitations child WHERE child.parent_link_id = workspace_invitations.id
+          SELECT 1 FROM workspace_invitations child
+          WHERE child.workspace_id = workspace_invitations.workspace_id
+            AND child.parent_link_id = workspace_invitations.id
         )
       RETURNING id
     `)

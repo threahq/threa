@@ -835,7 +835,6 @@ export interface InvitationSentOutboxPayload extends WorkspaceScopedPayload {
 }
 
 export interface InvitationLinkStateOutboxPayload {
-  parentInvitationId: string
   expiresAt: string | null
   maxUses: number | null
   useCount: number
@@ -845,44 +844,33 @@ export interface InvitationLinkStateOutboxPayload {
 
 export interface InvitationLinkCreatedOutboxPayload extends WorkspaceScopedPayload, InvitationLinkStateOutboxPayload {
   invitationId: string
+  parentInvitationId: string
   tokenHash: string
   role: WorkspaceInvitableRole
 }
 
-export interface InvitationLinkClaimedOutboxPayload extends WorkspaceScopedPayload {
+export interface InvitationLinkClaimedOutboxPayload
+  extends WorkspaceScopedPayload, Partial<Omit<InvitationLinkStateOutboxPayload, "status">> {
   invitationId: string
   email: string
   role: WorkspaceInvitableRole
   inviterWorkosUserId?: string
   parentInvitationId?: string
-  expiresAt?: string | null
-  maxUses?: number | null
-  useCount?: number
-  revision?: number
-  status?: InvitationStatus
 }
 
-export interface InvitationAcceptedOutboxPayload extends WorkspaceScopedPayload {
+export interface InvitationAcceptedOutboxPayload
+  extends WorkspaceScopedPayload, Partial<InvitationLinkStateOutboxPayload> {
   invitationId: string
   email: string
   workosUserId: string
   userName: string
   parentInvitationId?: string
-  expiresAt?: string | null
-  maxUses?: number | null
-  useCount?: number
-  revision?: number
-  status?: InvitationStatus
 }
 
-export interface InvitationRevokedOutboxPayload extends WorkspaceScopedPayload {
+export interface InvitationRevokedOutboxPayload
+  extends WorkspaceScopedPayload, Partial<InvitationLinkStateOutboxPayload> {
   invitationId: string
   parentInvitationId?: string
-  expiresAt?: string | null
-  maxUses?: number | null
-  useCount?: number
-  revision?: number
-  status?: InvitationStatus
 }
 
 // User-scoped event payloads (delivered to a specific target user)

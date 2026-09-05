@@ -78,13 +78,17 @@ describe("ControlPlaneClient error translation", () => {
 
 describe("ControlPlaneClient invitation protocol", () => {
   let client: ControlPlaneClient
-  let requests: Array<{ url: string; body: unknown }>
+  let requests: Array<{ url: string; method: string | undefined; body: unknown }>
 
   beforeEach(() => {
     client = new ControlPlaneClient("https://cp.test", "secret")
     requests = []
     globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
-      requests.push({ url: input.toString(), body: init?.body ? JSON.parse(String(init.body)) : null })
+      requests.push({
+        url: input.toString(),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      })
       return makeResponse(200, JSON.stringify({ ok: true }))
     }) as unknown as typeof fetch
   })
@@ -104,6 +108,7 @@ describe("ControlPlaneClient invitation protocol", () => {
     expect(requests).toEqual([
       {
         url: "https://cp.test/internal/invitation-shadows/inv_legacy_root/claim",
+        method: "POST",
         body: {
           email: "legacy@example.com",
           inviterWorkosUserId: "user_inviter",
@@ -129,6 +134,7 @@ describe("ControlPlaneClient invitation protocol", () => {
     expect(requests).toEqual([
       {
         url: "https://cp.test/internal/invitation-shadows/inv_child/accepted",
+        method: "POST",
         body: {
           workspaceId: "ws_1",
           email: "accepted@example.com",
@@ -139,6 +145,33 @@ describe("ControlPlaneClient invitation protocol", () => {
           useCount: 1,
           revision: 2,
           status: "revoked",
+        },
+      },
+    ])
+  })
+
+  test("patches link state with a serialized expiry", async () => {
+    const expiresAt = new Date("2026-10-01T12:34:56.789Z")
+
+    await client.updateInvitationLinkShadow({
+      id: "inv_root",
+      expiresAt,
+      maxUses: 4,
+      useCount: 2,
+      revision: 3,
+      status: "pending",
+    })
+
+    expect(requests).toEqual([
+      {
+        url: "https://cp.test/internal/invitation-shadows/inv_root",
+        method: "PATCH",
+        body: {
+          expiresAt: expiresAt.toISOString(),
+          maxUses: 4,
+          useCount: 2,
+          revision: 3,
+          status: "pending",
         },
       },
     ])

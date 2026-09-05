@@ -1935,10 +1935,6 @@ export interface CreateInvitationLinkInput {
   role: WorkspaceInvitableRole
   /** Admin-only memo, e.g. "for Simon — sent via Signal". Optional. */
   note?: string
-  /** Omitted defaults to one successful join; null means unlimited. */
-  maxUses?: number | null
-  /** Omitted defaults to seven days; null means no expiry. */
-  expiresAt?: string | null
 }
 
 export interface UpdateInvitationLinkInput {

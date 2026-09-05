@@ -305,7 +305,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    {unclaimedLink ? (
+                    {isLink ? (
                       <Button
                         size="sm"
                         variant={tokenInMemory ? "outline" : "ghost"}

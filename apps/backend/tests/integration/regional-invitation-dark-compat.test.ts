@@ -172,6 +172,19 @@ describe("regional invitation dark compatibility", () => {
     }
   })
 
+  test("should scope legacy hierarchy checks and claims to the workspace", async () => {
+    const withChild = await seedRoot(fixture, { maxUses: 1, expiresAt: new Date(Date.now() + 60_000) })
+    await seedChild(fixture, withChild.root, identity(13).email)
+    expect(await InvitationRepository.hasLinkChildren(fixture.pool, fixture.workspaceId, withChild.root.id)).toBe(true)
+    expect(await InvitationRepository.hasLinkChildren(fixture.pool, "ws_other", withChild.root.id)).toBe(false)
+
+    const claimable = await seedRoot(fixture, { maxUses: 1, expiresAt: new Date(Date.now() + 60_000) })
+    await expect(
+      InvitationRepository.claimLegacyLinkById(fixture.pool, "ws_other", claimable.root.id, identity(14).email)
+    ).resolves.toBeNull()
+    expect(await InvitationRepository.findById(fixture.pool, claimable.root.id)).toMatchObject({ email: null })
+  })
+
   test("should preserve conservative accounting for an old-writer acceptance", async () => {
     const { root } = await seedRoot(fixture, { maxUses: 1, expiresAt: new Date(Date.now() + 60_000) })
     await fixture.pool.query(
@@ -235,6 +248,55 @@ describe("regional invitation dark compatibility", () => {
     await expect(fixture.service.acceptInvitation(staleChild.id, nonExpiringCandidate)).resolves.toBe(
       fixture.workspaceId
     )
+  })
+
+  test("should retry missing claim state and skip an invalid root target", async () => {
+    const calls: unknown[] = []
+    const handler = new TestShadowSyncHandler(
+      fixture.pool,
+      {
+        notifyInvitationLinkClaimed: async (params: unknown) => calls.push(params),
+      } as unknown as ControlPlaneClient,
+      "local"
+    )
+    const payload = {
+      workspaceId: fixture.workspaceId,
+      email: identity(39).email,
+      role: "member" as const,
+    }
+
+    await expect(
+      handler.process({
+        id: 1n,
+        eventType: "invitation:link-claimed",
+        payload: { ...payload, invitationId: "inv_missing" },
+        createdAt: new Date(),
+      } as OutboxEvent)
+    ).rejects.toThrow("Invitation inv_missing not found for link-claimed delivery")
+    await expect(
+      handler.process({
+        id: 2n,
+        eventType: "invitation:link-claimed",
+        payload: { ...payload, invitationId: "inv_child", parentInvitationId: "inv_missing_parent" },
+        createdAt: new Date(),
+      } as OutboxEvent)
+    ).rejects.toThrow("Invitation parent inv_missing_parent not found for link-claimed delivery")
+
+    const emailInvitation = await InvitationRepository.insert(fixture.pool, {
+      id: invitationId(),
+      workspaceId: fixture.workspaceId,
+      email: identity(38).email,
+      role: "member",
+      invitedBy: fixture.inviterId,
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    await handler.process({
+      id: 3n,
+      eventType: "invitation:link-claimed",
+      payload: { ...payload, invitationId: emailInvitation.id },
+      createdAt: new Date(),
+    } as OutboxEvent)
+    expect(calls).toEqual([])
   })
 
   test("should deliver queued legacy claims and acceptance acknowledgements", async () => {
