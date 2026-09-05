@@ -9,6 +9,7 @@ import { userId, workspaceId, streamId } from "../../src/lib/id"
 
 interface Seeded {
   wsId: string
+  otherWsId: string
   sealedId: string
   sealedThreadId: string
   plainId: string
@@ -86,27 +87,37 @@ describe("E2eStreamsRepository.excludeE2eRootedStreamIds", () => {
       })
     })
 
-    return { wsId, sealedId, sealedThreadId, plainId, plainThreadId, otherWsPlainId }
+    return { wsId, otherWsId, sealedId, sealedThreadId, plainId, plainThreadId, otherWsPlainId }
   }
 
   test("should drop a thread under an E2E root that carries no e2e_streams row of its own", async () => {
     const { wsId, sealedId, sealedThreadId, plainId, plainThreadId, otherWsPlainId } = await seed()
 
-    const reportable = await E2eStreamsRepository.excludeE2eRootedStreamIds(pool, wsId, [
-      sealedId,
-      sealedThreadId,
-      plainId,
-      plainThreadId,
-      otherWsPlainId,
-      streamId(),
-    ])
+    const reportable = await E2eStreamsRepository.excludeE2eRootedStreamIds(
+      pool,
+      [sealedId, sealedThreadId, plainId, plainThreadId, otherWsPlainId, streamId()].map((id) => ({
+        workspaceId: wsId,
+        streamId: id,
+      }))
+    )
 
     expect(new Set(reportable)).toEqual(new Set([plainId, plainThreadId]))
   })
 
-  test("should return nothing when no ids are given", async () => {
-    const { wsId } = await seed()
+  test("should resolve refs from several workspaces in one call", async () => {
+    const { wsId, otherWsId, sealedThreadId, plainId, otherWsPlainId } = await seed()
 
-    expect(await E2eStreamsRepository.excludeE2eRootedStreamIds(pool, wsId, [])).toEqual([])
+    const reportable = await E2eStreamsRepository.excludeE2eRootedStreamIds(pool, [
+      { workspaceId: wsId, streamId: plainId },
+      { workspaceId: wsId, streamId: sealedThreadId },
+      { workspaceId: otherWsId, streamId: otherWsPlainId },
+      { workspaceId: wsId, streamId: otherWsPlainId },
+    ])
+
+    expect(new Set(reportable)).toEqual(new Set([plainId, otherWsPlainId]))
+  })
+
+  test("should return nothing when no refs are given", async () => {
+    expect(await E2eStreamsRepository.excludeE2eRootedStreamIds(pool, [])).toEqual([])
   })
 })

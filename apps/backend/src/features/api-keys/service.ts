@@ -68,7 +68,10 @@ export class BotChannelService {
   private async getOwnerReadableStreamIds(workspaceId: string, ownerUserId: string): Promise<string[]> {
     const ownerIds = await resolveUserAccessibleStreamIds(this.pool, workspaceId, ownerUserId, {})
     const liveRooted = await StreamRepository.filterIdsWithActiveRoot(this.pool, workspaceId, ownerIds)
-    return E2eStreamsRepository.excludeE2eRootedStreamIds(this.pool, workspaceId, liveRooted)
+    return E2eStreamsRepository.excludeE2eRootedStreamIds(
+      this.pool,
+      liveRooted.map((streamId) => ({ workspaceId, streamId }))
+    )
   }
 
   async isStreamActionableForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {

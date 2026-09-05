@@ -18,7 +18,7 @@ function createHandler(consent: Map<string, unknown> = new Map()) {
   const fakeCursorLock = makeFakeCursorLock()
   ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(fakeCursorLock)
   const excludeE2eRootedStreamIds = spyOn(E2eStreamsRepository, "excludeE2eRootedStreamIds").mockImplementation(
-    async (_db, _workspaceId, streamIds) => streamIds
+    async (_db, refs) => refs.map((ref) => ref.streamId)
   )
   const findOverrideForUsers = spyOn(UserPreferencesRepository, "findOverrideForUsers").mockResolvedValue(consent)
   const captureEvent = mock()
@@ -115,6 +115,7 @@ describe("AnalyticsOutboxHandler", () => {
 
     expect(captureEvent).toHaveBeenCalledTimes(1)
     expect(captureEvent.mock.calls[0][0]).toEqual({
+      uuid: expect.any(String),
       distinctId: "usr_a",
       event: "message_sent",
       properties: { workspaceId: "ws_test", streamId: "stream_test", messageId: "msg_test" },
@@ -165,6 +166,7 @@ describe("AnalyticsOutboxHandler", () => {
 
     expect(captureEvent).toHaveBeenCalledTimes(1)
     expect(captureEvent.mock.calls[0][0]).toEqual({
+      uuid: expect.any(String),
       distinctId: "usr_a",
       event: "reaction_added",
       properties: { workspaceId: "ws_test", streamId: "stream_test", messageId: "msg_test" },
@@ -181,6 +183,7 @@ describe("AnalyticsOutboxHandler", () => {
 
     expect(captureEvent).toHaveBeenCalledTimes(1)
     expect(captureEvent.mock.calls[0][0]).toEqual({
+      uuid: expect.any(String),
       distinctId: "usr_a",
       event: "stream_created",
       properties: { workspaceId: "ws_test", streamId: "stream_test", streamType: "channel" },
@@ -201,12 +204,13 @@ describe("AnalyticsOutboxHandler", () => {
     await new Promise((r) => setTimeout(r, 300))
 
     expect(captureEvent.mock.calls[0][0]).toEqual({
+      uuid: expect.any(String),
       distinctId: "usr_a",
       event: "stream_created",
       properties: { workspaceId: "ws_test", streamId: "stream_thread", streamType: "thread" },
       groups: { workspace: "ws_test" },
     })
-    expect(excludeE2eRootedStreamIds.mock.calls[0].slice(1)).toEqual(["ws_test", ["stream_thread"]])
+    expect(excludeE2eRootedStreamIds.mock.calls[0][1]).toEqual([{ workspaceId: "ws_test", streamId: "stream_thread" }])
   })
 
   it("should capture stream_joined with the expected object", async () => {
@@ -218,6 +222,7 @@ describe("AnalyticsOutboxHandler", () => {
 
     expect(captureEvent).toHaveBeenCalledTimes(1)
     expect(captureEvent.mock.calls[0][0]).toEqual({
+      uuid: expect.any(String),
       distinctId: "usr_a",
       event: "stream_joined",
       properties: { workspaceId: "ws_test", streamId: "stream_test" },
@@ -256,6 +261,43 @@ describe("AnalyticsOutboxHandler", () => {
 
     expect(captureEvent).not.toHaveBeenCalled()
     expect(result).toEqual({ status: "processed", processedIds: [5n] })
+  })
+
+  it("should reuse one E2E lookup for candidates across workspaces", async () => {
+    const { handler, excludeE2eRootedStreamIds } = createHandler(new Map())
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      messageCreatedEvent({ id: 1n, workspaceId: "ws_a", streamId: "stream_a" }),
+      messageCreatedEvent({ id: 2n, workspaceId: "ws_b", streamId: "stream_b" }),
+    ] as any)
+
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(excludeE2eRootedStreamIds).toHaveBeenCalledTimes(1)
+    expect(excludeE2eRootedStreamIds.mock.calls[0][1]).toEqual([
+      { workspaceId: "ws_a", streamId: "stream_a" },
+      { workspaceId: "ws_b", streamId: "stream_b" },
+    ])
+  })
+
+  it("should give a replayed outbox row the uuid it had the first time", async () => {
+    const first = createHandler(new Map([["usr_a", "granted"]]))
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([messageCreatedEvent({ id: 7n })] as any)
+    first.handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    const replay = createHandler(new Map([["usr_a", "granted"]]))
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      messageCreatedEvent({ id: 7n }),
+      messageCreatedEvent({ id: 8n }),
+    ] as any)
+    replay.handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    const original = first.captureEvent.mock.calls[0][0].uuid
+    expect(replay.captureEvent.mock.calls[0][0].uuid).toBe(original)
+    expect(replay.captureEvent.mock.calls[1][0].uuid).not.toBe(original)
+    expect(original).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
   it("should read consent once per batch with the distinct actor ids", async () => {

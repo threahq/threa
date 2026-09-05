@@ -12,6 +12,8 @@ export interface AnalyticsEvent {
   event: string
   properties?: Record<string, unknown>
   groups?: Record<string, string>
+  /** Idempotency key. PostHog drops a second event carrying a uuid it already ingested. */
+  uuid?: string
 }
 
 export interface AnalyticsReporter {
@@ -79,6 +81,7 @@ export class PostHogAnalyticsReporter implements AnalyticsReporter {
         event: event.event,
         properties: { service: this.service, region: this.region, ...event.properties },
         groups: event.groups,
+        uuid: event.uuid,
       })
     } catch (reportingError) {
       logger.warn({ err: reportingError }, "PostHog capture failed")

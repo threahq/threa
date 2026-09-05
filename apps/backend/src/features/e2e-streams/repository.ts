@@ -28,6 +28,11 @@ export interface E2eStream {
   hasSealedName: boolean
 }
 
+export interface StreamRef {
+  workspaceId: string
+  streamId: string
+}
+
 export interface MarkStreamE2eParams {
   streamId: string
   workspaceId: string
@@ -84,22 +89,23 @@ export const E2eStreamsRepository = {
   },
 
   /**
-   * Return the subset of `streamIds` whose EFFECTIVE ROOT is not E2E.
+   * Return the subset of `refs` whose EFFECTIVE ROOT is not E2E.
    * Threads created before #793 carry no `e2e_streams` row of their own, so
    * they match nothing in {@link filterE2eStreamIds} — this resolves
    * `COALESCE(root_stream_id, id)` first (INV-62) so threads are excluded
-   * alongside their root. Ids with no `streams` row drop out.
+   * alongside their root. Refs with no `streams` row in the paired workspace
+   * drop out.
    */
-  async excludeE2eRootedStreamIds(db: Querier, workspaceId: string, streamIds: string[]): Promise<string[]> {
-    if (streamIds.length === 0) return []
+  async excludeE2eRootedStreamIds(db: Querier, refs: StreamRef[]): Promise<string[]> {
+    if (refs.length === 0) return []
     const result = await db.query<{ id: string }>(sql`
       SELECT s.id
-      FROM streams s
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.streamId)}::text[])
+        AS ref(workspace_id, stream_id)
+      JOIN streams s ON s.workspace_id = ref.workspace_id AND s.id = ref.stream_id
       LEFT JOIN e2e_streams e
         ON e.workspace_id = s.workspace_id AND e.stream_id = COALESCE(s.root_stream_id, s.id)
-      WHERE s.workspace_id = ${workspaceId}
-        AND s.id = ANY(${streamIds})
-        AND e.stream_id IS NULL
+      WHERE e.stream_id IS NULL
     `)
     return result.rows.map((row) => row.id)
   },

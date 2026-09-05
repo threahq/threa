@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { Pool } from "pg"
 import type { AnalyticsReporter } from "@threa/backend-common"
 import { AuthorTypes } from "@threa/types"
@@ -22,6 +23,27 @@ interface Candidate {
   streamId: string
   event: string
   properties: Record<string, string>
+}
+
+interface Reportable extends Candidate {
+  uuid: string
+}
+
+/** Random constant; only its fixedness matters (RFC 4122 §4.3). */
+const EVENT_UUID_NAMESPACE = Buffer.from("6f1c4f2a9b6a4e1d8f3b2c7d5e0a1b4c", "hex")
+
+/**
+ * Outbox delivery is at-least-once, so a crash between capture and cursor
+ * advance replays the batch. PostHog drops an event whose uuid it has already
+ * ingested, so derive one from the row that produced it: same row, same uuid,
+ * one event. Workspace-scoped because outbox ids are only unique per region.
+ */
+function eventUuid(workspaceId: string, outboxEventId: bigint): string {
+  const hash = createHash("sha1").update(EVENT_UUID_NAMESPACE).update(`${workspaceId}:${outboxEventId}`).digest()
+  hash[6] = (hash[6]! & 0x0f) | 0x50
+  hash[8] = (hash[8]! & 0x3f) | 0x80
+  const hex = hash.subarray(0, 16).toString("hex")
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
 }
 
 function toCandidate(event: OutboxEvent): Candidate | null {
@@ -115,11 +137,19 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
   }
 
   protected async processBatch(events: OutboxEvent[]): Promise<bigint[]> {
-    const candidates = events.map(toCandidate).filter((candidate) => candidate !== null)
+    const candidates = events.flatMap<Reportable>((event) => {
+      const candidate = toCandidate(event)
+      return candidate ? [{ ...candidate, uuid: eventUuid(candidate.workspaceId, event.id) }] : []
+    })
 
     if (candidates.length > 0) {
-      const reportableStreamIds = await this.findReportableStreamIds(candidates)
-      const reportable = candidates.filter((candidate) => reportableStreamIds.has(candidate.streamId))
+      const nonE2eStreamIds = new Set(
+        await E2eStreamsRepository.excludeE2eRootedStreamIds(
+          this.db,
+          candidates.map(({ workspaceId, streamId }) => ({ workspaceId, streamId }))
+        )
+      )
+      const reportable = candidates.filter((candidate) => nonE2eStreamIds.has(candidate.streamId))
       const consentByActorId = await UserPreferencesRepository.findOverrideForUsers(
         this.db,
         Array.from(new Set(reportable.map((candidate) => candidate.actorId))),
@@ -129,6 +159,7 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
       for (const candidate of reportable) {
         if (consentByActorId.get(candidate.actorId) !== ANALYTICS_CONSENT_GRANTED) continue
         this.reporter.captureEvent({
+          uuid: candidate.uuid,
           distinctId: candidate.actorId,
           event: candidate.event,
           properties: candidate.properties,
@@ -138,21 +169,5 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
     }
 
     return events.map((event) => event.id)
-  }
-
-  private async findReportableStreamIds(candidates: Candidate[]): Promise<Set<string>> {
-    const streamIdsByWorkspace = new Map<string, Set<string>>()
-    for (const candidate of candidates) {
-      const streamIds = streamIdsByWorkspace.get(candidate.workspaceId) ?? new Set<string>()
-      streamIds.add(candidate.streamId)
-      streamIdsByWorkspace.set(candidate.workspaceId, streamIds)
-    }
-
-    const reportableStreamIds = new Set<string>()
-    for (const [workspaceId, streamIds] of streamIdsByWorkspace) {
-      const found = await E2eStreamsRepository.excludeE2eRootedStreamIds(this.db, workspaceId, Array.from(streamIds))
-      for (const streamId of found) reportableStreamIds.add(streamId)
-    }
-    return reportableStreamIds
   }
 }

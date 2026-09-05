@@ -103,7 +103,7 @@ describe("errorHandler", () => {
   test("should replace entity ids in the reported path", () => {
     const res = makeRes()
     const reporter = makeRecordingReporter()
-    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const errorHandler = createErrorHandler({ analyticsReporter: reporter })
     const err = new Error("boom")
     const req = {
       path: "/api/streams/stream_01JQ8ZP4K6/read-state",
