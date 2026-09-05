@@ -6,12 +6,8 @@ import { BotInvocationRepository } from "../../src/features/bot-runtimes"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 /**
- * Orphan cleanup vs. a live claim lease, against the real schema.
- *
- * A bot invocation's session shares its id. The runtime renews the claim lease
- * on its own cadence (90 s after claim in the current client), which is slower
- * than the 60 s heartbeat threshold, so a turn that is quiet on steps between
- * claim and first renewal must not be failed while the lease is live.
+ * A bot invocation's session shares its id, and claim renewal is the runtime's
+ * liveness signal: a stale heartbeat under a live lease is not an orphan.
  */
 describe("AgentSessionRepository.findOrphaned with a live claim lease", () => {
   let pool: Pool
