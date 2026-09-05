@@ -211,6 +211,21 @@ describe("SearchPage", () => {
       expect(seeAll).toHaveAttribute("href", "/w/workspace_1/memory?q=hello")
     })
 
+    it("counts a memo-only match as a result instead of showing the empty state", async () => {
+      mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+      vi.spyOn(hooksModule, "useSearch").mockImplementation(
+        () =>
+          ({ results: [], isLoading: false, error: null, search, clear }) as unknown as ReturnType<
+            typeof hooksModule.useSearch
+          >
+      )
+      renderPage()
+
+      expect(await screen.findByText("Memories")).toBeInTheDocument()
+      expect(screen.getByText("1 result")).toBeInTheDocument()
+      expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
+    })
+
     it("is absent when the memo response is empty", async () => {
       mockUseMemoSearch.mockReturnValue({ data: { results: [] }, isLoading: false, error: null })
       renderPage()

@@ -732,6 +732,22 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(html.indexOf("Memories")).toBeLessThan(html.indexOf("#general"))
     })
 
+    it("counts a memo-only match as a result instead of showing the empty state", async () => {
+      mockMemoSearchState.results = [buildMemoResult()]
+      mockSearchState.results = []
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByText("Memories")).toBeInTheDocument()
+      expect(screen.getByText("1 result in 0 streams")).toBeInTheDocument()
+      expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
+    })
+
     it("opens the active MESSAGE result on Enter, never a memo", async () => {
       mockMemoSearchState.results = [buildMemoResult()]
       mockSearchState.results = mockSearchResultsList

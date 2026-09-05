@@ -2,11 +2,6 @@ import { Link } from "react-router-dom"
 import { MemoResultItem } from "@/components/memo/memo-result-item"
 import type { MemoExplorerResult } from "@/api"
 
-/**
- * Top memo matches for a search query, rendered above message results on the
- * search page and sidebar search panel. Renders nothing when there are no
- * memo matches — a query can match a memo and no message, or vice versa.
- */
 export function MemoMatches({
   memos,
   exploreHref,

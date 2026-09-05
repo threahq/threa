@@ -51,6 +51,8 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     apiFilters,
     hasQuery,
   })
+  const resultCount = results.length + memos.length
+  const hasResults = resultCount > 0
 
   const inputRef = useRef<RichInputRef>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -65,10 +67,9 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const streamCount = useMemo(() => new Set(results.map((r) => r.streamId)).size, [results])
   const emptySummary = isLoading ? "Searching…" : "No results"
-  const resultSummary =
-    results.length > 0
-      ? `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`
-      : emptySummary
+  const resultSummary = hasResults
+    ? `${resultCount} result${resultCount === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`
+    : emptySummary
   const searchBinding = getEffectiveKeyBinding("openSearch", preferences?.keyboardShortcuts ?? {})
 
   const handleResultSelect = useCallback(
@@ -234,7 +235,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             </div>
           )}
 
-          {hasQuery && isLoading && results.length === 0 && (
+          {hasQuery && isLoading && !hasResults && (
             <div className="flex flex-col gap-1.5 px-1 py-1">
               <Skeleton className="h-12 rounded-md" />
               <Skeleton className="h-12 rounded-md" />
@@ -255,7 +256,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             />
           )}
 
-          {hasQuery && !isLoading && !displayError && results.length === 0 && (
+          {hasQuery && !isLoading && !displayError && !hasResults && (
             <div className="px-2 py-6 text-center">
               <p className="text-xs font-medium text-muted-foreground/80">No messages found</p>
               <p className="mt-1 text-[11px] text-muted-foreground/60">Try different words or remove a filter</p>

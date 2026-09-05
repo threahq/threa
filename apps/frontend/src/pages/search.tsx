@@ -86,6 +86,8 @@ export function SearchPage() {
     apiFilters,
     hasQuery,
   })
+  const resultCount = results.length + memos.length
+  const hasResults = resultCount > 0
 
   if (!workspaceId) {
     return null
@@ -119,7 +121,7 @@ export function SearchPage() {
           </div>
 
           <span className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground/50 sm:inline">
-            {hasQuery && !isLoading ? `${results.length} result${results.length === 1 ? "" : "s"}` : ""}
+            {hasQuery && !isLoading ? `${resultCount} result${resultCount === 1 ? "" : "s"}` : ""}
           </span>
         </div>
 
@@ -174,7 +176,7 @@ export function SearchPage() {
 
           {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} />}
 
-          {hasQuery && isLoading && results.length === 0 && (
+          {hasQuery && isLoading && !hasResults && (
             <div className="flex flex-col gap-2 py-1">
               <Skeleton className="h-14 rounded-md" />
               <Skeleton className="h-14 rounded-md" />
@@ -196,7 +198,7 @@ export function SearchPage() {
             />
           )}
 
-          {hasQuery && !isLoading && !displayError && results.length === 0 && (
+          {hasQuery && !isLoading && !displayError && !hasResults && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <p className="text-sm font-medium text-muted-foreground/70">No messages found</p>
               <p className="mt-1 text-xs text-muted-foreground/50">Try different words or remove a filter</p>

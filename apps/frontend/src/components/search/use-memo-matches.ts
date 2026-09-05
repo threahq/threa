@@ -8,24 +8,20 @@ import { SEARCH_DEBOUNCE_MS } from "./use-message-search"
 // from:/with:/type:/status: filter would silently ignore that filter.
 const FILTERS_WITHOUT_MEMO_EQUIVALENT: FilterType[] = ["from", "with", "type", "status"]
 
-export interface UseMemoMatchesParams {
+interface UseMemoMatchesParams {
   searchText: string
   parsedFilters: ParsedFilter[]
   apiFilters: SearchFilters
   hasQuery: boolean
 }
 
-export interface MemoMatchesState {
+interface MemoMatchesState {
   memos: MemoExplorerResult[]
   exploreHref: string
 }
 
-/**
- * Top memo matches for the current message-search query, shown above message
- * results on the search page and sidebar search panel. Takes the full
- * `searchText` rather than `semanticText`: memo search has no phrase handling,
- * and a phrase-only query would otherwise collapse to an empty string.
- */
+// Takes the full `searchText` rather than `semanticText`: memo search has no
+// phrase handling, and a phrase-only query would otherwise collapse to "".
 export function useMemoMatches(workspaceId: string, params: UseMemoMatchesParams): MemoMatchesState {
   const { searchText, parsedFilters, apiFilters, hasQuery } = params
 
