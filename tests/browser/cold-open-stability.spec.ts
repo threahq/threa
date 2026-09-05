@@ -129,13 +129,13 @@ test("should preserve cached sidebar state throughout reload when a stale SW sna
       const sample = () => {
         const navigation = document.querySelector('[role="navigation"][aria-label="Sidebar navigation"]')
         const links = Array.from(navigation?.querySelectorAll("a") ?? [])
-        const a = links.find((link) => link.textContent?.includes(padA))
-        if (a && a.getClientRects().length > 0) {
-          const b = links.find((link) => link.textContent?.includes(padB))
+        const padALink = links.find((link) => link.textContent?.includes(padA))
+        if (padALink && padALink.getClientRects().length > 0) {
+          const padBLink = links.find((link) => link.textContent?.includes(padB))
           frames.push({
             elapsed: performance.now() - start,
-            hasPadB: !!b && b.getClientRects().length > 0,
-            preview: a.textContent ?? "",
+            hasPadB: !!padBLink && padBLink.getClientRects().length > 0,
+            preview: padALink.textContent ?? "",
           })
         }
         if (performance.now() - start < 30_000) requestAnimationFrame(sample)
