@@ -243,6 +243,39 @@ describe("SocketEventGate", () => {
     }
   })
 
+  it("a buffered handler failure is logged, the splice finishes and the gate reopens", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      const socket = new FakeSocket()
+      const applied: string[] = []
+      const gate = new SocketEventGate(WS, { onApplied: (syncId) => applied.push(syncId) })
+      gate.attach(asSocket(socket))
+      const seen: string[] = []
+      gate.on("message:created", async (payload: unknown) => {
+        if ((payload as { syncId: string }).syncId === "1") throw new Error("boom")
+      })
+      gate.on("message:created", (payload: unknown) => {
+        seen.push((payload as { syncId: string }).syncId)
+      })
+
+      gate.pause()
+      socket.trigger("message:created", { workspaceId: WS, syncId: "2" })
+      socket.trigger("message:created", { workspaceId: WS, syncId: "1" })
+      await gate.resume(() => true)
+      socket.trigger("message:created", { workspaceId: WS, syncId: "3" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(seen).toEqual(["1", "2", "3"])
+      expect(applied).toEqual(["1", "2", "3"])
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Sync buffered handler failed",
+        expect.objectContaining({ eventType: "message:created", syncId: "1" })
+      )
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
   it("falls back to immediate application when the pause buffer overflows", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
     try {

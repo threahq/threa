@@ -1895,17 +1895,21 @@ export class SyncEngine {
       // gate paused and let that cycle's own run (chained by runCatchUp) do
       // the splice. Buffered events at or below the applied position were
       // already applied from the log.
-      if (!this.isDestroyed && this.catchUpCycle === cycle) {
-        if (gate.hasBuffered()) holdApplyWindow()
-        const through = appliedThrough
-        await gate.resume((_eventType, syncId) => through === null || syncId > through)
+      try {
+        if (!this.isDestroyed && this.catchUpCycle === cycle) {
+          if (gate.hasBuffered()) holdApplyWindow()
+          const through = appliedThrough
+          await gate.resume((_eventType, syncId) => through === null || syncId > through)
+        }
+      } finally {
+        // Release the held read layer last — after the batch flush AND the resume
+        // splice have written — so the one re-read every batched hook does on close
+        // reflects the replay's final state plus the spliced live events together.
+        // Inside its own finally: a rejected resume must still release, or every
+        // batched hook holds its stale value until a reload.
+        if (holdingApplyWindow) endApplyWindow()
+        stopReplay()
       }
-
-      // Release the held read layer last — after the batch flush AND the resume
-      // splice have written — so the one re-read every batched hook does on close
-      // reflects the replay's final state plus the spliced live events together.
-      if (holdingApplyWindow) endApplyWindow()
-      stopReplay()
     }
   }
 

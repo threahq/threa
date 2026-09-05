@@ -119,6 +119,16 @@ interface UseLastSeenEventOptions {
    * SWEEP_LINK_MS): a jump must remain a gap, not a read-through.
    */
   programmaticScrollAtRef?: React.RefObject<number>
+  /**
+   * The row a positional landing (unread marker, anchor restore) placed at the
+   * top of the viewport, set by the owner when the landing engages and consumed
+   * by the next arm. The first scan sweeps from it: a gesture that lifted the
+   * settle mask early moved the viewport off the landing row before tracking
+   * armed, and without this seed that movement reads as a jump, the contiguity
+   * check fails once, and the whole read-through marks nothing. Keyed by event
+   * id, so a row left over from another stream resolves to nothing and is inert.
+   */
+  sweepOriginRef?: React.RefObject<string | null>
 }
 
 interface UseLastSeenEventResult {
@@ -158,6 +168,7 @@ export function useLastSeenEvent({
   lastReadSequence,
   enabled,
   programmaticScrollAtRef,
+  sweepOriginRef,
 }: UseLastSeenEventOptions): UseLastSeenEventResult {
   const [lastSeenEventId, setLastSeenEventId] = useState<string | undefined>(undefined)
   const [atLastRow, setAtLastRow] = useState(false)
@@ -325,8 +336,14 @@ export function useLastSeenEvent({
     if (!enabled) return
     const el = scrollContainerEl ?? scrollContainerRef.current
     // A re-arm (enabled flip, scroller mount, jump-mode exit) starts a fresh
-    // sweep baseline — scans across a disabled window must never link.
-    prevScanRef.current = null
+    // sweep baseline — scans across a disabled window must never link — unless
+    // a positional landing left the row it placed at the top (sweepOriginRef):
+    // the first scan then sweeps from that row, as a scan right after the reveal
+    // would have. Stamped now, after the landing's last programmatic write, so
+    // the link check below admits it.
+    const origin = sweepOriginRef?.current ?? null
+    if (sweepOriginRef) sweepOriginRef.current = null
+    prevScanRef.current = origin ? { topId: origin, at: performance.now() } : null
     let raf = 0
     const schedule = () => {
       if (raf) return
@@ -359,7 +376,7 @@ export function useLastSeenEvent({
       el?.removeEventListener("scroll", onScroll)
       ro?.disconnect()
     }
-  }, [enabled, streamId, recompute, scrollContainerRef, scrollContainerEl, contentRef])
+  }, [enabled, streamId, recompute, scrollContainerRef, scrollContainerEl, contentRef, sweepOriginRef])
 
   // Re-scan when the window grows (live append), an event at the same index is
   // replaced (the optimistic temp_ row for the viewer's own send is swapped for

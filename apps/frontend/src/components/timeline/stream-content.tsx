@@ -1680,6 +1680,9 @@ export function StreamContent({
   // across a stamp, so programmatic jumps stay read gaps while user flings
   // sweep — see SWEEP_LINK_MS.
   const programmaticScrollAtRef = useRef(0)
+  // The row a positional landing placed at the top, handed to useLastSeenEvent
+  // so its first scan after the reveal sweeps from there (see sweepOriginRef).
+  const sweepOriginRef = useRef<string | null>(null)
 
   const {
     listRef,
@@ -2424,6 +2427,7 @@ export function StreamContent({
     lastReadSequence: frontierLastReadSequence,
     enabled: autoMarkEnabled,
     programmaticScrollAtRef,
+    sweepOriginRef,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, {
     enabled: autoMarkEnabled,
@@ -2787,6 +2791,7 @@ export function StreamContent({
         : scrollToMessage(target.id, { align: "start", onFirstSettle: revealIfCurrent })
     if (engaged) {
       holdSettleForRestore()
+      sweepOriginRef.current = target.id
       // Seed the detached-viewport guard: content resizes between engage and
       // the refine loop's first settle must re-target the landing, not slide
       // the viewport.
