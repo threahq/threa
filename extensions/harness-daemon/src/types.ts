@@ -17,6 +17,8 @@ export interface ManagedAgent {
   scratchpadUrl?: string
   instanceId?: string
   runtimeSessionId?: string
+  /** Thread the link points at when the session was attached; `scratchpadUrl` stays the root, which is what revival probes. */
+  activeStreamId?: string
   command: string[]
   createdAt: string
   updatedAt: string
@@ -55,6 +57,10 @@ export interface SpawnOptions {
   noRegister?: boolean
   noAutoAccept?: boolean
   noYolo?: boolean
+  /** Link the session to a thread under an existing scratchpad instead of minting a new one. */
+  attach?: { rootStreamId: string; anchorId: string }
+  /** Path to a file whose content is delivered as a brief once the attached session is up. Requires `attach`. */
+  briefFile?: string
 }
 
 export interface ResumeOptions {
@@ -86,6 +92,7 @@ export interface SpawnResult {
   scratchpadUrl?: string
   instanceId?: string
   runtimeSessionId?: string
+  activeStreamId?: string
   output: string
 }
 

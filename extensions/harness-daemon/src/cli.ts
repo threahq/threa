@@ -10,6 +10,7 @@ export function usage(): never {
 Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
       [--cwd <path>] [--profile <name>]   (--cwd uses an existing folder and provisions nothing)
+      [--attach <root-stream-id> --anchor <anchor-id> [--brief-file <path>]]   (link to a thread under that scratchpad instead of creating one)
   threa-harnessd do <natural language command>
   threa-harnessd list
   threa-harnessd up [--tmux <session>] [--dry-run] [--recreate-worktree]
@@ -27,6 +28,8 @@ Usage:
   threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
   threa-harnessd clear <agent-id-or-name-or-runtime-session-id>
       (kill the pane and start a FRESH conversation on the same scratchpad; opt-in only, never automatic)
+  threa-harnessd done <agent-id-or-name-or-runtime-session-id>
+      (commit, push, remove the worktree and end the Threa link; opt-in only)
   threa-harnessd interrupt <agent-id-or-name>
   threa-harnessd steer <agent-id-or-name> [follow-up text]
   threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>
@@ -220,6 +223,13 @@ export function parseSpawn(args: string[]): SpawnOptions {
       die(`--cwd provisions nothing, so it cannot be combined with ${conflicting.map((f) => `--${f}`).join(", ")}`)
     }
   }
+  const attach = stringFlag(flags, "attach")
+  const anchor = stringFlag(flags, "anchor")
+  if (attach && !anchor) die("--attach requires --anchor <anchor-id>")
+  if (anchor && !attach) die("--anchor requires --attach <root-stream-id>")
+  const briefFile = stringFlag(flags, "brief-file")
+  if (briefFile && !attach) die("--brief-file requires --attach")
+
   return {
     runtime,
     name: normalizeName(name),
@@ -233,5 +243,7 @@ export function parseSpawn(args: string[]): SpawnOptions {
     noRegister: boolFlag(flags, "no-register"),
     noAutoAccept: boolFlag(flags, "no-auto-accept"),
     noYolo: boolFlag(flags, "no-yolo"),
+    ...(attach && anchor ? { attach: { rootStreamId: attach, anchorId: anchor } } : {}),
+    ...(briefFile ? { briefFile } : {}),
   }
 }

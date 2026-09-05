@@ -30,6 +30,7 @@ interface ManagedAgentRow {
   probe_backoff_until: string | null
   tombstoned_at: string | null
   clear_pending_at: string | null
+  active_stream_id: string | null
 }
 
 export function inventoryPath(): string {
@@ -76,6 +77,7 @@ function openInventory(): Database {
     ["probe_backoff_until", "TEXT"],
     ["tombstoned_at", "TEXT"],
     ["clear_pending_at", "TEXT"],
+    ["active_stream_id", "TEXT"],
   ]
   for (const [column, type] of added) {
     if (!columns.some((existing) => existing.name === column)) {
@@ -108,6 +110,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     probeBackoffUntil: row.probe_backoff_until ?? undefined,
     tombstonedAt: row.tombstoned_at ?? undefined,
     clearPendingAt: row.clear_pending_at ?? undefined,
+    activeStreamId: row.active_stream_id ?? undefined,
   }
 }
 
@@ -147,6 +150,7 @@ export function readInventoryReadonly(): ManagedAgent[] {
       "probe_backoff_until",
       "tombstoned_at",
       "clear_pending_at",
+      "active_stream_id",
     ]
     const projection = optional.map((name) => (columns.has(name) ? name : `NULL AS ${name}`))
     const rows = db
@@ -169,8 +173,8 @@ export function upsertAgent(agent: ManagedAgent): void {
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
         tmux_window_id, tmux_pane_id, scratchpad_url, instance_id, runtime_session_id, command_json,
         created_at, updated_at, last_output, probe_failures, probe_backoff_until, tombstoned_at,
-        clear_pending_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        clear_pending_at, active_stream_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -190,7 +194,8 @@ export function upsertAgent(agent: ManagedAgent): void {
         probe_failures = excluded.probe_failures,
         probe_backoff_until = excluded.probe_backoff_until,
         tombstoned_at = excluded.tombstoned_at,
-        clear_pending_at = excluded.clear_pending_at
+        clear_pending_at = excluded.clear_pending_at,
+        active_stream_id = excluded.active_stream_id
     `
     ).run(
       agent.id,
@@ -213,7 +218,8 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.probeFailures ?? null,
       agent.probeBackoffUntil ?? null,
       agent.tombstonedAt ?? null,
-      agent.clearPendingAt ?? null
+      agent.clearPendingAt ?? null,
+      agent.activeStreamId ?? null
     )
   } finally {
     db.close()

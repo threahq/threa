@@ -168,7 +168,11 @@ function belongsToOtherKind(pane: LocalTmuxPane, kind: string): boolean {
  * and doing that under a coexisting session destroys work this record never
  * owned. A shared directory is wound down under `preserve: "none"`.
  */
-function sharedDirectoryClaimants(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps): string[] {
+function sharedDirectoryClaimants(
+  link: HarnessLink,
+  panes: LocalTmuxPane[],
+  deps: Pick<ReapDeps, "canonicalPath" | "identities">
+): string[] {
   const kind = linkRuntimeKind(link)
   const worktree = deps.canonicalPath(link.worktree)
   const records = identityRecordsFor(link.worktree, deps.identities(), deps.canonicalPath).filter(
@@ -189,6 +193,24 @@ type WindowDecision =
   | { kind: "drain"; reason: string }
   | { kind: "kill"; pane: LocalTmuxPane }
   | { kind: "refuse"; status: ReapStatus; reason: string }
+
+/** What {@link windDownLinkedWorktree} needs decided about the pane before it may destroy anything. */
+export type WindDownWindow = { kind: "none" } | { kind: "kill"; pane: LocalTmuxPane }
+
+/** The slice of {@link ReapDeps} {@link windDownLinkedWorktree} needs — narrow so a caller like `done` need not fake the archive-detection fields it never reaches. */
+export type WindDownDeps = Pick<
+  ReapDeps,
+  | "profileFor"
+  | "teardown"
+  | "killWindow"
+  | "awaitExit"
+  | "windDown"
+  | "forgetLink"
+  | "forgetIdentities"
+  | "canonicalPath"
+  | "identities"
+  | "log"
+>
 
 /**
  * Which window, if any, this record may kill.
@@ -368,24 +390,47 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
 
   if (dryRun) return { ...base, status: "would reap", detail: why }
 
-  // The window goes either way: the scratchpad is archived, so the session is
-  // over even when the cleanup refuses below (detached HEAD, unpushable
-  // branch). A refusal leaves the worktree on disk for a human — nothing is
-  // lost. It goes FIRST because the wind-down now removes the directory
-  // synchronously, and the pane's shell sits in it.
-  //
-  // `tmux kill-window` returns once it has delivered the signal, not once the
-  // process is gone. Removing the directory in that gap deletes the cwd of a
-  // Claude still flushing its transcript, so wait for the pane to actually
-  // exit — the grace the old detached `sleep 5` provided by accident.
-  // Teardown is arbitrary user commands, so it is NOT a rung on the ladder — it
-  // runs one level up, before the window is killed and before anything is
-  // pushed or removed. A failure refuses the whole wind-down: a teardown that
-  // did not run is not a teardown with nothing to do.
+  const outcome = await windDownLinkedWorktree(link, window, panes, deps)
+  if (outcome.refused !== undefined) {
+    return { ...base, status: "skipped teardown failed", detail: outcome.refused }
+  }
+  return {
+    ...base,
+    status: outcome.removed ? "reaped" : "reaped, worktree left",
+    detail: `pushed=${outcome.pushed}${outcome.reason ? ` (${outcome.reason})` : ""}${window.kind === "kill" ? ` window=${window.pane.windowId}` : ""}`,
+  }
+}
+
+/**
+ * Commit/push and remove a worktree a link record owns: teardown → kill the
+ * pane and wait for it to exit → wind down → forget the link → retire
+ * identities. Shared by the archive-driven reaper and the opt-in `done`
+ * command, which both hold `resume-active.lock` across the same sequence.
+ *
+ * The window goes either way: the session is over even when the cleanup
+ * refuses (detached HEAD, unpushable branch) — a refusal leaves the worktree
+ * on disk for a human, nothing is lost. Killing goes FIRST because the
+ * wind-down removes the directory synchronously and the pane's shell sits in
+ * it: `tmux kill-window` returns once it has delivered the signal, not once
+ * the process is gone, and removing the directory in that gap deletes the cwd
+ * of a Claude still flushing its transcript.
+ *
+ * Teardown is arbitrary user commands, so it is NOT a rung on the ladder — it
+ * runs one level up, before the window is killed and before anything is
+ * pushed or removed. A failure refuses the whole wind-down (`refused` set,
+ * nothing else touched): a teardown that did not run is not a teardown with
+ * nothing to do.
+ */
+export async function windDownLinkedWorktree(
+  link: HarnessLink,
+  window: WindDownWindow,
+  panes: LocalTmuxPane[],
+  deps: WindDownDeps
+): Promise<{ removed: boolean; pushed: boolean; reason?: string; refused?: string }> {
   const profile = deps.profileFor(link.worktree, linkRuntimeKind(link))
   const teardown = deps.teardown(link.worktree, profile.teardown)
   if (!teardown.ok) {
-    return { ...base, status: "skipped teardown failed", detail: teardown.reason ?? "teardown failed" }
+    return { removed: false, pushed: false, refused: teardown.reason ?? "teardown failed" }
   }
 
   if (window.kind === "kill") {
@@ -410,14 +455,10 @@ export async function reapLink(link: HarnessLink, deps: ReapDeps, dryRun: boolea
   // still that directory's — retiring it would let the next mint hand the same
   // live directory a second id.
   if (report.removed) retireIdentities(link.worktree, deps)
-  return {
-    ...base,
-    status: report.removed ? "reaped" : "reaped, worktree left",
-    detail: `pushed=${report.pushed}${report.reason ? ` (${report.reason})` : ""}${window.kind === "kill" ? ` window=${window.pane.windowId}` : ""}`,
-  }
+  return { removed: report.removed, pushed: report.pushed, reason: report.reason }
 }
 
-function retireIdentities(worktree: string, deps: ReapDeps): void {
+function retireIdentities(worktree: string, deps: Pick<ReapDeps, "forgetIdentities" | "log">): void {
   const retired = deps.forgetIdentities(worktree)
   if (retired.length > 0) deps.log(`${worktree}: retired identity ${retired.join(", ")}`)
 }
