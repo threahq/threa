@@ -72,11 +72,23 @@ describe("useExternalThreadDraftPromotion", () => {
       })
     )
 
-    await waitFor(() => expect(draftMessageModule.relocateLoadedDraft).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(draftMessageModule.relocateLoadedDraft).toHaveBeenCalledWith(
+        "ws_1",
+        "thread:event_card",
+        "stream:stream_thread"
+      )
+    )
     unmount()
     finishRelocation()
 
-    await waitFor(() => expect(draftMessageModule.rescopeScopeDrafts).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(draftMessageModule.rescopeScopeDrafts).toHaveBeenCalledWith(
+        "ws_1",
+        "thread:event_card",
+        "stream:stream_thread"
+      )
+    )
     await waitFor(() => expect(kickOperationQueue).toHaveBeenCalledOnce())
     expect(onPromoted).not.toHaveBeenCalled()
   })
