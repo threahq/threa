@@ -1086,6 +1086,9 @@ describe("SyncEngine sync cursor (active mode)", () => {
     return { transitions, stop }
   }
 
+  /** `onConnect` awaits the connect bootstrap, which lands its snapshot behind one window. */
+  const connectBootstrapWindow = [true, false]
+
   function makeActiveDeps(catchUp: ReturnType<typeof vi.fn>) {
     return {
       ...makeDeps(),
@@ -1337,15 +1340,15 @@ describe("SyncEngine sync cursor (active mode)", () => {
     expect(oneWorkspaceList.length).toBeGreaterThan(wsPrefix.length)
     expect(oneWorkspaceList.slice(0, wsPrefix.length)).toEqual([...wsPrefix])
     expect(conversationKeys.workspaceList("ws_2", {}).slice(0, wsPrefix.length)).not.toEqual([...wsPrefix])
-    // The apply window covers the whole run, snapshot included, so the batched
-    // hooks re-read once after the bootstrap has landed.
+    // Collapsing opens no window of its own: the heal snapshot fetches with the
+    // window released and lands behind the bootstrap's own, one open and close.
     applyWindow.stop()
-    expect(applyWindow.transitions).toEqual([true, false])
+    expect(applyWindow.transitions).toEqual([...connectBootstrapWindow, true, false])
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
   })
 
-  it("holds the apply window open while the collapse bootstrap lands", async () => {
+  it("fetches the collapse bootstrap with the apply window released", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     const bigPage = Array.from({ length: CATCHUP_COLLAPSE_THRESHOLD }, (_, i) =>
       userAddedEntry(String(11 + i), `user_${i}`)
@@ -1363,10 +1366,10 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await engine.onConnect(asSocket(new MockSocket()))
 
     await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("5000"))
-    // First call is the connect bootstrap (before catch-up); the second is the
-    // collapse, which must run behind the window so its snapshot paints together
-    // with the run's close.
-    expect(windowOpenDuringBootstrap).toEqual([false, true])
+    // First call is the connect bootstrap; the second is the collapse. Neither
+    // fetch runs behind the window: a held window during a network round trip
+    // freezes every render, and the snapshot opens its own window to land.
+    expect(windowOpenDuringBootstrap).toEqual([false, false])
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
   })
@@ -1430,6 +1433,47 @@ describe("SyncEngine sync cursor (active mode)", () => {
     }
   })
 
+  it("heals with a snapshot when the same entry's handler rejects on two runs", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({ entries: [userAddedEntry("11", "user_c"), userAddedEntry("12", "user_d")], head: "12" })
+      .mockResolvedValue({ entries: [userAddedEntry("12", "user_d")], head: "12" })
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    // A handler that rejects the same entry every time would otherwise pin the
+    // cursor below it forever: each heartbeat refetches, fails, and stops. The
+    // second failure on one syncId gives up on replay and lands a full snapshot
+    // instead, so the cursor moves past the entry the snapshot already covers.
+    engine.getLiveEventSource()!.on("workspace_user:added", async (payload: { user: { id: string } }) => {
+      if (payload.user.id === "user_d") throw new Error("write failed")
+    })
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      await engine.onConnect(asSocket(socket))
+      await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith("Sync catch-up failed", expect.anything()))
+      expect(engine.getSyncCursor()).toBe("11")
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      vi.useFakeTimers()
+      socket.trigger("sync:heartbeat", { workspaceId: "ws_1", head: "12" })
+      vi.advanceTimersByTime(2_500)
+      vi.useRealTimers()
+
+      await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("12"))
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Sync catch-up entry failed twice; healing with a snapshot",
+        expect.objectContaining({ syncId: "12", eventType: "workspace_user:added" })
+      )
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2)
+      expect(isApplyWindowOpen()).toBe(false)
+    } finally {
+      errorSpy.mockRestore()
+      engine.destroy()
+    }
+  })
+
   it("replays a small catch-up gap through the live handlers without collapsing", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     // A handful of missed entries stays on the per-entry replay path — cheap, and
@@ -1446,10 +1490,12 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await vi.waitFor(async () => expect(await db.workspaceUsers.get("small_user_2")).toBeDefined())
     expect(engine.getSyncCursor()).toBe("13")
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    // A page shorter than the limit ends the run; no confirming empty fetch.
+    expect(catchUp).toHaveBeenCalledTimes(1)
     // Replaying opens the apply-window once and closes it once, so the batched
     // store hooks settle the three streams in a single re-read rather than three.
     applyWindow.stop()
-    expect(applyWindow.transitions).toEqual([true, false])
+    expect(applyWindow.transitions).toEqual([...connectBootstrapWindow, true, false])
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
   })
@@ -1468,7 +1514,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalled())
     expect(engine.getSyncCursor()).toBe("10")
     applyWindow.stop()
-    expect(applyWindow.transitions).toEqual([])
+    expect(applyWindow.transitions).toEqual(connectBootstrapWindow)
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
   })
@@ -1487,7 +1533,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await engine.onConnect(asSocket(socket))
     await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
     socket.trigger("workspace_user:added", userAddedLivePayload("11", "user_live"))
-    expect(applyWindow.transitions).toEqual([])
+    expect(applyWindow.transitions).toEqual(connectBootstrapWindow)
 
     resolveFirstPage!(emptyPage("10"))
 
@@ -1495,7 +1541,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     // The splice is a write like any replayed entry: it lands behind the window
     // so the batched hooks re-read once, after it.
     applyWindow.stop()
-    expect(applyWindow.transitions).toEqual([true, false])
+    expect(applyWindow.transitions).toEqual([...connectBootstrapWindow, true, false])
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
   })
@@ -1991,10 +2037,10 @@ describe("SyncEngine sync cursor (active mode)", () => {
       expect(await db.workspaceUsers.get("user_live")).toBeDefined()
     })
     expect(engine.getSyncCursor()).toBe("20")
-    // The new cycle ran its own catch-up from the stale run's end position
-    // (one such fetch belongs to the stale run's paging, one to the rerun).
+    // The new cycle ran its own catch-up from the stale run's end position.
+    // The stale run stopped on its short page, so the fetch from 11 is the rerun's.
     const fetchesFromEleven = catchUp.mock.calls.filter((call) => (call[1] as { after: string }).after === "11")
-    expect(fetchesFromEleven.length).toBeGreaterThanOrEqual(2)
+    expect(fetchesFromEleven).toHaveLength(1)
     engine.destroy()
   })
 
@@ -2183,12 +2229,16 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
       syncId: "11",
       user: { id: "user_live", workspaceId: "ws_1", name: "User live" },
     })
+    // The handler's write commits within a few ticks, well inside the grace
+    // window; the cursor advances only once it has (reported on dispatch, a
+    // failed write would move the cursor past an entry the app never got).
+    for (let tick = 0; tick < 100 && engine.getSyncCursor() !== "11"; tick++) await vi.advanceTimersByTimeAsync(10)
+    expect(engine.getSyncCursor()).toBe("11")
     vi.advanceTimersByTime(10_000)
     vi.useRealTimers()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(catchUp.mock.calls.length).toBe(baseline)
-    expect(engine.getSyncCursor()).toBe("11")
     engine.destroy()
   })
 
@@ -2218,22 +2268,35 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
     engine.destroy()
   })
 
-  it("does not mark a head clean when the drain fails mid-way — the next heartbeat finishes it", async () => {
+  it("does not mark a head clean after a short page or a failed run — later heartbeats finish it", async () => {
     const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
     const { engine, socket } = await connectSettledEngine(catchUp)
-    // First heartbeat-triggered run: page 1 applies entry 11 (head reports
-    // 15), then the next page's fetch fails — lastSeenHead must NOT record 15.
+    // Run 1 applies entry 11 off a short page (head reports 15) and stops
+    // without a confirming fetch; the backend filters entries per user after
+    // paging, so the short page does not prove 15 is clean. Run 2 fails on the
+    // fetch. Run 3 applies 12. Neither the short page nor the failure may
+    // record 15 as seen, or the heartbeats that follow would be ignored.
     catchUp
       .mockResolvedValueOnce({ entries: [userAddedEntry("11", "user_a")], head: "15" })
       .mockRejectedValueOnce(new Error("network blip"))
       .mockResolvedValueOnce({ entries: [userAddedEntry("12", "user_b")], head: "15" })
       .mockResolvedValue(emptyPage("15"))
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
 
     vi.useFakeTimers()
     socket.trigger("sync:heartbeat", heartbeat("15"))
     vi.advanceTimersByTime(2_500)
     vi.useRealTimers()
     await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_a")).toBeDefined())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const afterRunOne = catchUp.mock.calls.length
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("15"))
+    vi.advanceTimersByTime(2_500)
+    vi.useRealTimers()
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith("Sync catch-up failed", expect.anything()))
+    expect(catchUp.mock.calls.length).toBe(afterRunOne + 1)
     // Let the failed run settle fully before the retry heartbeat.
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -2244,6 +2307,7 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
 
     await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_b")).toBeDefined())
     expect(engine.getSyncCursor()).toBe("12")
+    errorSpy.mockRestore()
     engine.destroy()
   })
 

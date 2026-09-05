@@ -226,14 +226,19 @@ export class SocketEventGate implements SyncEventSource {
       }
     }
 
-    // Live path: apply immediately without awaiting (matches raw socket
-    // delivery), advancing the cursor for syncId-bearing payloads.
-    this.dispatch(eventType, args[0]).catch((error: unknown) => {
-      console.error("Sync live handler failed", { eventType, error })
-    })
-    if (payload && payload.workspaceId === this.workspaceId && typeof payload.syncId === "string") {
-      this.opts.onApplied?.(payload.syncId)
-    }
+    // Live path: apply without awaiting (matches raw socket delivery). The
+    // cursor advances only once the handlers have landed: reported before,
+    // a handler whose write failed would have moved the cursor past an entry
+    // the app never received, and advance never rewinds.
+    const applied = payload && payload.workspaceId === this.workspaceId && typeof payload.syncId === "string"
+    this.dispatch(eventType, args[0]).then(
+      () => {
+        if (applied) this.opts.onApplied?.(payload.syncId as string)
+      },
+      (error: unknown) => {
+        console.error("Sync live handler failed", { eventType, error })
+      }
+    )
   }
 }
 
