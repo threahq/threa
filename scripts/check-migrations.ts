@@ -10,7 +10,8 @@
  *   a code change, not a migration + type alter.
  * - INV-17: migrations are append-only. A migration file that already exists on
  *   the base branch must never be edited or deleted — doing so diverges already
- *   applied databases from the file on disk.
+ *   applied databases from the file on disk. `INV17_EXEMPT` carries the one
+ *   exception the rule cannot express (see its comment).
  *
  * Run via `bun scripts/check-migrations.ts` (also wired into the root `lint`
  * script and the CI lint job).
@@ -157,29 +158,57 @@ async function checkContent(migrations: string[]): Promise<string[]> {
 }
 
 /**
+ * INV-17 exemptions, keyed by filename, with the reason each one is safe.
+ *
+ * The rule protects against a file on disk disagreeing with a database that
+ * already ran it. A migration that aborted on every database it reached has no
+ * such disagreement to protect, and it cannot be corrected by a later migration
+ * either: the runner executes pending files in order and stops at the first
+ * failure, so nothing after the broken file ever runs. Editing it in place is
+ * the only correction available.
+ *
+ * Adding an entry needs both halves: the migration must have failed everywhere
+ * it ran, and the edit must leave the resulting schema byte-identical.
+ */
+const INV17_EXEMPT = new Map<string, string>([
+  [
+    "20260905120000_message_search_config.sql",
+    "aborted on every database it reached (SQLSTATE 53100: the parallel HNSW rebuild's " +
+      "shared-memory segment does not fit prod's /dev/shm); the edit adds two SET LOCAL " +
+      "statements and leaves the resulting schema identical",
+  ],
+])
+
+/**
  * INV-17: migrations are append-only. Compare against the merge-base with the
  * base branch; any migration file Modified or Deleted relative to it is a
  * violation. Best-effort — if the git context isn't available (shallow CI
  * clone with no base ref, not a worktree), skip with a notice rather than
  * failing, since the content checks above are the always-on core.
  */
-async function checkAppendOnly(): Promise<{ violations: string[]; skipped: string | null }> {
+async function checkAppendOnly(): Promise<{ violations: string[]; exempted: string[]; skipped: string | null }> {
   const base = process.env.BASE_REF ?? "origin/main"
   const mergeBase = await git(["merge-base", base, "HEAD"])
   if (mergeBase === null) {
-    return { violations: [], skipped: `no merge-base with ${base}` }
+    return { violations: [], exempted: [], skipped: `no merge-base with ${base}` }
   }
 
   const diff = await git(["diff", "--name-status", `${mergeBase}`, "HEAD", "--", "apps/*/src/db/migrations/*.sql"])
   if (diff === null) {
-    return { violations: [], skipped: "git diff unavailable" }
+    return { violations: [], exempted: [], skipped: "git diff unavailable" }
   }
 
   const violations: string[] = []
+  const exempted: string[] = []
   for (const line of diff.split("\n")) {
     if (!line.trim()) continue
     const [status, ...rest] = line.split("\t")
     const path = rest[rest.length - 1]
+    const reason = INV17_EXEMPT.get(path.split("/").pop() ?? path)
+    if (reason && !status.startsWith("A")) {
+      exempted.push(`  ⚠︎ ${path} — INV-17 exemption: ${reason}.`)
+      continue
+    }
     // A = added (fine), M = modified, D = deleted, R = renamed.
     if (status.startsWith("M")) {
       violations.push(`  ❌ ${path} — INV-17: existing migration modified; migrations are append-only.`)
@@ -189,7 +218,7 @@ async function checkAppendOnly(): Promise<{ violations: string[]; skipped: strin
       violations.push(`  ❌ ${path} — INV-17: existing migration renamed; migrations are append-only.`)
     }
   }
-  return { violations, skipped: null }
+  return { violations, exempted, skipped: null }
 }
 
 async function git(args: string[]): Promise<string | null> {
@@ -211,7 +240,7 @@ async function main(): Promise<void> {
   }
 
   const contentViolations = await checkContent(migrations)
-  const { violations: appendOnlyViolations, skipped } = await checkAppendOnly()
+  const { violations: appendOnlyViolations, exempted, skipped } = await checkAppendOnly()
   const violations = [...contentViolations, ...appendOnlyViolations]
 
   if (violations.length > 0) {
@@ -225,6 +254,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`✓ ${migrations.length} migrations clean (INV-1, INV-3, INV-17)`)
+  for (const e of exempted) console.log(e)
   if (skipped) console.log(`  (append-only check skipped: ${skipped})`)
 }
 
