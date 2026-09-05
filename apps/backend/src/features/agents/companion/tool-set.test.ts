@@ -66,6 +66,13 @@ describe("search_messages prompt guidance", () => {
     const tool = built.find((t) => t.name === AgentToolNames.SEARCH_MESSAGES)
 
     expect(tool?.config.promptBlock).toContain("## Searching Messages")
+    expect(tool?.config.promptBlock).toContain(
+      "Write the query as a description of the thing: who was involved, what it was about, what happened. Do not compress it into keywords."
+    )
+    expect(tool?.config.promptBlock).toContain(
+      "Do at least two differently phrased searches before concluding something is not there"
+    )
+    expect(tool?.config.promptBlock).toContain("Set `exact=true` only for literal strings")
   })
 
   test("is absent without workspace deps", () => {
