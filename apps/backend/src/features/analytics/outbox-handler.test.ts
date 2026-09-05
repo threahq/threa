@@ -17,12 +17,14 @@ function makeFakeCursorLock() {
 function createHandler(consent: Map<string, unknown> = new Map()) {
   const fakeCursorLock = makeFakeCursorLock()
   ;(spyOn(cursorLockModule, "CursorLock") as any).mockImplementation(fakeCursorLock)
-  const findE2eStreamIds = spyOn(E2eStreamsRepository, "findE2eStreamIds").mockResolvedValue(new Set<string>())
+  const excludeE2eRootedStreamIds = spyOn(E2eStreamsRepository, "excludeE2eRootedStreamIds").mockImplementation(
+    async (_db, _workspaceId, streamIds) => streamIds
+  )
   const findOverrideForUsers = spyOn(UserPreferencesRepository, "findOverrideForUsers").mockResolvedValue(consent)
   const captureEvent = mock()
   const reporter = { captureEvent, captureException: mock(), shutdown: mock(async () => {}) }
   const handler = new AnalyticsOutboxHandler({} as any, reporter as any)
-  return { handler, captureEvent, findE2eStreamIds, findOverrideForUsers }
+  return { handler, captureEvent, excludeE2eRootedStreamIds, findOverrideForUsers }
 }
 
 function messageCreatedEvent(overrides: {
@@ -78,7 +80,7 @@ function streamCreatedEvent(overrides: Record<string, unknown> = {}) {
     payload: {
       workspaceId: "ws_test",
       streamId: "stream_test",
-      stream: { createdBy: "usr_a", type: "channel", ...(overrides.stream as object) },
+      stream: { id: "stream_test", createdBy: "usr_a", type: "channel", ...(overrides.stream as object) },
       ...overrides,
     },
     createdAt: new Date(),
@@ -144,8 +146,8 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should not capture anything for an E2E stream", async () => {
-    const { handler, captureEvent, findE2eStreamIds } = createHandler(new Map([["usr_a", "granted"]]))
-    findE2eStreamIds.mockResolvedValue(new Set(["stream_test"]))
+    const { handler, captureEvent, excludeE2eRootedStreamIds } = createHandler(new Map([["usr_a", "granted"]]))
+    excludeE2eRootedStreamIds.mockResolvedValue([])
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([messageCreatedEvent({})] as any)
 
     handler.handle()
@@ -184,6 +186,27 @@ describe("AnalyticsOutboxHandler", () => {
       properties: { workspaceId: "ws_test", streamId: "stream_test", streamType: "channel" },
       groups: { workspace: "ws_test" },
     })
+  })
+
+  it("should capture the created thread's own id when stream:created routes to the parent stream", async () => {
+    const { handler, captureEvent, excludeE2eRootedStreamIds } = createHandler(new Map([["usr_a", "granted"]]))
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      streamCreatedEvent({
+        streamId: "stream_parent",
+        stream: { id: "stream_thread", createdBy: "usr_a", type: "thread" },
+      }),
+    ] as any)
+
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(captureEvent.mock.calls[0][0]).toEqual({
+      distinctId: "usr_a",
+      event: "stream_created",
+      properties: { workspaceId: "ws_test", streamId: "stream_thread", streamType: "thread" },
+      groups: { workspace: "ws_test" },
+    })
+    expect(excludeE2eRootedStreamIds.mock.calls[0].slice(1)).toEqual(["ws_test", ["stream_thread"]])
   })
 
   it("should capture stream_joined with the expected object", async () => {

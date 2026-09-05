@@ -85,8 +85,8 @@ export const E2eStreamsRepository = {
 
   /**
    * Return the subset of `streamIds` whose EFFECTIVE ROOT is not E2E.
-   * `e2e_streams` rows exist per root only, so a thread under an E2E
-   * scratchpad matches nothing in {@link filterE2eStreamIds} — this resolves
+   * Threads created before #793 carry no `e2e_streams` row of their own, so
+   * they match nothing in {@link filterE2eStreamIds} — this resolves
    * `COALESCE(root_stream_id, id)` first (INV-62) so threads are excluded
    * alongside their root. Ids with no `streams` row drop out.
    */
@@ -153,21 +153,6 @@ export const E2eStreamsRepository = {
     return row?.name_ciphertext && row.name_envelope
       ? { ciphertext: row.name_ciphertext.toString("base64"), envelope: row.name_envelope }
       : null
-  },
-
-  /**
-   * Which of `streamIds` are E2E, in one query (INV-56). Threads under an E2E
-   * root carry their own row, so a thread id resolves without walking to the root.
-   */
-  async findE2eStreamIds(db: Querier, workspaceId: string, streamIds: string[]): Promise<Set<string>> {
-    if (streamIds.length === 0) return new Set()
-
-    const result = await db.query<{ stream_id: string }>(sql`
-      SELECT stream_id
-      FROM e2e_streams
-      WHERE workspace_id = ${workspaceId} AND stream_id = ANY(${streamIds})
-    `)
-    return new Set(result.rows.map((row) => row.stream_id))
   },
 
   async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {

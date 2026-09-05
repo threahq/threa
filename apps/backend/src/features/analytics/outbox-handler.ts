@@ -64,6 +64,7 @@ function toCandidate(event: OutboxEvent): Candidate | null {
       }
     }
     case "stream:created": {
+      // payload.streamId routes threads to the PARENT's room; the created stream is payload.stream.
       const payload = event.payload as StreamCreatedOutboxPayload
       if (!payload.stream?.createdBy) {
         return null
@@ -71,11 +72,11 @@ function toCandidate(event: OutboxEvent): Candidate | null {
       return {
         actorId: payload.stream.createdBy,
         workspaceId: payload.workspaceId,
-        streamId: payload.streamId,
+        streamId: payload.stream.id,
         event: "stream_created",
         properties: {
           workspaceId: payload.workspaceId,
-          streamId: payload.streamId,
+          streamId: payload.stream.id,
           streamType: payload.stream.type,
         },
       }
@@ -117,8 +118,8 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
     const candidates = events.map(toCandidate).filter((candidate) => candidate !== null)
 
     if (candidates.length > 0) {
-      const e2eStreamIds = await this.findE2eStreamIds(candidates)
-      const reportable = candidates.filter((candidate) => !e2eStreamIds.has(candidate.streamId))
+      const reportableStreamIds = await this.findReportableStreamIds(candidates)
+      const reportable = candidates.filter((candidate) => reportableStreamIds.has(candidate.streamId))
       const consentByActorId = await UserPreferencesRepository.findOverrideForUsers(
         this.db,
         Array.from(new Set(reportable.map((candidate) => candidate.actorId))),
@@ -139,7 +140,7 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
     return events.map((event) => event.id)
   }
 
-  private async findE2eStreamIds(candidates: Candidate[]): Promise<Set<string>> {
+  private async findReportableStreamIds(candidates: Candidate[]): Promise<Set<string>> {
     const streamIdsByWorkspace = new Map<string, Set<string>>()
     for (const candidate of candidates) {
       const streamIds = streamIdsByWorkspace.get(candidate.workspaceId) ?? new Set<string>()
@@ -147,11 +148,11 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
       streamIdsByWorkspace.set(candidate.workspaceId, streamIds)
     }
 
-    const e2eStreamIds = new Set<string>()
+    const reportableStreamIds = new Set<string>()
     for (const [workspaceId, streamIds] of streamIdsByWorkspace) {
-      const found = await E2eStreamsRepository.findE2eStreamIds(this.db, workspaceId, Array.from(streamIds))
-      for (const streamId of found) e2eStreamIds.add(streamId)
+      const found = await E2eStreamsRepository.excludeE2eRootedStreamIds(this.db, workspaceId, Array.from(streamIds))
+      for (const streamId of found) reportableStreamIds.add(streamId)
     }
-    return e2eStreamIds
+    return reportableStreamIds
   }
 }
