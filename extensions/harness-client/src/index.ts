@@ -27,7 +27,7 @@ export {
   type PrepareHarnessClearOptions,
   type PrepareHarnessReconnectOptions,
 } from "./harness-reconnect"
-export { discardSpawnBrief, parseSpawnCommandArgs, writeSpawnBrief, type SpawnCommandArgs } from "./spawn-command"
+export { discardSpawnBrief, parseSpawnCommandArgs, writeSpawnBrief } from "./spawn-command"
 export {
   BotSupervisorTransport,
   type BotSessionRestoredPayload,

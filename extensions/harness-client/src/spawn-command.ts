@@ -9,15 +9,14 @@ export interface SpawnCommandArgs {
   prompt: string
 }
 
-const SPAWN_USAGE = "Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines."
-
 export function parseSpawnCommandArgs(args: string): SpawnCommandArgs | { error: string } {
   const lines = args.split(/\r?\n/)
   const tokens = (lines[0] ?? "").split(/\s+/).filter(Boolean)
   const runtime = tokens[0] === "claude" || tokens[0] === "pi" ? tokens[0] : undefined
   const nameTokens = runtime ? tokens.slice(1) : tokens
   // A leading dash would reach harnessd as a flag, which dies with a parser error instead of this usage.
-  if (nameTokens.length === 0 || nameTokens.some((token) => token.startsWith("-"))) return { error: SPAWN_USAGE }
+  if (nameTokens.length === 0 || nameTokens.some((token) => token.startsWith("-")))
+    return { error: "Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines." }
   const name = nameTokens.join(" ")
   return { ...(runtime ? { runtime } : {}), name, prompt: lines.slice(1).join("\n").trim() }
 }
