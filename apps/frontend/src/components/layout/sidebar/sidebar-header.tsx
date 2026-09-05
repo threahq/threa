@@ -1,38 +1,61 @@
-import { Search as SearchIcon, Terminal, FileText, SlidersHorizontal } from "lucide-react"
+import { useState } from "react"
+import { ChevronDown, FileText, Search as SearchIcon, Terminal } from "lucide-react"
 import { Link } from "react-router-dom"
-import { useQuickSwitcher, usePreferences } from "@/contexts"
-import { useSidebar } from "@/contexts"
+import { useQuickSwitcher, usePreferences, useSidebar } from "@/contexts"
 import { useSearchPanel } from "@/components/search/search-panel-context"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
-import { ThemeDropdown } from "@/components/theme-dropdown"
 import { ThreaLogo } from "@/components/threa-logo"
+import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { getEffectiveKeyBinding, formatKeyBinding, formatKeyBindingText } from "@/lib/keyboard-shortcuts"
+import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
 interface SidebarHeaderProps {
   workspaceName: string
-  onEditLayout: () => void
-  hideViewToggle?: boolean
 }
 
-export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: SidebarHeaderProps) {
+export function SidebarHeader({ workspaceName }: SidebarHeaderProps) {
   const { openSwitcher } = useQuickSwitcher()
   const { openSearch } = useSearchPanel()
-  const { collapseOnMobile, setMenuOpen } = useSidebar()
+  const { collapseOnMobile } = useSidebar()
   const { preferences } = usePreferences()
+  const isTouch = useInputMode() === "touch"
+  const [switcherMenuOpen, setSwitcherMenuOpen] = useState(false)
   const customBindings = preferences?.keyboardShortcuts ?? {}
   const streamBinding = getEffectiveKeyBinding("openQuickSwitcher", customBindings)
   const commandBinding = getEffectiveKeyBinding("openCommands", customBindings)
   const searchBinding = getEffectiveKeyBinding("openSearch", customBindings)
 
-  const handleOpenSwitcher = (mode: "stream" | "command") => () => {
+  const openSwitcherIn = (mode: "stream" | "command") => () => {
     collapseOnMobile()
     openSwitcher(mode)
   }
 
+  const searchLabel = searchBinding ? `Search messages (${formatKeyBindingText(searchBinding)})` : "Search messages"
+
+  // A keyboard hint is noise on a touch device, so the shortcut rides the
+  // description line only where a keyboard is the active input.
+  const switcherActions: SidebarActionItem[] = [
+    {
+      id: "jump-to-stream",
+      label: "Jump to stream",
+      icon: FileText,
+      description: !isTouch && streamBinding ? formatKeyBinding(streamBinding) : null,
+      onSelect: openSwitcherIn("stream"),
+    },
+    {
+      id: "commands",
+      label: "Commands",
+      icon: Terminal,
+      description: !isTouch && commandBinding ? formatKeyBinding(commandBinding) : null,
+      onSelect: openSwitcherIn("command"),
+    },
+  ]
+
   return (
-    <div className="flex-shrink-0 border-b">
+    <div className="flex-shrink-0">
       {/* Mirrors the h-12 page-header row so the sidebar toggle sits in the
            identical viewport position whether the sidebar is open or not. */}
       <div className="flex h-12 items-center gap-1 px-4">
@@ -46,89 +69,118 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
           <span className="truncate text-sm font-semibold">{workspaceName}</span>
         </Link>
         <div className="ml-auto flex items-center">
-          <ThemeDropdown onOpenChange={setMenuOpen} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label={searchLabel}
+                onClick={() => openSearch()}
+              >
+                <SearchIcon className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="flex items-center gap-2">
+              <span>Search messages</span>
+              {searchBinding && <ShortcutHint binding={searchBinding} />}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="flex items-center gap-1 px-3 pt-2">
-        <QuickActionPill
-          onClick={handleOpenSwitcher("stream")}
-          icon={FileText}
-          label="Jump to stream"
-          binding={streamBinding}
+      {/* The hairline under the header runs into the quick-switch tab and stops
+           there; the tab hangs below the line, carved out of the header. */}
+      <div className="flex h-[18px] items-start">
+        <div className="h-px flex-1 bg-border" />
+        <SwitcherNotch
+          actions={switcherActions}
+          isTouch={isTouch}
+          open={switcherMenuOpen}
+          onOpenChange={setSwitcherMenuOpen}
         />
-        <QuickActionPill
-          onClick={handleOpenSwitcher("command")}
-          icon={Terminal}
-          label="Commands"
-          binding={commandBinding}
-        />
-        <QuickActionPill
-          onClick={() => openSearch()}
-          icon={SearchIcon}
-          label="Search messages"
-          binding={searchBinding}
-        />
+        <div className="h-px w-2 bg-border" />
       </div>
-
-      {!hideViewToggle && (
-        <div className="flex items-center px-3 pb-3 pt-2">
-          <button
-            type="button"
-            onClick={onEditLayout}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            )}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            Customize sidebar
-          </button>
-        </div>
-      )}
-
-      {/* Trailing breathing room under the pill row when the customize control
-           is hidden, so the list below doesn't butt against the border. */}
-      {hideViewToggle && <div className="h-3" aria-hidden="true" />}
     </div>
   )
 }
 
-interface QuickActionPillProps {
-  onClick: () => void
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  /** Effective user-configured binding, e.g. "mod+k"; undefined if disabled. */
-  binding: string | undefined
+function ShortcutHint({ binding }: { binding: string }) {
+  return (
+    <kbd className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+      {formatKeyBinding(binding)}
+    </kbd>
+  )
 }
 
-function QuickActionPill({ onClick, icon: Icon, label, binding }: QuickActionPillProps) {
-  const shortcutLabel = binding ? formatKeyBinding(binding) : null
-  const ariaLabel = binding ? `${label} (${formatKeyBindingText(binding)})` : label
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+const NOTCH_CLASS = cn(
+  // Pulled up into the header row's slack so the tab reads 24px tall while
+  // costing 18px of vertical space; `after` widens the touch target downward
+  // without moving anything (INV-21).
+  "-mt-1.5 relative flex h-6 w-11 items-center justify-center rounded-b-lg border-x border-b border-border bg-background",
+  "text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
+  "after:absolute after:-inset-x-1.5 after:-bottom-2.5 after:top-0 after:content-['']",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+  "data-[state=open]:bg-muted/60 data-[state=open]:text-foreground"
+)
+
+/**
+ * The tab hanging off the header's bottom-right edge. Opens the two quick-switch
+ * surfaces (stream jump, commands) as a drawer on touch and a dropdown for mouse
+ * input, mirroring the account and create menus in the footer. Top-level per INV-18.
+ */
+function SwitcherNotch({
+  actions,
+  isTouch,
+  open,
+  onOpenChange,
+}: {
+  actions: SidebarActionItem[]
+  isTouch: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const face = <ChevronDown className="h-3.5 w-3.5" />
+
+  if (isTouch) {
+    return (
+      <>
         <button
           type="button"
-          onClick={onClick}
-          aria-label={ariaLabel}
-          className={cn(
-            "flex h-8 flex-1 items-center justify-center rounded-md border border-border bg-background",
-            "text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          )}
+          className={NOTCH_CLASS}
+          data-state={open ? "open" : "closed"}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label="Jump to stream or command"
+          onClick={() => onOpenChange(true)}
         >
-          <Icon className="h-3.5 w-3.5" />
+          {face}
         </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="flex items-center gap-2">
-        <span>{label}</span>
-        {shortcutLabel && (
-          <kbd className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {shortcutLabel}
-          </kbd>
-        )}
-      </TooltipContent>
-    </Tooltip>
+        <SidebarActionDrawer
+          open={open}
+          onOpenChange={onOpenChange}
+          actions={actions}
+          title="Jump to"
+          description="Open stream search or the command palette."
+        />
+      </>
+    )
+  }
+
+  return (
+    <SidebarActionMenu
+      actions={actions}
+      ariaLabel="Jump to stream or command"
+      side="bottom"
+      align="end"
+      contentClassName="w-56"
+      open={open}
+      onOpenChange={onOpenChange}
+      trigger={
+        <button type="button" className={NOTCH_CLASS} aria-label="Jump to stream or command">
+          {face}
+        </button>
+      }
+    />
   )
 }

@@ -622,13 +622,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   return (
     <>
       <SidebarShell
-        header={
-          <SidebarHeader
-            workspaceName={workspace?.name ?? ""}
-            onEditLayout={() => setIsEditorOpen(true)}
-            hideViewToggle={!hasUserStreams || isBoardPage}
-          />
-        }
+        header={<SidebarHeader workspaceName={workspace?.name ?? ""} />}
         body={
           <SidebarStreamList
             workspaceId={workspaceId}
@@ -662,6 +656,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
               onCreateScratchpad={handleCreateScratchpad}
               onCreateChannel={handleCreateChannel}
               scratchpadAddMenuActions={scratchpadAddMenuActions}
+              onEditLayout={hasUserStreams && !isBoardPage ? () => setIsEditorOpen(true) : undefined}
               onShowGettingStarted={gettingStarted.canRestore ? gettingStarted.restore : undefined}
             />
           </>

@@ -54,9 +54,9 @@ export interface ActionDefinition<Context> {
  *   chevron-driven dropdown, so the menu reads as a complete list with the
  *   default pre-highlighted.
  */
-export type GroupedAction<Context> =
-  | { kind: "single"; action: ActionDefinition<Context> }
-  | { kind: "group"; members: ActionDefinition<Context>[] }
+export type GroupedItems<Item> = { kind: "single"; action: Item } | { kind: "group"; members: Item[] }
+
+export type GroupedAction<Context> = GroupedItems<ActionDefinition<Context>>
 
 /** Resolve the visible label for an action, handling the string/function variants. */
 export function resolveActionLabel<Context>(action: ActionDefinition<Context>, context: Context): string {
@@ -77,8 +77,8 @@ export function filterVisibleActions<Context>(
  * at the position of their first member. A group with only one visible member
  * degrades to a `single` item — no chevron.
  */
-export function groupVisibleActions<Context>(actions: ActionDefinition<Context>[]): GroupedAction<Context>[] {
-  const items: GroupedAction<Context>[] = []
+export function groupVisibleActions<Item extends { groupId?: string }>(actions: Item[]): GroupedItems<Item>[] {
+  const items: GroupedItems<Item>[] = []
   let i = 0
   while (i < actions.length) {
     const action = actions[i]
@@ -88,7 +88,7 @@ export function groupVisibleActions<Context>(actions: ActionDefinition<Context>[
       continue
     }
 
-    const members: ActionDefinition<Context>[] = [action]
+    const members: Item[] = [action]
     let j = i + 1
     while (j < actions.length && actions[j].groupId === action.groupId) {
       members.push(actions[j])
