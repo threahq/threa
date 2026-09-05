@@ -429,11 +429,12 @@ describe("public API bot send trace stamping", () => {
     return { handlers, createMessageForPrincipalReturningConversation }
   }
 
-  it("stamps sessionId when a running session on the stream belongs to this bot", async () => {
+  it("stamps sessionId and bumps the session heartbeat when a running session on the stream belongs to this bot", async () => {
     spyOn(AgentSessionRepository, "findRunningByStream").mockResolvedValue({
       id: "session_1",
       personaId: "bot_1",
     } as never)
+    const updateHeartbeat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined as never)
     const { handlers, createMessageForPrincipalReturningConversation } = sendHarness()
 
     await handlers.sendMessage(botRequest(), createResponse())
@@ -442,6 +443,8 @@ describe("public API bot send trace stamping", () => {
       { kind: "bot", botId: "bot_1" },
       expect.objectContaining({ sessionId: "session_1", authorId: "bot_1" })
     )
+    // The post is the turn's liveness signal between claim renewals.
+    expect(updateHeartbeat).toHaveBeenCalledWith(expect.anything(), "session_1")
   })
 
   it("does not stamp when the running session belongs to a different bot", async () => {

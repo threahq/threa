@@ -3140,6 +3140,9 @@ export function createPublicApiHandlers({
             sessionId,
           }
         )
+        // A post on the running session is work: it keeps orphan cleanup off a
+        // turn that talks between claim renewals the same way a trace step does.
+        if (sessionId) await AgentSessionRepository.updateHeartbeat(pool, sessionId)
 
         res.status(201).json({
           data: serializeMessage(message, { authorDisplayName: bot.name }),
