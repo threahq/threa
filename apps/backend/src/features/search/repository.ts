@@ -1,6 +1,13 @@
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
-import { DM_PARTICIPANT_COUNT, Visibilities, type AuthorType, type JSONContent, type StreamType } from "@threa/types"
+import {
+  DM_PARTICIPANT_COUNT,
+  Visibilities,
+  type AuthorType,
+  type ConversationStatus,
+  type JSONContent,
+  type StreamType,
+} from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 import { streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
@@ -94,6 +101,49 @@ export interface FullTextSearchParams {
   streamIds: string[]
   filters: ResolvedFilters
   limit: number
+}
+
+/**
+ * A conversation matched as a whole: extraction's topic summary and summary
+ * plus the span of its primary messages, so a hit can open at its first
+ * message and say how much discussion sits behind it.
+ */
+export interface ConversationSearchResult {
+  id: string
+  streamId: string
+  topicSummary: string | null
+  summary: string | null
+  status: ConversationStatus
+  messageCount: number
+  participantIds: string[]
+  firstMessageId: string | null
+  firstMessageAt: Date | null
+  lastMessageAt: Date | null
+  /** Cosine distance to the query embedding; lower is closer. */
+  distance: number
+}
+
+interface ConversationSearchRow {
+  id: string
+  stream_id: string
+  topic_summary: string | null
+  summary: string | null
+  status: ConversationStatus
+  message_count: number
+  participant_ids: string[]
+  first_message_id: string | null
+  first_message_at: Date | null
+  last_message_at: Date | null
+  distance: number
+}
+
+export interface ConversationSearchParams {
+  workspaceId: string
+  embedding: number[]
+  streamIds: string[]
+  filters: ResolvedFilters
+  limit: number
+  maxDistance: number
 }
 
 export interface HybridSearchParams {
@@ -382,6 +432,87 @@ export const SearchRepository = {
     `)
 
     return result.rows.map(mapRowToSearchResult)
+  },
+
+  /**
+   * Semantic-only conversation leg: nearest conversation embeddings within the
+   * accessible streams, gated by `maxDistance`. Author filters match on
+   * `participant_ids`; `after` reads `last_activity_at` (a conversation still
+   * going counts) while `before` reads `created_at`. `messages` has no
+   * workspace column, so the opener/closer lookups go through the
+   * conversation's own `message_ids` (INV-68).
+   */
+  async conversationSearch(db: Querier, params: ConversationSearchParams): Promise<ConversationSearchResult[]> {
+    const { workspaceId, embedding, streamIds, filters, limit, maxDistance } = params
+    if (streamIds.length === 0 || embedding.length === 0) {
+      return []
+    }
+
+    const embeddingLiteral = `[${embedding.join(",")}]`
+
+    const result = await db.query<ConversationSearchRow>(sql`
+      WITH hits AS (
+        SELECT
+          c.id,
+          c.stream_id,
+          c.topic_summary,
+          c.summary,
+          c.status,
+          c.message_ids,
+          c.participant_ids,
+          (c.embedding <=> ${embeddingLiteral}::vector) AS distance
+        FROM conversations c
+        JOIN streams s ON s.id = c.stream_id
+        WHERE c.workspace_id = ${workspaceId}
+          AND c.stream_id = ANY(${streamIds})
+          AND c.embedding IS NOT NULL
+          AND cardinality(c.message_ids) > 0
+          AND (${filters.authorId === undefined} OR c.participant_ids @> ARRAY[${filters.authorId ?? ""}]::text[])
+          AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
+          AND (${filters.before === undefined} OR c.created_at < ${filters.before ?? new Date()})
+          AND (${filters.after === undefined} OR c.last_activity_at >= ${filters.after ?? new Date(0)})
+        ORDER BY c.embedding <=> ${embeddingLiteral}::vector
+        LIMIT ${limit}
+      )
+      SELECT
+        h.id,
+        h.stream_id,
+        h.topic_summary,
+        h.summary,
+        h.status,
+        span.message_count,
+        h.participant_ids,
+        h.distance,
+        span.first_message_id,
+        span.first_message_at,
+        span.last_message_at
+      FROM hits h
+      CROSS JOIN LATERAL (
+        SELECT
+          count(*)::int AS message_count,
+          (array_agg(m.id ORDER BY m.sequence ASC))[1] AS first_message_id,
+          min(m.created_at) AS first_message_at,
+          max(m.created_at) AS last_message_at
+        FROM messages m
+        WHERE m.id = ANY(h.message_ids) AND m.deleted_at IS NULL
+      ) span
+      WHERE h.distance <= ${maxDistance} AND span.message_count > 0
+      ORDER BY h.distance ASC
+    `)
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      streamId: row.stream_id,
+      topicSummary: row.topic_summary,
+      summary: row.summary,
+      status: row.status,
+      messageCount: Number(row.message_count),
+      participantIds: row.participant_ids,
+      firstMessageId: row.first_message_id,
+      firstMessageAt: row.first_message_at,
+      lastMessageAt: row.last_message_at,
+      distance: Number(row.distance),
+    }))
   },
 
   /**

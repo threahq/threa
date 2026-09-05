@@ -17,7 +17,7 @@ import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import type { AuthorType } from "@threa/types"
 import { ApiError } from "@/api"
-import type { MemoExplorerResult } from "@/api"
+import type { ConversationSearchResult, MemoExplorerResult } from "@/api"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -30,6 +30,7 @@ type MockSearchResult = Omit<(typeof mockSearchResultsList)[number], "authorType
 
 const mockSearchState = {
   results: [] as MockSearchResult[],
+  conversations: [] as ConversationSearchResult[],
   isLoading: false,
   search: vi.fn(),
   clear: vi.fn(),
@@ -185,6 +186,7 @@ function installSpies() {
     () =>
       ({
         results: mockSearchState.results,
+        conversations: mockSearchState.conversations,
         isLoading: mockSearchState.isLoading,
         error: null,
         search: mockSearchState.search,
@@ -246,6 +248,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
     localStorage.clear()
     workspaceStreams = mockStreamsList
     mockSearchState.results = []
+    mockSearchState.conversations = []
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
@@ -746,6 +749,47 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(await screen.findByText("Memories")).toBeInTheDocument()
       expect(screen.getByText("1 result in 0 streams")).toBeInTheDocument()
       expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
+    })
+
+    it("shows the compact Conversations section between memories and messages", async () => {
+      mockMemoSearchState.results = [buildMemoResult()]
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.conversations = [
+        {
+          id: "conv_1",
+          streamId: "stream_channel1",
+          topicSummary: "Choosing the launch date",
+          summary: "The team weighed a May launch against waiting for the mobile build.",
+          status: "resolved",
+          messageCount: 7,
+          participantIds: ["user_1"],
+          firstMessageId: "msg_first",
+          firstMessageAt: "2026-01-01T00:00:00.000Z",
+          lastMessageAt: "2026-01-02T00:00:00.000Z",
+          distance: 0.3,
+        },
+      ]
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByText("Conversations")).toBeInTheDocument()
+      const card = screen.getByText("Choosing the launch date").closest("a")
+      expect(card).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_first")
+      expect(card).toHaveTextContent("7 messages")
+
+      await waitFor(() => expect(screen.getByText(/from the search results/)).toBeInTheDocument())
+      const html = document.body.innerHTML
+      expect(html.indexOf("Memories")).toBeLessThan(html.indexOf("Conversations"))
+      expect(html.indexOf("Conversations")).toBeLessThan(html.indexOf("from the search results"))
+
+      // Enter still opens the active MESSAGE result, never a conversation card
+      await user.keyboard("{Enter}")
+      expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
     })
 
     it("opens the active MESSAGE result on Enter, never a memo", async () => {

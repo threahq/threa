@@ -25,6 +25,7 @@ export {
   type SearchFilters,
   type SearchRequest,
   type SearchResultItem,
+  type ConversationSearchResult,
   type SearchResponse,
   type ArchiveStatus,
 } from "./search"

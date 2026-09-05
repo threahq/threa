@@ -783,6 +783,44 @@ export const ConversationRepository = {
     return mapRowToConversation(result.rows[0])
   },
 
+  async findEmbeddingSourceHashes(
+    db: Querier,
+    workspaceId: string,
+    ids: string[]
+  ): Promise<Map<string, string | null>> {
+    if (ids.length === 0) return new Map()
+    const result = await db.query<{ id: string; embedding_source_hash: string | null }>(sql`
+      SELECT id, embedding_source_hash FROM conversations
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
+    `)
+    return new Map(result.rows.map((row) => [row.id, row.embedding_source_hash]))
+  },
+
+  /**
+   * Store embeddings for the given source hashes. A row whose stored hash already
+   * equals the incoming one is left alone, so two workers embedding the same text
+   * cannot flip-flop the column (INV-20). Returns the number of rows written.
+   */
+  async updateEmbeddings(
+    db: Querier,
+    workspaceId: string,
+    rows: Array<{ id: string; embedding: number[]; sourceHash: string }>
+  ): Promise<number> {
+    if (rows.length === 0) return 0
+    const ids = rows.map((row) => row.id)
+    const embeddingLiterals = rows.map((row) => `[${row.embedding.join(",")}]`)
+    const hashes = rows.map((row) => row.sourceHash)
+    const result = await db.query(sql`
+      UPDATE conversations c
+      SET embedding = v.embedding::vector, embedding_source_hash = v.source_hash
+      FROM UNNEST(${ids}::text[], ${embeddingLiterals}::text[], ${hashes}::text[]) AS v(id, embedding, source_hash)
+      WHERE c.id = v.id
+        AND c.workspace_id = ${workspaceId}
+        AND c.embedding_source_hash IS DISTINCT FROM v.source_hash
+    `)
+    return result.rowCount ?? 0
+  },
+
   async updateTopicSummary(
     db: Querier,
     params: {

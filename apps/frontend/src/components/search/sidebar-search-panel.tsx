@@ -13,6 +13,7 @@ import { useSearchPanel } from "./search-panel-context"
 import { useMessageSearch } from "./use-message-search"
 import { useMemoMatches } from "./use-memo-matches"
 import { MemoMatches } from "./memo-matches"
+import { ConversationMatches } from "./conversation-matches"
 import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
 import { SearchFilterMenu } from "./search-filter-menu"
@@ -31,6 +32,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const { query, setQuery, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } = useSearchPanel()
   const {
     results,
+    conversations,
     isLoading,
     error,
     validationError,
@@ -232,6 +234,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
           {hasQuery && !displayError && (
             <div className="px-1 pt-1">
               <MemoMatches memos={memos} exploreHref={exploreHref} compact />
+              <ConversationMatches workspaceId={workspaceId} conversations={conversations} compact />
             </div>
           )}
 

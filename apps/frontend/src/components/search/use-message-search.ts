@@ -8,7 +8,7 @@ import {
   useWorkspaceUsers,
 } from "@/stores/workspace-store"
 import { parseSearchQuery, type ParsedFilter } from "@/lib/search-query-parser"
-import type { SearchFilters, SearchResultItem } from "@/api"
+import type { ConversationSearchResult, SearchFilters, SearchResultItem } from "@/api"
 import type { ArchiveStatus } from "@/api"
 import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threa/types"
 
@@ -17,6 +17,8 @@ const SEARCH_RESULT_LIMIT = 50
 
 export interface MessageSearchState {
   results: SearchResultItem[]
+  /** Discussions whose topic matched semantically; rendered as their own group above messages. */
+  conversations: ConversationSearchResult[]
   isLoading: boolean
   error: Error | null
   validationError: string | null
@@ -47,7 +49,10 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
-  const { results, isLoading, error, search, clear } = useSearch({ workspaceId, limit: SEARCH_RESULT_LIMIT })
+  const { results, conversations, isLoading, error, search, clear } = useSearch({
+    workspaceId,
+    limit: SEARCH_RESULT_LIMIT,
+  })
 
   const {
     filters: parsedFilters,
@@ -175,6 +180,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
 
   return {
     results,
+    conversations,
     isLoading,
     error,
     validationError: hasTooManyPhrases ? `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.` : null,

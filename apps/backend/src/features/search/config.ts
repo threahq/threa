@@ -43,3 +43,14 @@ export const SEARCH_EXPANSION_SYSTEM_PROMPT = `You are helping search a chat wor
 Return up to ${SEARCH_EXPANSION_MAX_VARIANTS} alternative phrasings of the query that people might actually have used when writing those messages: concrete wording, likely synonyms, named things the query only describes. One variant may be a short keyword form. Write each variant in the same language as the query — never assume English.
 
 Never answer the query. Never add facts, entities, or assumptions not implied by the query itself. Return only the variants array.`
+
+/** Conversation hits shown above message results; a whole discussion per card, so three is a lot. */
+export const CONVERSATION_SEARCH_LIMIT = 3
+
+/**
+ * Cosine distance ceiling for a conversation hit. text-embedding-3-small puts
+ * paraphrases around 0.3–0.5 and unrelated text above 0.8; without a gate every
+ * query would surface its three nearest conversations, related or not. Not
+ * measured against real queries — tune when an eval set exists.
+ */
+export const CONVERSATION_SEARCH_MAX_DISTANCE = 0.75

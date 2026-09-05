@@ -10,6 +10,7 @@ import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
 import { useMemoMatches } from "@/components/search/use-memo-matches"
 import { MemoMatches } from "@/components/search/memo-matches"
+import { ConversationMatches } from "@/components/search/conversation-matches"
 import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
@@ -66,6 +67,7 @@ export function SearchPage() {
 
   const {
     results,
+    conversations,
     isLoading,
     error,
     validationError,
@@ -175,6 +177,7 @@ export function SearchPage() {
           )}
 
           {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} />}
+          {hasQuery && !displayError && <ConversationMatches workspaceId={workspaceId} conversations={conversations} />}
 
           {hasQuery && isLoading && !hasResults && (
             <div className="flex flex-col gap-2 py-1">

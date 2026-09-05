@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { SearchService } from "./service"
-import type { SearchResult } from "./repository"
+import type { ConversationSearchResult, SearchResult } from "./repository"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
 import { validateRequest } from "../../lib/validation"
 import { setAuditSubjects } from "../access-log"
@@ -42,6 +42,22 @@ export function serializeSearchResult(result: SearchResult) {
   }
 }
 
+export function serializeConversationSearchResult(result: ConversationSearchResult) {
+  return {
+    id: result.id,
+    streamId: result.streamId,
+    topicSummary: result.topicSummary,
+    summary: result.summary,
+    status: result.status,
+    messageCount: result.messageCount,
+    participantIds: result.participantIds,
+    firstMessageId: result.firstMessageId,
+    firstMessageAt: result.firstMessageAt?.toISOString() ?? null,
+    lastMessageAt: result.lastMessageAt?.toISOString() ?? null,
+    distance: result.distance,
+  }
+}
+
 interface Dependencies {
   pool: Pool
   searchService: SearchService
@@ -78,7 +94,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
       if (inStreams && inStreams.length > 0) {
         resolvedInStreamIds = await resolveInFilterStreamIds(pool, workspaceId, userId, inStreams)
         if (resolvedInStreamIds.length === 0) {
-          res.json({ results: [], excludedE2eStreamCount: 0 })
+          res.json({ results: [], conversations: [], excludedE2eStreamCount: 0 })
           return
         }
       }
@@ -96,7 +112,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
       // Resolve access before calling the auth-agnostic search service
       const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, filters)
 
-      const { results, excludedE2eStreamCount } = await searchService.search({
+      const { results, conversations, excludedE2eStreamCount } = await searchService.search({
         workspaceId,
         permissions: { accessibleStreamIds },
         query,
@@ -107,13 +123,14 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
         deep,
       })
 
-      setAuditSubjects(
-        res,
-        results.map((r) => ({ type: "message", id: r.id }))
-      )
+      setAuditSubjects(res, [
+        ...results.map((r) => ({ type: "message", id: r.id })),
+        ...conversations.map((c) => ({ type: "conversation", id: c.id })),
+      ])
 
       res.json({
         results: results.map(serializeSearchResult),
+        conversations: conversations.map(serializeConversationSearchResult),
         excludedE2eStreamCount,
       })
     },

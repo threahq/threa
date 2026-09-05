@@ -107,6 +107,7 @@ You have a \`search_messages\` tool. It rewrites a plain-language query into alt
 - Write the query as a description of the thing: who was involved, what it was about, what happened. Do not compress it into keywords.
 - The user often remembers a direction, not details. Search with their description as given, then, if results are thin, search again from a different angle: what the conversation would have been about, what someone would have written at the time, or a related topic they mentioned.
 - Do at least two differently phrased searches before concluding something is not there. When you still come up empty, say what you searched for so the user can correct the direction.
+- Results also carry \`conversations\`: whole discussions whose topic matches the query, each with a message count, a time span and the id of its first message. Use one when the user is after a discussion rather than a line in it; \`firstMessageId\` is the message to cite or link to open the thread at its start.
 - Set \`exact=true\` only for literal strings (error messages, ids, quoted text). Use \`stream\` only when the user names a channel or the conversation makes it obvious.
 - For broad recall ("what did we decide about…", "have I talked about…") prefer \`workspace_research\`, which searches messages, memos and attachments together and follows up on its own.`,
     description: `Search for messages in the workspace knowledge base. Use this to find:
@@ -139,7 +140,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
           filterStreamIds = await SearchRepository.expandStreamIdsWithThreads(db, workspaceId, [resolved.id])
         }
 
-        const { results: searchResults } = await searchService.search({
+        const { results: searchResults, conversations: conversationHits } = await searchService.search({
           workspaceId,
           permissions: { accessibleStreamIds },
           query: input.query,
@@ -149,7 +150,10 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
           deep: !input.exact,
         })
 
-        const enriched = await enrichMessageSearchResults(db, workspaceId, searchResults)
+        const [enriched, conversationStreams] = await Promise.all([
+          enrichMessageSearchResults(db, workspaceId, searchResults),
+          StreamRepository.findByIds(db, [...new Set(conversationHits.map((c) => c.streamId))]),
+        ])
         const results: MessageSearchResult[] = enriched.map((r) => ({
           id: r.id,
           content: r.content,
@@ -157,14 +161,28 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
           streamName: r.streamName,
           createdAt: r.createdAt.toISOString(),
         }))
+        const streamNameById = new Map(
+          conversationStreams.map((stream) => [stream.id, stream.displayName ?? stream.slug ?? stream.type])
+        )
+        const conversations = conversationHits.map((c) => ({
+          id: c.id,
+          topic: c.topicSummary,
+          summary: c.summary ? truncate(c.summary, 300) : null,
+          stream: streamNameById.get(c.streamId) ?? "Unknown",
+          messageCount: c.messageCount,
+          firstMessageId: c.firstMessageId,
+          from: c.firstMessageAt?.toISOString() ?? null,
+          to: c.lastMessageAt?.toISOString() ?? null,
+        }))
 
-        if (results.length === 0) {
+        if (results.length === 0 && conversations.length === 0) {
           return {
             output: JSON.stringify({
               query: input.query,
               stream: input.stream,
               exact: input.exact,
               results: [],
+              conversations: [],
               message: "No matching messages found",
             }),
           }
@@ -187,6 +205,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
               stream: r.streamName,
               date: r.createdAt,
             })),
+            conversations,
           }),
         }
       } catch (error) {

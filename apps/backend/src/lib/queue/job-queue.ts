@@ -38,6 +38,7 @@ export const JobQueues = {
   WORD_PROCESS: "word.process",
   EXCEL_PROCESS: "excel.process",
   ATTACHMENT_EMBED: "attachment.embed",
+  CONVERSATION_EMBEDDING_GENERATE: "conversation-embedding.generate",
   AVATAR_PROCESS: "avatar.process",
   LINK_PREVIEW_EXTRACT: "link_preview.extract",
   VIDEO_TRANSCODE_SUBMIT: "video.transcode_submit",
@@ -244,6 +245,16 @@ export interface AttachmentEmbeddingJobData {
   workspaceId: string
 }
 
+/**
+ * Embed a conversation's topic summary, summary and opening message so it can
+ * be found as a search unit of its own. Idempotent: the worker skips when the
+ * embedded text's hash is unchanged.
+ */
+export interface ConversationEmbeddingJobData {
+  conversationId: string
+  workspaceId: string
+}
+
 /** Avatar processing job - resizes raw upload into WebP variants */
 export interface AvatarProcessJobData {
   workspaceId: string
@@ -425,6 +436,7 @@ export interface JobDataMap {
   [JobQueues.WORD_PROCESS]: WordProcessJobData
   [JobQueues.EXCEL_PROCESS]: ExcelProcessJobData
   [JobQueues.ATTACHMENT_EMBED]: AttachmentEmbeddingJobData
+  [JobQueues.CONVERSATION_EMBEDDING_GENERATE]: ConversationEmbeddingJobData
   [JobQueues.AVATAR_PROCESS]: AvatarProcessJobData
   [JobQueues.LINK_PREVIEW_EXTRACT]: LinkPreviewExtractJobData
   [JobQueues.VIDEO_TRANSCODE_SUBMIT]: VideoTranscodeSubmitJobData
