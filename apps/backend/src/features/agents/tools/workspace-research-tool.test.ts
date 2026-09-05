@@ -31,7 +31,7 @@ describe("workspace_research tool", () => {
   test("should pass query + opts to workspace agent and return structured AgentToolResult", async () => {
     const runWorkspaceAgent = mock(async (_query: string, _opts: unknown) => baseResult)
 
-    const tool = createWorkspaceResearchTool({ runWorkspaceAgent })
+    const tool = createWorkspaceResearchTool({ runWorkspaceAgent, searchFlag: "on" })
     const onProgress = mock((_s: string) => {})
     const controller = new AbortController()
     const result = await tool.config.execute(
@@ -83,7 +83,7 @@ describe("workspace_research tool", () => {
     )
 
     const onProgress = mock((_s: string) => {})
-    const tool = createWorkspaceResearchTool({ runWorkspaceAgent })
+    const tool = createWorkspaceResearchTool({ runWorkspaceAgent, searchFlag: "on" })
     await tool.config.execute({ query: "q" }, { toolCallId: "test", onProgress })
 
     expect(onProgress).toHaveBeenCalledTimes(2)
@@ -100,7 +100,7 @@ describe("workspace_research tool", () => {
       })
     )
 
-    const tool = createWorkspaceResearchTool({ runWorkspaceAgent })
+    const tool = createWorkspaceResearchTool({ runWorkspaceAgent, searchFlag: "on" })
     const result = await tool.config.execute({ query: "q" }, { toolCallId: "test" })
     const parsed = JSON.parse(result.output)
     expect(parsed.status).toBe("partial")

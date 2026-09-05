@@ -94,13 +94,15 @@ export interface StreamMessagesResult {
 const MAX_RESULTS = 10
 const MAX_STREAM_MESSAGES = 20
 
-export function createSearchMessagesTool(deps: WorkspaceToolDeps) {
-  const { db, workspaceId, accessibleStreamIds, invokingUserId, searchService } = deps
+const SEARCH_MESSAGES_DESCRIPTION = `Search for messages in the workspace knowledge base. Use this to find:
+- Previous discussions about a topic
+- Specific information mentioned in past conversations
+- Context about decisions or plans
 
-  return defineAgentTool({
-    name: "search_messages",
-    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_MESSAGES],
-    promptBlock: `## Searching Messages
+Set exact=true to find literal phrase matches (useful for error messages, IDs, or quoted text).
+Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed slug (#general).`
+
+const IMPROVED_SEARCH_MESSAGES_PROMPT_BLOCK = `## Searching Messages
 
 You have a \`search_messages\` tool. It rewrites a plain-language query into alternative phrasings, searches keyword and meaning together, and reranks the results, so it works best when the query describes what the user is looking for rather than guessing the words they used.
 
@@ -109,15 +111,20 @@ You have a \`search_messages\` tool. It rewrites a plain-language query into alt
 - Do at least two differently phrased searches before concluding something is not there. When you still come up empty, say what you searched for so the user can correct the direction.
 - Results also carry \`conversations\`: whole discussions whose topic matches the query, each with a message count, a time span and the id of its first message. Use one when the user is after a discussion rather than a line in it; \`firstMessageId\` is the message to cite or link to open the thread at its start.
 - Set \`exact=true\` only for literal strings (error messages, ids, quoted text). Use \`stream\` only when the user names a channel or the conversation makes it obvious.
-- For broad recall ("what did we decide about…", "have I talked about…") prefer \`workspace_research\`, which searches messages, memos and attachments together and follows up on its own.`,
-    description: `Search for messages in the workspace knowledge base. Use this to find:
-- Previous discussions about a topic
-- Specific information mentioned in past conversations
-- Context about decisions or plans
+- For broad recall ("what did we decide about…", "have I talked about…") prefer \`workspace_research\`, which searches messages, memos and attachments together and follows up on its own.`
 
-Set exact=true to find literal phrase matches (useful for error messages, IDs, or quoted text).
-Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed slug (#general).
-Semantic searches are rewritten into alternative phrasings and reranked, so describe what you remember in plain words rather than guessing exact wording.`,
+export function createSearchMessagesTool(deps: WorkspaceToolDeps) {
+  const { db, workspaceId, accessibleStreamIds, invokingUserId, searchService, searchFlag } = deps
+  const improved = searchFlag === "on"
+
+  return defineAgentTool({
+    name: "search_messages",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_MESSAGES],
+    ...(improved && { promptBlock: IMPROVED_SEARCH_MESSAGES_PROMPT_BLOCK }),
+    description: improved
+      ? `${SEARCH_MESSAGES_DESCRIPTION}
+Semantic searches are rewritten into alternative phrasings and reranked, so describe what you remember in plain words rather than guessing exact wording.`
+      : SEARCH_MESSAGES_DESCRIPTION,
     inputSchema: SearchMessagesSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -147,7 +154,8 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
           filters: input.stream ? { streamIds: filterStreamIds } : undefined,
           limit: 10,
           exact: input.exact,
-          deep: !input.exact,
+          deep: improved && !input.exact,
+          searchFlag,
         })
 
         const [enriched, conversationStreams] = await Promise.all([
@@ -182,7 +190,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
               stream: input.stream,
               exact: input.exact,
               results: [],
-              conversations: [],
+              ...(improved && { conversations: [] }),
               message: "No matching messages found",
             }),
           }
@@ -205,7 +213,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
               stream: r.streamName,
               date: r.createdAt,
             })),
-            conversations,
+            ...(improved && { conversations }),
           }),
         }
       } catch (error) {

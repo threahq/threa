@@ -4,7 +4,7 @@ import { withClient } from "../../../db"
 import { composeAbortSignal, isAbortError, type AI } from "@threa/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
-import type { AuthoredByKind, TraceSource } from "@threa/types"
+import type { AuthoredByKind, FeatureFlagValue, TraceSource } from "@threa/types"
 import type { EmbeddingServiceLike } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
 import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
@@ -26,7 +26,7 @@ import {
   DEFAULT_MAX_QUOTE_DEPTH,
 } from "../quote-resolver"
 import { logger } from "../../../lib/logger"
-import { hybridWeightsForQuery } from "../../search"
+import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "../../search"
 import {
   WORKSPACE_AGENT_MAX_ITERATIONS,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
@@ -113,6 +113,8 @@ export interface WorkspaceAgentInput {
   query: string
   conversationHistory: Message[]
   invokingUserId: string
+  /** The invoking user's resolved `search` flag; "off" keeps the pre-rework message ranking. */
+  searchFlag: FeatureFlagValue<"search">
   /**
    * Cooperative cancellation signal (from SessionAbortRegistry). When aborted the
    * researcher stops at the next safe checkpoint and returns partial results.
@@ -325,6 +327,7 @@ export class WorkspaceAgent {
   ): Promise<WorkspaceAgentResult> {
     const { configResolver, embeddingService } = this.deps
     const { workspaceId, query, conversationHistory } = input
+    const ranking = searchRankingForFlag(input.searchFlag)
 
     // User-scoped memos (roadmap 6.4) are private to one owner, and the
     // researcher's reply + broadcast trace sources reach every participant of the
@@ -373,7 +376,8 @@ export class WorkspaceAgent {
             embeddingService,
             memoViewerUserId,
             true,
-            excludedMessageIds
+            excludedMessageIds,
+            ranking
           )
         : Promise.resolve({ memos: [], messages: [], attachments: [] })
 
@@ -419,7 +423,8 @@ export class WorkspaceAgent {
         embeddingService,
         memoViewerUserId,
         true,
-        excludedMessageIds
+        excludedMessageIds,
+        ranking
       )
 
       allMemos = mergeMemoResults(allMemos, plannerResults.memos)
@@ -501,7 +506,8 @@ export class WorkspaceAgent {
         embeddingService,
         memoViewerUserId,
         true,
-        excludedMessageIds
+        excludedMessageIds,
+        ranking
       )
 
       allMemos = mergeMemoResults(allMemos, iterationResults.memos)
@@ -810,7 +816,8 @@ Each query must have:
     embeddingService: EmbeddingServiceLike,
     memoViewerUserId: string | undefined,
     includeSurroundingContext: boolean,
-    excludedMessageIds: Set<string>
+    excludedMessageIds: Set<string>,
+    ranking: SearchRanking
   ): Promise<{
     memos: EnrichedMemoResult[]
     messages: EnrichedMessageResult[]
@@ -847,7 +854,8 @@ Each query must have:
             workspaceId,
             accessibleStreamIds,
             includeSurroundingContext,
-            excludedMessageIds
+            excludedMessageIds,
+            ranking
           )
           return {
             type: "messages" as const,
@@ -1016,7 +1024,8 @@ Each query must have:
     workspaceId: string,
     accessibleStreamIds: string[],
     includeSurroundingContext: boolean,
-    excludedMessageIds: Set<string>
+    excludedMessageIds: Set<string>,
+    ranking: SearchRanking
   ): Promise<EnrichedMessageResult[]> {
     const { embeddingService } = this.deps
 
@@ -1050,6 +1059,7 @@ Each query must have:
                 streamIds: accessibleStreamIds,
                 filters,
                 limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
+                ranking,
               })
             : await SearchRepository.hybridSearch(client, {
                 query: normalizedQuery,
@@ -1057,7 +1067,8 @@ Each query must have:
                 streamIds: accessibleStreamIds,
                 filters,
                 limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
-                ...hybridWeightsForQuery(normalizedQuery),
+                ranking,
+                ...hybridWeightsForQuery(normalizedQuery, ranking),
               })
         const searchResults =
           hasQuery && hasEmbedding && primaryResults.length === 0
@@ -1066,6 +1077,7 @@ Each query must have:
                 streamIds: accessibleStreamIds,
                 filters,
                 limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
+                ranking,
               })
             : primaryResults
 

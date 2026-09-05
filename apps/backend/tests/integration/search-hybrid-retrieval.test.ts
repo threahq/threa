@@ -168,6 +168,7 @@ describe("Message hybrid search retrieval", () => {
     // OR-joined keyword leg's term overlap.
     const service = makeService(pool)
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "why did the railway deploy break",
@@ -189,6 +190,7 @@ describe("Message hybrid search retrieval", () => {
 
     const service = makeService(pool)
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "widget pricing tiers explained thoroughly",
@@ -233,6 +235,7 @@ describe("Message hybrid search retrieval", () => {
     // 4 tokens, no digits -> "general" intent (keywordWeight 0.4, semanticWeight 0.6).
     const service = makeService(pool)
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "acme project rollout status",
@@ -250,6 +253,7 @@ describe("Message hybrid search retrieval", () => {
 
       const service = makeService(pool)
       const { results } = await service.search({
+        searchFlag: "on",
         workspaceId: wsId,
         permissions: await permissionsFor(wsId, uid),
         query: "acme",
@@ -267,6 +271,7 @@ describe("Message hybrid search retrieval", () => {
 
       const service = makeService(pool)
       const { results } = await service.search({
+        searchFlag: "on",
         workspaceId: wsId,
         permissions: await permissionsFor(wsId, uid),
         query: "acme project launch",
@@ -375,6 +380,7 @@ describe("Message hybrid search retrieval", () => {
 
     const service = makeService(pool)
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: testWorkspaceId,
       permissions: await permissionsFor(testWorkspaceId, memberId),
       query: "gizmoflarp",
@@ -385,6 +391,32 @@ describe("Message hybrid search retrieval", () => {
     expect(unreachableReply.streamId).toBe(outsiderThreadId)
   })
 
+  test("should keep AND keyword semantics when the search flag is off", async () => {
+    const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
+    const { twoTermMatch, oneTermMatch } = await seedRailwayMessages(wsId, sid, uid)
+
+    const service = makeService(pool)
+    const permissions = await permissionsFor(wsId, uid)
+
+    const legacy = await service.search({
+      searchFlag: "off",
+      workspaceId: wsId,
+      permissions,
+      query: "railway deploy",
+      skipEmbedding: true,
+    })
+    expect(legacy.results.map((r) => r.id)).toEqual([twoTermMatch.id])
+
+    const improved = await service.search({
+      searchFlag: "on",
+      workspaceId: wsId,
+      permissions,
+      query: "railway deploy",
+      skipEmbedding: true,
+    })
+    expect(improved.results.map((r) => r.id)).toEqual([twoTermMatch.id, oneTermMatch.id])
+  })
+
   test("should apply OR keyword semantics and phrase restriction in fullTextSearch", async () => {
     const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
     const { twoTermMatch, oneTermMatch } = await seedRailwayMessages(wsId, sid, uid)
@@ -392,6 +424,7 @@ describe("Message hybrid search retrieval", () => {
     const service = makeService(pool)
 
     const orResult = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "why did the railway deploy break",
@@ -400,6 +433,7 @@ describe("Message hybrid search retrieval", () => {
     expect(orResult.results.map((r) => r.id)).toEqual([twoTermMatch.id, oneTermMatch.id])
 
     const phraseResult = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "why did the railway deploy break",
@@ -415,6 +449,7 @@ describe("Message hybrid search retrieval", () => {
 
     const service = makeService(pool)
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: 'railway "deploy failed"',

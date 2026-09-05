@@ -18,6 +18,7 @@ function makeDeps(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDeps {
     workspaceId: "workspace_test",
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_test",
+    searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
     storage: { getObject: async () => Buffer.from("test") } as unknown as WorkspaceToolDeps["storage"],
     attachmentService: makeAttachmentService(),

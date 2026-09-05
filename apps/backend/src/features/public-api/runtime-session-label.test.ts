@@ -24,6 +24,7 @@ function createHandlers(overrides: Partial<PublicApiDeps> = {}) {
     eventService: {} as PublicApiDeps["eventService"],
     streamService: {} as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
+    featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],

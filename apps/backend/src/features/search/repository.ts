@@ -12,6 +12,7 @@ import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filt
 import { streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
+import { LEGACY_SEMANTIC_DISTANCE_THRESHOLD, type SearchRanking } from "./config"
 
 export interface GetAccessibleStreamsParams {
   workspaceId: string
@@ -95,12 +96,16 @@ export interface ResolvedFilters {
   after?: Date // Inclusive (>=)
 }
 
-export interface FullTextSearchParams {
+export interface ExactSearchParams {
   query: string
   phrases?: string[]
   streamIds: string[]
   filters: ResolvedFilters
   limit: number
+}
+
+export interface FullTextSearchParams extends ExactSearchParams {
+  ranking: SearchRanking
 }
 
 /**
@@ -156,6 +161,7 @@ export interface HybridSearchParams {
   keywordWeight?: number
   semanticWeight?: number
   k?: number
+  ranking: SearchRanking
 }
 
 function escapeLike(value: string): string {
@@ -173,13 +179,24 @@ function phrasePredicatesSql(phrases: string[]) {
 /** Same quote characters the frontend's `parseSearchQuery` accepts; `"..."` in the query text means an exact phrase, as `websearch_to_tsquery` used to treat it. */
 const QUOTED_PHRASE_RE = /["“]([^"“”]+)["”]/g
 
-function withQuotedPhrases(query: string, phrases: string[]): string[] {
+function withQuotedPhrases(query: string, phrases: string[], ranking: SearchRanking): string[] {
+  if (ranking === "legacy") return phrases
   const quoted = Array.from(query.matchAll(QUOTED_PHRASE_RE), (m) => m[1].trim()).filter((p) => p.length > 0)
   return Array.from(new Set([...phrases, ...quoted]))
 }
 
-/** `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one matching term surface a result. */
-function keywordTsquerySql(query: string) {
+/**
+ * Improved: `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one
+ * matching term surface a result. Legacy: `websearch_to_tsquery`, which ANDs
+ * terms and reads `"..."` as a phrase itself.
+ */
+/** Legacy ranks raw term frequency; improved divides by log document length so short exact hits beat long rambling ones. */
+function tsRankNormalization(ranking: SearchRanking): 0 | 1 {
+  return ranking === "legacy" ? 0 : 1
+}
+
+function keywordTsquerySql(query: string, ranking: SearchRanking) {
+  if (ranking === "legacy") return composeSql`websearch_to_tsquery('english', ${query})`
   return composeSql`replace(plainto_tsquery('english', ${query})::text, ' & ', ' | ')::tsquery`
 }
 
@@ -263,8 +280,8 @@ export const SearchRepository = {
    * If query is empty, returns recent messages matching filters.
    */
   async fullTextSearch(db: Querier, params: FullTextSearchParams): Promise<SearchResult[]> {
-    const { query, streamIds, filters, limit } = params
-    const phrases = withQuotedPhrases(query, params.phrases ?? [])
+    const { query, streamIds, filters, limit, ranking } = params
+    const phrases = withQuotedPhrases(query, params.phrases ?? [], ranking)
 
     if (streamIds.length === 0) {
       return []
@@ -313,12 +330,12 @@ export const SearchRepository = {
         m.metadata,
         m.edited_at,
         m.created_at,
-        ts_rank(m.search_vector, ${keywordTsquerySql(query)}, 1) as rank
+        ts_rank(m.search_vector, ${keywordTsquerySql(query, ranking)}, ${tsRankNormalization(ranking)}::int) as rank
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
       WHERE m.stream_id = ANY(${streamIds})
         AND m.deleted_at IS NULL
-        AND m.search_vector @@ ${keywordTsquerySql(query)}
+        AND m.search_vector @@ ${keywordTsquerySql(query, ranking)}
         ${phrasePredicatesSql(phrases)}
         AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
         AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
@@ -339,8 +356,21 @@ export const SearchRepository = {
    * RRF formula: score(d) = Σ(weight / (k + rank(d)))
    */
   async hybridSearch(db: Querier, params: HybridSearchParams): Promise<SearchResult[]> {
-    const { query, embedding, streamIds, filters, limit, keywordWeight = 0.6, semanticWeight = 0.4, k = 60 } = params
-    const phrases = withQuotedPhrases(query, params.phrases ?? [])
+    const {
+      query,
+      embedding,
+      streamIds,
+      filters,
+      limit,
+      keywordWeight = 0.6,
+      semanticWeight = 0.4,
+      k = 60,
+      ranking,
+    } = params
+    const phrases = withQuotedPhrases(query, params.phrases ?? [], ranking)
+    // Legacy gates semantic hits by distance; improved lets fusion rank them.
+    const semanticDistanceThreshold = ranking === "legacy" ? LEGACY_SEMANTIC_DISTANCE_THRESHOLD : null
+    // ts_rank normalization 1 divides by 1 + log(document length) so long messages stop winning on term count alone.
 
     if (streamIds.length === 0) {
       return []
@@ -353,7 +383,7 @@ export const SearchRepository = {
 
     const result = await db.query<SearchResultRow>(composeSql`
       WITH keyword_query AS (
-        SELECT ${keywordTsquerySql(query)} AS q
+        SELECT ${keywordTsquerySql(query, ranking)} AS q
       ),
       keyword_ranked AS (
         SELECT
@@ -368,7 +398,7 @@ export const SearchRepository = {
           m.metadata,
           m.edited_at,
           m.created_at,
-          ROW_NUMBER() OVER (ORDER BY ts_rank(m.search_vector, kq.q, 1) DESC) as rank
+          ROW_NUMBER() OVER (ORDER BY ts_rank(m.search_vector, kq.q, ${tsRankNormalization(ranking)}::int) DESC) as rank
         FROM messages m
         JOIN streams s ON m.stream_id = s.id
         CROSS JOIN keyword_query kq
@@ -401,6 +431,7 @@ export const SearchRepository = {
         WHERE m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
           AND m.embedding IS NOT NULL
+          AND (${semanticDistanceThreshold === null} OR m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold ?? 0})
           ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
@@ -522,7 +553,7 @@ export const SearchRepository = {
    *
    * Use this for error messages, IDs, or other literal text matching.
    */
-  async exactSearch(db: Querier, params: FullTextSearchParams): Promise<SearchResult[]> {
+  async exactSearch(db: Querier, params: ExactSearchParams): Promise<SearchResult[]> {
     const { query, phrases = [], streamIds, filters, limit } = params
     const hasQuery = query.trim().length > 0
 

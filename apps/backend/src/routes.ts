@@ -341,7 +341,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     steeredMessageService,
   })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
-  const search = createSearchHandlers({ pool, searchService })
+  const search = createSearchHandlers({ pool, searchService, featureFlagService })
   const memo = createMemoHandlers({ pool, memoExplorerService })
   const emoji = createEmojiHandlers()
   const boardExclusionService = new BoardExclusionService(pool)
@@ -1911,6 +1911,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const publicAuth = createPublicApiAuthMiddleware({ userApiKeyService, botApiKeyService, workspaceAuthzService, pool })
   const publicApi = createPublicApiHandlers({
     searchService,
+    featureFlagService,
     memoExplorerService,
     attachmentService,
     botChannelService,

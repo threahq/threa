@@ -11,6 +11,7 @@ import {
   type AgentToolEffect,
   type AuthorType,
   type ConversationDirective,
+  type FeatureFlagValue,
   type SourceItem,
 } from "@threa/types"
 import type { UserPreferencesService } from "../user-preferences"
@@ -107,6 +108,8 @@ export interface PersonaAgentDeps {
   workspaceAgent: WorkspaceAgent
   generalResearcher: GeneralResearcher
   searchService: SearchService
+  /** The invoking user's `search` flag: "off" keeps pre-rework tool prompts and ranking. */
+  resolveSearchFlag: (workspaceId: string, workosUserId: string) => Promise<FeatureFlagValue<"search">>
   conversationSummaryService: ConversationSummaryService
   attachmentService: AttachmentService
   memoExplorerService: MemoExplorerService
@@ -893,6 +896,12 @@ export class PersonaAgent {
         // signal comes from SessionAbortRegistry via AgentRuntime.toolSignalProvider —
         // cancelling aborts gracefully (partial results) rather than failing the
         // whole session.
+        // Resolved once per turn: the same value gates the search_messages tool
+        // prompt and ranking, and the researcher's message ranking.
+        const searchFlag: FeatureFlagValue<"search"> = agentContext.invokingWorkosUserId
+          ? await this.deps.resolveSearchFlag(workspaceId, agentContext.invokingWorkosUserId)
+          : "off"
+
         let runWorkspaceAgent:
           | ((
               query: string,
@@ -908,6 +917,7 @@ export class PersonaAgent {
               query,
               conversationHistory: agentContext.streamContext.conversationHistory,
               invokingUserId: capturedInvokingUserId,
+              searchFlag,
               signal,
               onSubstep,
               deadlineAt,
@@ -1075,6 +1085,7 @@ export class PersonaAgent {
             workspaceId,
             accessibleStreamIds: [...agentContext.accessibleStreamIds],
             invokingUserId: agentContext.invokingUserId,
+            searchFlag,
             searchService,
             attachmentService,
             memoExplorer: memoExplorerService,

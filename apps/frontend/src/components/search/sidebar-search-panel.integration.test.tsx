@@ -198,6 +198,7 @@ const mentionablesFilterFn = (items: unknown[], query: string) => {
 }
 
 function installSpies() {
+  vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("on")
   vi.spyOn(hooksModule, "useSearch").mockImplementation(
     () =>
       ({
@@ -703,6 +704,27 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(mockNavigate).not.toHaveBeenCalled()
     })
 
+    it("offers no deep search when the search flag is off: no button, and Enter stays on the fast path", async () => {
+      vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("off")
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("#general")).toBeInTheDocument()
+      })
+      expect(screen.queryByRole("button", { name: /search deeper/i })).toBeNull()
+
+      await user.keyboard("{Enter}")
+
+      expect(mockSearchState.search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
+    })
+
     it("offers no deep search for a filter-only query: no button, and Enter stays on the fast path", async () => {
       mockSearchState.results = []
 
@@ -829,6 +851,28 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
       expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringContaining("/memory"))
+    })
+
+    it("is absent, and skips the memo request, when the search flag is off", async () => {
+      vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("off")
+      mockMemoSearchState.results = [buildMemoResult()]
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("#general")).toBeInTheDocument()
+      })
+      await waitFor(() => expect(mockUseMemoSearch).toHaveBeenCalled())
+
+      expect(screen.queryByText("Memories")).not.toBeInTheDocument()
+      const lastCall = mockUseMemoSearch.mock.calls.at(-1)
+      expect(lastCall?.[2]).toEqual({ enabled: false })
     })
 
     it("is absent, and skips the memo request, when the query carries from:@martin", async () => {

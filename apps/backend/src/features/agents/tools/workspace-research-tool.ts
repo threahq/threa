@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, ToolPrivacyCategories } from "@threa/types"
+import { AgentStepTypes, ToolPrivacyCategories, type FeatureFlagValue } from "@threa/types"
 import type { WorkspaceAgentResult } from "../researcher"
 import { WORKSPACE_AGENT_TOTAL_BUDGET_MS } from "../researcher/config"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
@@ -32,7 +32,12 @@ export interface RunWorkspaceAgentOptions {
 
 export interface WorkspaceResearchCallbacks {
   runWorkspaceAgent: (query: string, opts: RunWorkspaceAgentOptions) => Promise<WorkspaceAgentResult>
+  /** The invoking user's `search` flag; "on" adds the description-as-query guidance. */
+  searchFlag: FeatureFlagValue<"search">
 }
+
+const DIRECTION_QUERY_GUIDANCE =
+  "\n- The user describes what they want by direction rather than detail — pass their description in their own words, with any names, places or time hints they gave, instead of reducing it to keywords"
 
 /**
  * Fallback AbortSignal for contexts where the runtime did not provide one
@@ -41,7 +46,7 @@ export interface WorkspaceResearchCallbacks {
 const NEVER_SIGNAL = new AbortController().signal
 
 export function createWorkspaceResearchTool(callbacks: WorkspaceResearchCallbacks) {
-  const { runWorkspaceAgent } = callbacks
+  const { runWorkspaceAgent, searchFlag } = callbacks
 
   return defineAgentTool({
     name: WORKSPACE_RESEARCH_TOOL_NAME,
@@ -55,8 +60,7 @@ You have a \`workspace_research\` tool to retrieve relevant workspace memory (pa
 Use workspace_research when:
 - The user references past decisions, conversations, or people in this workspace
 - The user asks about a specific project, document, or file they've shared
-- Answering correctly requires information that lives in workspace history (not general knowledge)
-- The user describes what they want by direction rather than detail — pass their description in their own words, with any names, places or time hints they gave, instead of reducing it to keywords
+- Answering correctly requires information that lives in workspace history (not general knowledge)${searchFlag === "on" ? DIRECTION_QUERY_GUIDANCE : ""}
 
 Do NOT use workspace_research for:
 - Greetings, small talk, or acknowledgments (e.g. "hi", "thanks", "pie")

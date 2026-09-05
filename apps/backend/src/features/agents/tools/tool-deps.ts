@@ -1,5 +1,11 @@
 import type { Pool } from "pg"
-import type { AgentSettablePreferences, KnowledgeType, MemoScope, UserPreferences } from "@threa/types"
+import type {
+  AgentSettablePreferences,
+  FeatureFlagValue,
+  KnowledgeType,
+  MemoScope,
+  UserPreferences,
+} from "@threa/types"
 import type { AttachmentService } from "../../attachments"
 import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
@@ -11,6 +17,8 @@ export interface WorkspaceToolDeps {
   workspaceId: string
   accessibleStreamIds: string[]
   invokingUserId: string
+  /** The invoking user's resolved `search` flag; "off" keeps the pre-rework tool prompt and ranking. */
+  searchFlag: FeatureFlagValue<"search">
   searchService: SearchService
   storage: StorageProvider
   attachmentService: AttachmentService

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useSearch } from "@/hooks"
+import { useFeatureFlag, useSearch } from "@/hooks"
 import { localStartOfDayISO } from "@/lib/dates"
 import {
   useWorkspaceBots,
@@ -45,6 +45,7 @@ export interface MessageSearchState {
  * parse, resolve, and rank identically.
  */
 export function useMessageSearch(workspaceId: string, query: string): MessageSearchState {
+  const searchFlag = useFeatureFlag(workspaceId, "search")
   const users = useWorkspaceUsers(workspaceId)
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
@@ -132,7 +133,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   }, [parsedFilters, users, personas, bots, streams])
 
   const hasQuery = searchText.trim().length > 0 || phrases.length > 0 || parsedFilters.length > 0
-  const canSearchDeeper = hasQuery && !hasTooManyPhrases && semanticText.trim().length > 0
+  const canSearchDeeper = searchFlag === "on" && hasQuery && !hasTooManyPhrases && semanticText.trim().length > 0
 
   // `users`/`streams` come from live queries that produce a NEW array on every
   // workspace IndexedDB write (incoming messages, presence, …), which gives

@@ -503,6 +503,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       workspaceAgent,
       generalResearcher,
       searchService,
+      resolveSearchFlag: async () => "on",
       conversationSummaryService,
       attachmentService,
       memoExplorerService,

@@ -105,6 +105,7 @@ describe("SearchPage", () => {
     mockConversations = []
     mockUseMemoSearch.mockReset()
     mockUseMemoSearch.mockReturnValue({ data: { results: [] }, isLoading: false, error: null })
+    vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("on")
     vi.spyOn(hooksModule, "useMemoSearch").mockImplementation(
       (...args) => mockUseMemoSearch(...args) as ReturnType<typeof hooksModule.useMemoSearch>
     )
@@ -219,6 +220,37 @@ describe("SearchPage", () => {
       expect(screen.getByRole("button", { name: /search deeper/i })).toBeDisabled()
     })
     expect(screen.getByRole("radio", { name: "Ranked results" })).toBeInTheDocument()
+  })
+
+  describe("search flag off", () => {
+    beforeEach(() => {
+      vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("off")
+    })
+
+    it("hides the Search deeper button and keeps Enter on the fast path", async () => {
+      const user = userEvent.setup()
+      renderPage()
+
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: /search deeper/i })).toBeNull()
+
+      const input = screen.getByLabelText("Search messages")
+      await user.click(input)
+      await user.keyboard("{Enter}")
+
+      expect(search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
+    })
+
+    it("skips the memo request and renders no Memories section", async () => {
+      mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+      renderPage()
+
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      await waitFor(() => expect(mockUseMemoSearch).toHaveBeenCalled())
+      expect(screen.queryByText("Memories")).not.toBeInTheDocument()
+      const lastCall = mockUseMemoSearch.mock.calls.at(-1)
+      expect(lastCall?.[2]).toEqual({ enabled: false })
+    })
   })
 
   describe("memo matches", () => {
