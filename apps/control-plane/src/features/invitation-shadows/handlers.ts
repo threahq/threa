@@ -34,7 +34,6 @@ const createShadowSchema = z
   )
 
 const updateShadowSchema = z.union([
-  z.object({ status: z.literal("revoked") }),
   z.object({
     expiresAt: z.string().datetime().nullable(),
     maxUses: z.number().int().positive().nullable(),
@@ -42,6 +41,7 @@ const updateShadowSchema = z.union([
     revision: z.number().int().nonnegative(),
     status: z.enum(["pending", "accepted", "expired", "revoked"]),
   }),
+  z.object({ status: z.literal("revoked") }),
 ])
 
 const lookupSchema = z.object({

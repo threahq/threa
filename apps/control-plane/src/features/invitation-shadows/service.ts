@@ -123,18 +123,32 @@ export class InvitationShadowService {
     status?: "pending" | "accepted" | "expired" | "revoked"
   }): Promise<void> {
     const result = await withTransaction(this.pool, async (client) => {
-      let invitation = await InvitationShadowRepository.findByIdForUpdate(client, params.id)
+      let parent: InvitationShadowRow | null = null
+      if (params.parentInvitationId) {
+        parent = await InvitationShadowRepository.findByIdForUpdate(client, params.parentInvitationId)
+        if (!parent) {
+          throw new HttpError(`Invitation parent shadow ${params.parentInvitationId} is not mirrored yet`, {
+            status: 503,
+            code: "INVITATION_SHADOW_NOT_READY",
+          })
+        }
+        if (parent.workspace_id !== params.workspaceId || parent.kind !== "link" || parent.parent_link_id) {
+          throw new HttpError(`Invitation parent shadow ${params.parentInvitationId} conflicts`, {
+            status: 409,
+            code: "INVITATION_PARENT_CONFLICT",
+          })
+        }
+      }
+
+      let invitation =
+        params.id === params.parentInvitationId
+          ? parent
+          : await InvitationShadowRepository.findByIdForUpdate(client, params.id)
       let preserveRevokedStatus = false
       let revokedChildren: InvitationShadowRow[] = []
 
-      if (params.parentInvitationId) {
-        const parent =
-          params.parentInvitationId === params.id
-            ? invitation
-            : await InvitationShadowRepository.findByIdForUpdate(client, params.parentInvitationId)
-        if (!parent || parent.workspace_id !== params.workspaceId || parent.kind !== "link" || parent.parent_link_id) {
-          throw new Error(`Invitation parent shadow ${params.parentInvitationId} not found`)
-        }
+      if (parent) {
+        let currentParent = parent
         if (
           params.expiresAt !== undefined &&
           params.maxUses !== undefined &&
@@ -142,34 +156,51 @@ export class InvitationShadowService {
           params.revision !== undefined &&
           params.status !== undefined
         ) {
-          await InvitationShadowRepository.applyParentSnapshot(client, parent.id, {
-            expiresAt: params.expiresAt,
-            maxUses: params.maxUses,
-            useCount: params.useCount,
-            revision: params.revision,
-            status: params.status,
-          })
+          currentParent =
+            (await InvitationShadowRepository.applyParentSnapshot(client, parent.id, {
+              expiresAt: params.expiresAt,
+              maxUses: params.maxUses,
+              useCount: params.useCount,
+              revision: params.revision,
+              status: params.status,
+            })) ?? parent
         }
-        const currentParent = (await InvitationShadowRepository.findById(client, parent.id)) ?? parent
         if (currentParent.status === "revoked") {
           revokedChildren = await InvitationShadowRepository.revokePendingChildren(client, parent.id)
         }
         if (!invitation && params.id !== parent.id) {
           invitation = await InvitationShadowRepository.insertLinkChild(client, {
             id: params.id,
-            parent,
+            parent: currentParent,
             email: params.email,
           })
         }
-        preserveRevokedStatus = params.id === parent.id
+        if (params.id === parent.id) {
+          invitation = await InvitationShadowRepository.setEmailFromLegacyClaim(client, parent.id, params.email)
+          if (!invitation) {
+            throw new HttpError(`Invitation shadow ${params.id} acceptance identity conflicts`, {
+              status: 409,
+              code: "INVITATION_ACCEPTANCE_CONFLICT",
+            })
+          }
+          preserveRevokedStatus = true
+        }
       }
 
-      if (!invitation) throw new Error(`Invitation shadow ${params.id} not found`)
+      if (!invitation) {
+        throw new HttpError(`Invitation shadow ${params.id} is not mirrored yet`, {
+          status: 503,
+          code: "INVITATION_SHADOW_NOT_READY",
+        })
+      }
       if (
         invitation.parent_link_id !==
         (params.parentInvitationId && params.parentInvitationId !== params.id ? params.parentInvitationId : null)
       ) {
-        throw new Error(`Invitation shadow ${params.id} has an unexpected parent`)
+        throw new HttpError(`Invitation shadow ${params.id} has an unexpected parent`, {
+          status: 409,
+          code: "INVITATION_PARENT_CONFLICT",
+        })
       }
       const recorded = await InvitationShadowRepository.recordAccepted(client, {
         id: params.id,
@@ -178,7 +209,12 @@ export class InvitationShadowService {
         workosUserId: params.workosUserId,
         preserveRevokedStatus,
       })
-      if (!recorded) throw new Error(`Invitation shadow ${params.id} acceptance identity conflicts`)
+      if (!recorded) {
+        throw new HttpError(`Invitation shadow ${params.id} acceptance identity conflicts`, {
+          status: 409,
+          code: "INVITATION_ACCEPTANCE_CONFLICT",
+        })
+      }
       const insertedMembership = await WorkspaceRegistryRepository.insertMembership(
         client,
         params.workspaceId,

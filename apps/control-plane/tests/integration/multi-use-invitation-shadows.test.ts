@@ -6,8 +6,41 @@ import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
 import { InvitationShadowRepository, InvitationShadowService } from "../../src/features/invitation-shadows"
 import { PlatformAdminSyncService } from "../../src/features/platform-admin"
 import { WorkspaceRegistryRepository } from "../../src/features/workspaces"
-import { RegionalInvitationError, type RegionalClient } from "../../src/lib/regional-client"
+import { RegionalInvitationError, RegionalClient } from "../../src/lib/regional-client"
 import { setupTestDatabase } from "./setup"
+
+type RegionalClientMethods = {
+  acceptInvitation?: RegionalClient["acceptInvitation"]
+  claimInvitationLink?: RegionalClient["claimInvitationLink"]
+}
+
+class TestRegionalClient extends RegionalClient {
+  constructor(private readonly methods: RegionalClientMethods = {}) {
+    super({}, "test-internal-key")
+  }
+
+  override async acceptInvitation(
+    region: string,
+    invitationId: string,
+    data: { workosUserId: string; email: string; name: string }
+  ): Promise<{ workspaceId: string }> {
+    return this.methods.acceptInvitation?.(region, invitationId, data) ?? { workspaceId: "ws_multi_shadow" }
+  }
+
+  override async claimInvitationLink(
+    region: string,
+    data: { token: string; email: string }
+  ): Promise<{ ok: true; alreadyMember?: { workspaceId: string } }> {
+    return this.methods.claimInvitationLink?.(region, data) ?? { ok: true }
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 1_000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs)),
+  ])
+}
 
 describe("multi-use invitation shadows", () => {
   let pool: Pool
@@ -35,10 +68,7 @@ describe("multi-use invitation shadows", () => {
       [workspaceId]
     )
     workos = new StubWorkosOrgService()
-    regional = {
-      acceptInvitation: async () => ({ workspaceId }),
-      claimInvitationLink: async () => ({ ok: true }),
-    } as unknown as RegionalClient
+    regional = new TestRegionalClient()
     service = new InvitationShadowService({
       pool,
       regionalClient: regional,
@@ -376,15 +406,20 @@ describe("multi-use invitation shadows", () => {
       revision: 1,
       inviterWorkosUserId: "user_owner",
     })
-    service["regionalClient"] = {
-      acceptInvitation: async () => {
-        throw new RegionalInvitationError(409, JSON.stringify({ code: "INVITATION_EXHAUSTED" }))
-      },
-    } as unknown as RegionalClient
+    const rejectingService = new InvitationShadowService({
+      pool,
+      regionalClient: new TestRegionalClient({
+        acceptInvitation: async () => {
+          throw new RegionalInvitationError(409, JSON.stringify({ code: "INVITATION_EXHAUSTED" }))
+        },
+      }),
+      workosOrgService: workos,
+      platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
+    })
 
     let caught: unknown
     try {
-      await service.acceptShadow("inv_child_exhausted", {
+      await rejectingService.acceptShadow("inv_child_exhausted", {
         id: "user_full",
         email: "full@example.com",
         name: "Full User",
@@ -443,13 +478,18 @@ describe("multi-use invitation shadows", () => {
       roleSlug: WORKSPACE_ROLE_SLUGS.MEMBER,
       expiresAt: future,
     })
-    service["regionalClient"] = {
-      claimInvitationLink: async () => {
-        throw new RegionalInvitationError(409, JSON.stringify({ code: "INVITATION_ALREADY_CLAIMED" }))
-      },
-    } as unknown as RegionalClient
+    const oldRegionalService = new InvitationShadowService({
+      pool,
+      regionalClient: new TestRegionalClient({
+        claimInvitationLink: async () => {
+          throw new RegionalInvitationError(409, JSON.stringify({ code: "INVITATION_ALREADY_CLAIMED" }))
+        },
+      }),
+      workosOrgService: workos,
+      platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
+    })
 
-    await expect(service.claimByToken(token, "legacy@example.com")).rejects.toMatchObject({
+    await expect(oldRegionalService.claimByToken(token, "legacy@example.com")).rejects.toMatchObject({
       status: 409,
       code: "INVITATION_ALREADY_CLAIMED",
     })
@@ -647,6 +687,160 @@ describe("multi-use invitation shadows", () => {
     ])
   })
 
+  test("should bind a null-email legacy root when acceptance arrives before claim", async () => {
+    await createParent()
+
+    await service.reconcileAccepted({
+      id: "inv_parent_multi",
+      workspaceId,
+      email: "legacy-accept-first@example.com",
+      workosUserId: "user_legacy_accept_first",
+      parentInvitationId: "inv_parent_multi",
+    })
+
+    expect(await InvitationShadowRepository.findById(pool, "inv_parent_multi")).toMatchObject({
+      email: "legacy-accept-first@example.com",
+      status: "accepted",
+      accepted_workos_user_id: "user_legacy_accept_first",
+    })
+    expect(await WorkspaceRegistryRepository.isMember(pool, workspaceId, "user_legacy_accept_first")).toBe(true)
+  })
+
+  test("should insert an accepted child from the refreshed parent snapshot", async () => {
+    await createParent()
+
+    await service.reconcileAccepted({
+      id: "inv_child_snapshot_first",
+      workspaceId,
+      email: "snapshot-first@example.com",
+      workosUserId: "user_snapshot_first",
+      parentInvitationId: "inv_parent_multi",
+      expiresAt: null,
+      maxUses: null,
+      useCount: 1,
+      revision: 2,
+      status: "pending",
+    })
+
+    expect(await InvitationShadowRepository.findById(pool, "inv_parent_multi")).toMatchObject({
+      expires_at: null,
+      max_uses: null,
+      use_count: 1,
+      revision: 2,
+    })
+    expect(await InvitationShadowRepository.findById(pool, "inv_child_snapshot_first")).toMatchObject({
+      parent_link_id: "inv_parent_multi",
+      email: "snapshot-first@example.com",
+      expires_at: null,
+      status: "accepted",
+    })
+  })
+
+  test("should let a parent update finish before a concurrent acceptance locks its child", async () => {
+    await createParent()
+    await service.acceptLinkClaim({
+      id: "inv_parent_multi",
+      childInvitationId: "inv_child_lock_order",
+      email: "lock-order@example.com",
+      inviterWorkosUserId: "user_owner",
+    })
+
+    const updater = await pool.connect()
+    try {
+      await updater.query("BEGIN")
+      await updater.query("SET LOCAL lock_timeout = '300ms'")
+      await updater.query("SET LOCAL statement_timeout = '900ms'")
+      await InvitationShadowRepository.findByIdForUpdate(updater, "inv_parent_multi")
+
+      const acknowledgement = service.reconcileAccepted({
+        id: "inv_child_lock_order",
+        workspaceId,
+        email: "lock-order@example.com",
+        workosUserId: "user_lock_order",
+        parentInvitationId: "inv_parent_multi",
+      })
+
+      const waitDeadline = Date.now() + 750
+      let waitingOnParent = false
+      while (!waitingOnParent && Date.now() < waitDeadline) {
+        const result = await pool.query<{ waiting: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_stat_activity
+             WHERE datname = current_database() AND pid <> $1
+               AND wait_event_type = 'Lock'
+               AND query LIKE '%FROM invitation_shadows WHERE id = $1 FOR UPDATE%'
+           ) AS waiting`,
+          [updater.processID]
+        )
+        waitingOnParent = result.rows[0]?.waiting ?? false
+        if (!waitingOnParent) await Bun.sleep(10)
+      }
+      expect(waitingOnParent).toBe(true)
+
+      await InvitationShadowRepository.applyParentSnapshot(updater, "inv_parent_multi", {
+        expiresAt: null,
+        maxUses: 2,
+        useCount: 1,
+        revision: 2,
+        status: "revoked",
+      })
+      expect(await InvitationShadowRepository.revokePendingChildren(updater, "inv_parent_multi")).toEqual([
+        expect.objectContaining({ id: "inv_child_lock_order", status: "revoked" }),
+      ])
+      await updater.query("COMMIT")
+      await withTimeout(acknowledgement, "acceptance acknowledgement")
+    } catch (error) {
+      await updater.query("ROLLBACK")
+      throw error
+    } finally {
+      updater.release()
+    }
+
+    expect(await InvitationShadowRepository.findById(pool, "inv_child_lock_order")).toMatchObject({
+      status: "accepted",
+      accepted_workos_user_id: "user_lock_order",
+    })
+  })
+
+  test("should expose retryable missing shadows and permanent acceptance conflicts as HttpErrors", async () => {
+    await expect(
+      service.reconcileAccepted({
+        id: "inv_missing_child",
+        workspaceId,
+        email: "missing@example.com",
+        workosUserId: "user_missing",
+        parentInvitationId: "inv_missing_parent",
+      })
+    ).rejects.toMatchObject({ status: 503, code: "INVITATION_SHADOW_NOT_READY" })
+
+    await createParent()
+    await expect(
+      service.reconcileAccepted({
+        id: "inv_parent_multi",
+        workspaceId: "ws_wrong",
+        email: "wrong-workspace@example.com",
+        workosUserId: "user_wrong_workspace",
+        parentInvitationId: "inv_parent_multi",
+      })
+    ).rejects.toMatchObject({ status: 409, code: "INVITATION_PARENT_CONFLICT" })
+
+    await service.acceptLinkClaim({
+      id: "inv_parent_multi",
+      childInvitationId: "inv_child_conflict",
+      email: "right@example.com",
+      inviterWorkosUserId: "user_owner",
+    })
+    await expect(
+      service.reconcileAccepted({
+        id: "inv_child_conflict",
+        workspaceId,
+        email: "wrong@example.com",
+        workosUserId: "user_wrong",
+        parentInvitationId: "inv_parent_multi",
+      })
+    ).rejects.toMatchObject({ status: 409, code: "INVITATION_ACCEPTANCE_CONFLICT" })
+  })
+
   test("creates a missing accepted child before delayed claim and revoke events without accepting the wrong email", async () => {
     await createParent()
     await service.acceptLinkClaim({
@@ -735,14 +929,19 @@ describe("multi-use invitation shadows", () => {
       workspaceId,
       "user_accepted",
     ])
-    service["regionalClient"] = {
-      acceptInvitation: async () => {
-        throw new Error("must not replay regional membership")
-      },
-    } as unknown as RegionalClient
+    const replayGuardService = new InvitationShadowService({
+      pool,
+      regionalClient: new TestRegionalClient({
+        acceptInvitation: async () => {
+          throw new Error("must not replay regional membership")
+        },
+      }),
+      workosOrgService: workos,
+      platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
+    })
 
     await expect(
-      service.acceptShadow("inv_child_accepted", {
+      replayGuardService.acceptShadow("inv_child_accepted", {
         id: "user_accepted",
         email: "accepted@example.com",
         name: "Accepted User",

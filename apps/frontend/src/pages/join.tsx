@@ -179,9 +179,7 @@ export function JoinPage() {
             You're invited to <span className="text-primary">{data.workspaceName}</span>
           </h1>
           <p className="text-sm text-muted-foreground">
-            {data.expiresAt
-              ? `Single-use link · expires ${formatDisplayDate(new Date(data.expiresAt))}`
-              : "Single-use link"}
+            {data.expiresAt ? `Invite link · expires ${formatDisplayDate(new Date(data.expiresAt))}` : "Invite link"}
           </p>
         </div>
 

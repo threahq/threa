@@ -87,7 +87,7 @@ export interface WorkspaceInvitation {
   kind: "email" | "link"
   email: string | null
   roleSlug: WorkspaceInvitableRole
-  expiresAt: string
+  expiresAt: string | null
   createdAt: string
   inviter: {
     workosUserId: string

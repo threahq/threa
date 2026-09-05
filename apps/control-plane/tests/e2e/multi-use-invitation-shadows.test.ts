@@ -1,8 +1,22 @@
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
+import { Pool } from "pg"
+import { InvitationShadowRepository } from "../../src/features/invitation-shadows"
 import { TestClient, createWorkspace, loginAs } from "../client"
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex")
+
+async function readShadow(id: string) {
+  const pool = new Pool({
+    connectionString:
+      process.env.TEST_DATABASE_URL || "postgresql://threa:threa@localhost:5454/threa_control_plane_test",
+  })
+  try {
+    return await InvitationShadowRepository.findById(pool, id)
+  } finally {
+    await pool.end()
+  }
+}
 
 describe("multi-use invitation shadow protocol", () => {
   test("supports unlimited, non-expiring lookup and revisioned updates", async () => {
@@ -75,10 +89,18 @@ describe("multi-use invitation shadow protocol", () => {
       useCount: 0,
       revision: 1,
     })
-    await owner.internalRequest("PATCH", "/internal/invitation-shadows/inv_cp_recovery_parent", {
+    const revoked = await owner.internalRequest("PATCH", "/internal/invitation-shadows/inv_cp_recovery_parent", {
       expiresAt: null,
       maxUses: 2,
       useCount: 1,
+      revision: 2,
+      status: "revoked",
+    })
+    expect(revoked.status).toBe(200)
+    expect(await readShadow("inv_cp_recovery_parent")).toMatchObject({
+      expires_at: null,
+      max_uses: 2,
+      use_count: 1,
       revision: 2,
       status: "revoked",
     })
@@ -104,6 +126,56 @@ describe("multi-use invitation shadow protocol", () => {
     )
     expect(listed.data.workspaces).toContainEqual(expect.objectContaining({ id: workspace.id }))
     expect(listed.data.pendingInvitations).toEqual([])
+  })
+
+  test("returns retryable and permanent errors from accepted reconciliation", async () => {
+    const owner = new TestClient()
+    await loginAs(owner, "cp-conflict-owner@example.com", "CP Conflict Owner")
+    const workspace = await createWorkspace(owner, "CP Reconciliation Errors")
+
+    const missing = await owner.internalRequest("POST", "/internal/invitation-shadows/inv_cp_missing_child/accepted", {
+      workspaceId: workspace.id,
+      email: "missing@example.com",
+      workosUserId: "user_missing",
+      parentInvitationId: "inv_cp_missing_parent",
+    })
+    expect(missing).toMatchObject({
+      status: 503,
+      data: { code: "INVITATION_SHADOW_NOT_READY" },
+    })
+
+    await owner.internalRequest("POST", "/internal/invitation-shadows", {
+      id: "inv_cp_conflict_parent",
+      workspaceId: workspace.id,
+      region: "local",
+      kind: "link",
+      email: null,
+      tokenHash: tokenHash("cp-conflict-token"),
+      roleSlug: "member",
+      expiresAt: null,
+      maxUses: 2,
+      useCount: 0,
+      revision: 1,
+      status: "pending",
+    })
+    await owner.internalRequest("POST", "/internal/invitation-shadows/inv_cp_conflict_parent/claim", {
+      childInvitationId: "inv_cp_conflict_child",
+      email: "right@example.com",
+    })
+    const conflict = await owner.internalRequest(
+      "POST",
+      "/internal/invitation-shadows/inv_cp_conflict_child/accepted",
+      {
+        workspaceId: workspace.id,
+        email: "wrong@example.com",
+        workosUserId: "user_wrong",
+        parentInvitationId: "inv_cp_conflict_parent",
+      }
+    )
+    expect(conflict).toMatchObject({
+      status: 409,
+      data: { code: "INVITATION_ACCEPTANCE_CONFLICT" },
+    })
   })
 
   test("creates separate child shadows and keeps them pending after repeated claim events", async () => {
