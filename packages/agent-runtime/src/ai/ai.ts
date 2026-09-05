@@ -53,6 +53,8 @@ export interface CostRecorder {
     provider: string
     origin: AIOrigin
     usage: UsageWithCost
+    /** Wall time of the provider call. Absent when the caller did not time it. */
+    latencyMs?: number
     metadata?: Record<string, unknown>
   }): Promise<void>
 }
@@ -918,6 +920,7 @@ export function createAI(config: AIConfig): AI {
     functionId: string
     modelString: string
     usage: UsageWithCost
+    latencyMs?: number
     metadata?: Record<string, unknown>
   }): Promise<void> {
     if (!config.costRecorder || !params.context) return
@@ -934,6 +937,7 @@ export function createAI(config: AIConfig): AI {
         provider: parsed.provider,
         origin: params.context.origin ?? "system",
         usage: params.usage,
+        latencyMs: params.latencyMs,
         metadata: params.metadata,
       })
     } catch (error) {
@@ -965,6 +969,7 @@ export function createAI(config: AIConfig): AI {
         modelString: effectiveModel,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
+      const startedAt = Date.now()
       const response = await aiGenerateText({
         model,
         // Our Message type is compatible with AI SDK's ModelMessage at runtime
@@ -993,6 +998,7 @@ export function createAI(config: AIConfig): AI {
         functionId: options.telemetry?.functionId ?? "generateText",
         modelString: effectiveModel,
         usage,
+        latencyMs: Date.now() - startedAt,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
 
@@ -1025,6 +1031,7 @@ export function createAI(config: AIConfig): AI {
             messages: options.messages,
           }
 
+      const startedAt = Date.now()
       const response = await aiGenerateText({
         model: options.model,
         system,
@@ -1054,6 +1061,7 @@ export function createAI(config: AIConfig): AI {
           functionId: options.telemetry?.functionId ?? "generateTextWithTools",
           modelString: options.modelString,
           usage,
+          latencyMs: Date.now() - startedAt,
           metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
         })
       }
@@ -1086,6 +1094,7 @@ export function createAI(config: AIConfig): AI {
         modelString: effectiveModel,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
+      const startedAt = Date.now()
       // @ts-expect-error AI SDK generateObject has complex generics; we validate schema type at our interface level
       const response = await aiGenerateObject({
         model,
@@ -1114,6 +1123,7 @@ export function createAI(config: AIConfig): AI {
         functionId: options.telemetry?.functionId ?? "generateObject",
         modelString: effectiveModel,
         usage,
+        latencyMs: Date.now() - startedAt,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
 
@@ -1140,6 +1150,7 @@ export function createAI(config: AIConfig): AI {
         modelString: effectiveModel,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
+      const startedAt = Date.now()
       const response = await aiEmbed({
         model,
         value: options.value,
@@ -1155,6 +1166,7 @@ export function createAI(config: AIConfig): AI {
         functionId: options.telemetry?.functionId ?? "embed",
         modelString: effectiveModel,
         usage,
+        latencyMs: Date.now() - startedAt,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
 
@@ -1183,6 +1195,7 @@ export function createAI(config: AIConfig): AI {
         modelString: effectiveModel,
         metadata: embedManyMetadata,
       })
+      const startedAt = Date.now()
       const response = await aiEmbedMany({
         model,
         values: options.values,
@@ -1201,6 +1214,7 @@ export function createAI(config: AIConfig): AI {
         functionId: options.telemetry?.functionId ?? "embedMany",
         modelString: effectiveModel,
         usage,
+        latencyMs: Date.now() - startedAt,
         metadata: embedManyMetadata,
       })
 

@@ -319,6 +319,28 @@ describe("generation reasoning and usage", () => {
       fetchSpy.mockRestore()
     }
   })
+
+  it("should time the provider call and forward the latency to the cost recorder", async () => {
+    const recorded: Array<{ latencyMs?: number }> = []
+    const recordUsage = mock(async (params: { latencyMs?: number }) => {
+      recorded.push(params)
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return openRouterResponse("ok")
+    }) as unknown as typeof globalThis.fetch)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" }, costRecorder: { recordUsage } })
+      await ai.generateText({
+        model: "openrouter:openai/gpt-5.6-luna",
+        messages: [{ role: "user", content: "test" }],
+        context: { workspaceId: "ws_1" },
+      })
+      expect(recorded[0]?.latencyMs).toBeGreaterThanOrEqual(20)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })
 
 describe("OpenRouter response fixtures", () => {
