@@ -144,6 +144,7 @@ export function captureException(error: unknown, properties?: Record<string, unk
 }
 
 export function capture(event: string, properties?: Record<string, string>): void {
-  if (!active) return
-  active.client.capture(event, properties)
+  const current = active
+  if (!current) return
+  guard("capture", () => current.client.capture(event, properties))
 }
