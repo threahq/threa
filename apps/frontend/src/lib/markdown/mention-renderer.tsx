@@ -3,7 +3,7 @@ import { Link } from "react-router-dom"
 import type { ActorHrefPointer } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { useMentionType, useMentionClick, useIsMentionOnlyBot } from "./mention-context"
-import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
+import { useChannelUrl, useChannelUrlById, useChannelLabelById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand } from "./command-list-context"
 import { MENTION_PATTERN, isValidSlug } from "@threa/types"
@@ -102,17 +102,21 @@ function TriggerChip({ type, text }: TriggerChipProps) {
  * Render a pointer-link mention/channel (`[@slug](user:usr_x)` etc.) as a chip.
  * The type comes from the URL scheme (authoritative, INV-64) — not the slug→type
  * map the bare-slug path falls back to — and navigation uses the embedded id, so
- * a renamed slug never mis-colors or breaks the link. The visible label is still
- * the slug carried in the link text (resolving id → current name is separate
- * visual-identity work).
+ * a renamed slug never mis-colors or breaks the link. A `#` chip also reads its
+ * label off the id, the way an in-app stream link does, so a renamed channel or
+ * scratchpad updates in place; the authored slug is the fallback for a target
+ * the viewer has no cached row for. `@` chips keep the authored slug — the
+ * actor caches they'd resolve through are a separate surface.
  */
 export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointer; slug: string }) {
   const getChannelUrlById = useChannelUrlById()
+  const getChannelLabelById = useChannelLabelById()
   const getMentionType = useMentionType()
   const onMentionClick = useMentionClick()
   const isMentionOnlyBot = useIsMentionOnlyBot()
 
   if (pointer.kind === "channel") {
+    const label = getChannelLabelById(pointer.id) ?? slug
     const url = getChannelUrlById(pointer.id)
     if (url) {
       return (
@@ -120,11 +124,11 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
           to={url}
           className={cn(chipBase, "hover:underline underline-offset-2 decoration-current/50", triggerStyles.channel)}
         >
-          #{slug}
+          #{label}
         </Link>
       )
     }
-    return <span className={cn(chipBase, triggerStyles.channel)}>#{slug}</span>
+    return <span className={cn(chipBase, triggerStyles.channel)}>#{label}</span>
   }
 
   // "me" is viewer-relative; the scheme only knows "user", so upgrade to the

@@ -159,7 +159,10 @@ describe("MarkdownContent", () => {
       { id: "bot_own", slug: "my-bot", name: "My Bot", type: "bot" },
       { id: "bot_theirs", slug: "kris-bot", name: "Kris's Bot", type: "bot", mentionOnly: true },
     ]
-    const STREAMS = [{ id: "stream_1", type: StreamTypes.CHANNEL, slug: "general" }]
+    const STREAMS = [
+      { id: "stream_1", type: StreamTypes.CHANNEL, slug: "general" },
+      { id: "stream_2", type: StreamTypes.SCRATCHPAD, slug: null, displayName: "Pi remote control" },
+    ]
 
     const renderPointer = (content: string, onMentionClick?: (slug: string, type: MentionType, id?: string) => void) =>
       render(
@@ -193,6 +196,22 @@ describe("MarkdownContent", () => {
       renderPointer("[#ghost](channel:stream_unknown)")
       expect(screen.getByText("#ghost")).toBeInTheDocument()
       expect(screen.queryByRole("link", { name: "#ghost" })).not.toBeInTheDocument()
+    })
+
+    it("renders a scratchpad pointer as a link, same as a channel", () => {
+      renderPointer("See [#pi-remote-control](channel:stream_2)")
+      expect(screen.getByRole("link", { name: "#pi-remote-control" })).toHaveAttribute("href", "/w/ws_1/s/stream_2")
+    })
+
+    it("relabels a renamed target from the id, not the slug frozen at authoring time", () => {
+      renderPointer("See [#old-name](channel:stream_2)")
+      expect(screen.getByRole("link", { name: "#pi-remote-control" })).toBeInTheDocument()
+      expect(screen.queryByText("#old-name")).not.toBeInTheDocument()
+    })
+
+    it("keeps the authored label for a target the viewer has no cached row for", () => {
+      renderPointer("[#ghost](channel:stream_unknown)")
+      expect(screen.getByText("#ghost")).toBeInTheDocument()
     })
 
     it("navigates a user mention by the embedded id, not the slug", () => {

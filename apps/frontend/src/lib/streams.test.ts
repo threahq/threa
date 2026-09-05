@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { resolveDmDisplayName, resolveStreamName, streamLabel } from "./streams"
+import { SLUG_MAX_LENGTH } from "@threa/types"
+import { resolveDmDisplayName, resolveStreamName, streamChipSlug, streamLabel } from "./streams"
 
 describe("streamLabel", () => {
   it("prefixes a channel with its slug", () => {
@@ -60,5 +61,38 @@ describe("resolveDmDisplayName", () => {
   it("returns null when the peer user is not present in the workspace users cache", () => {
     const dmPeers = [{ streamId: "stream_dm_1", userId: "user_missing" }]
     expect(resolveDmDisplayName("stream_dm_1", workspaceUsers, dmPeers)).toBeNull()
+  })
+})
+
+describe("streamChipSlug", () => {
+  it("uses a channel's own slug", () => {
+    expect(streamChipSlug({ type: "channel", slug: "pizza", displayName: null })).toBe("pizza")
+  })
+
+  it("folds a scratchpad's display name into slug shape", () => {
+    expect(streamChipSlug({ type: "scratchpad", slug: null, displayName: "Pi remote control" })).toBe(
+      "pi-remote-control"
+    )
+  })
+
+  it("strips punctuation and collapses separators", () => {
+    expect(streamChipSlug({ type: "scratchpad", slug: null, displayName: "Kris's plan — v2!" })).toBe("kris-s-plan-v2")
+  })
+
+  it("caps the fold at the shared slug length limit", () => {
+    const long = "a".repeat(80)
+    expect(streamChipSlug({ type: "scratchpad", slug: null, displayName: long })).toHaveLength(SLUG_MAX_LENGTH)
+  })
+
+  it("keeps a name written outside the Latin alphabet", () => {
+    expect(streamChipSlug({ type: "scratchpad", slug: null, displayName: "日本語のメモ" })).toBe("日本語のメモ")
+  })
+
+  it("falls back to the type noun when the name folds to nothing", () => {
+    expect(streamChipSlug({ type: "scratchpad", slug: null, displayName: "《》" })).toBe("scratchpad")
+  })
+
+  it("folds the placeholder for an unnamed scratchpad", () => {
+    expect(streamChipSlug({ type: "scratchpad", slug: null, displayName: null })).toBe("untitled")
   })
 })

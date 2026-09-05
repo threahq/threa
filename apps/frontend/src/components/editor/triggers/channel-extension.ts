@@ -12,13 +12,16 @@ export interface ChannelNodeAttrs {
 export type ChannelOptions = TriggerExtensionOptions<ChannelItem>
 
 /**
- * TipTap extension for #channel links.
+ * TipTap extension for #stream links.
  * Creates an inline node that renders as a styled channel chip.
  */
 export const ChannelExtension = createTriggerExtension<ChannelItem, ChannelNodeAttrs>({
   name: "channelLink",
   pluginKey: ChannelPluginKey,
   char: "#",
+  // `##` narrows the list to channels, so the second `#` has to reach the query
+  // instead of restarting the match (see `useChannelSuggestion`).
+  allowToIncludeChar: true,
   attributes: {
     id: { dataAttr: "data-id" },
     slug: { dataAttr: "data-slug" },
