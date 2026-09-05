@@ -750,8 +750,10 @@ export const MemoRepository = {
     }
 
     if (updates.length === 0) {
-      const memo = await this.findById(db, id)
-      return memo && memo.workspaceId === workspaceId ? memo : null
+      const current = await db.query<MemoRow>(sql`
+        SELECT ${sql.raw(SELECT_FIELDS)} FROM memos WHERE id = ${id} AND workspace_id = ${workspaceId}
+      `)
+      return current.rows[0] ? mapRowToMemo(current.rows[0]) : null
     }
 
     // Card ordering: every field update bumps the card version so a
