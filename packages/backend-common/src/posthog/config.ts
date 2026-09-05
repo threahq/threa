@@ -15,11 +15,14 @@ export function loadPostHogConfig(
   env: { POSTHOG_PROJECT_TOKEN?: string; POSTHOG_HOST?: string; POSTHOG_LOGS_LEVEL?: string },
   opts: { isProduction: boolean; service: string }
 ): PostHogConfig | null {
+  // Parsed before the credential branches so a typo fails the boot that
+  // introduced it, not the later one that finally sets a project token.
+  const logsLevel = parseLogsLevel(env.POSTHOG_LOGS_LEVEL)
   const projectToken = env.POSTHOG_PROJECT_TOKEN?.trim()
   const host = env.POSTHOG_HOST?.trim()
 
   if (projectToken && host) {
-    return { projectToken, host, logsLevel: parseLogsLevel(env.POSTHOG_LOGS_LEVEL) }
+    return { projectToken, host, logsLevel }
   }
 
   if (projectToken && !host) {

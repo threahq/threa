@@ -262,4 +262,38 @@ describe("attachPostHogLogShipping", () => {
     expect(shipper.stats().queued).toBe(2)
     await shipper.shutdown()
   })
+
+  test("should receive records below LOG_LEVEL by lowering the root logger level", async () => {
+    const previousLevel = logger.level
+    const shipper = attachPostHogLogShipping({
+      config: { projectToken: "phc_test", host, logsLevel: "debug" },
+      service: "backend",
+      region: null,
+      environment: "test",
+      fetchImpl: okFetch,
+      flushIntervalMs: 1_000_000,
+    })!
+
+    logger.debug("posthog-attach-test debug line")
+
+    expect(shipper.stats().queued).toBe(1)
+    await shipper.shutdown()
+    logger.level = previousLevel
+  })
+
+  test("should stop queueing once shut down, because the destination outlives it", async () => {
+    const shipper = attachPostHogLogShipping({
+      config: { projectToken: "phc_test", host, logsLevel: "error" },
+      service: "backend",
+      region: null,
+      environment: "test",
+      fetchImpl: okFetch,
+      flushIntervalMs: 1_000_000,
+    })!
+
+    await shipper.shutdown()
+    logger.error("posthog-attach-test line after shutdown")
+
+    expect(shipper.stats().queued).toBe(0)
+  })
 })

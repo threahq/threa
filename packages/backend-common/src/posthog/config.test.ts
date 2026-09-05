@@ -38,6 +38,12 @@ describe("loadPostHogConfig", () => {
     ).toThrow('POSTHOG_LOGS_LEVEL must be one of trace, debug, info, warn, error, fatal — got "verbose"')
   })
 
+  test("should throw when POSTHOG_LOGS_LEVEL is not a pino level and no credentials are set", () => {
+    expect(() =>
+      loadPostHogConfig({ POSTHOG_LOGS_LEVEL: "verbose" }, { isProduction: false, service: "backend" })
+    ).toThrow('POSTHOG_LOGS_LEVEL must be one of trace, debug, info, warn, error, fatal — got "verbose"')
+  })
+
   test("should throw when the token is set without a host", () => {
     expect(() =>
       loadPostHogConfig({ POSTHOG_PROJECT_TOKEN: "phc_abc" }, { isProduction: false, service: "backend" })

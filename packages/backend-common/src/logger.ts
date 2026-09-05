@@ -25,6 +25,13 @@ export const logger = pino({ level, serializers: { error: pino.stdSerializers.er
  * Add a destination to the live logger. Exists so log shipping can attach after
  * boot, once config is known, without the logger importing the shipper.
  */
-export function addLogDestination(entry: pino.StreamEntry): void {
+export function addLogDestination(entry: { level: pino.Level; stream: pino.DestinationStream }): void {
   streams.add(entry)
+  // pino drops a record below its own level before multistream ever sees it, so
+  // a destination more verbose than LOG_LEVEL would silently receive nothing.
+  // Lowering the root only widens what reaches multistream; every destination
+  // still filters to its own level, so the console output is unchanged.
+  if (pino.levels.values[entry.level]! < logger.levelVal) {
+    logger.level = entry.level
+  }
 }

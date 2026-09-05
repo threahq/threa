@@ -120,6 +120,7 @@ export class PostHogLogShipper {
   private readonly timer: ReturnType<typeof setInterval>
 
   private queue: OtlpLogRecord[] = []
+  private closed = false
   private droppedForOverflow = 0
   private droppedForParse = 0
   private droppedBatches = 0
@@ -143,6 +144,9 @@ export class PostHogLogShipper {
   }
 
   write(line: string): void {
+    // pino's multistream has no remove, so this destination outlives shutdown.
+    // Without the guard a shut-down shipper would queue every later log line.
+    if (this.closed) return
     let parsed: unknown
     try {
       parsed = JSON.parse(line)
@@ -180,6 +184,7 @@ export class PostHogLogShipper {
   }
 
   async shutdown(): Promise<void> {
+    this.closed = true
     clearInterval(this.timer)
     const deadline = Date.now() + SHUTDOWN_TIMEOUT_MS
     while (this.queue.length > 0 && Date.now() < deadline) {
