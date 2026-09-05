@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { db, sequenceToNum, type CachedStream } from "@/db"
+import { db, sequenceToNum, type CachedStream, type DraftScratchpad } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
@@ -184,7 +184,14 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { getScratchpad, updateScratchpad, deleteScratchpad } = useDraftScratchpads(workspaceId)
   const promotionWaitController = useMemo(() => new AbortController(), [workspaceId, streamId])
-  const draft = enabled ? getScratchpad(streamId) : undefined
+  // Promotion deletes the draft row before the navigation to the real stream
+  // commits; presenting the last-seen draft across that gap keeps the header
+  // from falling back to the empty placeholder.
+  const lastDraftRef = useRef<DraftScratchpad | undefined>(undefined)
+  if (lastDraftRef.current?.id !== streamId) lastDraftRef.current = undefined
+  const currentDraft = enabled ? getScratchpad(streamId) : undefined
+  if (currentDraft) lastDraftRef.current = currentDraft
+  const draft = currentDraft ?? (getPromotedStreamId(streamId) ? lastDraftRef.current : undefined)
 
   useEffect(() => () => promotionWaitController.abort(), [promotionWaitController])
 

@@ -69,6 +69,12 @@ interface UseTimelineScrollOptions {
    */
   skipInitialScroll?: boolean
   /**
+   * When false, the cold-load settle runs unmasked: the first paint shows the
+   * rows instead of the skeleton overlay. Set for a stream that continues a
+   * draft the user was already looking at — its rows are the ones on screen.
+   */
+  maskInitialSettle?: boolean
+  /**
    * While true, a converged cold-load settle parks its reveal instead of
    * dropping the mask: the atomic landing decision (INV-70) may still be
    * waiting on async inputs (read-state hydration), and revealing the tail
@@ -194,6 +200,7 @@ export function useTimelineScroll({
   getFirstKey,
   resetKey,
   skipInitialScroll = false,
+  maskInitialSettle = true,
   isJumpMode = false,
   userInteractedAtRef,
   landingPendingRef,
@@ -229,7 +236,7 @@ export function useTimelineScroll({
   // skeleton overlay) until the height stabilises, so convergence happens
   // off-screen. Revisits are already measured, so this reveals immediately.
   // Deep-link mounts drive their own jump, so they are never masked.
-  const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll)
+  const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll && maskInitialSettle)
   const isInitialSettlingRef = useRef(isInitialSettling)
   isInitialSettlingRef.current = isInitialSettling
 
@@ -311,7 +318,7 @@ export function useTimelineScroll({
     deferGestureCleanupRef.current?.()
     // Re-mask for the new stream's cold-load settle (a no-op when it converges
     // instantly, e.g. revisiting an already-measured stream).
-    setIsInitialSettling(!skipInitialScroll)
+    setIsInitialSettling(!skipInitialScroll && maskInitialSettle)
   }
 
   // Compute `shift` for this render. Only while reading history (not following

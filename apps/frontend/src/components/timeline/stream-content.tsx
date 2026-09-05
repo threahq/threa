@@ -1,4 +1,5 @@
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
+import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useNavigationType, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
@@ -1702,6 +1703,11 @@ export function StreamContent({
     getFirstKey: () => (useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[0]) : null),
     resetKey: streamId,
     skipInitialScroll,
+    // A just-promoted scratchpad still presents the draft's handed-over rows
+    // (released once its own live query resolves), so the user is already
+    // looking at them; masking that settle is the skeleton flash it exists to
+    // prevent.
+    maskInitialSettle: getDraftPromotionEvents(streamId) === null,
     isJumpMode,
     userInteractedAtRef,
     landingPendingRef,
