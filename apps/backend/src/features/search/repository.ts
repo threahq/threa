@@ -185,16 +185,16 @@ function withQuotedPhrases(query: string, phrases: string[], ranking: SearchRank
   return Array.from(new Set([...phrases, ...quoted]))
 }
 
-/**
- * Improved: `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one
- * matching term surface a result. Legacy: `websearch_to_tsquery`, which ANDs
- * terms and reads `"..."` as a phrase itself.
- */
 /** Legacy ranks raw term frequency; improved divides by log document length so short exact hits beat long rambling ones. */
 function tsRankNormalization(ranking: SearchRanking): 0 | 1 {
   return ranking === "legacy" ? 0 : 1
 }
 
+/**
+ * Improved: `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one
+ * matching term surface a result. Legacy: `websearch_to_tsquery`, which ANDs
+ * terms and reads `"..."` as a phrase itself.
+ */
 function keywordTsquerySql(query: string, ranking: SearchRanking) {
   if (ranking === "legacy") return composeSql`websearch_to_tsquery('english', ${query})`
   return composeSql`replace(plainto_tsquery('english', ${query})::text, ' & ', ' | ')::tsquery`
@@ -370,7 +370,6 @@ export const SearchRepository = {
     const phrases = withQuotedPhrases(query, params.phrases ?? [], ranking)
     // Legacy gates semantic hits by distance; improved lets fusion rank them.
     const semanticDistanceThreshold = ranking === "legacy" ? LEGACY_SEMANTIC_DISTANCE_THRESHOLD : null
-    // ts_rank normalization 1 divides by 1 + log(document length) so long messages stop winning on term count alone.
 
     if (streamIds.length === 0) {
       return []

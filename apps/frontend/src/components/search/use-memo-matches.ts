@@ -31,8 +31,9 @@ export function useMemoMatches(workspaceId: string, params: UseMemoMatchesParams
     return () => clearTimeout(timer)
   }, [searchText])
 
+  const searchFlag = useFeatureFlag(workspaceId, "search")
   const enabled =
-    useFeatureFlag(workspaceId, "search") === "on" &&
+    searchFlag === "on" &&
     hasQuery &&
     debouncedText.trim().length > 0 &&
     !parsedFilters.some((filter) => FILTERS_WITHOUT_MEMO_EQUIVALENT.includes(filter.type))
