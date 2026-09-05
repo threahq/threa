@@ -63,6 +63,10 @@ function buildMemoResult(overrides: Partial<MemoExplorerResult["memo"]> = {}): M
       status: "active",
       version: 1,
       revisionReason: null,
+      authoredByKind: "pipeline",
+      sourceSessionId: null,
+      scope: "workspace",
+      scopeUserId: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,
@@ -71,7 +75,7 @@ function buildMemoResult(overrides: Partial<MemoExplorerResult["memo"]> = {}): M
     distance: 0,
     sourceStream: null,
     rootStream: null,
-  } as unknown as MemoExplorerResult
+  }
 }
 
 describe("SearchPage", () => {
