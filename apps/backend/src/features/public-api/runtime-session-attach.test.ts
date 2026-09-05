@@ -100,6 +100,49 @@ describe("createBotRuntimeSession attachTo", () => {
     })
   })
 
+  it("resumes the link that won a runtime-identity conflict instead of surfacing the 23505", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn({} as never))
+    const winner = {
+      id: "brsl_winner",
+      rootStreamId: "stream_other_root",
+      activeStreamId: "stream_other_thread",
+      runtimeSessionId: "sess_1",
+    }
+    const findActivePiRemoteSession = mock().mockResolvedValueOnce(null).mockResolvedValueOnce(winner)
+    const handlers = createHandlers({
+      findActivePiRemoteSession,
+      attachRuntimeSessionToThread: mock(() => Promise.reject(Object.assign(new Error("unique"), { code: "23505" }))),
+      repairBotTraitsInTransaction: mock(() => Promise.resolve()),
+    })
+    const cap = createResponse()
+
+    await handlers.createBotRuntimeSession(attachRequest(), cap.res)
+
+    expect(cap.body()).toEqual({
+      data: {
+        linkId: "brsl_winner",
+        rootStreamId: "stream_other_root",
+        activeStreamId: "stream_other_thread",
+        runtimeSessionId: "sess_1",
+        streamUrlPath: "/w/ws_1/s/stream_other_thread",
+        e2eEnabled: false,
+      },
+    })
+  })
+
+  it("rethrows a non-identity failure from the attach", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    const handlers = createHandlers({
+      findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+      attachRuntimeSessionToThread: mock(() => Promise.reject(Object.assign(new Error("boom"), { code: "XX000" }))),
+    })
+    const cap = createResponse()
+
+    await expect(handlers.createBotRuntimeSession(attachRequest(), cap.res)).rejects.toMatchObject({ code: "XX000" })
+  })
+
   it("identity reuse wins before the attachTo branch is reached", async () => {
     spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)

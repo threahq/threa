@@ -52,6 +52,7 @@ import {
   provisionSessionKeyWrapsSchema,
   renameRuntimeSessionSchema,
   rebindRuntimeSessionSchema,
+  endRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
@@ -604,6 +605,13 @@ const provisionedWrapsSchema = z.object({ stored: z.number().int() })
 
 const renamedRuntimeSessionLinkSchema = runtimeSessionLinkSchema.extend({ displayName: z.string() })
 
+const endedRuntimeSessionLinkSchema = z.object({
+  linkId: z.string(),
+  rootStreamId: z.string(),
+  activeStreamId: z.string(),
+  status: z.literal("ended"),
+})
+
 const delegationSchema = z.object({
   id: z.string(),
   streamId: z.string(),
@@ -806,6 +814,7 @@ export type OperationId =
   | "provisionStreamE2eKeyWraps"
   | "renameBotRuntimeSession"
   | "rebindBotRuntimeSession"
+  | "endBotRuntimeSession"
   | "claimBotInvocation"
   | "renewBotInvocationClaim"
   | "recordBotInvocationStep"
@@ -986,7 +995,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "createBotRuntimeSession",
     summary: "Create or link a bot runtime session",
     description:
-      "Creates a fresh scratchpad session by default. Pass `attachTo` to link the session to a new thread under an existing scratchpad the bot already has access to instead.",
+      "Creates a fresh scratchpad session by default. Pass `attachTo` to link the session to a new thread under an existing scratchpad the bot already has access to instead. An identity that is already linked resumes its existing link in either mode; compare the returned `rootStreamId` and `activeStreamId` with the request to tell the two apart.",
     tags: ["Bot runtimes"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
     parameters: [workspaceIdParam],
@@ -1049,6 +1058,21 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: rebindRuntimeSessionSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(runtimeSessionLinkSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/end",
+    operationId: "endBotRuntimeSession",
+    summary: "End the runtime session link on purpose",
+    description:
+      "Ends the link without archiving its scratchpad and frees the runtime identity for reuse. Cancels any pending invocation still routed at this runtime session.",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: endRuntimeSessionSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(endedRuntimeSessionLinkSchema),
     canReturn404: true,
   },
   {

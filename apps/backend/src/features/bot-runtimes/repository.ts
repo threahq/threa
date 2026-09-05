@@ -822,6 +822,28 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  /**
+   * Frees the identity by appending `:retired:<id>` to `runtime_session_id` —
+   * the (kind, instance, session) unique key is unconditional, so a plain
+   * 'ended' row would block a future session from reusing it.
+   */
+  async endActiveByRuntimeSession(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string; runtimeSessionId: string }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(sql`
+      UPDATE bot_runtime_session_links
+      SET status = 'ended', runtime_session_id = runtime_session_id || ':retired:' || id, updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId}
+        AND bot_id = ${params.botId}
+        AND instance_id = ${params.instanceId}
+        AND runtime_session_id = ${params.runtimeSessionId}
+        AND status = 'active'
+      RETURNING *
+    `)
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
   /** Newest archive-ended link for one runtime session identity (regardless of the stream's archive state). */
   async findArchivedByRuntimeSession(
     db: Querier,
@@ -1181,6 +1203,23 @@ export const BotInvocationRepository = {
       RETURNING *
     `)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  /** Only 'pending' rows — a claimed invocation is mid-turn and goes through `cancelClaim`/the claim loop's own fencing instead. */
+  async cancelPendingByTargetRuntimeSession(
+    db: Querier,
+    params: { workspaceId: string; botId: string; runtimeSessionId: string }
+  ): Promise<BotInvocation[]> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET status = 'cancelled', cancellation_reason = 'routing_changed', updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot' AND actor_id = ${params.botId}
+        AND status = 'pending'
+        AND target_runtime_session_id = ${params.runtimeSessionId}
+      RETURNING *
+    `)
+    return result.rows.map(mapInvocation)
   },
 
   async cancelActiveBySource(

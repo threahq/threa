@@ -726,6 +726,38 @@ export class BotRuntimeService {
     })
   }
 
+  /** Ends the link and cancels pending invocations still routed at it, in one transaction (INV-4/6/7). */
+  async endRuntimeSession(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+    runtimeSessionId: string
+  }): Promise<BotRuntimeSessionLink | null> {
+    return withTransaction(this.pool, async (db) => {
+      const ended = await BotRuntimeSessionLinkRepository.endActiveByRuntimeSession(db, params)
+      if (!ended) return null
+      const cancelled = await BotInvocationRepository.cancelPendingByTargetRuntimeSession(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeSessionId: params.runtimeSessionId,
+      })
+      await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
+      await this.emitCancellationHints(db, cancelled)
+      logger.info(
+        {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          rootStreamId: ended.rootStreamId,
+          activeStreamId: ended.activeStreamId,
+          linkId: ended.id,
+          cancelledInvocations: cancelled.length,
+        },
+        "Ended runtime session link"
+      )
+      return ended
+    })
+  }
+
   private async terminalizeCancelledSessions(
     db: Querier,
     workspaceId: string,
