@@ -43,7 +43,12 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
     <MemoryRouter initialEntries={["/start"]}>
       <TooltipProvider>
         <StashedDraftsComposerBridgeContext.Provider
-          value={{ openRef: { current: null }, openScheduledRef: { current: null }, focusComposer }}
+          value={{
+            openRef: { current: null },
+            openScheduledRef: { current: null },
+            reportScheduledCount: () => {},
+            focusComposer,
+          }}
         >
           <StashedDraftsPicker {...pickerProps} />
         </StashedDraftsComposerBridgeContext.Provider>

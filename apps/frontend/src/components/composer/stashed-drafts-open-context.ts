@@ -20,6 +20,13 @@ export interface StashedDraftsComposerBridge {
   /** The scheduled-messages picker's `open`, for the folded phone foot whose
    *  Schedule row lives in the Aa popover while the picker stays a slot node. */
   openScheduledRef: MutableRefObject<(() => void) | null>
+  /**
+   * How many sends the scheduled picker is holding, published upward because
+   * the phone foot hides the picker's own trigger (dot and all) and shows the
+   * presence on its "+" instead. Reactive (state, not a ref): the "+"
+   * re-renders on it.
+   */
+  reportScheduledCount: (count: number) => void
   focusComposer: () => void
 }
 
@@ -38,6 +45,15 @@ export function useRegisterStashedDraftsOpen(open: () => void) {
       if (bridge.openRef.current === open) bridge.openRef.current = null
     }
   }, [bridge, open])
+}
+
+export function useReportScheduledCount(count: number) {
+  const bridge = useStashedDraftsBridge()
+  useEffect(() => {
+    if (!bridge) return
+    bridge.reportScheduledCount(count)
+    return () => bridge.reportScheduledCount(0)
+  }, [bridge, count])
 }
 
 export function useRegisterScheduledMessagesOpen(open: () => void) {

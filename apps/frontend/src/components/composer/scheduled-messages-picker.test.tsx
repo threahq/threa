@@ -5,6 +5,7 @@ import { DEFAULT_WORK_SCHEDULE } from "@threa/types"
 import { spyOnExport } from "@/test/spy"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ScheduledMessagesPicker } from "./scheduled-messages-picker"
+import { StashedDraftsComposerBridgeContext } from "./stashed-drafts-open-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as hooks from "@/hooks"
 import * as workScheduleModule from "@/hooks/use-work-schedule"
@@ -36,6 +37,33 @@ describe("ScheduledMessagesPicker", () => {
     spyOnExport(contexts, "usePreferencesOptional").mockReturnValue((() => null) as never)
     // Always-mounted edit dialog pulls in a deep react-query hook tree; stub it.
     spyOnExport(editDialogModule, "ScheduledEditDialog").mockReturnValue((() => null) as never)
+  })
+
+  it("publishes its pending count to the composer, and clears it on unmount", () => {
+    // The phone foot hides this trigger and its dot, so the count has to reach
+    // the composer's + through the bridge.
+    spyOnExport(hooks, "useScheduledList").mockReturnValue((() => ({
+      items: [{ id: "sched_1" }, { id: "sched_2" }],
+    })) as never)
+    const reportScheduledCount = vi.fn()
+    const { unmount } = render(
+      <TooltipProvider>
+        <StashedDraftsComposerBridgeContext.Provider
+          value={{
+            openRef: { current: null },
+            openScheduledRef: { current: null },
+            reportScheduledCount,
+            focusComposer: vi.fn(),
+          }}
+        >
+          <ScheduledMessagesPicker workspaceId="ws_1" streamId="stream_1" canSchedule onSchedule={vi.fn()} />
+        </StashedDraftsComposerBridgeContext.Provider>
+      </TooltipProvider>
+    )
+
+    expect(reportScheduledCount).toHaveBeenLastCalledWith(2)
+    unmount()
+    expect(reportScheduledCount).toHaveBeenLastCalledWith(0)
   })
 
   it("lets the date/time inputs take focus while guarding the action buttons (touch)", async () => {

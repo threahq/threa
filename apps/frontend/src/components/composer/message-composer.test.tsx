@@ -15,6 +15,7 @@ import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
 import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
+import { useReportScheduledCount } from "./stashed-drafts-open-context"
 
 let isMobileMockValue = false
 let actionBarSpy: ReturnType<typeof spyOnExport<typeof editorModule, "EditorActionBar">>
@@ -794,6 +795,61 @@ describe("MessageComposer", () => {
       })
 
       expect(screen.queryByTestId("mobile-editor-toolbar")).not.toBeInTheDocument()
+    })
+
+    it("marks the + with what the hidden pickers are holding", async () => {
+      isMobileMockValue = true
+      // The real foot: the drafts and scheduled pickers live off-screen behind
+      // it, so the + is the only place their presence can show.
+      actionBarSpy.mockRestore()
+      const MockMicButton = forwardRef(function MockMicButton(
+        _props: unknown,
+        ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
+      ) {
+        useImperativeHandle(ref, () => ({ abort: vi.fn(), prepareSendAsIs: vi.fn() }))
+        return null
+      })
+      spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+        MockMicButton as unknown as typeof micButtonModule.MicButton
+      )
+      // Stands in for ScheduledMessagesPicker: the count reaches the composer
+      // through the bridge, not through a prop.
+      const ScheduledStub = () => {
+        useReportScheduledCount(1)
+        return null
+      }
+      const draft: CachedDraft = {
+        id: "draft_1",
+        workspaceId: "ws_1",
+        scope: "stream:stream_1",
+        contentJson: EMPTY_DOC,
+        attachments: [],
+        clientUpdatedAt: Date.now(),
+      }
+
+      render(
+        <MemoryRouter>
+          <MessageComposer
+            {...defaultProps}
+            workspaceId="ws_1"
+            initialMobileChromeOpen
+            stashedDrafts={{
+              drafts: [draft, { ...draft, id: "draft_2" }],
+              canStashCurrent: false,
+              onStashCurrent: vi.fn(),
+              onRestore: vi.fn(),
+              onDelete: vi.fn(),
+            }}
+            scheduledMessagesTrigger={<ScheduledStub />}
+          />
+        </MemoryRouter>
+      )
+
+      const more = await screen.findByRole("button", { name: "More (2 saved drafts, 1 scheduled)" })
+      fireEvent.click(more)
+      const menu = within(screen.getByTestId("composer-foot-menu"))
+      expect(menu.getByRole("button", { name: "Drafts (2 saved)" })).toBeInTheDocument()
+      expect(menu.getByRole("button", { name: "Schedule (1 pending)" })).toBeInTheDocument()
     })
 
     it("collapses when focus lands in another composer's + menu, and stays for its own", () => {
