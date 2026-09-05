@@ -48,9 +48,9 @@ import {
   ConversationSummaryService,
 } from "../../../src/features/agents"
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
-import { SearchService } from "../../../src/features/search"
+import { SearchService, SearchQueryExpander } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
-import { EmbeddingService, MemoExplorerService, MemoReranker } from "../../../src/features/memos"
+import { EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
 import {
   StreamRepository,
   StreamMemberRepository,
@@ -182,11 +182,16 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       embeddingService,
     })
     const generalResearcher = new GeneralResearcher({ ai: ctx.ai, configResolver: ctx.configResolver })
-    const searchService = new SearchService({ pool: ctx.pool, embeddingService })
+    const searchService = new SearchService({
+      pool: ctx.pool,
+      embeddingService,
+      queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
+      reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
+    })
     const memoExplorerService = new MemoExplorerService({
       pool: ctx.pool,
       embeddingService,
-      reranker: new MemoReranker({ ai: ctx.ai }),
+      reranker: new Reranker({ ai: ctx.ai, subject: "knowledge memos", functionId: "memo-rerank" }),
     })
     const conversationSummaryService = new ConversationSummaryService({
       ai: ctx.ai,

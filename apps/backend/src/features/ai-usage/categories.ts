@@ -41,6 +41,8 @@ export const FUNCTION_CATEGORY_MAP: Record<string, AIUsageCategory> = {
 
   "stream-naming": "other",
   "search-query": "other",
+  "search-expand": "other",
+  "search-rerank": "other",
   "voice-transcript-polish": "other",
   "suggestion-extract": "other",
 }

@@ -38,6 +38,16 @@ function fakeEmbeddingService(vector: number[]): EmbeddingServiceLike {
   }
 }
 
+/** SearchService with inert deep-mode deps: these tests never pass `deep: true`. */
+function makeService(pool: Pool, vector: number[] = unit(0)) {
+  return new SearchService({
+    pool,
+    embeddingService: fakeEmbeddingService(vector),
+    queryExpander: { expand: async () => [] },
+    reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
+  })
+}
+
 describe("Message hybrid search retrieval", () => {
   let pool: Pool
 
@@ -156,7 +166,7 @@ describe("Message hybrid search retrieval", () => {
     // None of the seeded messages carry an embedding, so the semantic leg
     // contributes nothing here — the ranking below is decided purely by the
     // OR-joined keyword leg's term overlap.
-    const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+    const service = makeService(pool)
     const { results } = await service.search({
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
@@ -177,7 +187,7 @@ describe("Message hybrid search retrieval", () => {
     })
     await seedEmbedding(semanticMatch.id, unit(1))
 
-    const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+    const service = makeService(pool)
     const { results } = await service.search({
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
@@ -221,7 +231,7 @@ describe("Message hybrid search retrieval", () => {
     await seedEmbedding(keywordOnly.id, unit(5))
 
     // 4 tokens, no digits -> "general" intent (keywordWeight 0.4, semanticWeight 0.6).
-    const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+    const service = makeService(pool)
     const { results } = await service.search({
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
@@ -238,7 +248,7 @@ describe("Message hybrid search retrieval", () => {
       const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
       const { keywordOnly, semanticOnly } = await seedKeywordVsSemanticOnly(wsId, sid, uid, "acme quarterly report")
 
-      const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+      const service = makeService(pool)
       const { results } = await service.search({
         workspaceId: wsId,
         permissions: await permissionsFor(wsId, uid),
@@ -255,7 +265,7 @@ describe("Message hybrid search retrieval", () => {
       const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
       const { keywordOnly, semanticOnly } = await seedKeywordVsSemanticOnly(wsId, sid, uid, "acme quarterly report")
 
-      const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+      const service = makeService(pool)
       const { results } = await service.search({
         workspaceId: wsId,
         permissions: await permissionsFor(wsId, uid),
@@ -363,7 +373,7 @@ describe("Message hybrid search retrieval", () => {
       text: "gizmoflarp reply hidden from the member",
     })
 
-    const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+    const service = makeService(pool)
     const { results } = await service.search({
       workspaceId: testWorkspaceId,
       permissions: await permissionsFor(testWorkspaceId, memberId),
@@ -379,7 +389,7 @@ describe("Message hybrid search retrieval", () => {
     const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
     const { twoTermMatch, oneTermMatch } = await seedRailwayMessages(wsId, sid, uid)
 
-    const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+    const service = makeService(pool)
 
     const orResult = await service.search({
       workspaceId: wsId,
@@ -403,7 +413,7 @@ describe("Message hybrid search retrieval", () => {
     const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
     const { twoTermMatch } = await seedRailwayMessages(wsId, sid, uid)
 
-    const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
+    const service = makeService(pool)
     const { results } = await service.search({
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),

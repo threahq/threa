@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { sanitizeOrder } from "./reranker"
+import { Reranker, sanitizeOrder } from "./reranker"
 import { StubReranker } from "./reranker.stub"
 
 describe("sanitizeOrder", () => {
@@ -49,5 +49,32 @@ describe("StubReranker", () => {
   it("handles the empty candidate list", async () => {
     const reranker = new StubReranker()
     expect(await reranker.rerank("q", [], { workspaceId: "ws_1" })).toEqual([])
+  })
+})
+
+describe("Reranker", () => {
+  it("passes subject and functionId through to the model call, and omits a missing title from the candidate list", async () => {
+    const generateObject = async (args: {
+      messages: { role: string; content: string }[]
+      telemetry: { functionId: string }
+    }) => {
+      expect(args.telemetry.functionId).toBe("search-rerank")
+      const systemMessage = args.messages.find((m) => m.role === "system")
+      expect(systemMessage?.content).toContain("chat messages")
+      const userMessage = args.messages.find((m) => m.role === "user")
+      expect(userMessage?.content).toContain("[0] hello world")
+      expect(userMessage?.content).not.toContain("undefined")
+      return { value: { order: [1, 0] } }
+    }
+
+    const reranker = new Reranker({
+      ai: { generateObject } as never,
+      subject: "chat messages",
+      functionId: "search-rerank",
+    })
+    const order = await reranker.rerank("q", [{ abstract: "hello world" }, { title: "t", abstract: "other" }], {
+      workspaceId: "ws_1",
+    })
+    expect(order).toEqual([1, 0])
   })
 })

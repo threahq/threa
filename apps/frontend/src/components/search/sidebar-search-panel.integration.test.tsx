@@ -563,6 +563,95 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
       expect(mockSearchState.search).toHaveBeenCalledWith("hello", { status: ["active", "archived"] })
     })
+
+    it("runs a deep search from the Search deeper button when results are present", async () => {
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("#general")).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole("button", { name: /search deeper/i }))
+
+      expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", { status: ["active", "archived"] }, undefined, {
+        deep: true,
+      })
+    })
+
+    it("keeps the result row and disables Search deeper while the deep search runs", async () => {
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.search.mockImplementation(async () => {
+        mockSearchState.isLoading = true
+      })
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("#general")).toBeInTheDocument()
+      })
+      mockSearchState.isLoading = false
+
+      await user.click(screen.getByRole("button", { name: /search deeper/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /search deeper/i })).toBeDisabled()
+      })
+      expect(screen.getByText(/results? in/)).toBeInTheDocument()
+    })
+
+    it("runs a deep search on Enter when there are no results", async () => {
+      mockSearchState.results = []
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await waitFor(() => {
+        expect(screen.getByText("No results")).toBeInTheDocument()
+      })
+
+      await user.keyboard("{Enter}")
+
+      expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", { status: ["active", "archived"] }, undefined, {
+        deep: true,
+      })
+      expect(mockNavigate).not.toHaveBeenCalled()
+    })
+
+    it("offers no deep search for a filter-only query: no button, and Enter stays on the fast path", async () => {
+      mockSearchState.results = []
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "before:2026-06-19")
+
+      await waitFor(() => {
+        expect(screen.getByText("No results")).toBeInTheDocument()
+      })
+      expect(screen.queryByRole("button", { name: /search deeper/i })).toBeNull()
+
+      await user.keyboard("{Enter}")
+
+      expect(mockSearchState.search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
+    })
   })
 
   describe("filter syntax", () => {

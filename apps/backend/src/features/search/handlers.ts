@@ -22,6 +22,7 @@ export const searchQuerySchema = z.object({
   after: z.string().datetime().optional(), // Inclusive (>=)
   exact: z.boolean().optional(), // Use ILIKE substring matching instead of full-text
   limit: z.coerce.number().int().min(1).max(100).optional(),
+  deep: z.boolean().optional(), // Rewrite into alternative phrasings, fuse, and rerank
 })
 
 export function serializeSearchResult(result: SearchResult) {
@@ -66,6 +67,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
         after,
         exact,
         limit,
+        deep,
       } = data
 
       // `in` mixes stream ids and user ids (in:@user = the DM with that user).
@@ -102,6 +104,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
         filters,
         exact,
         limit,
+        deep,
       })
 
       setAuditSubjects(

@@ -7,11 +7,15 @@ interface UseSearchOptions {
   limit?: number
 }
 
+interface SearchOptions {
+  deep?: boolean
+}
+
 interface UseSearchReturn {
   results: SearchResultItem[]
   isLoading: boolean
   error: Error | null
-  search: (query: string, filters?: SearchFilters, phrases?: string[]) => Promise<void>
+  search: (query: string, filters?: SearchFilters, phrases?: string[], options?: SearchOptions) => Promise<void>
   clear: () => void
 }
 
@@ -24,13 +28,13 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
   const requestIdRef = useRef(0)
 
   const search = useCallback(
-    async (query: string, filters?: SearchFilters, phrases?: string[]) => {
+    async (query: string, filters?: SearchFilters, phrases?: string[], options?: SearchOptions) => {
       const requestId = ++requestIdRef.current
       setIsLoading(true)
       setError(null)
 
       try {
-        const response = await searchMessages(workspaceId, { query, filters, phrases, limit })
+        const response = await searchMessages(workspaceId, { query, filters, phrases, limit, deep: options?.deep })
         if (requestId !== requestIdRef.current) return
         setResults(response.results)
       } catch (e) {

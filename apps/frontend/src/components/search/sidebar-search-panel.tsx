@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useNavigate } from "react-router-dom"
-import { ArrowLeft, Search as SearchIcon } from "lucide-react"
+import { ArrowLeft, Loader2, Search as SearchIcon, Sparkles } from "lucide-react"
 import { SidebarShell } from "@/components/layout/sidebar/sidebar-shell"
 import { RichInput, SEARCH_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
 import { Button } from "@/components/ui/button"
@@ -27,10 +27,18 @@ import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mo
 export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate()
   const { query, setQuery, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } = useSearchPanel()
-  const { results, isLoading, error, validationError, parsedFilters, searchText, hasQuery } = useMessageSearch(
-    workspaceId,
-    query
-  )
+  const {
+    results,
+    isLoading,
+    error,
+    validationError,
+    parsedFilters,
+    searchText,
+    hasQuery,
+    canSearchDeeper,
+    isSearchingDeeper,
+    searchDeeper,
+  } = useMessageSearch(workspaceId, query)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
@@ -47,6 +55,11 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const streamCount = useMemo(() => new Set(results.map((r) => r.streamId)).size, [results])
+  const emptySummary = isLoading ? "Searching…" : "No results"
+  const resultSummary =
+    results.length > 0
+      ? `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`
+      : emptySummary
   const searchBinding = getEffectiveKeyBinding("openSearch", preferences?.keyboardShortcuts ?? {})
 
   const handleResultSelect = useCallback(
@@ -81,7 +94,10 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
   const openActiveResult = (withModifier: boolean) => {
     const active = results.find((r) => r.id === activeResultId) ?? results[0]
-    if (!active) return
+    if (!active) {
+      searchDeeper()
+      return
+    }
     setActiveResultId(active.id)
     const href = `/w/${workspaceId}/s/${active.streamId}?m=${active.id}`
     if (withModifier) {
@@ -163,14 +179,29 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
           </div>
 
-          {hasQuery && !isLoading && !displayError && (
+          {hasQuery && !displayError && (
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 px-3 pb-2">
-              <p className="min-w-0 truncate text-[11px] tabular-nums text-muted-foreground">
-                {results.length === 0
-                  ? "No results"
-                  : `${results.length} result${results.length === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`}
-              </p>
-              <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
+              <p className="min-w-0 truncate text-[11px] tabular-nums text-muted-foreground">{resultSummary}</p>
+              <div className="flex items-center gap-1">
+                {canSearchDeeper && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-[11px]"
+                    type="button"
+                    disabled={isLoading}
+                    onClick={searchDeeper}
+                  >
+                    {isSearchingDeeper ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    Search deeper
+                  </Button>
+                )}
+                <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
+              </div>
             </div>
           )}
         </div>
