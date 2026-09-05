@@ -267,6 +267,7 @@ describe("useMessageQueue", () => {
         realStreamId: "stream_real_pad",
         workspaceId: "ws_1",
         events: [expect.objectContaining({ id: "temp_pad", streamId: "stream_real_pad", _sequenceNum: 1700 })],
+        stream: { id: "stream_real_pad", type: "scratchpad", workspaceId: "ws_1" },
       },
     ])
     expect(order).toEqual(["emit", "deleteDraft", "markSentAt", "deleteQueueRow"])

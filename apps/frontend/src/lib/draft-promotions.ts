@@ -14,6 +14,7 @@
  */
 
 import type { CachedEvent } from "@/db"
+import type { Stream } from "@threa/types"
 
 export interface DraftPromotion {
   draftId: string
@@ -25,6 +26,12 @@ export interface DraftPromotion {
    * resolves; released once it has.
    */
   events?: CachedEvent[]
+  /**
+   * The created stream row. The real view reads it while the workspace store's
+   * live query catches up with the queue's `db.streams.put`, so the header
+   * never falls back to the unnamed-scratchpad placeholder mid-promotion.
+   */
+  stream?: Stream
 }
 
 type Listener = (promotion: DraftPromotion) => void
@@ -52,6 +59,11 @@ export function getDraftPromotionSource(realStreamId: string): string | null {
 export function getDraftPromotionEvents(streamId: string): CachedEvent[] | null {
   const promotion = promotionsByRealStreamId.get(streamId) ?? promotionsByDraftId.get(streamId)
   return promotion?.events && promotion.events.length > 0 ? promotion.events : null
+}
+
+/** The created stream row for a promotion, by its real stream id. */
+export function getDraftPromotionStream(realStreamId: string): Stream | null {
+  return promotionsByRealStreamId.get(realStreamId)?.stream ?? null
 }
 
 export function releaseDraftPromotionEvents(realStreamId: string): void {

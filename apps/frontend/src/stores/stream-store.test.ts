@@ -891,6 +891,22 @@ describe("useStreamEvents across a draft promotion", () => {
     expect(result.current?.map((event) => event.id)).toEqual(["temp_promo"])
   })
 
+  it("holds the handoff while the real id's own window is still empty", async () => {
+    const draftId = "draft_promo_pending"
+    const realId = "stream_promo_pending"
+    // The moved row is deliberately absent from IDB: the live query resolves on
+    // a snapshot taken before the queue's put landed.
+    const moved: CachedEvent = { ...makeRealEvent(realId, String(Date.now())), id: "temp_pending", _status: "pending" }
+    emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
+
+    const { result } = renderHook(() => useStreamEvents(realId, null))
+
+    await waitFor(() => expect(result.current).toBeDefined())
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(result.current?.map((event) => event.id)).toEqual(["temp_pending"])
+    expect(getDraftPromotionEvents(realId)).toEqual([moved])
+  })
+
   it("keeps the draft id painted after its rows moved onto the real stream", async () => {
     const draftId = "draft_promo_moved"
     const realId = "stream_promo_moved"

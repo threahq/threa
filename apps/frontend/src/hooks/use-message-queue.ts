@@ -71,6 +71,8 @@ async function promoteDraft(
   const draftStreamId = next.streamId
 
   let realStreamId: string
+  // Undefined on the retry path, where the first attempt already wrote the row.
+  let createdStream: Stream | undefined
 
   if (next.promotedStreamId) {
     // Stream was already created on a previous attempt — reuse it
@@ -90,6 +92,7 @@ async function promoteDraft(
       ...(creation.type === StreamTypes.SCRATCHPAD && next.draftId ? { draftId: next.draftId } : {}),
     })
     realStreamId = newStream.id
+    createdStream = newStream
 
     // Persist realStreamId immediately so retries never create a duplicate.
     // This write is the durable idempotency marker — even if everything
@@ -147,6 +150,7 @@ async function promoteDraft(
     realStreamId,
     workspaceId: next.workspaceId,
     events: movedEvent ? [movedEvent] : [],
+    stream: createdStream,
   })
 
   // For threads, swap the anchor's threadId from the draft panel ID to the real

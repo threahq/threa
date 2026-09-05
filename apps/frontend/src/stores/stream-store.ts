@@ -384,9 +384,15 @@ export function useStreamEvents(
   // the rows have moved away), paint those rows so neither view shows a skeleton
   // or an empty state for a message the user just sent.
   const handoff = streamId ? getDraftPromotionEvents(streamId) : null
+  // Release on the first window that actually carries rows, not on `resolved`:
+  // the live query can resolve from a snapshot taken before the moved rows
+  // landed, and releasing there drops the handoff for the very render that
+  // still needs it — one empty frame between the draft's rows and the real
+  // stream's.
+  const carriesRows = resolved && (union?.length ?? 0) > 0
   useEffect(() => {
-    if (streamId && resolved && handoff) releaseDraftPromotionEvents(streamId)
-  }, [streamId, resolved, handoff])
+    if (streamId && carriesRows && handoff) releaseDraftPromotionEvents(streamId)
+  }, [streamId, carriesRows, handoff])
 
   if (!resolved) return handoff ?? undefined
   if (!union || !streamId) return union

@@ -19,7 +19,12 @@ import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-d
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { resolveDmDisplayName } from "@/lib/streams"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import { getPromotedStreamId, onDraftPromoted, waitForDraftPromotion } from "@/lib/draft-promotions"
+import {
+  getDraftPromotionStream,
+  getPromotedStreamId,
+  onDraftPromoted,
+  waitForDraftPromotion,
+} from "@/lib/draft-promotions"
 import type {
   Stream,
   StreamMember,
@@ -526,7 +531,10 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
   } = useStreamBootstrap(workspaceId, streamId, {
     enabled: enabled && !idbStream,
   })
-  const baseStream = idbStream ?? bootstrap?.stream
+  // A just-promoted stream is in IDB but not yet in the workspace store's
+  // resolved live query; the promotion's own copy covers that tick so the
+  // header keeps the name the draft was showing.
+  const baseStream = idbStream ?? bootstrap?.stream ?? getDraftPromotionStream(streamId) ?? undefined
   const renameStream = useRenameStream(workspaceId, streamId, baseStream)
   const { rename } = renameStream
   const displayName =
