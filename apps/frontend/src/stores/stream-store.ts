@@ -393,7 +393,7 @@ export function useStreamEvents(
   if (handoff && union.length === 0) return handoff
 
   const prev = prevRef.current
-  const shared = shareEventIdentities(prev?.streamId === streamId ? prev.array : handoff, union)
+  const shared = shareEventIdentities(prev?.streamId === streamId ? prev.array : null, union)
   if (shared !== prev?.array) {
     prevRef.current = { streamId, array: shared }
   }

@@ -69,7 +69,7 @@ import {
   TitleSources,
 } from "@threa/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
-import { draftStreamUniquenessKey, repairPromotedDraftScopes } from "../drafts"
+import { draftStreamUniquenessKey } from "../drafts"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { DynamicNamingStateRepository } from "../dynamic-naming/state-repository"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
@@ -605,9 +605,6 @@ export class StreamService {
       if (stream.type !== StreamTypes.SCRATCHPAD) {
         throw new Error(`Draft ${params.draftId} is already promoted to non-scratchpad stream ${stream.id}`)
       }
-      // The first create already wrote members, policy and outbox. Drafts pushed
-      // under the draft scope since then still follow it here.
-      await repairPromotedDraftScopes(db, { workspaceId: params.workspaceId, userId: params.createdBy })
       return stream
     }
 
@@ -662,14 +659,6 @@ export class StreamService {
     // actor is attributed — a description with no actor stays silent.
     if (stream.description && params.descriptionActor) {
       await this.emitDescriptionSet(db, stream, params.descriptionActor.id, params.descriptionActor.type)
-    }
-
-    // The drafts composed in the unpromoted scratchpad follow it onto the real
-    // stream in this transaction (after `stream:created`, so devices learn the
-    // stream before drafts point at it). Client-side re-scoping is the same
-    // move again and converges on its lineage match.
-    if (params.draftId) {
-      await repairPromotedDraftScopes(db, { workspaceId: params.workspaceId, userId: params.createdBy })
     }
 
     return stream

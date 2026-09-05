@@ -1,19 +1,13 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { MAX_DRAFTS_PER_USER, draftStreamScope, type DraftCommand, type JSONContent } from "@threa/types"
-
-/** Client-minted scratchpad draft ids (`draft_…`) — the only ids a `stream:` scope can name before promotion. */
-const DRAFT_SCRATCHPAD_ID_PREFIX = "draft_"
+import { MAX_DRAFTS_PER_USER, type DraftCommand, type JSONContent } from "@threa/types"
 
 /**
- * `uniqueness_key` a scratchpad promoted from a client draft carries:
- * `draft:{userId}:{draftId}`. Keyed per owner so two users' client-minted ids
- * can never collide and a caller can only ever find its own promotion.
+ * `uniqueness_key` of a scratchpad promoted from a client draft. Keyed per
+ * owner so two users' client-minted ids never collide.
  */
-export const DRAFT_STREAM_UNIQUENESS_KEY_PREFIX = "draft"
-
 export function draftStreamUniquenessKey(userId: string, draftId: string): string {
-  return `${DRAFT_STREAM_UNIQUENESS_KEY_PREFIX}:${userId}:${draftId}`
+  return `draft:${userId}:${draftId}`
 }
 
 interface DraftRow {
@@ -368,40 +362,6 @@ export const DraftsRepository = {
         AND scope = ${params.fromScope}
         AND deleted_at IS NULL
       RETURNING ${sql.raw(COLUMNS)}
-    `)
-    return result.rows.map(mapRow)
-  },
-
-  /**
-   * Re-point one owner's live drafts still scoped to a client draft id
-   * (`stream:draft_…`) onto the scratchpad that draft was promoted to, found
-   * through the stream's `uniqueness_key` (`draftStreamUniquenessKey`). The
-   * promotion path runs this in the create transaction; the bootstrap list runs
-   * it as repair, so a client that died between the create response and its own
-   * re-scope never leaves drafts pointing at a scratchpad that no longer exists.
-   * Set-based (INV-56), no-op when nothing diverged. Bumps `version` for the
-   * same reason `rescopeByScope` does. Returns the re-pointed rows.
-   */
-  async repointPromotedDraftScopes(db: Querier, params: { workspaceId: string; userId: string }): Promise<Draft[]> {
-    const streamScopePrefix = draftStreamScope("")
-    const draftColumns = COLUMNS.split(", ")
-      .map((column) => `d.${column}`)
-      .join(", ")
-    const result = await db.query<DraftRow>(sql`
-      UPDATE drafts d SET
-        scope = ${streamScopePrefix} || s.id,
-        root_stream_id = s.id,
-        updated_at = NOW(),
-        version = d.version + 1
-      FROM streams s
-      WHERE d.workspace_id = ${params.workspaceId}
-        AND d.user_id = ${params.userId}
-        AND d.deleted_at IS NULL
-        AND starts_with(d.scope, ${draftStreamScope(DRAFT_SCRATCHPAD_ID_PREFIX)})
-        AND s.workspace_id = d.workspace_id
-        AND s.type = 'scratchpad'
-        AND s.uniqueness_key = ${`${DRAFT_STREAM_UNIQUENESS_KEY_PREFIX}:`} || d.user_id || ':' || substr(d.scope, ${streamScopePrefix.length + 1})
-      RETURNING ${sql.raw(draftColumns)}
     `)
     return result.rows.map(mapRow)
   },
