@@ -76,6 +76,75 @@ describe("ControlPlaneClient error translation", () => {
   })
 })
 
+describe("ControlPlaneClient invitation protocol", () => {
+  let client: ControlPlaneClient
+  let requests: Array<{ url: string; body: unknown }>
+
+  beforeEach(() => {
+    client = new ControlPlaneClient("https://cp.test", "secret")
+    requests = []
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: input.toString(), body: init?.body ? JSON.parse(String(init.body)) : null })
+      return makeResponse(200, JSON.stringify({ ok: true }))
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    mock.restore()
+  })
+
+  test("sends a legacy root claim without a colliding child id", async () => {
+    await client.notifyInvitationLinkClaimed({
+      parentInvitationId: "inv_legacy_root",
+      email: "legacy@example.com",
+      inviterWorkosUserId: "user_inviter",
+    })
+
+    expect(requests).toEqual([
+      {
+        url: "https://cp.test/internal/invitation-shadows/inv_legacy_root/claim",
+        body: {
+          email: "legacy@example.com",
+          inviterWorkosUserId: "user_inviter",
+        },
+      },
+    ])
+  })
+
+  test("sends accepted identity and nullable parent state to the acknowledgement endpoint", async () => {
+    await client.acknowledgeInvitationAccepted({
+      invitationId: "inv_child",
+      workspaceId: "ws_1",
+      email: "accepted@example.com",
+      workosUserId: "workos_accepted",
+      parentInvitationId: "inv_parent",
+      expiresAt: null,
+      maxUses: null,
+      useCount: 1,
+      revision: 2,
+      status: "revoked",
+    })
+
+    expect(requests).toEqual([
+      {
+        url: "https://cp.test/internal/invitation-shadows/inv_child/accepted",
+        body: {
+          workspaceId: "ws_1",
+          email: "accepted@example.com",
+          workosUserId: "workos_accepted",
+          parentInvitationId: "inv_parent",
+          expiresAt: null,
+          maxUses: null,
+          useCount: 1,
+          revision: 2,
+          status: "revoked",
+        },
+      },
+    ])
+  })
+})
+
 describe("ControlPlaneClient.getWorkspaceMembership", () => {
   let client: ControlPlaneClient
 

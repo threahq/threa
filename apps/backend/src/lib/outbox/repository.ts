@@ -23,6 +23,7 @@ import type {
   ScheduledMessageView,
   Draft as WireDraft,
   WorkspaceInvitableRole,
+  InvitationStatus,
   AuthorType,
   Visibility,
   NotificationLevel,
@@ -833,11 +834,19 @@ export interface InvitationSentOutboxPayload extends WorkspaceScopedPayload {
   inviterWorkosUserId?: string
 }
 
-export interface InvitationLinkCreatedOutboxPayload extends WorkspaceScopedPayload {
+export interface InvitationLinkStateOutboxPayload {
+  parentInvitationId: string
+  expiresAt: string | null
+  maxUses: number | null
+  useCount: number
+  revision: number
+  status: InvitationStatus
+}
+
+export interface InvitationLinkCreatedOutboxPayload extends WorkspaceScopedPayload, InvitationLinkStateOutboxPayload {
   invitationId: string
   tokenHash: string
   role: WorkspaceInvitableRole
-  expiresAt: string
 }
 
 export interface InvitationLinkClaimedOutboxPayload extends WorkspaceScopedPayload {
@@ -845,6 +854,12 @@ export interface InvitationLinkClaimedOutboxPayload extends WorkspaceScopedPaylo
   email: string
   role: WorkspaceInvitableRole
   inviterWorkosUserId?: string
+  parentInvitationId?: string
+  expiresAt?: string | null
+  maxUses?: number | null
+  useCount?: number
+  revision?: number
+  status?: InvitationStatus
 }
 
 export interface InvitationAcceptedOutboxPayload extends WorkspaceScopedPayload {
@@ -852,10 +867,22 @@ export interface InvitationAcceptedOutboxPayload extends WorkspaceScopedPayload 
   email: string
   workosUserId: string
   userName: string
+  parentInvitationId?: string
+  expiresAt?: string | null
+  maxUses?: number | null
+  useCount?: number
+  revision?: number
+  status?: InvitationStatus
 }
 
 export interface InvitationRevokedOutboxPayload extends WorkspaceScopedPayload {
   invitationId: string
+  parentInvitationId?: string
+  expiresAt?: string | null
+  maxUses?: number | null
+  useCount?: number
+  revision?: number
+  status?: InvitationStatus
 }
 
 // User-scoped event payloads (delivered to a specific target user)

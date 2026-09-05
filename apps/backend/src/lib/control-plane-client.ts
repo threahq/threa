@@ -1,6 +1,6 @@
 import { logger } from "./logger"
 import { HttpError, INTERNAL_API_KEY_HEADER } from "@threa/backend-common"
-import type { WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threa/types"
+import type { InvitationStatus, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threa/types"
 
 const REQUEST_TIMEOUT_MS = 10_000
 
@@ -33,7 +33,11 @@ export class ControlPlaneClient {
     id: string
     workspaceId: string
     region: string
-    expiresAt: Date
+    expiresAt: Date | null
+    maxUses?: number | null
+    useCount?: number
+    revision?: number
+    status?: InvitationStatus
     /** "email" → email-bound at creation; "link" → email-null until claim. */
     kind: "email" | "link"
     /** Required for kind="email", null for kind="link". */
@@ -52,7 +56,7 @@ export class ControlPlaneClient {
       },
       body: JSON.stringify({
         ...params,
-        expiresAt: params.expiresAt.toISOString(),
+        expiresAt: params.expiresAt?.toISOString() ?? null,
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
@@ -70,11 +74,16 @@ export class ControlPlaneClient {
    * invitation so the recipient gets a verification email.
    */
   async notifyInvitationLinkClaimed(params: {
-    id: string
+    parentInvitationId: string
+    childInvitationId?: string
     email: string
+    expiresAt?: Date | null
+    maxUses?: number | null
+    useCount?: number
+    revision?: number
     inviterWorkosUserId?: string
   }): Promise<void> {
-    const url = `${this.baseUrl}/internal/invitation-shadows/${params.id}/claim`
+    const url = `${this.baseUrl}/internal/invitation-shadows/${params.parentInvitationId}/claim`
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -82,7 +91,12 @@ export class ControlPlaneClient {
         [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
       },
       body: JSON.stringify({
+        ...(params.childInvitationId ? { childInvitationId: params.childInvitationId } : {}),
         email: params.email,
+        ...(params.expiresAt !== undefined ? { expiresAt: params.expiresAt?.toISOString() ?? null } : {}),
+        ...(params.maxUses !== undefined ? { maxUses: params.maxUses } : {}),
+        ...(params.useCount !== undefined ? { useCount: params.useCount } : {}),
+        ...(params.revision !== undefined ? { revision: params.revision } : {}),
         ...(params.inviterWorkosUserId ? { inviterWorkosUserId: params.inviterWorkosUserId } : {}),
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -90,7 +104,15 @@ export class ControlPlaneClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "")
-      logger.error({ id: params.id, status: res.status, body }, "Failed to notify invitation link claim")
+      logger.error(
+        {
+          parentInvitationId: params.parentInvitationId,
+          childInvitationId: params.childInvitationId,
+          status: res.status,
+          body,
+        },
+        "Failed to notify invitation link claim"
+      )
       throw new Error(`Control-plane returned ${res.status}: ${body}`)
     }
   }
@@ -237,6 +259,81 @@ export class ControlPlaneClient {
         { provider: params.provider, externalId: params.externalId, status: res.status, body },
         "Failed to unregister integration route"
       )
+      throw new Error(`Control-plane returned ${res.status}: ${body}`)
+    }
+  }
+
+  async acknowledgeInvitationAccepted(params: {
+    invitationId: string
+    workspaceId: string
+    email: string
+    workosUserId: string
+    parentInvitationId?: string
+    expiresAt?: Date | null
+    maxUses?: number | null
+    useCount?: number
+    revision?: number
+    status?: InvitationStatus
+  }): Promise<void> {
+    const url = `${this.baseUrl}/internal/invitation-shadows/${params.invitationId}/accepted`
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+      },
+      body: JSON.stringify({
+        workspaceId: params.workspaceId,
+        email: params.email,
+        workosUserId: params.workosUserId,
+        ...(params.parentInvitationId ? { parentInvitationId: params.parentInvitationId } : {}),
+        ...(params.expiresAt !== undefined ? { expiresAt: params.expiresAt?.toISOString() ?? null } : {}),
+        ...(params.maxUses !== undefined ? { maxUses: params.maxUses } : {}),
+        ...(params.useCount !== undefined ? { useCount: params.useCount } : {}),
+        ...(params.revision !== undefined ? { revision: params.revision } : {}),
+        ...(params.status !== undefined ? { status: params.status } : {}),
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error(
+        { invitationId: params.invitationId, status: res.status, body },
+        "Failed to acknowledge invitation acceptance"
+      )
+      throw new Error(`Control-plane returned ${res.status}: ${body}`)
+    }
+  }
+
+  async updateInvitationLinkShadow(params: {
+    id: string
+    expiresAt: Date | null
+    maxUses: number | null
+    useCount: number
+    revision: number
+    status: InvitationStatus
+  }): Promise<void> {
+    const url = `${this.baseUrl}/internal/invitation-shadows/${params.id}`
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+      },
+      body: JSON.stringify({
+        expiresAt: params.expiresAt?.toISOString() ?? null,
+        maxUses: params.maxUses,
+        useCount: params.useCount,
+        revision: params.revision,
+        status: params.status,
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error({ id: params.id, status: res.status, body }, "Failed to update invitation link shadow")
       throw new Error(`Control-plane returned ${res.status}: ${body}`)
     }
   }

@@ -4,7 +4,7 @@ import { WORKSPACE_INVITABLE_ROLES, WORKSPACE_ROLE_SLUGS } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import type { Invitation } from "./repository"
-import type { InvitationService, InvitationLinkErrorCode } from "./service"
+import type { InvitationService } from "./service"
 import { InvitationLinkError } from "./service"
 
 /**
@@ -13,7 +13,15 @@ import { InvitationLinkError } from "./service"
  * declared in `WorkspaceInvitation`.
  */
 function toWire(invitation: Invitation) {
-  const { tokenHash: _tokenHash, ...wire } = invitation
+  const {
+    tokenHash: _tokenHash,
+    parentLinkId: _parentLinkId,
+    acceptedWorkosUserId: _acceptedWorkosUserId,
+    acceptanceConsumesCapacity: _acceptanceConsumesCapacity,
+    revision: _revision,
+    revokedAt: _revokedAt,
+    ...wire
+  } = invitation
   return wire
 }
 
@@ -27,21 +35,22 @@ const sendInvitationsSchema = z.object({
   role: invitableRoleSchema.optional().default(WORKSPACE_ROLE_SLUGS.MEMBER),
 })
 
-const createLinkSchema = z.object({
-  role: invitableRoleSchema,
-  note: z.string().trim().max(200).optional(),
-})
+const createLinkSchema = z
+  .object({
+    role: invitableRoleSchema,
+    note: z.string().trim().max(200).optional(),
+  })
+  .strict()
 
 const claimLinkSchema = z.object({
   token: z.string().min(1).max(200),
   email: z.string().email(),
 })
 
-const LINK_ERROR_HTTP: Record<InvitationLinkErrorCode, { status: number }> = {
-  INVITATION_NOT_FOUND: { status: 404 },
-  INVITATION_REVOKED: { status: 409 },
-  INVITATION_EXPIRED: { status: 409 },
-  INVITATION_ALREADY_CLAIMED: { status: 409 },
+function linkErrorStatus(code: InvitationLinkError["code"]): number {
+  if (code === "INVITATION_NOT_FOUND") return 404
+  if (code === "INVITATION_ROLLOUT_UNAVAILABLE") return 503
+  return 409
 }
 
 interface Dependencies {
@@ -103,10 +112,6 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
       res.json({ invitation: toWire(invitation) })
     },
 
-    /**
-     * Admin-auth: create a single-use link invite. The plaintext token is
-     * returned exactly once; only the SHA-256 hash is persisted.
-     */
     async createLink(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
@@ -143,7 +148,7 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
         res.json({ ok: true, ...(claimResult.alreadyMember ? { alreadyMember: claimResult.alreadyMember } : {}) })
       } catch (err) {
         if (err instanceof InvitationLinkError) {
-          throw new HttpError(err.code, { status: LINK_ERROR_HTTP[err.code].status, code: err.code })
+          throw new HttpError(err.code, { status: linkErrorStatus(err.code), code: err.code })
         }
         throw err
       }
