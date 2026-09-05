@@ -88,7 +88,11 @@ import {
   type DynamicNamingTargetAdapter,
   type DynamicNamingTargetKind,
 } from "./features/dynamic-naming"
-import { AttachmentService, createAttachmentUploadSweepWorker } from "./features/attachments"
+import {
+  AttachmentService,
+  createAttachmentUploadSweepWorker,
+  registerAttachmentExtractionSearchConfigBackfill,
+} from "./features/attachments"
 import { MessageFormatter } from "./lib/ai/message-formatter"
 import { SearchService, SearchQueryExpander, StubQueryExpander } from "./features/search"
 import {
@@ -107,6 +111,7 @@ import {
   createMemoBatchCheckWorker,
   createMemoBatchProcessWorker,
   registerMessageEmbeddingBackfill,
+  registerMemoSearchConfigBackfill,
 } from "./features/memos"
 import {
   ConversationService,
@@ -1553,6 +1558,8 @@ export async function startServer(): Promise<ServerInstance> {
   registerMentionBackfill()
   registerMessageReferencePinsBackfill()
   registerMessageSearchConfigBackfill()
+  registerMemoSearchConfigBackfill()
+  registerAttachmentExtractionSearchConfigBackfill()
   registerStreamContextBackfill()
   registerMessageEmbeddingBackfill({ embeddingService })
   registerConversationEmbeddingBackfill({ embeddingService })

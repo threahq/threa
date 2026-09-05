@@ -3,10 +3,11 @@ import type { AuthorType, KnowledgeType, MemoScope, MemoStatus, MemoType } from 
 import { MemoScopes } from "@threa/types"
 import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
+import { detectSearchConfig } from "../../lib/text-search-config"
 import { ConversationRepository } from "../conversations"
 import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type Message } from "../messaging"
-import { MemoRepository, type Memo, type MemoSearchFilters } from "./repository"
+import { MemoRepository, memoSearchText, type Memo, type MemoSearchFilters } from "./repository"
 import { classifyMemoQueryIntent } from "./query-intent"
 import { resolveMemoSearchMode, DEFAULT_MEMO_SEARCH_MODE, MEMO_RERANKER_CANDIDATE_LIMIT } from "./config"
 import type { RerankerLike } from "./reranker"
@@ -246,6 +247,19 @@ export class MemoExplorerService {
       return null
     }
 
+    // A title-only edit is too short to detect a language from, so the stemmer
+    // is re-detected from the whole memo as it will read after the edit.
+    const editsText = fields.title !== undefined || fields.abstract !== undefined || fields.keyPoints !== undefined
+    const editedSearchConfig = editsText
+      ? detectSearchConfig(
+          memoSearchText({
+            title: fields.title ?? resolved.memo.title,
+            abstract: fields.abstract ?? resolved.memo.abstract,
+            keyPoints: fields.keyPoints ?? resolved.memo.keyPoints,
+          })
+        )
+      : undefined
+
     const embedding =
       fields.abstract !== undefined
         ? await this.embeddingService.embed(fields.abstract, { workspaceId, functionId: "memo-edit-embedding" })
@@ -257,6 +271,7 @@ export class MemoExplorerService {
         abstract: fields.abstract,
         keyPoints: fields.keyPoints,
         tags: fields.tags,
+        searchConfig: editedSearchConfig,
       })
       if (row && embedding) {
         await MemoRepository.updateEmbedding(client, memoId, embedding)

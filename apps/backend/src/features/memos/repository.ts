@@ -1,4 +1,5 @@
 import { sql, type Querier } from "../../db"
+import { detectSearchConfig } from "../../lib/text-search-config"
 import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope, MemoEmbedSummary } from "@threa/types"
 import {
   MEMO_KNOWLEDGE_TYPE_BOOST,
@@ -6,6 +7,22 @@ import {
   MEMO_AUTHORED_BY_KIND_BOOST,
   MEMO_BOOST_DEFAULT,
 } from "./config"
+
+/** The text memo full-text search runs over, and so the text its stemmer is detected from. */
+export function memoSearchText(memo: { title: string; abstract: string; keyPoints?: string[] | null }): string {
+  return `${memo.title} ${memo.abstract} ${(memo.keyPoints ?? []).join(" ")}`
+}
+
+/**
+ * Memo full-text search computes its tsvector per row — no stored column, no
+ * index — so both the vector and the query are stemmed with the config the row
+ * itself was written in, rather than the OR-across-configs tsquery an
+ * index-backed `search_vector` needs (`tsqueryAcrossConfigsSql`).
+ */
+const MEMO_TSVECTOR = sql.raw(
+  "to_tsvector(text_search_config(m.search_config), m.title || ' ' || m.abstract || ' ' || array_to_string(m.key_points, ' '))"
+)
+const MEMO_ROW_CONFIG = sql.raw("text_search_config(m.search_config)")
 
 /**
  * B2 structural boost expression, generated from the config maps (single
@@ -113,6 +130,12 @@ export interface UpdateMemoParams {
   title?: string
   abstract?: string
   keyPoints?: string[]
+  /**
+   * Stemmer for the memo's full-text search. `insert` derives it from the text
+   * it is given; an update only carries the fields that changed, so the caller
+   * detects it from the merged memo (`memoSearchText`) and passes it here.
+   */
+  searchConfig?: string
   sourceMessageIds?: string[]
   participantIds?: string[]
   knowledgeType?: KnowledgeType
@@ -641,7 +664,7 @@ export const MemoRepository = {
     const result = await db.query<MemoRow>(sql`
       INSERT INTO memos (
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
-        title, abstract, key_points, source_message_ids, participant_ids,
+        title, abstract, key_points, search_config, source_message_ids, participant_ids,
         knowledge_type, tags, parent_memo_id, status, version,
         authored_by_kind, source_session_id, scope, scope_user_id
       )
@@ -654,6 +677,7 @@ export const MemoRepository = {
         ${params.title},
         ${params.abstract},
         ${params.keyPoints ?? []},
+        ${detectSearchConfig(memoSearchText(params))},
         ${params.sourceMessageIds},
         ${params.participantIds},
         ${params.knowledgeType},
@@ -687,6 +711,10 @@ export const MemoRepository = {
     if (params.keyPoints !== undefined) {
       updates.push(`key_points = $${paramIndex++}`)
       values.push(params.keyPoints)
+    }
+    if (params.searchConfig !== undefined) {
+      updates.push(`search_config = $${paramIndex++}`)
+      values.push(params.searchConfig)
     }
     if (params.sourceMessageIds !== undefined) {
       updates.push(`source_message_ids = $${paramIndex++}`)
@@ -742,6 +770,18 @@ export const MemoRepository = {
     const result = await db.query<MemoRow>(query, values)
     if (!result.rows[0]) return null
     return mapRowToMemo(result.rows[0])
+  },
+
+  /** Rows whose config was set in the meantime (an edit re-detects) are left alone (INV-20). */
+  async fillMissingSearchConfigs(db: Querier, rows: Array<{ id: string; searchConfig: string }>): Promise<number> {
+    if (rows.length === 0) return 0
+    const result = await db.query(sql`
+      UPDATE memos m
+      SET search_config = v.search_config
+      FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.searchConfig)}::text[]) AS v(id, search_config)
+      WHERE m.id = v.id AND m.search_config IS NULL
+    `)
+    return result.rowCount ?? 0
   },
 
   async updateEmbedding(db: Querier, id: string, embedding: number[]): Promise<void> {
@@ -931,10 +971,7 @@ export const MemoRepository = {
       WITH memo_with_stream AS (
         SELECT
           ${sql.raw(SELECT_FIELDS_PREFIXED)},
-          ts_rank(
-            to_tsvector('english', m.title || ' ' || m.abstract || ' ' || array_to_string(m.key_points, ' ')),
-            websearch_to_tsquery('english', ${query})
-          ) as rank,
+          ts_rank(${MEMO_TSVECTOR}, websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})) as rank,
           COALESCE(msg_stream.id, conv_stream.id) as stream_id,
           COALESCE(msg_stream.type, conv_stream.type) as stream_type,
           COALESCE(msg_stream.display_name, msg_stream.slug, conv_stream.display_name, conv_stream.slug) as stream_name,
@@ -956,8 +993,7 @@ export const MemoRepository = {
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
-          AND to_tsvector('english', m.title || ' ' || m.abstract || ' ' || array_to_string(m.key_points, ' '))
-              @@ websearch_to_tsquery('english', ${query})
+          AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
       )
       SELECT * FROM memo_with_stream
       WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
@@ -1008,9 +1044,8 @@ export const MemoRepository = {
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
 
     const embeddingLiteral = `[${embedding.join(",")}]`
-    const tsvector = sql.raw(
-      "to_tsvector('english', m.title || ' ' || m.abstract || ' ' || array_to_string(m.key_points, ' '))"
-    )
+    const tsvector = MEMO_TSVECTOR
+    const rowConfig = MEMO_ROW_CONFIG
     const streamJoins = sql.raw(`
       LEFT JOIN messages msg ON m.source_message_id = msg.id
       LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id
@@ -1032,7 +1067,7 @@ export const MemoRepository = {
         SELECT
           m.id,
           ROW_NUMBER() OVER (
-            ORDER BY ts_rank(${tsvector}, websearch_to_tsquery('english', ${query})) DESC
+            ORDER BY ts_rank(${tsvector}, websearch_to_tsquery(${rowConfig}, ${query})) DESC
           ) as rank
         FROM memos m
         ${streamJoins}
@@ -1050,7 +1085,7 @@ export const MemoRepository = {
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
-          AND ${tsvector} @@ websearch_to_tsquery('english', ${query})
+          AND ${tsvector} @@ websearch_to_tsquery(${rowConfig}, ${query})
         LIMIT ${internalLimit}
       ),
       semantic_ranked AS (

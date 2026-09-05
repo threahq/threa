@@ -1,4 +1,5 @@
 import { sql, composeSql, type Querier } from "../../db"
+import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
 import { streamAccessPredicateSql } from "../streams"
 import {
   AttachmentSafetyStatuses,
@@ -526,9 +527,10 @@ export const AttachmentRepository = {
    *   - thread-descendant expansion when `streamIds` is supplied (callers
    *     pass channel/DM ids and the repo finds files in those streams *and*
    *     their threads via `root_stream_id`)
-   *   - filename/extract FTS via `websearch_to_tsquery('english', ...)`
-   *     against the combined `attachments.search_vector` and
-   *     `attachment_extractions.search_vector`
+   *   - filename/extract FTS against the combined `attachments.search_vector`
+   *     and `attachment_extractions.search_vector`, with the query parsed
+   *     under every text-search config (`tsqueryAcrossConfigsSql`) because an
+   *     extraction is stemmed with the config for its own language
    *   - exact substring match (ILIKE) when `exact = true`
    *   - filename-only substring match via `nameSubstring`
    *   - mime-category filter resolved through `mimePrefixesForCategory`
@@ -566,6 +568,7 @@ export const AttachmentRepository = {
     const nameLikePattern = nameSubstring ? `%${nameSubstring}%` : ""
     const useFts = hasQueryText && !exact
     const useIlike = hasQueryText && exact
+    const ftsQuery = tsqueryAcrossConfigsSql("websearch_to_tsquery", trimmedQuery ?? "")
     const cursorCreatedAt = cursor?.createdAt ?? null
     const cursorId = cursor?.id ?? ""
 
@@ -620,8 +623,8 @@ export const AttachmentRepository = {
         AND (
           ${!useFts}
           OR (
-            a.search_vector @@ websearch_to_tsquery('english', ${trimmedQuery ?? ""})
-            OR e.search_vector @@ websearch_to_tsquery('english', ${trimmedQuery ?? ""})
+            a.search_vector @@ ${ftsQuery}
+            OR e.search_vector @@ ${ftsQuery}
           )
         )
         AND (

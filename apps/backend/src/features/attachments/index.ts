@@ -17,6 +17,10 @@ export { isAttachmentReadableViaShareOrReference, unboundAttachmentBlockedForCal
 export { toAttachmentSummary, fetchUploadStatuses, hydrateAttachmentSummaries } from "./summary"
 
 export { AttachmentExtractionRepository } from "./extraction-repository"
+export {
+  registerAttachmentExtractionSearchConfigBackfill,
+  ATTACHMENT_EXTRACTION_SEARCH_CONFIG_BACKFILL_NAME,
+} from "./search-config-backfill"
 export type {
   AttachmentExtraction,
   InsertAttachmentExtractionParams,

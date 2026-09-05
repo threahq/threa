@@ -9,7 +9,7 @@ import {
   type StreamType,
 } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
-import { SEARCH_TEXT_CONFIGS } from "../../lib/text-search-config"
+import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
 import { streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
@@ -192,19 +192,16 @@ function tsRankNormalization(ranking: SearchRanking): 0 | 1 {
 }
 
 /**
- * Each message is stemmed with the config for its own language and a query is
- * too short to detect one from, so the query is parsed under every config and
- * OR-ed. Every `$1` is the same parameter; `composeSql` renumbers at the splice.
+ * The query parsed under every config (`tsqueryAcrossConfigsSql`).
  *
  * Improved: `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one
  * matching term surface a result. Legacy: `websearch_to_tsquery`, which ANDs
  * terms and reads `"..."` as a phrase itself.
  */
 function keywordTsquerySql(query: string, ranking: SearchRanking) {
-  const parser = ranking === "legacy" ? "websearch_to_tsquery" : "plainto_tsquery"
-  const perConfig = SEARCH_TEXT_CONFIGS.map((config) => `${parser}('${config}', $1)`).join(" || ")
-  const text = ranking === "legacy" ? `(${perConfig})` : `replace((${perConfig})::text, ' & ', ' | ')::tsquery`
-  return { text, values: [query] }
+  if (ranking === "legacy") return tsqueryAcrossConfigsSql("websearch_to_tsquery", query)
+  const parsed = tsqueryAcrossConfigsSql("plainto_tsquery", query)
+  return { text: `replace((${parsed.text})::text, ' & ', ' | ')::tsquery`, values: parsed.values }
 }
 
 export const SearchRepository = {
