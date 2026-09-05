@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
+import { setupIsolatedTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
@@ -57,6 +57,7 @@ async function readEmbeddingRow(pool: Pool, id: string) {
 
 describe("conversation-embeddings backfill and worker against the real schema", () => {
   let pool: Pool
+  let cleanup: () => Promise<void>
   let ctx: ConversationEmbeddingBackfillContext
   let embeddingService: ReturnType<typeof makeFakeEmbeddingService>
 
@@ -71,7 +72,7 @@ describe("conversation-embeddings backfill and worker against the real schema", 
   let sealedId: string
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    ;({ pool, cleanup } = await setupIsolatedTestDatabase("conv_embed_backfill"))
     embeddingService = makeFakeEmbeddingService()
     ctx = { pool, embeddingService }
 
@@ -178,11 +179,11 @@ describe("conversation-embeddings backfill and worker against the real schema", 
       ownerUserId: ownerId,
       ownerUserKeyId: userEncryptionKeyId(),
     })
-  })
+  }, 30_000)
 
   afterAll(async () => {
-    await pool.end()
-  })
+    await cleanup()
+  }, 30_000)
 
   test("plan lists only summarized conversations with primary messages outside sealed streams", async () => {
     const chunks = await plan(ctx, wsId)
