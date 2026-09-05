@@ -2,6 +2,9 @@ import type { Pool } from "pg"
 import type { Querier } from "../../db"
 import {
   AuthorTypes,
+  BotInvocationCapabilities,
+  BotInvocationTriggers,
+  UNROUTED_BOT_INVOCATION_TRIGGERS,
   LabelActorTypes,
   LabelableResourceTypes,
   MemoryModes,
@@ -15,6 +18,7 @@ import type {
   BotRuntimeManifest,
   BotRuntimeStatus,
   BotTrait,
+  JSONContent,
 } from "@threa/types"
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -51,7 +55,7 @@ import {
 } from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
-import { MessageRepository, type InvocationSourceState } from "../messaging"
+import { MessageRepository, type EventService, type InvocationSourceState, type Message } from "../messaging"
 import {
   buildCanonicalInvocationPrompt,
   resolveCanonicalInvocationRoutes,
@@ -65,6 +69,7 @@ interface BotRuntimeServiceDeps {
     "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
   >
   labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
+  eventService?: Pick<EventService, "createMessageForPrincipalInTransaction">
 }
 
 class ClaimCandidateFenceLost extends Error {}
@@ -98,11 +103,13 @@ export class BotRuntimeService {
     "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
   >
   private readonly labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
+  private readonly eventService?: Pick<EventService, "createMessageForPrincipalInTransaction">
 
   constructor(deps: BotRuntimeServiceDeps) {
     this.pool = deps.pool
     this.streamService = deps.streamService
     this.labelAssignmentService = deps.labelAssignmentService
+    this.eventService = deps.eventService
   }
 
   async findLatestPresence(params: { workspaceId: string; botId: string }): Promise<BotRuntimeInstance | null> {
@@ -766,6 +773,68 @@ export class BotRuntimeService {
     })
   }
 
+  /**
+   * Briefs a linked runtime session with a bot-authored prompt: no human
+   * authored this turn, so `resolveRoutes` (which skips the active bot as its
+   * own author) produces no route for it — the brief inserts the message and
+   * creates the invocation itself in one transaction, and the `brief` trigger
+   * tells consumers no human sent it.
+   */
+  async briefRuntimeSession(params: {
+    workspaceId: string
+    botId: string
+    ownerUserId: string
+    instanceId: string
+    runtimeSessionId: string
+    contentJson: JSONContent
+    contentMarkdown: string
+  }): Promise<{ message: Message; invocation: BotInvocation } | null> {
+    if (!this.eventService) throw new Error("briefRuntimeSession requires eventService")
+    const eventService = this.eventService
+    return withTransaction(this.pool, async (db) => {
+      const link = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        instanceId: params.instanceId,
+        runtimeSessionId: params.runtimeSessionId,
+      })
+      if (!link) return null
+      if (await E2eStreamsRepository.isE2eStream(db, params.workspaceId, link.rootStreamId)) {
+        throw new HttpError("Stream is end-to-end encrypted; use the sealed-messages endpoint", {
+          status: 400,
+          code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+        })
+      }
+      const { message } = await eventService.createMessageForPrincipalInTransaction(
+        db,
+        { kind: "bot", botId: params.botId },
+        {
+          workspaceId: params.workspaceId,
+          streamId: link.activeStreamId,
+          authorId: params.botId,
+          authorType: AuthorTypes.BOT,
+          contentJson: params.contentJson,
+          contentMarkdown: params.contentMarkdown,
+        }
+      )
+      const { invocation } = await this.createInvocationInTransaction(db, {
+        workspaceId: params.workspaceId,
+        rootStreamId: link.rootStreamId,
+        activeStreamId: link.activeStreamId,
+        sourceMessageId: message.id,
+        responseStreamId: link.activeStreamId,
+        actorId: params.botId,
+        trigger: BotInvocationTriggers.BRIEF,
+        requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
+        promptMarkdown: params.contentMarkdown,
+        authorUserId: params.ownerUserId,
+        targetInstanceId: link.instanceId,
+        targetRuntimeSessionId: link.runtimeSessionId,
+      })
+      return { message, invocation }
+    })
+  }
+
   private async terminalizeCancelledSessions(
     db: Querier,
     workspaceId: string,
@@ -1237,7 +1306,7 @@ export class BotRuntimeService {
           })
           if (!claimed) return null
           let pinned = claimed
-          if (claimed.trigger !== "session-control") {
+          if (!(UNROUTED_BOT_INVOCATION_TRIGGERS as readonly BotInvocationTrigger[]).includes(claimed.trigger)) {
             const source = await MessageRepository.findInvocationSourceStateForShare(db, {
               workspaceId: claimed.workspaceId,
               messageId: claimed.sourceMessageId,

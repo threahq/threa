@@ -347,6 +347,7 @@ export {
   type BotInvocationTrigger,
   BotInvocationTriggers,
   BOT_INVOCATION_CAPABILITIES,
+  UNROUTED_BOT_INVOCATION_TRIGGERS,
   type BotInvocationCapability,
   BotInvocationCapabilities,
   PI_TOOL_TRACE_FORMAT,

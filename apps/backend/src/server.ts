@@ -795,7 +795,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
   // namespace. One instance shared between HTTP routes (claim/complete/fail)
   // and the WebSocket namespace handler (presence + bootstrap).
-  const botRuntimeService = new BotRuntimeService({ pool, streamService, labelAssignmentService })
+  const botRuntimeService = new BotRuntimeService({ pool, streamService, labelAssignmentService, eventService })
 
   // Workspace authz mirror service — shared by routes (middleware + handlers,
   // public API auth) and feature services that need to gate on workspace

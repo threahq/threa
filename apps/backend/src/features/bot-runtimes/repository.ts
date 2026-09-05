@@ -5,6 +5,7 @@ import {
   BOT_RUNTIME_KINDS,
   BOT_RUNTIME_SESSION_LINK_STATUSES,
   BOT_RUNTIME_STATUSES,
+  UNROUTED_BOT_INVOCATION_TRIGGERS,
   type BotInvocationCapability,
   type BotInvocationStatus,
   type BotInvocationTrigger,
@@ -1158,7 +1159,7 @@ export const BotInvocationRepository = {
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.source_message_id = ${params.sourceMessageId}
           AND i.status IN ('pending', 'claimed')
-          AND i.trigger <> 'session-control'
+          AND i.trigger <> ALL(${UNROUTED_BOT_INVOCATION_TRIGGERS})
           AND NOT EXISTS (
             SELECT 1
             FROM jsonb_array_elements(${JSON.stringify(params.desiredRoutes)}::jsonb) desired
