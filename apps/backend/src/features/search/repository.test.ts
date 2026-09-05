@@ -57,7 +57,6 @@ describe("SearchRepository phrase predicates", () => {
     const { text, values } = queryConfig(db)
     expect(text).toContain("m.content_markdown ILIKE")
     expect(text).toContain("ORDER BY m.created_at DESC")
-    expect(text).not.toContain("websearch_to_tsquery")
     expect(values).toContain("1429")
   })
 
@@ -70,7 +69,6 @@ describe("SearchRepository phrase predicates", () => {
       streamIds: ["stream_member_channel"],
       filters,
       limit: 20,
-      semanticDistanceThreshold: 0.5,
     })
 
     const { text, values } = queryConfig(db)

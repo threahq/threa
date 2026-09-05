@@ -3,7 +3,7 @@ import { SearchRepository, type SearchResult, type ResolvedFilters } from "./rep
 import type { EmbeddingServiceLike } from "../memos"
 import { logger } from "../../lib/logger"
 import type { StreamType } from "@threa/types"
-import { SEMANTIC_DISTANCE_THRESHOLD } from "./config"
+import { hybridWeightsForQuery } from "./config"
 import { E2eStreamsRepository } from "../e2e-streams"
 
 export type ArchiveStatus = "active" | "archived"
@@ -168,7 +168,7 @@ export class SearchService {
       streamIds,
       filters: repoFilters,
       limit,
-      semanticDistanceThreshold: SEMANTIC_DISTANCE_THRESHOLD,
+      ...hybridWeightsForQuery(normalizedQuery),
     })
     return { results, excludedE2eStreamCount }
   }

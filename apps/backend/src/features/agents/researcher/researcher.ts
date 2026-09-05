@@ -26,7 +26,7 @@ import {
   DEFAULT_MAX_QUOTE_DEPTH,
 } from "../quote-resolver"
 import { logger } from "../../../lib/logger"
-import { SEMANTIC_DISTANCE_THRESHOLD } from "../../search"
+import { hybridWeightsForQuery } from "../../search"
 import {
   WORKSPACE_AGENT_MAX_ITERATIONS,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
@@ -949,7 +949,6 @@ Each query must have:
           keywordWeight: intent.keywordWeight,
           semanticWeight: intent.semanticWeight,
           applyStructuralBoost: intent.intent !== "temporal",
-          semanticDistanceThreshold: SEMANTIC_DISTANCE_THRESHOLD,
         })
         const results =
           hybridResults.length > 0
@@ -1058,7 +1057,7 @@ Each query must have:
                 streamIds: accessibleStreamIds,
                 filters,
                 limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
-                semanticDistanceThreshold: SEMANTIC_DISTANCE_THRESHOLD,
+                ...hybridWeightsForQuery(normalizedQuery),
               })
         const searchResults =
           hasQuery && hasEmbedding && primaryResults.length === 0

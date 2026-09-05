@@ -106,8 +106,6 @@ export interface HybridSearchParams {
   keywordWeight?: number
   semanticWeight?: number
   k?: number
-  /** Max L2 distance for semantic results; only messages with distance < this are included. */
-  semanticDistanceThreshold: number
 }
 
 function escapeLike(value: string): string {
@@ -120,6 +118,19 @@ function phrasePredicatesSql(phrases: string[]) {
     predicates = composeSql`${predicates} AND m.content_markdown ILIKE '%' || ${escapeLike(phrase)} || '%'`
   }
   return predicates
+}
+
+/** Same quote characters the frontend's `parseSearchQuery` accepts; `"..."` in the query text means an exact phrase, as `websearch_to_tsquery` used to treat it. */
+const QUOTED_PHRASE_RE = /["“]([^"“”]+)["”]/g
+
+function withQuotedPhrases(query: string, phrases: string[]): string[] {
+  const quoted = Array.from(query.matchAll(QUOTED_PHRASE_RE), (m) => m[1].trim()).filter((p) => p.length > 0)
+  return Array.from(new Set([...phrases, ...quoted]))
+}
+
+/** `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one matching term surface a result. */
+function keywordTsquerySql(query: string) {
+  return composeSql`replace(plainto_tsquery('english', ${query})::text, ' & ', ' | ')::tsquery`
 }
 
 export const SearchRepository = {
@@ -196,13 +207,14 @@ export const SearchRepository = {
   },
 
   /**
-   * Full-text search using PostgreSQL tsvector with websearch syntax.
+   * Full-text search using PostgreSQL tsvector, OR-joined terms.
    * Supports quoted phrases for exact matching: "chicken wingz"
    * Results are ranked by ts_rank.
    * If query is empty, returns recent messages matching filters.
    */
   async fullTextSearch(db: Querier, params: FullTextSearchParams): Promise<SearchResult[]> {
-    const { query, phrases = [], streamIds, filters, limit } = params
+    const { query, streamIds, filters, limit } = params
+    const phrases = withQuotedPhrases(query, params.phrases ?? [])
 
     if (streamIds.length === 0) {
       return []
@@ -251,12 +263,12 @@ export const SearchRepository = {
         m.metadata,
         m.edited_at,
         m.created_at,
-        ts_rank(m.search_vector, websearch_to_tsquery('english', ${query})) as rank
+        ts_rank(m.search_vector, ${keywordTsquerySql(query)}, 1) as rank
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
       WHERE m.stream_id = ANY(${streamIds})
         AND m.deleted_at IS NULL
-        AND m.search_vector @@ websearch_to_tsquery('english', ${query})
+        AND m.search_vector @@ ${keywordTsquerySql(query)}
         ${phrasePredicatesSql(phrases)}
         AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
         AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
@@ -277,18 +289,8 @@ export const SearchRepository = {
    * RRF formula: score(d) = Σ(weight / (k + rank(d)))
    */
   async hybridSearch(db: Querier, params: HybridSearchParams): Promise<SearchResult[]> {
-    const {
-      query,
-      phrases = [],
-      embedding,
-      streamIds,
-      filters,
-      limit,
-      keywordWeight = 0.6,
-      semanticWeight = 0.4,
-      k = 60,
-      semanticDistanceThreshold,
-    } = params
+    const { query, embedding, streamIds, filters, limit, keywordWeight = 0.6, semanticWeight = 0.4, k = 60 } = params
+    const phrases = withQuotedPhrases(query, params.phrases ?? [])
 
     if (streamIds.length === 0) {
       return []
@@ -300,7 +302,10 @@ export const SearchRepository = {
     const internalLimit = 50
 
     const result = await db.query<SearchResultRow>(composeSql`
-      WITH keyword_ranked AS (
+      WITH keyword_query AS (
+        SELECT ${keywordTsquerySql(query)} AS q
+      ),
+      keyword_ranked AS (
         SELECT
           m.id,
           m.stream_id,
@@ -313,12 +318,13 @@ export const SearchRepository = {
           m.metadata,
           m.edited_at,
           m.created_at,
-          ROW_NUMBER() OVER (ORDER BY ts_rank(m.search_vector, websearch_to_tsquery('english', ${query})) DESC) as rank
+          ROW_NUMBER() OVER (ORDER BY ts_rank(m.search_vector, kq.q, 1) DESC) as rank
         FROM messages m
         JOIN streams s ON m.stream_id = s.id
+        CROSS JOIN keyword_query kq
         WHERE m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
-          AND m.search_vector @@ websearch_to_tsquery('english', ${query})
+          AND m.search_vector @@ kq.q
           ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
@@ -345,7 +351,6 @@ export const SearchRepository = {
         WHERE m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
           AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold}
           ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
