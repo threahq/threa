@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { useActors } from "@/hooks"
 import { useUserProfile } from "@/components/user-profile"
 import { MarkdownContent } from "@/components/ui/markdown-content"
-import { triggerStyles, chipBase } from "@/lib/markdown/mention-renderer"
+import { triggerStyles, chipBase } from "@/lib/markdown/chip-styles"
 import { CollapsibleBody } from "@/lib/markdown/collapsible-body"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 

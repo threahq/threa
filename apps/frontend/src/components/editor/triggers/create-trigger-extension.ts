@@ -1,4 +1,5 @@
-import { Node, mergeAttributes, type Editor } from "@tiptap/react"
+import { Node, ReactNodeViewRenderer, mergeAttributes, type Editor, type ReactNodeViewProps } from "@tiptap/react"
+import type { ComponentType } from "react"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
@@ -40,6 +41,13 @@ export interface TriggerExtensionConfig<TItem, TAttrs extends object> {
   getText: (attrs: TAttrs) => string
   /** Maps the selected autocomplete item to node attributes */
   mapPropsToAttrs: (item: TItem) => TAttrs
+  /**
+   * Optional React node view. A chip whose label is baked into `attrs` renders
+   * fine from `renderHTML`; one that has to read live state — a `#` chip
+   * resolving its target's current name from the id — needs a component.
+   * `renderHTML` stays the fallback for the copy/paste and export paths.
+   */
+  nodeView?: ComponentType<ReactNodeViewProps>
   /**
    * Optional selection override. Return `true` to fully handle the pick and
    * skip the default "insert node chip" behavior — e.g. a slash item that
@@ -83,6 +91,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
     getClassName,
     getText,
     mapPropsToAttrs,
+    nodeView,
     onSelectItem,
   } = config
 
@@ -143,6 +152,8 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
     renderText({ node }) {
       return getText(node.attrs as TAttrs)
     },
+
+    ...(nodeView ? { addNodeView: () => ReactNodeViewRenderer(nodeView) } : {}),
 
     addProseMirrorPlugins() {
       return [

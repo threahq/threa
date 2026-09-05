@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
 import { type StreamType } from "@threa/types"
-import { isLinkableStreamType, streamChipSlug } from "@/lib/streams"
+import { isLinkableStreamType, streamLabel } from "@/lib/streams"
 
 interface ChannelLinkContextValue {
   getChannelUrl: (slug: string) => string | null
@@ -9,10 +9,11 @@ interface ChannelLinkContextValue {
    *  linkable streams, so an inaccessible or non-linkable target renders as
    *  plain text, not a dead link. */
   getChannelUrlById: (id: string) => string | null
-  /** The target's current chip label, so a renamed channel or scratchpad reads
-   *  under its new name instead of the one frozen into the link at authoring
-   *  time. Null for uncached ids — the caller then keeps the authored label. */
-  getChannelLabelById: (id: string) => string | null
+  /** The target's current chip identity — live name plus stream type, so a
+   *  renamed channel or scratchpad reads under its new name (and its own glyph)
+   *  instead of the slug frozen into the link at authoring time. Null for
+   *  uncached ids — the caller then keeps the authored label. */
+  getChannelChipById: (id: string) => { type: StreamType; label: string } | null
 }
 
 const ChannelLinkContext = createContext<ChannelLinkContextValue | null>(null)
@@ -31,19 +32,19 @@ export function ChannelLinkProvider({ workspaceId, streams, children }: ChannelL
   const value = useMemo<ChannelLinkContextValue>(() => {
     const slugToUrl = new Map<string, string>()
     const idToUrl = new Map<string, string>()
-    const idToLabel = new Map<string, string>()
+    const idToChip = new Map<string, { type: StreamType; label: string }>()
     for (const stream of streams) {
       if (isLinkableStreamType(stream.type)) {
         const url = `/w/${workspaceId}/s/${stream.id}`
         idToUrl.set(stream.id, url)
-        idToLabel.set(stream.id, streamChipSlug(stream))
+        idToChip.set(stream.id, { type: stream.type, label: streamLabel(stream) })
         if (stream.slug) slugToUrl.set(stream.slug, url)
       }
     }
     return {
       getChannelUrl: (slug: string) => slugToUrl.get(slug) ?? null,
       getChannelUrlById: (id: string) => idToUrl.get(id) ?? null,
-      getChannelLabelById: (id: string) => idToLabel.get(id) ?? null,
+      getChannelChipById: (id: string) => idToChip.get(id) ?? null,
     }
   }, [workspaceId, streams])
 
@@ -75,13 +76,13 @@ export function useChannelUrlById(): (id: string) => string | null {
 }
 
 /**
- * Hook to get a channel/scratchpad's current chip label from its `stream_` id.
+ * Hook to get a channel/scratchpad's current chip identity from its `stream_` id.
  * Returns null resolver if not within ChannelLinkProvider.
  */
-export function useChannelLabelById(): (id: string) => string | null {
+export function useChannelChipById(): (id: string) => { type: StreamType; label: string } | null {
   const context = useContext(ChannelLinkContext)
   if (!context) {
     return () => null
   }
-  return context.getChannelLabelById
+  return context.getChannelChipById
 }

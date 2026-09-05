@@ -1,7 +1,7 @@
 import { type ComponentType, type ReactNode } from "react"
 import { Link2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { chipBase, triggerStyles } from "@/lib/markdown/mention-renderer"
+import { chipBase, triggerStyles } from "@/lib/markdown/chip-styles"
 
 const inlineChip = "inline-flex max-w-[16rem] items-center gap-1 align-bottom"
 
