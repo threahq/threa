@@ -168,10 +168,18 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   // Auto-convert draft to real thread when created externally (e.g., agent eager
   // thread creation). The healed threadId lands on the anchor's payload for both
   // message and card anchors (chunk-2 healing) — one accessor covers both.
+  //
+  // This panel's own send writes the same slot: the draft panel id at queue
+  // time, the real id on promotion. Neither is external — the queue's
+  // `emitDraftPromoted` moves this panel over, and running the external path
+  // alongside it relocates the just-sent draft out from under `resolveDraft`
+  // and re-opens the panel from a late callback after the user closed it.
+  const [ownReplyQueued, setOwnReplyQueued] = useState(false)
   const externalThreadId = useMemo(() => {
-    if (!anchorEvent) return null
-    return (anchorEvent.payload as { threadId?: string }).threadId ?? null
-  }, [anchorEvent])
+    if (!anchorEvent || ownReplyQueued) return null
+    const threadId = (anchorEvent.payload as { threadId?: string }).threadId ?? null
+    return threadId && !isDraftPanel(threadId) ? threadId : null
+  }, [anchorEvent, ownReplyQueued])
 
   // Draft composer
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", anchorId: draftInfo.anchorId }) : ""
@@ -410,6 +418,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     const attachmentIds = attachments.map((a) => a.id)
 
     setDraftExpanded(false)
+    setOwnReplyQueued(true)
 
     try {
       // Clear input optimistically inside try so we can restore on failure
@@ -460,6 +469,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     } catch {
       // Restore content so the user can retry
       composer.setContent(contentJson)
+      setOwnReplyQueued(false)
     } finally {
       composer.setIsSending(false)
     }
