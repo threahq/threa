@@ -1494,10 +1494,7 @@ export const BotInvocationTriggers = {
  * reconciliation must leave them alone: re-resolving their source message
  * yields no route, so treating that as "routing changed" would cancel them.
  */
-export const UNROUTED_BOT_INVOCATION_TRIGGERS = [
-  "session-control",
-  "brief",
-] as const satisfies readonly BotInvocationTrigger[]
+export const UNROUTED_BOT_INVOCATION_TRIGGERS: readonly BotInvocationTrigger[] = ["session-control", "brief"]
 
 export const BOT_INVOCATION_CAPABILITIES = ["mentionable", "active-scratchpad", "session-control"] as const
 export type BotInvocationCapability = (typeof BOT_INVOCATION_CAPABILITIES)[number]

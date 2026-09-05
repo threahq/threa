@@ -26,7 +26,7 @@ describe("session-control command catalog", () => {
       scope: "stream",
       args: [
         {
-          name: "session",
+          name: "name",
           required: true,
           description: "Optional runtime (claude or pi) then the session name; lines after the first are the prompt",
         },
@@ -37,6 +37,7 @@ describe("session-control command catalog", () => {
       description: "Wind down this thread's session: commit, push, remove the worktree, end the link",
       kind: "bot-runtime",
       scope: "stream",
+      args: [{ name: "--force", required: false, description: "Finish despite local runtime activity" }],
     })
   })
 })

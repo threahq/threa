@@ -1151,7 +1151,7 @@ export class BotRuntimeService {
       trigger: params.trigger,
       requiredCapability: params.requiredCapability,
       promptMarkdown:
-        source && !(UNROUTED_BOT_INVOCATION_TRIGGERS as readonly BotInvocationTrigger[]).includes(params.trigger)
+        source && !UNROUTED_BOT_INVOCATION_TRIGGERS.includes(params.trigger)
           ? buildCanonicalInvocationPrompt(source)
           : params.promptMarkdown,
       sourceMessageRevision: source?.revision ?? 0,
@@ -1338,8 +1338,7 @@ export class BotRuntimeService {
             // resolver would only drop it as undesired and hide why. An unrouted
             // trigger has no canonical route to re-resolve at all.
             const promptMarkdown =
-              authorityDenial ||
-              (UNROUTED_BOT_INVOCATION_TRIGGERS as readonly BotInvocationTrigger[]).includes(claimed.trigger)
+              authorityDenial || UNROUTED_BOT_INVOCATION_TRIGGERS.includes(claimed.trigger)
                 ? claimed.promptMarkdown
                 : (await resolveCanonicalInvocationRoutes(db, source)).find(
                     (candidate) =>

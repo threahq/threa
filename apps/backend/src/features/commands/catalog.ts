@@ -167,7 +167,7 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       scope: CommandScopes.STREAM,
       args: [
         {
-          name: "session",
+          name: "name",
           required: true,
           description: "Optional runtime (claude or pi) then the session name; lines after the first are the prompt",
         },
@@ -178,6 +178,7 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       description: "Wind down this thread's session: commit, push, remove the worktree, end the link",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
+      args: [{ name: "--force", required: false, description: "Finish despite local runtime activity" }],
     },
   ]
 }
