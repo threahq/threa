@@ -13,6 +13,7 @@ import { useSearchPanel } from "./search-panel-context"
 import { useMessageSearch } from "./use-message-search"
 import { useMemoMatches } from "./use-memo-matches"
 import { MemoMatches } from "./memo-matches"
+import { ConversationMatches } from "./conversation-matches"
 import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
 import { SearchFilterMenu } from "./search-filter-menu"
@@ -31,6 +32,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const { query, setQuery, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } = useSearchPanel()
   const {
     results,
+    conversations,
     isLoading,
     error,
     validationError,
@@ -51,7 +53,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     apiFilters,
     hasQuery,
   })
-  const resultCount = results.length + memos.length
+  const resultCount = results.length + memos.length + conversations.length
   const hasResults = resultCount > 0
 
   const inputRef = useRef<RichInputRef>(null)
@@ -65,7 +67,10 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   }, [registerFocusHandler])
 
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
-  const streamCount = useMemo(() => new Set(results.map((r) => r.streamId)).size, [results])
+  const streamCount = useMemo(
+    () => new Set([...results.map((r) => r.streamId), ...conversations.map((c) => c.streamId)]).size,
+    [results, conversations]
+  )
   const emptySummary = isLoading ? "Searching…" : "No results"
   const resultSummary = hasResults
     ? `${resultCount} result${resultCount === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`
@@ -232,6 +237,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
           {hasQuery && !displayError && (
             <div className="px-1 pt-1">
               <MemoMatches memos={memos} exploreHref={exploreHref} compact />
+              <ConversationMatches workspaceId={workspaceId} conversations={conversations} compact />
             </div>
           )}
 

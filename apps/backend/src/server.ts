@@ -113,6 +113,9 @@ import {
   createStalenessSweepWorker,
   LLMBoundaryExtractor,
   StubBoundaryExtractor,
+  ConversationEmbeddingHandler,
+  createConversationEmbeddingWorker,
+  registerConversationEmbeddingBackfill,
 } from "./features/conversations"
 import { UserPreferencesService } from "./features/user-preferences"
 import { WorkspaceSettingsService } from "./features/workspace-settings"
@@ -1277,6 +1280,12 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
+  const conversationEmbeddingWorker = createConversationEmbeddingWorker({ pool, embeddingService })
+  jobQueue.registerHandler(JobQueues.CONVERSATION_EMBEDDING_GENERATE, conversationEmbeddingWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
   const boundaryExtractionWorker = createBoundaryExtractionWorker({ service: boundaryExtractionService })
   jobQueue.registerHandler(JobQueues.BOUNDARY_EXTRACT, boundaryExtractionWorker, {
     tier: QueueTiers.LIGHT,
@@ -1540,6 +1549,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMessageReferencePinsBackfill()
   registerStreamContextBackfill()
   registerMessageEmbeddingBackfill({ embeddingService })
+  registerConversationEmbeddingBackfill({ embeddingService })
   registerGithubInstallationBackfill({ workspaceIntegrationService })
   jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
     tier: QueueTiers.LIGHT,
@@ -1642,6 +1652,7 @@ export async function startServer(): Promise<ServerInstance> {
   const agentMessageMutationHandler = new AgentMessageMutationHandler(pool, jobQueue, eventService)
   const attachmentUploadedHandler = new AttachmentUploadedHandler(pool, jobQueue)
   const attachmentEmbeddingHandler = new AttachmentEmbeddingHandler(pool, jobQueue)
+  const conversationEmbeddingHandler = new ConversationEmbeddingHandler(pool, jobQueue)
   const systemMessageOutboxHandler = new SystemMessageOutboxHandler(pool, systemMessageService)
   const activityFeedHandler = new ActivityFeedHandler(pool, activityService)
   const botInvocationOutboxHandler = new BotInvocationOutboxHandler(pool, eventService)
@@ -1680,6 +1691,7 @@ export async function startServer(): Promise<ServerInstance> {
     agentMessageMutationHandler,
     attachmentUploadedHandler,
     attachmentEmbeddingHandler,
+    conversationEmbeddingHandler,
     systemMessageOutboxHandler,
     activityFeedHandler,
     botInvocationOutboxHandler,

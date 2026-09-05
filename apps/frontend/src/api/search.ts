@@ -1,5 +1,5 @@
 import api from "./client"
-import type { AuthorType, StreamType } from "@threa/types"
+import type { AuthorType, ConversationStatus, StreamType } from "@threa/types"
 
 export type ArchiveStatus = "active" | "archived"
 
@@ -34,8 +34,29 @@ export interface SearchResultItem {
   rank: number
 }
 
+/**
+ * A whole discussion whose topic matched the query semantically. `firstMessageId`
+ * deep-links into the stream at the start of the discussion; the span and count
+ * come from its non-deleted messages.
+ */
+export interface ConversationSearchResult {
+  id: string
+  streamId: string
+  topicSummary: string | null
+  summary: string | null
+  status: ConversationStatus
+  messageCount: number
+  participantIds: string[]
+  firstMessageId: string | null
+  firstMessageAt: string | null
+  lastMessageAt: string | null
+  distance: number
+}
+
 export interface SearchResponse {
   results: SearchResultItem[]
+  /** Empty on exact and keyword-only searches — the conversation leg is semantic. */
+  conversations: ConversationSearchResult[]
 }
 
 export async function searchMessages(workspaceId: string, request: SearchRequest): Promise<SearchResponse> {

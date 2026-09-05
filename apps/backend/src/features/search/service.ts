@@ -1,9 +1,11 @@
 import { Pool } from "pg"
-import { SearchRepository, type SearchResult, type ResolvedFilters } from "./repository"
+import { SearchRepository, type ConversationSearchResult, type SearchResult, type ResolvedFilters } from "./repository"
 import type { EmbeddingServiceLike, RerankerLike } from "../memos"
 import { logger } from "../../lib/logger"
 import type { StreamType } from "@threa/types"
 import {
+  CONVERSATION_SEARCH_LIMIT,
+  CONVERSATION_SEARCH_MAX_DISTANCE,
   hybridWeightsForQuery,
   SEARCH_DEEP_CANDIDATE_POOL,
   SEARCH_RERANK_CANDIDATE_LIMIT,
@@ -55,6 +57,11 @@ export interface SearchParams {
 
 export interface SearchResponse {
   results: SearchResult[]
+  /**
+   * Whole conversations near the query, ordered by distance. Empty on the
+   * exact, keyword-only and no-embedding paths: the leg is semantic only.
+   */
+  conversations: ConversationSearchResult[]
   /**
    * Number of streams in the requester's accessible set that were skipped
    * because they are E2E-encrypted. The server can't search their content;
@@ -168,7 +175,7 @@ export class SearchService {
 
     if (streamIds.length === 0) {
       logger.debug({ workspaceId, excludedE2eStreamCount }, "No accessible plaintext streams")
-      return { results: [], excludedE2eStreamCount }
+      return { results: [], conversations: [], excludedE2eStreamCount }
     }
 
     const repoFilters: ResolvedFilters = {
@@ -187,57 +194,53 @@ export class SearchService {
         filters: repoFilters,
         limit,
       })
-      return { results, excludedE2eStreamCount }
+      return { results, conversations: [], excludedE2eStreamCount }
     }
 
+    // One query embedding serves the message leg, the conversation leg and
+    // deep mode's original-query variant (INV-41: no connection held yet).
     const normalizedQuery = query.trim()
-    if (deep && !skipEmbedding && normalizedQuery) {
-      const results = await this.deepSearch({
-        normalizedQuery,
-        phrases,
-        streamIds,
-        repoFilters,
-        limit,
-        workspaceId,
-      })
-      return { results, excludedE2eStreamCount }
-    }
-
-    const results = await this.singleQuerySearch({
-      query,
-      phrases,
-      streamIds,
-      repoFilters,
-      limit,
-      skipEmbedding,
-      workspaceId,
-    })
-    return { results, excludedE2eStreamCount }
-  }
-
-  private async singleQuerySearch(params: {
-    query: string
-    phrases: string[]
-    streamIds: string[]
-    repoFilters: ResolvedFilters
-    limit: number
-    skipEmbedding: boolean
-    workspaceId: string
-  }): Promise<SearchResult[]> {
-    const { query, phrases, streamIds, repoFilters, limit, skipEmbedding, workspaceId } = params
-
-    // Generate embedding for search query (do this before DB connection - INV-41)
-    let embedding: number[] = []
-    if (!skipEmbedding && query.trim()) {
+    let queryEmbedding: number[] = []
+    if (!skipEmbedding && normalizedQuery) {
       try {
-        embedding = await this.embeddingService.embed(query, { workspaceId, functionId: "search-query" })
+        queryEmbedding = await this.embeddingService.embed(normalizedQuery, { workspaceId, functionId: "search-query" })
       } catch (error) {
         logger.warn({ error }, "Failed to generate embedding, falling back to keyword-only search")
       }
     }
 
+    const conversationLeg =
+      queryEmbedding.length > 0
+        ? SearchRepository.conversationSearch(this.pool, {
+            workspaceId,
+            embedding: queryEmbedding,
+            streamIds,
+            filters: repoFilters,
+            limit: CONVERSATION_SEARCH_LIMIT,
+            maxDistance: CONVERSATION_SEARCH_MAX_DISTANCE,
+          })
+        : Promise.resolve([])
+
+    const messageLeg =
+      deep && queryEmbedding.length > 0
+        ? this.deepSearch({ normalizedQuery, queryEmbedding, phrases, streamIds, repoFilters, limit, workspaceId })
+        : this.singleQuerySearch({ normalizedQuery, embedding: queryEmbedding, phrases, streamIds, repoFilters, limit })
+
+    const [results, conversations] = await Promise.all([messageLeg, conversationLeg])
+    return { results, conversations, excludedE2eStreamCount }
+  }
+
+  private async singleQuerySearch(params: {
+    normalizedQuery: string
+    embedding: number[]
+    phrases: string[]
+    streamIds: string[]
+    repoFilters: ResolvedFilters
+    limit: number
+  }): Promise<SearchResult[]> {
+    const { normalizedQuery, embedding, phrases, streamIds, repoFilters, limit } = params
+
     // INV-30: each branch issues a single query, pass pool directly
-    const normalizedQuery = query.trim()
     const hasQuery = normalizedQuery.length > 0
     const hasEmbedding = embedding.length > 0
 
@@ -264,30 +267,34 @@ export class SearchService {
 
   private async deepSearch(args: {
     normalizedQuery: string
+    queryEmbedding: number[]
     phrases: string[]
     streamIds: string[]
     repoFilters: ResolvedFilters
     limit: number
     workspaceId: string
   }): Promise<SearchResult[]> {
-    const { normalizedQuery, phrases, streamIds, repoFilters, limit, workspaceId } = args
+    const { normalizedQuery, queryEmbedding, phrases, streamIds, repoFilters, limit, workspaceId } = args
 
     const variants = await this.queryExpander.expand(normalizedQuery, { workspaceId })
     const queries = [normalizedQuery, ...variants]
 
     let embeddings: number[][]
     try {
-      embeddings = await this.embeddingService.embedBatch(queries, { workspaceId, functionId: "search-query" })
+      const variantEmbeddings =
+        variants.length === 0
+          ? []
+          : await this.embeddingService.embedBatch(variants, { workspaceId, functionId: "search-query" })
+      embeddings = [queryEmbedding, ...variantEmbeddings]
     } catch (error) {
       logger.warn({ error, workspaceId }, "Deep search embedding batch failed; falling back to single-query search")
       return this.singleQuerySearch({
-        query: normalizedQuery,
+        normalizedQuery,
+        embedding: queryEmbedding,
         phrases,
         streamIds,
         repoFilters,
         limit,
-        skipEmbedding: false,
-        workspaceId,
       })
     }
 

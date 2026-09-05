@@ -54,6 +54,10 @@ export {
 export type { StalenessSweepWorkerDeps } from "./staleness-sweep-worker"
 
 export { ConversationRepository } from "./repository"
+
+export { ConversationEmbeddingHandler } from "./embedding-outbox-handler"
+export { createConversationEmbeddingWorker } from "./embedding-worker"
+export { registerConversationEmbeddingBackfill } from "./embedding-backfill"
 export {
   MessageConversationStateRepository,
   MESSAGE_CONVERSATION_STATES,

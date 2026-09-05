@@ -1,4 +1,4 @@
-export { createSearchHandlers, serializeSearchResult } from "./handlers"
+export { createSearchHandlers, serializeSearchResult, serializeConversationSearchResult } from "./handlers"
 export { resolveUserAccessibleStreamIds } from "./access"
 export { SearchService } from "./service"
 export { SearchRepository } from "./repository"

@@ -25,6 +25,7 @@ export {
   type ImageCaptionJobData,
   type ImageThumbnailJobData,
   type AttachmentEmbeddingJobData,
+  type ConversationEmbeddingJobData,
   type PdfPrepareJobData,
   type PdfProcessPageJobData,
   type PdfAssembleJobData,

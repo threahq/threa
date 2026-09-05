@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react"
-import { searchMessages, type SearchFilters, type SearchResultItem } from "@/api"
+import { searchMessages, type ConversationSearchResult, type SearchFilters, type SearchResultItem } from "@/api"
 
 interface UseSearchOptions {
   workspaceId: string
@@ -13,6 +13,7 @@ interface SearchOptions {
 
 interface UseSearchReturn {
   results: SearchResultItem[]
+  conversations: ConversationSearchResult[]
   isLoading: boolean
   error: Error | null
   search: (query: string, filters?: SearchFilters, phrases?: string[], options?: SearchOptions) => Promise<void>
@@ -21,6 +22,7 @@ interface UseSearchReturn {
 
 export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchReturn {
   const [results, setResults] = useState<SearchResultItem[]>([])
+  const [conversations, setConversations] = useState<ConversationSearchResult[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   // Monotonic request counter so a slow earlier response can't clobber the
@@ -37,10 +39,12 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
         const response = await searchMessages(workspaceId, { query, filters, phrases, limit, deep: options?.deep })
         if (requestId !== requestIdRef.current) return
         setResults(response.results)
+        setConversations(response.conversations)
       } catch (e) {
         if (requestId !== requestIdRef.current) return
         setError(e instanceof Error ? e : new Error("Search failed"))
         setResults([])
+        setConversations([])
       } finally {
         if (requestId === requestIdRef.current) {
           setIsLoading(false)
@@ -54,9 +58,10 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
     // Invalidate any in-flight request so it can't repopulate after the clear
     requestIdRef.current++
     setResults([])
+    setConversations([])
     setError(null)
     setIsLoading(false)
   }, [])
 
-  return { results, isLoading, error, search, clear }
+  return { results, conversations, isLoading, error, search, clear }
 }

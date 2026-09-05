@@ -134,7 +134,7 @@ describe("SearchService deep mode", () => {
     const embedBatch = mock(async (texts: string[]) => texts.map(() => [0]))
     const expand = mock(async () => ["variant one", "variant two"])
     const service = makeService({
-      embeddingService: { embed: async () => [], embedBatch },
+      embeddingService: { embed: async () => [0], embedBatch },
       queryExpander: { expand },
     })
 
@@ -147,7 +147,7 @@ describe("SearchService deep mode", () => {
 
     expect(expand).toHaveBeenCalledWith("original query", { workspaceId: "ws_1" })
     expect(embedBatch).toHaveBeenCalledWith(
-      ["original query", "variant one", "variant two"],
+      ["variant one", "variant two"],
       expect.objectContaining({ workspaceId: "ws_1", functionId: "search-query" })
     )
     expect(hybridSearch).toHaveBeenCalledTimes(3)
@@ -166,7 +166,7 @@ describe("SearchService deep mode", () => {
     spyOn(SearchRepository, "hybridSearch").mockResolvedValue(results)
     const rerank = mock(async (_q: string, candidates: { abstract: string }[]) => candidates.map((_, i) => i))
     const service = makeService({
-      embeddingService: { embed: async () => [], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
+      embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
       reranker: { rerank },
     })
 
@@ -194,7 +194,7 @@ describe("SearchService deep mode", () => {
       Array.from({ length: candidates.length }, (_, i) => candidates.length - 1 - i)
     )
     const service = makeService({
-      embeddingService: { embed: async () => [], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
+      embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
       reranker: { rerank },
     })
 
@@ -237,7 +237,7 @@ describe("SearchService deep mode", () => {
     const expand = mock(async () => [])
     const rerank = mock(async (_q: string, candidates: unknown[]) => candidates.map((_, i) => i))
     const service = makeService({
-      embeddingService: { embed: async () => [], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
+      embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
       queryExpander: { expand },
       reranker: { rerank },
     })
