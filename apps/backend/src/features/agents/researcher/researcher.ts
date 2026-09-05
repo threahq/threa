@@ -26,6 +26,7 @@ import {
   DEFAULT_MAX_QUOTE_DEPTH,
 } from "../quote-resolver"
 import { logger } from "../../../lib/logger"
+import { workspaceHomeUrl, workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "../../search"
 import {
   WORKSPACE_AGENT_MAX_ITERATIONS,
@@ -602,7 +603,7 @@ export class WorkspaceAgent {
     partial: boolean
   ): WorkspaceAgentResult {
     const sources = this.buildSources(memos, messages, attachments, workspaceId)
-    const retrievedContext = formatRetrievedContext(memos, messages, attachments)
+    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId)
     return {
       retrievedContext,
       sources,
@@ -634,7 +635,7 @@ export class WorkspaceAgent {
     substeps.push({ text: stopText, at: new Date().toISOString() })
 
     const sources = this.buildSources(memos, messages, attachments, workspaceId)
-    const retrievedContext = formatRetrievedContext(memos, messages, attachments)
+    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId)
 
     logger.info(
       {
@@ -1243,7 +1244,7 @@ Each query must have:
         type: "workspace",
         traceType: "workspace_memo",
         title: memo.title,
-        url: `/w/${workspaceId}/memory?memo=${memo.id}`,
+        url: workspaceMemoUrl(workspaceId, memo.id),
         snippet: memo.abstract.slice(0, 200),
         memoId: memo.id,
         streamId: sourceStream?.id,
@@ -1257,7 +1258,7 @@ Each query must have:
         type: "workspace",
         traceType: "workspace_message",
         title: `${msg.authorName} in ${msg.streamName}`,
-        url: `/w/${workspaceId}/s/${msg.streamId}?m=${msg.id}`,
+        url: workspaceMessageUrl(workspaceId, msg.streamId, msg.id),
         snippet: msg.content.slice(0, 200),
         streamId: msg.streamId,
         streamName: msg.streamName,
@@ -1271,7 +1272,7 @@ Each query must have:
         type: "workspace",
         traceType: "workspace",
         title: att.filename,
-        url: att.streamId ? `/w/${workspaceId}/s/${att.streamId}` : `/w/${workspaceId}`,
+        url: att.streamId ? workspaceStreamUrl(workspaceId, att.streamId) : workspaceHomeUrl(workspaceId),
         snippet: att.summary?.slice(0, 200),
         streamId: att.streamId ?? undefined,
       })

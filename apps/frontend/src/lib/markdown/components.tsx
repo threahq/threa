@@ -1,6 +1,6 @@
 import type { Components } from "react-markdown"
 import { Children, isValidElement, type ReactNode, type MouseEvent } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import {
   parseAgentBlockHref,
   parseGiphyHref,
@@ -12,6 +12,7 @@ import {
 import type { ContentRange } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
+import { buildConversationPanelPath } from "@/lib/stream-links"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import {
   InAppLinkInline,
@@ -162,11 +163,56 @@ function extractTextFromChildren(children: ReactNode): string {
   return ""
 }
 
+const BARE_MESSAGE_ID = /^msg_[0-9A-HJKMNP-TV-Z]{26}$/i
+
+// The pointer parsers accept any non-empty segments; only id-shaped ones get
+// navigation, so a junk href can't become a navigable chip.
+const isIdShaped = (value: string, prefix: string) => value.startsWith(prefix) && value.length > prefix.length
+
 function MarkdownLink({ href, children }: { href?: string; children: ReactNode }) {
   const attachmentContext = useAttachmentContext()
   const linkPreviewContext = useLinkPreviewContext()
   const navigate = useNavigate()
   const { workspaceId } = useParams<{ workspaceId: string }>()
+
+  const sharedMessage = href ? parseSharedMessageHref(href) : null
+  const quote = href ? parseQuoteHref(href) : null
+  const messagePointer = sharedMessage ?? quote
+  if (messagePointer) {
+    const authoredLabel = extractTextFromChildren(children)
+    const label = BARE_MESSAGE_ID.test(authoredLabel) ? "Message" : authoredLabel
+    // Parsed but not id-shaped: the target would be junk. Render inert text —
+    // never the dead custom-protocol anchor the external branch would produce.
+    if (!isIdShaped(messagePointer.streamId, "stream_") || !isIdShaped(messagePointer.messageId, "msg_")) {
+      return <span>{label}</span>
+    }
+    if (!workspaceId) return <span>{label}</span>
+
+    const target = sharedMessage?.conversationId
+      ? buildConversationPanelPath(workspaceId, sharedMessage.conversationId, sharedMessage.messageId)
+      : `/w/${workspaceId}/s/${messagePointer.streamId}?m=${messagePointer.messageId}`
+
+    if (BARE_MESSAGE_ID.test(authoredLabel)) {
+      return (
+        <InAppLinkInline
+          href={target}
+          workspaceId={workspaceId}
+          streamId={messagePointer.streamId}
+          messageId={messagePointer.messageId}
+          fallbackLabel="Message"
+        />
+      )
+    }
+
+    return (
+      <Link
+        to={target}
+        className="break-all text-primary underline underline-offset-4 hover:text-primary/80 [&_span]:[text-decoration:inherit]"
+      >
+        <ProcessedChildren>{children}</ProcessedChildren>
+      </Link>
+    )
+  }
 
   // `memo:` reference — render the inline memo chip. The hydrated preview card
   // renders separately below the message (`MemoPreviewList`). The chip links to

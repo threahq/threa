@@ -230,6 +230,41 @@ describe("runEnclaveTurn prompt cache split", () => {
 })
 
 describe("runEnclaveTurn", () => {
+  it("repairs known local message metadata before sealing without an outbound lookup", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const triggerMessageId = "msg_01JABCDEFGHJKMNPQRSTVWXYZ0"
+    const unknownMessageId = "msg_01JABCDEFGHJKMNPQRSTVWXYZ1"
+    const prompt = await sealUnder(ssk, "point me back", triggerMessageId, "usr_owner")
+    const chat = stubChat(sendMessageReply(`See ${triggerMessageId}, not ${unknownMessageId}`))
+    const collected = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, ...collected },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        trigger: {
+          messageId: triggerMessageId,
+          authorName: "Owner",
+          authorType: "user",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      })
+    )
+
+    const reply = collected.sent[0]
+    const raw = await openMessageAsString({
+      key: ssk,
+      envelope: reply.envelope,
+      ciphertext: Buffer.from(reply.ciphertext, "base64"),
+    })
+    expect(parseSealedPayload(raw).contentMarkdown).toBe(
+      `See [${triggerMessageId}](shared-message:${STREAM_ID}/${triggerMessageId}), not ${unknownMessageId}`
+    )
+  })
+
   it("opens the forwarded turn and seals a reply the owner's SSK can recover", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()

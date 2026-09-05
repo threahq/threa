@@ -87,6 +87,8 @@ export interface AgentRuntimeConfig {
     content: string
     sources: SourceItem[]
   }) => Promise<{ messageId: string; operation?: "created" | "edited" }>
+  /** Normalize host-resolvable references once, immediately before commit. */
+  repairMessageContent?: (content: string) => Promise<string>
 
   /**
    * The turn's initial context for the trace — emitted as one `context:received`
@@ -989,13 +991,19 @@ export class AgentRuntime {
     pending: { content: string; sources: SourceItem[] },
     sent: { ids: string[]; contents: string[] }
   ): Promise<number> {
-    const sendResult = await this.config.sendMessage({
-      content: pending.content,
-      sources: pending.sources,
-    })
+    // Repair is cosmetic: a failed lookup must not discard a completed reply
+    // (same judgment as strip-inaccessible-refs — lose the pointer, not the
+    // response). Fall back to the unrepaired body and let the next turn try.
+    const content = this.config.repairMessageContent
+      ? await this.config.repairMessageContent(pending.content).catch((error) => {
+          logger.warn({ error }, "Message reference repair failed; sending unrepaired content")
+          return pending.content
+        })
+      : pending.content
+    const sendResult = await this.config.sendMessage({ content, sources: pending.sources })
     const operation = sendResult.operation ?? "created"
     sent.ids.push(sendResult.messageId)
-    sent.contents.push(pending.content)
+    sent.contents.push(content)
 
     const traceSources =
       pending.sources.length > 0
@@ -1010,7 +1018,7 @@ export class AgentRuntime {
     await this.emit({
       type: operation === "edited" ? "message:edited" : "message:sent",
       messageId: sendResult.messageId,
-      content: pending.content,
+      content,
       sources: traceSources,
     })
 

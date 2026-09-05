@@ -9,6 +9,7 @@ import { PersonaRepository } from "../persona-repository"
 import { enrichMessageSearchResults } from "../researcher"
 import { resolveStreamIdentifier } from "./identifier-resolver"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
+import { workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 import type { WorkspaceToolDeps } from "./tool-deps"
 
 const SearchMessagesSchema = z.object({
@@ -32,6 +33,9 @@ export interface MessageSearchResult {
   id: string
   content: string
   authorName: string
+  authorId: string
+  authorType: string
+  streamId: string
   streamName: string
   createdAt: string
 }
@@ -166,6 +170,9 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
           id: r.id,
           content: r.content,
           authorName: r.authorName,
+          authorId: r.authorId,
+          authorType: r.authorType,
+          streamId: r.streamId,
           streamName: r.streamName,
           createdAt: r.createdAt.toISOString(),
         }))
@@ -177,6 +184,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
           topic: c.topicSummary,
           summary: c.summary ? truncate(c.summary, 300) : null,
           stream: streamNameById.get(c.streamId) ?? "Unknown",
+          streamId: c.streamId,
           messageCount: c.messageCount,
           firstMessageId: c.firstMessageId,
           from: c.firstMessageAt?.toISOString() ?? null,
@@ -210,10 +218,21 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
               id: r.id,
               content: truncate(r.content, 300),
               author: r.authorName,
+              authorId: r.authorId,
+              authorType: r.authorType,
+              streamId: r.streamId,
               stream: r.streamName,
+              url: workspaceMessageUrl(workspaceId, r.streamId, r.id),
               date: r.createdAt,
             })),
-            ...(improved && { conversations }),
+            ...(improved && {
+              conversations: conversations.map((c) => ({
+                ...c,
+                url: c.firstMessageId
+                  ? workspaceMessageUrl(workspaceId, c.streamId, c.firstMessageId)
+                  : workspaceStreamUrl(workspaceId, c.streamId),
+              })),
+            }),
           }),
         }
       } catch (error) {
@@ -364,6 +383,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
               type: r.type,
               name: r.name ?? "(unnamed)",
               description: r.description ? truncate(r.description, 100) : null,
+              url: workspaceStreamUrl(workspaceId, r.id),
             })),
           }),
         }
@@ -473,8 +493,12 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
           }
         }
 
-        const messages = await MessageRepository.list(db, resolved.id, { limit })
-        messages.reverse()
+        const [messages, streams] = await Promise.all([
+          MessageRepository.list(db, resolved.id, { limit }).then((m) => m.reverse()),
+          StreamRepository.findByIdsInWorkspace(db, workspaceId, [resolved.id]),
+        ])
+        const stream = streams[0]
+        const streamName = stream?.displayName ?? stream?.slug ?? stream?.type ?? null
 
         const userIds = [...new Set(messages.filter((m) => m.authorType === "user").map((m) => m.authorId))]
         const personaIds = [...new Set(messages.filter((m) => m.authorType === "persona").map((m) => m.authorId))]
@@ -512,12 +536,16 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
         return {
           output: JSON.stringify({
             stream: input.stream,
+            streamId: resolved.id,
+            streamName,
+            url: workspaceStreamUrl(workspaceId, resolved.id),
             messages: results.map((r) => ({
               id: r.id,
               content: truncate(r.content, 500),
               author: r.authorName,
               authorType: r.authorType,
               date: r.createdAt,
+              url: workspaceMessageUrl(workspaceId, resolved.id, r.id),
             })),
           }),
         }

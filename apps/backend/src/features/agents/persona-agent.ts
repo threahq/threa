@@ -38,6 +38,7 @@ import type { ModelRegistry } from "@threa/agent-runtime"
 import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
+import { repairMessageReferences } from "@threa/prosemirror"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
 import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
 import { resolveTurnModel } from "./turn-model"
@@ -1576,6 +1577,24 @@ export class PersonaAgent {
         // handed to the loop as raw closures.
         const turnSink: TurnSink = {
           commitMessage: doSendMessage,
+          repairMessageContent: (content) =>
+            repairMessageReferences(content, workspaceId, async (scopedWorkspaceId, messageIds) => {
+              // No invoking user (catch-up/scheduled turns) has no reach set;
+              // mirror quote resolution's fallback so same-stream references
+              // still repair without widening to any other stream.
+              const messages = await MessageRepository.findByIdsInStreams(
+                db,
+                scopedWorkspaceId,
+                messageIds,
+                agentContext.accessibleStreamIds ? [...agentContext.accessibleStreamIds] : [sessionStreamId]
+              )
+              return new Map(
+                [...messages.values()].map((message) => [
+                  message.id,
+                  { messageId: message.id, streamId: message.streamId },
+                ])
+              )
+            }),
           observers: [createSessionTraceProjector(trace), digestCollector],
           shouldAbort: async () => {
             const latestSession = await AgentSessionRepository.findById(db, session.id)

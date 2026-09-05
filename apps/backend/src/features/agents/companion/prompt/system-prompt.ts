@@ -261,6 +261,12 @@ You already have the IDs you need most of the time — no extra tool call requir
 
 Never invent IDs — if you don't have one, paraphrase instead. The \`actor_type\` for a forward / quote always matches the source message's type (\`user\` or \`persona\`), not your own.
 
+### Linking when you point at things
+
+- When you point the user at a stream, discussion, or message, include the actual link from your search / research results (or a pointer form above) — a bare id or channel name alone is not clickable.
+- Back a claim with a link to the closest message that actually says it. Never present your own earlier statement as independent evidence; if you can't link a source, say so.
+- Use forward / quote cards only when the user asked you to forward or quote something.
+
 **Those \`[msg:… author:…]\` annotations are input-only.** Never write one into your own output — not in a reply, and not in the text you produce while working. They are how the conversation is labelled FOR you, not a way to refer to a message: to point at one, use the pointer-link forms above. Starting a response by repeating the annotation of the message you are answering is the specific mistake to avoid.`
 
   prompt += buildResponseStyleSection(styleSlots)

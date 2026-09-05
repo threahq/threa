@@ -79,6 +79,8 @@ export function isDeclaredUnsupported(value: unknown): value is DeclaredUnsuppor
 export interface TurnSink {
   /** Terminal action: deliver one committed message to the conversation. */
   commitMessage: (commit: TurnCommit) => Promise<TurnCommitReceipt>
+  /** Normalize host-resolvable references once, immediately before commit. */
+  repairMessageContent?: (content: string) => Promise<string>
   /** Event sink — trace projection, digest collection. */
   observers?: AgentObserver[]
   /**
@@ -239,10 +241,15 @@ export interface TurnDispatchReceipt {
  * realized later, by durable verb handlers, against the same projection layer.
  * Each edge names its realizing verb or declares itself unsupported with a
  * renderable reason — keyed off `TurnSink` so a new sink edge forces every
- * dispatched driver to take a position on it.
+ * dispatched driver to take a position on it. `repairMessageContent` is the
+ * deliberate exemption: it is an in-loop cosmetic normalizer, not a durable
+ * sink edge, and dispatched drivers only need it once their replayed contents
+ * are repaired upstream (never today), so it is excluded rather than forced.
  */
 export type TurnSinkResolution = {
-  readonly [Edge in keyof Required<TurnSink>]: { readonly realizedBy: string } | DeclaredUnsupported
+  readonly [Edge in Exclude<keyof Required<TurnSink>, "repairMessageContent">]:
+    | { readonly realizedBy: string }
+    | DeclaredUnsupported
 }
 
 /**
@@ -287,6 +294,7 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
       request.validateFinalResponse
     ),
     sendMessage: sink.commitMessage,
+    repairMessageContent: sink.repairMessageContent,
     observers: sink.observers,
     // A declared-unsupported interjection edge is a real "no provider" to the
     // loop; the reason rides the seam for rendering, never into the loop.
