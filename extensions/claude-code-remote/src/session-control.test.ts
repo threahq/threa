@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test"
+import { existsSync, readFileSync, unlinkSync } from "node:fs"
+import type { HarnessSpawnSpec } from "@threa/harness-client"
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
 
 function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T): T {
@@ -108,6 +110,37 @@ describe("createClaudeSessionControl", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "   " }, () => {
       process.env.THREA_TMUX_TARGET = "%9"
       expect(createClaudeSessionControl(undefined, "runtime", undefined, () => "root")!.commands).not.toContain("key")
+    })
+  })
+
+  it("advertises spawn only at the linked desk and done only inside a thread session", () => {
+    const spawnOrDone = (activeStreamId: string | undefined, runtimeSessionId?: string) =>
+      createClaudeSessionControl(
+        undefined,
+        runtimeSessionId,
+        undefined,
+        () => "root",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () => activeStreamId
+      )!.commands.filter((command) => command === "spawn" || command === "done")
+
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      expect({
+        desk: spawnOrDone("root", "runtime"),
+        thread: spawnOrDone("thread", "runtime"),
+        unlinked: spawnOrDone(undefined, "runtime"),
+        withoutRuntimeIdentity: spawnOrDone("root"),
+      }).toEqual({ desk: ["spawn"], thread: ["done"], unlinked: [], withoutRuntimeIdentity: [] })
+
+      process.env.THREA_HARNESSD_ENTRYPOINT = "/definitely/missing/harnessd.ts"
+      expect({ desk: spawnOrDone("root", "runtime"), thread: spawnOrDone("thread", "runtime") }).toEqual({
+        desk: [],
+        thread: [],
+      })
     })
   })
 
@@ -375,6 +408,179 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     expect(runClaudeCommand("clear", "", undefined, undefined, undefined, () => "root")).rejects.toThrow(
       "Harness clear is unavailable for this session."
     )
+  })
+
+  const runSpawn = async (args: string) => {
+    const posts: unknown[][] = []
+    const specs: HarnessSpawnSpec[] = []
+    let started = 0
+    const outcome = await runClaudeCommand(
+      "spawn",
+      args,
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { rootStreamId: "root" },
+      () => "root",
+      async (streamId: string, content: string) => {
+        posts.push([streamId, content])
+        return { id: "evt_anchor" }
+      },
+      (spec: HarnessSpawnSpec) => {
+        specs.push(spec)
+        return () => {
+          started += 1
+        }
+      }
+    )
+    const brief = specs[0]?.briefFile
+    const briefContent = brief ? readFileSync(brief, "utf8") : undefined
+    if (brief) unlinkSync(brief)
+    return { outcome, posts, specs, started, briefContent }
+  }
+
+  it("posts the anchor, writes the brief, and launches harnessd for /spawn", async () => {
+    const { outcome, posts, specs, started, briefContent } = await runSpawn("pi sidebar fix\nCollapse the sidebar.")
+
+    expect({
+      outcome,
+      posts,
+      spec: { ...specs[0]!, briefFile: typeof specs[0]!.briefFile },
+      started,
+      briefContent,
+    }).toEqual({
+      outcome: {
+        ok: true,
+        message: "Spawning **sidebar fix** as a pi thread; harnessd will brief it with your prompt.",
+      },
+      posts: [["root", "Starting **sidebar fix** (pi)"]],
+      spec: {
+        runtime: "pi",
+        name: "sidebar fix",
+        rootStreamId: "root",
+        anchorId: "evt_anchor",
+        briefFile: "string",
+      },
+      started: 1,
+      briefContent: "Collapse the sidebar.",
+    })
+  })
+
+  it("defaults /spawn to claude and passes no brief file for an empty prompt", async () => {
+    const { outcome, posts, specs, started, briefContent } = await runSpawn("tidy up")
+
+    expect({ outcome, spec: specs[0], posts, started, briefContent }).toEqual({
+      outcome: {
+        ok: true,
+        message: "Spawning **tidy up** as a claude thread.",
+      },
+      spec: {
+        runtime: "claude",
+        name: "tidy up",
+        rootStreamId: "root",
+        anchorId: "evt_anchor",
+        briefFile: undefined,
+      },
+      posts: [["root", "Starting **tidy up** (claude)"]],
+      started: 1,
+      briefContent: undefined,
+    })
+  })
+
+  it("returns /spawn usage without posting an anchor when the first line does not name an agent", async () => {
+    for (const args of ["", "\nprompt only", "--force do it"]) {
+      expect(await runSpawn(args)).toEqual({
+        outcome: {
+          ok: false,
+          message: "Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines.",
+        },
+        posts: [],
+        specs: [],
+        started: 0,
+        briefContent: undefined,
+      })
+    }
+  })
+
+  it("removes the brief and names the anchor when the harnessd launch fails", async () => {
+    let briefFile: string | undefined
+    await expect(
+      runClaudeCommand(
+        "spawn",
+        "pi broken\nfix the thing",
+        undefined,
+        "runtime",
+        undefined,
+        () => "root",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { rootStreamId: "root" },
+        () => "root",
+        async () => ({ id: "evt_anchor" }),
+        (spec: HarnessSpawnSpec) => {
+          briefFile = spec.briefFile
+          return () => {
+            throw new Error("harnessd missing")
+          }
+        }
+      )
+    ).rejects.toThrow("Posted the anchor evt_anchor but could not start broken: harnessd missing")
+    expect({ briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({
+      briefWritten: true,
+      briefLeft: false,
+    })
+  })
+
+  const runDone = (args: string, activeStreamId: string, reconnectBusy?: () => boolean) =>
+    runClaudeCommand(
+      "done",
+      args,
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      reconnectBusy,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => activeStreamId
+    )
+
+  it("hands /done off through harnessd only from a thread session", async () => {
+    for (const args of ["", "--force"]) {
+      const outcome = await runDone(args, "thread")
+      expect({ ok: outcome.ok, message: outcome.message, afterAck: typeof outcome.afterAck }).toEqual({
+        ok: true,
+        message: "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
+        afterAck: "function",
+      })
+    }
+    for (const args of ["--FORCE", "force", "--force=true", "--force --force", "extra"]) {
+      expect(await runDone(args, "thread")).toEqual({ ok: false, message: "Usage: `/done [--force]`." })
+    }
+    await expect(runDone("", "root")).rejects.toThrow("Done is only available inside a thread session.")
+  })
+
+  it("refuses non-force /done while Claude is busy instead of killing the pane mid-turn", async () => {
+    expect(await runDone("", "thread", () => true)).toEqual({
+      ok: false,
+      message: "Claude is busy; retry when idle or use `/done --force`.",
+    })
+    expect((await runDone("--force", "thread", () => true)).ok).toBe(true)
   })
 
   it("sends one exact allowed key using Claude's parent PID", async () => {

@@ -3,15 +3,20 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
+  discardSpawnBrief,
   harnessReconnectAvailable,
   markHarnessLinkWoundDown,
+  parseSpawnCommandArgs,
   prepareHarnessClear,
+  prepareHarnessDone,
   prepareHarnessReconnect,
+  prepareHarnessSpawn,
   recordHarnessLink,
   runHarnessKick,
   killOwnWindow,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
+  writeSpawnBrief,
 } from "@threa/harness-client"
 import {
   DelegationClient,
@@ -49,7 +54,9 @@ export const CHANNEL_SOURCE = "threa-channel"
 // `carry-on` queues text for the quota carry-on resume (see carry-on.ts);
 // `kick` asks harnessd to press Enter in this session's pane; `status` reads
 // connection/activity state and captures the visible pane without sending keys;
-// `clear` asks harnessd to restart this session with a fresh conversation.
+// `clear` asks harnessd to restart this session with a fresh conversation;
+// `spawn` asks harnessd to start a named agent in a thread under this
+// scratchpad; `done` winds this thread's own session down through harnessd.
 const SESSION_CONTROL_COMMANDS = [
   "stop",
   "steer",
@@ -64,6 +71,8 @@ const SESSION_CONTROL_COMMANDS = [
   "reconnect",
   "clear",
   "key",
+  "spawn",
+  "done",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
 // whatever the local client's own picker cache discovers (see model-catalog).
@@ -229,7 +238,10 @@ export async function runClaudeCommand(
   reconnectTarget?: () => ReconnectTarget,
   reconnectReady?: () => boolean,
   keySender: typeof sendAllowedTmuxKey = sendAllowedTmuxKey,
-  invocationContext?: SessionControlInvocationContext
+  invocationContext?: SessionControlInvocationContext,
+  activeStreamId?: () => string | undefined,
+  postMessage?: (streamId: string, content: string) => Promise<{ id: string }>,
+  spawnLauncher: typeof prepareHarnessSpawn = prepareHarnessSpawn
 ): Promise<{
   ok: boolean
   message: string
@@ -325,6 +337,58 @@ export async function runClaudeCommand(
         start,
       })
     }
+    case "spawn": {
+      const parsed = parseSpawnCommandArgs(args)
+      if ("error" in parsed) return { ok: false, message: parsed.error }
+      const root = rootStreamId?.()
+      if (!root || !postMessage || !harnessReconnectAvailable()) {
+        throw new Error("Spawn is unavailable for this session.")
+      }
+      if (invocationContext?.rootStreamId !== root) {
+        throw new Error("Spawn request no longer matches the linked scratchpad.")
+      }
+      const runtime = parsed.runtime ?? "claude"
+      const anchor = await postMessage(root, `Starting **${parsed.name}** (${runtime})`)
+      // harnessd dies on a blank brief, so an empty prompt gets no file at all.
+      const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
+      try {
+        spawnLauncher({ runtime, name: parsed.name, rootStreamId: root, anchorId: anchor.id, briefFile })()
+      } catch (error) {
+        discardSpawnBrief(briefFile)
+        throw new Error(
+          `Posted the anchor ${anchor.id} but could not start ${parsed.name}: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      return {
+        ok: true,
+        message: briefFile
+          ? `Spawning **${parsed.name}** as a ${runtime} thread; harnessd will brief it with your prompt.`
+          : `Spawning **${parsed.name}** as a ${runtime} thread.`,
+      }
+    }
+    case "done": {
+      if (args !== "" && args !== "--force") {
+        return { ok: false, message: "Usage: `/done [--force]`." }
+      }
+      if (!runtimeSessionId || !harnessReconnectAvailable()) {
+        throw new Error("Harness done is unavailable for this session.")
+      }
+      const target = reconnectTarget?.()
+      const root = target?.rootStreamId ?? rootStreamId?.()
+      const active = activeStreamId?.()
+      if (!root || !active || active === root) throw new Error("Done is only available inside a thread session.")
+      if (args !== "--force" && reconnectBusy?.()) {
+        return { ok: false, message: "Claude is busy; retry when idle or use `/done --force`." }
+      }
+      return harnessHandoffResult({
+        commandLabel: "done",
+        ackMessage: "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
+        root,
+        target,
+        force: args === "--force",
+        start: prepareHarnessDone(runtimeSessionId),
+      })
+    }
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
       return carryOn.enqueue(args)
@@ -409,7 +473,9 @@ export function createClaudeSessionControl(
   stopDelegationsForReconnect?: (force: boolean) => Promise<void>,
   restartDelegationsAfterReset?: () => void,
   reconnectTarget?: () => ReconnectTarget,
-  reconnectReady?: () => boolean
+  reconnectReady?: () => boolean,
+  activeStreamId?: () => string | undefined,
+  postMessage?: (streamId: string, content: string) => Promise<{ id: string }>
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
@@ -423,10 +489,15 @@ export function createClaudeSessionControl(
             // covered by the tmuxAvailable() gate above.
             if (command === "kick") return harnessReconnectAvailable()
             if (command === "key") return Boolean(rootStreamId?.() && process.env.TMUX_PANE?.trim())
+            if (command === "spawn" || command === "done") {
+              const active = activeStreamId?.()
+              if (!active || !harnessReconnectAvailable()) return false
+              return command === "spawn" ? active === rootStreamId?.() : active !== rootStreamId?.()
+            }
             return true
           })
         : SESSION_CONTROL_COMMANDS.filter(
-            (command) => command !== "kick" && command !== "reconnect" && command !== "clear" && command !== "key"
+            (command) => !["kick", "reconnect", "clear", "key", "spawn", "done"].includes(command)
           )
     },
     modelSuggestions: MODEL_SUGGESTIONS,
@@ -461,7 +532,9 @@ export function createClaudeSessionControl(
         reconnectTarget,
         reconnectReady,
         sendAllowedTmuxKey,
-        context
+        context,
+        activeStreamId,
+        postMessage
       ),
   }
 }
@@ -565,7 +638,9 @@ export class ChannelServer {
             const remote = this.session.statusSnapshot
             return { ...remote, rootStreamId: this.session.rootStreamId }
           },
-          () => !this.shuttingDown
+          () => !this.shuttingDown,
+          () => this.session?.statusSnapshot.activeStreamId,
+          (streamId, content) => client.sendMessage(streamId, { content })
         ),
         // Record what this window owns so harnessd can reap it later: an archive
         // that lands while this process is dead has nothing else to go on.

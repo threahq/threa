@@ -44,8 +44,14 @@ function requireHarnessEntrypoint(options: PrepareHarnessClearOptions): string {
   return entrypoint
 }
 
+function requireId(value: string, label: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error(`${label} is missing.`)
+  return trimmed
+}
+
 function prepareDetachedHarnessCommand(
-  command: "reconnect" | "clear",
+  command: "reconnect" | "clear" | "spawn" | "done",
   args: string[],
   options: PrepareHarnessClearOptions
 ): () => void {
@@ -91,16 +97,40 @@ export function prepareHarnessReconnect(
   rootStreamId: string,
   options: PrepareHarnessReconnectOptions = {}
 ): () => void {
-  if (!runtimeSessionId.trim()) throw new Error("Runtime session id is missing.")
-  if (!rootStreamId.trim()) throw new Error("Root stream id is missing.")
+  const session = requireId(runtimeSessionId, "Runtime session id")
+  const rootStream = requireId(rootStreamId, "Root stream id")
   const entrypoint = requireHarnessEntrypoint(options)
-  const args = [entrypoint, "reconnect", runtimeSessionId, "--root-stream-id", rootStreamId]
+  const args = [entrypoint, "reconnect", session, "--root-stream-id", rootStream]
   if (options.force) args.push("--force")
   return prepareDetachedHarnessCommand("reconnect", args, options)
 }
 
 export function prepareHarnessClear(runtimeSessionId: string, options: PrepareHarnessClearOptions = {}): () => void {
-  if (!runtimeSessionId.trim()) throw new Error("Runtime session id is missing.")
+  const session = requireId(runtimeSessionId, "Runtime session id")
   const entrypoint = requireHarnessEntrypoint(options)
-  return prepareDetachedHarnessCommand("clear", [entrypoint, "clear", runtimeSessionId], options)
+  return prepareDetachedHarnessCommand("clear", [entrypoint, "clear", session], options)
+}
+
+export interface HarnessSpawnSpec {
+  runtime: "claude" | "pi"
+  name: string
+  rootStreamId: string
+  anchorId: string
+  briefFile?: string
+}
+
+export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarnessClearOptions = {}): () => void {
+  const name = requireId(spec.name, "Agent name")
+  const rootStream = requireId(spec.rootStreamId, "Root stream id")
+  const anchor = requireId(spec.anchorId, "Anchor id")
+  const entrypoint = requireHarnessEntrypoint(options)
+  const args = [entrypoint, "spawn", spec.runtime, "--name", name, "--attach", rootStream, "--anchor", anchor]
+  if (spec.briefFile) args.push("--brief-file", spec.briefFile)
+  return prepareDetachedHarnessCommand("spawn", args, options)
+}
+
+export function prepareHarnessDone(runtimeSessionId: string, options: PrepareHarnessClearOptions = {}): () => void {
+  const session = requireId(runtimeSessionId, "Runtime session id")
+  const entrypoint = requireHarnessEntrypoint(options)
+  return prepareDetachedHarnessCommand("done", [entrypoint, "done", session], options)
 }

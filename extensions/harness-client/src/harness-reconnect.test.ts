@@ -1,5 +1,13 @@
 import { describe, expect, it, mock } from "bun:test"
-import { harnessReconnectAvailable, prepareHarnessClear, prepareHarnessReconnect } from "./harness-reconnect"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import {
+  harnessReconnectAvailable,
+  prepareHarnessClear,
+  prepareHarnessDone,
+  prepareHarnessReconnect,
+  prepareHarnessSpawn,
+} from "./harness-reconnect"
 
 const filesystem = (events: unknown[]) => ({
   mkdir: (path: string, options: unknown) => events.push(["mkdir", path, options]),
@@ -193,6 +201,206 @@ describe("prepareHarnessClear", () => {
     expect(() => prepareHarnessClear(" ", { exists: () => true, spawn: spawn as never })).toThrow("Runtime session")
     expect(() =>
       prepareHarnessClear("runtime", { entrypoint: "/missing", exists: () => false, spawn: spawn as never })
+    ).toThrow("entrypoint not found")
+    expect(spawn).not.toHaveBeenCalled()
+  })
+})
+
+describe("prepareHarnessSpawn", () => {
+  const spec = {
+    runtime: "claude" as const,
+    name: "fix sidebar",
+    rootStreamId: "stream_exact",
+    anchorId: "evt_exact",
+  }
+
+  it("starts detached with the attach routing and its own private append log", () => {
+    const events: unknown[] = []
+    const unref = mock(() => events.push(["unref"]))
+    const spawn = mock((...args: unknown[]) => {
+      events.push(["spawn", ...args])
+      return { on: () => undefined, unref }
+    })
+    const start = prepareHarnessSpawn(spec, {
+      entrypoint: "/repo/harnessd.ts",
+      bunExecutable: "/bun",
+      logPath: "/private/harnessd/spawn.log",
+      exists: () => true,
+      fs: filesystem(events),
+      spawn: spawn as never,
+    })
+
+    expect(events).toEqual([])
+    start()
+    expect(events).toEqual([
+      ["mkdir", "/private/harnessd", { recursive: true, mode: 0o700 }],
+      ["chmod", "/private/harnessd", 0o700],
+      ["open", "/private/harnessd/spawn.log", "a", 0o600],
+      ["chmod", "/private/harnessd/spawn.log", 0o600],
+      [
+        "spawn",
+        "/bun",
+        [
+          "/repo/harnessd.ts",
+          "spawn",
+          "claude",
+          "--name",
+          "fix sidebar",
+          "--attach",
+          "stream_exact",
+          "--anchor",
+          "evt_exact",
+        ],
+        { detached: true, stdio: ["ignore", 41, 41] },
+      ],
+      ["unref"],
+      ["close", 41],
+    ])
+    expect(() => start()).toThrow("already started")
+  })
+
+  it("passes the brief file through when one was written", () => {
+    const events: unknown[] = []
+    const spawn = mock((...args: unknown[]) => {
+      events.push(["spawn", ...args])
+      return { on: () => undefined, unref: () => undefined }
+    })
+    prepareHarnessSpawn(
+      { ...spec, runtime: "pi", briefFile: "/tmp/threa-spawn-abc.md" },
+      {
+        entrypoint: "/repo/harnessd.ts",
+        bunExecutable: "/bun",
+        logPath: "/private/harnessd/spawn.log",
+        exists: () => true,
+        fs: filesystem(events),
+        spawn: spawn as never,
+      }
+    )()
+
+    expect(events.find((event) => (event as unknown[])[0] === "spawn")).toEqual([
+      "spawn",
+      "/bun",
+      [
+        "/repo/harnessd.ts",
+        "spawn",
+        "pi",
+        "--name",
+        "fix sidebar",
+        "--attach",
+        "stream_exact",
+        "--anchor",
+        "evt_exact",
+        "--brief-file",
+        "/tmp/threa-spawn-abc.md",
+      ],
+      { detached: true, stdio: ["ignore", 41, 41] },
+    ])
+  })
+
+  it("preparation validates only identity and entrypoint", () => {
+    const spawn = mock(() => ({ on: () => undefined, unref: () => undefined }))
+    expect(() => prepareHarnessSpawn({ ...spec, name: " " }, { exists: () => true, spawn: spawn as never })).toThrow(
+      "Agent name"
+    )
+    expect(() =>
+      prepareHarnessSpawn({ ...spec, rootStreamId: "" }, { exists: () => true, spawn: spawn as never })
+    ).toThrow("Root stream")
+    expect(() =>
+      prepareHarnessSpawn({ ...spec, anchorId: " " }, { exists: () => true, spawn: spawn as never })
+    ).toThrow("Anchor id")
+    expect(() =>
+      prepareHarnessSpawn(spec, { entrypoint: "/missing", exists: () => false, spawn: spawn as never })
+    ).toThrow("entrypoint not found")
+    expect(spawn).not.toHaveBeenCalled()
+  })
+})
+
+describe("prepareHarnessDone", () => {
+  it("starts detached with the bare done routing and its own private append log", () => {
+    const events: unknown[] = []
+    const unref = mock(() => events.push(["unref"]))
+    const spawn = mock((...args: unknown[]) => {
+      events.push(["spawn", ...args])
+      return { on: () => undefined, unref }
+    })
+    const start = prepareHarnessDone("runtime_exact", {
+      entrypoint: "/repo/harnessd.ts",
+      bunExecutable: "/bun",
+      logPath: "/private/harnessd/done.log",
+      exists: () => true,
+      fs: filesystem(events),
+      spawn: spawn as never,
+    })
+
+    expect(events).toEqual([])
+    start()
+    expect(events).toEqual([
+      ["mkdir", "/private/harnessd", { recursive: true, mode: 0o700 }],
+      ["chmod", "/private/harnessd", 0o700],
+      ["open", "/private/harnessd/done.log", "a", 0o600],
+      ["chmod", "/private/harnessd/done.log", 0o600],
+      ["spawn", "/bun", ["/repo/harnessd.ts", "done", "runtime_exact"], { detached: true, stdio: ["ignore", 41, 41] }],
+      ["unref"],
+      ["close", 41],
+    ])
+    expect(() => start()).toThrow("already started")
+  })
+
+  it("logs a sanitized asynchronous spawn error without crashing after acknowledgement", async () => {
+    const events: unknown[] = []
+    let emitError: ((error: Error & { code?: unknown }) => void) | undefined
+    const start = prepareHarnessDone("runtime_secret", {
+      entrypoint: "/secret/harnessd.ts",
+      bunExecutable: "/secret/bun",
+      logPath: "/logs/done.log",
+      exists: () => true,
+      fs: filesystem(events),
+      spawn: (() => ({
+        on: (_event: "error", listener: typeof emitError) => {
+          emitError = listener
+        },
+        unref: () => undefined,
+      })) as never,
+    })
+
+    start()
+    queueMicrotask(() => emitError?.(Object.assign(new Error("/secret/bun runtime_secret"), { code: "ENOENT" })))
+    await Promise.resolve()
+
+    expect(events.slice(-2)).toEqual([
+      ["close", 41],
+      ["appendFile", "/logs/done.log", "Harness done launch failed (ENOENT)\n", { mode: 0o600 }],
+    ])
+    expect(JSON.stringify(events)).not.toContain("runtime_secret")
+  })
+
+  it("each command defaults to its own log file", () => {
+    const paths: unknown[] = []
+    const record = (events: unknown[]) => ({
+      ...filesystem([]),
+      open: (path: string) => {
+        events.push(path)
+        return 41
+      },
+    })
+    const spawn = (() => ({ on: () => undefined, unref: () => undefined })) as never
+    prepareHarnessSpawn(
+      { runtime: "claude", name: "n", rootStreamId: "s", anchorId: "a" },
+      { entrypoint: "/harnessd.ts", exists: () => true, fs: record(paths), spawn }
+    )()
+    prepareHarnessDone("runtime", { entrypoint: "/harnessd.ts", exists: () => true, fs: record(paths), spawn })()
+
+    expect(paths).toEqual([
+      join(homedir(), ".threa", "harnessd", "spawn.log"),
+      join(homedir(), ".threa", "harnessd", "done.log"),
+    ])
+  })
+
+  it("preparation validates only identity and entrypoint", () => {
+    const spawn = mock(() => ({ on: () => undefined, unref: () => undefined }))
+    expect(() => prepareHarnessDone(" ", { exists: () => true, spawn: spawn as never })).toThrow("Runtime session")
+    expect(() =>
+      prepareHarnessDone("runtime", { entrypoint: "/missing", exists: () => false, spawn: spawn as never })
     ).toThrow("entrypoint not found")
     expect(spawn).not.toHaveBeenCalled()
   })
