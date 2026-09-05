@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
 import { getPerfCapture } from "@/lib/perf/capture"
+import { trackPendingRead } from "./apply-window"
 import {
   findSharedRowWorkspace,
   getWorkspaceTableRow,
@@ -332,27 +333,39 @@ export function useStreamEvents(
   // page must not re-run it.
   const tailScanFloor = tailFloor === null ? floor : null
 
+  // Both reads register with the apply window while in flight so a bootstrap
+  // sweep holds its window until the timeline has re-read what it wrote.
   const tail = useLiveQuery(async () => {
     if (!streamId || !bounded) return stampStreamEvents([], streamId)
-    const stopLoad = getPerfCapture().time("timeline.tailLoad")
-    const events = await loadStreamTail(streamId, tailFloor, tailScanFloor)
-    stopLoad()
-    return stampStreamEvents(events, streamId, tailFloor)
+    const release = trackPendingRead()
+    try {
+      const stopLoad = getPerfCapture().time("timeline.tailLoad")
+      const events = await loadStreamTail(streamId, tailFloor, tailScanFloor)
+      stopLoad()
+      return stampStreamEvents(events, streamId, tailFloor)
+    } finally {
+      release()
+    }
   }, [streamId, tailFloor, tailScanFloor, bounded])
 
   const result = useLiveQuery(async () => {
     if (!streamId) return stampStreamEvents([], streamId)
-    const capture = getPerfCapture()
-    capture.count("liveQuery.rerun")
-    const stopLoad = capture.time("liveQuery.load")
-    const events = bounded
-      ? await loadStreamPrefix(streamId, floor, tailFloor)
-      : await loadStreamEvents(streamId, floor)
-    stopLoad()
-    // Stamp the result with the streamId it was fetched for so the caller
-    // can distinguish a fresh empty result from a stale empty result left
-    // over from the previous stream.
-    return stampStreamEvents(events, streamId, bounded ? tailFloor : null)
+    const release = trackPendingRead()
+    try {
+      const capture = getPerfCapture()
+      capture.count("liveQuery.rerun")
+      const stopLoad = capture.time("liveQuery.load")
+      const events = bounded
+        ? await loadStreamPrefix(streamId, floor, tailFloor)
+        : await loadStreamEvents(streamId, floor)
+      stopLoad()
+      // Stamp the result with the streamId it was fetched for so the caller
+      // can distinguish a fresh empty result from a stale empty result left
+      // over from the previous stream.
+      return stampStreamEvents(events, streamId, bounded ? tailFloor : null)
+    } finally {
+      release()
+    }
   }, [streamId, floor, tailFloor, bounded])
 
   // Until `useLiveQuery` re-runs after a streamId change, `result` is still
@@ -362,12 +375,31 @@ export function useStreamEvents(
   const tailStreamId = tail?.__streamId
   const tailForStream = bounded && streamId && tailStreamId === streamId ? (tail ?? null) : null
 
+  const oldestPersistedTail =
+    bounded && streamId && tailForStream && tailFloor === null
+      ? tailForStream.find((event) => event._status == null)
+      : undefined
+
   useEffect(() => {
-    if (!bounded || !streamId || !tailForStream || tailFloor !== null) return
-    const oldestPersisted = tailForStream.find((event) => event._status == null)
-    if (!oldestPersisted) return
-    setAnchor({ streamId, tailFloor: oldestPersisted._sequenceNum })
-  }, [bounded, streamId, tailForStream, tailFloor])
+    if (!bounded || !streamId || !oldestPersistedTail) return
+    setAnchor({ streamId, tailFloor: oldestPersistedTail._sequenceNum })
+  }, [bounded, streamId, oldestPersistedTail])
+
+  // Between one read landing and the next one it triggers (a stream switch, a
+  // re-latch after an unanchored tail, a prefix stamped for an older floor)
+  // neither querier is in flight, yet the window on screen is not the final
+  // one. Count that gap as pending too, so a sweep does not release on it.
+  const expectedTailFloor = bounded ? tailFloor : null
+  const readsUnsettled =
+    !!streamId &&
+    (resultStreamId !== streamId ||
+      (result?.__tailFloor ?? null) !== expectedTailFloor ||
+      (bounded && (tailStreamId !== streamId || (tail?.__tailFloor ?? null) !== tailFloor)) ||
+      !!oldestPersistedTail)
+  useEffect(() => {
+    if (!readsUnsettled) return
+    return trackPendingRead()
+  }, [readsUnsettled])
 
   const prevRef = useRef<{ streamId: string; array: CachedEvent[] } | null>(null)
   const prevArray = prevRef.current?.streamId === streamId ? (prevRef.current?.array ?? null) : null

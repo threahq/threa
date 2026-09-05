@@ -7,6 +7,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { db } from "@/db"
+import { ApiError } from "@/api/client"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
@@ -2701,5 +2702,118 @@ describe("SyncEngine bootstrap query-cache identity", () => {
       deps.queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.userPreferences.theme
     ).toBe("dark")
     engine.destroy()
+  })
+})
+
+describe("SyncEngine first-connect sweep", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    resetApplyWindow()
+    await Promise.all([
+      db.workspaces.clear(),
+      db.syncCursors.clear(),
+      db.workspaceUsers.clear(),
+      db.unreadState.clear(),
+      db.streams.clear(),
+      db.streamMemberships.clear(),
+      db.events.clear(),
+    ])
+  })
+
+  /** A sync service makes onConnect await the cursor load before the sweep, the gap a claimant lands in. */
+  function makeSyncDeps() {
+    const catchUp = vi.fn(async (): Promise<SyncCatchUpResponse> => ({ entries: [], head: "0" }))
+    return { ...makeDeps(), syncService: { catchUp } }
+  }
+
+  it("sweeps the open stream with the workspace snapshot and publishes both caches inside one apply window", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    engine.setCurrentStreamId("stream_1")
+    const seen: Array<{ open: boolean; workspace: boolean; stream: boolean }> = []
+    const stop = subscribeApplyWindow(() =>
+      seen.push({
+        open: isApplyWindowOpen(),
+        workspace: deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1")) !== undefined,
+        stream: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_1")) !== undefined,
+      })
+    )
+
+    await engine.onConnect(asSocket(new MockSocket()))
+    stop()
+
+    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_1", undefined]])
+    expect(seen).toEqual([
+      { open: true, workspace: false, stream: false },
+      { open: false, workspace: true, stream: true },
+    ])
+    engine.destroy()
+  })
+
+  it("hands a claimed stream's bootstrap to the query layer instead of a second fetch", async () => {
+    const deps = makeSyncDeps()
+    const engine = new SyncEngine(deps)
+    const connecting = engine.onConnect(asSocket(new MockSocket()))
+    const claim = engine.claimStreamBootstrap("stream_2")
+
+    await connecting
+
+    await expect(claim).resolves.toMatchObject({ stream: { id: "stream_2" }, windowVersion: expect.any(Number) })
+    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_2", undefined]])
+    engine.destroy()
+  })
+
+  it("rejects a claim with the stream's own fetch error", async () => {
+    const deps = makeSyncDeps()
+    const forbidden = new ApiError(403, "FORBIDDEN", "Forbidden")
+    deps.streamService.bootstrap.mockImplementation(async (_workspaceId: string, streamId: string) => {
+      if (streamId === "stream_2") throw forbidden
+      return makeStreamBootstrap(streamId)
+    })
+    const engine = new SyncEngine(deps)
+    const connecting = engine.onConnect(asSocket(new MockSocket()))
+    const claim = engine.claimStreamBootstrap("stream_2")
+
+    await connecting
+
+    await expect(claim).rejects.toBe(forbidden)
+    engine.destroy()
+  })
+
+  it("resolves a claim the sweep did not cover to null once the sweep settles", async () => {
+    const deps = makeDeps()
+    let releaseWorkspace: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseWorkspace = resolve
+    })
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      await held
+      return makeWorkspaceBootstrap()
+    })
+    const engine = new SyncEngine(deps)
+    engine.setCurrentStreamId("stream_1")
+    const connecting = engine.onConnect(asSocket(new MockSocket()))
+    const late = engine.claimStreamBootstrap("stream_9")
+    expect(late).not.toBeNull()
+
+    releaseWorkspace()
+    await connecting
+
+    await expect(late).resolves.toBeNull()
+    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_1", undefined]])
+    expect(engine.claimStreamBootstrap("stream_1")).toBeNull()
+    engine.destroy()
+  })
+
+  it("resolves outstanding claims to null on destroy", async () => {
+    const deps = makeSyncDeps()
+    const engine = new SyncEngine(deps)
+    const connecting = engine.onConnect(asSocket(new MockSocket()))
+    const claim = engine.claimStreamBootstrap("stream_2")
+
+    engine.destroy()
+    await connecting
+
+    await expect(claim).resolves.toBeNull()
   })
 })

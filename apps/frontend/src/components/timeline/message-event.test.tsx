@@ -191,6 +191,30 @@ describe("MessageEvent", () => {
     })
   })
 
+  describe("reply in thread", () => {
+    it("links a confirmed message to its draft thread panel", () => {
+      const event = createMessageEvent("msg_123", "Confirmed message")
+
+      render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
+
+      expect(screen.getByRole("link", { name: "Reply in thread" })).toHaveAttribute(
+        "href",
+        "/panel/draft:stream_123:msg_123"
+      )
+    })
+
+    it("withholds the action while the row still carries its client id", () => {
+      // The send queue clears the pending status once the POST succeeds; until
+      // the server echo swaps the ids in, the row is stored under its client id.
+      const event: StreamEvent = { ...createMessageEvent("temp_abc", "Just sent"), id: "temp_abc" }
+
+      render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
+
+      expect(screen.queryByRole("link", { name: "Reply in thread" })).toBeNull()
+      expect(screen.getByRole("button", { name: "Reply in thread" })).toBeDisabled()
+    })
+  })
+
   describe("provenance chip", () => {
     it("renders a revival chip linking to the conversation panel", () => {
       const event = createMessageEvent("msg_123", "Pizza")

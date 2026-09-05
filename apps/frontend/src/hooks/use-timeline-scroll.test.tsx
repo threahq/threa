@@ -62,6 +62,7 @@ function makeScrollerDiv(metrics: { scrollHeight: number; clientHeight: number; 
 
 const opts = (overrides: Partial<Options> & Pick<Options, "itemCount" | "getFirstKey">): Options => ({
   resetKey: "stream_1",
+  getLastKey: () => null,
   ...overrides,
 })
 

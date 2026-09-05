@@ -6,6 +6,7 @@ import { db, sequenceToNum } from "@/db"
 import { putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
+import { useBatchedValue } from "@/stores/apply-window"
 import { isTerminalBootstrapError, shouldSuppressBootstrapError } from "@/lib/query-load-state"
 import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/contiguity"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
@@ -787,14 +788,20 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     return idbEvents[idbEvents.length - 1].sequence
   }, [idbEvents, bootstrap?.latestSequence])
 
+  // The window is held at the output, not at the bootstrap: the floor keeps
+  // flowing so the IndexedDB re-reads a sweep triggers start inside the window,
+  // and the timeline releases its old window in the same render as the sidebar.
+  const held = useBatchedValue(
+    useMemo(
+      () => ({ events, holes, isLoading, isConfirmedEmpty, isResolved: idbResolved, hasOlderEvents, latestSequence }),
+      [events, holes, isLoading, isConfirmedEmpty, idbResolved, hasOlderEvents, latestSequence]
+    )
+  )
+
   return {
-    events,
-    holes,
-    isLoading,
-    isConfirmedEmpty,
+    ...held,
     error: suppressBootstrapError ? null : error,
     fetchOlderEvents,
-    hasOlderEvents,
     isFetchingOlder,
     fetchNewerEvents,
     hasNewerEvents,
@@ -807,6 +814,5 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     isJumpMode: !!jumpState,
     addEvent,
     updateEvent,
-    latestSequence,
   }
 }

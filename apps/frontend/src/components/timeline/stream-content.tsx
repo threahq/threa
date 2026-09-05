@@ -943,6 +943,7 @@ export function StreamContent({
     holes,
     isLoading,
     isConfirmedEmpty,
+    isResolved,
     error,
     fetchOlderEvents,
     hasOlderEvents,
@@ -1700,6 +1701,8 @@ export function StreamContent({
   } = useTimelineScroll({
     itemCount: useVirtualized ? visibleItems.length : 0,
     getFirstKey: () => (useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[0]) : null),
+    getLastKey: () =>
+      useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[visibleItems.length - 1]) : null,
     resetKey: streamId,
     skipInitialScroll,
     isJumpMode,
@@ -3186,7 +3189,9 @@ export function StreamContent({
                         {...batchPointerHandlers}
                       >
                         <div ref={plainContentRef}>
-                          {isThread && anchorEvent && parentStreamId && (
+                          {/* The plain scroller has no settle mask: hold the anchor until the
+                              replies' first read lands so both paint in one frame. */}
+                          {isResolved && isThread && anchorEvent && parentStreamId && (
                             <ThreadParentEvent
                               event={anchorEvent}
                               workspaceId={workspaceId}

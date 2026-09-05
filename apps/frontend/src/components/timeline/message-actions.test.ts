@@ -79,6 +79,12 @@ describe("getVisibleActions", () => {
     expect(ids).toEqual(["copy-as-markdown", "copy-as-plain-text"])
   })
 
+  it("should not include reply-in-thread while the row still awaits its server id", () => {
+    const ids = getVisibleActions(createContext({ awaitingServerId: true })).map((a) => a.id)
+
+    expect(ids).not.toContain("reply-in-thread")
+  })
+
   it("should include reply-in-conversation only when the surface supplies its handler", () => {
     const without = getVisibleActions(createContext()).map((a) => a.id)
     expect(without).not.toContain("reply-in-conversation")

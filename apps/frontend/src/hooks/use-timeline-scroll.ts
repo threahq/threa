@@ -61,6 +61,8 @@ interface UseTimelineScrollOptions {
   itemCount: number
   /** Stable key of the item at index 0, or null when empty. Drives prepend detection. */
   getFirstKey: () => string | null
+  /** Stable key of the last item, or null when empty. Drives tail-replace detection. */
+  getLastKey: () => string | null
   /** When this key changes, all scroll state resets (e.g. streamId). */
   resetKey?: string
   /**
@@ -192,6 +194,7 @@ interface UseTimelineScrollReturn {
 export function useTimelineScroll({
   itemCount,
   getFirstKey,
+  getLastKey,
   resetKey,
   skipInitialScroll = false,
   isJumpMode = false,
@@ -241,6 +244,7 @@ export function useTimelineScroll({
   // older page landed (or the window trimmed from the start); virtua's `shift`
   // then holds the viewport from the end.
   const prevFirstKeyRef = useRef<string | null>(null)
+  const prevLastKeyRef = useRef<string | null>(null)
   const prevCountRef = useRef(0)
   const lastResetKeyRef = useRef(resetKey)
   const didInitialScrollRef = useRef(false)
@@ -297,6 +301,7 @@ export function useTimelineScroll({
   if (lastResetKeyRef.current !== resetKey) {
     lastResetKeyRef.current = resetKey
     prevFirstKeyRef.current = null
+    prevLastKeyRef.current = null
     prevCountRef.current = 0
     prevScrollTopRef.current = 0
     prevScrollHeightRef.current = 0
@@ -326,6 +331,16 @@ export function useTimelineScroll({
       shift = true
     }
   }
+  // While following the tail, a new last row that is not a single live append
+  // (a sweep landing a gap, a window replaced under the reader) is a tail
+  // replace: virtua has only estimated the rows below the old tail.
+  const lastKey = itemCount > 0 ? getLastKey() : null
+  const tailReplaced =
+    isFollowingTailRef.current &&
+    prevCountRef.current > 0 &&
+    prevLastKeyRef.current !== null &&
+    lastKey !== prevLastKeyRef.current &&
+    !(itemCount === prevCountRef.current + 1 && firstKey === prevFirstKeyRef.current)
   // Record the baseline once per commit, in a layout effect — not during
   // render. React may render this component twice before committing (StrictMode
   // in dev, a concurrent re-render in prod); a during-render write would let a
@@ -337,6 +352,7 @@ export function useTimelineScroll({
   // shift check — and is idempotent across the double render.
   useLayoutEffect(() => {
     prevFirstKeyRef.current = firstKey
+    prevLastKeyRef.current = lastKey
     prevCountRef.current = itemCount
   })
 
@@ -660,6 +676,25 @@ export function useTimelineScroll({
     pinToBottom()
     settleToBottom(2000)
   }, [itemCount, skipInitialScroll, resetKey, pinToBottom, settleToBottom])
+
+  // A tail replace pinned by the ResizeObserver alone converges over several
+  // frames: each pin scrolls into estimated space, virtua renders and measures
+  // the rows there, the height changes, the observer pins again, and every
+  // frame paints a different newest row. scrollToIndex(last) before paint
+  // renders the tail region in this commit and keeps virtua's own loop on the
+  // last row until its rows are measured, so the tail settles in one refine
+  // instead of walking down row by row.
+  useLayoutEffect(() => {
+    if (!tailReplaced || !didInitialScrollRef.current) return
+    const el = scrollerRef.current
+    if (!el) return
+    try {
+      listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el) })
+    } catch {
+      // Not-yet-measured list can throw; the pin still lands.
+    }
+    pinToBottom()
+  }, [tailReplaced, itemCount, pinToBottom])
 
   // The one observer that keeps the tail glued. Two observed targets:
   //  - content (contentRef): grows on a live append, on media decoding, as

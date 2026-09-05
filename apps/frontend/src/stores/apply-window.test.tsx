@@ -6,7 +6,9 @@ import {
   isApplyWindowOpen,
   resetApplyWindow,
   subscribeApplyWindow,
+  trackPendingRead,
   useBatchedValue,
+  whenReadsSettled,
 } from "./apply-window"
 
 describe("apply window gate", () => {
@@ -89,5 +91,60 @@ describe("useBatchedValue", () => {
 
     act(() => endApplyWindow())
     expect(result.current).toBe("c")
+  })
+})
+
+describe("whenReadsSettled", () => {
+  beforeEach(() => {
+    resetApplyWindow()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    resetApplyWindow()
+  })
+
+  async function settles(promise: Promise<void>, withinMs: number): Promise<boolean> {
+    return Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), withinMs)),
+    ])
+  }
+
+  it("resolves right away when no read is pending", async () => {
+    expect(await settles(whenReadsSettled(), 100)).toBe(true)
+  })
+
+  it("waits for a tracked read to release", async () => {
+    const release = trackPendingRead()
+    const settled = whenReadsSettled()
+    expect(await settles(settled, 30)).toBe(false)
+    release()
+    expect(await settles(settled, 100)).toBe(true)
+  })
+
+  it("counts a release once, however many times it is called", async () => {
+    const releaseFirst = trackPendingRead()
+    const releaseSecond = trackPendingRead()
+    releaseFirst()
+    releaseFirst()
+    const settled = whenReadsSettled()
+    expect(await settles(settled, 30)).toBe(false)
+    releaseSecond()
+    expect(await settles(settled, 100)).toBe(true)
+  })
+
+  it("releases on the deadline when a reader never settles", async () => {
+    vi.useFakeTimers()
+    trackPendingRead()
+    let settled = false
+    const pending = whenReadsSettled().then(() => {
+      settled = true
+    })
+    await vi.advanceTimersByTimeAsync(1_900)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(200)
+    await pending
+    expect(settled).toBe(true)
   })
 })

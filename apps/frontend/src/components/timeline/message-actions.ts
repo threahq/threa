@@ -56,6 +56,9 @@ export interface MessageActionContext {
   sessionId?: string
   /** Whether this message is the parent of the currently open thread panel */
   isThreadParent?: boolean
+  /** The row is still the client's optimistic copy: its ids are not yet
+   *  server-known, so a thread drafted against it could never be created. */
+  awaitingServerId?: boolean
   /** URL for "reply in thread" */
   replyUrl: string
   /** URL for "show trace" (persona or bot messages sent during a session) */
@@ -313,7 +316,7 @@ export const messageActions: MessageAction[] = [
     label: "Reply in thread",
     icon: MessageSquareReply,
     groupId: "reply",
-    when: (ctx) => !ctx.isThreadParent,
+    when: (ctx) => !ctx.isThreadParent && !ctx.awaitingServerId,
     getHref: (ctx) => ctx.replyUrl,
   },
   {

@@ -24,6 +24,7 @@ import {
 import { makeCachedStream } from "@/test/workspace-rows"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 import { requestStreamEventReadRefresh } from "./stream-event-read-refresh"
+import { whenReadsSettled } from "./apply-window"
 import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
 
 const WORKSPACE_ID = "ws_1"
@@ -1074,5 +1075,22 @@ describe("useStreamEvents with the bounded read armed", () => {
       if (!events) continue
       expect(new Set(events.map((e) => e.streamId)).size).toBe(1)
     }
+  })
+})
+
+describe("useStreamEvents as a tracked read", () => {
+  const STREAM = "stream_tracked_read"
+
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("holds whenReadsSettled until the mounted window has read its rows", async () => {
+    await db.events.bulkPut([makeRealEvent(STREAM, "1"), makeRealEvent(STREAM, "2")])
+    const { result } = renderHook(() => useStreamEvents(STREAM, 1))
+
+    await whenReadsSettled()
+
+    expect(result.current?.map((event) => event.sequence)).toEqual(["1", "2"])
   })
 })

@@ -89,9 +89,48 @@ export function useBatchedValue<T>(value: T): T {
   return open ? held.current : value
 }
 
+/**
+ * Readers with asynchronous reads (the timeline's IndexedDB live queries)
+ * register in-flight work here so a sweep can hold its window open until the
+ * reads its writes triggered have landed. The synchronous store hooks need
+ * none of this: they re-read on the close transition itself.
+ */
+let pendingReads = 0
+
+export function trackPendingRead(): () => void {
+  pendingReads += 1
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    pendingReads -= 1
+  }
+}
+
+const READS_SETTLE_DEADLINE_MS = 2000
+
+/**
+ * Resolves once no tracked read has been pending across two consecutive
+ * macrotask turns. Two, because a live query re-run is scheduled a microtask
+ * after the write commits, and a re-run that starts a chained read (the tail
+ * re-latch) is only visible one turn later. The deadline bounds a reader that
+ * never settles; by the time this is awaited the sweep's writes are committed,
+ * so releasing on the deadline paints complete data, unlike a clock on the
+ * window itself, which could paint a half-applied refresh.
+ */
+export async function whenReadsSettled(): Promise<void> {
+  const deadline = Date.now() + READS_SETTLE_DEADLINE_MS
+  let quietTurns = 0
+  while (quietTurns < 2 && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    quietTurns = pendingReads === 0 ? quietTurns + 1 : 0
+  }
+}
+
 /** Test/teardown escape hatch: reset to the closed, depth-0 state. */
 export function resetApplyWindow(): void {
   const wasOpen = depth > 0
   depth = 0
+  pendingReads = 0
   if (wasOpen) notifyTransition()
 }
