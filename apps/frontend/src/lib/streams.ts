@@ -1,6 +1,6 @@
 import { SLUG_MAX_LENGTH, StreamTypes } from "@threa/types"
 import type { StreamType } from "@threa/types"
-import { Bell, FileText, Hash, MessageSquare, MessageSquareDashed } from "lucide-react"
+import { Bell, FileText, Hash, MessageSquare, MessageSquareDashed, NotebookPen } from "lucide-react"
 import type { ComponentType } from "react"
 
 /**
@@ -194,6 +194,29 @@ export function resolveStreamName(
  * the other inserts a chip that renders as dead plain text.
  */
 export const LINKABLE_STREAM_TYPES: readonly StreamType[] = [StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD]
+
+export interface StreamChipParts {
+  icon: ComponentType<{ className?: string }>
+  /** The bare name, never carrying the sigil — no surface doubles the `#`. */
+  label: string
+  /** The channel sigil, rendered as text ahead of the label. Channels only. */
+  prefix?: string
+}
+
+/**
+ * How a stream reads inside an inline chip — the `#` mention and the in-app
+ * stream link render the identical shape, in the composer and the timeline
+ * alike. A channel carries its sigil as `prefix` so it reads as a mention;
+ * every other type leads with `icon`.
+ *
+ * The scratchpad glyph is deliberately not {@link STREAM_ICONS}': a chip sits in
+ * a line of prose, where the note glyph reads as a written page, while the
+ * sidebar and pickers keep the flatter document mark across a whole list.
+ */
+export function streamChipParts(type: StreamType | undefined, name: string): StreamChipParts {
+  if (type === StreamTypes.CHANNEL) return { icon: Hash, label: name.replace(/^#/, ""), prefix: "#" }
+  return { icon: type === StreamTypes.SCRATCHPAD ? NotebookPen : MessageSquare, label: name }
+}
 
 /** Whether a `#` chip may point at this stream type ({@link LINKABLE_STREAM_TYPES}). */
 export function isLinkableStreamType(type: string): boolean {

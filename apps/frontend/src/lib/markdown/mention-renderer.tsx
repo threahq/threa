@@ -2,29 +2,19 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { ActorHrefPointer } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
+import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
+import { chipBase, triggerStyles } from "./chip-styles"
 import { useMentionType, useMentionClick, useIsMentionOnlyBot } from "./mention-context"
-import { useChannelUrl, useChannelUrlById, useChannelLabelById } from "./channel-link-context"
+import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand } from "./command-list-context"
+import { StreamChip } from "./stream-chip"
 import { MENTION_PATTERN, isValidSlug } from "@threa/types"
-
-// Colors match the design system kitchen sink.
-export const triggerStyles = {
-  user: "bg-[hsl(200_70%_50%/0.1)] text-[hsl(200_70%_50%)]",
-  persona: "bg-primary/10 text-primary",
-  bot: "bg-green-500/10 text-green-600 dark:text-green-400",
-  broadcast: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-  channel: "bg-muted text-foreground",
-  command: "bg-[hsl(280_60%_55%/0.15)] text-[hsl(280_60%_55%)] font-mono",
-  me: "bg-[hsl(200_70%_50%/0.15)] text-primary font-semibold",
-}
 
 interface TriggerChipProps {
   type: "mention" | "channel" | "command"
   text: string
 }
-
-export const chipBase = "inline px-1 py-px rounded font-medium"
 
 /**
  * A personal bot the viewer doesn't own: mentionable, never invocable by them
@@ -35,6 +25,20 @@ const mentionOnlyStyle =
   "bg-amber-500/10 text-amber-600 dark:text-amber-400 underline decoration-dashed underline-offset-2"
 const mentionOnlyTitle = "Personal bot: you can mention it, but only its owner can invoke it. It won't respond to you."
 
+/**
+ * Navigable wrapper for a `#` chip. The chip carries its own background and
+ * padding, so the anchor only routes — `no-underline` keeps it from drawing a
+ * second line under the pill, matching how a posted in-app link wraps the same
+ * chip ({@link InAppLinkInline}).
+ */
+function StreamChipLink({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link to={to} className="no-underline">
+      {children}
+    </Link>
+  )
+}
+
 /** Channel chips render as links; mentions and commands render as spans. */
 function TriggerChip({ type, text }: TriggerChipProps) {
   const getMentionType = useMentionType()
@@ -43,18 +47,11 @@ function TriggerChip({ type, text }: TriggerChipProps) {
   const isMentionOnlyBot = useIsMentionOnlyBot()
 
   if (type === "channel") {
+    // A bare `#slug` names a channel by definition (INV-64's lenient input), so
+    // it always reads as the sigil-prefixed form.
+    const chip = <InAppLinkChip prefix="#" label={text} />
     const url = getChannelUrl(text)
-    if (url) {
-      return (
-        <Link
-          to={url}
-          className={cn(chipBase, "hover:underline underline-offset-2 decoration-current/50", triggerStyles.channel)}
-        >
-          #{text}
-        </Link>
-      )
-    }
-    return <span className={cn(chipBase, triggerStyles.channel)}>#{text}</span>
+    return url ? <StreamChipLink to={url}>{chip}</StreamChipLink> : chip
   }
 
   let style: string
@@ -102,33 +99,21 @@ function TriggerChip({ type, text }: TriggerChipProps) {
  * Render a pointer-link mention/channel (`[@slug](user:usr_x)` etc.) as a chip.
  * The type comes from the URL scheme (authoritative, INV-64) — not the slug→type
  * map the bare-slug path falls back to — and navigation uses the embedded id, so
- * a renamed slug never mis-colors or breaks the link. A `#` chip also reads its
- * label off the id, the way an in-app stream link does, so a renamed channel or
- * scratchpad updates in place; the authored slug is the fallback for a target
- * the viewer has no cached row for. `@` chips keep the authored slug — the
- * actor caches they'd resolve through are a separate surface.
+ * a renamed slug never mis-colors or breaks the link. A `#` chip draws through
+ * {@link StreamChip}, the same chip a pasted stream link renders. `@` chips keep
+ * the authored slug — the actor caches they'd resolve through are a separate
+ * surface.
  */
 export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointer; slug: string }) {
   const getChannelUrlById = useChannelUrlById()
-  const getChannelLabelById = useChannelLabelById()
   const getMentionType = useMentionType()
   const onMentionClick = useMentionClick()
   const isMentionOnlyBot = useIsMentionOnlyBot()
 
   if (pointer.kind === "channel") {
-    const label = getChannelLabelById(pointer.id) ?? slug
+    const chip = <StreamChip id={pointer.id} slug={slug} />
     const url = getChannelUrlById(pointer.id)
-    if (url) {
-      return (
-        <Link
-          to={url}
-          className={cn(chipBase, "hover:underline underline-offset-2 decoration-current/50", triggerStyles.channel)}
-        >
-          #{label}
-        </Link>
-      )
-    }
-    return <span className={cn(chipBase, triggerStyles.channel)}>#{label}</span>
+    return url ? <StreamChipLink to={url}>{chip}</StreamChipLink> : chip
   }
 
   // "me" is viewer-relative; the scheme only knows "user", so upgrade to the

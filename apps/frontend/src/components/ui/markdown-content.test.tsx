@@ -198,14 +198,15 @@ describe("MarkdownContent", () => {
       expect(screen.queryByRole("link", { name: "#ghost" })).not.toBeInTheDocument()
     })
 
-    it("renders a scratchpad pointer as a link, same as a channel", () => {
+    it("names a scratchpad pointer, dropping the folded slug for the real title", () => {
       renderPointer("See [#pi-remote-control](channel:stream_2)")
-      expect(screen.getByRole("link", { name: "#pi-remote-control" })).toHaveAttribute("href", "/w/ws_1/s/stream_2")
+      expect(screen.getByRole("link", { name: "Pi remote control" })).toHaveAttribute("href", "/w/ws_1/s/stream_2")
+      expect(screen.queryByText("#pi-remote-control")).not.toBeInTheDocument()
     })
 
     it("relabels a renamed target from the id, not the slug frozen at authoring time", () => {
       renderPointer("See [#old-name](channel:stream_2)")
-      expect(screen.getByRole("link", { name: "#pi-remote-control" })).toBeInTheDocument()
+      expect(screen.getByRole("link", { name: "Pi remote control" })).toBeInTheDocument()
       expect(screen.queryByText("#old-name")).not.toBeInTheDocument()
     })
 

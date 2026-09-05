@@ -1,4 +1,5 @@
-import { Node, mergeAttributes, type Editor } from "@tiptap/react"
+import { Node, ReactNodeViewRenderer, mergeAttributes, type Editor, type ReactNodeViewProps } from "@tiptap/react"
+import type { ComponentType } from "react"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
@@ -41,6 +42,13 @@ export interface TriggerExtensionConfig<TItem, TAttrs extends object> {
   /** Maps the selected autocomplete item to node attributes */
   mapPropsToAttrs: (item: TItem) => TAttrs
   /**
+   * Optional React node view. A chip whose label is baked into `attrs` renders
+   * fine from `renderHTML`; one that has to read live state — a `#` chip
+   * resolving its target's current name from the id — needs a component.
+   * `renderHTML` stays the fallback for the copy/paste and export paths.
+   */
+  nodeView?: ComponentType<ReactNodeViewProps>
+  /**
    * Optional selection override. Return `true` to fully handle the pick and
    * skip the default "insert node chip" behavior — e.g. a slash item that
    * hands off to another trigger by inserting plain text instead of a node.
@@ -69,6 +77,18 @@ export interface TriggerExtensionOptions<TItem> {
 const baseClassName = "inline rounded px-1 py-0.5"
 
 /**
+ * `setAttribute` stringifies, so an unset attribute would land on the element as
+ * the literal text "null".
+ */
+function definedAttributes(attrs: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(attrs)
+      .filter(([, value]) => value !== null && value !== undefined)
+      .map(([key, value]) => [key, String(value)])
+  )
+}
+
+/**
  * Factory function to create TipTap trigger extensions.
  * Reduces boilerplate for @mentions, #channels, /commands, and future triggers.
  */
@@ -83,6 +103,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
     getClassName,
     getText,
     mapPropsToAttrs,
+    nodeView,
     onSelectItem,
   } = config
 
@@ -143,6 +164,19 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
     renderText({ node }) {
       return getText(node.attrs as TAttrs)
     },
+
+    // A node view replaces the editor DOM, so `renderHTML`'s attributes never
+    // reach it. They go on the outer element TipTap builds, the same one
+    // `selectNode()` marks, so the `[data-type=…].ProseMirror-selectednode`
+    // styling, `pillFromDom` and the paste specs' `data-id` all find one element.
+    ...(nodeView
+      ? {
+          addNodeView: () =>
+            ReactNodeViewRenderer(nodeView, {
+              attrs: ({ HTMLAttributes }) => ({ ...definedAttributes(HTMLAttributes), "data-type": name }),
+            }),
+        }
+      : {}),
 
     addProseMirrorPlugins() {
       return [

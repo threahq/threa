@@ -1,12 +1,12 @@
 import { useMemo, type ComponentType } from "react"
-import { Hash, NotebookPen, MessageSquare, Lock, Globe } from "lucide-react"
+import { Hash, MessageSquare, Lock, Globe } from "lucide-react"
 import { useLiveQuery } from "dexie-react-hooks"
-import type { StreamType, MessageLinkPreviewData } from "@threa/types"
+import type { MessageLinkPreviewData } from "@threa/types"
 import { db } from "@/db"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { useActors } from "@/hooks/use-actors"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
-import { resolveStreamName } from "@/lib/streams"
+import { resolveStreamName, streamChipParts } from "@/lib/streams"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 
 type ChipIcon = ComponentType<{ className?: string }>
@@ -36,17 +36,6 @@ export type InAppLinkChipState =
 export interface ChipMessageParts {
   lead: string
   tail: string
-}
-
-function streamTypeIcon(streamType: StreamType | undefined): ChipIcon {
-  switch (streamType) {
-    case "scratchpad":
-      return NotebookPen
-    case "channel":
-      return Hash
-    default:
-      return MessageSquare
-  }
 }
 
 /**
@@ -231,22 +220,14 @@ export function useInAppLinkChip({
       return { status: "resolved", icon: MessageSquare, label: "Message" }
     }
 
-    // Stream links: a channel renders its `#` as a text prefix (mention-style),
-    // so strip it from the bare label and let the chip's `prefix` add it back.
+    // Stream links read exactly like a `#` mention of the same stream — one
+    // helper decides the glyph, the sigil and the bare label for both.
     if (localName) {
-      const isChannelChip = cachedType === "channel"
-      const label = isChannelChip && localName.startsWith("#") ? localName.slice(1) : localName
-      return { status: "resolved", icon: streamTypeIcon(cachedType), label, prefix: isChannelChip ? "#" : undefined }
+      return { status: "resolved", ...streamChipParts(cachedType, localName) }
     }
     if (loading) return { status: "pending" }
     if (data?.kind === "stream" && data.streamName) {
-      const isChannel = data.streamType === "channel"
-      return {
-        status: "resolved",
-        icon: streamTypeIcon(data.streamType),
-        label: data.streamName,
-        prefix: isChannel ? "#" : undefined,
-      }
+      return { status: "resolved", ...streamChipParts(data.streamType, data.streamName) }
     }
     return { status: "resolved", icon: Hash, label: "Conversation" }
   }, [localName, loading, data, cachedType, isMessage, cachedMessageEvent, actors, dmPeers, streamId, currentUserId])

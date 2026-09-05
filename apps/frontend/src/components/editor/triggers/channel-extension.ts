@@ -1,5 +1,7 @@
 import { PluginKey } from "@tiptap/pm/state"
+import { triggerStyles } from "@/lib/markdown/chip-styles"
 import { createTriggerExtension, type TriggerExtensionOptions } from "./create-trigger-extension"
+import { ChannelLinkView } from "./channel-link-view"
 import type { ChannelItem } from "./types"
 
 export const ChannelPluginKey = new PluginKey("channel")
@@ -13,7 +15,12 @@ export type ChannelOptions = TriggerExtensionOptions<ChannelItem>
 
 /**
  * TipTap extension for #stream links.
- * Creates an inline node that renders as a styled channel chip.
+ *
+ * The node view draws the chip, so a scratchpad reads under its live name and
+ * its own glyph rather than the folded slug baked into `attrs`.
+ * `getClassName`/`getText` stay the plain-HTML fallback the copy, paste and
+ * export paths render through — same neutral channel palette, so the two never
+ * disagree about the chip's colour.
  */
 export const ChannelExtension = createTriggerExtension<ChannelItem, ChannelNodeAttrs>({
   name: "channelLink",
@@ -26,10 +33,11 @@ export const ChannelExtension = createTriggerExtension<ChannelItem, ChannelNodeA
     id: { dataAttr: "data-id" },
     slug: { dataAttr: "data-slug" },
   },
-  getClassName: () => "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200",
+  getClassName: () => triggerStyles.channel,
   getText: (attrs) => `#${attrs.slug}`,
   mapPropsToAttrs: (c) => ({
     id: c.id,
     slug: c.slug,
   }),
+  nodeView: ChannelLinkView,
 })
