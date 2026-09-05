@@ -23,10 +23,10 @@ export interface StashedDraftsComposerBridge {
   /**
    * How many sends the scheduled picker is holding, published upward because
    * the phone foot hides the picker's own trigger (dot and all) and shows the
-   * presence on its "+" instead. `null` on unmount — a torn-down picker has no
-   * count to report. Reactive (state, not a ref): the "+" re-renders on it.
+   * presence on its "+" instead. Reactive (state, not a ref): the "+"
+   * re-renders on it.
    */
-  reportScheduledCount: (count: number | null) => void
+  reportScheduledCount: (count: number) => void
   focusComposer: () => void
 }
 
@@ -52,7 +52,7 @@ export function useReportScheduledCount(count: number) {
   useEffect(() => {
     if (!bridge) return
     bridge.reportScheduledCount(count)
-    return () => bridge.reportScheduledCount(null)
+    return () => bridge.reportScheduledCount(0)
   }, [bridge, count])
 }
 

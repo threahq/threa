@@ -392,7 +392,7 @@ function FootMenu({
   draftCount = 0,
 }: FootMenuProps) {
   const [open, setOpen] = useState(false)
-  const row = (label: string, icon: ReactNode, action: () => void, badge?: { count: number; label: string }) => (
+  const row = (label: string, icon: ReactNode, action: () => void, badge?: { count: number; noun: string }) => (
     <Button
       type="button"
       variant="ghost"
@@ -400,7 +400,7 @@ function FootMenu({
       disabled={disabled}
       // The count replaces the content-derived accessible name, so the label
       // has to ride inside it.
-      aria-label={badge ? `${label} (${badge.label})` : undefined}
+      aria-label={badge ? `${label} (${badge.count} ${badge.noun})` : undefined}
       className="h-9 w-full justify-start gap-2 px-2 text-sm"
       onPointerDown={(e) => e.preventDefault()}
       onClick={() => {
@@ -416,10 +416,9 @@ function FootMenu({
   // What the menu holds, named for the trigger. Only rows the menu actually
   // offers count: a foot without a Drafts row must not grow a dot for drafts
   // it can't reach.
-  const waiting = [
-    onOpenDrafts && draftCount > 0 ? `${draftCount} saved draft${draftCount === 1 ? "" : "s"}` : null,
-    onSchedule && scheduledCount > 0 ? `${scheduledCount} scheduled` : null,
-  ].filter((part): part is string => part !== null)
+  const waiting: string[] = []
+  if (onOpenDrafts && draftCount > 0) waiting.push(`${draftCount} saved draft${draftCount === 1 ? "" : "s"}`)
+  if (onSchedule && scheduledCount > 0) waiting.push(`${scheduledCount} scheduled`)
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -460,14 +459,14 @@ function FootMenu({
             "Schedule",
             <CalendarClock className="h-4 w-4" />,
             onSchedule,
-            scheduledCount > 0 ? { count: scheduledCount, label: `${scheduledCount} pending` } : undefined
+            scheduledCount > 0 ? { count: scheduledCount, noun: "pending" } : undefined
           )}
         {onOpenDrafts &&
           row(
             "Drafts",
             <FileEdit className="h-4 w-4" />,
             onOpenDrafts,
-            draftCount > 0 ? { count: draftCount, label: `${draftCount} saved` } : undefined
+            draftCount > 0 ? { count: draftCount, noun: "saved" } : undefined
           )}
         {onMobileExpandedChange &&
           row(

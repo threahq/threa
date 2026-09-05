@@ -63,7 +63,7 @@ describe("ScheduledMessagesPicker", () => {
 
     expect(reportScheduledCount).toHaveBeenLastCalledWith(2)
     unmount()
-    expect(reportScheduledCount).toHaveBeenLastCalledWith(null)
+    expect(reportScheduledCount).toHaveBeenLastCalledWith(0)
   })
 
   it("lets the date/time inputs take focus while guarding the action buttons (touch)", async () => {

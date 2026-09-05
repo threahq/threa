@@ -1074,15 +1074,14 @@ export function MessageComposer({
   // The picker owns the pending list; the phone foot hides its trigger, so it
   // publishes the count here for the "+" to wear.
   const [scheduledCount, setScheduledCount] = useState(0)
-  const reportScheduledCount = useCallback((count: number | null) => setScheduledCount(count ?? 0), [])
   const stashedDraftsBridge = useMemo<StashedDraftsComposerBridge>(
     () => ({
       openRef: stashedDraftsOpenRef,
       openScheduledRef: scheduledMessagesOpenRef,
-      reportScheduledCount,
+      reportScheduledCount: setScheduledCount,
       focusComposer: () => richEditorRef.current?.focus(),
     }),
-    [reportScheduledCount]
+    []
   )
   const composerEmpty = isEmptyContent(content) && pendingAttachments.length === 0
 
