@@ -1,8 +1,8 @@
 import { forwardRef } from "react"
 import type { Placement } from "@floating-ui/react"
-import { Hash } from "lucide-react"
 import { SuggestionList, type SuggestionListRef } from "./suggestion-list"
 import type { ChannelItem } from "./types"
+import { STREAM_ICONS } from "@/lib/streams"
 
 export type ChannelListRef = SuggestionListRef
 
@@ -11,12 +11,15 @@ interface ChannelListProps {
   clientRect: (() => DOMRect | null) | null
   command: (item: ChannelItem) => void
   placement?: Placement
+  /** Show the rows but arm none, so Enter still reaches the editor. */
+  deferSelection?: boolean
 }
 
 function ChannelItemContent({ item }: { item: ChannelItem }) {
+  const Icon = STREAM_ICONS[item.type]
   return (
     <>
-      <Hash className="h-4 w-4 text-green-600 dark:text-green-400" />
+      <Icon className="h-4 w-4 text-green-600 dark:text-green-400" />
       <div className="flex flex-1 flex-col items-start">
         <span className="font-medium">{item.name ?? item.slug}</span>
         <span className="text-xs text-muted-foreground">
@@ -29,11 +32,11 @@ function ChannelItemContent({ item }: { item: ChannelItem }) {
 }
 
 /**
- * Autocomplete list for #channels.
- * Shows available channels/streams with keyboard navigation.
+ * Autocomplete list for #stream links.
+ * Shows available channels and scratchpads with keyboard navigation.
  */
 export const ChannelList = forwardRef<ChannelListRef, ChannelListProps>(function ChannelList(
-  { items, clientRect, command, placement },
+  { items, clientRect, command, placement, deferSelection },
   ref
 ) {
   return (
@@ -43,9 +46,10 @@ export const ChannelList = forwardRef<ChannelListRef, ChannelListProps>(function
       clientRect={clientRect}
       command={command}
       getKey={(item) => item.id}
-      ariaLabel="Channel suggestions"
+      ariaLabel="Stream suggestions"
       renderItem={(item) => <ChannelItemContent item={item} />}
       placement={placement}
+      deferSelection={deferSelection}
     />
   )
 })

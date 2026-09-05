@@ -26,6 +26,12 @@ export interface TriggerExtensionConfig<TItem, TAttrs extends object> {
   char: string
   /** Whether trigger only works at start of line (default: false) */
   startOfLine?: boolean
+  /**
+   * Let the query contain the trigger char, so a doubled sigil stays one match
+   * (`##pi` → query `#pi`) instead of the second char starting a fresh match the
+   * `allowedPrefixes` check then rejects — which is what closes the popup.
+   */
+  allowToIncludeChar?: boolean
   /** Attribute definitions for the node */
   attributes: Record<keyof TAttrs, AttributeConfig>
   /** Returns the CSS class(es) for the rendered node */
@@ -72,6 +78,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
     pluginKey,
     char,
     startOfLine = false,
+    allowToIncludeChar = false,
     attributes,
     getClassName,
     getText,
@@ -144,6 +151,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
           pluginKey,
           char,
           allowSpaces: false,
+          allowToIncludeChar,
           startOfLine,
           findSuggestionMatch: withKeyboardCorrectionTolerance(pluginKey, this.editor),
           // Disable suggestions in code contexts (code blocks and inline code)

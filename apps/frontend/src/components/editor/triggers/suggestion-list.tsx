@@ -33,6 +33,13 @@ export interface SuggestionListProps<T> {
    * Omitted, every items change resets to the first row.
    */
   highlightResetKey?: string
+  /**
+   * Open with no row armed: nothing is highlighted and Enter/Tab fall through to
+   * the editor until the user arrows or hovers. For a list that opens on a
+   * prefix which is also markdown (`##` is an h2 marker) — the rows are visible
+   * so the user knows to keep typing, and the key that would send still sends.
+   */
+  deferSelection?: boolean
 }
 
 /**
@@ -51,6 +58,7 @@ function SuggestionListInner<T>(
     placement = "bottom-start",
     emptyState,
     highlightResetKey,
+    deferSelection = false,
   }: SuggestionListProps<T>,
   ref: React.ForwardedRef<SuggestionListRef>
 ) {
@@ -61,7 +69,8 @@ function SuggestionListInner<T>(
   // The highlight follows the row's key, not its position, so a recompute that
   // only changes array identity can't move it. A key no longer in the list
   // resolves to the first row.
-  const selectedIndex = Math.max(0, selectedKey === null ? -1 : keys.indexOf(selectedKey))
+  const explicitIndex = selectedKey === null ? -1 : keys.indexOf(selectedKey)
+  const selectedIndex = deferSelection && explicitIndex < 0 ? -1 : Math.max(0, explicitIndex)
   const keysRef = useRef<string[]>(keys)
   keysRef.current = keys
   const keySignature = keys.join("\u0000")
@@ -110,14 +119,15 @@ function SuggestionListInner<T>(
       switch (event.key) {
         case "ArrowUp":
           event.preventDefault()
-          setSelectedKey(keys[(selectedIndex - 1 + items.length) % items.length])
+          setSelectedKey(keys[selectedIndex < 0 ? items.length - 1 : (selectedIndex - 1 + items.length) % items.length])
           return true
         case "ArrowDown":
           event.preventDefault()
-          setSelectedKey(keys[(selectedIndex + 1) % items.length])
+          setSelectedKey(keys[selectedIndex < 0 ? 0 : (selectedIndex + 1) % items.length])
           return true
         case "Tab":
         case "Enter":
+          if (selectedIndex < 0) return false
           event.preventDefault()
           command(items[selectedIndex])
           return true

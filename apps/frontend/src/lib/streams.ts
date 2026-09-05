@@ -1,4 +1,4 @@
-import { StreamTypes } from "@threa/types"
+import { SLUG_MAX_LENGTH, StreamTypes } from "@threa/types"
 import type { StreamType } from "@threa/types"
 import { Bell, FileText, Hash, MessageSquare, MessageSquareDashed } from "lucide-react"
 import type { ComponentType } from "react"
@@ -185,4 +185,36 @@ export function resolveStreamName(
   const stream = caches.streams.find((s) => s.id === streamId)
   if (stream) return streamLabel(stream, context)
   return null
+}
+
+/**
+ * The stream types a `#` link can point at: the workspace's named, linkable
+ * rooms. One list, because the composer's suggestion source and the renderer's
+ * id→url/label map have to agree — a type offered by one and not resolved by
+ * the other inserts a chip that renders as dead plain text.
+ */
+export const LINKABLE_STREAM_TYPES: readonly StreamType[] = [StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD]
+
+/** Whether a `#` chip may point at this stream type ({@link LINKABLE_STREAM_TYPES}). */
+export function isLinkableStreamType(type: string): boolean {
+  return LINKABLE_STREAM_TYPES.includes(type as StreamType)
+}
+
+/**
+ * Label for a `#` chip pointing at `stream`. Channels carry a slug; scratchpads
+ * never do (`createScratchpad` mints none), so their display name is folded into
+ * slug shape. The chip's `attrs.id` is the authoritative reference (INV-64) and
+ * this is display only, so a fold collision between two same-named pads is
+ * harmless.
+ */
+export function streamChipSlug(stream: { type: string; slug?: string | null; displayName?: string | null }): string {
+  if (stream.slug) return stream.slug
+  const folded = streamLabel(stream, "generic")
+    .toLowerCase()
+    // Letters and digits in any script (INV-54): folding to ASCII would empty
+    // out a name written in one, and the chip would read `#scratchpad`.
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .slice(0, SLUG_MAX_LENGTH)
+    .replace(/^-+|-+$/g, "")
+  return folded || streamFallbackLabel(stream.type as StreamType, "noun")
 }
