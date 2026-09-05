@@ -57,14 +57,25 @@ function swallowUnclaimedDrop(event: globalThis.DragEvent) {
   if (event.dataTransfer) event.dataTransfer.dropEffect = "none"
 }
 
+/**
+ * A drop ends the drag, so it also disarms — the row's `dragend` is not the only
+ * way out. A row that unmounts mid-drag (a rename re-sorts its section, a socket
+ * event re-renders the list) never fires `dragend`, and a guard left armed
+ * swallows every unclaimed drop in the app for the rest of the session.
+ */
+function endMissedDropGuard(event: globalThis.DragEvent) {
+  swallowUnclaimedDrop(event)
+  setMissedDropGuard(false)
+}
+
 function setMissedDropGuard(armed: boolean) {
   if (armed) {
     window.addEventListener("dragover", swallowUnclaimedDrop)
-    window.addEventListener("drop", swallowUnclaimedDrop)
+    window.addEventListener("drop", endMissedDropGuard)
     return
   }
   window.removeEventListener("dragover", swallowUnclaimedDrop)
-  window.removeEventListener("drop", swallowUnclaimedDrop)
+  window.removeEventListener("drop", endMissedDropGuard)
 }
 
 /**

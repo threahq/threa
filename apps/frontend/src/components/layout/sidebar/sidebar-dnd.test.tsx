@@ -74,6 +74,24 @@ describe("DraggableStreamRow", () => {
     expect(afterDrag.defaultPrevented).toBe(false)
   })
 
+  it("comes down on the drop even when the row unmounted mid-drag and never fired dragend", () => {
+    const view = render(
+      <DraggableStreamRow workspaceId="ws_1" streamId="stream_1" label="Pi remote control">
+        <a href="/w/ws_1/s/stream_1">Pi remote control</a>
+      </DraggableStreamRow>
+    )
+    fireEvent.dragStart(screen.getByText("Pi remote control"), { dataTransfer: stubDataTransfer() })
+    view.unmount()
+
+    const missed = new Event("drop", { bubbles: true, cancelable: true })
+    window.dispatchEvent(missed)
+    expect(missed.defaultPrevented).toBe(true)
+
+    const afterDrag = new Event("drop", { bubbles: true, cancelable: true })
+    window.dispatchEvent(afterDrag)
+    expect(afterDrag.defaultPrevented).toBe(false)
+  })
+
   it("leaves a drop a real target already claimed alone", () => {
     render(
       <DraggableStreamRow workspaceId="ws_1" streamId="stream_1" label="Pi remote control">
