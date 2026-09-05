@@ -42,6 +42,22 @@ const mockMemoSearchState = {
 
 const mockUseMemoSearch = vi.fn()
 
+function buildConversationResult(): ConversationSearchResult {
+  return {
+    id: "conv_1",
+    streamId: "stream_channel1",
+    topicSummary: "Choosing the launch date",
+    summary: "The team weighed a May launch against waiting for the mobile build.",
+    status: "resolved",
+    messageCount: 7,
+    participantIds: ["user_1"],
+    firstMessageId: "msg_first",
+    firstMessageAt: "2026-01-01T00:00:00.000Z",
+    lastMessageAt: "2026-01-02T00:00:00.000Z",
+    distance: 0.3,
+  }
+}
+
 function buildMemoResult(): MemoExplorerResult {
   return {
     memo: {
@@ -754,21 +770,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
     it("shows the compact Conversations section between memories and messages", async () => {
       mockMemoSearchState.results = [buildMemoResult()]
       mockSearchState.results = mockSearchResultsList
-      mockSearchState.conversations = [
-        {
-          id: "conv_1",
-          streamId: "stream_channel1",
-          topicSummary: "Choosing the launch date",
-          summary: "The team weighed a May launch against waiting for the mobile build.",
-          status: "resolved",
-          messageCount: 7,
-          participantIds: ["user_1"],
-          firstMessageId: "msg_first",
-          firstMessageAt: "2026-01-01T00:00:00.000Z",
-          lastMessageAt: "2026-01-02T00:00:00.000Z",
-          distance: 0.3,
-        },
-      ]
+      mockSearchState.conversations = [buildConversationResult()]
 
       const user = userEvent.setup()
       renderPanel()
@@ -790,6 +792,23 @@ describe("SidebarSearchPanel Integration Tests", () => {
       // Enter still opens the active MESSAGE result, never a conversation card
       await user.keyboard("{Enter}")
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
+    })
+
+    it("counts a conversation-only match as a result instead of showing the empty state", async () => {
+      mockSearchState.results = []
+      mockSearchState.conversations = [buildConversationResult()]
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByText("Conversations")).toBeInTheDocument()
+      expect(screen.getByText("1 result in 1 stream")).toBeInTheDocument()
+      expect(screen.queryByText("No results")).not.toBeInTheDocument()
+      expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
     })
 
     it("opens the active MESSAGE result on Enter, never a memo", async () => {

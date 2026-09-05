@@ -64,7 +64,8 @@ export async function processChunk(
   const pending = conversations.flatMap((conversation) => {
     const text = texts.get(conversation.id) ?? ""
     const sourceHash = hashConversationEmbeddingText(text)
-    return storedHashes.get(conversation.id) === sourceHash ? [] : [{ id: conversation.id, text, sourceHash }]
+    const expectedSourceHash = storedHashes.get(conversation.id) ?? null
+    return expectedSourceHash === sourceHash ? [] : [{ id: conversation.id, text, sourceHash, expectedSourceHash }]
   })
 
   let processed = 0
@@ -77,7 +78,12 @@ export async function processChunk(
     processed += await ConversationRepository.updateEmbeddings(
       ctx.pool,
       workspaceId,
-      sub.map((entry, index) => ({ id: entry.id, embedding: embeddings[index]!, sourceHash: entry.sourceHash }))
+      sub.map((entry, index) => ({
+        id: entry.id,
+        embedding: embeddings[index]!,
+        sourceHash: entry.sourceHash,
+        expectedSourceHash: entry.expectedSourceHash,
+      }))
     )
   }
 

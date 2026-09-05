@@ -296,5 +296,25 @@ describe("SearchPage", () => {
       expect(await screen.findByText("#general")).toBeInTheDocument()
       expect(screen.queryByText("Conversations")).not.toBeInTheDocument()
     })
+
+    it("counts a conversation-only match as a result instead of showing the empty state", async () => {
+      mockConversations = [buildConversationResult()]
+      vi.spyOn(hooksModule, "useSearch").mockImplementation(
+        () =>
+          ({
+            results: [],
+            conversations: mockConversations,
+            isLoading: false,
+            error: null,
+            search,
+            clear,
+          }) as unknown as ReturnType<typeof hooksModule.useSearch>
+      )
+      renderPage()
+
+      expect(await screen.findByText("Conversations")).toBeInTheDocument()
+      expect(screen.getByText("1 result")).toBeInTheDocument()
+      expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
+    })
   })
 })

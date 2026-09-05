@@ -45,6 +45,8 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     searchDeeper,
   } = useMessageSearch(workspaceId, query)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
+  const resultCount = results.length + conversations.length
+  const hasResults = resultCount > 0
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
   const { memos, exploreHref } = useMemoMatches(workspaceId, {
@@ -67,7 +69,10 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   }, [registerFocusHandler])
 
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
-  const streamCount = useMemo(() => new Set(results.map((r) => r.streamId)).size, [results])
+  const streamCount = useMemo(
+    () => new Set([...results.map((r) => r.streamId), ...conversations.map((c) => c.streamId)]).size,
+    [results, conversations]
+  )
   const emptySummary = isLoading ? "Searching…" : "No results"
   const resultSummary = hasResults
     ? `${resultCount} result${resultCount === 1 ? "" : "s"} in ${streamCount} stream${streamCount === 1 ? "" : "s"}`

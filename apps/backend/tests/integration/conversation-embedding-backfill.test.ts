@@ -244,6 +244,85 @@ describe("conversation-embeddings backfill and worker against the real schema", 
     )
   })
 
+  test("the worker throws for a retry when a newer embedding landed while it was embedding", async () => {
+    const observed = `Choosing the launch date\nShipping in May.\n${openingText}`
+    const newer = `Choosing the launch date\nShipping in June.\n${openingText}`
+    await ConversationRepository.update(pool, wsId, summarizedId, { summary: "Shipping in May." })
+
+    const racing: EmbeddingServiceLike = {
+      async embed() {
+        // Another worker finishes first with text that changed after this job's read
+        const stored = (await readEmbeddingRow(pool, summarizedId)).embedding_source_hash
+        await ConversationRepository.update(pool, wsId, summarizedId, { summary: "Shipping in June." })
+        await ConversationRepository.updateEmbeddings(pool, wsId, [
+          {
+            id: summarizedId,
+            embedding: unitVector(3),
+            sourceHash: hashConversationEmbeddingText(newer),
+            expectedSourceHash: stored,
+          },
+        ])
+        return unitVector(9)
+      },
+      async embedBatch() {
+        throw new Error("unused")
+      },
+    }
+    const job = {
+      id: "job_race",
+      name: "conversation-embedding.generate",
+      data: { conversationId: summarizedId, workspaceId: wsId },
+    }
+
+    await expect(createConversationEmbeddingWorker({ pool, embeddingService: racing })(job)).rejects.toThrow(
+      /source changed during embed/
+    )
+    expect(await readEmbeddingRow(pool, summarizedId)).toEqual({
+      embedding: `[${unitVector(3).join(",")}]`,
+      embedding_source_hash: hashConversationEmbeddingText(newer),
+    })
+    expect(hashConversationEmbeddingText(observed)).not.toBe(hashConversationEmbeddingText(newer))
+
+    // The retry sees the newer text already stored and does nothing
+    const before = embeddingService.singles.length
+    await createConversationEmbeddingWorker({ pool, embeddingService })(job)
+    expect(embeddingService.singles.length).toBe(before)
+  })
+
+  test("processChunk skips a row whose embedding moved while the batch was embedding", async () => {
+    const newer = "Deploy failures every Friday.\nthe deploy failed again"
+    await ConversationRepository.update(pool, wsId, summaryOnlyId, { summary: "Deploy failures on Fridays." })
+
+    const racing: EmbeddingServiceLike = {
+      async embed() {
+        throw new Error("unused")
+      },
+      async embedBatch(texts) {
+        const stored = (await readEmbeddingRow(pool, summaryOnlyId)).embedding_source_hash
+        await ConversationRepository.update(pool, wsId, summaryOnlyId, { summary: "Deploy failures every Friday." })
+        await ConversationRepository.updateEmbeddings(pool, wsId, [
+          {
+            id: summaryOnlyId,
+            embedding: unitVector(5),
+            sourceHash: hashConversationEmbeddingText(newer),
+            expectedSourceHash: stored,
+          },
+        ])
+        return texts.map(() => unitVector(11))
+      },
+    }
+
+    const result = await processChunk({ pool, embeddingService: racing }, wsId, { ids: [summaryOnlyId] })
+    expect(result).toEqual({ processed: 0 })
+    expect(await readEmbeddingRow(pool, summaryOnlyId)).toEqual({
+      embedding: `[${unitVector(5).join(",")}]`,
+      embedding_source_hash: hashConversationEmbeddingText(newer),
+    })
+
+    const rerun = await processChunk(ctx, wsId, { ids: [summaryOnlyId] })
+    expect(rerun).toEqual({ processed: 0 })
+  })
+
   test("the worker leaves unsummarized and sealed conversations alone", async () => {
     const worker = createConversationEmbeddingWorker({ pool, embeddingService })
     const before = embeddingService.singles.length

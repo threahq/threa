@@ -59,6 +59,8 @@ describe("Conversation search results", () => {
   let farId: string
   let hiddenId: string
   let noMessagesId: string
+  let events: EventService
+  let post: (sid: string, authorId: string, text: string) => Promise<{ id: string }>
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
@@ -94,8 +96,8 @@ describe("Conversation search results", () => {
       await StreamMemberRepository.insert(client, privatePadId, outsiderId)
     })
 
-    const events = new EventService(pool)
-    const post = async (sid: string, authorId: string, text: string) =>
+    events = new EventService(pool)
+    post = async (sid: string, authorId: string, text: string) =>
       events.createMessage({
         workspaceId: wsId,
         streamId: sid,
@@ -167,10 +169,10 @@ describe("Conversation search results", () => {
     // Same direction as the query (distance 0) for the match, the hidden one and
     // the emptied one; orthogonal (distance 1) for the lunch conversation.
     await ConversationRepository.updateEmbeddings(pool, wsId, [
-      { id: matchId, embedding: unit(0), sourceHash: "h-match" },
-      { id: hiddenId, embedding: unit(0), sourceHash: "h-hidden" },
-      { id: noMessagesId, embedding: unit(0), sourceHash: "h-empty" },
-      { id: farId, embedding: unit(1), sourceHash: "h-far" },
+      { id: matchId, embedding: unit(0), sourceHash: "h-match", expectedSourceHash: null },
+      { id: hiddenId, embedding: unit(0), sourceHash: "h-hidden", expectedSourceHash: null },
+      { id: noMessagesId, embedding: unit(0), sourceHash: "h-empty", expectedSourceHash: null },
+      { id: farId, embedding: unit(1), sourceHash: "h-far", expectedSourceHash: null },
     ])
   })
 
@@ -271,6 +273,42 @@ describe("Conversation search results", () => {
       query: "lunch",
     })
     expect(conversations.map((c) => c.id)).toEqual([farId])
+  })
+
+  test("fills the candidate limit past nearer conversations whose messages are all deleted", async () => {
+    // Three conversations sit exactly on the query vector but every message in
+    // them is deleted; the launch conversation is slightly further away. The
+    // survivor check has to run before the LIMIT, or these three would fill it.
+    const query = unit(0)
+    query[2] = 0.1
+    for (let i = 0; i < 3; i++) {
+      const message = await post(padId, memberId, `retracted ${i}`)
+      await events.deleteMessageInternal({
+        workspaceId: wsId,
+        messageId: message.id,
+        streamId: padId,
+        actorId: memberId,
+      })
+      const ghost = await ConversationRepository.insert(pool, {
+        id: conversationId(),
+        streamId: padId,
+        workspaceId: wsId,
+        topicSummary: `Ghost ${i}`,
+        topicSummarySource: TitleSources.GENERATED,
+        summary: null,
+      })
+      await ConversationRepository.addPrimaryMessages(pool, wsId, ghost.id, [message.id], [memberId])
+      await ConversationRepository.updateEmbeddings(pool, wsId, [
+        { id: ghost.id, embedding: query, sourceHash: `h-ghost-${i}`, expectedSourceHash: null },
+      ])
+    }
+
+    const { conversations } = await makeService(pool, query).search({
+      workspaceId: wsId,
+      permissions: await permissionsFor(memberId),
+      query: "when do we launch",
+    })
+    expect(conversations.map((c) => c.id)).toEqual([matchId])
   })
 
   test("never surfaces a conversation from a stream the caller cannot access", async () => {

@@ -797,25 +797,29 @@ export const ConversationRepository = {
   },
 
   /**
-   * Store embeddings for the given source hashes. A row whose stored hash already
-   * equals the incoming one is left alone, so two workers embedding the same text
-   * cannot flip-flop the column (INV-20). Returns the number of rows written.
+   * Store embeddings, each guarded on the source hash the caller observed before
+   * embedding (`expectedSourceHash`, null for a never-embedded row). A row whose
+   * stored hash moved in the meantime is left alone, so a slow embed of older
+   * text can never overwrite a newer one (INV-20). Returns the number of rows written.
    */
   async updateEmbeddings(
     db: Querier,
     workspaceId: string,
-    rows: Array<{ id: string; embedding: number[]; sourceHash: string }>
+    rows: Array<{ id: string; embedding: number[]; sourceHash: string; expectedSourceHash: string | null }>
   ): Promise<number> {
     if (rows.length === 0) return 0
     const ids = rows.map((row) => row.id)
     const embeddingLiterals = rows.map((row) => `[${row.embedding.join(",")}]`)
     const hashes = rows.map((row) => row.sourceHash)
+    const expected = rows.map((row) => row.expectedSourceHash)
     const result = await db.query(sql`
       UPDATE conversations c
       SET embedding = v.embedding::vector, embedding_source_hash = v.source_hash
-      FROM UNNEST(${ids}::text[], ${embeddingLiterals}::text[], ${hashes}::text[]) AS v(id, embedding, source_hash)
+      FROM UNNEST(${ids}::text[], ${embeddingLiterals}::text[], ${hashes}::text[], ${expected}::text[])
+        AS v(id, embedding, source_hash, expected_hash)
       WHERE c.id = v.id
         AND c.workspace_id = ${workspaceId}
+        AND c.embedding_source_hash IS NOT DISTINCT FROM v.expected_hash
         AND c.embedding_source_hash IS DISTINCT FROM v.source_hash
     `)
     return result.rowCount ?? 0

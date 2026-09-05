@@ -17,8 +17,9 @@ export interface ConversationEmbeddingWorkerDeps {
 
 /**
  * Three phases (INV-41): read the conversation and its opener, embed with no
- * connection held, write back. The write is guarded on the source hash, so a
- * concurrent re-extraction that already stored newer text wins (INV-20).
+ * connection held, write back. The write is a CAS on the source hash observed
+ * before embedding; when another writer moved it meanwhile the job throws so
+ * the queue retries against the current text (INV-20).
  */
 export function createConversationEmbeddingWorker(
   deps: ConversationEmbeddingWorkerDeps
@@ -49,7 +50,8 @@ export function createConversationEmbeddingWorker(
     const text = (await loadConversationEmbeddingTexts(pool, [conversation])).get(conversation.id) ?? ""
     const sourceHash = hashConversationEmbeddingText(text)
     const storedHashes = await ConversationRepository.findEmbeddingSourceHashes(pool, workspaceId, [conversation.id])
-    if (storedHashes.get(conversation.id) === sourceHash) {
+    const expectedSourceHash = storedHashes.get(conversation.id) ?? null
+    if (expectedSourceHash === sourceHash) {
       log.debug("Embedding text unchanged, skipping")
       return
     }
@@ -57,11 +59,10 @@ export function createConversationEmbeddingWorker(
     const embedding = await embeddingService.embed(text, { workspaceId, functionId: "conversation-embedding" })
 
     const written = await ConversationRepository.updateEmbeddings(pool, workspaceId, [
-      { id: conversation.id, embedding, sourceHash },
+      { id: conversation.id, embedding, sourceHash, expectedSourceHash },
     ])
     if (written === 0) {
-      log.info("Conversation changed between fetch and write, embedding discarded")
-      return
+      throw new Error(`Conversation ${conversation.id} embedding source changed during embed; retrying`)
     }
     log.info("Conversation embedding stored")
   }

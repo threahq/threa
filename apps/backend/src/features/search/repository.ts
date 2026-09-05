@@ -466,7 +466,7 @@ export const SearchRepository = {
         WHERE c.workspace_id = ${workspaceId}
           AND c.stream_id = ANY(${streamIds})
           AND c.embedding IS NOT NULL
-          AND cardinality(c.message_ids) > 0
+          AND EXISTS (SELECT 1 FROM messages m WHERE m.id = ANY(c.message_ids) AND m.deleted_at IS NULL)
           AND (${filters.authorId === undefined} OR c.participant_ids @> ARRAY[${filters.authorId ?? ""}]::text[])
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
           AND (${filters.before === undefined} OR c.created_at < ${filters.before ?? new Date()})
@@ -496,7 +496,7 @@ export const SearchRepository = {
         FROM messages m
         WHERE m.id = ANY(h.message_ids) AND m.deleted_at IS NULL
       ) span
-      WHERE h.distance <= ${maxDistance} AND span.message_count > 0
+      WHERE h.distance <= ${maxDistance}
       ORDER BY h.distance ASC
     `)
 
