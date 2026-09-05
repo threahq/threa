@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useMemoSearch } from "@/hooks"
+import { useFeatureFlag, useMemoSearch } from "@/hooks"
 import type { MemoExplorerResult, SearchFilters } from "@/api"
 import type { FilterType, ParsedFilter } from "@/lib/search-query-parser"
 import { SEARCH_DEBOUNCE_MS } from "./use-message-search"
@@ -31,7 +31,9 @@ export function useMemoMatches(workspaceId: string, params: UseMemoMatchesParams
     return () => clearTimeout(timer)
   }, [searchText])
 
+  const searchFlag = useFeatureFlag(workspaceId, "search")
   const enabled =
+    searchFlag === "on" &&
     hasQuery &&
     debouncedText.trim().length > 0 &&
     !parsedFilters.some((filter) => FILTERS_WITHOUT_MEMO_EQUIVALENT.includes(filter.type))

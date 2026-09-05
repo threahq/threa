@@ -13,6 +13,7 @@ function makeWorkspace(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDep
     workspaceId: "workspace_test",
     accessibleStreamIds: ["stream_ok"],
     invokingUserId: "usr_test",
+    searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
     storage: {} as WorkspaceToolDeps["storage"],
     attachmentService: {} as WorkspaceToolDeps["attachmentService"],

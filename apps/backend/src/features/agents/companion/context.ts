@@ -99,6 +99,8 @@ export interface AgentContext {
   messages: ModelMessage[]
   triggerMessage: Message | null
   invokingUserId: string | undefined
+  /** WorkOS id of the invoking user, for user-layer feature flags. */
+  invokingWorkosUserId: string | undefined
   preferences: UserPreferences | undefined
   authorNames: Map<string, string>
   streamContext: StreamContext
@@ -518,6 +520,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     messages,
     triggerMessage,
     invokingUserId,
+    invokingWorkosUserId: invokingUser?.workosUserId,
     preferences,
     authorNames,
     streamContext,

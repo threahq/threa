@@ -52,6 +52,7 @@ function createHandlers(overrides: Partial<PublicApiDeps> = {}): ReturnType<type
   const deps: PublicApiDeps = {
     streamService,
     searchService: {} as PublicApiDeps["searchService"],
+    featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],

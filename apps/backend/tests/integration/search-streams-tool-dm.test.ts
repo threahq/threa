@@ -68,6 +68,7 @@ describe("search_streams DM matching", () => {
         workspaceId: testWorkspaceId,
         accessibleStreamIds: [dmId],
         invokingUserId: ownerMember.id,
+        searchFlag: "on",
         searchService: {} as never,
         storage: {} as never,
       })
@@ -92,6 +93,7 @@ describe("search_streams DM matching", () => {
         workspaceId: testWorkspaceId,
         accessibleStreamIds: [dmId],
         invokingUserId: peerMember.id,
+        searchFlag: "on",
         searchService: {} as never,
         storage: {} as never,
       })
@@ -205,6 +207,7 @@ describe("search_streams DM matching", () => {
       const accessSpec = await computeAgentAccessSpec(client, {
         stream: scratchpad!,
         invokingUserId: ownerMember.id,
+        searchFlag: "on",
       })
 
       expect(accessSpec.type).toBe("user_full_access")
@@ -223,6 +226,7 @@ describe("search_streams DM matching", () => {
         workspaceId: testWorkspaceId,
         accessibleStreamIds,
         invokingUserId: ownerMember.id,
+        searchFlag: "on",
         searchService: {} as never,
         storage: {} as never,
       })
@@ -288,6 +292,7 @@ describe("search_streams DM matching", () => {
         workspaceId: testWorkspaceId,
         accessibleStreamIds: [dmId],
         invokingUserId: ownerMember.id,
+        searchFlag: "on",
         searchService: {} as never,
         storage: {} as never,
       })
@@ -357,6 +362,7 @@ describe("search_streams DM matching", () => {
         workspaceId: testWorkspaceId,
         accessibleStreamIds: [dmId],
         invokingUserId: ownerMember.id,
+        searchFlag: "on",
         searchService: {} as never,
         storage: {} as never,
       })
@@ -432,6 +438,7 @@ describe("search_streams DM matching", () => {
         workspaceId: testWorkspaceId,
         accessibleStreamIds: [dmId, ...channelIds],
         invokingUserId: ownerMember.id,
+        searchFlag: "on",
         searchService: {} as never,
         storage: {} as never,
       })
@@ -569,6 +576,7 @@ describe("search_streams DM matching", () => {
         workspaceId: testWorkspaceId,
         accessibleStreamIds: [targetDmId, shortSlugDmId],
         invokingUserId: ownerMember.id,
+        searchFlag: "on",
         searchService: {} as never,
         storage: {} as never,
       })

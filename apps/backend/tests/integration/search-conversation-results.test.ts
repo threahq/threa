@@ -186,6 +186,7 @@ describe("Conversation search results", () => {
 
   test("returns the matching conversation with its non-deleted span, count and first-message deep link", async () => {
     const { conversations } = await makeService(pool).search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "when do we launch",
@@ -214,11 +215,23 @@ describe("Conversation search results", () => {
     })
   })
 
+  test("returns no conversations when the search flag is off", async () => {
+    const { conversations } = await makeService(pool).search({
+      searchFlag: "off",
+      workspaceId: wsId,
+      permissions: await permissionsFor(memberId),
+      query: "when do we launch",
+    })
+
+    expect(conversations).toEqual([])
+  })
+
   test("points the deep link at the next surviving message when the opener is deleted", async () => {
     const events = new EventService(pool)
     await events.deleteMessageInternal({ workspaceId: wsId, messageId: openerId, streamId: padId, actorId: memberId })
     try {
       const { conversations } = await makeService(pool).search({
+        searchFlag: "on",
         workspaceId: wsId,
         permissions: await permissionsFor(memberId),
         query: "when do we launch",
@@ -238,6 +251,7 @@ describe("Conversation search results", () => {
     const permissions = await permissionsFor(memberId)
 
     const byOutsider = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions,
       query: "launch",
@@ -246,6 +260,7 @@ describe("Conversation search results", () => {
     expect(byOutsider.conversations.map((c) => c.id)).toEqual([matchId])
 
     const byStranger = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions,
       query: "launch",
@@ -256,6 +271,7 @@ describe("Conversation search results", () => {
 
   test("returns no conversations for exact searches", async () => {
     const { conversations } = await makeService(pool).search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "launch",
@@ -268,6 +284,7 @@ describe("Conversation search results", () => {
     // Query vector aligned with the lunch conversation only: the launch
     // conversation is now orthogonal and must not appear.
     const { conversations } = await makeService(pool, unit(1)).search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "lunch",
@@ -304,6 +321,7 @@ describe("Conversation search results", () => {
     }
 
     const { conversations } = await makeService(pool, query).search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(memberId),
       query: "when do we launch",
@@ -313,6 +331,7 @@ describe("Conversation search results", () => {
 
   test("never surfaces a conversation from a stream the caller cannot access", async () => {
     const { conversations } = await makeService(pool).search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(outsiderId),
       query: "launch",

@@ -60,6 +60,10 @@ export const FEATURE_FLAGS = {
   // user's own opt-in preference is the consent, and the upload path re-checks
   // both server-side.
   perfDiagnostics: defineFlag({ values: ["off", "available"], scopes: ["workspace", "user"], default: "off" }),
+  // "on" is the reworked search: OR-joined keyword terms, no semantic distance
+  // gate, deep mode, memo and conversation groups, and the matching agent tool
+  // guidance. "off" keeps the pre-rework ranking on every surface.
+  search: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS

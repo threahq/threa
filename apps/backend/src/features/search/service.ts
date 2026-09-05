@@ -2,11 +2,13 @@ import { Pool } from "pg"
 import { SearchRepository, type ConversationSearchResult, type SearchResult, type ResolvedFilters } from "./repository"
 import type { EmbeddingServiceLike, RerankerLike } from "../memos"
 import { logger } from "../../lib/logger"
-import type { StreamType } from "@threa/types"
+import type { FeatureFlagValue, StreamType } from "@threa/types"
 import {
   CONVERSATION_SEARCH_LIMIT,
   CONVERSATION_SEARCH_MAX_DISTANCE,
   hybridWeightsForQuery,
+  searchRankingForFlag,
+  type SearchRanking,
   SEARCH_DEEP_CANDIDATE_POOL,
   SEARCH_RERANK_CANDIDATE_LIMIT,
   SEARCH_RERANK_SNIPPET_CHARS,
@@ -53,6 +55,12 @@ export interface SearchParams {
   skipEmbedding?: boolean
   /** Rewrite the query into variants, fuse, and rerank; costs two model calls. */
   deep?: boolean
+  /**
+   * The requester's resolved `search` flag. "off" runs the pre-rework ranking,
+   * ignores `deep` and returns no conversations. Required so a caller cannot
+   * fall into either behaviour by omission (INV-11).
+   */
+  searchFlag: FeatureFlagValue<"search">
 }
 
 export interface SearchResponse {
@@ -153,10 +161,12 @@ export class SearchService {
       limit = DEFAULT_LIMIT,
       exact = false,
       skipEmbedding = false,
-      deep = false,
+      searchFlag,
     } = params
+    const ranking = searchRankingForFlag(searchFlag)
+    const deep = ranking === "improved" && (params.deep ?? false)
 
-    logger.debug({ query, phrases, filters, workspaceId, exact, deep }, "Search request")
+    logger.debug({ query, phrases, filters, workspaceId, exact, deep, ranking }, "Search request")
 
     const candidateStreamIds = this.resolveStreamIds(permissions.accessibleStreamIds, filters)
 
@@ -210,7 +220,7 @@ export class SearchService {
     }
 
     const conversationLeg =
-      queryEmbedding.length > 0
+      ranking === "improved" && queryEmbedding.length > 0
         ? SearchRepository.conversationSearch(this.pool, {
             workspaceId,
             embedding: queryEmbedding,
@@ -224,7 +234,15 @@ export class SearchService {
     const messageLeg =
       deep && queryEmbedding.length > 0
         ? this.deepSearch({ normalizedQuery, queryEmbedding, phrases, streamIds, repoFilters, limit, workspaceId })
-        : this.singleQuerySearch({ normalizedQuery, embedding: queryEmbedding, phrases, streamIds, repoFilters, limit })
+        : this.singleQuerySearch({
+            normalizedQuery,
+            embedding: queryEmbedding,
+            phrases,
+            streamIds,
+            repoFilters,
+            limit,
+            ranking,
+          })
 
     const [results, conversations] = await Promise.all([messageLeg, conversationLeg])
     return { results, conversations, excludedE2eStreamCount }
@@ -237,8 +255,9 @@ export class SearchService {
     streamIds: string[]
     repoFilters: ResolvedFilters
     limit: number
+    ranking: SearchRanking
   }): Promise<SearchResult[]> {
-    const { normalizedQuery, embedding, phrases, streamIds, repoFilters, limit } = params
+    const { normalizedQuery, embedding, phrases, streamIds, repoFilters, limit, ranking } = params
 
     // INV-30: each branch issues a single query, pass pool directly
     const hasQuery = normalizedQuery.length > 0
@@ -251,6 +270,7 @@ export class SearchService {
         streamIds,
         filters: repoFilters,
         limit,
+        ranking,
       })
     }
 
@@ -261,7 +281,8 @@ export class SearchService {
       streamIds,
       filters: repoFilters,
       limit,
-      ...hybridWeightsForQuery(normalizedQuery),
+      ranking,
+      ...hybridWeightsForQuery(normalizedQuery, ranking),
     })
   }
 
@@ -295,6 +316,7 @@ export class SearchService {
         streamIds,
         repoFilters,
         limit,
+        ranking: "improved",
       })
     }
 
@@ -308,7 +330,8 @@ export class SearchService {
           streamIds,
           filters: repoFilters,
           limit: SEARCH_DEEP_CANDIDATE_POOL,
-          ...hybridWeightsForQuery(q),
+          ranking: "improved",
+          ...hybridWeightsForQuery(q, "improved"),
         })
       )
     )

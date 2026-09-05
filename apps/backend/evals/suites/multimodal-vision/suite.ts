@@ -403,6 +403,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       workspaceAgent,
       generalResearcher,
       searchService,
+      resolveSearchFlag: async () => "on",
       conversationSummaryService,
       attachmentService,
       memoExplorerService,

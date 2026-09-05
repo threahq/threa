@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type { FeatureFlagValue } from "@threa/types"
 import { classifyMemoQueryIntent, type MemoQueryIntent } from "../memos"
 
 /**
@@ -13,7 +14,28 @@ const HYBRID_WEIGHTS_BY_INTENT: Record<MemoQueryIntent, { keywordWeight: number;
   general: { keywordWeight: 0.4, semanticWeight: 0.6 },
 }
 
-export function hybridWeightsForQuery(query: string): { keywordWeight: number; semanticWeight: number } {
+/**
+ * Which message ranking a search runs. `legacy` is the pre-rework behaviour
+ * behind the `search` feature flag's "off" value: AND-joined `websearch_to_tsquery`
+ * terms, fixed fusion weights and a semantic distance gate. `improved` is the
+ * flag's "on" value.
+ */
+export type SearchRanking = "legacy" | "improved"
+
+export function searchRankingForFlag(searchFlag: FeatureFlagValue<"search">): SearchRanking {
+  return searchFlag === "on" ? "improved" : "legacy"
+}
+
+const LEGACY_HYBRID_WEIGHTS = { keywordWeight: 0.6, semanticWeight: 0.4 }
+
+/** Max cosine distance for a semantic message hit under legacy ranking. */
+export const LEGACY_SEMANTIC_DISTANCE_THRESHOLD = 0.8
+
+export function hybridWeightsForQuery(
+  query: string,
+  ranking: SearchRanking
+): { keywordWeight: number; semanticWeight: number } {
+  if (ranking === "legacy") return LEGACY_HYBRID_WEIGHTS
   const { intent } = classifyMemoQueryIntent(query)
   return HYBRID_WEIGHTS_BY_INTENT[intent]
 }

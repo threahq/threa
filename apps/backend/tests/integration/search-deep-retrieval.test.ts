@@ -142,6 +142,7 @@ describe("Message deep search retrieval", () => {
     })
 
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "deploy failed",
@@ -181,6 +182,7 @@ describe("Message deep search retrieval", () => {
     })
 
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "deploy failed",
@@ -209,6 +211,7 @@ describe("Message deep search retrieval", () => {
     // finds it directly; deep mode is ignored for exact search, so `expand`
     // (which throws) is never reached.
     const { results } = await service.search({
+      searchFlag: "on",
       workspaceId: wsId,
       permissions: await permissionsFor(wsId, uid),
       query: "deploy failed",

@@ -98,6 +98,7 @@ describe("buildSystemPrompt", () => {
     const tools = [
       createWorkspaceResearchTool({
         runWorkspaceAgent: async () => ({ sources: [], memos: [], messages: [], substeps: [] }) as never,
+        searchFlag: "on",
       }),
       createWebSearchTool({ tavilyApiKey: "tvly-test" }),
       createReadUrlTool(),

@@ -17,6 +17,7 @@ describe("SearchRepository phrase predicates", () => {
   test("requires every phrase in full-text results", async () => {
     const db = makeDb()
     await SearchRepository.fullTextSearch(db, {
+      ranking: "improved",
       query: "created pr",
       phrases: ["1429", "urgent"],
       streamIds: ["stream_member_channel"],
@@ -32,6 +33,7 @@ describe("SearchRepository phrase predicates", () => {
   test("uses literal case-insensitive phrase matching", async () => {
     const db = makeDb()
     await SearchRepository.fullTextSearch(db, {
+      ranking: "improved",
       query: "error",
       phrases: ["A%_\\B"],
       streamIds: ["stream_member_channel"],
@@ -47,6 +49,7 @@ describe("SearchRepository phrase predicates", () => {
   test("uses recency search with phrase predicates when semantic text is empty", async () => {
     const db = makeDb()
     await SearchRepository.fullTextSearch(db, {
+      ranking: "improved",
       query: "",
       phrases: ["1429"],
       streamIds: ["stream_member_channel"],
@@ -63,6 +66,7 @@ describe("SearchRepository phrase predicates", () => {
   test("applies every phrase to keyword and semantic hybrid CTEs", async () => {
     const db = makeDb()
     await SearchRepository.hybridSearch(db, {
+      ranking: "improved",
       query: "created pr",
       phrases: ["1429"],
       embedding: [0.1, 0.2],

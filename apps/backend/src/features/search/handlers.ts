@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { SearchService } from "./service"
+import type { FeatureFlagService } from "../feature-flags"
 import type { ConversationSearchResult, SearchResult } from "./repository"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
 import { validateRequest } from "../../lib/validation"
@@ -61,9 +62,10 @@ export function serializeConversationSearchResult(result: ConversationSearchResu
 interface Dependencies {
   pool: Pool
   searchService: SearchService
+  featureFlagService: FeatureFlagService
 }
 
-export function createSearchHandlers({ pool, searchService }: Dependencies) {
+export function createSearchHandlers({ pool, searchService, featureFlagService }: Dependencies) {
   return {
     async search(req: Request, res: Response) {
       const userId = req.user!.id
@@ -110,7 +112,10 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
       }
 
       // Resolve access before calling the auth-agnostic search service
-      const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, filters)
+      const [accessibleStreamIds, searchFlag] = await Promise.all([
+        resolveUserAccessibleStreamIds(pool, workspaceId, userId, filters),
+        featureFlagService.getFlag(workspaceId, req.user!.workosUserId, "search"),
+      ])
 
       const { results, conversations, excludedE2eStreamCount } = await searchService.search({
         workspaceId,
@@ -121,6 +126,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
         exact,
         limit,
         deep,
+        searchFlag,
       })
 
       setAuditSubjects(res, [

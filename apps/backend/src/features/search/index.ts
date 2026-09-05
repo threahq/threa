@@ -2,7 +2,7 @@ export { createSearchHandlers, serializeSearchResult, serializeConversationSearc
 export { resolveUserAccessibleStreamIds } from "./access"
 export { SearchService } from "./service"
 export { SearchRepository } from "./repository"
-export { hybridWeightsForQuery } from "./config"
+export { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "./config"
 export { SearchQueryExpander } from "./query-expansion"
 export { StubQueryExpander } from "./query-expansion.stub"
 
