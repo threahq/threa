@@ -912,6 +912,7 @@ export class SyncEngine {
       await this.subscribeMemberStreams(bootstrap.streamMemberships.map((sm) => sm.streamId))
     } catch (error) {
       this.lastWorkspaceError = error
+      console.error("Workspace bootstrap failed", { workspaceId, isReconnect: _isReconnect, forceFull, error })
       // No snapshot landed, so none can be masked: release the seed guard or a
       // failed cold bootstrap would leave the cursor unseedable for the whole
       // session and catch-up would never gain a position.

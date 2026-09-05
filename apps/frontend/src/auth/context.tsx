@@ -4,6 +4,7 @@ import { API_BASE } from "@/api/client"
 import { clearAllCachedData } from "@/db"
 import { getCachedUser, setCachedUser, clearCachedUser } from "@/lib/cached-user"
 import { clearLastWorkspaceId } from "@/lib/last-workspace"
+import { PUSH_BOOTSTRAP_CACHE } from "@/lib/sw-bootstrap-prefetch"
 import type { AuthState, User } from "./types"
 
 declare global {
@@ -223,6 +224,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // exactly the current account's IDB. Promoted-account IDB (a separate
     // named handle) is untouched, which is what scope=current wants.
     await clearAllCachedData().catch(() => {})
+    // The service worker's pre-fetched workspace snapshot is keyed by URL, not
+    // account. With IDB empty the next sign-in has no local state, so it would
+    // accept that copy as fresh and paint this account's data for the next one.
+    if (typeof caches !== "undefined") await caches.delete(PUSH_BOOTSTRAP_CACHE).catch(() => {})
     window.location.href =
       scope === "current" ? `${API_BASE}/api/auth/logout?scope=current` : `${API_BASE}/api/auth/logout`
   }, [])

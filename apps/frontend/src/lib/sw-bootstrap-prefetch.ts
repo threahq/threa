@@ -5,8 +5,9 @@ import { writeSlotCarrier } from "../stores/slot-store"
 
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
 // (stream: IndexedDB; workspace: the Cache API entry served by the SW fetch
-// interceptor). Lives outside sw.ts so unit tests can drive it without a
-// ServiceWorkerGlobalScope; sw.ts wires it to the push/message/sync events.
+// interceptor to a page with no local state). Lives outside sw.ts so unit tests
+// can drive it without a ServiceWorkerGlobalScope; sw.ts wires it to the
+// push/message/sync events.
 
 /** Cache name for pre-fetched workspace bootstrap responses triggered by push or background sync. */
 export const PUSH_BOOTSTRAP_CACHE = "push-bootstrap"
@@ -236,8 +237,11 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
 }
 
 /**
- * Pre-fetch the workspace bootstrap so the next workspace bootstrap fetch in the
- * page is served from the warm push cache by the SW's fetch interceptor.
+ * Pre-fetch the workspace bootstrap into the push cache. The SW's fetch
+ * interceptor serves it only to a page with nothing local (no sync cursor, no
+ * cached workspace): a page that has either asks with `?fresh=1`, which deletes
+ * this copy rather than reading it, because a snapshot captured before the
+ * device went away would stamp the cursor below entries already applied.
  *
  * Errors propagate so the `sync` event handler sees the rejection and the
  * browser retries Background Sync. Inline callers (push handler, no-sync
@@ -245,8 +249,7 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
  *
  * Unlike stream bootstrap, we don't seed IDB here — the workspace bootstrap
  * apply pipeline is large and lives in workspace-sync; running it from the SW
- * would duplicate that surface. Cache-API hydration alone is enough because
- * TanStack always issues a fresh GET on app load and that GET hits the cache.
+ * would duplicate that surface.
  */
 async function prefetchWorkspaceBootstrap(workspaceId: string): Promise<void> {
   const url = `/api/workspaces/${workspaceId}/bootstrap`
