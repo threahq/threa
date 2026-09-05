@@ -147,10 +147,10 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   // Query observer), so invalidateQueries never triggers a refetch. Route the
   // refresh through the engine's reconnect-style bootstrap instead.
   const handleSoftRefresh = useCallback(async () => {
-    await syncEngine.refreshAfterConnectivityResume()
+    await syncEngine.refreshAfterPull()
   }, [syncEngine])
 
-  // Light pull = soft refresh (re-fetch data), heavy pull = hard refresh (page reload)
+  // Light pull = one sweep of workspace + visible streams, heavy pull = hard refresh (page reload)
   const {
     ref: pullRef,
     distance: pullDistance,
