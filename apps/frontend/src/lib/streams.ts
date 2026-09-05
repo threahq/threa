@@ -188,6 +188,19 @@ export function resolveStreamName(
 }
 
 /**
+ * The stream types a `#` link can point at: the workspace's named, linkable
+ * rooms. One list, because the composer's suggestion source and the renderer's
+ * id→url/label map have to agree — a type offered by one and not resolved by
+ * the other inserts a chip that renders as dead plain text.
+ */
+export const LINKABLE_STREAM_TYPES: readonly StreamType[] = [StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD]
+
+/** Whether a `#` chip may point at this stream type ({@link LINKABLE_STREAM_TYPES}). */
+export function isLinkableStreamType(type: string): boolean {
+  return LINKABLE_STREAM_TYPES.includes(type as StreamType)
+}
+
+/**
  * Label for a `#` chip pointing at `stream`. Channels carry a slug; scratchpads
  * never do (`createScratchpad` mints none), so their display name is folded into
  * slug shape. The chip's `attrs.id` is the authoritative reference (INV-64) and

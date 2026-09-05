@@ -1,15 +1,13 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import { StreamTypes, type StreamType } from "@threa/types"
-import { streamChipSlug } from "@/lib/streams"
-
-/** Stream types a `#` chip can point at (see `useChannelSuggestion`). */
-const LINKABLE_TYPES: readonly StreamType[] = [StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD]
+import { type StreamType } from "@threa/types"
+import { isLinkableStreamType, streamChipSlug } from "@/lib/streams"
 
 interface ChannelLinkContextValue {
   getChannelUrl: (slug: string) => string | null
-  /** Resolve a channel URL from a `stream_` id (the authoritative pointer-link
-   *  reference, INV-64). Returns null for ids that aren't a known channel, so an
-   *  inaccessible or non-channel stream renders as plain text, not a dead link. */
+  /** Resolve a stream URL from a `stream_` id (the authoritative pointer-link
+   *  reference, INV-64). Returns null for anything outside the viewer's cached
+   *  linkable streams, so an inaccessible or non-linkable target renders as
+   *  plain text, not a dead link. */
   getChannelUrlById: (id: string) => string | null
   /** The target's current chip label, so a renamed channel or scratchpad reads
    *  under its new name instead of the one frozen into the link at authoring
@@ -35,7 +33,7 @@ export function ChannelLinkProvider({ workspaceId, streams, children }: ChannelL
     const idToUrl = new Map<string, string>()
     const idToLabel = new Map<string, string>()
     for (const stream of streams) {
-      if (LINKABLE_TYPES.includes(stream.type)) {
+      if (isLinkableStreamType(stream.type)) {
         const url = `/w/${workspaceId}/s/${stream.id}`
         idToUrl.set(stream.id, url)
         idToLabel.set(stream.id, streamChipSlug(stream))

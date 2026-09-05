@@ -5,11 +5,8 @@ import type { ChannelItem } from "./types"
 import { ChannelList } from "./channel-list"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
-import { getStreamName, isUtilityStream, streamChipSlug, streamLabel } from "@/lib/streams"
+import { getStreamName, isLinkableStreamType, isUtilityStream, streamChipSlug, streamLabel } from "@/lib/streams"
 import { useSuggestion } from "./use-suggestion"
-
-/** Stream types a `#` link can point at: the workspace's named, linkable rooms. */
-const LINKABLE_TYPES: readonly string[] = [StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD]
 
 /** Sort key placing channels ahead of scratchpads. */
 function channelsFirst(type: string): number {
@@ -54,7 +51,7 @@ export function useChannelSuggestion() {
         // read "Untitled" and insert the same `#untitled`.
         .filter(
           (stream) =>
-            LINKABLE_TYPES.includes(stream.type) &&
+            isLinkableStreamType(stream.type) &&
             !stream.archivedAt &&
             !isUtilityStream(stream) &&
             getStreamName(stream) !== null
