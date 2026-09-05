@@ -165,7 +165,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
             zone, and a zone they do not know is a zone they ignore. */}
         {threadInPane ? (
           <div data-testid="aside-host-pane" data-view="panel" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
-            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
+            <PanelHost workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
           </div>
         ) : (
           <div

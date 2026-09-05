@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest"
+import type { CachedEvent } from "@/db"
 import {
   emitDraftPromoted,
+  getDraftPromotionEvents,
   getDraftPromotionSource,
   getPromotedStreamId,
+  releaseDraftPromotionEvents,
   waitForDraftPromotion,
 } from "./draft-promotions"
 
@@ -12,6 +15,38 @@ describe("draft promotions", () => {
 
     expect(getPromotedStreamId("draft_lookup")).toBe("stream_lookup")
     expect(getDraftPromotionSource("stream_lookup")).toBe("draft_lookup")
+  })
+
+  it("hands the moved rows to both ids until the real stream releases them", () => {
+    const moved: CachedEvent = {
+      id: "temp_moved",
+      workspaceId: "ws_1",
+      streamId: "stream_handoff",
+      sequence: "1",
+      _sequenceNum: 1,
+      eventType: "message_created",
+      payload: {},
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      _status: "pending",
+      _cachedAt: 0,
+    }
+    emitDraftPromoted({
+      draftId: "draft_handoff",
+      realStreamId: "stream_handoff",
+      workspaceId: "ws_1",
+      events: [moved],
+    })
+
+    expect(getDraftPromotionEvents("draft_handoff")).toEqual([moved])
+    expect(getDraftPromotionEvents("stream_handoff")).toEqual([moved])
+
+    releaseDraftPromotionEvents("stream_handoff")
+
+    expect(getDraftPromotionEvents("draft_handoff")).toBeNull()
+    expect(getDraftPromotionEvents("stream_handoff")).toBeNull()
+    expect(getPromotedStreamId("draft_handoff")).toBe("stream_handoff")
   })
 
   it("resolves a waiter registered while materialization is in flight", async () => {

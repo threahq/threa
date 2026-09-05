@@ -1044,3 +1044,14 @@ describe("useTimelineScroll — cold-load settle across a stream switch", () => 
     }
   })
 })
+
+describe("useTimelineScroll — cold-load settle mask", () => {
+  it("masks the settle by default and re-masks on a stream switch", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    expect(harness.current.isInitialSettling).toBe(true)
+    act(() => harness.current.revealSettle())
+    expect(harness.current.isInitialSettling).toBe(false)
+    harness.rerender(opts({ resetKey: "stream_2", itemCount: 3, getFirstKey: () => "e0" }))
+    expect(harness.current.isInitialSettling).toBe(true)
+  })
+})

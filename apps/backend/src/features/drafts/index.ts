@@ -1,4 +1,4 @@
-export { DraftsRepository } from "./repository"
+export { DraftsRepository, draftStreamUniquenessKey } from "./repository"
 export type { Draft, InsertDraftParams, CasUpdateDraftParams } from "./repository"
 
 export { DraftsService } from "./service"

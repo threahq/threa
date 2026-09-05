@@ -2,6 +2,7 @@ import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
+import { getDraftPromotionEvents, releaseDraftPromotionEvents } from "@/lib/draft-promotions"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { trackPendingRead } from "./apply-window"
 import {
@@ -409,10 +410,25 @@ export function useStreamEvents(
   // Both reads must be stamped for the current stream before anything is
   // returned: a union built from one fresh and one stale range is a window with
   // a hole in it, which INV-61's contiguity gate would read as a real gap.
-  if (streamId && (resultStreamId !== streamId || (bounded && tailStreamId !== streamId))) {
-    return undefined
-  }
+  const resolved = !streamId || (resultStreamId === streamId && (!bounded || tailStreamId === streamId))
+  // A draft→real promotion moves the optimistic rows onto the real id before the
+  // real view mounts. Until its live query resolves (and, for the draft id, once
+  // the rows have moved away), paint those rows so neither view shows a skeleton
+  // or an empty state for a message the user just sent.
+  const handoff = streamId ? getDraftPromotionEvents(streamId) : null
+  // Release on the first window that actually carries rows, not on `resolved`:
+  // the live query can resolve from a snapshot taken before the moved rows
+  // landed, and releasing there drops the handoff for the very render that
+  // still needs it — one empty frame between the draft's rows and the real
+  // stream's.
+  const carriesRows = resolved && (union?.length ?? 0) > 0
+  useEffect(() => {
+    if (streamId && carriesRows && handoff) releaseDraftPromotionEvents(streamId)
+  }, [streamId, carriesRows, handoff])
+
+  if (!resolved) return handoff ?? undefined
   if (!union || !streamId) return union
+  if (handoff && union.length === 0) return handoff
 
   const prev = prevRef.current
   const shared = shareEventIdentities(prev?.streamId === streamId ? prev.array : null, union)

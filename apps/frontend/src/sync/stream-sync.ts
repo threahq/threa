@@ -229,7 +229,16 @@ function getBootstrapWindowCeiling(events: StreamEvent[], latestSequence: string
   }, BigInt(events[0].sequence))
 }
 
-async function cleanupStaleOptimisticEvents(streamId: string, database: ThreaDatabase): Promise<void> {
+/**
+ * A `temp_` row with no queue entry is stale unless its send succeeded at or
+ * after this bootstrap's fetch started: the response then predates the message,
+ * and the socket echo (or a later bootstrap) still owns the swap.
+ */
+async function cleanupStaleOptimisticEvents(
+  streamId: string,
+  database: ThreaDatabase,
+  fetchStartedAt?: number
+): Promise<void> {
   const db = database
   const tempEvents = await db.events
     .where("streamId")
@@ -245,6 +254,7 @@ async function cleanupStaleOptimisticEvents(streamId: string, database: ThreaDat
 
   for (const temp of tempEvents) {
     if (temp._status === "failed") continue
+    if (temp._sentAt !== undefined && (fetchStartedAt === undefined || temp._sentAt >= fetchStartedAt)) continue
     const stillPending = await db.pendingMessages.get(temp.id)
     if (!stillPending && !pendingCommandEventIds.has(temp.id)) {
       await db.events.delete(temp.id)
@@ -299,7 +309,7 @@ async function writeBootstrapEventsAndStream(
   account: AccountWriteContext
 ): Promise<StreamReadFrontier | undefined> {
   const db = account.database
-  await cleanupStaleOptimisticEvents(streamId, db)
+  await cleanupStaleOptimisticEvents(streamId, db, fetchStartedAt)
 
   if (bootstrap.syncMode !== "append") {
     await pruneBootstrapReplaceWindow(streamId, bootstrap, db)

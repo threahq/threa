@@ -231,6 +231,12 @@ export interface CachedEvent {
   // Optimistic sending state (for message_created events)
   _clientId?: string
   _status?: "pending" | "sent" | "failed" | "editing"
+  /**
+   * Client wall-clock (ms) when the send request for this optimistic row
+   * succeeded. Set before its `pendingMessages` row is deleted, so a bootstrap
+   * whose fetch started earlier cannot mistake the not-yet-echoed row for stale.
+   */
+  _sentAt?: number
   /** Persisted stream sequence visible when this optimistic row was created. */
   _anchorSequenceNum?: number
   _cachedAt: number

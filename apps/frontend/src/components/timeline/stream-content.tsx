@@ -1,4 +1,5 @@
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
+import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useNavigationType, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
@@ -3040,7 +3041,7 @@ export function StreamContent({
               <MessageConversationProvider conversationIdByMessageId={conversationIdByMessageId}>
                 <TextSelectionQuote streamId={streamId} containerRef={quoteScopeRef} />
                 <div ref={quoteScopeRef} className="relative h-full">
-                  <div className="absolute inset-0 overflow-hidden">
+                  <div className="absolute inset-0 overflow-hidden" data-testid="stream-timeline">
                     {isSearchOpen && (
                       <StreamSearchBar
                         search={streamSearch}
@@ -3514,6 +3515,18 @@ function TimelineMessageList({
   // existing blank behaviour (no skeleton flash on top of prior chrome).
   const hasRenderedContentRef = useRef(false)
 
+  // A promoted draft's timeline mounts with the rows the user is already
+  // looking at, so its settle mask carries those rows instead of a skeleton:
+  // virtua paints nothing until its ResizeObserver reports the scroller size,
+  // and hides each row again until the row itself is measured. Read at the
+  // stream's first render — the handoff is released once the live query
+  // resolves, which is well before the settle ends.
+  const promotedMountRef = useRef<{ streamId: string; promoted: boolean } | null>(null)
+  if (promotedMountRef.current?.streamId !== streamId) {
+    promotedMountRef.current = { streamId, promoted: getDraftPromotionEvents(streamId) !== null }
+  }
+  const continuesDraft = promotedMountRef.current.promoted
+
   // Floating date header (INV-42): the local day of the topmost visible row,
   // and whether the pill is shown. Updated from the scroll handler so it tracks
   // the day as the user scrolls, like Slack's sticky date.
@@ -3892,8 +3905,23 @@ function TimelineMessageList({
         scrollerRef={scrollerRef}
       />
       {isInitialSettling && (
-        <div aria-hidden data-testid="settle-mask" className="pointer-events-none absolute inset-0 z-10 bg-background">
-          {skeleton}
+        <div
+          aria-hidden
+          data-testid="settle-mask"
+          className="pointer-events-none absolute inset-0 z-10 overflow-hidden bg-background"
+        >
+          {continuesDraft ? (
+            <EventList
+              timelineItems={visibleItems}
+              isLoading={false}
+              workspaceId={workspaceId}
+              streamId={streamId}
+              viewerIsMember={viewerIsMember}
+              batch={batch}
+            />
+          ) : (
+            skeleton
+          )}
         </div>
       )}
     </>

@@ -17,6 +17,8 @@ import * as streamKeyCache from "@/lib/crypto/stream-key-cache"
 import * as messageEnvelope from "@/lib/crypto/message-envelope"
 import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
+import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
+import { useDraftScratchpads } from "./use-draft-scratchpads"
 
 function createWrapper(
   queryClient: QueryClient,
@@ -375,6 +377,86 @@ describe("useStreamOrDraft scratchpad draft send", () => {
         streamCreation: expect.objectContaining({ type: "scratchpad" }),
       },
       "follow-up": { streamId: "stream_promoted", streamCreation: undefined },
+    })
+  })
+})
+
+describe("useStreamOrDraft scratchpad draft promotion", () => {
+  beforeEach(async () => {
+    await clearAllCachedData()
+    await db.draftScratchpads.clear()
+  })
+
+  it("presents the promoted stream before the workspace store catches up", async () => {
+    await db.workspaceUsers.put({
+      id: "member_promoted",
+      workspaceId: "ws_promoted",
+      workosUserId: "workos_1",
+      email: "kris@example.com",
+      role: "owner",
+      slug: "kris",
+      name: "Kris",
+      joinedAt: "2026-09-05T06:00:00Z",
+      _cachedAt: Date.now(),
+    } as never)
+
+    // The queue writes the row to IDB and announces the promotion; the
+    // workspace store's live query has not delivered it yet.
+    emitDraftPromoted({
+      draftId: "draft_ahead",
+      realStreamId: "stream_ahead",
+      workspaceId: "ws_promoted",
+      stream: {
+        id: "stream_ahead",
+        workspaceId: "ws_promoted",
+        type: "scratchpad",
+        displayName: "Plan",
+        companionMode: "on",
+        parentStreamId: null,
+        parentAnchorId: null,
+        rootStreamId: null,
+        archivedAt: null,
+      } as never,
+    })
+
+    const { result } = renderHook(() => useStreamOrDraft("ws_promoted", "stream_ahead"), {
+      wrapper: createWrapper(new QueryClient()),
+    })
+
+    await waitFor(() => expect(result.current.stream).toBeDefined())
+    expect(result.current.stream).toMatchObject({ id: "stream_ahead", displayName: "Plan", isDraft: false })
+  })
+
+  it("keeps presenting the draft after promotion deletes its row", async () => {
+    await db.draftScratchpads.put({
+      id: "draft_kept",
+      workspaceId: "ws_kept",
+      displayName: "Plan",
+      companionMode: "on",
+      createdAt: Date.now(),
+    })
+
+    const { result } = renderHook(
+      () => ({
+        view: useStreamOrDraft("ws_kept", "draft_kept"),
+        row: useDraftScratchpads("ws_kept").getScratchpad("draft_kept"),
+      }),
+      { wrapper: createWrapper(new QueryClient()) }
+    )
+    await waitFor(() => expect(result.current.view.stream?.id).toBe("draft_kept"))
+
+    // The queue's promotion order: announce, then drop the draft rows while the
+    // navigation to the real stream is still pending.
+    emitDraftPromoted({ draftId: "draft_kept", realStreamId: "stream_kept", workspaceId: "ws_kept" })
+    await act(async () => {
+      await db.draftScratchpads.delete("draft_kept")
+      deleteDraftScratchpadFromCache("ws_kept", "draft_kept")
+    })
+    await waitFor(() => expect(result.current.row).toBeUndefined())
+
+    expect(result.current.view).toMatchObject({
+      isLoading: false,
+      stream: { id: "draft_kept", displayName: "Plan", isDraft: true },
     })
   })
 })

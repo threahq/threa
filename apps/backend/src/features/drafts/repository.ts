@@ -2,6 +2,14 @@ import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { MAX_DRAFTS_PER_USER, type DraftCommand, type JSONContent } from "@threa/types"
 
+/**
+ * `uniqueness_key` of a scratchpad promoted from a client draft. Keyed per
+ * owner so two users' client-minted ids never collide.
+ */
+export function draftStreamUniquenessKey(userId: string, draftId: string): string {
+  return `draft:${userId}:${draftId}`
+}
+
 interface DraftRow {
   id: string
   workspace_id: string

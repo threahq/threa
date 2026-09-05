@@ -81,7 +81,7 @@ export function StreamPage() {
   const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
+  const { isPanelOpen, closePanel, setFocusedPane } = usePanel()
   const {
     containerRef,
     panelWidth,
@@ -287,7 +287,10 @@ export function StreamPage() {
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
   if (stream) {
-    streamName = pendingName ?? decryptedStreamName ?? streamLabel(stream)
+    // An unnamed scratchpad takes the same fallback the draft branch below and
+    // the sidebar use, so promoting a draft doesn't retitle the header from
+    // "New scratchpad" to "Untitled" before the generated name lands.
+    streamName = pendingName ?? decryptedStreamName ?? streamLabel(stream, isScratchpad ? "sidebar" : "generic")
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }
@@ -964,7 +967,7 @@ export function StreamPage() {
 
         {mobileTakeover ? (
           <div className={layout.panel}>
-            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
           </div>
         ) : (
           <ThreadPanelSlot
@@ -984,7 +987,7 @@ export function StreamPage() {
             onResizeKeyDown={handleResizeKeyDown}
             inert={asideStage}
           >
-            <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>
         )}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />

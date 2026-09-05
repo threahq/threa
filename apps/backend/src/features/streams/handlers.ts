@@ -56,6 +56,9 @@ import {
   notificationLevelSchema,
 } from "../../lib/schemas"
 
+/** Client-minted scratchpad draft ids: `draft_` + a short base36/ULID tail. */
+const DRAFT_ID_PATTERN = /^draft_[A-Za-z0-9]{1,64}$/
+
 const createStreamSchema = z
   .object({
     type: streamTypeSchema.extract(["scratchpad", "channel", "thread", "aside"]),
@@ -108,6 +111,16 @@ const createStreamSchema = z
      * transaction, like the E2E flag and context bag.
      */
     allowedToolCategories: z.array(z.enum(TOOL_PRIVACY_CATEGORIES)).nullable().optional(),
+    /**
+     * Scratchpads only: the client draft id this scratchpad is promoted from.
+     * Keys the create idempotently per caller and re-points the draft's
+     * composer drafts onto the new stream.
+     */
+    draftId: z.string().regex(DRAFT_ID_PATTERN).optional(),
+  })
+  .refine((data) => data.draftId === undefined || data.type === "scratchpad", {
+    message: "draftId is only supported on scratchpad creation",
+    path: ["draftId"],
   })
   .refine((data) => data.type !== "channel" || data.slug, {
     message: "Slug is required for channels",
@@ -640,6 +653,7 @@ export function createStreamHandlers({
         e2eEnabled,
         e2eOwnerKeyId,
         allowedToolCategories,
+        draftId,
       } = data
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
@@ -744,6 +758,7 @@ export function createStreamHandlers({
         contextBag,
         e2e: resolvedE2eOwnerKeyId ? { ownerKeyId: resolvedE2eOwnerKeyId } : undefined,
         allowedToolCategories,
+        draftId,
       })
 
       res.status(201).json({ stream })

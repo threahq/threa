@@ -388,11 +388,16 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     return { streamType: StreamTypes.THREAD, rootStreamType: rootType }
   }, [parentStream, ancestors])
 
-  // Listen for draft thread promotion and navigate to the real thread panel
+  // Listen for draft thread promotion and navigate to the real thread panel.
+  // The real stream's composer is a different element, so a focused draft
+  // composer hands its focus over explicitly — on mobile this is what keeps the
+  // keyboard up through the switch.
+  const [focusPromotedComposer, setFocusPromotedComposer] = useState(false)
   useEffect(() => {
     if (!isDraft || !panelId) return
     return onDraftPromoted((promotion) => {
       if (promotion.draftId === panelId && promotion.workspaceId === workspaceId) {
+        setFocusPromotedComposer(draftPortalTargetRef.current?.contains(document.activeElement) === true)
         openPanel(promotion.realStreamId, { replace: true })
       }
     })
@@ -712,7 +717,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
               streamId={panelId}
               highlightMessageId={highlightMessageId}
               stream={stream}
-              autoFocus={isThread && !isMobile}
+              autoFocus={isThread && (!isMobile || focusPromotedComposer)}
             />
           </StreamErrorBoundary>
         )}

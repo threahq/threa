@@ -24,6 +24,7 @@ import {
 import { makeCachedStream } from "@/test/workspace-rows"
 import { bumpLaterOptimisticAnchors } from "@/sync/stream-sync"
 import { requestStreamEventReadRefresh } from "./stream-event-read-refresh"
+import { emitDraftPromoted, getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { whenReadsSettled } from "./apply-window"
 import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
 
@@ -869,6 +870,59 @@ describe("bounded timeline read — tail and prefix", () => {
     expect(computeTimelineHoles(union)).toEqual([
       { afterEventId: `evt_${STREAM}_14`, afterSequence: "14", missingCount: 1 },
     ])
+  })
+})
+
+describe("useStreamEvents across a draft promotion", () => {
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("paints the moved rows under the real id before its live query resolves, then releases them", async () => {
+    const draftId = "draft_promo_hook"
+    const realId = "stream_promo_hook"
+    const moved: CachedEvent = { ...makeRealEvent(realId, String(Date.now())), id: "temp_promo", _status: "pending" }
+    await db.events.put(moved)
+    emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
+
+    const { result } = renderHook(() => useStreamEvents(realId, null))
+
+    // Spread off the window's `__streamId`/`__tailFloor` stamps so the rows
+    // themselves are what gets compared.
+    expect(result.current?.map((event) => ({ ...event }))).toEqual([moved])
+    await waitFor(() => expect(getDraftPromotionEvents(realId)).toBeNull())
+    expect(result.current?.map((event) => ({ ...event }))).toEqual([moved])
+  })
+
+  it("holds the handoff while the real id's own window is still empty", async () => {
+    const draftId = "draft_promo_pending"
+    const realId = "stream_promo_pending"
+    // The moved row is deliberately absent from IDB: the live query resolves on
+    // a snapshot taken before the queue's put landed.
+    const moved: CachedEvent = { ...makeRealEvent(realId, String(Date.now())), id: "temp_pending", _status: "pending" }
+    emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
+
+    const { result } = renderHook(() => useStreamEvents(realId, null))
+
+    await waitFor(() => expect(result.current).toBeDefined())
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(result.current?.map((event) => event.id)).toEqual(["temp_pending"])
+    expect(getDraftPromotionEvents(realId)).toEqual([moved])
+  })
+
+  it("keeps the draft id painted after its rows moved onto the real stream", async () => {
+    const draftId = "draft_promo_moved"
+    const realId = "stream_promo_moved"
+    const moved: CachedEvent = { ...makeRealEvent(realId, String(Date.now())), id: "temp_moved", _status: "pending" }
+    await db.events.put(moved)
+    emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
+
+    const { result } = renderHook(() => useStreamEvents(draftId, null))
+
+    await waitFor(() => expect(result.current).toBeDefined())
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(result.current?.map((event) => event.id)).toEqual(["temp_moved"])
+    expect(getDraftPromotionEvents(draftId)).toEqual([moved])
   })
 })
 
