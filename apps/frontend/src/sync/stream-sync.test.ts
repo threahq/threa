@@ -5226,7 +5226,6 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
     await emit("stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_aside_1",
-      deliverToStreamId: hostId,
       stream: anchored("stream_aside_1", "aside"),
     })
     expect((await db.events.get("evt_anchor"))?.payload).not.toHaveProperty("threadId")
@@ -5235,7 +5234,6 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
     await emit("stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_thread_1",
-      deliverToStreamId: hostId,
       stream: anchored("stream_thread_1", "thread"),
     })
     expect((await db.events.get("evt_anchor"))?.payload).toMatchObject({ threadId: "stream_thread_1" })
@@ -5243,7 +5241,7 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
     cleanup()
   })
 
-  it("still routes on streamId alone for a legacy-shaped payload with no deliverToStreamId", async () => {
+  it("still routes on streamId when the payload's stream carries no parent", async () => {
     const hostId = "stream_host_aside_gate_legacy"
     await db.events.put({
       ...makeEvent({ id: "evt_anchor_legacy", streamId: hostId, sequence: "1", payload: { messageId: "msg_anchor" } }),
@@ -5262,7 +5260,7 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
       slug: null,
       description: null,
       visibility: "private",
-      parentStreamId: hostId,
+      parentStreamId: null,
       parentAnchorId: "msg_anchor",
       rootStreamId: hostId,
       companionMode: "off",

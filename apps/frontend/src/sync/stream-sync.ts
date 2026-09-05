@@ -870,7 +870,6 @@ interface ReactionPayload {
 interface StreamCreatedPayload {
   workspaceId: string
   streamId: string
-  deliverToStreamId?: string
   stream: Stream
 }
 
@@ -1676,7 +1675,7 @@ function bindStreamSocketHandlers(
   }
 
   const handleStreamCreated = async (payload: StreamCreatedPayload) => {
-    if ((payload.deliverToStreamId ?? payload.streamId) !== streamId) return
+    if ((payload.stream.parentStreamId ?? payload.streamId) !== streamId) return
     const stream = payload.stream
     // An aside is anchored like a thread but is never the anchor's thread:
     // writing `threadId` would hijack the thread affordance, and its stream row
