@@ -55,6 +55,7 @@
     "socket.io": "^4.8",
     "squid": "^0.5",
     "tesseract.js": "6.0.0",
+    "tinyld": "1.3.4",
     "ulid": "^2",
     "umzug": "^3",
     "unpdf": "1.1.0",
