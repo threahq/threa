@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
 import { HttpError } from "../errors"
-import { errorHandler } from "./error-handler"
+import type { ErrorReporter, ExceptionContext } from "../posthog/error-reporter"
+import { createErrorHandler } from "./error-handler"
 
 function makeRes(): Response & { statusCode: number; body: unknown } {
   const res = {
@@ -19,12 +20,25 @@ function makeRes(): Response & { statusCode: number; body: unknown } {
   return res as unknown as Response & { statusCode: number; body: unknown }
 }
 
+function makeRecordingReporter(): ErrorReporter & { calls: { error: unknown; context?: ExceptionContext }[] } {
+  const calls: { error: unknown; context?: ExceptionContext }[] = []
+  return {
+    calls,
+    captureException(error: unknown, context?: ExceptionContext) {
+      calls.push({ error, context })
+    },
+    async shutdown() {},
+  }
+}
+
 const req = { path: "/x", method: "GET" } as unknown as Request
 const next = (() => {}) as unknown as NextFunction
 
 describe("errorHandler", () => {
   test("formats an HttpError with status, message, code, and details", () => {
     const res = makeRes()
+    const errorHandler = createErrorHandler({ errorReporter: makeRecordingReporter() })
+
     errorHandler(
       new HttpError("Validation failed", {
         status: 400,
@@ -46,6 +60,8 @@ describe("errorHandler", () => {
 
   test("omits code and details when not provided", () => {
     const res = makeRes()
+    const errorHandler = createErrorHandler({ errorReporter: makeRecordingReporter() })
+
     errorHandler(new HttpError("Nope", { status: 404 }), req, res, next)
 
     expect(res.statusCode).toBe(404)
@@ -54,9 +70,58 @@ describe("errorHandler", () => {
 
   test("surfaces unknown errors as a 500", () => {
     const res = makeRes()
+    const errorHandler = createErrorHandler({ errorReporter: makeRecordingReporter() })
+
     errorHandler(new Error("boom"), req, res, next)
 
     expect(res.statusCode).toBe(500)
     expect(res.body).toEqual({ error: "Internal server error", code: "INTERNAL_ERROR" })
+  })
+
+  test("should capture an unexpected error with the request identity when the user is authenticated", () => {
+    const res = makeRes()
+    const reporter = makeRecordingReporter()
+    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const err = new Error("boom")
+    const req = {
+      path: "/x",
+      method: "GET",
+      authUser: { id: "usr_1", email: "a@example.com", firstName: null, lastName: null, permissions: null },
+    } as unknown as Request
+
+    errorHandler(err, req, res, next)
+
+    expect(reporter.calls).toEqual([
+      {
+        error: err,
+        context: { distinctId: "usr_1", properties: { path: "/x", method: "GET", status_code: 500 } },
+      },
+    ])
+  })
+
+  test("should capture with no distinct id when unauthenticated", () => {
+    const res = makeRes()
+    const reporter = makeRecordingReporter()
+    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const err = new Error("boom")
+
+    errorHandler(err, req, res, next)
+
+    expect(reporter.calls).toEqual([
+      {
+        error: err,
+        context: { properties: { path: "/x", method: "GET", status_code: 500 } },
+      },
+    ])
+  })
+
+  test("should not capture an HttpError", () => {
+    const res = makeRes()
+    const reporter = makeRecordingReporter()
+    const errorHandler = createErrorHandler({ errorReporter: reporter })
+
+    errorHandler(new HttpError("Nope", { status: 404 }), req, res, next)
+
+    expect(reporter.calls).toEqual([])
   })
 })

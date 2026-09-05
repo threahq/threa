@@ -3,7 +3,7 @@ import { logger } from "./lib/logger"
 import { classifyGlobalCrash, serializeCrashReason } from "./lib/crash-policy"
 import { runWithShutdownWatchdog } from "./lib/graceful-shutdown"
 
-const { server, stop, fastShutdown } = await startServer()
+const { server, stop, fastShutdown, errorReporter } = await startServer()
 
 // Hard ceiling on graceful shutdown. `stop()` drains the pools, and `pool.end()`
 // blocks on an unreachable Postgres — that wedged the process half-dead for ~24
@@ -50,6 +50,9 @@ process.on("SIGHUP", () => shutdown(0))
 
 process.on("uncaughtException", (err) => {
   const decision = classifyGlobalCrash("uncaughtException", err)
+  errorReporter.captureException(err, {
+    properties: { source: "uncaughtException", classification: decision.classification, fatal: decision.isFatal },
+  })
   if (!decision.isFatal) {
     logger.warn({ err, classification: decision.classification }, decision.logMessage)
     return
@@ -62,6 +65,9 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   const reasonInfo = serializeCrashReason(reason)
   const decision = classifyGlobalCrash("unhandledRejection", reason)
+  errorReporter.captureException(reason, {
+    properties: { source: "unhandledRejection", classification: decision.classification, fatal: decision.isFatal },
+  })
   if (!decision.isFatal) {
     logger.warn({ reason: reasonInfo, classification: decision.classification }, decision.logMessage)
     return

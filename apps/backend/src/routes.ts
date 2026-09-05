@@ -80,11 +80,12 @@ import {
 } from "./features/enclave-runtimes"
 import {
   createInternalAuthMiddleware,
-  errorHandler,
+  createErrorHandler,
   StubAuthService,
   type AuthService,
   type SessionCookies,
   type ApiKeyService,
+  type ErrorReporter,
 } from "@threa/backend-common"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./middleware/public-api-auth"
 import { createApiVersionGate } from "./middleware/api-version"
@@ -206,6 +207,7 @@ interface Dependencies {
   controlPlaneClient: ControlPlaneClient | null
   costService: AICostServiceLike
   accessLogService: AccessLogService
+  errorReporter: ErrorReporter
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -275,6 +277,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ai,
     controlPlaneClient,
     accessLogService,
+    errorReporter,
   } = deps
 
   const audit = createAuditMiddleware(accessLogService)
@@ -2037,5 +2040,5 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // ships un-logged access.
   assertAuditCoverage(app)
 
-  app.use(errorHandler)
+  app.use(createErrorHandler({ errorReporter }))
 }
