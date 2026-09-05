@@ -811,13 +811,26 @@ export class SyncEngine {
           syncStatus.set(`stream:${streamId}`, status)
         }
       } else {
-        // Fire the fetch immediately — freshness is never deferred over the wire.
-        // forceFull runs from the catch-up fallbacks, which stamp the cursor at
-        // a head they read themselves — so this snapshot must not be the
-        // service worker's lock-time copy (see workspaceService.bootstrap).
+        // The service worker's lock-time snapshot may only answer when nothing
+        // local can be newer than it: no sync cursor and no cached workspace.
+        // Applied over local state it replays entries this device already saw,
+        // and since the cursor only ever advances, a head stamped from it can
+        // never be repaired. forceFull runs from the catch-up fallbacks, which
+        // stamp the cursor at a head they read themselves, so it is fresh too.
+        const cachedWorkspace = await db.workspaces.get(workspaceId)
+        const localCursor = this.syncLogCursor?.get() ?? null
+        const fresh = forceFull || localCursor !== null || cachedWorkspace !== undefined
         const stopFetch = getPerfCapture().time("bootstrap.fetch")
-        bootstrap = await workspaceService.bootstrap(workspaceId, { fresh: forceFull })
+        bootstrap = await workspaceService.bootstrap(workspaceId, { fresh })
         stopFetch()
+        if (
+          !_isReconnect &&
+          localCursor !== null &&
+          bootstrap.syncHead &&
+          BigInt(bootstrap.syncHead) < BigInt(localCursor)
+        ) {
+          throw new Error(`Bootstrap snapshot head ${bootstrap.syncHead} is below the local sync cursor ${localCursor}`)
+        }
 
         // On the very first connect of a warm start, hold the IndexedDB write
         // until the cached reveal has painted. applyWorkspaceBootstrap writes the
@@ -838,13 +851,12 @@ export class SyncEngine {
           // can only become ready once THIS write lands, so waiting on the
           // reveal would deadlock until the timeout. In that case we write
           // immediately and let the gate reveal off the fresh write.
-          const [workspace, unreadState, metadata, sidebarConfig] = await Promise.all([
-            db.workspaces.get(workspaceId),
+          const [unreadState, metadata, sidebarConfig] = await Promise.all([
             db.unreadState.get(workspaceId),
             db.workspaceMetadata.get(workspaceId),
             db.sidebarConfigs.get(workspaceId),
           ])
-          const canRevealFromCache = !!workspace && !!unreadState && !!metadata && !!sidebarConfig
+          const canRevealFromCache = !!cachedWorkspace && !!unreadState && !!metadata && !!sidebarConfig
           if (canRevealFromCache) await waitForInitialReveal(workspaceId)
         }
 
