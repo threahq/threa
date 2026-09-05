@@ -82,7 +82,7 @@ import {
   insertCommandFailedEvent,
   parseRuntimeCommandInvocationMetadata,
 } from "../commands"
-import { HttpError } from "@threa/backend-common"
+import { HttpError, isUniqueViolation } from "@threa/backend-common"
 import { invocationClaimNotFound, invocationInputStale } from "./errors"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
@@ -1174,9 +1174,20 @@ export function createPublicApiHandlers({
       // it between our reads above and the insert. The whole create rolled
       // back (no orphan stream) — resume that link instead of surfacing a 500.
       const resumeAfterIdentityConflict = async (error: unknown) => {
-        if ((error as { code?: string }).code !== "23505") throw error
+        if (!isUniqueViolation(error)) throw error
         const revived = await botRuntimeService.findActivePiRemoteSession(identity)
-        if (!revived) throw error
+        // Nothing active to resume: the identity is held by a link that is no
+        // longer active. An archive-ended link keeps its runtime_session_id
+        // (only `/done` retires it), so attaching that identity to a different
+        // scratchpad lands here. Typed at the boundary so the SQLSTATE cannot
+        // surface as a 500 (INV-32).
+        if (!revived) {
+          throw new HttpError("A conflicting runtime session link already exists for this identity", {
+            status: 409,
+            code: "RUNTIME_SESSION_CONFLICT",
+            cause: error as Error,
+          })
+        }
         return resumeLink(revived)
       }
 

@@ -396,7 +396,7 @@ export class BotRuntimeService {
     }
 
     return withTransaction(this.pool, async (client) => {
-      const root = await StreamRepository.findByIdForWorkspace(client, params.rootStreamId, params.workspaceId)
+      const root = await StreamRepository.findByIdForWorkspaceForShare(client, params.rootStreamId, params.workspaceId)
       if (!root) throw new HttpError("Scratchpad not found", { status: 404, code: "NOT_FOUND" })
       if (root.type !== StreamTypes.SCRATCHPAD) {
         throw new HttpError("attachTo root must be a scratchpad", { status: 400, code: "ATTACH_ROOT_NOT_SCRATCHPAD" })

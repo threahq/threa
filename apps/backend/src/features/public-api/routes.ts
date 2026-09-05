@@ -1002,6 +1002,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: createRuntimeSessionSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(runtimeSessionLinkSchema),
+    canReturn404: true,
+    canReturn409: true,
   },
   {
     method: "get",

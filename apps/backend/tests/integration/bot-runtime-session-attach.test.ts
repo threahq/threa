@@ -215,7 +215,7 @@ describe("attachRuntimeSessionToThread", () => {
         displayName: "Sub work",
         traits: ["active-scratchpad"],
       })
-    ).rejects.toMatchObject({ status: 404 })
+    ).rejects.toMatchObject({ status: 404, code: "MESSAGE_NOT_FOUND" })
   })
 
   test("refuses a second identity on the same anchor and leaves the first link untouched", async () => {

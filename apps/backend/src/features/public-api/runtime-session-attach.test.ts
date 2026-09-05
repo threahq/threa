@@ -132,6 +132,22 @@ describe("createBotRuntimeSession attachTo", () => {
     })
   })
 
+  it("answers a 409 when the conflicting identity is held by a finished link", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    const handlers = createHandlers({
+      // Both reads miss: the identity belongs to a link that is no longer
+      // active, so there is nothing to resume and the SQLSTATE must not escape.
+      findActivePiRemoteSession: mock(() => Promise.resolve(null)),
+      attachRuntimeSessionToThread: mock(() => Promise.reject(Object.assign(new Error("unique"), { code: "23505" }))),
+    })
+    const cap = createResponse()
+
+    await expect(handlers.createBotRuntimeSession(attachRequest(), cap.res)).rejects.toMatchObject({
+      status: 409,
+      code: "RUNTIME_SESSION_CONFLICT",
+    })
+  })
+
   it("rethrows a non-identity failure from the attach", async () => {
     spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
     const handlers = createHandlers({

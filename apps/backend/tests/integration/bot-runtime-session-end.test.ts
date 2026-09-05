@@ -4,7 +4,7 @@ import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "
 import { BotRuntimeService, BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { StreamService } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { messageId, streamId } from "../../src/lib/id"
+import { botRuntimeSessionLinkId, messageId, streamId } from "../../src/lib/id"
 
 describe("endRuntimeSession", () => {
   let fixture: BotRuntimeFixture
@@ -165,7 +165,7 @@ describe("endRuntimeSession", () => {
   test("cancels pending invocations targeted at the ended session and leaves other pending rows alone", async () => {
     const link = (instanceId: string, runtimeSessionId: string, activeStreamId: string) =>
       BotRuntimeSessionLinkRepository.upsert(pool, {
-        id: `brsl_${crypto.randomUUID().replaceAll("-", "")}`,
+        id: botRuntimeSessionLinkId(),
         workspaceId: workspace,
         botId: bot,
         runtimeKind: "openclaw",

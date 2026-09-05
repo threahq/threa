@@ -22,13 +22,23 @@ function downgradeStreamAnchor(stream: Record<string, unknown>): Record<string, 
   return rest
 }
 
+/**
+ * A serialized stream object, not merely any schema node declaring an
+ * `anchorId`. The bot-runtime `attachTo` request body declares one too, and
+ * rewriting that one left a body whose `required` named a property it no
+ * longer declared under `additionalProperties: false` — unsatisfiable.
+ */
+function isStreamSchemaNode(props: Record<string, unknown>): boolean {
+  return "anchorId" in props && "id" in props
+}
+
 /** Recursively rewrite the OpenAPI stream schema: drop `anchorId`, restore optional `parentMessageId`. */
 function restoreParentMessageIdInSpec(node: unknown): unknown {
   if (Array.isArray(node)) return node.map(restoreParentMessageIdInSpec)
   if (node && typeof node === "object") {
     const obj = node as Record<string, unknown>
     const props = obj.properties as Record<string, unknown> | undefined
-    if (props && "anchorId" in props) {
+    if (props && isStreamSchemaNode(props)) {
       const { anchorId: _anchorId, ...restProps } = props
       return {
         ...obj,
