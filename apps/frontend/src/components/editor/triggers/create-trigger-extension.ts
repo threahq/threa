@@ -77,6 +77,18 @@ export interface TriggerExtensionOptions<TItem> {
 const baseClassName = "inline rounded px-1 py-0.5"
 
 /**
+ * `setAttribute` stringifies, so an unset attribute would land on the element as
+ * the literal text "null".
+ */
+function definedAttributes(attrs: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(attrs)
+      .filter(([, value]) => value !== null && value !== undefined)
+      .map(([key, value]) => [key, String(value)])
+  )
+}
+
+/**
  * Factory function to create TipTap trigger extensions.
  * Reduces boilerplate for @mentions, #channels, /commands, and future triggers.
  */
@@ -153,7 +165,18 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
       return getText(node.attrs as TAttrs)
     },
 
-    ...(nodeView ? { addNodeView: () => ReactNodeViewRenderer(nodeView) } : {}),
+    // A node view replaces the editor DOM, so `renderHTML`'s attributes never
+    // reach it. They go on the outer element TipTap builds, the same one
+    // `selectNode()` marks, so the `[data-type=…].ProseMirror-selectednode`
+    // styling, `pillFromDom` and the paste specs' `data-id` all find one element.
+    ...(nodeView
+      ? {
+          addNodeView: () =>
+            ReactNodeViewRenderer(nodeView, {
+              attrs: ({ HTMLAttributes }) => ({ ...definedAttributes(HTMLAttributes), "data-type": name }),
+            }),
+        }
+      : {}),
 
     addProseMirrorPlugins() {
       return [

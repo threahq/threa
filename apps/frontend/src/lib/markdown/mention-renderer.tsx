@@ -3,13 +3,13 @@ import { Link } from "react-router-dom"
 import type { ActorHrefPointer } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
-import { streamChipParts } from "@/lib/streams"
 import { chipBase, triggerStyles } from "./chip-styles"
 import { useMentionType, useMentionClick, useIsMentionOnlyBot } from "./mention-context"
-import { useChannelUrl, useChannelUrlById, useChannelChipById } from "./channel-link-context"
+import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand } from "./command-list-context"
-import { MENTION_PATTERN, StreamTypes, isValidSlug } from "@threa/types"
+import { StreamChip } from "./stream-chip"
+import { MENTION_PATTERN, isValidSlug } from "@threa/types"
 
 interface TriggerChipProps {
   type: "mention" | "channel" | "command"
@@ -99,26 +99,19 @@ function TriggerChip({ type, text }: TriggerChipProps) {
  * Render a pointer-link mention/channel (`[@slug](user:usr_x)` etc.) as a chip.
  * The type comes from the URL scheme (authoritative, INV-64) — not the slug→type
  * map the bare-slug path falls back to — and navigation uses the embedded id, so
- * a renamed slug never mis-colors or breaks the link. A `#` chip renders as the
- * same {@link InAppLinkChip} a pasted stream link does and reads its label off
- * the id, so a renamed channel or scratchpad updates in place and a scratchpad
- * reads under its real name instead of a folded slug; the authored slug is the
- * fallback for a target the viewer has no cached row for. `@` chips keep the authored slug — the
- * actor caches they'd resolve through are a separate surface.
+ * a renamed slug never mis-colors or breaks the link. A `#` chip draws through
+ * {@link StreamChip}, the same chip a pasted stream link renders. `@` chips keep
+ * the authored slug — the actor caches they'd resolve through are a separate
+ * surface.
  */
 export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointer; slug: string }) {
   const getChannelUrlById = useChannelUrlById()
-  const getChannelChipById = useChannelChipById()
   const getMentionType = useMentionType()
   const onMentionClick = useMentionClick()
   const isMentionOnlyBot = useIsMentionOnlyBot()
 
   if (pointer.kind === "channel") {
-    const target = getChannelChipById(pointer.id)
-    // No cached row: the authored slug is all we have, and INV-64 writes it in
-    // the channel form, so keep rendering it that way.
-    const parts = streamChipParts(target?.type ?? StreamTypes.CHANNEL, target?.label ?? slug)
-    const chip = <InAppLinkChip icon={parts.icon} prefix={parts.prefix} label={parts.label} />
+    const chip = <StreamChip id={pointer.id} slug={slug} />
     const url = getChannelUrlById(pointer.id)
     return url ? <StreamChipLink to={url}>{chip}</StreamChipLink> : chip
   }
