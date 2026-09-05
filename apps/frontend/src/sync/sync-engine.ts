@@ -731,9 +731,7 @@ export class SyncEngine {
         )
 
         const [workspaceBootstrap, streamResults] = await Promise.all([
-          // A forceFull reconnect with visible streams lands here rather than in
-          // the single-fetch branch below, so it needs the same cache bypass.
-          workspaceService.bootstrap(workspaceId, { fresh: forceFull }),
+          workspaceService.bootstrap(workspaceId, { fresh: true }),
           Promise.all(
             visibleStreamIds.map(async (streamId) => {
               try {
@@ -811,12 +809,10 @@ export class SyncEngine {
           syncStatus.set(`stream:${streamId}`, status)
         }
       } else {
-        // Fire the fetch immediately — freshness is never deferred over the wire.
-        // forceFull runs from the catch-up fallbacks, which stamp the cursor at
-        // a head they read themselves — so this snapshot must not be the
-        // service worker's lock-time copy (see workspaceService.bootstrap).
+        // IDB supplies the cached paint. A cached HTTP snapshot can predate both
+        // that local state and its cursor, so applying it can undo already-synced work.
         const stopFetch = getPerfCapture().time("bootstrap.fetch")
-        bootstrap = await workspaceService.bootstrap(workspaceId, { fresh: forceFull })
+        bootstrap = await workspaceService.bootstrap(workspaceId, { fresh: true })
         stopFetch()
 
         // On the very first connect of a warm start, hold the IndexedDB write
