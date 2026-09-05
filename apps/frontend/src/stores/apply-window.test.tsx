@@ -92,6 +92,21 @@ describe("useBatchedValue", () => {
     act(() => endApplyWindow())
     expect(result.current).toBe("c")
   })
+
+  it("takes the new key's value inside a window instead of holding the previous key's", () => {
+    const { result, rerender } = renderHook(({ value, key }) => useBatchedValue(value, key), {
+      initialProps: { value: "a1", key: "stream_a" },
+    })
+
+    act(() => beginApplyWindow())
+    rerender({ value: "b1", key: "stream_b" })
+    expect(result.current).toBe("b1")
+    rerender({ value: "b2", key: "stream_b" })
+    expect(result.current).toBe("b1")
+
+    act(() => endApplyWindow())
+    expect(result.current).toBe("b2")
+  })
 })
 
 describe("whenReadsSettled", () => {
@@ -117,6 +132,17 @@ describe("whenReadsSettled", () => {
 
   it("waits for a tracked read to release", async () => {
     const release = trackPendingRead()
+    const settled = whenReadsSettled()
+    expect(await settles(settled, 30)).toBe(false)
+    release()
+    expect(await settles(settled, 100)).toBe(true)
+  })
+
+  it("ignores a release from before a reset", async () => {
+    const stale = trackPendingRead()
+    resetApplyWindow()
+    const release = trackPendingRead()
+    stale()
     const settled = whenReadsSettled()
     expect(await settles(settled, 30)).toBe(false)
     release()

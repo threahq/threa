@@ -164,6 +164,8 @@ export class SyncEngine {
    */
   private coldSweepClaims = new Map<string, StreamBootstrapClaim>()
   private coldSweepSettled = false
+  /** Navigation refreshes the sweep suppressed; replayed for the streams it did not cover. */
+  private refreshesDeferredBySweep = new Set<string>()
   /**
    * False until this session's cold-boot workspace snapshot has been applied
    * (or definitively failed). While it is false a snapshot is still pending
@@ -689,10 +691,17 @@ export class SyncEngine {
     return claim.promise
   }
 
-  private settleColdSweep(): void {
+  private settleColdSweep(sweptStreamIds: ReadonlySet<string> = new Set()): void {
     this.coldSweepSettled = true
     for (const claim of this.coldSweepClaims.values()) claim.resolve(null)
     this.coldSweepClaims.clear()
+    // A stream navigated to during the sweep that the sweep did not cover has a
+    // cached window the query layer will not refetch (infinite stale time), so
+    // its deferred navigation refresh runs now.
+    const stillVisible = new Set(this.getVisibleServerStreamIds())
+    const deferred = [...this.refreshesDeferredBySweep].filter((id) => !sweptStreamIds.has(id) && stillVisible.has(id))
+    this.refreshesDeferredBySweep.clear()
+    for (const streamId of deferred) void this.refreshStreamAfterNavigation(streamId)
   }
 
   /**
@@ -987,7 +996,7 @@ export class SyncEngine {
       }
     } finally {
       // Whatever the sweep did not hand over, the query layer now fetches itself.
-      if (!_isReconnect) this.settleColdSweep()
+      if (!_isReconnect) this.settleColdSweep(new Set(visibleStreamIds))
     }
   }
 
@@ -1252,9 +1261,11 @@ export class SyncEngine {
   }
 
   private refreshStreamAfterNavigation(streamId: string): Promise<void> {
+    if (this.isDestroyed || !isServerStreamId(streamId)) return Promise.resolve()
     // Until the first-connect sweep has run it owns every visible stream's
     // first window; a refresh here would apply a second, separate state.
-    if (this.isDestroyed || !isServerStreamId(streamId) || !this.coldSweepSettled) {
+    if (!this.coldSweepSettled) {
+      this.refreshesDeferredBySweep.add(streamId)
       return Promise.resolve()
     }
 

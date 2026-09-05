@@ -80,7 +80,7 @@ describe("getVisibleActions", () => {
   })
 
   it("should not include reply-in-thread while the row still awaits its server id", () => {
-    const ids = getVisibleActions(createContext({ awaitingServerId: true })).map((a) => a.id)
+    const ids = getVisibleActions(createContext({ awaitingServerId: true })).map((action) => action.id)
 
     expect(ids).not.toContain("reply-in-thread")
   })

@@ -77,16 +77,24 @@ export function useApplyWindowOpen(): boolean {
  * value when it closes. Outside a window this is a pass-through — zero behavior
  * change for live operation, which is the overwhelming common case.
  *
- * The ref is written during render on purpose: it caches the last value seen
- * while the window was closed (the pre-window value to freeze on), is derived
- * deterministically from `value`, and never schedules a render — the same
+ * A `resetKey` change (the stream or workspace the value belongs to) takes the
+ * current value even inside a window: the hook's host stays mounted across a
+ * navigation, so the held value would otherwise be the previous key's.
+ *
+ * The refs are written during render on purpose: they cache the last value seen
+ * while the window was closed (the pre-window value to freeze on), are derived
+ * deterministically from `value`, and never schedule a render — the same
  * structural-sharing pattern the stream store uses.
  */
-export function useBatchedValue<T>(value: T): T {
+export function useBatchedValue<T>(value: T, resetKey?: unknown): T {
   const open = useApplyWindowOpen()
   const held = useRef(value)
-  if (!open) held.current = value
-  return open ? held.current : value
+  const heldKey = useRef(resetKey)
+  if (!open || heldKey.current !== resetKey) {
+    held.current = value
+    heldKey.current = resetKey
+  }
+  return held.current
 }
 
 /**
@@ -96,12 +104,15 @@ export function useBatchedValue<T>(value: T): T {
  * none of this: they re-read on the close transition itself.
  */
 let pendingReads = 0
+// A release from before a reset must not decrement the new count.
+let readsEpoch = 0
 
 export function trackPendingRead(): () => void {
   pendingReads += 1
+  const epoch = readsEpoch
   let released = false
   return () => {
-    if (released) return
+    if (released || epoch !== readsEpoch) return
     released = true
     pendingReads -= 1
   }
@@ -132,5 +143,6 @@ export function resetApplyWindow(): void {
   const wasOpen = depth > 0
   depth = 0
   pendingReads = 0
+  readsEpoch += 1
   if (wasOpen) notifyTransition()
 }

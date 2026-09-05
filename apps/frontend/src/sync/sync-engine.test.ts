@@ -2805,6 +2805,34 @@ describe("SyncEngine first-connect sweep", () => {
     engine.destroy()
   })
 
+  it("refreshes a stream navigated to during the sweep once the sweep settles", async () => {
+    const deps = makeDeps()
+    let releaseWorkspace: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseWorkspace = resolve
+    })
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      await held
+      return makeWorkspaceBootstrap()
+    })
+    const engine = new SyncEngine(deps)
+    engine.setCurrentStreamId("stream_1")
+    const connecting = engine.onConnect(asSocket(new MockSocket()))
+    engine.setVisibleStreamIds(["stream_2"])
+    expect(deps.streamService.bootstrap).not.toHaveBeenCalledWith("ws_1", "stream_2", undefined)
+
+    releaseWorkspace()
+    await connecting
+
+    await vi.waitFor(() =>
+      expect(deps.streamService.bootstrap.mock.calls).toEqual([
+        ["ws_1", "stream_1", undefined],
+        ["ws_1", "stream_2", undefined],
+      ])
+    )
+    engine.destroy()
+  })
+
   it("resolves outstanding claims to null on destroy", async () => {
     const deps = makeSyncDeps()
     const engine = new SyncEngine(deps)

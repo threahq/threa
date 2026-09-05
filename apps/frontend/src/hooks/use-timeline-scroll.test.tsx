@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
 import { StrictMode, type ReactNode } from "react"
+import type { VirtualizerHandle } from "virtua"
 import { act, render } from "@testing-library/react"
 import { useTimelineScroll } from "./use-timeline-scroll"
 
@@ -132,6 +133,38 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
     // exitJumpMode swaps the window wholesale; baseline was cleared so no shift.
     harness.rerender(opts({ itemCount: 30, getFirstKey: () => "e90" }))
     expect(harness.current.shift).toBe(false)
+  })
+})
+
+describe("useTimelineScroll — tail replace", () => {
+  it("requests the last index before paint when the tail row changes under a following reader", () => {
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    scrollToIndex.mockClear()
+
+    // A single live append at the tail is not a replace.
+    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "e60" }))
+    expect(scrollToIndex).not.toHaveBeenCalled()
+
+    // A sweep lands a gap: same count, different newest row.
+    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10", getLastKey: () => "e70" }))
+    expect(scrollToIndex).toHaveBeenCalledWith(50, expect.objectContaining({ align: "end" }))
+  })
+
+  it("does not re-request the tail for a reader who scrolled away", () => {
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e59" }))
+    act(() => harness.current.disableAutoScroll())
+    scrollToIndex.mockClear()
+
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", getLastKey: () => "e70" }))
+    expect(scrollToIndex).not.toHaveBeenCalled()
   })
 })
 

@@ -3191,7 +3191,7 @@ export function StreamContent({
                         <div ref={plainContentRef}>
                           {/* The plain scroller has no settle mask: hold the anchor until the
                               replies' first read lands so both paint in one frame. */}
-                          {isResolved && isThread && anchorEvent && parentStreamId && (
+                          {isResolved && !isLoading && isThread && anchorEvent && parentStreamId && (
                             <ThreadParentEvent
                               event={anchorEvent}
                               workspaceId={workspaceId}

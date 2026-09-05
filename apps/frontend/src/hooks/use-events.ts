@@ -795,7 +795,8 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     useMemo(
       () => ({ events, holes, isLoading, isConfirmedEmpty, isResolved: idbResolved, hasOlderEvents, latestSequence }),
       [events, holes, isLoading, isConfirmedEmpty, idbResolved, hasOlderEvents, latestSequence]
-    )
+    ),
+    streamId
   )
 
   return {
