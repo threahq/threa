@@ -1,22 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render } from "@testing-library/react"
 import * as contextsModule from "@/contexts"
-import * as authModule from "@/auth"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
+import * as workspaceUserModule from "@/hooks/use-current-workspace-user-id"
 import * as posthogModule from "./posthog"
 import { AnalyticsConsentGate } from "./gate"
 
 type Consent = "unset" | "granted" | "denied"
 const analytics = { posthogToken: "tok_1", posthogHost: "https://eu.example.com" }
 
-function mockInputs(params: { consent: Consent; analytics: typeof analytics | null; user: { id: string } | null }) {
+function mockInputs(params: { consent: Consent; analytics: typeof analytics | null; userId: string | null }) {
   vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
     preferences: { analyticsConsent: params.consent },
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
   vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockReturnValue({
     data: { analytics: params.analytics },
   } as unknown as ReturnType<typeof useWorkspacesModule.useWorkspaceBootstrap>)
-  vi.spyOn(authModule, "useUser").mockReturnValue(params.user as unknown as ReturnType<typeof authModule.useUser>)
+  vi.spyOn(workspaceUserModule, "useCurrentWorkspaceUserId").mockReturnValue(params.userId)
 }
 
 describe("AnalyticsConsentGate", () => {
@@ -29,8 +29,8 @@ describe("AnalyticsConsentGate", () => {
     stop = vi.spyOn(posthogModule, "stopAnalytics").mockImplementation(() => {})
   })
 
-  it("should start with the workspace target when consent is granted", () => {
-    mockInputs({ consent: "granted", analytics, user: { id: "usr_1" } })
+  it("should start with the workspace-scoped user id when consent is granted", () => {
+    mockInputs({ consent: "granted", analytics, userId: "usr_1" })
 
     render(<AnalyticsConsentGate workspaceId="ws_1" />)
 
@@ -43,13 +43,13 @@ describe("AnalyticsConsentGate", () => {
     expect(stop).not.toHaveBeenCalled()
   })
 
-  it.each<[string, Consent, typeof analytics | null, { id: string } | null]>([
-    ["consent is unset", "unset", analytics, { id: "usr_1" }],
-    ["consent is denied", "denied", analytics, { id: "usr_1" }],
-    ["the workspace has no analytics config", "granted", null, { id: "usr_1" }],
-    ["there is no user", "granted", analytics, null],
-  ])("should stop and never start when %s", (_label, consent, analyticsConfig, user) => {
-    mockInputs({ consent, analytics: analyticsConfig, user })
+  it.each<[string, Consent, typeof analytics | null, string | null]>([
+    ["consent is unset", "unset", analytics, "usr_1"],
+    ["consent is denied", "denied", analytics, "usr_1"],
+    ["the workspace has no analytics config", "granted", null, "usr_1"],
+    ["the workspace user is not loaded yet", "granted", analytics, null],
+  ])("should stop and never start when %s", (_label, consent, analyticsConfig, userId) => {
+    mockInputs({ consent, analytics: analyticsConfig, userId })
 
     render(<AnalyticsConsentGate workspaceId="ws_1" />)
 
@@ -58,19 +58,38 @@ describe("AnalyticsConsentGate", () => {
   })
 
   it("should stop when consent flips to denied without a remount", () => {
-    mockInputs({ consent: "granted", analytics, user: { id: "usr_1" } })
+    mockInputs({ consent: "granted", analytics, userId: "usr_1" })
     const { rerender } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
     expect(start).toHaveBeenCalledTimes(1)
 
-    mockInputs({ consent: "denied", analytics, user: { id: "usr_1" } })
+    mockInputs({ consent: "denied", analytics, userId: "usr_1" })
     rerender(<AnalyticsConsentGate workspaceId="ws_1" />)
 
     expect(stop).toHaveBeenCalledTimes(1)
     expect(start).toHaveBeenCalledTimes(1)
   })
 
+  it("should restart against the new workspace when it changes", () => {
+    mockInputs({ consent: "granted", analytics, userId: "usr_1" })
+    const { rerender } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    mockInputs({
+      consent: "granted",
+      analytics: { posthogToken: "tok_2", posthogHost: "https://us.example.com" },
+      userId: "usr_2",
+    })
+    rerender(<AnalyticsConsentGate workspaceId="ws_2" />)
+
+    expect(start).toHaveBeenNthCalledWith(2, {
+      token: "tok_2",
+      host: "https://us.example.com",
+      distinctId: "usr_2",
+      workspaceId: "ws_2",
+    })
+  })
+
   it("should keep analytics running when the gate unmounts", () => {
-    mockInputs({ consent: "granted", analytics, user: { id: "usr_1" } })
+    mockInputs({ consent: "granted", analytics, userId: "usr_1" })
     const { unmount } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
 
     unmount()

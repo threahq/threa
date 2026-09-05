@@ -1,21 +1,27 @@
-import posthog, { type CaptureResult } from "posthog-js"
+import posthog, { type CaptureResult, type Properties } from "posthog-js"
+
+export type AnalyticsRoot = Pick<typeof posthog, "init">
 
 export type AnalyticsClient = Pick<
   typeof posthog,
-  "init" | "opt_in_capturing" | "opt_out_capturing" | "identify" | "group" | "reset" | "captureException"
+  "opt_in_capturing" | "opt_out_capturing" | "identify" | "group" | "reset" | "captureException"
 >
 
 /**
- * posthog-js attaches the raw browser URL to EVERY event, so a crash report from
- * `/w/ws_x/s/stream_y` would carry a stream id the backend deliberately never
- * sends (E2E streams are excluded server-side, and there is no client-side
- * equivalent). Any segment that is not lowercase-kebab becomes `:id`, which
- * fails closed: every prefixed ULID (INV-2) holds `_` and uppercase.
+ * posthog-js attaches the raw browser URL to every event, to the person
+ * properties it sends as `$set_once`, and to session-entry copies of both, so a
+ * crash report from `/w/ws_x/s/stream_y` would carry a stream id the backend
+ * deliberately never sends (E2E streams are excluded server-side, and there is
+ * no client-side equivalent). Any segment that is not lowercase-kebab becomes
+ * `:id`, which fails closed: every prefixed ULID (INV-2) holds `_` and uppercase.
  */
 const ROUTE_SEGMENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-const URL_PROPERTIES = ["$current_url", "$initial_current_url", "$session_entry_url", "$referrer"]
-const PATH_PROPERTIES = ["$pathname", "$initial_pathname"]
+// Matched against the key with its leading `$` dropped, so posthog's prefixed
+// copies ($initial_current_url, $session_entry_pathname, …) are covered as the
+// SDK adds them. A fixed key list fails open on every upgrade.
+const URL_KEY = /(?:^|_)(?:url|referrer)$/
+const PATH_KEY = /(?:^|_)pathname$/
 
 function sanitizePath(pathname: string): string {
   return pathname
@@ -34,17 +40,25 @@ function sanitizeUrl(value: string): string {
   }
 }
 
-export function sanitizeUrlProperties(event: CaptureResult | null): CaptureResult | null {
-  if (!event?.properties) return event
+function sanitizeBag(bag: Properties): Properties {
+  const sanitized: Properties = { ...bag }
+  for (const [key, value] of Object.entries(sanitized)) {
+    if (typeof value !== "string") continue
+    const name = key.startsWith("$") ? key.slice(1) : key
+    if (URL_KEY.test(name)) sanitized[key] = sanitizeUrl(value)
+    else if (PATH_KEY.test(name)) sanitized[key] = sanitizePath(value)
+  }
+  return sanitized
+}
 
-  const properties = { ...event.properties }
-  for (const key of URL_PROPERTIES) {
-    if (typeof properties[key] === "string") properties[key] = sanitizeUrl(properties[key])
+export function sanitizeUrlProperties(event: CaptureResult | null): CaptureResult | null {
+  if (!event) return event
+  return {
+    ...event,
+    ...(event.properties && { properties: sanitizeBag(event.properties) }),
+    ...(event.$set && { $set: sanitizeBag(event.$set) }),
+    ...(event.$set_once && { $set_once: sanitizeBag(event.$set_once) }),
   }
-  for (const key of PATH_PROPERTIES) {
-    if (typeof properties[key] === "string") properties[key] = sanitizePath(properties[key])
-  }
-  return { ...event, properties }
 }
 
 export interface StartAnalyticsParams {
@@ -60,34 +74,36 @@ interface ActiveAnalytics extends StartAnalyticsParams {
 
 let active: ActiveAnalytics | null = null
 
-function sameTarget(a: ActiveAnalytics, b: StartAnalyticsParams, client: AnalyticsClient): boolean {
-  return (
-    a.client === client &&
-    a.token === b.token &&
-    a.host === b.host &&
-    a.distinctId === b.distinctId &&
-    a.workspaceId === b.workspaceId
-  )
-}
-
-export function startAnalytics(params: StartAnalyticsParams, client: AnalyticsClient = posthog): void {
-  if (active && sameTarget(active, params, client)) {
+export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot = posthog): void {
+  if (
+    active &&
+    active.token === params.token &&
+    active.distinctId === params.distinctId &&
+    active.workspaceId === params.workspaceId
+  ) {
     return
   }
-  if (active) {
-    stopAnalytics()
-  }
 
-  client.init(params.token, {
-    api_host: params.host,
-    autocapture: false,
-    capture_pageview: false,
-    capture_pageleave: false,
-    disable_session_recording: true,
-    capture_exceptions: true,
-    persistence: "localStorage+cookie",
-    before_send: sanitizeUrlProperties,
-  })
+  // One instance per project token. posthog-js ignores a second `init` on an
+  // instance it has already loaded, so a user who moves from an EU workspace to
+  // a US one in the same tab would otherwise keep writing US activity into the
+  // EU project. `api_host` is fixed at init, and travels with the token.
+  const client = root.init(
+    params.token,
+    {
+      api_host: params.host,
+      autocapture: false,
+      capture_pageview: false,
+      capture_pageleave: false,
+      disable_session_recording: true,
+      capture_exceptions: true,
+      persistence: "localStorage+cookie",
+      before_send: sanitizeUrlProperties,
+    },
+    `threa_${params.token}`
+  )
+
+  stopAnalytics()
   client.opt_in_capturing()
   client.identify(params.distinctId)
   client.group("workspace", params.workspaceId)
@@ -98,9 +114,9 @@ export function startAnalytics(params: StartAnalyticsParams, client: AnalyticsCl
 export function stopAnalytics(): void {
   if (!active) return
   const { client } = active
+  active = null
   client.reset()
   client.opt_out_capturing()
-  active = null
 }
 
 export function captureException(error: unknown, properties?: Record<string, unknown>): void {
