@@ -14,20 +14,22 @@ import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
+import type { MemoExplorerResult } from "@/api"
 
 const search = vi.fn()
 const clear = vi.fn()
+const mockUseMemoSearch = vi.fn()
 
 function LocationProbe() {
   const location = useLocation()
   return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
 }
 
-function renderPage() {
+function renderPage(initialEntry = "/w/workspace_1/search?q=hello") {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <TooltipProvider>
-        <MemoryRouter initialEntries={["/w/workspace_1/search?q=hello"]}>
+        <MemoryRouter initialEntries={[initialEntry]}>
           <SidebarProvider>
             <SearchPanelProvider workspaceId="workspace_1">
               <Routes>
@@ -42,12 +44,51 @@ function renderPage() {
   )
 }
 
+function buildMemoResult(overrides: Partial<MemoExplorerResult["memo"]> = {}): MemoExplorerResult {
+  return {
+    memo: {
+      id: "memo_1",
+      workspaceId: "workspace_1",
+      memoType: "message",
+      sourceMessageId: "msg_1",
+      sourceConversationId: null,
+      title: "Launch decision",
+      abstract: "Approved launch plan",
+      keyPoints: [],
+      sourceMessageIds: ["msg_1"],
+      participantIds: ["user_1"],
+      knowledgeType: "decision",
+      tags: [],
+      parentMemoId: null,
+      status: "active",
+      version: 1,
+      revisionReason: null,
+      authoredByKind: "pipeline",
+      sourceSessionId: null,
+      scope: "workspace",
+      scopeUserId: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      ...overrides,
+    },
+    distance: 0,
+    sourceStream: null,
+    rootStream: null,
+  }
+}
+
 describe("SearchPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     localStorage.clear()
     search.mockReset()
     clear.mockReset()
+    mockUseMemoSearch.mockReset()
+    mockUseMemoSearch.mockReturnValue({ data: { results: [] }, isLoading: false, error: null })
+    vi.spyOn(hooksModule, "useMemoSearch").mockImplementation(
+      (...args) => mockUseMemoSearch(...args) as ReturnType<typeof hooksModule.useMemoSearch>
+    )
     vi.spyOn(hooksModule, "useSearch").mockReturnValue({
       results: [mockSearchResultsList[1]!, mockSearchResultsList[0]!],
       isLoading: false,
@@ -154,5 +195,53 @@ describe("SearchPage", () => {
       expect(screen.getByRole("button", { name: /search deeper/i })).toBeDisabled()
     })
     expect(screen.getByRole("radio", { name: "Ranked results" })).toBeInTheDocument()
+  })
+
+  describe("memo matches", () => {
+    it("renders a Memories section with a memo card and a See all link", async () => {
+      mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+      renderPage()
+
+      expect(await screen.findByText("Memories")).toBeInTheDocument()
+
+      const card = screen.getByText("Launch decision").closest("a")
+      expect(card).toHaveAttribute("href", "/w/workspace_1/memory?q=hello&memo=memo_1")
+
+      const seeAll = screen.getByRole("link", { name: "See all" })
+      expect(seeAll).toHaveAttribute("href", "/w/workspace_1/memory?q=hello")
+    })
+
+    it("counts a memo-only match as a result instead of showing the empty state", async () => {
+      mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+      vi.spyOn(hooksModule, "useSearch").mockImplementation(
+        () =>
+          ({ results: [], isLoading: false, error: null, search, clear }) as unknown as ReturnType<
+            typeof hooksModule.useSearch
+          >
+      )
+      renderPage()
+
+      expect(await screen.findByText("Memories")).toBeInTheDocument()
+      expect(screen.getByText("1 result")).toBeInTheDocument()
+      expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
+    })
+
+    it("is absent when the memo response is empty", async () => {
+      mockUseMemoSearch.mockReturnValue({ data: { results: [] }, isLoading: false, error: null })
+      renderPage()
+
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      expect(screen.queryByText("Memories")).not.toBeInTheDocument()
+    })
+
+    it("is absent, and skips the memo request, when the query carries from:@someone", async () => {
+      mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+      renderPage("/w/workspace_1/search?q=from%3A%40martin%20hello")
+
+      await waitFor(() => expect(mockUseMemoSearch).toHaveBeenCalled())
+      expect(screen.queryByText("Memories")).not.toBeInTheDocument()
+      const lastCall = mockUseMemoSearch.mock.calls.at(-1)
+      expect(lastCall?.[2]).toEqual({ enabled: false })
+    })
   })
 })

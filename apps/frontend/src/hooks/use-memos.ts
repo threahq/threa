@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   archiveMemo,
   deleteMemo,
@@ -21,11 +21,12 @@ export const memoKeys = {
   detail: (workspaceId: string, memoId: string) => [...memoKeys.all, "detail", workspaceId, memoId] as const,
 }
 
-export function useMemoSearch(workspaceId: string, request: MemoSearchRequest) {
+export function useMemoSearch(workspaceId: string, request: MemoSearchRequest, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: memoKeys.search(workspaceId, request),
     queryFn: () => searchMemos(workspaceId, request),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && (options?.enabled ?? true),
+    placeholderData: keepPreviousData,
   })
 }
 

@@ -22,6 +22,8 @@ export interface MessageSearchState {
   validationError: string | null
   /** Structured filters parsed out of the query string (from:@…, in:#…, …). */
   parsedFilters: ParsedFilter[]
+  /** Parsed filters resolved to the ids the message-search API understands. */
+  apiFilters: SearchFilters
   /** Free-text part of the query with filters removed. */
   searchText: string
   /** True when the query contains anything searchable. */
@@ -177,6 +179,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     error,
     validationError: hasTooManyPhrases ? `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.` : null,
     parsedFilters,
+    apiFilters,
     searchText,
     hasQuery,
     canSearchDeeper,
