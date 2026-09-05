@@ -158,7 +158,8 @@ async function checkContent(migrations: string[]): Promise<string[]> {
 }
 
 /**
- * INV-17 exemptions, keyed by filename, with the reason each one is safe.
+ * INV-17 exemptions, keyed by repository-relative path, with the reason each
+ * one is safe.
  *
  * The rule protects against a file on disk disagreeing with a database that
  * already ran it. A migration that aborted on every database it reached has no
@@ -168,11 +169,13 @@ async function checkContent(migrations: string[]): Promise<string[]> {
  * the only correction available.
  *
  * Adding an entry needs both halves: the migration must have failed everywhere
- * it ran, and the edit must leave the resulting schema byte-identical.
+ * it ran, and the edit must leave the resulting schema byte-identical. An
+ * exemption covers modification only — a deletion or rename still fails, since
+ * neither can leave the schema identical.
  */
 const INV17_EXEMPT = new Map<string, string>([
   [
-    "20260905120000_message_search_config.sql",
+    "apps/backend/src/db/migrations/20260905120000_message_search_config.sql",
     "aborted on every database it reached (SQLSTATE 53100: the parallel HNSW rebuild's " +
       "shared-memory segment does not fit prod's /dev/shm); the edit adds two SET LOCAL " +
       "statements and leaves the resulting schema identical",
@@ -204,12 +207,12 @@ async function checkAppendOnly(): Promise<{ violations: string[]; exempted: stri
     if (!line.trim()) continue
     const [status, ...rest] = line.split("\t")
     const path = rest[rest.length - 1]
-    const reason = INV17_EXEMPT.get(path.split("/").pop() ?? path)
-    if (reason && !status.startsWith("A")) {
+    // A = added (fine), M = modified, D = deleted, R = renamed.
+    const reason = INV17_EXEMPT.get(path)
+    if (reason && status === "M") {
       exempted.push(`  ⚠︎ ${path} — INV-17 exemption: ${reason}.`)
       continue
     }
-    // A = added (fine), M = modified, D = deleted, R = renamed.
     if (status.startsWith("M")) {
       violations.push(`  ❌ ${path} — INV-17: existing migration modified; migrations are append-only.`)
     } else if (status.startsWith("D")) {
@@ -243,6 +246,8 @@ async function main(): Promise<void> {
   const { violations: appendOnlyViolations, exempted, skipped } = await checkAppendOnly()
   const violations = [...contentViolations, ...appendOnlyViolations]
 
+  for (const exemptionNotice of exempted) console.log(exemptionNotice)
+
   if (violations.length > 0) {
     console.error("\n❌ Migration invariant violations:\n")
     for (const v of violations) console.error(v)
@@ -254,7 +259,6 @@ async function main(): Promise<void> {
   }
 
   console.log(`✓ ${migrations.length} migrations clean (INV-1, INV-3, INV-17)`)
-  for (const e of exempted) console.log(e)
   if (skipped) console.log(`  (append-only check skipped: ${skipped})`)
 }
 
