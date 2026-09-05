@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { db } from "@/db"
+import { liveQuery } from "dexie"
 import { QueryClient } from "@tanstack/react-query"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
@@ -209,6 +210,49 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(await db.streams.get("stream_stale")).toBeUndefined()
     // Current stream should exist
     expect(await db.streams.get("stream_current")).toBeDefined()
+  })
+
+  it("adds and removes streams in one commit, so a live query sees a single change", async () => {
+    const fetchStartedAt = Date.now() - 1000
+    const now = new Date().toISOString()
+    const stream = {
+      workspaceId: "ws_1",
+      type: "channel",
+      slug: null,
+      description: null,
+      visibility: "public",
+      parentStreamId: null,
+      rootStreamId: null,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "user_1",
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+    } as const
+    await db.streams.put({ ...stream, id: "stream_stale", displayName: "Gone", _cachedAt: fetchStartedAt - 86400000 })
+    const bootstrap = makeBootstrap({
+      streams: [{ ...stream, id: "stream_current", displayName: "Current", lastMessagePreview: null }],
+    })
+
+    const seen: string[][] = []
+    let resolveFirst: (() => void) | undefined
+    const first = new Promise<void>((resolve) => {
+      resolveFirst = resolve
+    })
+    const subscription = liveQuery(() => db.streams.orderBy("id").primaryKeys()).subscribe((ids) => {
+      seen.push(ids.map(String))
+      resolveFirst?.()
+    })
+    try {
+      await first
+      await applyWorkspaceBootstrap("ws_1", bootstrap, fetchStartedAt)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    } finally {
+      subscription.unsubscribe()
+    }
+
+    expect(seen).toEqual([["stream_stale"], ["stream_current"]])
   })
 
   it("preserves streams written by socket handlers DURING the fetch (race condition)", async () => {

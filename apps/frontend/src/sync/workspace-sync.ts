@@ -2738,6 +2738,9 @@ export async function applyWorkspaceBootstrap(
   // cold first connect). Mirrors applyReconnectBootstrapBatch. The conditional
   // unread/prefs/sidebar writes are inlined (read→check→write stays atomic,
   // INV-20) rather than nested transactions.
+  // Stale-entity deletes ride the same transaction as the upserts so a rename
+  // and an archive land in one commit, never as two visible states.
+  let deletions = NO_TABLE_DELETIONS
   const stopTx = capture.time("bootstrap.tx")
   await db.transaction(
     "rw",
@@ -2756,6 +2759,7 @@ export async function applyWorkspaceBootstrap(
       db.userPreferences,
       db.sidebarConfigs,
       db.workspaceMetadata,
+      db.slots,
     ],
     async () => {
       const stopPreRead = capture.time("bootstrap.preRead")
@@ -2972,27 +2976,21 @@ export async function applyWorkspaceBootstrap(
       } else {
         effectiveSidebarConfig = existingSidebar.config
       }
+
+      // Rows absent from the bootstrap and written before the fetch started
+      // are stale; rows socket handlers wrote during the fetch survive. With
+      // no fetchStartedAt nothing is swept.
+      if (fetchStartedAt !== undefined) {
+        const stopCleanup = capture.time("bootstrap.cleanup")
+        deletions = await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
+        stopCleanup()
+      }
     }
   )
 
   stopTx()
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
-
-  // Clean up stale entities: anything in IDB for this workspace that
-  // wasn't in the bootstrap AND was written before this bootstrap.
-  // Entities with _cachedAt >= now were written concurrently by socket
-  // handlers and must be preserved.
-  // Use the pre-fetch timestamp for stale cleanup. Entities written by
-  // socket handlers DURING the fetch have _cachedAt > fetchStartedAt and
-  // survive. Only truly stale entities (from before we started fetching)
-  // are removed. If no fetchStartedAt provided, skip cleanup entirely.
-  let deletions = NO_TABLE_DELETIONS
-  if (fetchStartedAt !== undefined) {
-    const stopCleanup = capture.time("bootstrap.cleanup")
-    deletions = await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
-    stopCleanup()
-  }
 
   // Populate in-memory cache so useLiveQuery hooks return real data on first
   // synchronous render (the default value). Without this, every component sees
@@ -3220,6 +3218,7 @@ export async function applyReconnectBootstrapBatch(
     labelAssignments: 0,
   }
 
+  let swept = NO_TABLE_DELETIONS
   await db.transaction(
     "rw",
     [
@@ -3410,16 +3409,16 @@ export async function applyReconnectBootstrapBatch(
         removeRowConfirmations(workspaceId, "streamMemberships", terminalRowIds)
         removeRowConfirmations(workspaceId, "streamReadState", terminalRowIds)
       }
+
+      if (fetchStartedAt !== undefined) {
+        swept = await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
+      }
     }
   )
 
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
 
-  const swept =
-    fetchStartedAt !== undefined
-      ? await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
-      : NO_TABLE_DELETIONS
   const terminalCount = terminalStreamIds.size
   const deletions: TableDeletions = {
     ...swept,

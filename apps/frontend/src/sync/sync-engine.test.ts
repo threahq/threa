@@ -1143,6 +1143,87 @@ describe("SyncEngine sync cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("lets the pre-fetched snapshot answer a first run with no local state", async () => {
+    const deps = makeActiveDeps(vi.fn(async () => emptyPage("42")))
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledWith("ws_1", { fresh: false })
+    engine.destroy()
+  })
+
+  it("bypasses the pre-fetched snapshot when a sync cursor exists", async () => {
+    // The service worker's copy was captured when the tab last hid. Over a
+    // cursor it would replay entries this device already applied.
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const deps = makeActiveDeps(vi.fn(async () => emptyPage("10")))
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledWith("ws_1", { fresh: true })
+    engine.destroy()
+  })
+
+  it("bypasses the pre-fetched snapshot when a cached workspace exists without a cursor", async () => {
+    const now = new Date().toISOString()
+    await db.workspaces.put({
+      id: "ws_1",
+      name: "Cached",
+      slug: "cached",
+      createdAt: now,
+      updatedAt: now,
+      _cachedAt: 1,
+    })
+    const deps = makeActiveDeps(vi.fn(async () => emptyPage("42")))
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledWith("ws_1", { fresh: true })
+    engine.destroy()
+  })
+
+  it("refuses a snapshot whose sync head is below the local cursor and keeps the cached state", async () => {
+    // A snapshot older than the cursor cannot be applied: the cursor never
+    // rewinds, so the entries between the two would replay on screen now and
+    // the rows they touched would be swept as stale. The cached state stays,
+    // the workspace is marked stale, and catch-up resumes from the cursor.
+    const now = new Date().toISOString()
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    await db.workspaces.put({
+      id: "ws_1",
+      name: "Cached",
+      slug: "cached",
+      createdAt: now,
+      updatedAt: now,
+      _cachedAt: 1,
+    })
+    await db.workspaceUsers.put({ id: "user_kept", workspaceId: "ws_1", name: "Kept", _cachedAt: 1 } as never)
+    const catchUp = vi.fn(async () => emptyPage("10"))
+    const deps = makeActiveDeps(catchUp)
+    deps.workspaceService.bootstrap = vi.fn(async () => ({
+      ...makeWorkspaceBootstrap(),
+      workspace: { ...makeWorkspaceBootstrap().workspace, name: "Older" },
+      syncHead: "5",
+    }))
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    expect({
+      workspaceName: (await db.workspaces.get("ws_1"))?.name,
+      keptUser: (await db.workspaceUsers.get("user_kept"))?.id,
+      status: deps.syncStatus.get("workspace:ws_1"),
+      cursor: engine.getSyncCursor(),
+    }).toEqual({ workspaceName: "Cached", keptUser: "user_kept", status: "stale", cursor: "10" })
+    await vi.waitFor(() =>
+      expect(catchUp).toHaveBeenCalledWith("ws_1", expect.objectContaining({ after: "10" }), expect.any(AbortSignal))
+    )
+    engine.destroy()
+  })
+
   it("does not strand entries when a cache-served bootstrap is older than the log head", async () => {
     // Regression: the service worker's lock-time bootstrap copy declares an
     // older syncHead than the log's true head. The cursor must land on the
