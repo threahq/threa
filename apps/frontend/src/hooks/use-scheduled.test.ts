@@ -2,12 +2,40 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
+import type { ScheduledMessageView } from "@threa/types"
 import { db } from "@/db"
+import { getActiveDb, setActiveDb, ThreaDatabase } from "@/db/database"
+import { bumpAccountGeneration } from "@/db/event-writes"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { scheduledKeys, useScheduledList } from "./use-scheduled"
 
 const WORKSPACE_ID = "ws_test"
+
+function makeScheduledView(): ScheduledMessageView {
+  const now = new Date().toISOString()
+  return {
+    id: "scheduled_account_a",
+    workspaceId: WORKSPACE_ID,
+    userId: "usr_me",
+    streamId: "stream_1",
+    parentMessageId: null,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "hello",
+    attachmentIds: [],
+    metadata: null,
+    scheduledFor: now,
+    status: "pending",
+    sentMessageId: null,
+    lastError: null,
+    editActiveUntil: null,
+    clientMessageId: null,
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    statusChangedAt: now,
+  }
+}
 
 describe("useScheduledList refetchOnReconnect (sync mode gate)", () => {
   let listFn: ReturnType<typeof vi.fn>
@@ -79,5 +107,40 @@ describe("useScheduledList refetchOnReconnect (sync mode gate)", () => {
     })
 
     await waitFor(() => expect(listFn).toHaveBeenCalledTimes(2))
+  })
+
+  it("does not persist a delayed account A response after switching to account B", async () => {
+    mockEngine(true)
+    const accountA = getActiveDb()
+    const accountB = new ThreaDatabase(`threa_test_scheduled_account_b_${Date.now()}`)
+    let resolveList: ((value: { scheduled: ScheduledMessageView[]; nextCursor: null }) => void) | undefined
+    listFn.mockImplementationOnce(
+      () => new Promise<{ scheduled: ScheduledMessageView[]; nextCursor: null }>((resolve) => (resolveList = resolve))
+    )
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    renderHook(() => useScheduledList(WORKSPACE_ID, "pending"), { wrapper })
+
+    try {
+      await waitFor(() => expect(resolveList).toBeDefined())
+      bumpAccountGeneration()
+      setActiveDb(accountB)
+      resolveList!({ scheduled: [makeScheduledView()], nextCursor: null })
+      await waitFor(() =>
+        expect(queryClient.getQueryState(scheduledKeys.list(WORKSPACE_ID, "pending"))?.status).toBe("success")
+      )
+
+      expect({
+        accountA: await accountA.scheduledMessages.get("scheduled_account_a"),
+        accountB: await accountB.scheduledMessages.get("scheduled_account_a"),
+      }).toEqual({ accountA: undefined, accountB: undefined })
+    } finally {
+      setActiveDb(accountA)
+      bumpAccountGeneration()
+      queryClient.clear()
+      accountB.close()
+      await accountB.delete()
+    }
   })
 })

@@ -1,5 +1,8 @@
 import {
   db,
+  getActiveDb,
+  type ThreaDatabase,
+  type AccountWriteContext,
   type CachedBot,
   type CachedDmPeer,
   type CachedLabel,
@@ -12,6 +15,7 @@ import {
   type CachedWorkspace,
   type CachedWorkspaceUser,
 } from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { mergeConversationByTitleRevision, mergeStreamByTitleRevision } from "@/lib/title-merge"
 import {
@@ -2651,8 +2655,11 @@ function mapArchivedStreamRows(
 export async function applyWorkspaceBootstrap(
   workspaceId: string,
   bootstrap: WorkspaceBootstrap,
-  fetchStartedAt?: number
+  fetchStartedAt?: number,
+  account: AccountWriteContext = { generation: getAccountGeneration(), database: getActiveDb() }
 ): Promise<AppliedWorkspaceBootstrap> {
+  if (getAccountGeneration() !== account.generation) return { anyChanged: false, bootstrap }
+  const db = account.database
   const now = Date.now()
   const capture = getPerfCapture()
 
@@ -2791,6 +2798,7 @@ export async function applyWorkspaceBootstrap(
         db.workspaceMetadata.get(workspaceId),
       ])
       stopPreRead()
+      if (getAccountGeneration() !== account.generation) return
 
       const stopDiff = capture.time("bootstrap.diff")
       const streamCandidates = dedupeById([
@@ -2986,7 +2994,7 @@ export async function applyWorkspaceBootstrap(
       // no fetchStartedAt nothing is swept.
       if (fetchStartedAt !== undefined) {
         const stopCleanup = capture.time("bootstrap.cleanup")
-        deletions = await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt)
+        deletions = await cleanupStaleEntities(workspaceId, bootstrap, fetchStartedAt, db)
         stopCleanup()
       }
     }
@@ -2995,6 +3003,8 @@ export async function applyWorkspaceBootstrap(
   stopTx()
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
+
+  if (getAccountGeneration() !== account.generation) return { anyChanged: rowsWritten > 0, bootstrap }
 
   // Populate in-memory cache so useLiveQuery hooks return real data on first
   // synchronous render (the default value). Without this, every component sees
@@ -3104,11 +3114,13 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>,
   staleStreamIds: Set<string>,
   terminalStreamIds: Set<string>,
-  fetchStartedAt?: number
+  fetchStartedAt?: number,
+  account: AccountWriteContext = { generation: getAccountGeneration(), database: getActiveDb() }
 ): Promise<{
   workspaceBootstrap: WorkspaceBootstrap
   streamBootstraps: Map<string, StreamBootstrap>
 }> {
+  const db = account.database
   const now = Date.now()
   const capture = getPerfCapture()
   let rowsWritten = 0
@@ -3120,6 +3132,9 @@ export async function applyReconnectBootstrapBatch(
     db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
     db.unreadState.get(workspaceId),
   ])
+  if (getAccountGeneration() !== account.generation) {
+    return { workspaceBootstrap, streamBootstraps }
+  }
 
   const finalBootstrap = mergeReconnectWorkspaceBootstrap({
     workspaceBootstrap,
@@ -3398,7 +3413,7 @@ export async function applyReconnectBootstrapBatch(
         // Carry the fetch window so a per-stream envelope's stale `readState`
         // never clobbers a frontier touched during the reconnect (same rule
         // the workspace map merge above applies).
-        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, fetchStartedAt)
+        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, fetchStartedAt, account)
       }
 
       if (terminalStreamIds.size > 0) {
@@ -3416,7 +3431,7 @@ export async function applyReconnectBootstrapBatch(
       }
 
       if (fetchStartedAt !== undefined) {
-        swept = await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt)
+        swept = await cleanupStaleEntities(workspaceId, finalBootstrap, fetchStartedAt, db)
       }
     }
   )
@@ -3424,6 +3439,10 @@ export async function applyReconnectBootstrapBatch(
   stopTx()
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
+
+  if (getAccountGeneration() !== account.generation) {
+    return { workspaceBootstrap: finalBootstrap, streamBootstraps }
+  }
 
   const terminalCount = terminalStreamIds.size
   const deletions: TableDeletions = {
@@ -3551,8 +3570,10 @@ export async function applyReconnectBootstrapBatch(
 async function cleanupStaleEntities(
   workspaceId: string,
   bootstrap: WorkspaceBootstrap,
-  now: number
+  now: number,
+  database: ThreaDatabase = getActiveDb()
 ): Promise<TableDeletions> {
+  const db = database
   // Archived roots ride in bootstrap.archivedStreams (absent from .streams);
   // keep them so the absence-sweep doesn't delete rows every consumer still
   // needs (drafts hiding, name resolution) across a reload.

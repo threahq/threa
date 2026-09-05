@@ -25,8 +25,8 @@ interface BufferedEvent {
 /**
  * Soft cap on the pause buffer. Catch-up pauses for seconds at most; a
  * workspace producing this many live events in that window is far outside
- * normal load, and falling back to immediate (live) application there merely
- * reverts to today's delivery semantics for the overflow.
+ * normal load. Overflow requests an authoritative recovery while keeping live
+ * delivery paused.
  */
 const DEFAULT_BUFFER_LIMIT = 2_000
 
@@ -65,6 +65,7 @@ export class SocketEventGate implements SyncEventSource {
     private readonly workspaceId: string,
     private readonly opts: {
       onApplied?: (syncId: string) => void
+      onRecoveryRequired?: () => void
       bufferLimit?: number
     } = {}
   ) {}
@@ -167,10 +168,6 @@ export class SocketEventGate implements SyncEventSource {
         }
         const event = batch[i]
         if (!applyIf(event.eventType, event.syncId, event.payload)) continue
-        // A splice is delayed live delivery, so it follows the live path's rule:
-        // log and move on. Rethrowing here would strand the remaining events and
-        // leave the gate paused, and skip the opener's release of the apply
-        // window — every batched hook then holds its stale value until a reload.
         try {
           await this.dispatch(event.eventType, event.payload)
         } catch (error) {
@@ -179,6 +176,8 @@ export class SocketEventGate implements SyncEventSource {
             syncId: event.syncId.toString(),
             error,
           })
+          this.retainForRecovery(batch.slice(i))
+          return
         }
         this.opts.onApplied?.(event.syncId.toString())
       }
@@ -192,9 +191,8 @@ export class SocketEventGate implements SyncEventSource {
    * Invokes every registered handler for `eventType` with `payload`, awaiting
    * them all. Used by the catch-up loop (log entries) and the resume splice.
    * Every handler runs even when one rejects; the rejections are then rethrown
-   * so the caller decides: catch-up fails the entry (the cursor stays below it
-   * and the next run retries it), the live path and the resume splice log and
-   * move on.
+   * so the caller decides: catch-up fails the entry, the live path logs it,
+   * and the resume splice keeps the failed suffix buffered for recovery.
    */
   async dispatch(eventType: string, payload: unknown): Promise<void> {
     const set = this.handlers.get(eventType)
@@ -229,13 +227,15 @@ export class SocketEventGate implements SyncEventSource {
           this.buffer.push({ eventType, payload, syncId })
           return
         }
+        this.buffer = []
         if (!this.overflowWarned) {
           this.overflowWarned = true
-          console.warn("Sync gate buffer overflow — applying live events immediately", {
+          console.warn("Sync gate buffer overflow; forcing an authoritative snapshot", {
             workspaceId: this.workspaceId,
           })
         }
-        // Fall through: overflow reverts to live (immediate) application.
+        this.opts.onRecoveryRequired?.()
+        return
       }
     }
 
@@ -252,6 +252,12 @@ export class SocketEventGate implements SyncEventSource {
         console.error("Sync live handler failed", { eventType, error })
       }
     )
+  }
+
+  private retainForRecovery(events: BufferedEvent[]): void {
+    const limit = this.opts.bufferLimit ?? DEFAULT_BUFFER_LIMIT
+    this.buffer = [...events, ...this.buffer].slice(0, limit)
+    this.opts.onRecoveryRequired?.()
   }
 }
 

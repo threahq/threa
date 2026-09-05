@@ -2626,7 +2626,11 @@ export function StreamContent({
   const handleJumpToLatest = useCallback(() => {
     // Explicit "go to latest": abandon any pending navigation — a
     // late-resolving jump would otherwise re-enter jump mode and scroll back
-    // to the abandoned target, overriding this click.
+    // to the abandoned target, overriding this click. Revoke a marker landing's
+    // unread sweep handoff too: if the click beats read tracking's first arm,
+    // that stale origin would link the marker to the tail after the jump stamp
+    // and mark the skipped block read.
+    sweepOriginRef.current = null
     cancelPendingJump()
     pendingScrollTarget.current = null
     searchNavPhaseRef.current = "idle"

@@ -4,7 +4,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSavedService } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useBatchedValue } from "@/stores/apply-window"
-import { db, type CachedSavedMessage } from "@/db"
+import { db, getActiveDb, type CachedSavedMessage, type AccountWriteContext } from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import type {
   SavedMessageView,
   SavedMessageListResponse,
@@ -106,14 +107,17 @@ export async function replaceSavedPage(
   status: SavedStatus,
   rows: SavedMessageView[],
   fetchStartedAt: number,
-  hasMore: boolean
+  hasMore: boolean,
+  account: AccountWriteContext = { generation: getAccountGeneration(), database: getActiveDb() }
 ): Promise<void> {
+  if (getAccountGeneration() !== account.generation) return
+  const { database } = account
   const indexKey = status === "saved" ? "[workspaceId+status+_savedAtMs]" : "[workspaceId+status+_statusChangedAtMs]"
 
   const toDelete: string[] = hasMore
     ? []
     : await (async () => {
-        const existing = await db.savedMessages
+        const existing = await database.savedMessages
           .where(indexKey)
           .between([workspaceId, status, -Infinity], [workspaceId, status, Infinity], true, true)
           .toArray()
@@ -121,9 +125,11 @@ export async function replaceSavedPage(
         return existing.filter((row) => !serverIds.has(row.id) && row._cachedAt < fetchStartedAt).map((row) => row.id)
       })()
 
-  await db.transaction("rw", db.savedMessages, async () => {
-    if (toDelete.length > 0) await db.savedMessages.bulkDelete(toDelete)
-    if (rows.length > 0) await db.savedMessages.bulkPut(rows.map(toCached))
+  if (getAccountGeneration() !== account.generation) return
+  await database.transaction("rw", database.savedMessages, async () => {
+    if (getAccountGeneration() !== account.generation) return
+    if (toDelete.length > 0) await database.savedMessages.bulkDelete(toDelete)
+    if (rows.length > 0) await database.savedMessages.bulkPut(rows.map(toCached))
   })
 }
 
@@ -147,10 +153,11 @@ export function useSavedList(workspaceId: string, status: SavedStatus) {
       // Capture before the await so concurrent socket writes land after
       // fetchStartedAt and survive reconciliation.
       const fetchStartedAt = Date.now()
+      const account = { generation: getAccountGeneration(), database: getActiveDb() }
       const res = await savedService.list(workspaceId, { status, limit: 50 })
       // `hasMore` gates reconciliation-delete: only prune when the server
       // response is the complete set for this tab (nextCursor === null).
-      await replaceSavedPage(workspaceId, status, res.saved, fetchStartedAt, res.nextCursor !== null)
+      await replaceSavedPage(workspaceId, status, res.saved, fetchStartedAt, res.nextCursor !== null, account)
       return res
     },
     // INV-53: when a SyncEngine is mounted, a socket reconnect runs

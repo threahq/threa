@@ -14,11 +14,7 @@ import { loginAndCreateWorkspace, expectApiOk } from "./helpers"
  */
 
 async function swControls(page: Page): Promise<boolean> {
-  return page.evaluate(async () => {
-    if (!navigator.serviceWorker) return false
-    await navigator.serviceWorker.ready.catch(() => null)
-    return !!navigator.serviceWorker.controller
-  })
+  return page.evaluate(() => !!navigator.serviceWorker?.controller)
 }
 
 /** The composer action side the app has actually applied, read from IDB. */
@@ -55,7 +51,12 @@ test.describe("Service worker bootstrap staleness", () => {
     await loginAndCreateWorkspace(page, "sw-stale")
     const workspaceId = page.url().match(/\/w\/([^/?]+)/)![1]
 
-    test.skip(!(await swControls(page)), "No controlling service worker — needs PLAYWRIGHT_PROD_FRONTEND=1")
+    await expect
+      .poll(() => swControls(page), {
+        timeout: 15000,
+        message: "Production service worker did not take control; run with PLAYWRIGHT_PROD_FRONTEND=1",
+      })
+      .toBe(true)
 
     const mk = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
       data: { type: "scratchpad", displayName: "sw stale pad" },
