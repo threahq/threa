@@ -66,6 +66,7 @@ describe("PostHogErrorReporter", () => {
     expect(event.properties.region).toBe("eu-north-1")
     expect(event.properties.path).toBe("/x")
     expect(event.properties.$exception_list?.[0]?.value).toBe("boom")
+    expect(event.properties.$process_person_profile).toBe(false)
   })
 
   test("should resolve shutdown within the bound when the transport hangs", async () => {

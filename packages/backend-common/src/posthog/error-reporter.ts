@@ -52,6 +52,10 @@ export class PostHogErrorReporter implements ErrorReporter {
         service: this.service,
         region: this.region,
         ...context?.properties,
+        // posthog-node only suppresses person processing when no distinct id is
+        // given, and one always is. Errors are operational telemetry: they must
+        // not create a person profile for a user who never granted consent.
+        $process_person_profile: false,
       })
     } catch (reportingError) {
       logger.warn({ err: reportingError }, "PostHog captureException failed")

@@ -86,7 +86,7 @@ describe("errorHandler", () => {
     const req = {
       path: "/x",
       method: "GET",
-      authUser: { id: "usr_1", email: "a@example.com", firstName: null, lastName: null, permissions: null },
+      authUser: { id: "user_01JQ8ZP4K6", email: "a@example.com", firstName: null, lastName: null, permissions: null },
     } as unknown as Request
 
     errorHandler(err, req, res, next)
@@ -94,7 +94,27 @@ describe("errorHandler", () => {
     expect(reporter.calls).toEqual([
       {
         error: err,
-        context: { distinctId: "usr_1", properties: { path: "/x", method: "GET", status_code: 500 } },
+        context: { distinctId: "user_01JQ8ZP4K6", properties: { path: "/x", method: "GET", status_code: 500 } },
+      },
+    ])
+  })
+
+  test("should replace entity ids in the reported path", () => {
+    const res = makeRes()
+    const reporter = makeRecordingReporter()
+    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const err = new Error("boom")
+    const req = {
+      path: "/api/streams/stream_01JQ8ZP4K6/read-state",
+      method: "POST",
+    } as unknown as Request
+
+    errorHandler(err, req, res, next)
+
+    expect(reporter.calls).toEqual([
+      {
+        error: err,
+        context: { properties: { path: "/api/streams/:id/read-state", method: "POST", status_code: 500 } },
       },
     ])
   })
