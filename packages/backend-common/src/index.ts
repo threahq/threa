@@ -42,11 +42,13 @@ export { createRateLimit, getClientIp } from "./middleware/rate-limit"
 export type { RateLimitOptions } from "./middleware/rate-limit"
 
 export { loadPostHogConfig } from "./posthog/config"
-export type { PostHogConfig } from "./posthog/config"
+export type { PostHogConfig, PostHogLogsLevel } from "./posthog/config"
 export { PostHogAnalyticsReporter, DisabledAnalyticsReporter } from "./posthog/reporter"
 export type { AnalyticsReporter, AnalyticsEvent, ExceptionContext } from "./posthog/reporter"
+export { attachPostHogLogShipping, PostHogLogShipper } from "./posthog/otlp-logs"
+export type { PostHogLogShipperParams, PostHogLogShipperStats } from "./posthog/otlp-logs"
 
-export { logger } from "./logger"
+export { logger, addLogDestination } from "./logger"
 export { extractWorkspaceIdFromGithubInstallState } from "./github-install-state"
 export {
   userId,

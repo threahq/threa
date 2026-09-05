@@ -20,6 +20,7 @@ import {
   sessionCookieConfigFromEnv,
   PostHogAnalyticsReporter,
   DisabledAnalyticsReporter,
+  attachPostHogLogShipping,
   type AnalyticsReporter,
 } from "@threa/backend-common"
 import { BotChannelService } from "./features/api-keys"
@@ -836,6 +837,14 @@ export async function startServer(): Promise<ServerInstance> {
   const analyticsReporter: AnalyticsReporter = config.posthog
     ? new PostHogAnalyticsReporter({ config: config.posthog, service: "backend", region: config.region })
     : new DisabledAnalyticsReporter()
+  const logShipper = config.posthog
+    ? attachPostHogLogShipping({
+        config: config.posthog,
+        service: "backend",
+        region: config.region,
+        environment: process.env.NODE_ENV || "development",
+      })
+    : null
   const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction })
   const server = createServer(app)
   // Node closes idle keep-alive connections after 5s by default; a client that
@@ -1915,6 +1924,7 @@ export async function startServer(): Promise<ServerInstance> {
       })
     }
     await analyticsReporter.shutdown()
+    await logShipper?.shutdown()
     logger.info("Closing database pools...")
     // Final responses/disconnects fire-and-forget audit rows; bounded drain so
     // they don't lose the race against pool.end().

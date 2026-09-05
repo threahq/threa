@@ -15,6 +15,7 @@ import {
   ensureListenerFromLatest,
   logger,
   PostHogAnalyticsReporter,
+  attachPostHogLogShipping,
   DisabledAnalyticsReporter,
   type OutboxEvent,
   type ProcessResult,
@@ -88,6 +89,14 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   const analyticsReporter: AnalyticsReporter = config.posthog
     ? new PostHogAnalyticsReporter({ config: config.posthog, service: "control-plane", region: null })
     : new DisabledAnalyticsReporter()
+  const logShipper = config.posthog
+    ? attachPostHogLogShipping({
+        config: config.posthog,
+        service: "control-plane",
+        region: null,
+        environment: process.env.NODE_ENV || "development",
+      })
+    : null
 
   const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
   const pool = createDatabasePool(config.databaseUrl, { max: 10 })
@@ -356,6 +365,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     await startedAuthLogRetention.stop()
     await outboxDispatcher.stop()
     await analyticsReporter.shutdown()
+    await logShipper?.shutdown()
     await listenPool.end()
     await pool.end()
     logger.info("Control plane stopped")

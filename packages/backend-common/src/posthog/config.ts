@@ -1,19 +1,25 @@
 import { logger } from "../logger"
 
+const LOGS_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"] as const
+
+export type PostHogLogsLevel = (typeof LOGS_LEVELS)[number]
+
 export interface PostHogConfig {
   projectToken: string
   host: string
+  /** Minimum pino level shipped to PostHog Logs. `null` = ship nothing. */
+  logsLevel: PostHogLogsLevel | null
 }
 
 export function loadPostHogConfig(
-  env: { POSTHOG_PROJECT_TOKEN?: string; POSTHOG_HOST?: string },
+  env: { POSTHOG_PROJECT_TOKEN?: string; POSTHOG_HOST?: string; POSTHOG_LOGS_LEVEL?: string },
   opts: { isProduction: boolean; service: string }
 ): PostHogConfig | null {
   const projectToken = env.POSTHOG_PROJECT_TOKEN?.trim()
   const host = env.POSTHOG_HOST?.trim()
 
   if (projectToken && host) {
-    return { projectToken, host }
+    return { projectToken, host, logsLevel: parseLogsLevel(env.POSTHOG_LOGS_LEVEL) }
   }
 
   if (projectToken && !host) {
@@ -33,4 +39,13 @@ export function loadPostHogConfig(
   }
 
   return null
+}
+
+function parseLogsLevel(raw: string | undefined): PostHogLogsLevel | null {
+  const value = raw?.trim()
+  if (!value) return null
+  if (!(LOGS_LEVELS as readonly string[]).includes(value)) {
+    throw new Error(`POSTHOG_LOGS_LEVEL must be one of ${LOGS_LEVELS.join(", ")} — got "${value}"`)
+  }
+  return value as PostHogLogsLevel
 }

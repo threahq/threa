@@ -9,7 +9,33 @@ describe("loadPostHogConfig", () => {
       { isProduction: false, service: "backend" }
     )
 
-    expect(config).toEqual({ projectToken: "phc_abc", host: "https://eu.i.posthog.com" })
+    expect(config).toEqual({ projectToken: "phc_abc", host: "https://eu.i.posthog.com", logsLevel: null })
+  })
+
+  test("should read POSTHOG_LOGS_LEVEL when it names a pino level", () => {
+    const config = loadPostHogConfig(
+      {
+        POSTHOG_PROJECT_TOKEN: "phc_abc",
+        POSTHOG_HOST: "https://eu.i.posthog.com",
+        POSTHOG_LOGS_LEVEL: " warn ",
+      },
+      { isProduction: false, service: "backend" }
+    )
+
+    expect(config).toEqual({ projectToken: "phc_abc", host: "https://eu.i.posthog.com", logsLevel: "warn" })
+  })
+
+  test("should throw when POSTHOG_LOGS_LEVEL is not a pino level", () => {
+    expect(() =>
+      loadPostHogConfig(
+        {
+          POSTHOG_PROJECT_TOKEN: "phc_abc",
+          POSTHOG_HOST: "https://eu.i.posthog.com",
+          POSTHOG_LOGS_LEVEL: "verbose",
+        },
+        { isProduction: false, service: "backend" }
+      )
+    ).toThrow('POSTHOG_LOGS_LEVEL must be one of trace, debug, info, warn, error, fatal — got "verbose"')
   })
 
   test("should throw when the token is set without a host", () => {

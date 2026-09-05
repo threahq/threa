@@ -35,7 +35,7 @@ describe("loadControlPlaneConfig PostHog wiring", () => {
     process.env.POSTHOG_HOST = "https://eu.i.posthog.com"
 
     const config = loadControlPlaneConfig()
-    expect(config.posthog).toEqual({ projectToken: "phc_test", host: "https://eu.i.posthog.com" })
+    expect(config.posthog).toEqual({ projectToken: "phc_test", host: "https://eu.i.posthog.com", logsLevel: null })
   })
 
   test("should throw when only POSTHOG_PROJECT_TOKEN is set", () => {
