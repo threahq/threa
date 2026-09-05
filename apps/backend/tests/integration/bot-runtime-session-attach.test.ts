@@ -3,6 +3,7 @@ import type { Pool } from "pg"
 import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "./setup"
 import { BotRuntimeService, BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { StreamService } from "../../src/features/streams"
+import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { messageId, streamId, userId } from "../../src/lib/id"
 
@@ -106,6 +107,42 @@ describe("attachRuntimeSessionToThread", () => {
         traits: ["active-scratchpad"],
       })
     ).rejects.toMatchObject({ status: 409, code: "SCRATCHPAD_ARCHIVED" })
+  })
+
+  test("refuses when the root scratchpad is end-to-end encrypted and writes no thread", async () => {
+    const encrypted = streamId()
+    await pool.query(
+      "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
+      [encrypted, workspace, author]
+    )
+    await E2eStreamsRepository.markStreamE2e(pool, {
+      streamId: encrypted,
+      workspaceId: workspace,
+      ownerUserId: author,
+      ownerUserKeyId: "e2ek_attach",
+    })
+    const anchor = await anchorMessage(encrypted)
+
+    await expect(
+      service().attachRuntimeSessionToThread({
+        workspaceId: workspace,
+        botId: bot,
+        ownerUserId: author,
+        runtimeKind: "pi-local",
+        instanceId: "e2e-instance",
+        runtimeSessionId: "e2e-session",
+        rootStreamId: encrypted,
+        anchorId: anchor.id,
+        displayName: "Sub work",
+        traits: ["active-scratchpad"],
+      })
+    ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" })
+
+    const threads = await pool.query<{ count: string }>(
+      "SELECT count(*)::text FROM streams WHERE parent_stream_id = $1",
+      [encrypted]
+    )
+    expect(threads.rows[0]!.count).toBe("0")
   })
 
   test("refuses when the root is not a scratchpad", async () => {

@@ -114,6 +114,7 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
       { memoryMode: "auto" },
       { e2e: { ownerKeyId: "uik_1" } },
       { ifArchived: "replace" },
+      { ifMissing: "error" },
     ]) {
       expect(
         createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", attachTo, ...extra }).success

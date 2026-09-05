@@ -50,7 +50,7 @@ import {
   type StreamService,
 } from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
-import { E2eStreamActorsRepository } from "../e2e-streams"
+import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import { MessageRepository, type InvocationSourceState } from "../messaging"
 import {
   buildCanonicalInvocationPrompt,
@@ -406,6 +406,14 @@ export class BotRuntimeService {
       }
       if (root.createdBy !== params.ownerUserId) {
         throw new HttpError("Scratchpad belongs to another user", { status: 403, code: "FORBIDDEN" })
+      }
+      // The brief that follows an attach is plaintext, so an E2E root would leave a
+      // thread, a link and a running agent that can never be briefed (INV-11).
+      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.rootStreamId)) {
+        throw new HttpError("Scratchpad is end-to-end encrypted; attach is unsupported", {
+          status: 400,
+          code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+        })
       }
 
       const thread = await streamService.createThreadForPrincipalOn(

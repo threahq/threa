@@ -199,11 +199,13 @@ export const createRuntimeSessionSchema = z
         data.labelName === undefined &&
         data.memoryMode === undefined &&
         data.e2e === undefined &&
-        data.ifArchived !== "replace"),
+        data.ifArchived !== "replace" &&
+        data.ifMissing !== "error"),
     {
       // attachTo joins an existing scratchpad; these options only make sense
       // when the call is minting a fresh one.
-      message: 'attachTo cannot be combined with description, labelName, memoryMode, e2e, or ifArchived="replace"',
+      message:
+        'attachTo cannot be combined with description, labelName, memoryMode, e2e, ifArchived="replace", or ifMissing="error"',
       path: ["attachTo"],
     }
   )
