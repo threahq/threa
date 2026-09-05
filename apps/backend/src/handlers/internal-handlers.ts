@@ -3,7 +3,7 @@ import { z } from "zod"
 import { HttpError } from "../lib/errors"
 import { isValidIanaTimezone } from "../lib/temporal"
 import type { WorkspaceService } from "../features/workspaces"
-import type { InvitationService } from "../features/invitations"
+import { InvitationAcceptanceError, type InvitationService } from "../features/invitations"
 
 const createWorkspaceSchema = z.object({
   id: z.string().min(1),
@@ -69,7 +69,15 @@ export function createInternalHandlers(deps: InternalHandlersDeps) {
         throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
       }
 
-      const workspaceId = await invitationService.acceptInvitation(invitationId, result.data)
+      let workspaceId: string | null
+      try {
+        workspaceId = await invitationService.acceptInvitation(invitationId, result.data)
+      } catch (error) {
+        if (error instanceof InvitationAcceptanceError) {
+          throw new HttpError(error.code, { status: 409, code: error.code })
+        }
+        throw error
+      }
 
       if (!workspaceId) {
         throw new HttpError("Invitation not found or already processed", {

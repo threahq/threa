@@ -222,13 +222,15 @@ export const WorkspaceRegistryRepository = {
     return result.rows[0]?.exists ?? false
   },
 
-  async insertMembership(db: Querier, workspaceId: string, workosUserId: string): Promise<void> {
-    await db.query(
+  async insertMembership(db: Querier, workspaceId: string, workosUserId: string): Promise<boolean> {
+    const result = await db.query(
       `INSERT INTO workspace_memberships (workspace_id, workos_user_id)
        VALUES ($1, $2)
-       ON CONFLICT (workspace_id, workos_user_id) DO NOTHING`,
+       ON CONFLICT (workspace_id, workos_user_id) DO NOTHING
+       RETURNING workspace_id`,
       [workspaceId, workosUserId]
     )
+    return (result.rowCount ?? 0) > 0
   },
 
   async deleteMembershipsByWorkspace(db: Querier, workspaceId: string): Promise<void> {

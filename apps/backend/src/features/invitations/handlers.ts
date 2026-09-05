@@ -4,7 +4,7 @@ import { WORKSPACE_INVITABLE_ROLES, WORKSPACE_ROLE_SLUGS } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import type { Invitation } from "./repository"
-import type { InvitationService, InvitationLinkErrorCode } from "./service"
+import type { InvitationService } from "./service"
 import { InvitationLinkError } from "./service"
 
 /**
@@ -13,7 +13,15 @@ import { InvitationLinkError } from "./service"
  * declared in `WorkspaceInvitation`.
  */
 function toWire(invitation: Invitation) {
-  const { tokenHash: _tokenHash, ...wire } = invitation
+  const {
+    tokenHash: _tokenHash,
+    parentLinkId: _parentLinkId,
+    acceptedWorkosUserId: _acceptedWorkosUserId,
+    acceptanceConsumesCapacity: _acceptanceConsumesCapacity,
+    revision: _revision,
+    revokedAt: _revokedAt,
+    ...wire
+  } = invitation
   return wire
 }
 
@@ -27,21 +35,30 @@ const sendInvitationsSchema = z.object({
   role: invitableRoleSchema.optional().default(WORKSPACE_ROLE_SLUGS.MEMBER),
 })
 
+const maxUsesSchema = z.number().int().positive().max(2_147_483_647).nullable().optional()
+
 const createLinkSchema = z.object({
   role: invitableRoleSchema,
   note: z.string().trim().max(200).optional(),
+  maxUses: maxUsesSchema,
+  expiresAt: z.string().datetime().nullable().optional(),
 })
+
+const updateLinkSchema = z
+  .object({
+    maxUses: maxUsesSchema,
+    expiresAt: z.string().datetime().nullable().optional(),
+  })
+  .refine((value) => value.maxUses !== undefined || value.expiresAt !== undefined)
 
 const claimLinkSchema = z.object({
   token: z.string().min(1).max(200),
   email: z.string().email(),
 })
 
-const LINK_ERROR_HTTP: Record<InvitationLinkErrorCode, { status: number }> = {
-  INVITATION_NOT_FOUND: { status: 404 },
-  INVITATION_REVOKED: { status: 409 },
-  INVITATION_EXPIRED: { status: 409 },
-  INVITATION_ALREADY_CLAIMED: { status: 409 },
+function parseOptionalExpiry(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined || value === null) return value
+  return new Date(value)
 }
 
 interface Dependencies {
@@ -103,10 +120,6 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
       res.json({ invitation: toWire(invitation) })
     },
 
-    /**
-     * Admin-auth: create a single-use link invite. The plaintext token is
-     * returned exactly once; only the SHA-256 hash is persisted.
-     */
     async createLink(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
@@ -118,6 +131,8 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
         invitedBy: userId,
         role: data.role,
         note: data.note?.trim() || null,
+        maxUses: data.maxUses,
+        expiresAt: parseOptionalExpiry(data.expiresAt),
       })
 
       // Token returned exactly once. Frontend constructs the join URL from
@@ -125,6 +140,20 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
       // through to the regional backend (and it just-works across staging,
       // PR previews, and prod without per-env config).
       res.status(201).json({ invitation: toWire(invitation), token })
+    },
+
+    async updateLink(req: Request, res: Response) {
+      const data = validateRequest(updateLinkSchema, req.body)
+      const invitation = await invitationService.updateLink({
+        workspaceId: req.workspaceId!,
+        invitationId: req.params.invitationId,
+        maxUses: data.maxUses,
+        expiresAt: parseOptionalExpiry(data.expiresAt),
+      })
+      if (!invitation) {
+        throw new HttpError("Invitation link cannot be updated", { status: 409, code: "INVITATION_NOT_EDITABLE" })
+      }
+      res.json({ invitation: toWire(invitation) })
     },
 
     /**
@@ -140,10 +169,14 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
 
       try {
         const claimResult = await invitationService.claimLinkByToken(result.data.token, result.data.email)
-        res.json({ ok: true, ...(claimResult.alreadyMember ? { alreadyMember: claimResult.alreadyMember } : {}) })
+        res.json({
+          ok: true,
+          ...(claimResult.invitationId ? { invitationId: claimResult.invitationId } : {}),
+          ...(claimResult.alreadyMember ? { alreadyMember: claimResult.alreadyMember } : {}),
+        })
       } catch (err) {
         if (err instanceof InvitationLinkError) {
-          throw new HttpError(err.code, { status: LINK_ERROR_HTTP[err.code].status, code: err.code })
+          throw new HttpError(err.code, { status: err.code === "INVITATION_NOT_FOUND" ? 404 : 409, code: err.code })
         }
         throw err
       }

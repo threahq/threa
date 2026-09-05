@@ -131,7 +131,7 @@ export interface WorkspaceInvitationSummary {
   kind: "email" | "link"
   email: string | null
   roleSlug: WorkspaceInvitableRole
-  expiresAt: string
+  expiresAt: string | null
   createdAt: string
   inviter: {
     workosUserId: string
@@ -485,7 +485,7 @@ export class BackofficeService {
       kind: row.kind === "link" ? "link" : "email",
       email: row.email,
       roleSlug: row.role_slug,
-      expiresAt: row.expires_at.toISOString(),
+      expiresAt: row.expires_at?.toISOString() ?? null,
       createdAt: row.created_at.toISOString(),
       inviter: summarizeInviter(row.inviter_workos_user_id, inviterById),
     }))

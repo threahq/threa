@@ -9,6 +9,20 @@ import { ThreaLogo } from "@/components/threa-logo"
 import { ApiError } from "@/api/client"
 import { formatRegion } from "@/lib/regions"
 
+const ACCEPT_INVITATION_ERRORS: Record<string, string> = {
+  INVITATION_REVOKED: "This invitation was revoked.",
+  INVITATION_EXPIRED: "This invitation has expired.",
+  INVITATION_EXHAUSTED: "This invite link has reached its join limit.",
+  INVITATION_EMAIL_MISMATCH: "Sign in with the email address that received this invitation.",
+  INVITATION_NOT_FOUND: "This invitation is no longer available.",
+}
+
+function getAcceptInvitationErrorMessage(error: unknown): string {
+  if (ApiError.isApiError(error)) return ACCEPT_INVITATION_ERRORS[error.code] ?? error.message
+  if (error instanceof Error) return error.message
+  return "Failed to accept invitation."
+}
+
 function getCreateWorkspaceErrorMessage(error: unknown): string | null {
   if (!error) return null
   if (ApiError.isApiError(error) && error.status === 403 && error.code === "WORKSPACE_CREATION_INVITE_REQUIRED") {
@@ -59,9 +73,9 @@ export function WorkspaceSelectPage() {
       onSuccess: ({ workspaceId }) => {
         navigate(`/w/${workspaceId}/setup`, { replace: true })
       },
-      onError: () => {
+      onError: (error) => {
         setAcceptingId(null)
-        setAcceptError("Failed to accept invitation. It may have been revoked.")
+        setAcceptError(getAcceptInvitationErrorMessage(error))
       },
     })
   }

@@ -5,6 +5,8 @@ import type {
   SendInvitationsResponse,
   CreateInvitationLinkInput,
   CreateInvitationLinkResponse,
+  UpdateInvitationLinkInput,
+  UpdateInvitationLinkResponse,
   InvitationLinkLookupResponse,
   ClaimInvitationLinkInput,
   ClaimInvitationLinkResponse,
@@ -29,6 +31,14 @@ export const invitationsApi = {
 
   async createLink(workspaceId: string, data: CreateInvitationLinkInput): Promise<CreateInvitationLinkResponse> {
     return api.post<CreateInvitationLinkResponse>(`/api/workspaces/${workspaceId}/invitations/links`, data)
+  },
+
+  async updateLink(
+    workspaceId: string,
+    invitationId: string,
+    data: UpdateInvitationLinkInput
+  ): Promise<UpdateInvitationLinkResponse> {
+    return api.patch<UpdateInvitationLinkResponse>(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, data)
   },
 
   async revoke(workspaceId: string, invitationId: string): Promise<void> {

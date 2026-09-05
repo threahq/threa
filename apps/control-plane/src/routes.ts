@@ -286,6 +286,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/internal/invitation-shadows", internalAuth, shadow.create)
   app.patch("/internal/invitation-shadows/:id", internalAuth, shadow.update)
   app.post("/internal/invitation-shadows/:id/claim", internalAuth, shadow.notifyClaim)
+  app.post("/internal/invitation-shadows/:id/accepted", internalAuth, shadow.acknowledgeAccepted)
   app.post("/internal/workspaces/:workspaceId/members/:userId/role", internalAuth, internalAuthz.changeRole)
   app.delete("/internal/workspaces/:workspaceId/members/:userId", internalAuth, internalAuthz.removeMember)
   app.put("/internal/integration-routes", internalAuth, integrationRoutes.register)

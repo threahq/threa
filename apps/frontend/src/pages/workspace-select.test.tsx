@@ -146,6 +146,30 @@ describe("WorkspaceSelectPage", () => {
     expect(await screen.findByTestId("setup-route")).toBeInTheDocument()
   })
 
+  it("should show a structured invitation acceptance error", async () => {
+    mockUseWorkspaces.mockReturnValue({
+      workspaces: [],
+      cachedWorkspaces: [],
+      pendingInvitations: [
+        { id: "inv_1", workspaceId: "workspace_1", workspaceName: "Full workspace", expiresAt: null },
+      ],
+      isLoading: false,
+      error: null,
+    })
+    mockUseAcceptInvitation.mockReturnValue({
+      mutate: (_invitationId: string, options?: { onError?: (error: unknown) => void }) => {
+        options?.onError?.(new ApiError(409, "INVITATION_EXHAUSTED", "Invitation exhausted"))
+      },
+      isPending: false,
+    })
+
+    renderPage()
+    await userEvent.click(screen.getByRole("button", { name: "Accept" }))
+
+    expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled()
+    expect(screen.getByText("This invite link has reached its join limit.")).toBeInTheDocument()
+  })
+
   it("should show workspace picker when user has multiple workspaces", () => {
     mockUseWorkspaces.mockReturnValue({
       workspaces: [makeWorkspace("workspace_1", "Alpha"), makeWorkspace("workspace_2", "Beta")],

@@ -216,8 +216,11 @@ export interface WorkspaceInvitation {
   /** Admin-only memo. Only set on `'link'` invites; never returned by public surfaces. */
   note: string | null
   createdAt: string
-  expiresAt: string
+  expiresAt: string | null
   acceptedAt: string | null
+  /** Null means unlimited successful joins. */
+  maxUses: number | null
+  useCount: number
 }
 
 export interface Stream {

@@ -13,7 +13,11 @@ const createShadowSchema = z
     id: z.string().min(1),
     workspaceId: z.string().min(1),
     region: z.string().min(1),
-    expiresAt: z.string().datetime(),
+    expiresAt: z.string().datetime().nullable(),
+    maxUses: z.number().int().positive().nullable().optional(),
+    useCount: z.number().int().nonnegative().optional(),
+    revision: z.number().int().nonnegative().optional(),
+    status: z.enum(["pending", "accepted", "expired", "revoked"]).optional(),
     kind: z.enum(["email", "link"]).default("email"),
     email: z.string().email().nullable().optional(),
     tokenHash: z.string().min(1).nullable().optional(),
@@ -29,9 +33,16 @@ const createShadowSchema = z
     { message: "email is required for kind='email'; tokenHash is required for kind='link'" }
   )
 
-const updateShadowSchema = z.object({
-  status: z.enum(["revoked"]),
-})
+const updateShadowSchema = z.union([
+  z.object({ status: z.literal("revoked") }),
+  z.object({
+    expiresAt: z.string().datetime().nullable(),
+    maxUses: z.number().int().positive().nullable(),
+    useCount: z.number().int().nonnegative(),
+    revision: z.number().int().nonnegative(),
+    status: z.enum(["pending", "accepted", "expired", "revoked"]),
+  }),
+])
 
 const lookupSchema = z.object({
   token: z.string().min(1).max(200),
@@ -42,8 +53,30 @@ const claimSchema = z.object({
   email: z.string().email(),
 })
 
-const notifyClaimSchema = z.object({
+function optionalDate(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined) return undefined
+  return value === null ? null : new Date(value)
+}
+
+const acceptedSchema = z.object({
+  workspaceId: z.string().min(1),
   email: z.string().email(),
+  workosUserId: z.string().min(1),
+  parentInvitationId: z.string().min(1).optional(),
+  expiresAt: z.string().datetime().nullable().optional(),
+  maxUses: z.number().int().positive().nullable().optional(),
+  useCount: z.number().int().nonnegative().optional(),
+  revision: z.number().int().nonnegative().optional(),
+  status: z.enum(["pending", "accepted", "expired", "revoked"]).optional(),
+})
+
+const notifyClaimSchema = z.object({
+  childInvitationId: z.string().min(1).optional(),
+  email: z.string().email(),
+  expiresAt: z.string().datetime().nullable().optional(),
+  maxUses: z.number().int().positive().nullable().optional(),
+  useCount: z.number().int().nonnegative().optional(),
+  revision: z.number().int().nonnegative().optional(),
   inviterWorkosUserId: z.string().min(1).optional(),
 })
 
@@ -63,7 +96,11 @@ export function createInvitationShadowHandlers({ shadowService }: Dependencies) 
         email: parsed.data.email ?? null,
         tokenHash: parsed.data.tokenHash ?? null,
         roleSlug: parsed.data.roleSlug,
-        expiresAt: new Date(parsed.data.expiresAt),
+        expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
+        maxUses: parsed.data.maxUses,
+        useCount: parsed.data.useCount,
+        revision: parsed.data.revision,
+        status: parsed.data.status,
         inviterWorkosUserId: parsed.data.inviterWorkosUserId,
       })
 
@@ -77,7 +114,13 @@ export function createInvitationShadowHandlers({ shadowService }: Dependencies) 
         throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
       }
 
-      const updated = await shadowService.updateStatus(id, parsed.data.status)
+      const updated =
+        "revision" in parsed.data
+          ? await shadowService.updateLinkSnapshot(id, {
+              ...parsed.data,
+              expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null,
+            })
+          : await shadowService.updateStatus(id, parsed.data.status)
       if (!updated) {
         throw new HttpError("Invitation shadow not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -113,8 +156,33 @@ export function createInvitationShadowHandlers({ shadowService }: Dependencies) 
       }
       await shadowService.acceptLinkClaim({
         id: req.params.id,
+        childInvitationId: parsed.data.childInvitationId,
         email: parsed.data.email,
+        expiresAt: optionalDate(parsed.data.expiresAt),
+        maxUses: parsed.data.maxUses,
+        useCount: parsed.data.useCount,
+        revision: parsed.data.revision,
         inviterWorkosUserId: parsed.data.inviterWorkosUserId,
+      })
+      res.json({ ok: true })
+    },
+
+    async acknowledgeAccepted(req: Request, res: Response) {
+      const parsed = acceptedSchema.safeParse(req.body)
+      if (!parsed.success) {
+        throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+      }
+      await shadowService.reconcileAccepted({
+        id: req.params.id,
+        workspaceId: parsed.data.workspaceId,
+        email: parsed.data.email,
+        workosUserId: parsed.data.workosUserId,
+        parentInvitationId: parsed.data.parentInvitationId,
+        expiresAt: optionalDate(parsed.data.expiresAt),
+        maxUses: parsed.data.maxUses,
+        useCount: parsed.data.useCount,
+        revision: parsed.data.revision,
+        status: parsed.data.status,
       })
       res.json({ ok: true })
     },

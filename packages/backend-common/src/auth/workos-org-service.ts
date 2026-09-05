@@ -35,6 +35,12 @@ export interface WorkosAppInvitation {
   acceptedUserId: string | null
 }
 
+export interface WorkosInvitationSummary {
+  id: string
+  state: "pending" | "accepted" | "revoked" | "expired"
+  expiresAt: Date
+}
+
 /** Minimal WorkOS user shape the backoffice needs for resolving owners. */
 export interface WorkosUserSummary {
   id: string
@@ -99,6 +105,7 @@ export interface WorkosOrgService {
     /** WorkOS role slug applied when the invitation is accepted. */
     roleSlug?: string
   }): Promise<{ id: string; expiresAt: Date }>
+  getInvitation(invitationId: string): Promise<WorkosInvitationSummary>
   revokeInvitation(invitationId: string): Promise<void>
   /** Resend an existing invitation. WorkOS issues a fresh token + expiry. */
   resendInvitation(invitationId: string): Promise<{ id: string; expiresAt: Date }>
@@ -228,6 +235,11 @@ export class WorkosOrgServiceImpl implements WorkosOrgService {
       id: invitation.id,
       expiresAt: new Date(invitation.expiresAt),
     }
+  }
+
+  async getInvitation(invitationId: string): Promise<WorkosInvitationSummary> {
+    const invitation = await this.workos.userManagement.getInvitation(invitationId)
+    return { id: invitation.id, state: invitation.state, expiresAt: new Date(invitation.expiresAt) }
   }
 
   async revokeInvitation(invitationId: string): Promise<void> {
