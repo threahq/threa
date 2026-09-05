@@ -94,9 +94,15 @@ describe("settle message endpoint", () => {
     const result = await pool.query(sql`SELECT * FROM message_conversation_state WHERE message_id = ${id}`)
     return result.rows[0] ?? null
   }
-  const feedbackRows = async () => (await pool.query("SELECT * FROM conversation_feedback")).rows
+  const feedbackRows = async () =>
+    (await pool.query(sql`SELECT * FROM conversation_feedback WHERE workspace_id = ${testWorkspaceId}`)).rows
   const updatedEvents = async () =>
-    (await pool.query("SELECT payload FROM outbox WHERE event_type = 'conversation:updated'")).rows
+    (
+      await pool.query(
+        sql`SELECT payload FROM outbox WHERE event_type = 'conversation:updated' AND payload->>'workspaceId' = ${testWorkspaceId}`
+      )
+    ).rows
+  const clearOutbox = () => pool.query(sql`DELETE FROM outbox WHERE payload->>'workspaceId' = ${testWorkspaceId}`)
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
@@ -161,7 +167,7 @@ describe("settle message endpoint", () => {
   afterEach(async () => {
     await withTransaction(pool, async (client) => {
       await client.query("DELETE FROM message_conversation_state")
-      await client.query("DELETE FROM outbox")
+      await client.query(sql`DELETE FROM outbox WHERE payload->>'workspaceId' = ${testWorkspaceId}`)
       await client.query("DELETE FROM conversation_feedback")
       await client.query("DELETE FROM conversations")
       await client.query("DELETE FROM messages")
@@ -217,7 +223,7 @@ describe("settle message endpoint", () => {
     await withTransaction(pool, async (client) => {
       await MessageConversationStateRepository.settle(client, testWorkspaceId, [msgId], "llm-window")
     })
-    await pool.query("DELETE FROM outbox")
+    await clearOutbox()
 
     const result = await service.settleMessage({
       workspaceId: testWorkspaceId,
