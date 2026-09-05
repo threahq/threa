@@ -11,6 +11,12 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
   SELECT ('pg_catalog.' || COALESCE(name, 'english'))::regconfig
 $$;
 
--- Rewrites messages under ACCESS EXCLUSIVE and rebuilds its indexes.
+-- Rewrites messages under ACCESS EXCLUSIVE and rebuilds its indexes. A parallel
+-- HNSW rebuild asks for a maintenance_work_mem-sized shared-memory segment,
+-- which prod's /dev/shm cannot hold (SQLSTATE 53100 on the first deploy), so
+-- build serially; the serial build keeps the graph in local memory, and 256 MB
+-- fits the 286 MB index's graph where the default 64 MB spills and builds slow.
+SET LOCAL max_parallel_maintenance_workers = 0;
+SET LOCAL maintenance_work_mem = '256MB';
 ALTER TABLE messages ALTER COLUMN search_vector
   SET EXPRESSION AS (to_tsvector(message_search_config(search_config), content_markdown));
