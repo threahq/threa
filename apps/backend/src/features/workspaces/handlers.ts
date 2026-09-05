@@ -82,6 +82,7 @@ interface Dependencies {
   workosOrgService: WorkosOrgService
   callService?: import("../calls").CallService
   pool: import("pg").Pool
+  analytics: { posthogToken: string; posthogHost: string } | null
 }
 
 export function createWorkspaceHandlers({
@@ -103,6 +104,7 @@ export function createWorkspaceHandlers({
   workosOrgService,
   callService,
   pool,
+  analytics,
 }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
@@ -371,6 +373,7 @@ export function createWorkspaceHandlers({
         userPreferences,
         workspaceSettings,
         featureFlags,
+        analytics,
         sidebarConfig,
         boardViews,
         labels,

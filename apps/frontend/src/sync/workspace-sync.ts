@@ -2581,6 +2581,7 @@ const BOOTSTRAP_NON_ROW_FIELDS = [
   "viewerPermissions",
   "viewerIsPlatformAdmin",
   "workspaceSettings",
+  "analytics",
 ] as const satisfies readonly BootstrapNonRowField[]
 
 // A new `WorkspaceBootstrap` field must be classified: either add it to

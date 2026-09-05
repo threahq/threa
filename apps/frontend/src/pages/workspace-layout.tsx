@@ -88,6 +88,8 @@ import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
 import { copyStreamLink, copyConversationLink } from "@/lib/stream-links"
 import { PerfCaptureProvider } from "@/lib/perf/context"
 import { PerfCaptureConsentGate } from "@/lib/perf/consent"
+import { AnalyticsConsentGate } from "@/lib/analytics/gate"
+import { AnalyticsConsentBanner } from "@/components/analytics-consent-banner"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 
@@ -543,6 +545,8 @@ export function WorkspaceLayout() {
                                   <QuickSwitcherProvider openSwitcher={openSwitcher}>
                                     <PanelProvider>
                                       <PerfCaptureConsentGate workspaceId={workspaceId} />
+                                      <AnalyticsConsentGate workspaceId={workspaceId} />
+                                      <AnalyticsConsentBanner workspaceId={workspaceId} />
                                       <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
                                       <EnclaveRewrapNudgeListener workspaceId={workspaceId} />
                                       <MediaGalleryProvider>

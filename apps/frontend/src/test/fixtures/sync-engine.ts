@@ -142,6 +142,7 @@ export function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       updatedAt: now,
     },
     featureFlags: { workspace: {}, user: {} },
+    analytics: null,
     workspaceSettings: {
       ...DEFAULT_WORKSPACE_SETTINGS,
       workspaceId: "ws_1",

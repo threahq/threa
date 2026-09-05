@@ -922,6 +922,9 @@ export {
   UNREAD_OPEN_POSITION_OPTIONS,
   type UnreadOpenPosition,
   UnreadOpenPositions,
+  // Analytics consent
+  ANALYTICS_CONSENT_OPTIONS,
+  type AnalyticsConsent,
   // Code block collapse threshold
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,

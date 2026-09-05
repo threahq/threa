@@ -150,6 +150,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // Maps are uploaded to PostHog and deleted before deploy (deploy-cloudflare.yml).
+    sourcemap: "hidden",
+  },
   test: {
     // Two projects so the Node build-script tests under scripts/ don't drag in
     // the jsdom UI bootstrap (./src/test/setup.ts → @/db, localStorage, DOM

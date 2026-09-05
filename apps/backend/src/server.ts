@@ -934,6 +934,7 @@ export async function startServer(): Promise<ServerInstance> {
     costService,
     accessLogService,
     errorReporter,
+    posthog: config.posthog,
   })
 
   app.use(errorHandler)

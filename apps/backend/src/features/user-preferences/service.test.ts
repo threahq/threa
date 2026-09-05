@@ -97,6 +97,25 @@ describe("UserPreferencesService.updatePreferences mobile inline attachments", (
   })
 })
 
+describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
+  afterEach(() => mock.restore())
+
+  it("should store the granted override when analyticsConsent is updated", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([{ key: "analyticsConsent", value: "granted" }])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { analyticsConsent: "granted" })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "analyticsConsent", value: "granted" }])
+    expect(bulkDelete).not.toHaveBeenCalled()
+    expect(prefs.analyticsConsent).toBe("granted")
+  })
+})
+
 describe("UserPreferencesService.updatePreferences board ledger settings", () => {
   afterEach(() => mock.restore())
 
