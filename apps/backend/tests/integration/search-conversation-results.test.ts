@@ -6,7 +6,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
+import { setupIsolatedTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
@@ -47,6 +47,7 @@ function makeService(pool: Pool, vector: number[] = unit(0)) {
 
 describe("Conversation search results", () => {
   let pool: Pool
+  let cleanup: () => Promise<void>
   const wsId = workspaceId()
   let memberId: string
   let outsiderId: string
@@ -63,7 +64,7 @@ describe("Conversation search results", () => {
   let post: (sid: string, authorId: string, text: string) => Promise<{ id: string }>
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    ;({ pool, cleanup } = await setupIsolatedTestDatabase("conv_search_results"))
 
     await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
@@ -174,11 +175,11 @@ describe("Conversation search results", () => {
       { id: noMessagesId, embedding: unit(0), sourceHash: "h-empty", expectedSourceHash: null },
       { id: farId, embedding: unit(1), sourceHash: "h-far", expectedSourceHash: null },
     ])
-  })
+  }, 30_000)
 
   afterAll(async () => {
-    await pool.end()
-  })
+    await cleanup()
+  }, 30_000)
 
   async function permissionsFor(uid: string): Promise<SearchPermissions> {
     return { accessibleStreamIds: await resolveUserAccessibleStreamIds(pool, wsId, uid, {}) }
