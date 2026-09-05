@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { chmodSync, unlinkSync, writeFileSync } from "node:fs"
+import { unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -25,7 +25,6 @@ export function parseSpawnCommandArgs(args: string): SpawnCommandArgs | { error:
 export function writeSpawnBrief(prompt: string, options: { dir?: string } = {}): string {
   const path = join(options.dir ?? tmpdir(), `threa-spawn-${randomUUID()}.md`)
   writeFileSync(path, prompt, { flag: "wx", mode: 0o600 })
-  chmodSync(path, 0o600)
   return path
 }
 
