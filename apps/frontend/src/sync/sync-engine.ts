@@ -164,6 +164,8 @@ export class SyncEngine {
    */
   private coldSweepClaims = new Map<string, StreamBootstrapClaim>()
   private coldSweepSettled = false
+  /** The streams the running first-connect sweep fetches; null until it starts. */
+  private coldSweepStreamIds: ReadonlySet<string> | null = null
   /** Navigation refreshes the sweep suppressed; replayed for the streams it did not cover. */
   private refreshesDeferredBySweep = new Set<string>()
   /**
@@ -679,10 +681,13 @@ export class SyncEngine {
    * connect is pending): the caller fetches for itself. The promise resolves
    * to null when the sweep did not cover the stream, and rejects with the
    * stream's fetch error when it did and failed, so terminal 403/404 handling
-   * in the query layer is unchanged.
+   * in the query layer is unchanged. A stream navigated to after the sweep
+   * chose its set gets null at once rather than a promise that waits out the
+   * sweep only to resolve to null.
    */
   claimStreamBootstrap(streamId: string): Promise<CachedStreamBootstrap | null> | null {
     if (this.coldSweepSettled || this.isDestroyed || !this.socket || !isServerStreamId(streamId)) return null
+    if (this.coldSweepStreamIds !== null && !this.coldSweepStreamIds.has(streamId)) return null
     let claim = this.coldSweepClaims.get(streamId)
     if (!claim) {
       claim = createStreamBootstrapClaim()
@@ -764,6 +769,10 @@ export class SyncEngine {
     const visibleStreamIds = Array.from(
       new Set([...this.getVisibleServerStreamIds(), ...(_isReconnect ? [] : this.coldSweepClaims.keys())])
     )
+    if (!_isReconnect) this.coldSweepStreamIds = new Set(visibleStreamIds)
+    // Only the streams whose window actually landed count as swept; a stream
+    // whose fetch failed keeps its deferred refresh so settle retries it.
+    let sweptStreamIds: ReadonlySet<string> = new Set()
     for (const streamId of visibleStreamIds) {
       syncStatus.set(`stream:${streamId}`, "syncing")
       syncStatus.setError(`stream:${streamId}`, null)
@@ -844,6 +853,10 @@ export class SyncEngine {
         const workspaceStreamIds = new Set(workspaceBootstrap.streams.map((stream) => stream.id))
         for (const streamId of visibleStreamIds) {
           if (successfulStreamBootstraps.has(streamId) || workspaceStreamIds.has(streamId)) continue
+          // A fetch that failed for a reason other than 403/404 says nothing
+          // about whether the stream exists; only a stream the server answered
+          // for, or left out of a fresh snapshot, is gone.
+          if (staleStreamIds.has(streamId)) continue
           terminalStreamIds.add(streamId)
           // Only synthesize a 404 if no precise error was recorded in the first
           // pass — otherwise a 403 from a stream the server omitted from the
@@ -877,6 +890,7 @@ export class SyncEngine {
               fetchStartedAt
             )
           bootstrap = appliedWorkspaceBootstrap
+          sweptStreamIds = new Set([...appliedStreamBootstraps.keys(), ...terminalStreamIds])
 
           queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
           // Seed the per-stream TanStack cache from the bootstraps we just
@@ -996,7 +1010,7 @@ export class SyncEngine {
       }
     } finally {
       // Whatever the sweep did not hand over, the query layer now fetches itself.
-      if (!_isReconnect) this.settleColdSweep(new Set(visibleStreamIds))
+      if (!_isReconnect) this.settleColdSweep(sweptStreamIds)
     }
   }
 
@@ -1262,9 +1276,10 @@ export class SyncEngine {
 
   private refreshStreamAfterNavigation(streamId: string): Promise<void> {
     if (this.isDestroyed || !isServerStreamId(streamId)) return Promise.resolve()
-    // Until the first-connect sweep has run it owns every visible stream's
-    // first window; a refresh here would apply a second, separate state.
-    if (!this.coldSweepSettled) {
+    // Until the first-connect sweep has run it owns the first window of every
+    // stream it fetches; a refresh here would apply a second, separate state.
+    // Before the sweep starts every visible stream is in its set.
+    if (!this.coldSweepSettled && (this.coldSweepStreamIds === null || this.coldSweepStreamIds.has(streamId))) {
       this.refreshesDeferredBySweep.add(streamId)
       return Promise.resolve()
     }

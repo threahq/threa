@@ -81,6 +81,10 @@ export function useApplyWindowOpen(): boolean {
  * current value even inside a window: the hook's host stays mounted across a
  * navigation, so the held value would otherwise be the previous key's.
  *
+ * A host that mounts while a window is open has no pre-window value to hold;
+ * it passes values through until its first render with the window closed,
+ * otherwise a timeline opened mid-sweep would freeze on its loading state.
+ *
  * The refs are written during render on purpose: they cache the last value seen
  * while the window was closed (the pre-window value to freeze on), are derived
  * deterministically from `value`, and never schedule a render — the same
@@ -90,10 +94,12 @@ export function useBatchedValue<T>(value: T, resetKey?: unknown): T {
   const open = useApplyWindowOpen()
   const held = useRef(value)
   const heldKey = useRef(resetKey)
-  if (!open || heldKey.current !== resetKey) {
+  const primed = useRef(false)
+  if (!open || !primed.current || heldKey.current !== resetKey) {
     held.current = value
     heldKey.current = resetKey
   }
+  if (!open) primed.current = true
   return held.current
 }
 

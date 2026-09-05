@@ -2780,32 +2780,24 @@ describe("SyncEngine first-connect sweep", () => {
     engine.destroy()
   })
 
-  it("resolves a claim the sweep did not cover to null once the sweep settles", async () => {
-    const deps = makeDeps()
-    let releaseWorkspace: () => void = () => {}
-    const held = new Promise<void>((resolve) => {
-      releaseWorkspace = resolve
-    })
-    deps.workspaceService.bootstrap.mockImplementation(async () => {
-      await held
-      return makeWorkspaceBootstrap()
-    })
+  it("resolves claims to null when the sweep fails before landing, so the query layer fetches itself", async () => {
+    const deps = makeSyncDeps()
+    deps.workspaceService.bootstrap.mockRejectedValueOnce(new Error("network down"))
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     const engine = new SyncEngine(deps)
-    engine.setCurrentStreamId("stream_1")
     const connecting = engine.onConnect(asSocket(new MockSocket()))
-    const late = engine.claimStreamBootstrap("stream_9")
-    expect(late).not.toBeNull()
+    const claim = engine.claimStreamBootstrap("stream_2")
+    expect(claim).not.toBeNull()
 
-    releaseWorkspace()
     await connecting
 
-    await expect(late).resolves.toBeNull()
-    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_1", undefined]])
-    expect(engine.claimStreamBootstrap("stream_1")).toBeNull()
+    await expect(claim).resolves.toBeNull()
+    expect(engine.claimStreamBootstrap("stream_2")).toBeNull()
+    errorSpy.mockRestore()
     engine.destroy()
   })
 
-  it("refreshes a stream navigated to during the sweep once the sweep settles", async () => {
+  it("returns null at once for a stream the running sweep will not cover", async () => {
     const deps = makeDeps()
     let releaseWorkspace: () => void = () => {}
     const held = new Promise<void>((resolve) => {
@@ -2818,17 +2810,54 @@ describe("SyncEngine first-connect sweep", () => {
     const engine = new SyncEngine(deps)
     engine.setCurrentStreamId("stream_1")
     const connecting = engine.onConnect(asSocket(new MockSocket()))
-    engine.setVisibleStreamIds(["stream_2"])
-    expect(deps.streamService.bootstrap).not.toHaveBeenCalledWith("ws_1", "stream_2", undefined)
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalled())
+
+    // The sweep has chosen its set; a claim for another stream would only wait
+    // it out to resolve to null, so the query layer fetches for itself now.
+    expect(engine.claimStreamBootstrap("stream_9")).toBeNull()
+    // Same rule for a navigation refresh: nothing to defer to.
+    engine.setVisibleStreamIds(["stream_9"])
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_9", undefined))
+
+    releaseWorkspace()
+    await connecting
+    engine.destroy()
+  })
+
+  it("keeps a stream whose sweep fetch failed transiently stale, and retries its deferred refresh on settle", async () => {
+    const deps = makeDeps()
+    let releaseWorkspace: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseWorkspace = resolve
+    })
+    // stream_1 is a public channel the viewer never joined (absent from the
+    // workspace snapshot's member streams); its first fetch hits a 500.
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      await held
+      return makeWorkspaceBootstrap()
+    })
+    let streamFetches = 0
+    deps.streamService.bootstrap.mockImplementation(async (_workspaceId: string, streamId: string) => {
+      streamFetches += 1
+      if (streamId === "stream_1" && streamFetches === 1) throw new ApiError(500, "INTERNAL", "boom")
+      return makeStreamBootstrap(streamId)
+    })
+    const engine = new SyncEngine(deps)
+    engine.setCurrentStreamId("stream_1")
+    const connecting = engine.onConnect(asSocket(new MockSocket()))
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", undefined))
+    // Navigated to again mid-sweep (a panel reopening it): deferred to the sweep.
+    engine.setVisibleStreamIds(["stream_1"])
 
     releaseWorkspace()
     await connecting
 
+    // A failed fetch is not a missing stream: no synthesized 404, status stale
+    // rather than error, and the deferred refresh runs so the window lands.
+    expect(deps.syncStatus.getError("stream:stream_1")).toBeNull()
+    expect(deps.syncStatus.get("stream:stream_1")).not.toBe("error")
     await vi.waitFor(() =>
-      expect(deps.streamService.bootstrap.mock.calls).toEqual([
-        ["ws_1", "stream_1", undefined],
-        ["ws_1", "stream_2", undefined],
-      ])
+      expect(deps.streamService.bootstrap.mock.calls.filter(([, id]) => id === "stream_1")).toHaveLength(2)
     )
     engine.destroy()
   })

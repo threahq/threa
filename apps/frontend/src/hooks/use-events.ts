@@ -791,28 +791,52 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // The window is held at the output, not at the bootstrap: the floor keeps
   // flowing so the IndexedDB re-reads a sweep triggers start inside the window,
   // and the timeline releases its old window in the same render as the sidebar.
+  // Every rendered flag is held together with the rows: an error banner, a
+  // fetch spinner or the jump-mode chrome flipping mid-window is a third state.
   const held = useBatchedValue(
     useMemo(
-      () => ({ events, holes, isLoading, isConfirmedEmpty, isResolved: idbResolved, hasOlderEvents, latestSequence }),
-      [events, holes, isLoading, isConfirmedEmpty, idbResolved, hasOlderEvents, latestSequence]
+      () => ({
+        events,
+        holes,
+        isLoading,
+        isConfirmedEmpty,
+        isResolved: idbResolved,
+        hasOlderEvents,
+        latestSequence,
+        error: suppressBootstrapError ? null : error,
+        isFetchingOlder,
+        hasNewerEvents,
+        isFetchingNewer,
+        isJumpMode: !!jumpState,
+      }),
+      [
+        events,
+        holes,
+        isLoading,
+        isConfirmedEmpty,
+        idbResolved,
+        hasOlderEvents,
+        latestSequence,
+        suppressBootstrapError,
+        error,
+        isFetchingOlder,
+        hasNewerEvents,
+        isFetchingNewer,
+        jumpState,
+      ]
     ),
     streamId
   )
 
   return {
     ...held,
-    error: suppressBootstrapError ? null : error,
     fetchOlderEvents,
-    isFetchingOlder,
     fetchNewerEvents,
-    hasNewerEvents,
-    isFetchingNewer,
     jumpToEvent,
     jumpToEventByDate,
     exitJumpMode,
     cancelPendingJump,
     currentJumpGeneration,
-    isJumpMode: !!jumpState,
     addEvent,
     updateEvent,
   }

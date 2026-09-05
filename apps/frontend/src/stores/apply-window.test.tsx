@@ -107,6 +107,25 @@ describe("useBatchedValue", () => {
     act(() => endApplyWindow())
     expect(result.current).toBe("b2")
   })
+
+  it("passes values through for a host that mounts inside a window, until its first closed render", () => {
+    act(() => beginApplyWindow())
+    const { result, rerender } = renderHook(({ value }) => useBatchedValue(value), {
+      initialProps: { value: "loading" },
+    })
+    // No pre-window value exists to hold; freezing here would pin a timeline
+    // opened mid-sweep on its loading state until the sweep closes.
+    rerender({ value: "rows" })
+    expect(result.current).toBe("rows")
+
+    act(() => endApplyWindow())
+    expect(result.current).toBe("rows")
+    act(() => beginApplyWindow())
+    rerender({ value: "more rows" })
+    expect(result.current).toBe("rows")
+    act(() => endApplyWindow())
+    expect(result.current).toBe("more rows")
+  })
 })
 
 describe("whenReadsSettled", () => {
