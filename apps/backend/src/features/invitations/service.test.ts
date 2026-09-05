@@ -157,6 +157,16 @@ describe("InvitationService.claimLinkByToken", () => {
     expect(insertChild).not.toHaveBeenCalled()
   })
 
+  test("should reject an expired member-link retry without publishing another claim", async () => {
+    findRootForUpdate.mockResolvedValue({ ...root, expiresAt: new Date(Date.now() - 1000) })
+    findChild.mockResolvedValue(child)
+    const service = new InvitationService({} as never, {} as never)
+    await expect(service.claimLinkByToken("token", "new@example.com")).rejects.toMatchObject({
+      code: "INVITATION_EXPIRED",
+    })
+    expect(insertOutbox).not.toHaveBeenCalled()
+  })
+
   test("should bind a legacy admin root and never mint a child", async () => {
     findRootForUpdate.mockResolvedValue({ ...root, role: "admin", maxUses: 1 })
     const service = new InvitationService({} as never, {} as never)

@@ -67,7 +67,7 @@ export function EditInviteLinkDialog({
   const [settings, setSettings] = useState<InviteLinkSettingsValue | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const generationRef = useRef(0)
-  const openedInvitationIdRef = useRef<string | null>(null)
+  const openedInvitationRef = useRef<WorkspaceInvitation | null>(null)
 
   const mutation = useMutation({
     mutationFn: ({ target, value }: { target: WorkspaceInvitation; value: InviteLinkSettingsValue }) =>
@@ -77,15 +77,15 @@ export function EditInviteLinkDialog({
   useEffect(() => {
     if (!open) {
       generationRef.current += 1
-      openedInvitationIdRef.current = null
+      openedInvitationRef.current = null
       setSettings(null)
       setValidationError(null)
       mutation.reset()
       return
     }
-    if (invitation && openedInvitationIdRef.current !== invitation.id) {
+    if (invitation && openedInvitationRef.current?.id !== invitation.id) {
       generationRef.current += 1
-      openedInvitationIdRef.current = invitation.id
+      openedInvitationRef.current = { ...invitation }
       setSettings(valuesFor(invitation))
       setValidationError(null)
       mutation.reset()
@@ -95,7 +95,9 @@ export function EditInviteLinkDialog({
   if (!invitation || !settings) return null
 
   const submit = () => {
-    if (Object.keys(buildInviteLinkPatch(invitation, settings)).length === 0) {
+    const original = openedInvitationRef.current
+    if (!original) return
+    if (Object.keys(buildInviteLinkPatch(original, settings)).length === 0) {
       onOpenChange(false)
       return
     }
@@ -104,7 +106,7 @@ export function EditInviteLinkDialog({
     if (error) return
     const generation = generationRef.current
     mutation.mutate(
-      { target: invitation, value: settings },
+      { target: original, value: settings },
       {
         onSuccess: () => {
           if (generation !== generationRef.current) return

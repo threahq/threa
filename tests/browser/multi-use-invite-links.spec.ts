@@ -184,6 +184,9 @@ test.describe("Multi-use invite links", () => {
       await openCreateLink(page, workspace.id)
       await page.goBack()
       await expect(page).not.toHaveURL(/invite-link=/)
+      await expect(page).toHaveURL(/ws-settings=users/)
+      await expect(page.getByRole("heading", { name: "Workspace Settings" })).toBeVisible()
+      await expect(page.getByRole("heading", { name: "Create invite link" })).not.toBeVisible()
 
       const link = await createLinkFromSettings(page, workspace.id, null, true)
       await claimSignInAndAccept(browser, link, `mobile-${testId}@example.com`, `Mobile ${testId}`, workspace.id, true)

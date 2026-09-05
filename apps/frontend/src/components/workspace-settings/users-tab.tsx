@@ -97,12 +97,6 @@ function invitationErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-function linkState(expired: boolean, exhausted: boolean): string {
-  if (expired) return "Expired"
-  if (exhausted) return "Exhausted"
-  return "Active"
-}
-
 export function PendingEmailInvitationDetails({
   email,
   role,
@@ -347,7 +341,9 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
               const tokenInMemory = tokensRef.current.has(invitation.id)
               const exhausted = invitation.maxUses !== null && invitation.useCount >= invitation.maxUses
               const expired = invitation.expiresAt !== null && new Date(invitation.expiresAt).getTime() <= Date.now()
-              const state = linkState(expired, exhausted)
+              let state = "Active"
+              if (expired) state = "Expired"
+              else if (exhausted) state = "Exhausted"
               return (
                 <div
                   key={invitation.id}

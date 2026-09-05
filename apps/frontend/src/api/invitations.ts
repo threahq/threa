@@ -12,6 +12,21 @@ import type {
   ClaimInvitationLinkResponse,
 } from "@threa/types"
 
+export const INVITATION_ERROR_CODES = {
+  NOT_FOUND: "INVITATION_NOT_FOUND",
+  REVOKED: "INVITATION_REVOKED",
+  EXPIRED: "INVITATION_EXPIRED",
+  EXHAUSTED: "INVITATION_EXHAUSTED",
+  ALREADY_CLAIMED: "INVITATION_ALREADY_CLAIMED",
+  EMAIL_MISMATCH: "INVITATION_EMAIL_MISMATCH",
+} as const
+
+export type InvitationErrorCode = (typeof INVITATION_ERROR_CODES)[keyof typeof INVITATION_ERROR_CODES]
+
+export function isInvitationErrorCode(code: string): code is InvitationErrorCode {
+  return Object.values(INVITATION_ERROR_CODES).some((value) => value === code)
+}
+
 export const invitationKeys = {
   all: ["invitations"] as const,
   /** The pending-invitations list for one workspace — the invalidation target

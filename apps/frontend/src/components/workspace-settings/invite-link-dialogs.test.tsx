@@ -103,7 +103,11 @@ describe("invite link dialogs", () => {
     expect(screen.queryByRole("switch", { name: "Unlimited" })).not.toBeInTheDocument()
   })
 
-  it("should preserve in-progress edit values across an invitation refetch", async () => {
+  it("should preserve another admin's expiry change when saving an in-progress limit edit", async () => {
+    const refreshed = { ...invitation, expiresAt: "2100-02-01T12:34:56.789Z" }
+    const update = vi.spyOn(invitationsModule.invitationsApi, "updateLink").mockResolvedValue({
+      invitation: { ...refreshed, maxUses: 9 },
+    })
     const client = new QueryClient()
     const props = { workspaceId: "ws_1", open: true, onOpenChange: vi.fn(), onSuccess: vi.fn() }
     const view = render(
@@ -116,10 +120,12 @@ describe("invite link dialogs", () => {
     await userEvent.type(input, "9")
     view.rerender(
       <QueryClientProvider client={client}>
-        <EditInviteLinkDialog {...props} invitation={{ ...invitation, note: "refetched" }} />
+        <EditInviteLinkDialog {...props} invitation={refreshed} />
       </QueryClientProvider>
     )
     expect(screen.getByLabelText("Maximum joins")).toHaveValue(9)
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "inv_1", { maxUses: 9 }))
   })
 
   it("should clear a failed edit before reopening", async () => {
@@ -198,11 +204,11 @@ describe("invite link dialogs", () => {
     expect(onOpenChange).not.toHaveBeenCalled()
   })
 
-  it("should reset browser-closed create state and ignore its pending response", async () => {
+  it("should retain a completed link without replacing the reopened create dialog", async () => {
     const request = deferred<CreateInvitationLinkResponse>()
     vi.spyOn(invitationsModule.invitationsApi, "createLink").mockReturnValueOnce(request.promise)
     const client = new QueryClient()
-    const props = { workspaceId: "ws_1", onOpenChange: vi.fn(), onSuccess: vi.fn() }
+    const props = { workspaceId: "ws_1", onOpenChange: vi.fn(), onSuccess: vi.fn(), onTokenCreated: vi.fn() }
     const view = render(
       <QueryClientProvider client={client}>
         <CreateInviteLinkDialog {...props} open />
@@ -231,6 +237,7 @@ describe("invite link dialogs", () => {
       expect(screen.getByText("Anyone with this link can join the workspace as member.")).toBeInTheDocument()
     )
     expect(screen.queryByLabelText("Share link")).not.toBeInTheDocument()
-    expect(props.onSuccess).not.toHaveBeenCalled()
+    await waitFor(() => expect(props.onTokenCreated).toHaveBeenCalledWith(invitation.id, "old-token"))
+    expect(props.onSuccess).toHaveBeenCalledOnce()
   })
 })

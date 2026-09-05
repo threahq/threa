@@ -67,6 +67,10 @@ export function CreateInviteLinkDialog({
         maxUses: settings.unlimited ? null : Number(settings.maxUses),
         expiresAt: settings.neverExpires ? null : localDateTimeToIso(settings.expiresAt),
       }),
+    onSuccess: (data) => {
+      onTokenCreated?.(data.invitation.id, data.token)
+      onSuccess()
+    },
   })
 
   useEffect(() => {
@@ -92,8 +96,6 @@ export function CreateInviteLinkDialog({
       onSuccess: (data) => {
         if (generation !== generationRef.current) return
         setCreatedToken(data.token)
-        onTokenCreated?.(data.invitation.id, data.token)
-        onSuccess()
       },
     })
   }

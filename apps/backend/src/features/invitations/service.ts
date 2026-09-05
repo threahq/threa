@@ -371,6 +371,7 @@ export class InvitationService {
           child = claimed
         }
       } else {
+        if (isExpired(parent)) throw new InvitationLinkError("INVITATION_EXPIRED")
         const legacyClaim = parent.email?.toLowerCase() === email ? parent : null
         if (parent.email && !legacyClaim && parent.maxUses === 1 && parent.acceptanceConsumesCapacity !== false) {
           throw new InvitationLinkError("INVITATION_EXHAUSTED")

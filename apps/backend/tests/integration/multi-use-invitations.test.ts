@@ -123,6 +123,30 @@ describe("multi-use invitation lifecycle", () => {
     expect((await InvitationRepository.findById(fixture.pool, created.invitation.id))?.useCount).toBe(2)
   })
 
+  test("should reject a limit below completed joins without changing the link", async () => {
+    const created = await fixture.service.createLink({
+      workspaceId: fixture.workspaceId,
+      invitedBy: fixture.inviterId,
+      role: "member",
+      note: null,
+      maxUses: 3,
+      expiresAt: null,
+    })
+    const candidates = [identity(50), identity(51)]
+    const children = await Promise.all(candidates.map((candidate) => claim(fixture, created.token, candidate.email)))
+    await Promise.all(children.map((id, index) => fixture.service.acceptInvitation(id, candidates[index])))
+    const before = await InvitationRepository.findById(fixture.pool, created.invitation.id)
+    await expect(
+      fixture.service.updateLink({
+        workspaceId: fixture.workspaceId,
+        invitationId: created.invitation.id,
+        maxUses: 1,
+      })
+    ).resolves.toBeNull()
+    expect(await InvitationRepository.findById(fixture.pool, created.invitation.id)).toEqual(before)
+    expect(before).toMatchObject({ maxUses: 3, useCount: 2 })
+  })
+
   test("should allow multiple unlimited joins and preserve completed-join replay", async () => {
     const created = await fixture.service.createLink({
       workspaceId: fixture.workspaceId,

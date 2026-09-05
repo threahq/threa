@@ -8,17 +8,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ThreaLogo } from "@/components/threa-logo"
 import { ApiError } from "@/api/client"
 import { formatRegion } from "@/lib/regions"
+import { INVITATION_ERROR_CODES, isInvitationErrorCode, type InvitationErrorCode } from "@/api/invitations"
 
-const ACCEPT_INVITATION_ERRORS: Record<string, string> = {
-  INVITATION_REVOKED: "This invitation was revoked.",
-  INVITATION_EXPIRED: "This invitation has expired.",
-  INVITATION_EXHAUSTED: "This invite link has reached its join limit.",
-  INVITATION_EMAIL_MISMATCH: "Sign in with the email address that received this invitation.",
-  INVITATION_NOT_FOUND: "This invitation is no longer available.",
+const ACCEPT_INVITATION_ERRORS: Record<InvitationErrorCode, string> = {
+  [INVITATION_ERROR_CODES.REVOKED]: "This invitation was revoked.",
+  [INVITATION_ERROR_CODES.EXPIRED]: "This invitation has expired.",
+  [INVITATION_ERROR_CODES.EXHAUSTED]: "This invite link has reached its join limit.",
+  [INVITATION_ERROR_CODES.EMAIL_MISMATCH]: "Sign in with the email address that received this invitation.",
+  [INVITATION_ERROR_CODES.NOT_FOUND]: "This invitation is no longer available.",
+  [INVITATION_ERROR_CODES.ALREADY_CLAIMED]: "This invite link has already been used.",
 }
 
 function getAcceptInvitationErrorMessage(error: unknown): string {
-  if (ApiError.isApiError(error)) return ACCEPT_INVITATION_ERRORS[error.code] ?? error.message
+  if (ApiError.isApiError(error)) {
+    return isInvitationErrorCode(error.code) ? ACCEPT_INVITATION_ERRORS[error.code] : error.message
+  }
   if (error instanceof Error) return error.message
   return "Failed to accept invitation."
 }
