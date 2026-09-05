@@ -271,5 +271,5 @@ export function useLiveSavedCount(workspaceId: string): number {
   }, [workspaceId])
   // Hold steady during a catch-up replay so the badge settles once with the rest
   // of the sidebar instead of ticking per replayed reminder (apply-window gate).
-  return useBatchedValue(count ?? 0)
+  return useBatchedValue(count ?? 0, workspaceId)
 }

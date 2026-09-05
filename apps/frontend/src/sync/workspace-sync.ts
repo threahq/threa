@@ -3223,6 +3223,7 @@ export async function applyReconnectBootstrapBatch(
   }
 
   let swept = NO_TABLE_DELETIONS
+  const stopTx = capture.time("bootstrap.tx")
   await db.transaction(
     "rw",
     [
@@ -3420,6 +3421,7 @@ export async function applyReconnectBootstrapBatch(
     }
   )
 
+  stopTx()
   capture.mark("bootstrap.rowsWritten", rowsWritten)
   capture.mark("bootstrap.rowsSkipped", rowsSkipped)
 
@@ -3436,6 +3438,7 @@ export async function applyReconnectBootstrapBatch(
   // same transaction without going through the workspace diff, so either one
   // means the cached arrays can no longer be assumed current.
   const anyChanged = rowsWritten > 0 || streamBootstraps.size > 0 || deletions.total > 0
+  const stopSeed = capture.time("bootstrap.seed")
   const previousTables = getCachedWorkspaceTables(workspaceId)
   const seedReadStates = finalBootstrap.streamReadState
     ? mergeLocalAndServerReadStates(
@@ -3514,6 +3517,7 @@ export async function applyReconnectBootstrapBatch(
     },
     { publish: anyChanged }
   )
+  stopSeed()
   if (anyChanged) capture.mark("bootstrap.storePublish", 1)
 
   // The returned bootstrap is written to the bootstrap query cache by the

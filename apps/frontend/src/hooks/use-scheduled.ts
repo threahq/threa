@@ -262,7 +262,7 @@ export function useLiveScheduledCount(workspaceId: string): number {
   }, [workspaceId])
   // Hold steady during a catch-up replay so the badge settles once with the rest
   // of the sidebar instead of ticking per replayed schedule (apply-window gate).
-  return useBatchedValue(count ?? 0)
+  return useBatchedValue(count ?? 0, workspaceId)
 }
 
 /**

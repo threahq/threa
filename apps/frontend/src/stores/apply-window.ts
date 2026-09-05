@@ -77,21 +77,78 @@ export function useApplyWindowOpen(): boolean {
  * value when it closes. Outside a window this is a pass-through — zero behavior
  * change for live operation, which is the overwhelming common case.
  *
- * The ref is written during render on purpose: it caches the last value seen
- * while the window was closed (the pre-window value to freeze on), is derived
- * deterministically from `value`, and never schedules a render — the same
+ * A `resetKey` change (the stream or workspace the value belongs to) takes the
+ * current value even inside a window: the hook's host stays mounted across a
+ * navigation, so the held value would otherwise be the previous key's.
+ *
+ * A host that mounts while a window is open has no pre-window value to hold;
+ * it passes values through until its first render with the window closed,
+ * otherwise a timeline opened mid-sweep would freeze on its loading state.
+ *
+ * The refs are written during render on purpose: they cache the last value seen
+ * while the window was closed (the pre-window value to freeze on), are derived
+ * deterministically from `value`, and never schedule a render — the same
  * structural-sharing pattern the stream store uses.
  */
-export function useBatchedValue<T>(value: T): T {
+export function useBatchedValue<T>(value: T, resetKey?: unknown): T {
   const open = useApplyWindowOpen()
   const held = useRef(value)
-  if (!open) held.current = value
-  return open ? held.current : value
+  const heldKey = useRef(resetKey)
+  const primed = useRef(false)
+  if (!open || !primed.current || heldKey.current !== resetKey) {
+    held.current = value
+    heldKey.current = resetKey
+  }
+  if (!open) primed.current = true
+  return held.current
+}
+
+/**
+ * Readers with asynchronous reads (the timeline's IndexedDB live queries)
+ * register in-flight work here so a sweep can hold its window open until the
+ * reads its writes triggered have landed. The synchronous store hooks need
+ * none of this: they re-read on the close transition itself.
+ */
+let pendingReads = 0
+// A release from before a reset must not decrement the new count.
+let readsEpoch = 0
+
+export function trackPendingRead(): () => void {
+  pendingReads += 1
+  const epoch = readsEpoch
+  let released = false
+  return () => {
+    if (released || epoch !== readsEpoch) return
+    released = true
+    pendingReads -= 1
+  }
+}
+
+const READS_SETTLE_DEADLINE_MS = 2000
+
+/**
+ * Resolves once no tracked read has been pending across two consecutive
+ * macrotask turns. Two, because a live query re-run is scheduled a microtask
+ * after the write commits, and a re-run that starts a chained read (the tail
+ * re-latch) is only visible one turn later. The deadline bounds a reader that
+ * never settles; by the time this is awaited the sweep's writes are committed,
+ * so releasing on the deadline paints complete data, unlike a clock on the
+ * window itself, which could paint a half-applied refresh.
+ */
+export async function whenReadsSettled(): Promise<void> {
+  const deadline = Date.now() + READS_SETTLE_DEADLINE_MS
+  let quietTurns = 0
+  while (quietTurns < 2 && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    quietTurns = pendingReads === 0 ? quietTurns + 1 : 0
+  }
 }
 
 /** Test/teardown escape hatch: reset to the closed, depth-0 state. */
 export function resetApplyWindow(): void {
   const wasOpen = depth > 0
   depth = 0
+  pendingReads = 0
+  readsEpoch += 1
   if (wasOpen) notifyTransition()
 }

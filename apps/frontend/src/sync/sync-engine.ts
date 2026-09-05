@@ -24,7 +24,7 @@ import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { CatchUpBatch, LiveCommitBatch } from "./catch-up-batch"
-import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
+import { beginApplyWindow, endApplyWindow, whenReadsSettled } from "@/stores/apply-window"
 import { requestStreamEventReadRefresh } from "@/stores/stream-event-read-refresh"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { SyncStatusStore } from "./sync-status"
@@ -154,6 +154,20 @@ export class SyncEngine {
    *  drained into one follow-up backfill when the active one settles. */
   private queuedGapCursors = new Map<string, string>()
   private hasEverConnected = false
+  /**
+   * Per-stream bootstraps the first-connect sweep hands to the query layer
+   * (`claimStreamBootstrap`). Created on demand by the claimant, resolved by the
+   * sweep with the bootstrap it applied, or with null once the sweep is over
+   * for streams it did not cover. `coldSweepSettled` flips when the first
+   * non-reconnect bootstrap finishes; from then on the query layer fetches for
+   * itself.
+   */
+  private coldSweepClaims = new Map<string, StreamBootstrapClaim>()
+  private coldSweepSettled = false
+  /** The streams the running first-connect sweep fetches; null until it starts. */
+  private coldSweepStreamIds: ReadonlySet<string> | null = null
+  /** Navigation refreshes the sweep suppressed; replayed for the streams it did not cover. */
+  private refreshesDeferredBySweep = new Set<string>()
   /**
    * False until this session's cold-boot workspace snapshot has been applied
    * (or definitively failed). While it is false a snapshot is still pending
@@ -660,6 +674,42 @@ export class SyncEngine {
   }
 
   /**
+   * Hand a visible stream's first bootstrap to the query layer from the
+   * first-connect sweep instead of a separate fetch, so the stream window,
+   * the workspace snapshot and every other visible stream land in one IDB
+   * commit and one apply window. Null once the sweep has run (or before any
+   * connect is pending): the caller fetches for itself. The promise resolves
+   * to null when the sweep did not cover the stream, and rejects with the
+   * stream's fetch error when it did and failed, so terminal 403/404 handling
+   * in the query layer is unchanged. A stream navigated to after the sweep
+   * chose its set gets null at once rather than a promise that waits out the
+   * sweep only to resolve to null.
+   */
+  claimStreamBootstrap(streamId: string): Promise<CachedStreamBootstrap | null> | null {
+    if (this.coldSweepSettled || this.isDestroyed || !this.socket || !isServerStreamId(streamId)) return null
+    if (this.coldSweepStreamIds !== null && !this.coldSweepStreamIds.has(streamId)) return null
+    let claim = this.coldSweepClaims.get(streamId)
+    if (!claim) {
+      claim = createStreamBootstrapClaim()
+      this.coldSweepClaims.set(streamId, claim)
+    }
+    return claim.promise
+  }
+
+  private settleColdSweep(sweptStreamIds: ReadonlySet<string> = new Set()): void {
+    this.coldSweepSettled = true
+    for (const claim of this.coldSweepClaims.values()) claim.resolve(null)
+    this.coldSweepClaims.clear()
+    // A stream navigated to during the sweep that the sweep did not cover has a
+    // cached window the query layer will not refetch (infinite stale time), so
+    // its deferred navigation refresh runs now.
+    const stillVisible = new Set(this.getVisibleServerStreamIds())
+    const deferred = [...this.refreshesDeferredBySweep].filter((id) => !sweptStreamIds.has(id) && stillVisible.has(id))
+    this.refreshesDeferredBySweep.clear()
+    for (const streamId of deferred) void this.refreshStreamAfterNavigation(streamId)
+  }
+
+  /**
    * Re-trigger workspace bootstrap (e.g., user clicks "Retry" in sidebar error).
    */
   retryWorkspace(): void {
@@ -673,6 +723,7 @@ export class SyncEngine {
    */
   destroy(): void {
     this.isDestroyed = true
+    this.settleColdSweep()
     this.liveCommitBatch.destroy()
     this.cleanupAllHandlers()
     this.subscribedStreams.clear()
@@ -711,7 +762,17 @@ export class SyncEngine {
 
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
 
-    const visibleStreamIds = _isReconnect ? this.getVisibleServerStreamIds() : []
+    // A first connect sweeps the visible streams together with the workspace
+    // snapshot (plus any the query layer has already claimed), so the sidebar
+    // and the open timelines land in one commit. A reconnect sweeps the same
+    // set; a retry with nothing open takes the single-fetch branch.
+    const visibleStreamIds = Array.from(
+      new Set([...this.getVisibleServerStreamIds(), ...(_isReconnect ? [] : this.coldSweepClaims.keys())])
+    )
+    if (!_isReconnect) this.coldSweepStreamIds = new Set(visibleStreamIds)
+    // Only the streams whose window actually landed count as swept; a stream
+    // whose fetch failed keeps its deferred refresh so settle retries it.
+    let sweptStreamIds: ReadonlySet<string> = new Set()
     for (const streamId of visibleStreamIds) {
       syncStatus.set(`stream:${streamId}`, "syncing")
       syncStatus.setError(`stream:${streamId}`, null)
@@ -725,10 +786,22 @@ export class SyncEngine {
         await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
       }
 
+      // The service worker's lock-time snapshot may only answer when nothing
+      // local can be newer than it: no sync cursor and no cached workspace.
+      // Applied over local state it replays entries this device already saw,
+      // and since the cursor only ever advances, a head stamped from it can
+      // never be repaired. forceFull runs from the catch-up fallbacks, which
+      // stamp the cursor at a head they read themselves, so it is fresh too.
+      // A reconnect always has local state on screen, so only forceFull (the
+      // below-floor fallback) needs the cache bypass there.
+      const cachedWorkspace = _isReconnect ? undefined : await db.workspaces.get(workspaceId)
+      const localCursor = _isReconnect ? null : (this.syncLogCursor?.get() ?? null)
+      const fresh = _isReconnect ? forceFull : forceFull || localCursor !== null || cachedWorkspace !== undefined
+
       const fetchStartedAt = Date.now()
       let bootstrap: WorkspaceBootstrap
 
-      if (_isReconnect && visibleStreamIds.length > 0) {
+      if (visibleStreamIds.length > 0) {
         // Cursor-before-join per stream is owned by joinStreamForCatchUp —
         // see its doc for why the order is load-bearing (INV-53).
         const catchupCursors = new Map<string, string | null>()
@@ -738,14 +811,18 @@ export class SyncEngine {
           })
         )
 
+        const stopFetch = getPerfCapture().time("bootstrap.fetch")
         const [workspaceBootstrap, streamResults] = await Promise.all([
-          // A forceFull reconnect with visible streams lands here rather than in
-          // the single-fetch branch below, so it needs the same cache bypass.
-          workspaceService.bootstrap(workspaceId, { fresh: forceFull }),
+          workspaceService.bootstrap(workspaceId, { fresh }),
           Promise.all(
             visibleStreamIds.map(async (streamId) => {
               try {
-                const after = catchupCursors.get(streamId) ?? null
+                // A reconnect appends from the cursor. A first connect without a
+                // cached bootstrap is a fresh open, not a catch-up: fetch the
+                // full latest window instead (same rule as performStreamRefresh).
+                const cursor = catchupCursors.get(streamId) ?? null
+                const after =
+                  _isReconnect || queryClient.getQueryData(streamKeys.bootstrap(workspaceId, streamId)) ? cursor : null
                 const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
                 return { streamId, bootstrap }
               } catch (error) {
@@ -754,6 +831,8 @@ export class SyncEngine {
             })
           ),
         ])
+        stopFetch()
+        this.assertSnapshotHeadAboveCursor(_isReconnect, localCursor, workspaceBootstrap)
 
         const successfulStreamBootstraps = new Map<string, import("@threa/types").StreamBootstrap>()
         const staleStreamIds = new Set<string>()
@@ -774,6 +853,10 @@ export class SyncEngine {
         const workspaceStreamIds = new Set(workspaceBootstrap.streams.map((stream) => stream.id))
         for (const streamId of visibleStreamIds) {
           if (successfulStreamBootstraps.has(streamId) || workspaceStreamIds.has(streamId)) continue
+          // A fetch that failed for a reason other than 403/404 says nothing
+          // about whether the stream exists; only a stream the server answered
+          // for, or left out of a fresh snapshot, is gone.
+          if (staleStreamIds.has(streamId)) continue
           terminalStreamIds.add(streamId)
           // Only synthesize a 404 if no precise error was recorded in the first
           // pass — otherwise a 403 from a stream the server omitted from the
@@ -787,92 +870,61 @@ export class SyncEngine {
           }
         }
 
-        const { workspaceBootstrap: appliedWorkspaceBootstrap, streamBootstraps: appliedStreamBootstraps } =
-          await applyReconnectBootstrapBatch(
-            workspaceId,
-            workspaceBootstrap,
-            successfulStreamBootstraps,
-            staleStreamIds,
-            terminalStreamIds,
-            fetchStartedAt
-          )
-        bootstrap = appliedWorkspaceBootstrap
+        if (!_isReconnect) await this.holdWriteForCachedReveal(cachedWorkspace)
+        if (this.isDestroyed) return
 
-        queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
-        // Seed the per-stream TanStack cache from the bootstraps we just
-        // applied. E2E payloads stay as ciphertext + envelope here — the
-        // render layer decrypts in memory via `useDecryptedMessageContent`.
-        for (const [streamId, streamBootstrap] of appliedStreamBootstraps) {
-          queryClient.setQueryData(
-            streamKeys.bootstrap(workspaceId, streamId),
-            toCachedStreamBootstrap(
+        // One apply window around the IDB commit and both cache publications,
+        // held until the timeline's re-reads of the written windows have
+        // landed, so the sidebar and every open timeline release on the same
+        // render. The per-stream cache write is what moves the timeline floor,
+        // so it has to happen inside the window too.
+        beginApplyWindow()
+        try {
+          const { workspaceBootstrap: appliedWorkspaceBootstrap, streamBootstraps: appliedStreamBootstraps } =
+            await applyReconnectBootstrapBatch(
+              workspaceId,
+              workspaceBootstrap,
+              successfulStreamBootstraps,
+              staleStreamIds,
+              terminalStreamIds,
+              fetchStartedAt
+            )
+          bootstrap = appliedWorkspaceBootstrap
+          sweptStreamIds = new Set([...appliedStreamBootstraps.keys(), ...terminalStreamIds])
+
+          queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
+          // Seed the per-stream TanStack cache from the bootstraps we just
+          // applied. E2E payloads stay as ciphertext + envelope here — the
+          // render layer decrypts in memory via `useDecryptedMessageContent`.
+          for (const [streamId, streamBootstrap] of appliedStreamBootstraps) {
+            const cached = toCachedStreamBootstrap(
               streamBootstrap,
               queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId)),
               { incrementWindowVersionOnReplace: streamBootstrap.syncMode === "replace" }
             )
-          )
-          syncStatus.setError(`stream:${streamId}`, null)
-          syncStatus.set(`stream:${streamId}`, "synced")
-        }
-        for (const streamId of [...staleStreamIds, ...terminalStreamIds]) {
-          const status = syncStatus.getError(`stream:${streamId}`) ? "error" : "stale"
-          syncStatus.set(`stream:${streamId}`, status)
+            queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), cached)
+            this.coldSweepClaims.get(streamId)?.resolve(cached)
+            syncStatus.setError(`stream:${streamId}`, null)
+            syncStatus.set(`stream:${streamId}`, "synced")
+          }
+          for (const result of streamResults) {
+            if ("error" in result) this.coldSweepClaims.get(result.streamId)?.reject(result.error)
+          }
+          for (const streamId of [...staleStreamIds, ...terminalStreamIds]) {
+            const status = syncStatus.getError(`stream:${streamId}`) ? "error" : "stale"
+            syncStatus.set(`stream:${streamId}`, status)
+          }
+          await whenReadsSettled()
+        } finally {
+          endApplyWindow()
         }
       } else {
-        // The service worker's lock-time snapshot may only answer when nothing
-        // local can be newer than it: no sync cursor and no cached workspace.
-        // Applied over local state it replays entries this device already saw,
-        // and since the cursor only ever advances, a head stamped from it can
-        // never be repaired. forceFull runs from the catch-up fallbacks, which
-        // stamp the cursor at a head they read themselves, so it is fresh too.
-        const cachedWorkspace = await db.workspaces.get(workspaceId)
-        const localCursor = this.syncLogCursor?.get() ?? null
-        const fresh = forceFull || localCursor !== null || cachedWorkspace !== undefined
         const stopFetch = getPerfCapture().time("bootstrap.fetch")
         bootstrap = await workspaceService.bootstrap(workspaceId, { fresh })
         stopFetch()
-        if (
-          !_isReconnect &&
-          localCursor !== null &&
-          bootstrap.syncHead &&
-          BigInt(bootstrap.syncHead) < BigInt(localCursor)
-        ) {
-          throw new Error(`Bootstrap snapshot head ${bootstrap.syncHead} is below the local sync cursor ${localCursor}`)
-        }
+        this.assertSnapshotHeadAboveCursor(_isReconnect, localCursor, bootstrap)
 
-        // On the very first connect of a warm start, hold the IndexedDB write
-        // until the cached reveal has painted. applyWorkspaceBootstrap writes the
-        // same stores the reveal reads, and IndexedDB serializes readwrite
-        // against readonly, so an un-gated write here queues the reveal's reads
-        // behind it — the reason an online start lagged an offline one. The fetch
-        // above already ran in parallel with the reveal, so this only delays the
-        // write by the (bounded) time the paint needs. Skipped on reconnects
-        // (content already on screen), where the write must land promptly. See
-        // reveal-gate.ts.
-        if (!_isReconnect) {
-          // Only defer when the cache is complete enough for the gate to reveal
-          // WITHOUT this write. The coordinated-loading gate holds its reveal
-          // until the workspace row plus the unread / metadata / sidebar
-          // singletons are all present (see coordinated-loading-context.tsx's
-          // `workspaceDataReady`). If any are missing — a cold start, or a
-          // partial cache from an interrupted/upgraded prior session — the gate
-          // can only become ready once THIS write lands, so waiting on the
-          // reveal would deadlock until the timeout. In that case we write
-          // immediately and let the gate reveal off the fresh write.
-          const [unreadState, metadata, sidebarConfig] = await Promise.all([
-            db.unreadState.get(workspaceId),
-            db.workspaceMetadata.get(workspaceId),
-            db.sidebarConfigs.get(workspaceId),
-          ])
-          const canRevealFromCache = !!cachedWorkspace && !!unreadState && !!metadata && !!sidebarConfig
-          if (canRevealFromCache) await waitForInitialReveal(workspaceId)
-        }
-
-        // An account/workspace switch tears this engine down (isDestroyed) and
-        // repoints the shared `db` proxy + queryClient before the new subtree
-        // mounts. Any await above (the fetch, the cache probe, the reveal wait)
-        // can outlive that switch, so bail before writing — otherwise this stale
-        // bootstrap lands in the newly-active account's IDB and cache.
+        if (!_isReconnect) await this.holdWriteForCachedReveal(cachedWorkspace)
         if (this.isDestroyed) return
 
         // Write to IDB (source of truth); the returned bootstrap carries the
@@ -903,21 +955,21 @@ export class SyncEngine {
         } finally {
           endApplyWindow()
         }
-
-        // Cold-boot single bootstrap: this first-connect snapshot is the
-        // authority for everything <= its sync head (read-before-stamp on the
-        // backend). Jump the cursor there so the catch-up that runs next sees no
-        // gap — otherwise a stale cursor persisted from a prior session makes
-        // catch-up collapse the gap into a SECOND full bootstrap. Reconnects are
-        // excluded: their cursor marks the disconnect window catch-up must heal.
-        if (!_isReconnect && this.eventGate && bootstrap.syncHead) {
-          this.syncLogCursor?.advance(bootstrap.syncHead)
-          this.noteSeenHead(bootstrap.syncHead)
-        }
-        // Snapshot applied: no pending cold snapshot can be masked any more, so
-        // catch-up's fallback seed may read head again from here on.
-        if (!_isReconnect) this.coldSnapshotSettled = true
       }
+
+      // Cold-boot bootstrap: this first-connect snapshot is the authority for
+      // everything <= its sync head (read-before-stamp on the backend). Jump
+      // the cursor there so the catch-up that runs next sees no gap —
+      // otherwise a stale cursor persisted from a prior session makes catch-up
+      // collapse the gap into a SECOND full bootstrap. Reconnects are excluded:
+      // their cursor marks the disconnect window catch-up must heal.
+      if (!_isReconnect && this.eventGate && bootstrap.syncHead) {
+        this.syncLogCursor?.advance(bootstrap.syncHead)
+        this.noteSeenHead(bootstrap.syncHead)
+      }
+      // Snapshot applied: no pending cold snapshot can be masked any more, so
+      // catch-up's fallback seed may read head again from here on.
+      if (!_isReconnect) this.coldSnapshotSettled = true
 
       this.lastWorkspaceError = null
       syncStatus.set(`workspace:${workspaceId}`, "synced")
@@ -956,7 +1008,53 @@ export class SyncEngine {
         // Propagate to TanStack so coordinated-loading shows the error
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), undefined)
       }
+    } finally {
+      // Whatever the sweep did not hand over, the query layer now fetches itself.
+      if (!_isReconnect) this.settleColdSweep(sweptStreamIds)
     }
+  }
+
+  private assertSnapshotHeadAboveCursor(
+    isReconnect: boolean,
+    localCursor: string | null,
+    bootstrap: WorkspaceBootstrap
+  ): void {
+    if (
+      !isReconnect &&
+      localCursor !== null &&
+      bootstrap.syncHead &&
+      BigInt(bootstrap.syncHead) < BigInt(localCursor)
+    ) {
+      throw new Error(`Bootstrap snapshot head ${bootstrap.syncHead} is below the local sync cursor ${localCursor}`)
+    }
+  }
+
+  /**
+   * On the very first connect of a warm start, hold the IndexedDB write until
+   * the cached reveal has painted. The bootstrap apply writes the same stores
+   * the reveal reads, and IndexedDB serializes readwrite against readonly, so
+   * an un-gated write here queues the reveal's reads behind it — the reason an
+   * online start lagged an offline one. The fetch already ran in parallel with
+   * the reveal, so this only delays the write by the (bounded) time the paint
+   * needs. Reconnects skip it (content already on screen). See reveal-gate.ts.
+   *
+   * Only defers when the cache is complete enough for the gate to reveal
+   * WITHOUT this write: the coordinated-loading gate holds its reveal until the
+   * workspace row plus the unread / metadata / sidebar singletons are all
+   * present (`workspaceDataReady` in coordinated-loading-context.tsx). If any
+   * are missing — a cold start, or a partial cache from an interrupted/upgraded
+   * prior session — the gate can only become ready once THIS write lands, so
+   * waiting on the reveal would deadlock until the timeout.
+   */
+  private async holdWriteForCachedReveal(cachedWorkspace: unknown): Promise<void> {
+    const { workspaceId } = this.deps
+    const [unreadState, metadata, sidebarConfig] = await Promise.all([
+      db.unreadState.get(workspaceId),
+      db.workspaceMetadata.get(workspaceId),
+      db.sidebarConfigs.get(workspaceId),
+    ])
+    const canRevealFromCache = !!cachedWorkspace && !!unreadState && !!metadata && !!sidebarConfig
+    if (canRevealFromCache) await waitForInitialReveal(workspaceId)
   }
 
   /**
@@ -1177,7 +1275,12 @@ export class SyncEngine {
   }
 
   private refreshStreamAfterNavigation(streamId: string): Promise<void> {
-    if (this.isDestroyed || !isServerStreamId(streamId)) {
+    if (this.isDestroyed || !isServerStreamId(streamId)) return Promise.resolve()
+    // Until the first-connect sweep has run it owns the first window of every
+    // stream it fetches; a refresh here would apply a second, separate state.
+    // Before the sweep starts every visible stream is in its set.
+    if (!this.coldSweepSettled && (this.coldSweepStreamIds === null || this.coldSweepStreamIds.has(streamId))) {
+      this.refreshesDeferredBySweep.add(streamId)
       return Promise.resolve()
     }
 
@@ -1807,17 +1910,21 @@ export class SyncEngine {
       // gate paused and let that cycle's own run (chained by runCatchUp) do
       // the splice. Buffered events at or below the applied position were
       // already applied from the log.
-      if (!this.isDestroyed && this.catchUpCycle === cycle) {
-        if (gate.hasBuffered()) holdApplyWindow()
-        const through = appliedThrough
-        await gate.resume((_eventType, syncId) => through === null || syncId > through)
+      try {
+        if (!this.isDestroyed && this.catchUpCycle === cycle) {
+          if (gate.hasBuffered()) holdApplyWindow()
+          const through = appliedThrough
+          await gate.resume((_eventType, syncId) => through === null || syncId > through)
+        }
+      } finally {
+        // Release the held read layer last — after the batch flush AND the resume
+        // splice have written — so the one re-read every batched hook does on close
+        // reflects the replay's final state plus the spliced live events together.
+        // Inside its own finally: a rejected resume must still release, or every
+        // batched hook holds its stale value until a reload.
+        if (holdingApplyWindow) endApplyWindow()
+        stopReplay()
       }
-
-      // Release the held read layer last — after the batch flush AND the resume
-      // splice have written — so the one re-read every batched hook does on close
-      // reflects the replay's final state plus the spliced live events together.
-      if (holdingApplyWindow) endApplyWindow()
-      stopReplay()
     }
   }
 
@@ -1862,6 +1969,25 @@ function parseHeartbeatHead(value: string): bigint | null {
  */
 export function isSyncEngineCurrent(engine: SyncEngine, workspaceId: string): boolean {
   return engine.workspaceId === workspaceId && !engine.isDestroyed
+}
+
+interface StreamBootstrapClaim {
+  promise: Promise<CachedStreamBootstrap | null>
+  resolve: (bootstrap: CachedStreamBootstrap | null) => void
+  reject: (error: unknown) => void
+}
+
+function createStreamBootstrapClaim(): StreamBootstrapClaim {
+  let resolve: StreamBootstrapClaim["resolve"] = () => {}
+  let reject: StreamBootstrapClaim["reject"] = () => {}
+  const promise = new Promise<CachedStreamBootstrap | null>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  // A rejected claim is awaited by its claimant; this keeps a claimant that
+  // went away first from surfacing as an unhandled rejection.
+  promise.catch(() => {})
+  return { promise, resolve, reject }
 }
 
 export const SyncEngineContext = createContext<SyncEngine | null>(null)

@@ -12,6 +12,7 @@ import {
 import { STREAM_BOOTSTRAP_QUERY_OPTIONS } from "@/lib/stream-bootstrap-query"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { streamKeys } from "./use-streams"
 
 export function isDraftId(id: string): boolean {
@@ -41,6 +42,7 @@ export function useCoordinatedStreamQueries(workspaceId: string, streamIds: stri
   const socket = useSocket()
   const streamService = useStreamService()
   const queryClient = useQueryClient()
+  const syncEngine = useOptionalSyncEngine()
 
   // Filter out draft IDs - they don't need server fetches
   const serverStreamIds = useMemo(() => streamIds.filter((id) => !isDraftId(id)), [streamIds])
@@ -70,6 +72,11 @@ export function useCoordinatedStreamQueries(workspaceId: string, streamIds: stri
               debugBootstrap("Coordinated stream bootstrap queryFn start", { workspaceId, streamId })
               await joinRoomBestEffort(socket, `ws:${workspaceId}:stream:${streamId}`, "CoordinatedStreamBootstrap")
 
+              // A first connect applies this window with the workspace sweep;
+              // fetching here too would paint it a second time on its own.
+              const swept = await (syncEngine?.claimStreamBootstrap(streamId) ?? null)
+              if (swept) return swept
+
               const fetchStartedAt = Date.now()
               const bootstrap = await streamService.bootstrap(workspaceId, streamId)
               debugBootstrap("Coordinated stream bootstrap fetch success", {
@@ -92,7 +99,7 @@ export function useCoordinatedStreamQueries(workspaceId: string, streamIds: stri
         enabled: !!workspaceId && !!socket && !erroredStreamIds.has(streamId),
         ...STREAM_BOOTSTRAP_QUERY_OPTIONS,
       })),
-    [serverStreamIds, workspaceId, streamService, socket, erroredStreamIds, queryClient]
+    [serverStreamIds, workspaceId, streamService, socket, erroredStreamIds, queryClient, syncEngine]
   )
 
   const results = useQueries({ queries })

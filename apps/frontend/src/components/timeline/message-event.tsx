@@ -1226,6 +1226,13 @@ function SentMessageEvent({
     agentBlockCtx.insertAgentBlock({ authorId: agentAuthor, authorName: actorName ?? agentAuthor, content })
   }, [agentBlockCtx, agentAuthor, actorName, payload.contentJson, payload.contentMarkdown])
 
+  // An optimistic row is stored under its client id as both event id and
+  // messageId until the server echo swaps the real ids in (the send queue
+  // clears its pending status as soon as the POST succeeds, before that swap).
+  // A thread drafted against the client id would anchor on an id the server
+  // never knows, so the reply action waits for the echo.
+  const awaitingServerId = payload.messageId === event.id
+
   // Shared action context for both desktop dropdown and mobile drawer
   const actionContext = useMemo(
     () => ({
@@ -1233,6 +1240,7 @@ function SentMessageEvent({
       actorType: event.actorType,
       sessionId: payload.sessionId,
       isThreadParent: panelId === threadId || isThreadParentProp,
+      awaitingServerId,
       replyUrl,
       traceUrl:
         isAgentTraceActor(event.actorType) && payload.sessionId
@@ -1403,6 +1411,7 @@ function SentMessageEvent({
       panelId,
       threadId,
       isThreadParentProp,
+      awaitingServerId,
       replyUrl,
       getTraceUrl,
       currentUserId,
@@ -1543,16 +1552,28 @@ function SentMessageEvent({
                 out as the user opens/closes the thread. */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    asChild
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
-                  >
-                    <Link to={actionContext.replyUrl} aria-label="Reply in thread">
+                  {awaitingServerId ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground shrink-0"
+                      aria-label="Reply in thread"
+                      disabled
+                    >
                       <MessageSquareReply className="h-3.5 w-3.5" />
-                    </Link>
-                  </Button>
+                    </Button>
+                  ) : (
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
+                    >
+                      <Link to={actionContext.replyUrl} aria-label="Reply in thread">
+                        <MessageSquareReply className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  )}
                 </TooltipTrigger>
                 <TooltipContent>Reply in thread</TooltipContent>
               </Tooltip>

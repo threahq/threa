@@ -167,7 +167,19 @@ export class SocketEventGate implements SyncEventSource {
         }
         const event = batch[i]
         if (!applyIf(event.eventType, event.syncId, event.payload)) continue
-        await this.dispatch(event.eventType, event.payload)
+        // A splice is delayed live delivery, so it follows the live path's rule:
+        // log and move on. Rethrowing here would strand the remaining events and
+        // leave the gate paused, and skip the opener's release of the apply
+        // window — every batched hook then holds its stale value until a reload.
+        try {
+          await this.dispatch(event.eventType, event.payload)
+        } catch (error) {
+          console.error("Sync buffered handler failed", {
+            eventType: event.eventType,
+            syncId: event.syncId.toString(),
+            error,
+          })
+        }
         this.opts.onApplied?.(event.syncId.toString())
       }
     }
@@ -181,7 +193,8 @@ export class SocketEventGate implements SyncEventSource {
    * them all. Used by the catch-up loop (log entries) and the resume splice.
    * Every handler runs even when one rejects; the rejections are then rethrown
    * so the caller decides: catch-up fails the entry (the cursor stays below it
-   * and the next run retries it), the live path logs and moves on.
+   * and the next run retries it), the live path and the resume splice log and
+   * move on.
    */
   async dispatch(eventType: string, payload: unknown): Promise<void> {
     const set = this.handlers.get(eventType)

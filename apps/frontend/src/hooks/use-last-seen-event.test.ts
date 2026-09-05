@@ -533,6 +533,94 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.atLastRow).toBe(true)
   })
 
+  it("sweeps from the landing row when a gesture moved the viewport off it before tracking armed", () => {
+    // Unread-marker landing: e1 (the first unread) was placed at the top behind
+    // the settle mask; a wheel before the reveal moved the viewport down to
+    // e3..e4 and aborted the refine loop. Without the seed the first scan sees a
+    // gap (e1..e2 never scanned) and the read-through marks nothing.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: -130, bottom: -100 }, // read pointer, scrolled off above
+      e1: { top: -100, bottom: -70 }, // first unread — the landing row
+      e2: { top: -70, bottom: -40 },
+      e3: { top: 10, bottom: 40 },
+      e4: { top: 40, bottom: 70 },
+      e5: { top: 130, bottom: 160 }, // below the viewport
+    }
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+    const events = Object.keys(positions).map((id, i) => ({
+      id,
+      sequence: String(i),
+      eventType: "message_created",
+    })) as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+    // The landing's refine loop stamped its last write before the reveal.
+    const programmaticScrollAtRef = { current: performance.now() }
+    const sweepOriginRef = { current: "e1" as string | null }
+
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useLastSeenEvent({
+          scrollContainerRef,
+          events,
+          streamId: "stream_1",
+          lastReadEventId: "e0",
+          enabled,
+          programmaticScrollAtRef,
+          sweepOriginRef,
+        }),
+      { initialProps: { enabled: false } }
+    )
+    expect(result.current.lastSeenEventId).toBeUndefined()
+
+    act(() => rerender({ enabled: true }))
+
+    expect(result.current.lastSeenEventId).toBe("e4")
+    expect(result.current.atLastRow).toBe(false)
+    // Consumed by the arm: a later re-arm starts from a clean baseline.
+    expect(sweepOriginRef.current).toBeNull()
+  })
+
+  it("treats the same off-landing viewport as a gap when no landing row was handed over", () => {
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: -130, bottom: -100 },
+      e1: { top: -100, bottom: -70 },
+      e2: { top: -70, bottom: -40 },
+      e3: { top: 10, bottom: 40 },
+      e4: { top: 40, bottom: 70 },
+    }
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+    const events = Object.keys(positions).map((id, i) => ({
+      id,
+      sequence: String(i),
+      eventType: "message_created",
+    })) as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId: "e0", enabled }),
+      { initialProps: { enabled: false } }
+    )
+    act(() => rerender({ enabled: true }))
+
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    expect(result.current.unreadAboveViewport).toBe(true)
+  })
+
   it("does not re-read a still-visible row when the read pointer moves backward (mark-as-unread), until a scroll", () => {
     // A short, fully-read stream: every row is on screen and the pointer is at
     // the tail (e3). Marking e2 unread moves the pointer back to e1 while e2 is
