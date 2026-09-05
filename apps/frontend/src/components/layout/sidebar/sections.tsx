@@ -3,6 +3,7 @@ import { Fragment, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
+import { streamLabel } from "@/lib/streams"
 import { UnreadBadge } from "@/components/unread-badge"
 import { isDraftId } from "@/hooks"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
@@ -295,8 +296,7 @@ interface RenderRowOptions {
  * One stream row, shared by the binary and tiered sections. Wraps as a drag
  * source only when dragging is on (desktop) and the row is a persisted stream —
  * drafts (incl. virtual DMs) carry transient ids that must never be filed into
- * config, and wrapping a disabled row would register a dead draggable for
- * nothing.
+ * config, and a draft has no permalink to hand a drop target.
  */
 function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): ReactNode {
   const item = (
@@ -314,7 +314,13 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
     />
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
-  const row = dragEnabled ? <DraggableStreamRow streamId={stream.id}>{item}</DraggableStreamRow> : item
+  const row = dragEnabled ? (
+    <DraggableStreamRow workspaceId={opts.workspaceId} streamId={stream.id} label={streamLabel(stream, "sidebar")}>
+      {item}
+    </DraggableStreamRow>
+  ) : (
+    item
+  )
   return <Fragment key={stream.id}>{row}</Fragment>
 }
 

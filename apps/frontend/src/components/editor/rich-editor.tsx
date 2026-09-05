@@ -253,15 +253,40 @@ function emojiAtomToEditableText(node: JSONContent, toEmoji?: (shortcode: string
 }
 
 /**
- * Convert a bare in-app stream/message/conversation URL into an inline chip,
- * replacing the link text. Shared by the clipboard `paste` path and the
- * Gboard/SwiftKey `beforeinput` path so mobile clipboard-bar pastes chip the same
- * as desktop. Returns whether a chip was inserted. A conversation link carries no
- * streamId — the node-view resolves it by URL.
+ * The URL a drop carries, if any. `text/uri-list` (RFC 2483) is what a dragged
+ * anchor or a browser tab puts on the clipboard: CRLF-separated URLs with `#`
+ * comment lines. Chrome mirrors it into `text/plain`, Safari sometimes doesn't.
  */
-function tryInsertInAppLinkChip(editor: import("@tiptap/react").Editor, text: string): boolean {
+export function readDroppedUrl(data: DataTransfer | null | undefined): string | null {
+  if (!data) return null
+  const uriList = data.getData("text/uri-list")
+  const first = uriList.split(/\r?\n/).find((line) => line.trim() && !line.startsWith("#"))
+  const candidate = first?.trim() || data.getData("text/plain").trim()
+  // A dragged text selection lands on `text/plain` too. The URL parser strips
+  // newlines and percent-encodes spaces, so a whole sentence containing a link
+  // would parse as one and the rest of the text would be swallowed into the
+  // chip — a URL has no raw whitespace, so anything that does is not one.
+  if (!candidate || /\s/.test(candidate)) return null
+  return candidate
+}
+
+/**
+ * Convert a bare in-app stream/message/conversation URL into an inline chip,
+ * replacing the link text. Shared by the clipboard `paste` path, the
+ * Gboard/SwiftKey `beforeinput` path, and the drop path so mobile clipboard-bar
+ * pastes and dragged links chip the same as a desktop paste. Returns whether a
+ * chip was inserted. A conversation link carries no streamId — the node-view
+ * resolves it by URL. `at` places the chip at a document position (the drop
+ * point) instead of the caret.
+ */
+function tryInsertInAppLinkChip(editor: import("@tiptap/react").Editor, text: string, at?: number): boolean {
   const ref = classifyDraftLink(text.trim())
   if (!ref || (ref.kind !== "stream" && ref.kind !== "message" && ref.kind !== "conversation")) return false
+  // Separate commands, not one chain: `insertInAppLink` reads the caret off the
+  // state it was handed, so the move has to commit before it runs. Position 0 is
+  // before the doc's first node and reads as "no position" to `focus`, so clamp
+  // to the first one inside it.
+  if (at !== undefined) editor.commands.focus(Math.max(at, 1))
   editor.commands.insertInAppLink({
     url: ref.url,
     streamId: ref.kind === "conversation" ? null : ref.streamId,
@@ -909,7 +934,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           return false
         },
       },
-      handleDrop: (_view, event, _slice, moved) => {
+      handleDrop: (view, event, _slice, moved) => {
         // Internal drag-and-drop (reordering) - let TipTap handle it
         if (moved) return false
 
@@ -918,6 +943,22 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           event.preventDefault()
           handleFilesInsert(Array.from(files), editorRef.current)
           return true
+        }
+
+        // A dragged in-app link chips the same as a pasted one. Other URLs fall
+        // through to ProseMirror's own link/text drop handling.
+        const droppedUrl = readDroppedUrl(event.dataTransfer)
+        if (droppedUrl && editorRef.current) {
+          const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
+          // A chip is an inline atom; a code block takes only text, so inserting
+          // one there splits the block and strands half the code in a paragraph.
+          // Fall through and let ProseMirror drop the URL as text instead.
+          if (at && !view.state.doc.resolve(at.pos).parent.type.spec.code) {
+            if (tryInsertInAppLinkChip(editorRef.current, droppedUrl, at.pos)) {
+              event.preventDefault()
+              return true
+            }
+          }
         }
         return false
       },
