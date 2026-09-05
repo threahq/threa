@@ -1478,6 +1478,10 @@ export function createPublicApiHandlers({
       }
       const contentMarkdown = normalizeMessage(data.content)
       const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+      // Same reason as sendMessage: a brief may carry `[x](attachment:att_x)`,
+      // and without the ids the create-time access gate never runs and the
+      // attachment_references projection is never written.
+      const attachmentIds = collectAttachmentReferenceIds(contentJson)
       const briefed = await botRuntimeService.briefRuntimeSession({
         workspaceId,
         botId,
@@ -1486,6 +1490,7 @@ export function createPublicApiHandlers({
         runtimeSessionId: data.runtimeSessionId,
         contentJson,
         contentMarkdown,
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       })
       if (!briefed) throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
       res.status(201).json({

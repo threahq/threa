@@ -788,6 +788,7 @@ export class BotRuntimeService {
     runtimeSessionId: string
     contentJson: JSONContent
     contentMarkdown: string
+    attachmentIds?: string[]
   }): Promise<{ message: Message; invocation: BotInvocation } | null> {
     if (!this.eventService) throw new Error("briefRuntimeSession requires eventService")
     const eventService = this.eventService
@@ -815,6 +816,7 @@ export class BotRuntimeService {
           authorType: AuthorTypes.BOT,
           contentJson: params.contentJson,
           contentMarkdown: params.contentMarkdown,
+          attachmentIds: params.attachmentIds,
         }
       )
       const { invocation } = await this.createInvocationInTransaction(db, {
