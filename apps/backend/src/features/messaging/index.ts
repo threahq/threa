@@ -28,7 +28,7 @@ export type { MessageVersion, MessageVersionKey } from "./version-repository"
 export { resolveMessageReferences, sliceReferenceContent } from "./references"
 export { registerMessageReferencePinsBackfill, MESSAGE_REFERENCE_PINS_BACKFILL_NAME } from "./references"
 export type { ResolveMessageReferencesResult, ReferenceContent } from "./references"
-export { registerMessageLanguageBackfill, MESSAGE_LANGUAGE_BACKFILL_NAME } from "./language-backfill"
+export { registerMessageSearchConfigBackfill, MESSAGE_SEARCH_CONFIG_BACKFILL_NAME } from "./search-config-backfill"
 
 export { EventService } from "./event-service"
 export type { ConversationAssigner, GetComposeTraceMode } from "./event-service"

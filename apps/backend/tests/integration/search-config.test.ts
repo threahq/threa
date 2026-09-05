@@ -1,10 +1,9 @@
 /**
- * Language-aware keyword search against the real schema: `messages.language`
- * picks the stemmer for `search_vector` and a query is parsed under every
- * stemmer, so an inflected Swedish word matches its base form the way an
- * English one always has. Proven end to end through EventService and
- * SearchService because the generated column, the IMMUTABLE config function
- * and the OR-ed tsquery only exist in Postgres (INV-68).
+ * `messages.search_config` picks the stemmer for `search_vector` and a query
+ * is parsed under every stemmer, so an inflected non-English word matches its
+ * base form the way an English one always has. Proven end to end through
+ * EventService and SearchService because the generated column, the IMMUTABLE
+ * config function and the OR-ed tsquery only exist in Postgres (INV-68).
  */
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
@@ -12,10 +11,10 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
-import { plan, processChunk } from "../../src/features/messaging/language-backfill"
+import { plan, processChunk } from "../../src/features/messaging/search-config-backfill"
 import { SearchService, resolveUserAccessibleStreamIds, type SearchPermissions } from "../../src/features/search"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
-import { SEARCH_CONFIG_BY_LANGUAGE, UNDETECTED_LANGUAGE } from "../../src/lib/text-language"
+import { DEFAULT_SEARCH_CONFIG, SEARCH_TEXT_CONFIGS } from "../../src/lib/text-search-config"
 import { userId, workspaceId, streamId } from "../../src/lib/id"
 
 const EMBEDDING_DIMS = 1536
@@ -30,7 +29,7 @@ function fakeEmbeddingService(): EmbeddingServiceLike {
   return { embed: async () => ZERO_VECTOR, embedBatch: async () => [] }
 }
 
-describe("Language-aware message keyword search", () => {
+describe("Per-message text-search config", () => {
   let pool: Pool
 
   beforeAll(async () => {
@@ -58,8 +57,8 @@ describe("Language-aware message keyword search", () => {
     await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
         id: testWorkspaceId,
-        name: "Language Search Test Workspace",
-        slug: `language-search-${testWorkspaceId}`,
+        name: "Search Config Test Workspace",
+        slug: `search-config-${testWorkspaceId}`,
         createdBy: testUserId,
       })
       testUserId = (await addTestMember(client, testWorkspaceId, testUserId)).id
@@ -89,11 +88,12 @@ describe("Language-aware message keyword search", () => {
     })
   }
 
-  async function storedLanguage(messageId: string): Promise<string | null> {
-    const result = await pool.query<{ language: string | null }>("SELECT language FROM messages WHERE id = $1", [
-      messageId,
-    ])
-    return result.rows[0]!.language
+  async function storedConfig(messageId: string): Promise<string | null> {
+    const result = await pool.query<{ search_config: string | null }>(
+      "SELECT search_config FROM messages WHERE id = $1",
+      [messageId]
+    )
+    return result.rows[0]!.search_config
   }
 
   async function searchIds(
@@ -126,7 +126,7 @@ describe("Language-aware message keyword search", () => {
         text: "The invoices went out this morning, shout if anything is missing",
       })
 
-      expect(await storedLanguage(swedish.id)).toBe("sv")
+      expect(await storedConfig(swedish.id)).toBe("swedish")
       expect(await searchIds(ws, "faktura", ranking.searchFlag)).toEqual([swedish.id])
     })
 
@@ -145,12 +145,12 @@ describe("Language-aware message keyword search", () => {
         text: "Jag har skickat fakturorna nu, säg till om något saknas",
       })
 
-      expect(await storedLanguage(english.id)).toBe("en")
+      expect(await storedConfig(english.id)).toBe("english")
       expect(await searchIds(ws, "invoice", ranking.searchFlag)).toEqual([english.id])
     })
   }
 
-  test("should stem a short message as English and store it as undetected", async () => {
+  test("should stem a short message as English", async () => {
     const ws = await seedWorkspaceWithStream()
     const short = await postMessage({
       workspaceId: ws.workspaceId,
@@ -159,11 +159,11 @@ describe("Language-aware message keyword search", () => {
       text: "invoices sent",
     })
 
-    expect(await storedLanguage(short.id)).toBe(UNDETECTED_LANGUAGE)
+    expect(await storedConfig(short.id)).toBe(DEFAULT_SEARCH_CONFIG)
     expect(await searchIds(ws, "invoice", "on")).toEqual([short.id])
   })
 
-  test("should re-detect the language when an edit rewrites the body", async () => {
+  test("should re-detect the config when an edit rewrites the body", async () => {
     const ws = await seedWorkspaceWithStream()
     const eventService = new EventService(pool)
     const message = await postMessage({
@@ -177,26 +177,26 @@ describe("Language-aware message keyword search", () => {
       messageId: message.id,
       streamId: ws.streamId,
       actorId: ws.userId,
-      ...testMessageContent("Jag har skickat fakturorna nu, säg till om något saknas"),
+      ...testMessageContent("Die Rechnungen sind heute Morgen rausgegangen, sag Bescheid wenn etwas fehlt"),
     })
 
-    expect(await storedLanguage(message.id)).toBe("sv")
-    expect(await searchIds(ws, "faktura", "on")).toEqual([message.id])
+    expect(await storedConfig(message.id)).toBe("german")
+    expect(await searchIds(ws, "Rechnung", "on")).toEqual([message.id])
   })
 
-  test("should resolve every detector code to the same config the query side ORs across", async () => {
-    const entries = [...Object.entries(SEARCH_CONFIG_BY_LANGUAGE), [UNDETECTED_LANGUAGE, "english"], [null, "english"]]
-    const result = await pool.query<{ lang: string | null; config: string }>(
-      `SELECT v.lang, search_config_for_language(v.lang)::text AS config
-       FROM UNNEST($1::text[]) WITH ORDINALITY AS v(lang, ord)
+  test("should resolve every configured name, and NULL, to a Postgres config", async () => {
+    const names = [...SEARCH_TEXT_CONFIGS, null]
+    const result = await pool.query<{ config: string }>(
+      `SELECT message_search_config(v.name)::text AS config
+       FROM UNNEST($1::text[]) WITH ORDINALITY AS v(name, ord)
        ORDER BY v.ord`,
-      [entries.map(([lang]) => lang)]
+      [names]
     )
-    expect(result.rows.map((row) => row.config)).toEqual(entries.map(([, config]) => config))
+    expect(result.rows.map((row) => row.config)).toEqual([...SEARCH_TEXT_CONFIGS, DEFAULT_SEARCH_CONFIG])
   })
 
-  describe("message-language backfill", () => {
-    test("should fill language on rows written before the column and leave detected rows alone", async () => {
+  describe("message-search-config backfill", () => {
+    test("should fill search_config on rows written before the column and leave detected rows alone", async () => {
       const ws = await seedWorkspaceWithStream()
       const other = await seedWorkspaceWithStream()
       const legacyRow = await postMessage({
@@ -211,7 +211,9 @@ describe("Language-aware message keyword search", () => {
         authorId: other.userId,
         text: "Jag har skickat fakturorna nu, säg till om något saknas",
       })
-      await pool.query("UPDATE messages SET language = NULL WHERE id = ANY($1)", [[legacyRow.id, otherWorkspaceRow.id]])
+      await pool.query("UPDATE messages SET search_config = NULL WHERE id = ANY($1)", [
+        [legacyRow.id, otherWorkspaceRow.id],
+      ])
       expect(await searchIds(ws, "faktura", "on")).toEqual([])
 
       const ctx = { pool }
@@ -220,8 +222,8 @@ describe("Language-aware message keyword search", () => {
 
       const processed = await Promise.all(chunks.map((chunk) => processChunk(ctx, ws.workspaceId, chunk)))
       expect(processed).toEqual([{ processed: 1 }])
-      expect(await storedLanguage(legacyRow.id)).toBe("sv")
-      expect(await storedLanguage(otherWorkspaceRow.id)).toBeNull()
+      expect(await storedConfig(legacyRow.id)).toBe("swedish")
+      expect(await storedConfig(otherWorkspaceRow.id)).toBeNull()
       expect(await searchIds(ws, "faktura", "on")).toEqual([legacyRow.id])
 
       // Idempotent: a redelivered chunk finds nothing left to fill.

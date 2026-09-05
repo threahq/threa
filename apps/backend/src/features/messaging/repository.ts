@@ -1,7 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import type { AuthorType, ConversationIntent, JSONContent } from "@threa/types"
-import { detectTextLanguage } from "../../lib/text-language"
+import { detectSearchConfig } from "../../lib/text-search-config"
 import type { MoveEventSequenceUpdate } from "../streams"
 
 interface MessageRow {
@@ -470,11 +470,6 @@ export const MessageRepository = {
     return filters?.afterSequence ? messages : messages.reverse()
   },
 
-  /**
-   * `language` is derived here, not passed: every write of `content_markdown`
-   * (this and `updateContent`) must set it, since `search_vector` is generated
-   * from the pair.
-   */
   async insert(db: Querier, params: InsertMessageParams): Promise<Message> {
     const clientMessageId = params.clientMessageId ?? null
     const sentVia = params.sentVia ?? null
@@ -494,7 +489,7 @@ export const MessageRepository = {
     const result = await db.query<MessageRow>(sql`
       INSERT INTO messages (
         id, stream_id, sequence, author_id, author_type,
-        content_json, content_markdown, language, client_message_id, sent_via, metadata,
+        content_json, content_markdown, search_config, client_message_id, sent_via, metadata,
         conversation_intent, ciphertext, envelope, e2e_version
       )
       VALUES (
@@ -505,7 +500,7 @@ export const MessageRepository = {
         ${params.authorType},
         ${JSON.stringify(params.contentJson)},
         ${params.contentMarkdown},
-        ${detectTextLanguage(params.contentMarkdown)},
+        ${detectSearchConfig(params.contentMarkdown)},
         ${clientMessageId},
         ${sentVia},
         ${JSON.stringify(metadata)},
@@ -731,7 +726,7 @@ export const MessageRepository = {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
       SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown},
-          language = ${detectTextLanguage(contentMarkdown)}, edited_at = NOW(),
+          search_config = ${detectSearchConfig(contentMarkdown)}, edited_at = NOW(),
           revision = GREATEST(
             revision + 1,
             (SELECT COALESCE(MAX(version_number), 0) + 1 FROM message_versions WHERE message_id = messages.id)
@@ -876,19 +871,14 @@ export const MessageRepository = {
     return result.rowCount ?? 0
   },
 
-  /**
-   * Fill `language` on rows that never had one (NULL). A row whose language
-   * was set in the meantime, by an edit re-detecting its new body, is left
-   * alone so a backfill reading old content can never overwrite it (INV-20).
-   * Returns the number of rows written.
-   */
-  async fillMissingLanguages(db: Querier, rows: Array<{ id: string; language: string }>): Promise<number> {
+  /** Rows whose config was set in the meantime (an edit re-detects) are left alone (INV-20). */
+  async fillMissingSearchConfigs(db: Querier, rows: Array<{ id: string; searchConfig: string }>): Promise<number> {
     if (rows.length === 0) return 0
     const result = await db.query(sql`
       UPDATE messages m
-      SET language = v.language
-      FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.language)}::text[]) AS v(id, language)
-      WHERE m.id = v.id AND m.language IS NULL
+      SET search_config = v.search_config
+      FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.searchConfig)}::text[]) AS v(id, search_config)
+      WHERE m.id = v.id AND m.search_config IS NULL
     `)
     return result.rowCount ?? 0
   },

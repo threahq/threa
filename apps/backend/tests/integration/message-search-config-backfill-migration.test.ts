@@ -3,14 +3,13 @@ import { Pool } from "pg"
 import { resolve } from "node:path"
 import { setupTestDatabase, withTestTransaction } from "./setup"
 
-const MIGRATION_PATH = resolve(import.meta.dir, "../../src/db/migrations/20260905120100_backfill_message_language.sql")
+const MIGRATION_PATH = resolve(
+  import.meta.dir,
+  "../../src/db/migrations/20260905120100_backfill_message_search_config.sql"
+)
 
-/**
- * The message-language definition is inert until a migration enqueues its
- * `backfill.plan` jobs (INV-67); without it, every message written before
- * `messages.language` existed would stay on the English stemmer forever.
- */
-describe("enqueue message-language backfill migration", () => {
+/** A registered backfill is inert until a migration enqueues its plan jobs (INV-67). */
+describe("enqueue message-search-config backfill migration", () => {
   let pool: Pool
   let migrationSql: string
 
@@ -38,7 +37,7 @@ describe("enqueue message-language backfill migration", () => {
         `SELECT workspace_id, queue_name, payload, (process_after - now()) >= interval '10 minutes' AS delayed
          FROM queue_messages
          WHERE queue_name = 'backfill.plan'
-           AND payload->>'backfillName' = 'message-language'
+           AND payload->>'backfillName' = 'message-search-config'
            AND workspace_id IN ('ws_lang_backfill_1', 'ws_lang_backfill_2')
          ORDER BY workspace_id`
       )
@@ -47,13 +46,13 @@ describe("enqueue message-language backfill migration", () => {
         {
           workspace_id: "ws_lang_backfill_1",
           queue_name: "backfill.plan",
-          payload: { workspaceId: "ws_lang_backfill_1", backfillName: "message-language" },
+          payload: { workspaceId: "ws_lang_backfill_1", backfillName: "message-search-config" },
           delayed: true,
         },
         {
           workspace_id: "ws_lang_backfill_2",
           queue_name: "backfill.plan",
-          payload: { workspaceId: "ws_lang_backfill_2", backfillName: "message-language" },
+          payload: { workspaceId: "ws_lang_backfill_2", backfillName: "message-search-config" },
           delayed: true,
         },
       ])

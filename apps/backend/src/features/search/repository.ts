@@ -9,7 +9,7 @@ import {
   type StreamType,
 } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
-import { SEARCH_TEXT_CONFIGS } from "../../lib/text-language"
+import { SEARCH_TEXT_CONFIGS } from "../../lib/text-search-config"
 import { streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
@@ -192,11 +192,9 @@ function tsRankNormalization(ranking: SearchRanking): 0 | 1 {
 }
 
 /**
- * Each message's `search_vector` is stemmed with the config for its own
- * language, and a query is too short to detect a language from, so the query
- * is parsed under every config and the results OR-ed: a term matches a row
- * whenever both stem alike under the row's config. Every `$1` is the same
- * query parameter, renumbered by `composeSql` at the splice.
+ * Each message is stemmed with the config for its own language and a query is
+ * too short to detect one from, so the query is parsed under every config and
+ * OR-ed. Every `$1` is the same parameter; `composeSql` renumbers at the splice.
  *
  * Improved: `plainto_tsquery` ANDs every term; rewriting `&` to `|` makes any one
  * matching term surface a result. Legacy: `websearch_to_tsquery`, which ANDs

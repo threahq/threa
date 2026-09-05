@@ -74,7 +74,7 @@ import { StreamService, StreamBriefService } from "./features/streams"
 import {
   EventService,
   registerMessageReferencePinsBackfill,
-  registerMessageLanguageBackfill,
+  registerMessageSearchConfigBackfill,
 } from "./features/messaging"
 import {
   DynamicNamingConversationTarget,
@@ -1552,7 +1552,7 @@ export async function startServer(): Promise<ServerInstance> {
   // so a redelivered plan/chunk job can always resolve its definition by name.
   registerMentionBackfill()
   registerMessageReferencePinsBackfill()
-  registerMessageLanguageBackfill()
+  registerMessageSearchConfigBackfill()
   registerStreamContextBackfill()
   registerMessageEmbeddingBackfill({ embeddingService })
   registerConversationEmbeddingBackfill({ embeddingService })
