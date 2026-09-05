@@ -347,6 +347,12 @@ export async function runClaudeCommand(
       if (invocationContext?.rootStreamId !== root) {
         throw new Error("Spawn request no longer matches the linked scratchpad.")
       }
+      // The command list hides `/spawn` outside the desk, but dispatch reaches
+      // every command by name: a thread session would otherwise spawn siblings
+      // of itself under an anchor its own desk never posted.
+      if (activeStreamId?.() !== root) {
+        throw new Error("Spawn is only available at the scratchpad itself, not inside a thread session.")
+      }
       const runtime = parsed.runtime ?? "claude"
       const anchor = await postMessage(root, `Starting **${parsed.name}** (${runtime})`)
       // harnessd dies on a blank brief, so an empty prompt gets no file at all.
@@ -377,6 +383,11 @@ export async function runClaudeCommand(
       const root = target?.rootStreamId ?? rootStreamId?.()
       const active = activeStreamId?.()
       if (!root || !active || active === root) throw new Error("Done is only available inside a thread session.")
+      // The same guard `spawn` applies: a stale invocation must not wind down
+      // whichever scratchpad this session is linked to now.
+      if (invocationContext?.rootStreamId !== root) {
+        throw new Error("Done request no longer matches the linked scratchpad.")
+      }
       if (args !== "--force" && reconnectBusy?.()) {
         return { ok: false, message: "Claude is busy; retry when idle or use `/done --force`." }
       }

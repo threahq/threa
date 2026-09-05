@@ -410,7 +410,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     )
   })
 
-  const runSpawn = async (args: string) => {
+  const runSpawn = async (args: string, activeStreamId = "root") => {
     const posts: unknown[][] = []
     const specs: HarnessSpawnSpec[] = []
     let started = 0
@@ -428,7 +428,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       { rootStreamId: "root" },
-      () => "root",
+      () => activeStreamId,
       async (streamId: string, content: string) => {
         posts.push([streamId, content])
         return { id: "evt_anchor" }
@@ -509,6 +509,14 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     }
   })
 
+  it("refuses a /spawn dispatched from inside a thread session, posting no anchor", async () => {
+    // The command list hides it there, but dispatch reaches every command by
+    // name — a thread must not spawn siblings under an anchor it never posted.
+    await expect(runSpawn("claude sidebar\nfix it", "thread")).rejects.toThrow(
+      "Spawn is only available at the scratchpad itself, not inside a thread session."
+    )
+  })
+
   it("removes the brief and names the anchor when the harnessd launch fails", async () => {
     let briefFile: string | undefined
     await expect(
@@ -542,7 +550,12 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     })
   })
 
-  const runDone = (args: string, activeStreamId: string, reconnectBusy?: () => boolean) =>
+  const runDone = (
+    args: string,
+    activeStreamId: string,
+    reconnectBusy?: () => boolean,
+    invocationRootStreamId = "root"
+  ) =>
     runClaudeCommand(
       "done",
       args,
@@ -556,7 +569,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
+      { rootStreamId: invocationRootStreamId },
       () => activeStreamId
     )
 
@@ -573,6 +586,14 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       expect(await runDone(args, "thread")).toEqual({ ok: false, message: "Usage: `/done [--force]`." })
     }
     await expect(runDone("", "root")).rejects.toThrow("Done is only available inside a thread session.")
+  })
+
+  it("refuses a /done whose invocation names a different scratchpad than the linked one", async () => {
+    // The session can be relinked between the dispatch and this handler; winding
+    // down on a stale invocation would end whichever thread it points at now.
+    await expect(runDone("", "thread", undefined, "other_root")).rejects.toThrow(
+      "Done request no longer matches the linked scratchpad."
+    )
   })
 
   it("refuses non-force /done while Claude is busy instead of killing the pane mid-turn", async () => {
