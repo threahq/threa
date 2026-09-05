@@ -76,6 +76,48 @@ describe("InProcessTurnDriver", () => {
     expect(events.some((event) => event.type === "session:end" && event.messagesSent === 1)).toBe(true)
   })
 
+  it("uses the repaired body consistently for commit, trace, and result", async () => {
+    const events: AgentEvent[] = []
+    const commits: TurnCommit[] = []
+    const repairMessageContent = mock(async (content: string) => `${content} repaired`)
+    const driver = new InProcessTurnDriver({ ai: commitOnceAI("Draft") })
+
+    const result = await driver.runTurn(plaintextRequest(), {
+      repairMessageContent,
+      commitMessage: async (commit) => {
+        commits.push(commit)
+        return { messageId: "msg_1" }
+      },
+      observers: [{ handle: async (event) => void events.push(event) }],
+    })
+
+    expect(repairMessageContent).toHaveBeenCalledTimes(1)
+    expect(commits).toEqual([{ content: "Draft repaired", sources: [] }])
+    expect(result.sentContents).toEqual(["Draft repaired"])
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "message:sent", messageId: "msg_1", content: "Draft repaired" })
+    )
+    expect(events).toContainEqual(expect.objectContaining({ type: "session:end", lastContent: "Draft repaired" }))
+  })
+
+  it("surfaces repair failures without committing the draft", async () => {
+    const commits: TurnCommit[] = []
+    const driver = new InProcessTurnDriver({ ai: commitOnceAI("Draft") })
+
+    await expect(
+      driver.runTurn(plaintextRequest(), {
+        repairMessageContent: async () => {
+          throw new Error("reference lookup failed")
+        },
+        commitMessage: async (commit) => {
+          commits.push(commit)
+          return { messageId: "msg_1" }
+        },
+      })
+    ).rejects.toThrow("reference lookup failed")
+    expect(commits).toEqual([])
+  })
+
   it("refuses a non-plaintext delivery before any model call", async () => {
     const generateTextWithTools = mock(async () => {
       throw new Error("must not be called")

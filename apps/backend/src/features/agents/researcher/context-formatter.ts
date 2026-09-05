@@ -6,6 +6,7 @@ import { StreamRepository } from "../../streams"
 import type { Memo } from "../../memos"
 import { PersonaRepository } from "../persona-repository"
 import { formatRelativeDate } from "../../../lib/temporal"
+import { workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 
 export interface EnrichedMemoResult {
   memo: Memo
@@ -55,15 +56,16 @@ export interface EnrichedAttachmentResult {
 export function formatRetrievedContext(
   memos: EnrichedMemoResult[],
   messages: EnrichedMessageResult[],
-  attachments: EnrichedAttachmentResult[] = []
+  attachments: EnrichedAttachmentResult[],
+  workspaceId: string
 ): string | null {
   if (memos.length === 0 && messages.length === 0 && attachments.length === 0) {
     return null
   }
 
-  const memosSection = memos.length > 0 ? formatMemosSection(memos) : ""
-  const messagesSection = messages.length > 0 ? formatMessagesSection(messages) : ""
-  const attachmentsSection = attachments.length > 0 ? formatAttachmentsSection(attachments) : ""
+  const memosSection = memos.length > 0 ? formatMemosSection(memos, workspaceId) : ""
+  const messagesSection = messages.length > 0 ? formatMessagesSection(messages, workspaceId) : ""
+  const attachmentsSection = attachments.length > 0 ? formatAttachmentsSection(attachments, workspaceId) : ""
 
   return `## Retrieved Knowledge
 
@@ -72,7 +74,7 @@ The following relevant information was found in the workspace:
 ${memosSection}${messagesSection}${attachmentsSection}Use this knowledge to inform your response. Cite sources when relevant.`
 }
 
-function formatMemosSection(memos: EnrichedMemoResult[]): string {
+function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): string {
   const memoEntries = memos
     .map(({ memo, sourceStream }) => {
       const location = sourceStream?.name ?? sourceStream?.type ?? "workspace"
@@ -85,11 +87,12 @@ function formatMemosSection(memos: EnrichedMemoResult[]): string {
         memo.sourceMessageIds.length > 0
           ? `\n_Sources: ${memo.sourceMessageIds.map(formatMsgRefToken).join(", ")}_\n`
           : ""
+      const linkLine = `Link: ${workspaceMemoUrl(workspaceId, memo.id)}\n`
 
       return `**${memo.title}** _(${memoTag})_
 
 ${memo.abstract}
-${keyPointsList}${sourcesLine}`
+${keyPointsList}${sourcesLine}${linkLine}`
     })
     .join("\n")
 
@@ -99,7 +102,7 @@ ${memoEntries}
 `
 }
 
-function formatMessagesSection(messages: EnrichedMessageResult[]): string {
+function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string): string {
   const messageEntries = messages
     .map((msg) => {
       const relativeDate = formatRelativeDate(msg.createdAt)
@@ -110,11 +113,13 @@ function formatMessagesSection(messages: EnrichedMessageResult[]): string {
       // The pointer formats are taught in the "Referring to messages and
       // attachments" prompt section; this header gives the agent the
       // matching `[msg:… stream:… author:… type:…]` ids without a follow-
-      // up tool call.
+      // up tool call. The link is copyable as-is — no id reconstruction.
       const idTag = formatRetrievedMessageTag(msg.id, msg.streamId, msg.authorId, msg.authorType)
+      const link = workspaceMessageUrl(workspaceId, msg.streamId, msg.id)
 
       return `> ${idTag} **${author}** in _${msg.streamName}_ (${relativeDate}):
-> ${content}${quoteBlock}`
+> ${content}${quoteBlock}
+> Link: ${link}`
     })
     .join("\n\n")
 
@@ -125,7 +130,7 @@ ${messageEntries}
 `
 }
 
-function formatAttachmentsSection(attachments: EnrichedAttachmentResult[]): string {
+function formatAttachmentsSection(attachments: EnrichedAttachmentResult[], workspaceId: string): string {
   const attachmentEntries = attachments
     .map((att) => {
       const relativeDate = formatRelativeDate(att.createdAt)
@@ -133,8 +138,9 @@ function formatAttachmentsSection(attachments: EnrichedAttachmentResult[]): stri
       const summary = att.summary ? `\n${att.summary}` : ""
       // Surface attachment id for `attachment:` resurfacing pointer URLs.
       const attachTag = formatAttachWithStreamTag(att.id, att.streamId)
+      const linkLine = att.streamId ? `\nLink: ${workspaceStreamUrl(workspaceId, att.streamId)}` : ""
 
-      return `**${att.filename}**${contentInfo} _(${attachTag}, ${relativeDate})_${summary}`
+      return `**${att.filename}**${contentInfo} _(${attachTag}, ${relativeDate})_${summary}${linkLine}`
     })
     .join("\n\n")
 

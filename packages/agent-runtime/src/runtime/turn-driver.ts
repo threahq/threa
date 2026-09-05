@@ -79,6 +79,8 @@ export function isDeclaredUnsupported(value: unknown): value is DeclaredUnsuppor
 export interface TurnSink {
   /** Terminal action: deliver one committed message to the conversation. */
   commitMessage: (commit: TurnCommit) => Promise<TurnCommitReceipt>
+  /** Normalize host-resolvable references once, immediately before commit. */
+  repairMessageContent?: (content: string) => Promise<string>
   /** Event sink — trace projection, digest collection. */
   observers?: AgentObserver[]
   /**
@@ -242,7 +244,9 @@ export interface TurnDispatchReceipt {
  * dispatched driver to take a position on it.
  */
 export type TurnSinkResolution = {
-  readonly [Edge in keyof Required<TurnSink>]: { readonly realizedBy: string } | DeclaredUnsupported
+  readonly [Edge in Exclude<keyof Required<TurnSink>, "repairMessageContent">]:
+    | { readonly realizedBy: string }
+    | DeclaredUnsupported
 }
 
 /**
@@ -287,6 +291,7 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
       request.validateFinalResponse
     ),
     sendMessage: sink.commitMessage,
+    repairMessageContent: sink.repairMessageContent,
     observers: sink.observers,
     // A declared-unsupported interjection edge is a real "no provider" to the
     // loop; the reason rides the seam for rendering, never into the loop.

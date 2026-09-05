@@ -1,6 +1,7 @@
 import type { LanguageModel, ModelMessage } from "ai"
 import { ulid } from "ulid"
 import { logger as baseLogger } from "@threa/agent-runtime/logger"
+import { repairMessageReferences } from "@threa/prosemirror/message-reference-repair"
 import {
   base64ToBytes,
   buildMessageAad,
@@ -173,6 +174,13 @@ export async function runEnclaveTurn(
   // Every ref the conversation mentions, decrypted out of the sealed payloads —
   // together with `ciphertextById` this powers the `read_attachment` tool.
   const refsById = new Map<string, AttachmentRef>()
+  const messageRefsById = new Map<string, { messageId: string; streamId: string }>()
+  if (request.trigger) {
+    messageRefsById.set(request.trigger.messageId, {
+      messageId: request.trigger.messageId,
+      streamId: request.streamId,
+    })
+  }
 
   // Open the history this enclave is entitled to. Generations predating our
   // invite have no wrap; that history is skipped rather than fatal. Strip the
@@ -377,6 +385,13 @@ export async function runEnclaveTurn(
   }
 
   const turnSink: TurnSink = {
+    repairMessageContent: (content) =>
+      repairMessageReferences(
+        content,
+        "",
+        async (_workspaceId, messageIds) =>
+          new Map(messageIds.flatMap((id) => (messageRefsById.has(id) ? [[id, messageRefsById.get(id)!]] : [])))
+      ),
     // Terminal action: mint each reply's id, seal it under the current SSK bound
     // to that id, and stream it back now (awaited, so it's delivered before the
     // loop moves on). The backend stores ciphertext under this id. Citation
@@ -416,7 +431,10 @@ export async function runEnclaveTurn(
           sessionId: request.sessionId,
           replySenderId: request.reply.senderId,
           pollNewMessages,
-          onOpened: (message) => namingInterjections.set(message.messageId, message.content),
+          onOpened: (message) => {
+            namingInterjections.set(message.messageId, message.content)
+            messageRefsById.set(message.messageId, { messageId: message.messageId, streamId: request.streamId })
+          },
         })
       : declaredUnsupported("Ariadne can't see mid-turn messages in encrypted scratchpads"),
     // Session Stop: the heartbeat's abort flag cancels a pending LLM iteration

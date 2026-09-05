@@ -5,6 +5,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { StreamPoliciesRepository, StreamRepository, StreamEventRepository } from "../streams"
+import { SearchRepository } from "../search"
 import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./persona-agent"
 import { DraftsRepository, type Draft } from "../drafts"
 import { PersonaRepository, type Persona } from "./persona-repository"
@@ -166,6 +167,7 @@ async function runSupersedeRerun(params: {
   /** Tool calls the stubbed model issues on its first turn; the second turn answers in text. */
   firstTurnToolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>
   subagentRun?: SubagentRun
+  finalText?: string
 }) {
   const supersededSession = makeSession({
     id: SUPERSEDED_SESSION_ID,
@@ -261,10 +263,11 @@ async function runSupersedeRerun(params: {
       if (turn === 0 && params.firstTurnToolCalls) {
         return { text: "", toolCalls: params.firstTurnToolCalls, response: { messages: [] } }
       }
+      const text = params.finalText ?? "Revised final answer."
       return {
-        text: "Revised final answer.",
+        text,
         toolCalls: [],
-        response: { messages: [{ role: "assistant", content: "Revised final answer." }] },
+        response: { messages: [{ role: "assistant", content: text }] },
       }
     },
     // Supersede response validator: accept the revision so the turn commits.
@@ -536,6 +539,29 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
     expect(researchInputs).toHaveLength(1)
     // Same model the turn ran on — not GENERAL_RESEARCH_MODEL_ID, the no-turn fallback.
     expect(researchInputs[0]?.modelId).toBe(OPUS)
+  })
+
+  it("repairs exact message references through the production runtime sink", async () => {
+    const referencedId = "msg_01JABCDEFGHJKMNPQRSTVWXYZ0"
+    spyOn(SearchRepository, "getAccessibleStreamsForAgent").mockResolvedValue([STREAM_ID])
+    const lookup = spyOn(MessageRepository, "findByIdsInStreams").mockImplementation(
+      async (_db, workspaceId, ids, streamIds) =>
+        workspaceId === WORKSPACE_ID && ids.includes(referencedId) && streamIds.includes(STREAM_ID)
+          ? new Map([[referencedId, { id: referencedId, streamId: STREAM_ID } as never]])
+          : new Map()
+    )
+
+    const { result, createMessage } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      triggerAuthorUserId: "usr_1",
+      finalText: `See ${referencedId}`,
+    })
+
+    expect(result.status).toBe("completed")
+    expect(createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ content: `See [${referencedId}](shared-message:${STREAM_ID}/${referencedId})` })
+    )
+    expect(lookup.mock.calls).toContainEqual([expect.anything(), WORKSPACE_ID, [referencedId], [STREAM_ID]])
   })
 
   it("terminalizes a denied channel-mention thread creation on the parent stream", async () => {

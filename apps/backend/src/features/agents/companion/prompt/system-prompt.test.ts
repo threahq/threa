@@ -72,6 +72,15 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("[Image #1](attachment:att_xxx)")
   })
 
+  test("instructs inline linking, source-backed claims, and cards only on request", () => {
+    const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
+
+    expect(prompt).toContain("### Linking when you point at things")
+    expect(prompt).toContain("include the actual link")
+    expect(prompt).toContain("Never present your own earlier statement as independent evidence")
+    expect(prompt).toContain("only when the user asked you to forward or quote")
+  })
+
   test("omits the custom instruction section when no scratchpad prompt exists", () => {
     const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
 

@@ -13,6 +13,7 @@
   "dependencies": {
     "@threa/agent-runtime": "workspace:*",
     "@threa/crypto": "workspace:*",
+    "@threa/prosemirror": "workspace:*",
     "@threa/types": "workspace:*",
     "ai": "^7",
     "express": "^5",

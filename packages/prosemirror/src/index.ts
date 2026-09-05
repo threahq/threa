@@ -49,6 +49,11 @@ export {
   type ChannelHrefPointer,
   type ActorHrefPointer,
 } from "./pointer-urls"
+export {
+  repairMessageReferences,
+  type MessageReferenceResolver,
+  type ResolvedMessageReference,
+} from "./message-reference-repair"
 export { LEAF_NODE_TYPES, CONTAINER_NODE_TYPES, UnknownNodeTypeError, nodeSize, docContentSize } from "./positions"
 export { sliceContent, isRangeValid, normalizeRange, isEmptySlice } from "./slice"
 export { resolveSelectionRange, type SelectionRangeInput } from "./selection-range"
