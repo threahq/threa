@@ -1,4 +1,5 @@
 export { MemoRepository } from "./repository"
+export { registerMemoSearchConfigBackfill, MEMO_SEARCH_CONFIG_BACKFILL_NAME } from "./search-config-backfill"
 export {
   resolveMemoEmbedSummaries,
   resolveMemoEmbedSummariesForMessages,

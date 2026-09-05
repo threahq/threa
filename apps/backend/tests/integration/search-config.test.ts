@@ -187,7 +187,7 @@ describe("Per-message text-search config", () => {
   test("should resolve every configured name, and NULL, to a Postgres config", async () => {
     const names = [...SEARCH_TEXT_CONFIGS, null]
     const result = await pool.query<{ config: string }>(
-      `SELECT message_search_config(v.name)::text AS config
+      `SELECT text_search_config(v.name)::text AS config
        FROM UNNEST($1::text[]) WITH ORDINALITY AS v(name, ord)
        ORDER BY v.ord`,
       [names]

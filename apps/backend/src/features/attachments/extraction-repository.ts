@@ -1,4 +1,5 @@
 import { sql, type Querier } from "../../db"
+import { detectSearchConfig } from "../../lib/text-search-config"
 import type {
   ExtractionContentType,
   ExtractionSourceType,
@@ -81,6 +82,11 @@ export interface InsertAttachmentExtractionParams {
   excelMetadata?: ExcelMetadata | null
 }
 
+/** The text an extraction's `search_vector` is built from, and so the text its stemmer is detected from. */
+export function extractionSearchText(params: { summary: string; fullText?: string | null }): string {
+  return `${params.summary} ${params.fullText ?? ""}`
+}
+
 function mapRowToExtraction(row: AttachmentExtractionRow): AttachmentExtraction {
   return {
     id: row.id,
@@ -117,7 +123,7 @@ export const AttachmentExtractionRepository = {
     const result = await client.query<AttachmentExtractionRow>(sql`
       INSERT INTO attachment_extractions (
         id, attachment_id, workspace_id,
-        content_type, summary, full_text, structured_data,
+        content_type, summary, full_text, search_config, structured_data,
         source_type, pdf_metadata, text_metadata, word_metadata, excel_metadata
       )
       VALUES (
@@ -127,6 +133,7 @@ export const AttachmentExtractionRepository = {
         ${params.contentType},
         ${params.summary},
         ${params.fullText ?? null},
+        ${detectSearchConfig(extractionSearchText(params))},
         ${params.structuredData ? JSON.stringify(params.structuredData) : null},
         ${params.sourceType ?? "image"},
         ${params.pdfMetadata ? JSON.stringify(params.pdfMetadata) : null},
@@ -143,9 +150,10 @@ export const AttachmentExtractionRepository = {
    * Copy an existing extraction to a NEW attachment id in one `INSERT ... SELECT`
    * (persona knowledge-by-reference copy-on-attach): the copied file has identical
    * content, so its `summary_embedding` carries over natively — no re-embed job.
-   * `search_vector` is GENERATED and never copied. Workspace-scoped on the source
-   * read (INV-8). Returns `true` when a source row existed and was copied; `false`
-   * when the source has no extraction yet (the caller kicks the pipeline instead).
+   * `search_vector` is GENERATED and never copied; `search_config` is, since the
+   * copied text is identical. Workspace-scoped on the source read (INV-8). Returns
+   * `true` when a source row existed and was copied; `false` when the source has no
+   * extraction yet (the caller kicks the pipeline instead).
    */
   async copyForAttachment(
     client: Querier,
@@ -154,13 +162,13 @@ export const AttachmentExtractionRepository = {
     const result = await client.query(sql`
       INSERT INTO attachment_extractions (
         id, attachment_id, workspace_id,
-        content_type, summary, full_text, structured_data,
+        content_type, summary, full_text, search_config, structured_data,
         source_type, pdf_metadata, text_metadata, word_metadata, excel_metadata,
         summary_embedding
       )
       SELECT
         ${params.id}, ${params.attachmentId}, ${params.workspaceId},
-        content_type, summary, full_text, structured_data,
+        content_type, summary, full_text, search_config, structured_data,
         source_type, pdf_metadata, text_metadata, word_metadata, excel_metadata,
         summary_embedding
       FROM attachment_extractions
@@ -226,6 +234,22 @@ export const AttachmentExtractionRepository = {
       DELETE FROM attachment_extractions WHERE attachment_id = ${attachmentId}
     `)
     return (result.rowCount ?? 0) > 0
+  },
+
+  /** Rows whose config was set in the meantime (a re-extraction re-detects) are left alone (INV-20). */
+  async fillMissingSearchConfigs(
+    client: Querier,
+    workspaceId: string,
+    rows: Array<{ id: string; searchConfig: string }>
+  ): Promise<number> {
+    if (rows.length === 0) return 0
+    const result = await client.query(sql`
+      UPDATE attachment_extractions e
+      SET search_config = v.search_config
+      FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.searchConfig)}::text[]) AS v(id, search_config)
+      WHERE e.id = v.id AND e.workspace_id = ${workspaceId} AND e.search_config IS NULL
+    `)
+    return result.rowCount ?? 0
   },
 
   /**

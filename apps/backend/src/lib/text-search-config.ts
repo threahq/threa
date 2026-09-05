@@ -45,3 +45,17 @@ export function detectSearchConfig(text: string): string {
   if (!best || best.accuracy < MIN_DETECTION_ACCURACY) return DEFAULT_SEARCH_CONFIG
   return SEARCH_CONFIG_BY_LANGUAGE.get(best.lang) ?? DEFAULT_SEARCH_CONFIG
 }
+
+export type TsqueryParser = "websearch_to_tsquery" | "plainto_tsquery"
+
+/**
+ * A tsquery parsed under every config and OR-ed, as a `composeSql` fragment.
+ * Rows are stemmed with the config for their own language and a query is too
+ * short to detect one from; an index-backed `search_vector` needs one constant
+ * tsquery, so the query covers every stemmer instead. Every `$1` is the same
+ * parameter; `composeSql` renumbers at the splice.
+ */
+export function tsqueryAcrossConfigsSql(parser: TsqueryParser, query: string): { text: string; values: unknown[] } {
+  const perConfig = SEARCH_TEXT_CONFIGS.map((config) => `${parser}('${config}', $1)`).join(" || ")
+  return { text: `(${perConfig})`, values: [query] }
+}
