@@ -265,6 +265,8 @@ export function readPiRemoteSession(runtimeSessionId: string): PiRemoteSession |
 
 export interface PiRemoteLinkDeps {
   expectedInstanceId: string
+  /** Set only by an attached spawn: the scratchpad the pre-linked thread lives under. */
+  expectedRootStreamId?: string
   attempts: number
   bootWaitMs: number
   responseWaitMs: number
@@ -280,6 +282,14 @@ export async function linkPiRemoteSession(deps: PiRemoteLinkDeps): Promise<PiRem
     const link = deps.readSession()
     if (link && link.instanceId !== deps.expectedInstanceId) {
       die(`Pi remote link instance ${link.instanceId} does not match launched instance ${deps.expectedInstanceId}`)
+    }
+    // An attached spawn already has its thread on the server. A Pi that linked
+    // itself to some other scratchpad is not that session, and the caller
+    // reports the attached URL regardless — so the mismatch would be invisible.
+    if (link && deps.expectedRootStreamId && link.rootStreamId !== deps.expectedRootStreamId) {
+      die(
+        `Pi remote link scratchpad ${link.rootStreamId} does not match the attached scratchpad ${deps.expectedRootStreamId}`
+      )
     }
     return link
   }
@@ -440,6 +450,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
         ? undefined
         : await linkPiRemoteSession({
             expectedInstanceId: instanceId,
+            expectedRootStreamId: options.attach?.rootStreamId,
             attempts,
             bootWaitMs: Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000),
             responseWaitMs: Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000),

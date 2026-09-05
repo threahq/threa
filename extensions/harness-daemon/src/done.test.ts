@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import type { HarnessLink } from "@threa/harness-client"
 import { doneAgent, type DoneDeps } from "./done"
-import type { LocalTmuxPane, ManagedAgentPane } from "./discovery"
+import type { LocalTmuxPane } from "./discovery"
 import { DEFAULT_PROFILE } from "./profiles"
 import type { ManagedAgent } from "./types"
 
@@ -35,7 +35,9 @@ const PANE: LocalTmuxPane = {
   paneId: "%9",
   panePid: 4242,
   cwd: "/repo/fix-sidebar",
-  startCommand: "claude --name threa.fix-sidebar",
+  // A launch the resolver can tie back to the record's runtime session.
+  startCommand:
+    "env THREA_RUNTIME_SESSION_ID=ccs-sidebar claude --dangerously-load-development-channels server:threa-channel",
 }
 
 interface Recorded {
@@ -46,23 +48,26 @@ interface Recorded {
 
 function makeDoneDeps(
   options: {
-    pane?: ManagedAgentPane
+    panes?: LocalTmuxPane[]
+    claudePids?: number[]
+    worktreeExists?: boolean
     teardown?: { ok: boolean; reason?: string }
     windDownResult?: { pushed: boolean; removed: boolean; reason?: string }
     endSessionResult?: "ended" | "not-found"
   } = {}
 ): { deps: DoneDeps; recorded: Recorded } {
   const recorded: Recorded = { calls: [], logged: [], persisted: [] }
-  const pane = options.pane ?? { status: "found", pane: PANE }
+  const panes = options.panes ?? [PANE]
   const teardownResult = options.teardown ?? { ok: true }
   const windDownResult = options.windDownResult ?? { pushed: true, removed: true }
   const endSessionResult = options.endSessionResult ?? "ended"
   const deps: DoneDeps = {
     findAgent: () => AGENT,
-    resolvePane: () => pane,
     links: () => [LINK],
-    panes: () => [PANE],
+    panes: () => panes,
     identities: () => [],
+    claudeProcessesIn: () => options.claudePids ?? [],
+    pathExists: () => options.worktreeExists ?? true,
     canonicalPath: (path) => path,
     profileFor: () => DEFAULT_PROFILE,
     teardown: (cwd) => {
@@ -93,12 +98,13 @@ function makeDoneDeps(
       recorded.calls.push("endSession")
       return endSessionResult
     },
+    postToRoot: async (rootStreamId, content) => void recorded.calls.push(`postToRoot:${rootStreamId}:${content}`),
   }
   return { deps, recorded }
 }
 
 describe("doneAgent", () => {
-  test("kills the pane, waits for exit, winds down, forgets the link, retires identities, ends the session, and persists stopped", async () => {
+  test("kills the pane, waits for exit, winds down, forgets the link, retires identities, ends the session, persists stopped, and reports to the root", async () => {
     const { deps, recorded } = makeDoneDeps()
 
     await doneAgent("fix-sidebar", deps)
@@ -113,13 +119,14 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
+      "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
       "release",
     ])
     expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])
   })
 
   test("no live pane skips the kill but still winds down and ends the link", async () => {
-    const { deps, recorded } = makeDoneDeps({ pane: { status: "missing" } })
+    const { deps, recorded } = makeDoneDeps({ panes: [] })
 
     await doneAgent("fix-sidebar", deps)
 
@@ -131,6 +138,42 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
+      "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
+      "release",
+    ])
+  })
+
+  test("refuses a worktree where a paneless Claude is still running, and says so in the root stream", async () => {
+    // The reaper's veto: what `done` force-removes is a directory, and a live
+    // Claude in it is fatal whichever record asked for the wind-down.
+    const { deps, recorded } = makeDoneDeps({ panes: [], claudePids: [9911] })
+
+    await expect(doneAgent("fix-sidebar", deps)).rejects.toThrow(
+      "fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)"
+    )
+
+    expect(recorded.calls).toEqual([
+      "lock",
+      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)",
+      "release",
+    ])
+    expect(recorded.persisted).toEqual([])
+  })
+
+  test("a worktree removed by hand still kills the window, clears the records, and ends the session", async () => {
+    const { deps, recorded } = makeDoneDeps({ worktreeExists: false })
+
+    await doneAgent("fix-sidebar", deps)
+
+    expect(recorded.calls).toEqual([
+      "lock",
+      "kill:@7",
+      "awaitExit:4242",
+      "forgetLink:ccs-sidebar",
+      "forgetIdentities:/repo/fix-sidebar",
+      "endSession",
+      "persist:stopped",
+      "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree already gone, link ended.",
       "release",
     ])
   })
@@ -142,7 +185,12 @@ describe("doneAgent", () => {
       "fix-sidebar: teardown failed, nothing removed: lint failed"
     )
 
-    expect(recorded.calls).toEqual(["lock", "teardown:/repo/fix-sidebar", "release"])
+    expect(recorded.calls).toEqual([
+      "lock",
+      "teardown:/repo/fix-sidebar",
+      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: teardown failed, nothing removed: lint failed",
+      "release",
+    ])
     expect(recorded.persisted).toEqual([])
   })
 
@@ -164,6 +212,7 @@ describe("doneAgent", () => {
         "forgetLink:ccs-sidebar",
         "endSession",
         "persist:stopped",
+        "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree left: branch protected, link ended.",
         "release",
       ])
       expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])

@@ -187,7 +187,7 @@ function sharedDirectoryClaimants(
   ]
 }
 
-type WindowDecision =
+export type WindowDecision =
   | { kind: "none" }
   /** Forget the record, destroy nothing: the directory's ownership is in doubt. */
   | { kind: "drain"; reason: string }
@@ -196,6 +196,9 @@ type WindowDecision =
 
 /** What {@link windDownLinkedWorktree} needs decided about the pane before it may destroy anything. */
 export type WindDownWindow = { kind: "none" } | { kind: "kill"; pane: LocalTmuxPane }
+
+/** The slice of {@link ReapDeps} {@link decideWindow} reads, so `done` can apply the same vetoes without faking a reap. */
+export type WindowDecisionDeps = Pick<ReapDeps, "links" | "identities" | "claudeProcessesIn" | "canonicalPath">
 
 /** The slice of {@link ReapDeps} {@link windDownLinkedWorktree} needs — narrow so a caller like `done` need not fake the archive-detection fields it never reaches. */
 export type WindDownDeps = Pick<
@@ -230,7 +233,7 @@ export type WindDownDeps = Pick<
  * gated on `runtimeKind`: what is being destroyed is a directory, and a live
  * Claude in it is fatal whichever runtime the record names.
  */
-function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: ReapDeps): WindowDecision {
+export function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: WindowDecisionDeps): WindowDecision {
   // Link records store a raw `process.cwd()` while tmux reports a resolved
   // path; on macOS /tmp vs /private/tmp alone is enough to read an occupied
   // worktree as empty, which is the one misreading that ends in a removal.
@@ -458,7 +461,7 @@ export async function windDownLinkedWorktree(
   return { removed: report.removed, pushed: report.pushed, reason: report.reason }
 }
 
-function retireIdentities(worktree: string, deps: Pick<ReapDeps, "forgetIdentities" | "log">): void {
+export function retireIdentities(worktree: string, deps: Pick<ReapDeps, "forgetIdentities" | "log">): void {
   const retired = deps.forgetIdentities(worktree)
   if (retired.length > 0) deps.log(`${worktree}: retired identity ${retired.join(", ")}`)
 }

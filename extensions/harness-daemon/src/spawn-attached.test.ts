@@ -92,6 +92,7 @@ describe("runAttachedSpawn", () => {
       "readBrief:/tmp/brief.md",
       "spawn:fix-sidebar",
       "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
+      "unlinkBrief:/tmp/brief.md",
     ])
   })
 
@@ -108,6 +109,7 @@ describe("runAttachedSpawn", () => {
       "spawn:fix-sidebar",
       "brief:cc-sidebar:ccs-sidebar:please fix the sidebar",
       "postToRoot:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: brief endpoint 500",
+      "unlinkBrief:/tmp/brief.md",
     ])
   })
 
@@ -120,7 +122,7 @@ describe("runAttachedSpawn", () => {
     expect(result).toBe(RESULT)
   })
 
-  test("an unreadable brief file dies before spawn runs", async () => {
+  test("an unreadable brief file reports and dies before spawn runs", async () => {
     const failure = new Error("ENOENT: no such file")
     const { deps, recorded } = makeDeps({ readBriefResult: failure })
 
@@ -128,27 +130,38 @@ describe("runAttachedSpawn", () => {
       "ENOENT: no such file"
     )
 
-    expect(recorded.calls).toEqual(["readBrief:/tmp/missing.md"])
+    expect(recorded.calls).toEqual([
+      "readBrief:/tmp/missing.md",
+      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: ENOENT: no such file",
+    ])
   })
 
-  test("an empty brief file dies before spawn runs", async () => {
+  test("an empty brief file reports, removes the file, and dies before spawn runs", async () => {
     const { deps, recorded } = makeDeps({ readBriefResult: "" })
 
     await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/empty.md" }, deps)).rejects.toThrow(
       "--brief-file /tmp/empty.md is empty"
     )
 
-    expect(recorded.calls).toEqual(["readBrief:/tmp/empty.md"])
+    expect(recorded.calls).toEqual([
+      "readBrief:/tmp/empty.md",
+      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/empty.md is empty",
+      "unlinkBrief:/tmp/empty.md",
+    ])
   })
 
-  test("a whitespace-only brief file dies before spawn runs", async () => {
+  test("a whitespace-only brief file reports, removes the file, and dies before spawn runs", async () => {
     const { deps, recorded } = makeDeps({ readBriefResult: "   \n\t  " })
 
     await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/blank.md" }, deps)).rejects.toThrow(
       "--brief-file /tmp/blank.md is empty"
     )
 
-    expect(recorded.calls).toEqual(["readBrief:/tmp/blank.md"])
+    expect(recorded.calls).toEqual([
+      "readBrief:/tmp/blank.md",
+      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/blank.md is empty",
+      "unlinkBrief:/tmp/blank.md",
+    ])
   })
 
   test("a failure to post to the root is only logged, and the original error still rethrows", async () => {
@@ -165,6 +178,7 @@ describe("runAttachedSpawn", () => {
       "spawn:fix-sidebar",
       "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
       "log:harnessd: could not post to root stream stream_root: network down",
+      "unlinkBrief:/tmp/brief.md",
     ])
   })
 })

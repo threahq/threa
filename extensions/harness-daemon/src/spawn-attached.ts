@@ -14,70 +14,77 @@ export interface AttachedSpawnDeps {
   log: (message: string) => void
 }
 
+export interface RootReporterDeps {
+  postToRoot: (rootStreamId: string, content: string) => Promise<void>
+  log: (message: string) => void
+}
+
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
 /** Best-effort: a failure to report a failure must not mask the original error. */
-async function reportToRoot(
-  rootStreamId: string,
-  content: string,
-  deps: Pick<AttachedSpawnDeps, "postToRoot" | "log">
-) {
+export async function reportToRoot(rootStreamId: string, content: string, deps: RootReporterDeps) {
   try {
     await deps.postToRoot(rootStreamId, content)
   } catch (error) {
-    deps.log(
-      `harnessd: could not post to root stream ${rootStreamId}: ${error instanceof Error ? error.message : String(error)}`
-    )
+    deps.log(`harnessd: could not post to root stream ${rootStreamId}: ${reason(error)}`)
   }
 }
 
 /**
  * Spawns an attached agent and, when a brief file is given, hands it the caller's prompt
- * through the Threa brief endpoint. Any failure past this point is reported into the
- * scratchpad root stream (best-effort) before rethrowing, so a spawn that dies is never silent.
+ * through the Threa brief endpoint. Every failure is reported into the scratchpad root
+ * stream (best-effort) before rethrowing, so a spawn that dies is never silent.
  */
 export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpawnDeps): Promise<SpawnResult> {
   if (!options.attach) die("runAttachedSpawn requires options.attach")
   const rootStreamId = options.attach.rootStreamId
 
-  // Read before spawning: an unreadable or blank (including whitespace-only) brief must create nothing (INV-11).
-  const pendingBrief: { path: string; content: string } | undefined = options.briefFile
-    ? { path: options.briefFile, content: deps.readBrief(options.briefFile) }
-    : undefined
-  if (pendingBrief && !pendingBrief.content.trim()) die(`--brief-file ${pendingBrief.path} is empty`)
-
-  let result: SpawnResult
+  // Set once the file is read: from there on the prompt is in memory and the file has no
+  // second reader, so it goes whichever way this ends. Leaving it would strand the user's
+  // prompt in tmpdir forever — the launcher unref'd and cannot clean up.
+  let briefPath: string | undefined
   try {
-    result = await deps.spawn(options)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    await reportToRoot(rootStreamId, `harnessd: spawn of \`${options.name}\` failed: ${message}`, deps)
-    throw error
-  }
-
-  if (pendingBrief) {
-    const instanceId = result.instanceId ?? die("spawned agent has no instanceId to brief")
-    const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
+    let content: string | undefined
+    let result: SpawnResult
     try {
-      await deps.brief({ instanceId, runtimeSessionId, content: pendingBrief.content })
+      // Read before spawning: an unreadable or blank brief must create nothing (INV-11).
+      if (options.briefFile) {
+        content = deps.readBrief(options.briefFile)
+        briefPath = options.briefFile
+        if (!content.trim()) die(`--brief-file ${briefPath} is empty`)
+      }
+      result = await deps.spawn(options)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      await reportToRoot(
-        rootStreamId,
-        `harnessd: \`${options.name}\` started in thread ${result.activeStreamId} but the brief was not delivered: ${message}`,
-        deps
-      )
+      await reportToRoot(rootStreamId, `harnessd: spawn of \`${options.name}\` failed: ${reason(error)}`, deps)
       throw error
     }
-    try {
-      deps.unlinkBrief(pendingBrief.path)
-    } catch (error) {
-      // The brief already landed; a leftover file on disk is a cleanup nit, not a failure to report.
-      deps.log(
-        `harnessd: could not remove brief file ${pendingBrief.path}: ${error instanceof Error ? error.message : String(error)}`
-      )
+
+    if (content !== undefined) {
+      const instanceId = result.instanceId ?? die("spawned agent has no instanceId to brief")
+      const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
+      try {
+        await deps.brief({ instanceId, runtimeSessionId, content })
+      } catch (error) {
+        await reportToRoot(
+          rootStreamId,
+          `harnessd: \`${options.name}\` started in thread ${result.activeStreamId} but the brief was not delivered: ${reason(error)}`,
+          deps
+        )
+        throw error
+      }
+    }
+
+    return result
+  } finally {
+    if (briefPath) {
+      try {
+        deps.unlinkBrief(briefPath)
+      } catch (error) {
+        // A leftover file on disk is a cleanup nit, never the failure worth reporting.
+        deps.log(`harnessd: could not remove brief file ${briefPath}: ${reason(error)}`)
+      }
     }
   }
-
-  return result
 }
 
 export function defaultAttachedSpawnDeps(): AttachedSpawnDeps {

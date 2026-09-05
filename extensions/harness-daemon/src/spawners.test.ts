@@ -346,3 +346,26 @@ test("requireThreadSessionTarget dies loudly when Threa credentials are missing"
     else process.env.THREA_API_KEY = savedApiKey
   }
 })
+
+test("Pi remote linking rejects a link that landed on another scratchpad than the attached one", async () => {
+  await expect(
+    linkPiRemoteSession({
+      expectedInstanceId: "pi-instance",
+      expectedRootStreamId: "stream_attached",
+      attempts: 3,
+      bootWaitMs: 0,
+      responseWaitMs: 0,
+      retryBackoffMs: 0,
+      maxRetryBackoffMs: 0,
+      sleep: async () => {},
+      sendRemoteCommand: () => {
+        throw new Error("must not send after finding a link")
+      },
+      readSession: () => ({
+        instanceId: "pi-instance",
+        rootStreamId: "stream_elsewhere",
+        scratchpadUrl: "https://app.threa.io/w/workspace/s/stream_elsewhere",
+      }),
+    })
+  ).rejects.toThrow("Pi remote link scratchpad stream_elsewhere does not match the attached scratchpad stream_attached")
+})
