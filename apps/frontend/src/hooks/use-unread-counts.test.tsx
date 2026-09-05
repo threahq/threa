@@ -144,6 +144,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       gettingStartedDismissed: false,
       performanceDiagnosticsOptIn: false,
       analyticsConsent: "unset",
+      sessionReplayOptIn: false,
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",

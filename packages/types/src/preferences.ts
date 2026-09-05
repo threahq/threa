@@ -456,6 +456,12 @@ export interface UserPreferences {
    * client inits PostHog only after "granted".
    */
   analyticsConsent: AnalyticsConsent
+  /**
+   * The user's consent to record replays of their own session. Requires
+   * `analyticsConsent === "granted"` as well: the client only ever starts a
+   * recording on a PostHog instance that consent already brought up.
+   */
+  sessionReplayOptIn: boolean
   createdAt: string
   updatedAt: string
 }
@@ -508,6 +514,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   gettingStartedDismissed: false,
   performanceDiagnosticsOptIn: false,
   analyticsConsent: "unset",
+  sessionReplayOptIn: false,
 }
 
 /**
@@ -558,6 +565,7 @@ export interface UpdateUserPreferencesInput {
   gettingStartedDismissed?: boolean
   performanceDiagnosticsOptIn?: boolean
   analyticsConsent?: AnalyticsConsent
+  sessionReplayOptIn?: boolean
 }
 
 /**

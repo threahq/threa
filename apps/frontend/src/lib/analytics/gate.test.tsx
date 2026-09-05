@@ -9,9 +9,14 @@ import { AnalyticsConsentGate } from "./gate"
 type Consent = "unset" | "granted" | "denied"
 const analytics = { posthogToken: "tok_1", posthogHost: "https://eu.example.com" }
 
-function mockInputs(params: { consent: Consent; analytics: typeof analytics | null; userId: string | null }) {
+function mockInputs(params: {
+  consent: Consent
+  analytics: typeof analytics | null
+  userId: string | null
+  replay?: boolean
+}) {
   vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
-    preferences: { analyticsConsent: params.consent },
+    preferences: { analyticsConsent: params.consent, sessionReplayOptIn: params.replay ?? false },
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
   vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockReturnValue({
     data: { analytics: params.analytics },
@@ -22,11 +27,13 @@ function mockInputs(params: { consent: Consent; analytics: typeof analytics | nu
 describe("AnalyticsConsentGate", () => {
   let start: ReturnType<typeof vi.spyOn>
   let stop: ReturnType<typeof vi.spyOn>
+  let replay: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
     vi.restoreAllMocks()
     start = vi.spyOn(posthogModule, "startAnalytics").mockImplementation(() => {})
     stop = vi.spyOn(posthogModule, "stopAnalytics").mockImplementation(() => {})
+    replay = vi.spyOn(posthogModule, "setSessionReplay").mockImplementation(() => {})
   })
 
   it("should start with the workspace-scoped user id when consent is granted", () => {
@@ -55,6 +62,17 @@ describe("AnalyticsConsentGate", () => {
 
     expect(start).not.toHaveBeenCalled()
     expect(stop).toHaveBeenCalled()
+  })
+
+  it("should leave the recorder off until replay is opted into as well", () => {
+    mockInputs({ consent: "granted", analytics, userId: "usr_1" })
+    const { rerender } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
+    expect(replay).toHaveBeenCalledWith(false)
+
+    mockInputs({ consent: "granted", analytics, userId: "usr_1", replay: true })
+    rerender(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    expect(replay).toHaveBeenLastCalledWith(true)
   })
 
   it("should stop when consent flips to denied without a remount", () => {

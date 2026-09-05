@@ -164,6 +164,7 @@ const updatePreferencesSchema = z.object({
   gettingStartedDismissed: z.boolean().optional(),
   performanceDiagnosticsOptIn: z.boolean().optional(),
   analyticsConsent: z.enum(ANALYTICS_CONSENT_OPTIONS).optional(),
+  sessionReplayOptIn: z.boolean().optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({
