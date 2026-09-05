@@ -1582,12 +1582,21 @@ export class SyncEngine {
     const stopReplay = capture.time("catchup.replay")
     let fetched = 0
 
-    // Holds the reactive read layer steady for the whole run (see
-    // beginApplyWindow) so the sidebar, badges, memberships and drafts paint
-    // the run's FINAL state once when it closes, whether that state came from
-    // replayed entries or from a snapshot the run collapsed to. Closed in the
-    // finally, so a throw or early return can never strand it open.
-    beginApplyWindow()
+    // Holds the reactive read layer steady from the first write of this run
+    // (see beginApplyWindow) so the sidebar, badges, memberships and drafts
+    // paint the run's FINAL state once when it closes, whether that state came
+    // from replayed entries, a snapshot the run collapsed to, or the buffered
+    // live events spliced at the end. Opened lazily, never around the page
+    // fetches themselves: a hold that spans the network round trip stalls every
+    // render behind it (the user's own just-sent message included) while most
+    // connects find nothing to apply. Closed in the finally when it was opened,
+    // so a throw or early return can never strand it open.
+    let holdingApplyWindow = false
+    const holdApplyWindow = () => {
+      if (holdingApplyWindow) return
+      holdingApplyWindow = true
+      beginApplyWindow()
+    }
     try {
       await cursorStore.load()
       const cursorBefore = cursorStore.get()
@@ -1631,6 +1640,7 @@ export class SyncEngine {
             cursorBefore,
             head: response.head,
           })
+          holdApplyWindow()
           appliedThrough = await this.healGapWithSnapshot(response.head)
           return
         }
@@ -1660,6 +1670,7 @@ export class SyncEngine {
             head: response.head,
             firstPageEntries: response.entries.length,
           })
+          holdApplyWindow()
           appliedThrough = await this.healGapWithSnapshot(response.head)
           return
         }
@@ -1667,6 +1678,7 @@ export class SyncEngine {
         if (pages === 0) capture.mark("catchup.serialReplay", response.entries.length)
         pages += 1
         fetched += response.entries.length
+        holdApplyWindow()
         for (const entry of response.entries) {
           if (this.isDestroyed) return
           byEventType[entry.eventType] = (byEventType[entry.eventType] ?? 0) + 1
@@ -1737,6 +1749,7 @@ export class SyncEngine {
       // the splice. Buffered events at or below the applied position were
       // already applied from the log.
       if (!this.isDestroyed && this.catchUpCycle === cycle) {
+        if (gate.hasBuffered()) holdApplyWindow()
         const through = appliedThrough
         await gate.resume((_eventType, syncId) => through === null || syncId > through)
       }
@@ -1744,7 +1757,7 @@ export class SyncEngine {
       // Release the held read layer last — after the batch flush AND the resume
       // splice have written — so the one re-read every batched hook does on close
       // reflects the replay's final state plus the spliced live events together.
-      endApplyWindow()
+      if (holdingApplyWindow) endApplyWindow()
       stopReplay()
     }
   }

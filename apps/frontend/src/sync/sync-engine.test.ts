@@ -1454,6 +1454,52 @@ describe("SyncEngine sync cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("leaves the apply window closed when catch-up finds nothing to apply", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // The common connect: the cursor is already at head. Holding the window
+    // around the page fetch would stall every render (the user's own just-sent
+    // message included) for a network round trip that changes nothing.
+    const deps = makeActiveDeps(vi.fn(async () => emptyPage("10")))
+    const engine = new SyncEngine(deps)
+    const applyWindow = trackApplyWindow()
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalled())
+    expect(engine.getSyncCursor()).toBe("10")
+    applyWindow.stop()
+    expect(applyWindow.transitions).toEqual([])
+    expect(isApplyWindowOpen()).toBe(false)
+    engine.destroy()
+  })
+
+  it("opens the apply window before splicing live events buffered during an otherwise empty catch-up", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("10"))
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const socket = new MockSocket()
+    const applyWindow = trackApplyWindow()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+    socket.trigger("workspace_user:added", userAddedLivePayload("11", "user_live"))
+    expect(applyWindow.transitions).toEqual([])
+
+    resolveFirstPage!(emptyPage("10"))
+
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_live")).toBeDefined())
+    // The splice is a write like any replayed entry: it lands behind the window
+    // so the batched hooks re-read once, after it.
+    applyWindow.stop()
+    expect(applyWindow.transitions).toEqual([true, false])
+    expect(isApplyWindowOpen()).toBe(false)
+    engine.destroy()
+  })
+
   it("seeds the cursor from the bootstrap's sync head on first connect so a stale cursor does not double-bootstrap", async () => {
     // Cold boot of a returning user: a stale cursor survives in IDB from a prior
     // session. Without the head seed, catch-up would read from "10", see the

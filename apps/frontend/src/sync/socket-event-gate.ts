@@ -123,6 +123,11 @@ export class SocketEventGate implements SyncEventSource {
     return this
   }
 
+  /** Whether any live event is waiting for the next resume splice. */
+  hasBuffered(): boolean {
+    return this.buffer.length > 0
+  }
+
   /** Start buffering this workspace's syncId-bearing live events. */
   pause(): void {
     if (this.disposed) return
