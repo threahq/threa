@@ -832,13 +832,40 @@ export const MessageRepository = {
     return result.rows[0] ? BigInt(result.rows[0].sequence) : null
   },
 
-  async updateEmbedding(db: Querier, id: string, embedding: number[]): Promise<void> {
-    const embeddingLiteral = `[${embedding.join(",")}]`
-    await db.query(sql`
-      UPDATE messages
-      SET embedding = ${embeddingLiteral}::vector
-      WHERE id = ${id}
+  async findEmbeddingSourceHashes(db: Querier, ids: string[]): Promise<Map<string, string | null>> {
+    if (ids.length === 0) return new Map()
+    const result = await db.query<{ id: string; embedding_source_hash: string | null }>(sql`
+      SELECT id, embedding_source_hash FROM messages WHERE id = ANY(${ids}::text[])
     `)
+    return new Map(result.rows.map((row) => [row.id, row.embedding_source_hash]))
+  },
+
+  /**
+   * Store embeddings, each guarded on the source hash the caller observed before
+   * embedding (`expectedSourceHash`, null for a never-hashed row). A row whose
+   * stored hash moved in the meantime is left alone, so a slow embed of older
+   * text can never overwrite a newer one (INV-20). One UNNEST statement per
+   * batch (INV-56). Returns the number of rows written.
+   */
+  async updateEmbeddings(
+    db: Querier,
+    rows: Array<{ id: string; embedding: number[]; sourceHash: string; expectedSourceHash: string | null }>
+  ): Promise<number> {
+    if (rows.length === 0) return 0
+    const ids = rows.map((row) => row.id)
+    const embeddingLiterals = rows.map((row) => `[${row.embedding.join(",")}]`)
+    const hashes = rows.map((row) => row.sourceHash)
+    const expected = rows.map((row) => row.expectedSourceHash)
+    const result = await db.query(sql`
+      UPDATE messages m
+      SET embedding = v.embedding::vector, embedding_source_hash = v.source_hash
+      FROM UNNEST(${ids}::text[], ${embeddingLiterals}::text[], ${hashes}::text[], ${expected}::text[])
+        AS v(id, embedding, source_hash, expected_hash)
+      WHERE m.id = v.id
+        AND m.embedding_source_hash IS NOT DISTINCT FROM v.expected_hash
+        AND m.embedding_source_hash IS DISTINCT FROM v.source_hash
+    `)
+    return result.rowCount ?? 0
   },
 
   /**

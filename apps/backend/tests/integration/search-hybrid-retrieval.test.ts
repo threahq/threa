@@ -41,6 +41,12 @@ function fakeEmbeddingService(vector: number[]): EmbeddingServiceLike {
 describe("Message hybrid search retrieval", () => {
   let pool: Pool
 
+  function seedEmbedding(messageId: string, embedding: number[]) {
+    return MessageRepository.updateEmbeddings(pool, [
+      { id: messageId, embedding, sourceHash: "seed", expectedSourceHash: null },
+    ])
+  }
+
   beforeAll(async () => {
     pool = await setupTestDatabase()
   })
@@ -139,7 +145,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "banana weather forecast",
     })
-    await MessageRepository.updateEmbedding(pool, semanticOnly.id, unit(0))
+    await seedEmbedding(semanticOnly.id, unit(0))
     return { keywordOnly, semanticOnly }
   }
 
@@ -169,7 +175,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "purple bicycles wander quietly at dusk",
     })
-    await MessageRepository.updateEmbedding(pool, semanticMatch.id, unit(1))
+    await seedEmbedding(semanticMatch.id, unit(1))
 
     const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
     const { results } = await service.search({
@@ -194,7 +200,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "acme project rollout status update",
     })
-    await MessageRepository.updateEmbedding(pool, both.id, blend(0, 1, 0.6))
+    await seedEmbedding(both.id, blend(0, 1, 0.6))
 
     // Semantic leg only: perfect embedding match, no shared words.
     const semanticOnly = await postMessage({
@@ -203,7 +209,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "banana weather forecast",
     })
-    await MessageRepository.updateEmbedding(pool, semanticOnly.id, unit(0))
+    await seedEmbedding(semanticOnly.id, unit(0))
 
     // Keyword leg only: partial term match, embedding orthogonal to the query.
     const keywordOnly = await postMessage({
@@ -212,7 +218,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "acme project kickoff",
     })
-    await MessageRepository.updateEmbedding(pool, keywordOnly.id, unit(5))
+    await seedEmbedding(keywordOnly.id, unit(5))
 
     // 4 tokens, no digits -> "general" intent (keywordWeight 0.4, semanticWeight 0.6).
     const service = new SearchService({ pool, embeddingService: fakeEmbeddingService(unit(0)) })
