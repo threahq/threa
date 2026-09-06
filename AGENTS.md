@@ -90,6 +90,8 @@ threa/
 
 Service interactions, responsibilities, deploy targets: `docs/system-overview.md`.
 
+The npm scope is `@threahq` — `@threa` is not an account we own. Only the three extensions `publish-npm.yml` lists (`bot-runtime-client`, `remote-session`, `threa-bot`) are publishable; every other `package.json` carries `"private": true`. `bun run check:package-scopes` enforces both and runs in `lint`.
+
 Backend domain logic: `apps/backend/src/features/<name>/` — handler, service, repo, outbox handler, worker, config, tests colocated (INV-51). `lib/` = cross-cutting infra only (queueing, outbox dispatch, AI wrapper, logging); domain prompt builders/classifiers/extractors stay in their feature. Cross-feature imports via `index.ts` barrels only (INV-52).
 
 ## Invariants
