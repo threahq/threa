@@ -121,11 +121,10 @@ export function useAutoMarkAsRead(
       queue.cancel(streamId)
       return
     }
-    // No frontier to report leaves a debouncing mark alone: the rows it names
-    // were seen while attentive, and the frontier clears for reasons that say
-    // nothing about that — the pointer caught up, or turned unknowable while
-    // the event window changed source. An explicit unread cancels through the
-    // queue itself (`runExplicitUnread`).
+    // A cleared frontier leaves a debouncing mark alone: its rows were seen
+    // while attentive, and the frontier clears for unrelated reasons (pointer
+    // caught up, or briefly unknowable while the window changes source).
+    // Explicit unread cancels through the queue (`runExplicitUnread`).
     if (!reportEventId) return
 
     // D5 heal: a fully-read (`!partial`) open still fires one commit even when

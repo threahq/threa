@@ -1117,6 +1117,66 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.lastSeenEventId).toBeUndefined()
   })
 
+  it("holds a pointer below the window unknowable until older-page knowledge arrives", () => {
+    const container = mountWindow({ e2: { top: 5, bottom: 50 } })
+    const scrollContainerRef = { current: container }
+    const { result, rerender } = renderHook(
+      ({ hasOlderEvents }: { hasOlderEvents: boolean | null }) =>
+        useLastSeenEvent({
+          scrollContainerRef,
+          events: seqEvents([2]),
+          streamId: "stream_1",
+          lastReadEventId: "e_below_window",
+          lastReadSequence: 1n,
+          hasOlderEvents,
+          enabled: true,
+        }),
+      { initialProps: { hasOlderEvents: null as boolean | null } }
+    )
+    expect(result.current.lastSeenEventId).toBeUndefined()
+
+    act(() => rerender({ hasOlderEvents: false }))
+    expect(result.current.lastSeenEventId).toBe("e2")
+  })
+
+  it("resumes after a transient backward pointer flap without a scroll (stale snapshot, not an unread)", () => {
+    // The pointer is read from two sources that settle at different times: the
+    // read response advances the query cache to seq 2, then the stream
+    // bootstrap's stale IDB row (seq 1) publishes, then the response's own row
+    // (seq 2). Nobody marked anything unread, so once the pointer is back at 2
+    // and the reply below it (e3) is on screen, the reply must still be read.
+    const container = mountWindow({ e2: { top: 5, bottom: 50 } })
+    const scrollContainerRef = { current: container }
+    type Props = { events: StreamEvent[]; lastReadEventId: string; lastReadSequence: bigint }
+    const { result, rerender } = renderHook(
+      ({ events, lastReadEventId, lastReadSequence }: Props) =>
+        useLastSeenEvent({
+          scrollContainerRef,
+          events,
+          streamId: "stream_1",
+          lastReadEventId,
+          lastReadSequence,
+          hasOlderEvents: false,
+          enabled: true,
+        }),
+      { initialProps: { events: seqEvents([2]), lastReadEventId: "e1", lastReadSequence: 1n } }
+    )
+    expect(result.current.lastSeenEventId).toBe("e2")
+
+    act(() => rerender({ events: seqEvents([2]), lastReadEventId: "e2", lastReadSequence: 2n }))
+    expect(result.current.lastSeenEventId).toBeUndefined()
+
+    act(() => rerender({ events: seqEvents([2]), lastReadEventId: "e1", lastReadSequence: 1n }))
+    expect(result.current.lastSeenEventId).toBeUndefined()
+
+    const reply = document.createElement("div")
+    reply.setAttribute("data-event-id", "e3")
+    reply.getBoundingClientRect = () => rect(50, 95)
+    container.appendChild(reply)
+    act(() => rerender({ events: seqEvents([1, 2, 3]), lastReadEventId: "e2", lastReadSequence: 2n }))
+    expect(result.current.lastSeenEventId).toBe("e3")
+  })
+
   it("resolves a pointer between loaded rows to the last row at or below it", () => {
     // e2 is scrolled off the top; the viewport starts at e4. With the pointer
     // resolved to e2 the viewport is contiguous with it and reads through to e6.

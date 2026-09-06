@@ -112,12 +112,11 @@ interface UseLastSeenEventOptions {
   /** Authoritative sequence, including when the pointer's event is outside the loaded window. */
   lastReadSequence?: bigint | null
   /**
-   * Whether the loaded window has unloaded pages above it. A pointer whose
-   * event is not loaded resolves by sequence; when nothing loaded sits at or
-   * below it, the window head decides: loaded from the head, nothing is read;
-   * older pages unloaded, the pointer is unknowable and nothing is emitted.
+   * Whether unloaded pages sit above the loaded window. Decides whether a
+   * pointer below every loaded row means "nothing read" or "unknowable";
+   * `null` (not yet known, pre-bootstrap) counts as unknowable.
    */
-  hasOlderEvents?: boolean
+  hasOlderEvents?: boolean | null
   /** Off while loading/jumping/draft — no scroller to read, nothing to track. */
   enabled: boolean
   /**
@@ -201,28 +200,25 @@ export function useLastSeenEvent({
   const eventsRef = useRef(events)
   eventsRef.current = events
 
-  // The viewer's read pointer as an index into the loaded window, and its
-  // sequence: -1 for "nothing read" (null pointer). The pointer's event is
-  // routinely NOT loaded — a thread's watermark is born on its hidden
-  // `member_added` event, and a live-synced window may lack the row the
-  // watermark names — so an id miss resolves by sequence: the last loaded row
-  // at or below the pointer, or -1 when the window is loaded from the stream
-  // head. Only a pointer below a window with older pages unloaded is
-  // unknowable (`null` sequence, e.g. mark-as-unread on the oldest loaded row):
-  // read progress cannot be judged there, so nothing is emitted. A backward
-  // move is judged against the pointer's OWN past sequence (see below).
+  // The read pointer as an index into the loaded window plus its sequence
+  // (-1n for "nothing read"). The pointer's event is often not loaded: a thread
+  // watermark is born on its hidden `member_added` event, and a live-synced
+  // window may lack the row it names. An id miss resolves by sequence to the
+  // last loaded row at or below the pointer; none below a head-loaded window
+  // means nothing read, none below unloaded older pages means unknowable
+  // (`null`, nothing emitted). A backward move is judged against the pointer's
+  // OWN past sequence (see below).
   const { readIndex, readSeq } = useMemo<{ readIndex: number; readSeq: bigint | null }>(() => {
     if (lastReadEventId == null) return { readIndex: -1, readSeq: -1n }
     const byId = indexById.get(lastReadEventId)
     if (byId !== undefined) return { readIndex: byId, readSeq: lastReadSequence ?? BigInt(events[byId].sequence) }
     if (lastReadSequence == null) return { readIndex: -1, readSeq: null }
     let below = -1
-    for (let i = 0; i < events.length; i++) {
-      if (events[i].eventType === "aside:anchored") continue
+    for (const i of indexById.values()) {
       if (BigInt(events[i].sequence) <= lastReadSequence) below = i
     }
     if (below >= 0) return { readIndex: below, readSeq: lastReadSequence }
-    return hasOlderEvents ? { readIndex: -1, readSeq: null } : { readIndex: -1, readSeq: lastReadSequence }
+    return { readIndex: -1, readSeq: hasOlderEvents === false ? lastReadSequence : null }
   }, [lastReadEventId, lastReadSequence, indexById, events, hasOlderEvents])
   const readIndexRef = useRef(readIndex)
   readIndexRef.current = readIndex
@@ -417,11 +413,18 @@ export function useLastSeenEvent({
     prevStreamIdRef.current = streamId
     if (!streamChanged && lastReadEventId !== prevLastReadIdRef.current) {
       // Retreat = the pointer's sequence dropped below where it just was (mark-as-
-      // unread). Forward moves and external reads are left to recompute's forward
-      // bump; only a genuine backward move pins.
-      if (readSeqRef.current != null && prevReadSeqRef.current != null && readSeqRef.current < prevReadSeqRef.current) {
-        frontierRef.current = readIndex
-        pinnedRef.current = true
+      // unread); only a genuine backward move pins. A forward move lifts the pin:
+      // an explicit unread never advances the pointer by itself, so retreat then
+      // advance was a flap between the pointer's sources (a stale bootstrap row
+      // publishing after a read response). Held pinned, a stream too short to
+      // scroll would never read again.
+      if (readSeqRef.current != null && prevReadSeqRef.current != null) {
+        if (readSeqRef.current < prevReadSeqRef.current) {
+          frontierRef.current = readIndex
+          pinnedRef.current = true
+        } else if (readSeqRef.current > prevReadSeqRef.current) {
+          pinnedRef.current = false
+        }
       }
     }
     if (readSeqRef.current != null) prevReadSeqRef.current = readSeqRef.current

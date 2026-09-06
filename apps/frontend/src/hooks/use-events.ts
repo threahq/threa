@@ -582,14 +582,17 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     console.warn(`[useEvents] Suppressing bootstrap error for ${streamId} because local timeline data exists`, error)
   }, [suppressBootstrapError, error, streamId])
 
-  // Determine if older events exist.
+  // Determine if older events exist. Before the bootstrap answers (or a jump /
+  // older page does) the value is a placeholder, so `hasOlderEventsKnown` lets a
+  // consumer tell "none" from "not yet".
+  const olderPagesFetched = (olderData?.pages.length ?? 0) > 0
+  const hasOlderEventsKnown = hasOlderPage || olderPagesFetched || !!jumpState || bootstrap !== undefined
   const hasOlderEvents = useMemo(() => {
     if (hasOlderPage) return true
-    const hasRunQuery = (olderData?.pages.length ?? 0) > 0
-    if (hasRunQuery) return false
+    if (olderPagesFetched) return false
     if (jumpState) return jumpState.hasOlder
     return bootstrap?.hasOlderEvents ?? false
-  }, [hasOlderPage, jumpState, olderData?.pages.length, bootstrap?.hasOlderEvents])
+  }, [hasOlderPage, jumpState, olderPagesFetched, bootstrap?.hasOlderEvents])
 
   // Determine if newer events exist (only in jump mode).
   const hasNewerEvents = useMemo(() => {
@@ -802,6 +805,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
         isConfirmedEmpty,
         isResolved: idbResolved,
         hasOlderEvents,
+        hasOlderEventsKnown,
         latestSequence,
         error: suppressBootstrapError ? null : error,
         isFetchingOlder,
@@ -816,6 +820,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
         isConfirmedEmpty,
         idbResolved,
         hasOlderEvents,
+        hasOlderEventsKnown,
         latestSequence,
         suppressBootstrapError,
         error,

@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Browser } from "@playwright/test"
+import { test, expect, type Page } from "@playwright/test"
 import {
   clickReplyInThread,
   createChannel,
@@ -95,47 +95,45 @@ async function waitForSessionComplete(page: Page, workspaceId: string, threadId:
     .toContain("agent_session:completed")
 }
 
+/** Mention the stub companion in a fresh channel, let its reply land in a thread, and leave with the thread unread. */
+async function seedAgentThread(page: Page, channelPrefix: string) {
+  const { testId } = await loginAndCreateWorkspace(page, "thread-autoread")
+  await createChannel(page, `${channelPrefix}-${testId}`)
+  const { workspaceId, streamId } = extractIds(page)
+  await sendMention(page, `hi ${testId}`)
+  const threadId = await waitForThreadId(page, workspaceId, streamId, `hi ${testId}`)
+  await waitForSessionComplete(page, workspaceId, threadId)
+  await page.goto(`/w/${workspaceId}/drafts`)
+  expect(await serverUnreadCount(page, workspaceId, threadId)).toBe(1)
+  return { workspaceId, streamId, threadId }
+}
+
+async function expectThreadRead(page: Page, workspaceId: string, threadId: string) {
+  await expect
+    .poll(() => serverUnreadCount(page, workspaceId, threadId), {
+      timeout: 15000,
+      message: "thread should auto-read",
+    })
+    .toBe(0)
+}
+
 test.describe("Thread auto-read", () => {
   test("agent reply thread auto-reads when opened as a page", async ({ page }) => {
-    const { testId } = await loginAndCreateWorkspace(page, "thread-autoread")
-    await createChannel(page, `tar-page-${testId}`)
-    const { workspaceId, streamId } = extractIds(page)
-    await sendMention(page, `hi ${testId}`)
-    const threadId = await waitForThreadId(page, workspaceId, streamId, `hi ${testId}`)
-    await waitForSessionComplete(page, workspaceId, threadId)
-    await page.goto(`/w/${workspaceId}/drafts`)
-    expect(await serverUnreadCount(page, workspaceId, threadId)).toBe(1)
+    const { workspaceId, threadId } = await seedAgentThread(page, "tar-page")
 
     await page.goto(`/w/${workspaceId}/s/${threadId}`)
     await expect(page.getByRole("main").getByText("stub response from the companion")).toBeVisible({ timeout: 10000 })
-    await expect
-      .poll(() => serverUnreadCount(page, workspaceId, threadId), {
-        timeout: 15000,
-        message: "thread should auto-read",
-      })
-      .toBe(0)
+    await expectThreadRead(page, workspaceId, threadId)
   })
 
   test("agent reply thread auto-reads when opened in the panel", async ({ page }) => {
-    const { testId } = await loginAndCreateWorkspace(page, "thread-autoread")
-    await createChannel(page, `tar-panel-${testId}`)
-    const { workspaceId, streamId } = extractIds(page)
-    await sendMention(page, `hi ${testId}`)
-    const threadId = await waitForThreadId(page, workspaceId, streamId, `hi ${testId}`)
-    await waitForSessionComplete(page, workspaceId, threadId)
-    await page.goto(`/w/${workspaceId}/drafts`)
-    expect(await serverUnreadCount(page, workspaceId, threadId)).toBe(1)
+    const { workspaceId, streamId, threadId } = await seedAgentThread(page, "tar-panel")
 
     await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
     await expect(page.getByTestId("panel").getByText("stub response from the companion")).toBeVisible({
       timeout: 10000,
     })
-    await expect
-      .poll(() => serverUnreadCount(page, workspaceId, threadId), {
-        timeout: 15000,
-        message: "thread should auto-read",
-      })
-      .toBe(0)
+    await expectThreadRead(page, workspaceId, threadId)
   })
 
   test("human reply thread auto-reads when opened as a page", async ({ page, browser }) => {
@@ -187,11 +185,6 @@ test.describe("Thread auto-read", () => {
 
     await page.goto(`/w/${workspaceId}/s/${threadId}`)
     await expect(page.getByRole("main").getByText(`other reply ${testId}`)).toBeVisible({ timeout: 10000 })
-    await expect
-      .poll(() => serverUnreadCount(page, workspaceId, threadId), {
-        timeout: 15000,
-        message: "thread should auto-read",
-      })
-      .toBe(0)
+    await expectThreadRead(page, workspaceId, threadId)
   })
 })
