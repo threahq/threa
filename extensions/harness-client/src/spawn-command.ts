@@ -3,7 +3,7 @@ import { unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-export interface SpawnCommandArgs {
+interface SpawnCommandArgs {
   runtime?: "claude" | "pi"
   name: string
   prompt: string
