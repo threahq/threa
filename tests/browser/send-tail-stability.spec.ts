@@ -23,7 +23,7 @@ const STABLE_PX = 2
 const AT_BOTTOM_PX = 8
 
 interface Sample {
-  t: number
+  elapsedMs: number
   distance: number
   lastTop: number
   rows: number
@@ -38,7 +38,7 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string, c
           .post(`/api/workspaces/${workspaceId}/messages`, {
             data: { streamId, content: `seed msg-${String(i).padStart(3, "0")} some filler text here` },
           })
-          .then((r) => expectApiOk(r, `seed ${i}`))
+          .then((response) => expectApiOk(response, `seed ${i}`))
       )
     )
   }
@@ -55,7 +55,7 @@ function startSampler(page: Page, durationMs: number): Promise<void> {
         const rows = el.querySelectorAll(".message-item")
         const last = rows[rows.length - 1]
         out.push({
-          t: Math.round(performance.now() - start),
+          elapsedMs: Math.round(performance.now() - start),
           distance: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
           lastTop: last ? Math.round(last.getBoundingClientRect().top) : -1,
           rows: rows.length,
@@ -93,7 +93,7 @@ test("sending a message never displaces the settled tail", async ({ page }) => {
   const samples: Sample[] = await page.evaluate(
     () => (window as unknown as { __tailSamples: Sample[] }).__tailSamples ?? []
   )
-  expect(samples.length).toBeGreaterThan(60)
+  expect(samples.at(-1)?.elapsedMs, "sampler stopped before the post-echo window").toBeGreaterThanOrEqual(5_500)
 
   const sentRows = samples[samples.length - 1].rows
   // Settled = the sent row is mounted and the list is pinned to the bottom.
