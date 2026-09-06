@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import type {
-  ClaimInvitationLinkResponse,
-  CreateInvitationLinkResponse,
-  UpdateInvitationLinkResponse,
-  WorkspaceInvitation,
-} from "@threa/types"
+import type { CreateInvitationLinkResponse, UpdateInvitationLinkResponse, WorkspaceInvitation } from "@threa/types"
 import { hashInvitationToken } from "../../src/features/invitations/service"
 import { invitationId } from "../../src/lib/id"
 import { createWorkspace, loginAs, TestClient } from "../client"
@@ -123,6 +118,19 @@ describe("multi-use invitation API", () => {
       expiresAt: null,
     })
 
+    const pastExpiry = new Date(Date.now() - 1000).toISOString()
+    expect(
+      (await admin.post(`/api/workspaces/${workspace.id}/invitations/links`, { role: "member", expiresAt: pastExpiry }))
+        .status
+    ).toBe(400)
+    expect(
+      (
+        await admin.patch(`/api/workspaces/${workspace.id}/invitations/${created.data.invitation.id}`, {
+          expiresAt: pastExpiry,
+        })
+      ).status
+    ).toBe(400)
+
     const updated = await admin.patch<UpdateInvitationLinkResponse>(
       `/api/workspaces/${workspace.id}/invitations/${created.data.invitation.id}`,
       { maxUses: 2, expiresAt: null }
@@ -133,7 +141,7 @@ describe("multi-use invitation API", () => {
     })
 
     const email = `invite-joiner-${runId}@test.com`
-    const claimed = await admin.internalRequest<ClaimInvitationLinkResponse>(
+    const claimed = await admin.internalRequest<{ ok: true; invitationId: string }>(
       "POST",
       "/internal/invitations/claim-link",
       { token: created.data.token, email }

@@ -112,8 +112,14 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
       if (!invitation.email || invitation.email.toLowerCase() !== event.payload.email.toLowerCase()) {
         throw new Error(`Invitation ${event.payload.invitationId} email does not match accepted delivery`)
       }
+      if (invitation.acceptedWorkosUserId && invitation.acceptedWorkosUserId !== event.payload.workosUserId) {
+        throw new Error(`Invitation ${event.payload.invitationId} acceptance identity does not match accepted delivery`)
+      }
       if (!(await UserRepository.isMember(this.db, invitation.workspaceId, event.payload.workosUserId))) {
-        throw new Error(`Invitation ${event.payload.invitationId} member is not visible for accepted delivery`)
+        logger.warn(
+          { invitationId: invitation.id },
+          "Member row absent for accepted delivery; delivering on the accepted row's evidence"
+        )
       }
       const parentId = invitation.parentLinkId ?? (invitation.kind === "link" ? invitation.id : null)
       const parent = parentId ? await InvitationRepository.findById(this.db, parentId) : null

@@ -1968,8 +1968,6 @@ export interface ClaimInvitationLinkInput {
 
 export interface ClaimInvitationLinkResponse {
   ok: true
-  /** The email-bound child invitation accepted after authentication. */
-  invitationId?: string
   /** Set when the email already belongs to a workspace member; frontend can deep-link to login. */
   alreadyMember?: { workspaceId: string }
 }

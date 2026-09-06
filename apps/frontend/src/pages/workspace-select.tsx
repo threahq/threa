@@ -14,14 +14,18 @@ const ACCEPT_INVITATION_ERRORS: Record<InvitationErrorCode, string> = {
   [INVITATION_ERROR_CODES.REVOKED]: "This invitation was revoked.",
   [INVITATION_ERROR_CODES.EXPIRED]: "This invitation has expired.",
   [INVITATION_ERROR_CODES.EXHAUSTED]: "This invite link has reached its join limit.",
+  [INVITATION_ERROR_CODES.CLAIM_LIMIT]: "This link has too many pending join requests. Try again in a little while.",
   [INVITATION_ERROR_CODES.EMAIL_MISMATCH]: "Sign in with the email address that received this invitation.",
   [INVITATION_ERROR_CODES.NOT_FOUND]: "This invitation is no longer available.",
   [INVITATION_ERROR_CODES.ALREADY_CLAIMED]: "This invite link has already been used.",
+  [INVITATION_ERROR_CODES.ROLLOUT_UNAVAILABLE]: "Invitations are temporarily unavailable. Try again in a minute.",
 }
 
 function getAcceptInvitationErrorMessage(error: unknown): string {
   if (ApiError.isApiError(error)) {
-    return isInvitationErrorCode(error.code) ? ACCEPT_INVITATION_ERRORS[error.code] : error.message
+    return isInvitationErrorCode(error.code)
+      ? ACCEPT_INVITATION_ERRORS[error.code]
+      : ACCEPT_INVITATION_ERRORS[INVITATION_ERROR_CODES.ROLLOUT_UNAVAILABLE]
   }
   if (error instanceof Error) return error.message
   return "Failed to accept invitation."

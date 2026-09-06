@@ -37,6 +37,9 @@ const sendInvitationsSchema = z.object({
 
 const maxUsesSchema = z.number().int().positive().max(2_147_483_647).nullable().optional()
 
+const futureExpiry = (value: string | null | undefined) =>
+  value === undefined || value === null || new Date(value).getTime() > Date.now()
+
 const createLinkSchema = z
   .object({
     role: z.literal(WORKSPACE_ROLE_SLUGS.MEMBER),
@@ -45,6 +48,7 @@ const createLinkSchema = z
     expiresAt: z.string().datetime().nullable().optional(),
   })
   .strict()
+  .refine((value) => futureExpiry(value.expiresAt), { message: "expiresAt must be in the future" })
 
 const updateLinkSchema = z
   .object({
@@ -53,6 +57,7 @@ const updateLinkSchema = z
   })
   .strict()
   .refine((value) => value.maxUses !== undefined || value.expiresAt !== undefined)
+  .refine((value) => futureExpiry(value.expiresAt), { message: "expiresAt must be in the future" })
 
 const claimLinkSchema = z.object({
   token: z.string().min(1).max(200),

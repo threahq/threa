@@ -73,6 +73,9 @@ function isExpired(invitation: Invitation, now = new Date()): boolean {
   return invitation.expiresAt !== null && invitation.expiresAt <= now
 }
 
+/** Even unlimited links stop fanning out invite emails once this many claims sit unaccepted. */
+const MIN_PENDING_LINK_CLAIMS = 10
+
 function assertLinkAvailable(invitation: Invitation): void {
   if (invitation.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
   if (isExpired(invitation)) throw new InvitationLinkError("INVITATION_EXPIRED")
@@ -378,7 +381,19 @@ export class InvitationService {
         }
         const existingChild =
           legacyClaim ?? (await InvitationRepository.findLinkChild(client, parent.workspaceId, parent.id, email))
-        if (!existingChild) assertLinkAvailable(parent)
+        if (!existingChild) {
+          assertLinkAvailable(parent)
+          // Each pending child becomes a WorkOS email to a distinct address;
+          // bound the fan-out per link. Successful joins free slots.
+          const pendingClaims = await InvitationRepository.countPendingLinkChildren(
+            client,
+            parent.workspaceId,
+            parent.id
+          )
+          if (pendingClaims >= Math.max(parent.maxUses ?? 0, MIN_PENDING_LINK_CLAIMS)) {
+            throw new InvitationLinkError("INVITATION_CLAIM_LIMIT")
+          }
+        }
         child =
           existingChild ??
           (await InvitationRepository.insertOrFindLinkChild(client, {
@@ -422,6 +437,7 @@ export type InvitationLinkErrorCode =
   | "INVITATION_REVOKED"
   | "INVITATION_EXPIRED"
   | "INVITATION_EXHAUSTED"
+  | "INVITATION_CLAIM_LIMIT"
   | "INVITATION_ROLE_NOT_ALLOWED"
 
 export class InvitationLinkError extends Error {

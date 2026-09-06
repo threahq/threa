@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Ban, Hourglass, Mail, SearchX, UsersRound, type LucideIcon } from "lucide-react"
+import { Ban, Hourglass, Mail, RefreshCw, SearchX, UsersRound, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -47,6 +47,16 @@ const LOOKUP_ERROR_COPY = {
     body: "This link has reached its join limit. Ask the workspace admin to update it or send a new one.",
     icon: UsersRound,
   },
+  [INVITATION_ERROR_CODES.CLAIM_LIMIT]: {
+    title: "Link is busy",
+    body: "This link has too many pending join requests right now. Try again in a little while, or ask the admin to send you a direct invite.",
+    icon: UsersRound,
+  },
+  [INVITATION_ERROR_CODES.ROLLOUT_UNAVAILABLE]: {
+    title: "Invitations unavailable",
+    body: "Invitations are temporarily unavailable. Try again in a minute.",
+    icon: RefreshCw,
+  },
 } satisfies Partial<Record<InvitationErrorCode, LookupErrorCopy>>
 
 type LookupErrorCode = keyof typeof LOOKUP_ERROR_COPY
@@ -60,6 +70,7 @@ function getErrorCode(err: unknown): LookupErrorCode | null {
 
 function resolveClaimErrorMessage(code: LookupErrorCode | null, err: unknown): string | null {
   if (code) return LOOKUP_ERROR_COPY[code].body
+  if (err instanceof ApiError) return LOOKUP_ERROR_COPY[INVITATION_ERROR_CODES.ROLLOUT_UNAVAILABLE].body
   if (err instanceof Error) return err.message
   return null
 }

@@ -103,6 +103,66 @@ describe("multi-use invitation lifecycle", () => {
     })
   })
 
+  test("caps unaccepted link claims and frees slots when a join completes", async () => {
+    const created = await fixture.service.createLink({
+      workspaceId: fixture.workspaceId,
+      invitedBy: fixture.inviterId,
+      role: "member",
+      note: null,
+      maxUses: null,
+      expiresAt: null,
+    })
+    const childIds: string[] = []
+    for (let i = 0; i < 10; i++) {
+      childIds.push(await claim(fixture, created.token, `cap-claim-${i}@example.com`))
+    }
+
+    await expect(fixture.service.claimLinkByToken(created.token, "cap-claim-over@example.com")).rejects.toMatchObject({
+      code: "INVITATION_CLAIM_LIMIT",
+    })
+    await expect(fixture.service.claimLinkByToken(created.token, "cap-claim-3@example.com")).resolves.toMatchObject({
+      invitationId: childIds[3],
+    })
+
+    await fixture.service.acceptInvitation(childIds[0], {
+      workosUserId: "workos_cap_joiner",
+      email: "cap-claim-0@example.com",
+      name: "Cap Joiner",
+    })
+    await expect(fixture.service.claimLinkByToken(created.token, "cap-claim-over@example.com")).resolves.toMatchObject({
+      invitationId: expect.any(String),
+    })
+  })
+
+  test("does not treat a stranded child of an exhausted link as a pending invitation", async () => {
+    const created = await fixture.service.createLink({
+      workspaceId: fixture.workspaceId,
+      invitedBy: fixture.inviterId,
+      role: "member",
+      note: null,
+      maxUses: 1,
+      expiresAt: null,
+    })
+    const emailA = "exhausted-child-a@example.com"
+    const emailB = "exhausted-child-b@example.com"
+    const childA = await claim(fixture, created.token, emailA)
+    await claim(fixture, created.token, emailB)
+    await fixture.service.acceptInvitation(childA, {
+      workosUserId: "workos_exhausted_a",
+      email: emailA,
+      name: "Exhausted A",
+    })
+
+    const sent = await fixture.service.sendInvitations({
+      workspaceId: fixture.workspaceId,
+      invitedBy: fixture.inviterId,
+      emails: [emailB],
+      role: "member",
+    })
+    expect(sent.sent.map((invitation) => invitation.email)).toEqual([emailB])
+    expect(sent.skipped).toEqual([])
+  })
+
   test("should allow exactly two successful concurrent joins when maxUses is two", async () => {
     const created = await fixture.service.createLink({
       workspaceId: fixture.workspaceId,
@@ -640,8 +700,52 @@ describe("multi-use invitation lifecycle", () => {
           userName: "Pending Attacker",
         },
       } as OutboxEvent)
-    ).rejects.toThrow("member is not visible for accepted delivery")
+    ).rejects.toThrow("acceptance identity does not match accepted delivery")
     expect(calls).toHaveLength(1)
+  })
+
+  test("delivers the accepted ack after the member row is removed", async () => {
+    const created = await fixture.service.createLink({
+      workspaceId: fixture.workspaceId,
+      invitedBy: fixture.inviterId,
+      role: "member",
+      note: null,
+      maxUses: 2,
+      expiresAt: null,
+    })
+    const email = "removed-member-ack@example.com"
+    const childId = await claim(fixture, created.token, email)
+    await fixture.service.acceptInvitation(childId, {
+      workosUserId: "workos_removed_ack",
+      email,
+      name: "Removed Ack",
+    })
+    await fixture.pool.query("DELETE FROM users WHERE workspace_id = $1 AND workos_user_id = $2", [
+      fixture.workspaceId,
+      "workos_removed_ack",
+    ])
+    const calls: unknown[] = []
+    const handler = new TestShadowSyncHandler(
+      fixture.pool,
+      { acknowledgeInvitationAccepted: async (params: unknown) => calls.push(params) } as unknown as ControlPlaneClient,
+      "local"
+    )
+
+    await handler.process({
+      id: 9n,
+      eventType: "invitation:accepted",
+      createdAt: new Date(),
+      payload: {
+        workspaceId: fixture.workspaceId,
+        invitationId: childId,
+        email,
+        workosUserId: "workos_removed_ack",
+        userName: "Removed Ack",
+      },
+    } as OutboxEvent)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ invitationId: childId, email, workosUserId: "workos_removed_ack" })
   })
 
   test("should acknowledge a completed legacy root after the link is revoked", async () => {

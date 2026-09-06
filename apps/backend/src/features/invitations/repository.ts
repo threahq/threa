@@ -93,19 +93,25 @@ function mapRow(row: InvitationRow): Invitation {
   }
 }
 
+const USE_COUNT_EXPR = (alias: string) => `
+  CASE WHEN ${alias}.kind = 'link' AND ${alias}.parent_link_id IS NULL THEN
+    (CASE WHEN ${alias}.accepted_at IS NOT NULL AND ${alias}.acceptance_consumes_capacity IS DISTINCT FROM FALSE THEN 1 ELSE 0 END) +
+    (SELECT COUNT(*)::int FROM workspace_invitations child
+     WHERE child.workspace_id = ${alias}.workspace_id
+       AND child.parent_link_id = ${alias}.id
+       AND child.accepted_at IS NOT NULL
+       AND child.acceptance_consumes_capacity IS DISTINCT FROM FALSE)
+  ELSE 0 END`
+
 const SELECT_FIELDS = `
   wi.id, wi.workspace_id, wi.kind, wi.email, wi.role, wi.invited_by,
   wi.workos_invitation_id, wi.token_hash, wi.note, wi.status, wi.created_at,
   wi.expires_at, wi.accepted_at, wi.revoked_at, wi.parent_link_id, wi.max_uses,
   wi.accepted_workos_user_id, wi.acceptance_consumes_capacity, wi.revision,
-  CASE WHEN wi.kind = 'link' AND wi.parent_link_id IS NULL THEN
-    (CASE WHEN wi.accepted_at IS NOT NULL AND wi.acceptance_consumes_capacity IS DISTINCT FROM FALSE THEN 1 ELSE 0 END) +
-    (SELECT COUNT(*)::int FROM workspace_invitations child
-     WHERE child.workspace_id = wi.workspace_id
-       AND child.parent_link_id = wi.id
-       AND child.accepted_at IS NOT NULL
-       AND child.acceptance_consumes_capacity IS DISTINCT FROM FALSE)
-  ELSE 0 END AS use_count`
+  ${USE_COUNT_EXPR("wi")} AS use_count`
+
+/** Parents without remaining capacity are not pending, matching the CP shadow filter. */
+const PARENT_HAS_CAPACITY = `(parent.id IS NULL OR parent.max_uses IS NULL OR ${USE_COUNT_EXPR("parent")} < parent.max_uses)`
 
 async function findById(db: Querier, id: string, forUpdate = false): Promise<Invitation | null> {
   if (forUpdate) {
@@ -175,6 +181,14 @@ export const InvitationRepository = {
     return result.rows[0] ? findById(db, result.rows[0].id) : null
   },
 
+  async countPendingLinkChildren(db: Querier, workspaceId: string, parentLinkId: string): Promise<number> {
+    const result = await db.query<{ count: number }>(sql`
+      SELECT count(*)::int AS count FROM workspace_invitations
+      WHERE workspace_id = ${workspaceId} AND parent_link_id = ${parentLinkId} AND status = 'pending'
+    `)
+    return Number(result.rows[0]?.count ?? 0)
+  },
+
   async insertOrFindLinkChild(
     db: Querier,
     params: { id: string; parent: Invitation; email: string }
@@ -241,6 +255,7 @@ export const InvitationRepository = {
         AND (CASE WHEN parent.id IS NULL THEN wi.status ELSE parent.status END) <> 'revoked'
         AND (CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END IS NULL
           OR CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END > NOW())
+        AND ${sql.raw(PARENT_HAS_CAPACITY)}
       ORDER BY wi.created_at DESC
     `)
     return result.rows.map(mapRow)
@@ -256,6 +271,7 @@ export const InvitationRepository = {
         AND (CASE WHEN parent.id IS NULL THEN wi.status ELSE parent.status END) <> 'revoked'
         AND (CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END IS NULL
           OR CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END > NOW())
+        AND ${sql.raw(PARENT_HAS_CAPACITY)}
     `)
     return result.rows.map(mapRow)
   },

@@ -167,6 +167,18 @@ describe("InvitationService.claimLinkByToken", () => {
     expect(insertOutbox).not.toHaveBeenCalled()
   })
 
+  test("should bound the invite-email fan-out at the pending-claim cap", async () => {
+    const countPending = spyOn(InvitationRepository, "countPendingLinkChildren").mockResolvedValue(10)
+    const service = new InvitationService({} as never, {} as never)
+
+    await expect(service.claimLinkByToken("token", "new@example.com")).rejects.toMatchObject({
+      code: "INVITATION_CLAIM_LIMIT",
+    })
+    expect(insertChild).not.toHaveBeenCalled()
+    expect(insertOutbox).not.toHaveBeenCalled()
+    countPending.mockRestore()
+  })
+
   test("should bind a legacy admin root and never mint a child", async () => {
     findRootForUpdate.mockResolvedValue({ ...root, role: "admin", maxUses: 1 })
     const service = new InvitationService({} as never, {} as never)

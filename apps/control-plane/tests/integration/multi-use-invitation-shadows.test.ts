@@ -547,6 +547,30 @@ describe("multi-use invitation shadows", () => {
     })
   })
 
+  test("preserves the claim-limit error from the regional fan-out cap", async () => {
+    const token = "claim-limit-token"
+    await service.createShadow({
+      id: "inv_claim_limit",
+      workspaceId,
+      region: "local",
+      kind: "link",
+      email: null,
+      tokenHash: createHash("sha256").update(token).digest("hex"),
+      roleSlug: WORKSPACE_ROLE_SLUGS.MEMBER,
+      expiresAt: future,
+    })
+    service["regionalClient"] = {
+      claimInvitationLink: async () => {
+        throw new RegionalInvitationError(409, JSON.stringify({ code: "INVITATION_CLAIM_LIMIT" }))
+      },
+    } as unknown as RegionalClient
+
+    await expect(service.claimByToken(token, "limited@example.com")).rejects.toMatchObject({
+      status: 409,
+      code: "INVITATION_CLAIM_LIMIT",
+    })
+  })
+
   test("reconciles a regional join after CP rollback and a reordered parent revoke", async () => {
     await createParent()
     await service.acceptLinkClaim({
