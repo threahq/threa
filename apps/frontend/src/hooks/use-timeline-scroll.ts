@@ -333,14 +333,22 @@ export function useTimelineScroll({
   }
   // While following the tail, a new last row that is not a single live append
   // (a sweep landing a gap, a window replaced under the reader) is a tail
-  // replace: virtua has only estimated the rows below the old tail.
+  // replace: virtua has only estimated the rows below the old tail. Neither one
+  // appended row nor a same-size window whose last key changed in place (an own
+  // send's echo swapping the client id for the event id) leaves an unmeasured
+  // row, and re-requesting the last index for either lands virtua's deferred
+  // scroll after our pin, a few px above the true bottom.
   const lastKey = itemCount > 0 ? getLastKey() : null
+  const windowStartHeld = firstKey === prevFirstKeyRef.current
+  const appendedOneRow = itemCount === prevCountRef.current + 1 && windowStartHeld
+  const swappedTailInPlace = itemCount === prevCountRef.current && windowStartHeld
   const tailReplaced =
     isFollowingTailRef.current &&
     prevCountRef.current > 0 &&
     prevLastKeyRef.current !== null &&
     lastKey !== prevLastKeyRef.current &&
-    !(itemCount === prevCountRef.current + 1 && firstKey === prevFirstKeyRef.current)
+    !appendedOneRow &&
+    !swappedTailInPlace
   // Record the baseline once per commit, in a layout effect — not during
   // render. React may render this component twice before committing (StrictMode
   // in dev, a concurrent re-render in prod); a during-render write would let a
