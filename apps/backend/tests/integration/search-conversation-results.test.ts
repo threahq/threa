@@ -14,7 +14,7 @@ import { ConversationRepository } from "../../src/features/conversations"
 import {
   SearchService,
   resolveUserAccessibleStreamIds,
-  serializeConversationSearchResult,
+  serializeConversationForMessage,
   type SearchPermissions,
 } from "../../src/features/search"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
@@ -208,7 +208,7 @@ describe("Conversation search results", () => {
     expect(hit.firstMessageAt).toBeInstanceOf(Date)
     expect(hit.lastMessageAt!.getTime()).toBeGreaterThan(hit.firstMessageAt!.getTime())
 
-    const serialized = serializeConversationSearchResult(hit)
+    const serialized = serializeConversationForMessage(hit)
     expect(serialized).toMatchObject({
       id: matchId,
       firstMessageId: openerId,

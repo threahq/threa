@@ -1,4 +1,4 @@
-export { createSearchHandlers, serializeSearchResult } from "./handlers"
+export { createSearchHandlers, serializeSearchResult, serializeConversationForMessage } from "./handlers"
 export { resolveUserAccessibleStreamIds } from "./access"
 export { SearchService } from "./service"
 export { SearchQueryLogService, type RecordSearchQueryInput } from "./query-log-service"
