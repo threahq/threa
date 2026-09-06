@@ -601,8 +601,7 @@ export class RemoteSession {
     const inflight = [...this.inflight.values()]
     for (const route of inflight) route.revoke()
     for (const route of this.completed.values()) route.revoke()
-    for (const context of this.observedClaims.values()) context.handle.dispose()
-    this.observedClaims.clear()
+    for (const context of this.observedClaims.values()) this.fenceObservedClaim(context.invocation)
     this.inflight.clear()
     this.completed.clear()
     this.terminalReplies.clear()
@@ -815,7 +814,6 @@ export class RemoteSession {
       this.log(`claim failed: ${this.summarize(error)}`)
     } finally {
       this.claiming = false
-      this.scheduleRequestedClaimDrain()
     }
     return claimedAny
   }
@@ -900,7 +898,7 @@ export class RemoteSession {
     if (this.stopped || this.archive.detached || this.claimRetryTimer) return
     if (error instanceof ThreaApiError && error.status < 500 && !RETRYABLE_POST_STATUSES.has(error.status)) return
     const backoff = Math.min(CLAIM_RETRY_CAP_MS, this.config.pollMs * 2 ** this.claimFailures)
-    this.claimFailures = Math.min(this.claimFailures + 1, 30)
+    this.claimFailures++
     const retryAfter = error instanceof ThreaApiError ? (error.retryAfterMs ?? 0) : 0
     const delay = Math.min(2_147_483_647, Math.max(backoff, retryAfter))
     this.log(`claim failed; retrying in ${delay}ms: ${this.summarize(error)}`)
@@ -914,8 +912,9 @@ export class RemoteSession {
   }
 
   private async claimNext(busy: boolean, responseStreamId?: string): Promise<ClaimedInvocation | null> {
+    const lifecycle = this.lifecycle
     const invocation = await this.claimAndHydrate(busy, responseStreamId)
-    if (!invocation) return null
+    if (!invocation || this.stopped || this.archive.detached || lifecycle !== this.lifecycle) return null
     const identity = invocation.sealing ? this.bik.current : undefined
     const handle = this.transport.observeClaim({
       invocationId: invocation.id,

@@ -3290,6 +3290,63 @@ describe("claim wakeups and retries", () => {
     }
   })
 
+  for (const pendingStage of ["claim", "sync"] as const) {
+    test(`should discard a retry result when shutdown races ${pendingStage}`, async () => {
+      jest.useFakeTimers()
+      const { client, calls } = makeFakeClient()
+      const waiting = gate()
+      const { transport, observations } = makeFakeTransport(async () => {
+        if (pendingStage === "sync") await waiting.promise
+      })
+      spyOn(client, "claim")
+        .mockRejectedValueOnce(new ThreaApiError("unavailable", 503))
+        .mockImplementationOnce(async () => {
+          if (pendingStage === "claim") await waiting.promise
+          return makeInvocation({
+            id: "binv_status",
+            trigger: "session-control",
+            requiredCapability: "session-control",
+            metadata: { command: { executionKind: "bot-runtime", name: "status", args: "" } },
+          })
+        })
+        .mockResolvedValue(null)
+      const commands: string[] = []
+      const session = makeSession(client, transport, {
+        sessionControl: {
+          commands: ["status"],
+          interrupt: () => true,
+          runCommand: async (name) => {
+            commands.push(name)
+            return { ok: true, message: "status" }
+          },
+        },
+      })
+      try {
+        await (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+        jest.advanceTimersByTime(3_000)
+        jest.advanceTimersByTime(0)
+        await flush()
+        const closing = session.shutdown()
+        await flush()
+        waiting.open()
+        await closing
+        expect({
+          commands,
+          completed: calls.complete,
+          liveObservations: [...observations.values()].filter((value) => !value.disposed),
+        }).toEqual({
+          commands: [],
+          completed: [],
+          liveObservations: [],
+        })
+      } finally {
+        waiting.open()
+        await session.shutdown()
+        jest.useRealTimers()
+      }
+    })
+  }
+
   test("should back off repeated claim failures and cancel retries on shutdown", async () => {
     jest.useFakeTimers()
     const { client } = makeFakeClient()
