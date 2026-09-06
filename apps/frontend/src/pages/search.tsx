@@ -18,8 +18,10 @@ import { SearchRefineRow } from "@/components/search/search-refine-row"
 import { SearchRefineTrigger } from "@/components/search/search-refine-trigger"
 import { useRefineControl } from "@/components/search/use-refine-control"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
-import { SearchResults } from "@/components/search/search-results"
-import { SearchClusterList, countClusterResults } from "@/components/search/search-cluster-list"
+import { SearchGroupedList } from "@/components/search/search-grouped-list"
+import { SearchRankedList } from "@/components/search/search-ranked-list"
+import { countClusterResults, groupClustersByStream } from "@/components/search/group-clusters"
+import { useStreamGroupCollapse } from "@/components/search/use-stream-group-collapse"
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { boundRefines } from "@/lib/search-query-parser"
@@ -91,7 +93,6 @@ export function SearchPage() {
   }
 
   const {
-    results,
     clusters,
     memos,
     isLoading,
@@ -112,8 +113,10 @@ export function SearchPage() {
   const canRefine = refineEnabled && hasQuery
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
-  const resultCount = displayMode === "ranked" ? results.length : countClusterResults(clusters)
-  const hasResults = displayMode === "ranked" ? results.length > 0 : clusters.length > 0
+  const groups = useMemo(() => groupClustersByStream(clusters, memos), [clusters, memos])
+  const { collapsedStreamIds, toggle: toggleStreamGroup } = useStreamGroupCollapse(clusters)
+  const resultCount = countClusterResults(clusters)
+  const hasResults = clusters.length > 0
 
   const handleResultSelect = useCallback(
     (result: SearchResultItem) => {
@@ -245,30 +248,37 @@ export function SearchPage() {
 
           {displayError && <p className="py-8 text-center text-sm text-destructive">{displayError}</p>}
 
-          {hasQuery && !displayError && hasResults && displayMode === "clusters" && (
-            <SearchClusterList
-              workspaceId={workspaceId}
-              clusters={clusters}
-              memos={memos}
-              terms={terms}
-              activeResultId={activeResultId}
-              exploreHref={exploreHref}
-              foldHits={isMobile}
-              onResultSelect={handleResultSelect}
-              onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
-              onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
-            />
-          )}
-
-          {hasQuery && !displayError && hasResults && displayMode === "ranked" && (
-            <SearchResults
-              workspaceId={workspaceId}
-              results={results}
-              terms={terms}
-              activeResultId={activeResultId}
-              onResultSelect={handleResultSelect}
-            />
-          )}
+          {hasQuery &&
+            !displayError &&
+            hasResults &&
+            (displayMode === "ranked" ? (
+              <SearchRankedList
+                workspaceId={workspaceId}
+                clusters={clusters}
+                memos={memos}
+                terms={terms}
+                activeResultId={activeResultId}
+                exploreHref={exploreHref}
+                foldHits={isMobile}
+                onResultSelect={handleResultSelect}
+                onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
+                onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
+              />
+            ) : (
+              <SearchGroupedList
+                workspaceId={workspaceId}
+                groups={groups}
+                terms={terms}
+                activeResultId={activeResultId}
+                exploreHref={exploreHref}
+                collapsedStreamIds={collapsedStreamIds}
+                onToggleStream={toggleStreamGroup}
+                foldHits={isMobile}
+                onResultSelect={handleResultSelect}
+                onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
+                onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
+              />
+            ))}
 
           {hasQuery && !isLoading && !displayError && !hasResults && (
             <div className="flex flex-col items-center justify-center py-16 text-center">

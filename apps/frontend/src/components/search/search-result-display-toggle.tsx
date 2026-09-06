@@ -1,4 +1,4 @@
-import { List, MessagesSquare } from "lucide-react"
+import { Layers, List } from "lucide-react"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import type { SearchResultDisplayMode } from "@/lib/search-result-display-mode"
@@ -32,12 +32,12 @@ export function SearchResultDisplayToggle({ value, onChange, size = "sm", classN
     >
       <ToggleGroupItem
         value="clusters"
-        aria-label="Conversation results"
-        title="Conversation results"
+        aria-label="Grouped results"
+        title="Grouped results"
         className={cn(ITEM_CLASS, ITEM_SIZE[size])}
       >
-        <MessagesSquare aria-hidden="true" />
-        <span>Conversations</span>
+        <Layers aria-hidden="true" />
+        <span>Grouped</span>
       </ToggleGroupItem>
       <ToggleGroupItem
         value="ranked"

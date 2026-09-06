@@ -14,7 +14,6 @@ import {
   type SearchClickTarget,
   type SearchCluster,
   type SearchFilters,
-  type SearchResultItem,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
 import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threahq/types"
@@ -23,9 +22,7 @@ export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
 
 export interface MessageSearchState {
-  /** Message hits in ranked order, for the flat Ranked view. */
-  results: SearchResultItem[]
-  /** Conversation rows in ranked order, the default view. */
+  /** Conversation rows in rank order; both display modes render these. */
   clusters: SearchCluster[]
   /** Memo hits the rows point at through `memoIds`. */
   memos: MemoExplorerResult[]
@@ -61,7 +58,7 @@ export function useMessageSearch(workspaceId: string, query: string, refines: st
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
-  const { results, clusters, memos, queryLogId, refine, isLoading, error, search, clear } = useSearch({
+  const { clusters, memos, queryLogId, refine, isLoading, error, search, clear } = useSearch({
     workspaceId,
     limit: SEARCH_RESULT_LIMIT,
   })
@@ -193,7 +190,6 @@ export function useMessageSearch(workspaceId: string, query: string, refines: st
   )
 
   return {
-    results,
     clusters,
     memos,
     isLoading,

@@ -4,7 +4,7 @@
 import type React from "react"
 import { useState } from "react"
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Router } from "react-router-dom"
@@ -320,7 +320,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(markTexts).toContain("hello")
     })
 
-    it("defaults to conversation rows and persists ranked mode per workspace in API order", async () => {
+    it("defaults to grouped rows and persists ranked mode per workspace in API order", async () => {
       mockSearchState.results = [mockSearchResultsList[1]!, mockSearchResultsList[0]!]
       const user = userEvent.setup()
       const view = renderPanel()
@@ -329,7 +329,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.type(editor, "hello")
 
       expect(await screen.findByText("#general")).toBeInTheDocument()
-      expect(screen.getByRole("radio", { name: "Conversation results" })).toHaveAttribute("data-state", "on")
+      expect(screen.getByRole("radio", { name: "Grouped results" })).toHaveAttribute("data-state", "on")
       await user.click(screen.getByRole("radio", { name: "Ranked results" }))
 
       expect(resultIds()).toEqual(["msg_2", "msg_1"])
@@ -744,7 +744,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(screen.queryByText("No results")).not.toBeInTheDocument()
     })
 
-    it("shows the empty state in ranked mode when only topic rows matched", async () => {
+    it("keeps a hit-less topic row on screen in ranked mode too", async () => {
       mockSearchState.results = []
       mockSearchState.clusters = [
         createMockSearchCluster({ conversation: createMockClusterConversation(), matchedVia: ["topic"], hits: [] }),
@@ -758,12 +758,12 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      expect(await screen.findByText("Try different words or remove a filter")).toBeInTheDocument()
-      expect(screen.getByText("No results")).toBeInTheDocument()
-      expect(screen.queryByText("Choosing the launch date")).not.toBeInTheDocument()
+      expect(await screen.findByText("Choosing the launch date")).toBeInTheDocument()
+      expect(screen.getByText("1 result in 1 stream")).toBeInTheDocument()
+      expect(screen.queryByText("No results")).not.toBeInTheDocument()
     })
 
-    it("folds a memo hit into its row as a chip and links the memory explorer on the same words", async () => {
+    it("gathers a memo hit as a chip after the group's rows and links the memory explorer on the same words", async () => {
       mockSearchState.results = mockSearchResultsList
       mockSearchState.memos = [createMockMemoResult()]
       mockSearchState.clusters = [
@@ -784,7 +784,11 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const chip = (await screen.findByText("Launch decision")).closest("a")
       expect(chip).toHaveAttribute("href", "/w/workspace_1/memory?q=hello&memo=memo_1")
-      expect(document.querySelector('[data-search-cluster="conv_1"]')).toContainElement(chip)
+      const group = document.querySelector('[data-search-group="stream_channel1"]')
+      expect(group).toContainElement(chip)
+      const row = group!.querySelector('[data-search-cluster="conv_1"]')
+      expect(row).not.toContainElement(chip)
+      expect(row!.compareDocumentPosition(chip!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       expect(screen.getByRole("link", { name: "Search memory" })).toHaveAttribute(
         "href",
         "/w/workspace_1/memory?q=hello"
@@ -811,6 +815,102 @@ describe("SidebarSearchPanel Integration Tests", () => {
     })
   })
 
+  describe("grouped view", () => {
+    const secondGeneralHit = {
+      ...mockSearchResultsList[0]!,
+      id: "msg_1b",
+      content: "Second hit in general",
+    }
+
+    function twoStreamState() {
+      mockSearchState.results = [mockSearchResultsList[0]!, secondGeneralHit, mockSearchResultsList[1]!]
+      mockSearchState.clusters = [
+        createMockSearchCluster({ hits: [mockSearchResultsList[0]!, secondGeneralHit] }),
+        createMockSearchCluster({ hits: [mockSearchResultsList[1]!] }),
+      ]
+    }
+
+    async function typeQuery(user: ReturnType<typeof userEvent.setup>) {
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+      return editor
+    }
+
+    function groupSections(): HTMLElement[] {
+      return Array.from(document.querySelectorAll<HTMLElement>("[data-search-group]"))
+    }
+
+    it("heads each stream with its breadcrumb and result count, and collapses it away", async () => {
+      twoStreamState()
+      const user = userEvent.setup()
+      renderPanel()
+      await typeQuery(user)
+
+      await screen.findByText(/from the search results/)
+      expect(groupSections().map((section) => section.getAttribute("data-search-group"))).toEqual([
+        "stream_channel1",
+        "stream_channel2",
+      ])
+      const [general, random] = groupSections()
+      expect(within(general!).getByText("#general")).toBeInTheDocument()
+      expect(within(random!).getByText("#random")).toBeInTheDocument()
+      const header = within(general!).getByRole("button", { expanded: true })
+      expect(header).toHaveTextContent("2")
+      expect(resultIds()).toEqual(["msg_1", "msg_1b", "msg_2"])
+
+      await user.click(header)
+
+      expect(header).toHaveAttribute("aria-expanded", "false")
+      expect(resultIds()).toEqual(["msg_2"])
+      expect(screen.getByText("3 results in 2 streams")).toBeInTheDocument()
+    })
+
+    it("shows the same hits flat, each naming its stream, in ranked mode", async () => {
+      twoStreamState()
+      const user = userEvent.setup()
+      renderPanel()
+      await typeQuery(user)
+      await screen.findByText(/from the search results/)
+      expect(screen.getByText("3 results in 2 streams")).toBeInTheDocument()
+
+      await user.click(screen.getByRole("radio", { name: "Ranked results" }))
+
+      expect(groupSections()).toHaveLength(0)
+      expect(resultIds()).toEqual(["msg_1", "msg_1b", "msg_2"])
+      expect(Array.from(document.querySelectorAll("[data-search-stream-label]"), (label) => label.textContent)).toEqual(
+        ["#general", "#random"]
+      )
+      expect(screen.getByText("3 results in 2 streams")).toBeInTheDocument()
+    })
+
+    it("skips a collapsed group's hits when walking results with the keyboard", async () => {
+      twoStreamState()
+      const user = userEvent.setup()
+      renderPanel()
+      const editor = await typeQuery(user)
+      await screen.findByText(/from the search results/)
+
+      const [general] = groupSections()
+      await user.click(within(general!).getByRole("button", { expanded: true }))
+      await user.click(editor)
+      await user.keyboard("{ArrowDown}")
+
+      expect(document.querySelector('[aria-current="true"]')).toHaveAttribute("data-search-result-id", "msg_2")
+    })
+
+    it("labels the two display modes Grouped and Ranked", async () => {
+      mockSearchState.results = mockSearchResultsList
+      const user = userEvent.setup()
+      renderPanel()
+      await typeQuery(user)
+      await screen.findByText(/from the search results/)
+
+      const grouped = screen.getByRole("radio", { name: "Grouped results" })
+      expect(grouped).toHaveTextContent("Grouped")
+      expect(screen.getByRole("radio", { name: "Ranked results" })).toHaveTextContent("Ranked")
+    })
+  })
   describe("filter syntax", () => {
     it("shows a removable chip when typing filter syntax", async () => {
       const user = userEvent.setup()

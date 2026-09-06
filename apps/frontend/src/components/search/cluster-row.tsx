@@ -1,105 +1,17 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Archive, Brain, Loader2, MessagesSquare, Waypoints } from "lucide-react"
 import { RelativeTime } from "@/components/relative-time"
-import { useActors } from "@/hooks/use-actors"
 import { cn } from "@/lib/utils"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem } from "@/api"
 import { ResultRow } from "./result-row"
-import { useSearchStreamLabels, type SearchStreamLabels } from "./use-search-stream-labels"
+import type { SearchStreamLabels } from "./use-search-stream-labels"
 
 /** Hits shown before a row folds the rest behind "N more". */
 const VISIBLE_HITS = 3
 const VISIBLE_PARTICIPANTS = 3
 
-interface SearchClusterListProps {
-  workspaceId: string
-  clusters: SearchCluster[]
-  memos: MemoExplorerResult[]
-  terms: string[]
-  activeResultId: string | null
-  /** `/w/<ws>/memory?q=<text>`; a memory chip opens `&memo=<id>` on it. */
-  exploreHref: string
-  onResultSelect: (result: SearchResultItem) => void
-  onConversationSelect: (conversationId: string) => void
-  onMemoSelect: (memoId: string) => void
-  /** Phone widths fold every row's hits behind a count so the list fits on screen. */
-  foldHits?: boolean
-}
-
-/** What the "N results" summary counts: every hit, and a hit-less topic row as one. */
-export function countClusterResults(clusters: SearchCluster[]): number {
-  return clusters.reduce((count, cluster) => count + Math.max(cluster.hits.length, 1), 0)
-}
-
-function clusterKey(cluster: SearchCluster, index: number): string {
-  return cluster.conversation?.id ?? cluster.hits[0]?.id ?? `${cluster.streamId}:${index}`
-}
-
-/**
- * The default search view: one ranked row per conversation, with the matched
- * messages nested inside it. Rows without a conversation are single messages.
- */
-export function SearchClusterList({
-  workspaceId,
-  clusters,
-  memos,
-  terms,
-  activeResultId,
-  exploreHref,
-  onResultSelect,
-  onConversationSelect,
-  onMemoSelect,
-  foldHits = false,
-}: SearchClusterListProps) {
-  const { getActorName } = useActors(workspaceId)
-  const streamIds = useMemo(() => clusters.map((cluster) => cluster.streamId), [clusters])
-  const streamLabels = useSearchStreamLabels(workspaceId, streamIds)
-  const memosById = useMemo(() => new Map(memos.map((memo) => [memo.memo.id, memo])), [memos])
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set())
-
-  // A keyboard-selected hit must be visible, even when its row is folded.
-  useEffect(() => {
-    if (!activeResultId) return
-    const index = clusters.findIndex((cluster) => cluster.hits.some((hit) => hit.id === activeResultId))
-    if (index === -1) return
-    const key = clusterKey(clusters[index]!, index)
-    setExpandedKeys((current) => (current.has(key) ? current : new Set(current).add(key)))
-  }, [activeResultId, clusters])
-
-  const expand = useCallback((key: string) => {
-    setExpandedKeys((current) => new Set(current).add(key))
-  }, [])
-
-  return (
-    <ul className="flex flex-col gap-1.5">
-      {clusters.map((cluster, index) => {
-        const key = clusterKey(cluster, index)
-        return (
-          <ClusterRow
-            key={key}
-            workspaceId={workspaceId}
-            cluster={cluster}
-            memos={cluster.memoIds.flatMap((id) => memosById.get(id) ?? [])}
-            terms={terms}
-            activeResultId={activeResultId}
-            exploreHref={exploreHref}
-            streamLabels={streamLabels}
-            getActorName={getActorName}
-            expanded={expandedKeys.has(key)}
-            onExpand={() => expand(key)}
-            foldHits={foldHits}
-            onResultSelect={onResultSelect}
-            onConversationSelect={onConversationSelect}
-            onMemoSelect={onMemoSelect}
-          />
-        )
-      })}
-    </ul>
-  )
-}
-
-interface ClusterRowProps {
+export interface ClusterRowProps {
   workspaceId: string
   cluster: SearchCluster
   memos: MemoExplorerResult[]
@@ -108,6 +20,8 @@ interface ClusterRowProps {
   exploreHref: string
   streamLabels: SearchStreamLabels
   getActorName: (id: string, type: SearchResultItem["authorType"]) => string
+  /** False inside a group, where the stream header already names the stream. */
+  showStreamLabel: boolean
   expanded: boolean
   onExpand: () => void
   foldHits: boolean
@@ -116,7 +30,12 @@ interface ClusterRowProps {
   onMemoSelect: (memoId: string) => void
 }
 
-function ClusterRow({
+/**
+ * One conversation in the result list: its topic header, the memos it points
+ * at, and the matched messages nested inside. A single stray message with
+ * nothing around it renders as the bare message row instead.
+ */
+export function ClusterRow({
   workspaceId,
   cluster,
   memos,
@@ -125,6 +44,7 @@ function ClusterRow({
   exploreHref,
   streamLabels,
   getActorName,
+  showStreamLabel,
   expanded,
   onExpand,
   foldHits,
@@ -152,14 +72,14 @@ function ClusterRow({
         isActive={hits[0]!.id === activeResultId}
         onResultSelect={onResultSelect}
         actorName={getActorName(hits[0]!.authorId, hits[0]!.authorType)}
-        streamLabel={label}
+        streamLabel={showStreamLabel ? label : undefined}
         isResolving={isResolving}
         isArchived={isArchived}
       />
     )
   }
 
-  const streamLine = (
+  const streamLine = showStreamLabel ? (
     <p className="flex h-3 items-center gap-1 text-[10px] leading-3 text-muted-foreground">
       {isResolving ? (
         <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-label="Loading stream" />
@@ -172,7 +92,9 @@ function ClusterRow({
         {isArchived && <Archive className="h-3 w-3 text-foreground" aria-label="Archived stream" role="img" />}
       </span>
     </p>
-  )
+  ) : null
+
+  const bareTop = !conversation && !streamLine
 
   return (
     <li
@@ -189,11 +111,11 @@ function ClusterRow({
           onSelect={onConversationSelect}
         />
       ) : (
-        <div className="px-3 pt-2">{streamLine}</div>
+        streamLine && <div className="px-3 pt-2">{streamLine}</div>
       )}
 
       {hasChips && (
-        <div className="flex flex-wrap items-center gap-1 px-3 pb-1.5">
+        <div className={cn("flex flex-wrap items-center gap-1 px-3 pb-1.5", bareTop && "pt-2")}>
           {matchedTopic && (
             <span className="inline-flex h-5 items-center gap-1 rounded-full border border-border/60 px-1.5 text-[10px] text-muted-foreground">
               <Waypoints className="h-3 w-3" aria-hidden="true" />
@@ -201,23 +123,13 @@ function ClusterRow({
             </span>
           )}
           {memos.map((result) => (
-            <Link
-              key={result.memo.id}
-              to={`${exploreHref}&memo=${result.memo.id}`}
-              onClick={() => onMemoSelect(result.memo.id)}
-              data-search-memo-id={result.memo.id}
-              title={result.memo.title}
-              className="inline-flex h-5 max-w-full items-center gap-1 rounded-full border border-border/60 px-1.5 text-[10px] text-muted-foreground transition-colors hover:border-border hover:text-foreground"
-            >
-              <Brain className="h-3 w-3 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 truncate">{result.memo.title}</span>
-            </Link>
+            <MemoChip key={result.memo.id} result={result} exploreHref={exploreHref} onSelect={onMemoSelect} />
           ))}
         </div>
       )}
 
       {visibleHits.length > 0 && (
-        <ul className="flex flex-col gap-px px-1 pb-1">
+        <ul className={cn("flex flex-col gap-px px-1 pb-1", bareTop && !hasChips && "pt-1")}>
           {visibleHits.map((hit) => (
             <ResultRow
               key={hit.id}
@@ -252,6 +164,29 @@ function ClusterRow({
   )
 }
 
+export function MemoChip({
+  result,
+  exploreHref,
+  onSelect,
+}: {
+  result: MemoExplorerResult
+  exploreHref: string
+  onSelect: (memoId: string) => void
+}) {
+  return (
+    <Link
+      to={`${exploreHref}&memo=${result.memo.id}`}
+      onClick={() => onSelect(result.memo.id)}
+      data-search-memo-id={result.memo.id}
+      title={result.memo.title}
+      className="inline-flex h-5 max-w-full items-center gap-1 rounded-full border border-border/60 px-1.5 text-[10px] text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+    >
+      <Brain className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 truncate">{result.memo.title}</span>
+    </Link>
+  )
+}
+
 function ConversationHeader({
   workspaceId,
   conversation,
@@ -278,7 +213,7 @@ function ConversationHeader({
       data-search-conversation-id={conversation.id}
       className="block min-w-0 rounded-t-lg px-3 pb-1.5 pt-2 transition-colors hover:bg-muted/60"
     >
-      <div className="flex min-w-0 items-center justify-between gap-2">
+      <div className={cn("flex min-w-0 items-center gap-2", streamLine ? "justify-between" : "justify-end")}>
         {streamLine}
         {conversation.lastMessageAt && (
           <RelativeTime
