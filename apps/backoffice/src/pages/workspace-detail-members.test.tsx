@@ -175,7 +175,7 @@ describe("WorkspaceDetailMembersPage", () => {
               kind: "link",
               email: null,
               roleSlug: "member",
-              expiresAt: daysFromNow(7),
+              expiresAt: null,
               createdAt: new Date().toISOString(),
               inviter: null,
             },
@@ -197,8 +197,7 @@ describe("WorkspaceDetailMembersPage", () => {
     expect(screen.getByText(/Invited by Alice Anderson/)).toBeInTheDocument()
     // 3 days out from the fake-now clock
     expect(screen.getByText("Expires in 3d")).toBeInTheDocument()
-    // 7 days out
-    expect(screen.getByText("Expires in 7d")).toBeInTheDocument()
+    expect(screen.getByText("Never expires")).toBeInTheDocument()
   })
 
   it("shows the pending-invitations empty state when there are none", async () => {

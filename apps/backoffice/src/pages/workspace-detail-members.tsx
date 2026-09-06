@@ -694,9 +694,9 @@ function InvitationRow({ invitation }: { invitation: WorkspaceInvitation }) {
       <div className="flex shrink-0 items-center gap-3">
         <span
           className="hidden text-xs tabular-nums text-muted-foreground sm:inline"
-          title={formatDateTime(invitation.expiresAt)}
+          title={invitation.expiresAt ? formatDateTime(invitation.expiresAt) : "Never expires"}
         >
-          Expires {formatRelativeFuture(invitation.expiresAt)}
+          {invitation.expiresAt ? `Expires ${formatRelativeFuture(invitation.expiresAt)}` : "Never expires"}
         </span>
       </div>
     </li>

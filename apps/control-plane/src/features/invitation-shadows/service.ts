@@ -8,15 +8,33 @@ import {
   logger,
   type WorkosOrgService,
 } from "@threa/backend-common"
-import { InvitationShadowRepository } from "./repository"
+import { InvitationShadowRepository, type InvitationShadowRow } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
-import { RegionalClaimError, type RegionalClient } from "../../lib/regional-client"
+import { RegionalInvitationError, type RegionalClient } from "../../lib/regional-client"
 import type { InvitationLinkLookupResponse, PendingInvitation, WorkspaceInvitableRole } from "@threa/types"
 // Type-only to avoid a runtime module cycle; injected by the composition root.
 import type { PlatformAdminSyncService } from "../platform-admin"
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex")
+}
+
+const INVITATION_ERROR_MESSAGES = {
+  INVITATION_NOT_FOUND: "Invitation not found",
+  INVITATION_REVOKED: "This invitation has been revoked",
+  INVITATION_EXPIRED: "This invitation has expired",
+  INVITATION_EXHAUSTED: "This invite link has reached its join limit",
+  INVITATION_ALREADY_CLAIMED: "This invite link has already been used",
+  INVITATION_ACCEPTANCE_CONFLICT: "Invitation changed while accepting; try again",
+  INVITATION_PARENT_CONFLICT: "Invitation link changed while accepting; try again",
+  INVITATION_SHADOW_NOT_READY: "Invitations are temporarily unavailable; try again shortly",
+} as const
+
+function invitationErrorMessage(code: string | null | undefined, fallback: string): string {
+  if (code && code in INVITATION_ERROR_MESSAGES) {
+    return INVITATION_ERROR_MESSAGES[code as keyof typeof INVITATION_ERROR_MESSAGES]
+  }
+  return fallback
 }
 
 const WORKOS_ERROR_CODES = {
@@ -62,78 +80,177 @@ export class InvitationShadowService {
       id: row.id,
       workspaceId: row.workspace_id,
       workspaceName: row.workspace_name,
-      expiresAt: row.expires_at.toISOString(),
+      expiresAt: row.expires_at?.toISOString() ?? null,
     }))
   }
 
   /** Accept a single shadow invitation on behalf of a user */
   async acceptShadow(shadowId: string, user: ShadowUser): Promise<{ workspaceId: string }> {
-    // Validate shadow exists and belongs to this user (read-only check)
     const shadow = await InvitationShadowRepository.findById(this.pool, shadowId)
-    if (!shadow) {
-      throw new HttpError("Invitation not found", { status: 404, code: "NOT_FOUND" })
-    }
-    // Email is null for unclaimed link invites — those can't be accepted via
-    // this surface (they require the public claim flow first to bind an email).
-    if (!shadow.email || shadow.email.toLowerCase() !== user.email.toLowerCase()) {
+    if (!shadow || !shadow.email || shadow.email.toLowerCase() !== user.email.toLowerCase()) {
       throw new HttpError("Invitation not found", { status: 404, code: "NOT_FOUND" })
     }
 
-    // Early return for already-terminal states before opening a transaction.
-    if (shadow.status === "accepted") {
-      return { workspaceId: shadow.workspace_id }
-    }
-    if (shadow.status !== "pending") {
-      throw new HttpError("Invitation is no longer available", { status: 409, code: "INVITATION_REVOKED" })
-    }
-
-    // Single transaction: claim → regional call → membership insert.
-    // The regional call is a fast localhost hop, so holding the connection is acceptable.
-    // On any failure the transaction auto-rollbacks — shadow stays pending, no revert needed.
-    const result = await withTransaction(this.pool, async (client) => {
-      // Atomic claim prevents accept-vs-revoke races (INV-20)
-      const claimed = await InvitationShadowRepository.claimPending(client, shadow.id, "accepted")
-      if (!claimed) {
-        // Race: another accept or revoke won between our read and the claim.
-        const current = await InvitationShadowRepository.findById(client, shadow.id)
-        if (current?.status === "accepted") {
-          return { workspaceId: shadow.workspace_id }
-        }
-        throw new HttpError("Invitation is no longer available", { status: 409, code: "INVITATION_REVOKED" })
-      }
-
-      // Provision user on regional backend inside the transaction.
-      // Failure here auto-rollbacks the claim — shadow stays pending for retry.
+    const alreadyMember = await WorkspaceRegistryRepository.isMember(this.pool, shadow.workspace_id, user.id)
+    let insertedMembership = false
+    if (!alreadyMember || shadow.status === "pending") {
       const name = this.resolveDisplayName(user)
-      await this.regionalClient.acceptInvitation(shadow.region, shadow.id, {
-        workosUserId: user.id,
-        email: user.email,
-        name,
-      })
-
-      // Regional call succeeded — commit membership alongside the claim
-      await WorkspaceRegistryRepository.insertMembership(client, shadow.workspace_id, user.id)
-      // An invited platform admin should see backoffice links in the joined
-      // workspace without waiting for the next control-plane restart.
-      await this.platformAdminSync.enqueueIfAdmin(client, user.id)
-      return { workspaceId: shadow.workspace_id }
-    })
-
-    // Best-effort WorkOS org membership sync (no DB connection held — INV-41)
-    const orgId = await this.ensureWorkosOrganization(shadow.workspace_id)
-    if (orgId) {
       try {
-        await this.workosOrgService.ensureOrganizationMembership({
-          organizationId: orgId,
-          userId: user.id,
-          roleSlug: shadow.role_slug,
+        await this.regionalClient.acceptInvitation(shadow.region, shadow.id, {
+          workosUserId: user.id,
+          email: user.email,
+          name,
         })
       } catch (error) {
-        logger.warn({ err: error, workspaceId: shadow.workspace_id }, "Failed to sync WorkOS org membership on accept")
+        if (error instanceof RegionalInvitationError) {
+          const code = error.upstreamCode()
+          throw new HttpError(invitationErrorMessage(code, "Invitation acceptance failed"), {
+            status: error.status,
+            code: code ?? undefined,
+          })
+        }
+        throw error
       }
+
+      insertedMembership = await withTransaction(this.pool, async (client) => {
+        const accepted = await InvitationShadowRepository.recordAccepted(client, {
+          id: shadow.id,
+          workspaceId: shadow.workspace_id,
+          email: user.email,
+          workosUserId: user.id,
+          preserveRevokedStatus: shadow.kind === "link" && shadow.parent_link_id === null,
+        })
+        if (!accepted) throw new Error("Invitation shadow changed during regional acceptance")
+        const inserted = await WorkspaceRegistryRepository.insertMembership(client, shadow.workspace_id, user.id)
+        await this.platformAdminSync.enqueueIfAdmin(client, user.id)
+        return inserted
+      })
     }
 
-    return result
+    if (insertedMembership) await this.syncWorkosMembership(shadow.workspace_id, user.id, shadow.role_slug)
+    return { workspaceId: shadow.workspace_id }
+  }
+
+  async reconcileAccepted(params: {
+    id: string
+    workspaceId: string
+    email: string
+    workosUserId: string
+    parentInvitationId?: string
+    expiresAt?: Date | null
+    maxUses?: number | null
+    useCount?: number
+    revision?: number
+    status?: "pending" | "accepted" | "expired" | "revoked"
+  }): Promise<void> {
+    const result = await withTransaction(this.pool, async (client) => {
+      let parent: InvitationShadowRow | null = null
+      if (params.parentInvitationId) {
+        parent = await InvitationShadowRepository.findByIdForUpdate(client, params.parentInvitationId)
+        if (!parent) {
+          throw new HttpError(`Invitation parent shadow ${params.parentInvitationId} is not mirrored yet`, {
+            status: 503,
+            code: "INVITATION_SHADOW_NOT_READY",
+          })
+        }
+        if (parent.workspace_id !== params.workspaceId || parent.kind !== "link" || parent.parent_link_id) {
+          throw new HttpError(`Invitation parent shadow ${params.parentInvitationId} conflicts`, {
+            status: 409,
+            code: "INVITATION_PARENT_CONFLICT",
+          })
+        }
+      }
+
+      let invitation =
+        params.id === params.parentInvitationId
+          ? parent
+          : await InvitationShadowRepository.findByIdForUpdate(client, params.id)
+      let preserveRevokedStatus = false
+      let revokedChildren: InvitationShadowRow[] = []
+
+      if (parent) {
+        let currentParent = parent
+        if (
+          params.expiresAt !== undefined &&
+          params.maxUses !== undefined &&
+          params.useCount !== undefined &&
+          params.revision !== undefined &&
+          params.status !== undefined
+        ) {
+          currentParent =
+            (await InvitationShadowRepository.applyParentSnapshot(client, parent.id, {
+              expiresAt: params.expiresAt,
+              maxUses: params.maxUses,
+              useCount: params.useCount,
+              revision: params.revision,
+              status: params.status,
+            })) ?? parent
+        }
+        if (currentParent.status === "revoked") {
+          revokedChildren = await InvitationShadowRepository.revokePendingChildren(client, parent.id)
+        }
+        if (!invitation && params.id !== parent.id) {
+          invitation = await InvitationShadowRepository.insertLinkChild(client, {
+            id: params.id,
+            parent: currentParent,
+            email: params.email,
+          })
+        }
+        if (params.id === parent.id) {
+          invitation = await InvitationShadowRepository.setEmailFromLegacyClaim(client, parent.id, params.email)
+          if (!invitation) {
+            throw new HttpError(`Invitation shadow ${params.id} acceptance identity conflicts`, {
+              status: 409,
+              code: "INVITATION_ACCEPTANCE_CONFLICT",
+            })
+          }
+          preserveRevokedStatus = true
+        }
+      }
+
+      if (!invitation) {
+        throw new HttpError(`Invitation shadow ${params.id} is not mirrored yet`, {
+          status: 503,
+          code: "INVITATION_SHADOW_NOT_READY",
+        })
+      }
+      if (
+        invitation.parent_link_id !==
+        (params.parentInvitationId && params.parentInvitationId !== params.id ? params.parentInvitationId : null)
+      ) {
+        throw new HttpError(`Invitation shadow ${params.id} has an unexpected parent`, {
+          status: 409,
+          code: "INVITATION_PARENT_CONFLICT",
+        })
+      }
+      const recorded = await InvitationShadowRepository.recordAccepted(client, {
+        id: params.id,
+        workspaceId: params.workspaceId,
+        email: params.email,
+        workosUserId: params.workosUserId,
+        preserveRevokedStatus,
+      })
+      if (!recorded) {
+        throw new HttpError(`Invitation shadow ${params.id} acceptance identity conflicts`, {
+          status: 409,
+          code: "INVITATION_ACCEPTANCE_CONFLICT",
+        })
+      }
+      const insertedMembership = await WorkspaceRegistryRepository.insertMembership(
+        client,
+        params.workspaceId,
+        params.workosUserId
+      )
+      await this.platformAdminSync.enqueueIfAdmin(client, params.workosUserId)
+      return { recorded, revokedChildren, insertedMembership }
+    })
+
+    for (const child of result.revokedChildren) {
+      if (child.workos_invitation_id) await this.revokeWorkosInvitation(child.id, child.workos_invitation_id)
+    }
+    if (result.insertedMembership) {
+      await this.syncWorkosMembership(params.workspaceId, params.workosUserId, result.recorded.role_slug)
+    }
   }
 
   /**
@@ -150,10 +267,22 @@ export class InvitationShadowService {
     email: string | null
     tokenHash: string | null
     roleSlug: WorkspaceInvitableRole
-    expiresAt: Date
+    expiresAt: Date | null
+    maxUses?: number | null
+    useCount?: number
+    revision?: number
+    status?: "pending" | "accepted" | "expired" | "revoked"
     inviterWorkosUserId?: string
   }) {
-    const shadow = await InvitationShadowRepository.insert(this.pool, params)
+    let maxUses = params.maxUses
+    if (maxUses === undefined) maxUses = params.kind === "link" ? 1 : null
+    const shadow = await InvitationShadowRepository.insert(this.pool, {
+      ...params,
+      maxUses,
+      useCount: params.useCount ?? (params.status === "accepted" ? 1 : 0),
+      revision: params.revision ?? 0,
+      status: params.status ?? "pending",
+    })
 
     // Link invites have no email at creation — defer WorkOS until claim.
     if (params.kind === "link" || !params.email) {
@@ -170,6 +299,8 @@ export class InvitationShadowService {
         organizationId: orgId,
         inviterWorkosUserId: params.inviterWorkosUserId,
         roleSlug: shadow.role_slug,
+        expectedWorkosInvitationId: shadow.workos_invitation_id,
+        workosInvitationExpiresAt: shadow.workos_invitation_expires_at,
       })
     }
 
@@ -189,16 +320,19 @@ export class InvitationShadowService {
     if (row.status === "revoked") {
       throw new HttpError("Invitation revoked", { status: 409, code: "INVITATION_REVOKED" })
     }
-    if (row.status === "accepted") {
+    if (row.revision === 0 && row.status === "accepted") {
       throw new HttpError("Invitation already used", { status: 409, code: "INVITATION_ALREADY_CLAIMED" })
     }
-    if (row.expires_at <= new Date()) {
+    if (row.expires_at && row.expires_at <= new Date()) {
       throw new HttpError("Invitation expired", { status: 409, code: "INVITATION_EXPIRED" })
+    }
+    if (row.max_uses !== null && row.use_count >= row.max_uses) {
+      throw new HttpError("Invitation exhausted", { status: 409, code: "INVITATION_EXHAUSTED" })
     }
 
     return {
       workspaceName: row.workspace_name,
-      expiresAt: row.expires_at.toISOString(),
+      expiresAt: row.expires_at?.toISOString() ?? null,
     }
   }
 
@@ -214,6 +348,9 @@ export class InvitationShadowService {
     if (!shadow) {
       throw new HttpError("Invitation not found", { status: 404, code: "INVITATION_NOT_FOUND" })
     }
+    if (shadow.revision === 0 && shadow.status === "accepted") {
+      throw new HttpError("Invitation already used", { status: 409, code: "INVITATION_ALREADY_CLAIMED" })
+    }
 
     // Look up region from full shadow row (the workspace-joined row drops region)
     const fullShadow = await InvitationShadowRepository.findById(this.pool, shadow.id)
@@ -222,15 +359,21 @@ export class InvitationShadowService {
     }
 
     try {
-      return await this.regionalClient.claimInvitationLink(fullShadow.region, { token, email })
+      const claim = await this.regionalClient.claimInvitationLink(fullShadow.region, { token, email })
+      return claim.alreadyMember ? { ok: true, alreadyMember: claim.alreadyMember } : { ok: true }
     } catch (err) {
-      if (err instanceof RegionalClaimError) {
+      if (err instanceof RegionalInvitationError) {
         const code = err.upstreamCode()
-        if (code === "INVITATION_REVOKED" || code === "INVITATION_EXPIRED" || code === "INVITATION_ALREADY_CLAIMED") {
-          throw new HttpError(code, { status: 409, code })
+        if (
+          code === "INVITATION_REVOKED" ||
+          code === "INVITATION_EXPIRED" ||
+          code === "INVITATION_EXHAUSTED" ||
+          code === "INVITATION_ALREADY_CLAIMED"
+        ) {
+          throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 409, code })
         }
         if (code === "INVITATION_NOT_FOUND") {
-          throw new HttpError(code, { status: 404, code })
+          throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 404, code })
         }
       }
       throw err
@@ -242,18 +385,47 @@ export class InvitationShadowService {
    * link invitation. Mirror the email locally, then trigger the WorkOS
    * invitation so the recipient gets a verification email. Idempotent.
    */
-  async acceptLinkClaim(params: { id: string; email: string; inviterWorkosUserId?: string }): Promise<void> {
-    // Mirror email onto the local shadow first (idempotent).
-    const updated = await InvitationShadowRepository.setEmailFromClaim(this.pool, params.id, params.email, null)
-    if (!updated) {
-      logger.warn({ id: params.id }, "Link claim received for unknown shadow (or non-link kind)")
-      return
-    }
+  async acceptLinkClaim(params: {
+    id: string
+    childInvitationId?: string
+    email: string
+    expiresAt?: Date | null
+    maxUses?: number | null
+    useCount?: number
+    revision?: number
+    inviterWorkosUserId?: string
+  }): Promise<void> {
+    const updated = await withTransaction(this.pool, async (client) => {
+      const parent = await InvitationShadowRepository.findByIdForUpdate(client, params.id)
+      if (!parent || parent.kind !== "link" || parent.parent_link_id) return null
 
-    if (updated.workos_invitation_id) {
-      // Idempotent replay: WorkOS invite already sent. Nothing to do.
+      if (!params.childInvitationId) {
+        return InvitationShadowRepository.setEmailFromLegacyClaim(client, params.id, params.email)
+      }
+
+      if (params.revision !== undefined && params.useCount !== undefined && params.maxUses !== undefined) {
+        await InvitationShadowRepository.applyParentSnapshot(client, params.id, {
+          expiresAt: params.expiresAt ?? null,
+          maxUses: params.maxUses,
+          useCount: params.useCount,
+          revision: params.revision,
+          status: parent.status as "pending" | "accepted" | "expired" | "revoked",
+        })
+      }
+      const currentParent = (await InvitationShadowRepository.findById(client, params.id)) ?? parent
+      return InvitationShadowRepository.insertLinkChild(client, {
+        id: params.childInvitationId,
+        parent: currentParent,
+        email: params.email,
+        inviterWorkosUserId: params.inviterWorkosUserId,
+      })
+    })
+
+    if (!updated) {
+      logger.warn({ id: params.id }, "Link claim received for unknown parent shadow")
       return
     }
+    if (updated.status !== "pending") return
 
     const orgId = await this.ensureWorkosOrganization(updated.workspace_id)
     if (!orgId || !params.inviterWorkosUserId) {
@@ -270,6 +442,8 @@ export class InvitationShadowService {
       organizationId: orgId,
       inviterWorkosUserId: params.inviterWorkosUserId,
       roleSlug: updated.role_slug,
+      expectedWorkosInvitationId: updated.workos_invitation_id,
+      workosInvitationExpiresAt: updated.workos_invitation_expires_at,
     })
   }
 
@@ -279,15 +453,56 @@ export class InvitationShadowService {
     organizationId: string
     inviterWorkosUserId: string
     roleSlug: WorkspaceInvitableRole
+    expectedWorkosInvitationId: string | null
+    workosInvitationExpiresAt: Date | null
   }): Promise<void> {
     try {
-      const workosInvitation = await this.workosOrgService.sendInvitation({
-        organizationId: params.organizationId,
-        email: params.email,
-        inviterUserId: params.inviterWorkosUserId,
-        roleSlug: params.roleSlug,
-      })
-      await InvitationShadowRepository.setWorkosInvitationId(this.pool, params.shadowId, workosInvitation.id)
+      if (params.workosInvitationExpiresAt && params.workosInvitationExpiresAt > new Date()) return
+
+      let workosInvitation: { id: string; expiresAt: Date }
+      if (params.expectedWorkosInvitationId) {
+        const existing = await this.workosOrgService.getInvitation(params.expectedWorkosInvitationId)
+        if (existing.state === "accepted") return
+        if (existing.state === "pending" && existing.expiresAt > new Date()) {
+          await InvitationShadowRepository.storeWorkosInvitation(this.pool, {
+            id: params.shadowId,
+            expectedWorkosInvitationId: params.expectedWorkosInvitationId,
+            workosInvitationId: existing.id,
+            workosInvitationExpiresAt: existing.expiresAt,
+          })
+          return
+        }
+        workosInvitation =
+          existing.state === "pending"
+            ? await this.workosOrgService.resendInvitation(existing.id)
+            : await this.workosOrgService.sendInvitation({
+                organizationId: params.organizationId,
+                email: params.email,
+                inviterUserId: params.inviterWorkosUserId,
+                roleSlug: params.roleSlug,
+              })
+      } else {
+        workosInvitation = await this.workosOrgService.sendInvitation({
+          organizationId: params.organizationId,
+          email: params.email,
+          inviterUserId: params.inviterWorkosUserId,
+          roleSlug: params.roleSlug,
+        })
+      }
+
+      let stored: boolean
+      try {
+        stored = await InvitationShadowRepository.storeWorkosInvitation(this.pool, {
+          id: params.shadowId,
+          expectedWorkosInvitationId: params.expectedWorkosInvitationId,
+          workosInvitationId: workosInvitation.id,
+          workosInvitationExpiresAt: workosInvitation.expiresAt,
+        })
+      } catch (error) {
+        await this.revokeWorkosInvitation(params.shadowId, workosInvitation.id)
+        throw error
+      }
+      if (!stored) await this.revokeWorkosInvitation(params.shadowId, workosInvitation.id)
     } catch (error) {
       const errorCode = getWorkosErrorCode(error)
       const isKnownStateConflict =
@@ -300,6 +515,7 @@ export class InvitationShadowService {
         )
       } else {
         logger.error({ err: error, email: params.email, shadowId: params.shadowId }, "Failed to send WorkOS invitation")
+        throw error
       }
     }
   }
@@ -309,24 +525,82 @@ export class InvitationShadowService {
    * if one was sent. Uses atomic claim to prevent accept/revoke races (INV-20).
    */
   async updateStatus(id: string, status: "accepted" | "revoked") {
-    // Atomic claim: prevents race where accept commits membership while revoke wins status
-    const claimed = await InvitationShadowRepository.claimPending(this.pool, id, status)
-    if (!claimed) return false
+    const result = await withTransaction(this.pool, async (client) => {
+      const claimed = await InvitationShadowRepository.claimPending(client, id, status)
+      if (!claimed) return null
+      const revokedChildren =
+        status === "revoked" && claimed.kind === "link" && claimed.parent_link_id === null
+          ? await InvitationShadowRepository.revokePendingChildren(client, id)
+          : []
+      return { claimed, revokedChildren }
+    })
+    if (!result) return false
 
-    // Best-effort WorkOS revocation after the local claim is durable
-    if (status === "revoked" && claimed.workos_invitation_id) {
-      try {
-        await this.workosOrgService.revokeInvitation(claimed.workos_invitation_id)
-      } catch (error) {
-        const errorCode = getWorkosErrorCode(error)
-        if (errorCode === WORKOS_ERROR_CODES.INVITE_NOT_PENDING) {
-          logger.warn({ errorCode, shadowId: id }, "WorkOS state conflict when revoking invitation (noop)")
-        } else {
-          logger.error({ err: error, shadowId: id }, "Failed to revoke WorkOS invitation")
-        }
-      }
+    if (status === "revoked" && result.claimed.workos_invitation_id) {
+      await this.revokeWorkosInvitation(id, result.claimed.workos_invitation_id)
+    }
+    for (const child of result.revokedChildren) {
+      if (child.workos_invitation_id) await this.revokeWorkosInvitation(child.id, child.workos_invitation_id)
     }
 
+    return true
+  }
+
+  private async syncWorkosMembership(
+    workspaceId: string,
+    workosUserId: string,
+    roleSlug: WorkspaceInvitableRole
+  ): Promise<void> {
+    const orgId = await this.ensureWorkosOrganization(workspaceId)
+    if (!orgId) return
+    try {
+      await this.workosOrgService.ensureOrganizationMembership({
+        organizationId: orgId,
+        userId: workosUserId,
+        roleSlug,
+      })
+    } catch (error) {
+      logger.warn({ err: error, workspaceId }, "Failed to sync WorkOS org membership on accept")
+    }
+  }
+
+  private async revokeWorkosInvitation(shadowId: string, workosInvitationId: string): Promise<void> {
+    try {
+      await this.workosOrgService.revokeInvitation(workosInvitationId)
+    } catch (error) {
+      const errorCode = getWorkosErrorCode(error)
+      if (errorCode === WORKOS_ERROR_CODES.INVITE_NOT_PENDING) {
+        logger.warn({ errorCode, shadowId }, "WorkOS state conflict when revoking invitation (noop)")
+      } else {
+        logger.error({ err: error, shadowId }, "Failed to revoke WorkOS invitation")
+      }
+    }
+  }
+
+  async updateLinkSnapshot(
+    id: string,
+    snapshot: {
+      expiresAt: Date | null
+      maxUses: number | null
+      useCount: number
+      revision: number
+      status: "pending" | "accepted" | "expired" | "revoked"
+    }
+  ): Promise<boolean> {
+    const result = await withTransaction(this.pool, async (client) => {
+      const parent = await InvitationShadowRepository.findByIdForUpdate(client, id)
+      if (!parent || parent.kind !== "link" || parent.parent_link_id) return null
+      const updated = await InvitationShadowRepository.applyParentSnapshot(client, id, snapshot)
+      if (!updated) return null
+      const revokedChildren =
+        updated.status === "revoked" ? await InvitationShadowRepository.revokePendingChildren(client, id) : []
+      return { updated, revokedChildren }
+    })
+    if (!result) return false
+
+    for (const child of result.revokedChildren) {
+      if (child.workos_invitation_id) await this.revokeWorkosInvitation(child.id, child.workos_invitation_id)
+    }
     return true
   }
 

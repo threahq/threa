@@ -81,7 +81,7 @@ export class RegionalClient {
     if (!res.ok) {
       const body = await res.text().catch(() => "")
       logger.error({ region, invitationId, status: res.status, body }, "Regional invitation acceptance failed")
-      throw new Error(`Regional backend returned ${res.status}: ${body}`)
+      throw new RegionalInvitationError(res.status, body)
     }
 
     return res.json()
@@ -248,20 +248,20 @@ export class RegionalClient {
     if (!res.ok) {
       const body = await res.text().catch(() => "")
       logger.error({ region, status: res.status, body }, "Regional invitation link claim failed")
-      throw new RegionalClaimError(res.status, body)
+      throw new RegionalInvitationError(res.status, body)
     }
 
     return res.json()
   }
 }
 
-export class RegionalClaimError extends Error {
+export class RegionalInvitationError extends Error {
   constructor(
     public readonly status: number,
     public readonly body: string
   ) {
     super(`Regional backend returned ${status}: ${body}`)
-    this.name = "RegionalClaimError"
+    this.name = "RegionalInvitationError"
   }
 
   /** Try to parse the upstream `code` from the JSON body. */

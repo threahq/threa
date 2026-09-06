@@ -11,6 +11,7 @@ export {
 export type {
   WorkosOrgService,
   WorkosAppInvitation,
+  WorkosInvitationSummary,
   WorkosUserSummary,
   WorkosMembershipEvent,
   WorkosMirrorEventType,

@@ -1914,7 +1914,7 @@ export interface PendingInvitation {
   id: string
   workspaceId: string
   workspaceName: string
-  expiresAt: string
+  expiresAt: string | null
 }
 
 export interface SendInvitationsInput {
@@ -1945,7 +1945,7 @@ export interface CreateInvitationLinkResponse {
 
 export interface InvitationLinkLookupResponse {
   workspaceName: string
-  expiresAt: string
+  expiresAt: string | null
 }
 
 export interface ClaimInvitationLinkInput {
