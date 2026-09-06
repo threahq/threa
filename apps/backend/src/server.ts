@@ -94,7 +94,7 @@ import {
   registerAttachmentExtractionSearchConfigBackfill,
 } from "./features/attachments"
 import { MessageFormatter } from "./lib/ai/message-formatter"
-import { SearchService, SearchQueryExpander, StubQueryExpander } from "./features/search"
+import { SearchService, SearchQueryLogService, SearchQueryExpander, StubQueryExpander } from "./features/search"
 import {
   MemoService,
   MemoExplorerService,
@@ -382,6 +382,7 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubReranker()
     : new Reranker({ ai, subject: "chat messages", functionId: "search-rerank" })
   const searchService = new SearchService({ pool, embeddingService, queryExpander, reranker: messageReranker })
+  const searchQueryLogService = new SearchQueryLogService(pool)
   const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
 
   // Tiered concurrency budgets: each tier has its own in-flight cap so slow
@@ -853,6 +854,7 @@ export async function startServer(): Promise<ServerInstance> {
     eventService,
     attachmentService,
     searchService,
+    searchQueryLogService,
     memoExplorerService,
     conversationService,
     boundaryExtractionService,

@@ -87,4 +87,5 @@ export {
   callParticipantId,
   callEndpointId,
   perfCaptureId,
+  searchQueryLogId,
 } from "@threa/backend-common"

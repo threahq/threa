@@ -8,7 +8,13 @@ import {
   useWorkspaceUsers,
 } from "@/stores/workspace-store"
 import { parseSearchQuery, type ParsedFilter } from "@/lib/search-query-parser"
-import type { ConversationSearchResult, SearchFilters, SearchResultItem } from "@/api"
+import {
+  recordSearchClick,
+  type ConversationSearchResult,
+  type SearchClickTarget,
+  type SearchFilters,
+  type SearchResultItem,
+} from "@/api"
 import type { ArchiveStatus } from "@/api"
 import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threa/types"
 
@@ -36,6 +42,8 @@ export interface MessageSearchState {
   isSearchingDeeper: boolean
   /** Runs a deep search (query rewrite + rerank) now, skipping the debounce. Only user intent calls this. */
   searchDeeper: () => void
+  /** Attributes an opened result to the logged search; a no-op unless the user opted into query logging. */
+  recordResultClick: (target: SearchClickTarget) => void
 }
 
 /**
@@ -50,7 +58,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
-  const { results, conversations, isLoading, error, search, clear } = useSearch({
+  const { results, conversations, queryLogId, isLoading, error, search, clear } = useSearch({
     workspaceId,
     limit: SEARCH_RESULT_LIMIT,
   })
@@ -179,6 +187,16 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     })
   }, [canSearchDeeper, semanticText, search])
 
+  const recordResultClick = useCallback(
+    (target: SearchClickTarget) => {
+      if (!queryLogId) return
+      recordSearchClick(workspaceId, queryLogId, target).catch((err: unknown) => {
+        console.warn("Failed to record search click", err)
+      })
+    },
+    [workspaceId, queryLogId]
+  )
+
   return {
     results,
     conversations,
@@ -192,5 +210,6 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     canSearchDeeper,
     isSearchingDeeper: deepRequested && isLoading,
     searchDeeper,
+    recordResultClick,
   }
 }

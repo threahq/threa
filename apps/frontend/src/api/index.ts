@@ -22,11 +22,13 @@ export {
 } from "./commands"
 export {
   searchMessages,
+  recordSearchClick,
   type SearchFilters,
   type SearchRequest,
   type SearchResultItem,
   type ConversationSearchResult,
   type SearchResponse,
+  type SearchClickTarget,
   type ArchiveStatus,
 } from "./search"
 export {

@@ -78,6 +78,7 @@ export function SearchPage() {
     canSearchDeeper,
     isSearchingDeeper,
     searchDeeper,
+    recordResultClick,
   } = useMessageSearch(workspaceId ?? "", localQuery)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
@@ -177,7 +178,13 @@ export function SearchPage() {
           )}
 
           {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} />}
-          {hasQuery && !displayError && <ConversationMatches workspaceId={workspaceId} conversations={conversations} />}
+          {hasQuery && !displayError && (
+            <ConversationMatches
+              workspaceId={workspaceId}
+              conversations={conversations}
+              onSelect={(conversation) => recordResultClick({ kind: "conversation", id: conversation.id })}
+            />
+          )}
 
           {hasQuery && isLoading && !hasResults && (
             <div className="flex flex-col gap-2 py-1">
@@ -196,7 +203,10 @@ export function SearchPage() {
               results={results}
               terms={terms}
               activeResultId={activeResultId}
-              onResultSelect={(result) => setActiveResultId(result.id)}
+              onResultSelect={(result) => {
+                setActiveResultId(result.id)
+                recordResultClick({ kind: "message", id: result.id })
+              }}
               mode={displayMode}
             />
           )}

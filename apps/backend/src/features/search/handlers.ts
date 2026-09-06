@@ -2,12 +2,15 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { SearchService } from "./service"
+import type { SearchQueryLogService } from "./query-log-service"
 import type { FeatureFlagService } from "../feature-flags"
 import type { ConversationSearchResult, SearchResult } from "./repository"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
+import { searchRankingForFlag } from "./config"
+import { logger } from "../../lib/logger"
 import { validateRequest } from "../../lib/validation"
 import { setAuditSubjects } from "../access-log"
-import { MAX_SEARCH_PHRASES, STREAM_TYPES } from "@threa/types"
+import { MAX_SEARCH_PHRASES, SEARCH_CLICK_KINDS, STREAM_TYPES } from "@threa/types"
 
 const ARCHIVE_STATUSES = ["active", "archived"] as const
 
@@ -24,6 +27,15 @@ export const searchQuerySchema = z.object({
   exact: z.boolean().optional(), // Use ILIKE substring matching instead of full-text
   limit: z.coerce.number().int().min(1).max(100).optional(),
   deep: z.boolean().optional(), // Rewrite into alternative phrasings, fuse, and rerank
+})
+
+export const searchClickSchema = z.object({
+  kind: z.enum(SEARCH_CLICK_KINDS),
+  id: z.string().min(1),
+})
+
+const searchClickParamsSchema = z.object({
+  id: z.string().min(1),
 })
 
 export function serializeSearchResult(result: SearchResult) {
@@ -62,10 +74,11 @@ export function serializeConversationSearchResult(result: ConversationSearchResu
 interface Dependencies {
   pool: Pool
   searchService: SearchService
+  searchQueryLogService: SearchQueryLogService
   featureFlagService: FeatureFlagService
 }
 
-export function createSearchHandlers({ pool, searchService, featureFlagService }: Dependencies) {
+export function createSearchHandlers({ pool, searchService, searchQueryLogService, featureFlagService }: Dependencies) {
   return {
     async search(req: Request, res: Response) {
       const userId = req.user!.id
@@ -96,7 +109,7 @@ export function createSearchHandlers({ pool, searchService, featureFlagService }
       if (inStreams && inStreams.length > 0) {
         resolvedInStreamIds = await resolveInFilterStreamIds(pool, workspaceId, userId, inStreams)
         if (resolvedInStreamIds.length === 0) {
-          res.json({ results: [], conversations: [], excludedE2eStreamCount: 0 })
+          res.json({ results: [], conversations: [], excludedE2eStreamCount: 0, queryLogId: null })
           return
         }
       }
@@ -112,10 +125,11 @@ export function createSearchHandlers({ pool, searchService, featureFlagService }
       }
 
       // Resolve access before calling the auth-agnostic search service
-      const [accessibleStreamIds, searchFlag] = await Promise.all([
+      const [accessibleStreamIds, flags] = await Promise.all([
         resolveUserAccessibleStreamIds(pool, workspaceId, userId, filters),
-        featureFlagService.getFlag(workspaceId, req.user!.workosUserId, "search"),
+        featureFlagService.getFlags(workspaceId, req.user!.workosUserId),
       ])
+      const searchFlag = flags.search
 
       const { results, conversations, excludedE2eStreamCount } = await searchService.search({
         workspaceId,
@@ -134,11 +148,66 @@ export function createSearchHandlers({ pool, searchService, featureFlagService }
         ...conversations.map((c) => ({ type: "conversation", id: c.id })),
       ])
 
+      // Consent is the user's or workspace's flag, resolved here, never sent by the client.
+      let queryLogId: string | null = null
+      if (flags.searchQueryLog === "on") {
+        try {
+          queryLogId = (
+            await searchQueryLogService.record({
+              workspaceId,
+              userId,
+              query,
+              params: {
+                phrases,
+                from,
+                with: withParticipants,
+                in: inStreams,
+                type,
+                status,
+                before,
+                after,
+                exact,
+                limit,
+              },
+              mode: deep ? "deep" : "normal",
+              ranking: searchRankingForFlag(searchFlag),
+              resultIds: { messages: results.map((r) => r.id), conversations: conversations.map((c) => c.id) },
+            })
+          ).id
+        } catch (err) {
+          // The log is a side channel: the search already succeeded, so a failed write must not take it down.
+          logger.error({ err, workspaceId, userId }, "Failed to record search query log")
+        }
+      }
+
       res.json({
         results: results.map(serializeSearchResult),
         conversations: conversations.map(serializeConversationSearchResult),
         excludedE2eStreamCount,
+        queryLogId,
       })
+    },
+
+    async recordClick(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { id } = validateRequest(searchClickParamsSchema, req.params)
+      const { kind, id: targetId } = validateRequest(searchClickSchema, req.body)
+
+      // Consent is re-checked per click: a log id from before the flag was
+      // switched off must not keep writing behavioural data.
+      const flags = await featureFlagService.getFlags(workspaceId, req.user!.workosUserId)
+      if (flags.searchQueryLog !== "on") {
+        res.status(204).end()
+        return
+      }
+
+      await searchQueryLogService.recordClick({ workspaceId, userId, id, kind, targetId })
+      setAuditSubjects(res, [
+        { type: "search_query_log", id },
+        { type: kind, id: targetId },
+      ])
+      res.status(204).end()
     },
   }
 }

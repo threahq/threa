@@ -14,6 +14,8 @@ interface SearchOptions {
 interface UseSearchReturn {
   results: SearchResultItem[]
   conversations: ConversationSearchResult[]
+  /** Non-null only when the backend logged this search (opt-in `searchQueryLog` flag). */
+  queryLogId: string | null
   isLoading: boolean
   error: Error | null
   search: (query: string, filters?: SearchFilters, phrases?: string[], options?: SearchOptions) => Promise<void>
@@ -23,6 +25,7 @@ interface UseSearchReturn {
 export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchReturn {
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [conversations, setConversations] = useState<ConversationSearchResult[]>([])
+  const [queryLogId, setQueryLogId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   // Monotonic request counter so a slow earlier response can't clobber the
@@ -40,11 +43,13 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
         if (requestId !== requestIdRef.current) return
         setResults(response.results)
         setConversations(response.conversations)
+        setQueryLogId(response.queryLogId)
       } catch (e) {
         if (requestId !== requestIdRef.current) return
         setError(e instanceof Error ? e : new Error("Search failed"))
         setResults([])
         setConversations([])
+        setQueryLogId(null)
       } finally {
         if (requestId === requestIdRef.current) {
           setIsLoading(false)
@@ -59,9 +64,10 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
     requestIdRef.current++
     setResults([])
     setConversations([])
+    setQueryLogId(null)
     setError(null)
     setIsLoading(false)
   }, [])
 
-  return { results, conversations, isLoading, error, search, clear }
+  return { results, conversations, queryLogId, isLoading, error, search, clear }
 }

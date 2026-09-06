@@ -793,6 +793,8 @@ export {
   type AsideDraftScope,
   MAX_DRAFTS_PER_USER,
   MAX_SEARCH_PHRASES,
+  SEARCH_CLICK_KINDS,
+  type SearchClickKind,
 } from "./api"
 
 // Open-an-aside client-action id (single source of truth)

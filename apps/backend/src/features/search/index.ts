@@ -1,6 +1,13 @@
 export { createSearchHandlers, serializeSearchResult, serializeConversationSearchResult } from "./handlers"
 export { resolveUserAccessibleStreamIds } from "./access"
 export { SearchService } from "./service"
+export { SearchQueryLogService, type RecordSearchQueryInput } from "./query-log-service"
+export {
+  SearchQueryLogRepository,
+  type SearchQueryLogRow,
+  type SearchQueryMode,
+  type SearchQueryLogResultIds,
+} from "./query-log-repository"
 export { SearchRepository } from "./repository"
 export { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "./config"
 export { SearchQueryExpander } from "./query-expansion"

@@ -110,6 +110,7 @@ export const ACCESS_LOG_OPERATIONS = [
   // Search
   "search.messages",
   "search.memos",
+  "search.log_click",
   // Memos
   "memos.read",
   "memos.update",

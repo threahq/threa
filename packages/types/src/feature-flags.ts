@@ -64,6 +64,10 @@ export const FEATURE_FLAGS = {
   // gate, deep mode, memo and conversation groups, and the matching agent tool
   // guidance. "off" keeps the pre-rework ranking on every surface.
   search: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+  // Opt-in search query logging: "on" stores each message-search request and
+  // the result the user opened (`search_query_log`) to seed a retrieval eval
+  // set. Off writes nothing; the search response says whether a row exists.
+  searchQueryLog: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS
