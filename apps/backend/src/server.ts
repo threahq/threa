@@ -381,9 +381,15 @@ export async function startServer(): Promise<ServerInstance> {
   const messageReranker = config.useStubAI
     ? new StubReranker()
     : new Reranker({ ai, subject: "chat messages", functionId: "search-rerank" })
-  const searchService = new SearchService({ pool, embeddingService, queryExpander, reranker: messageReranker })
-  const searchQueryLogService = new SearchQueryLogService(pool)
   const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
+  const searchService = new SearchService({
+    pool,
+    embeddingService,
+    queryExpander,
+    reranker: messageReranker,
+    memoSearch: memoExplorerService,
+  })
+  const searchQueryLogService = new SearchQueryLogService(pool)
 
   // Tiered concurrency budgets: each tier has its own in-flight cap so slow
   // heavy work (PDF/image/memo) cannot monopolize the pool and starve

@@ -75,3 +75,6 @@ export const CONVERSATION_SEARCH_LIMIT = 3
  * query would surface its three nearest conversations, related or not.
  */
 export const CONVERSATION_SEARCH_MAX_DISTANCE = 0.75
+
+/** Memo hits folded into the cluster list; matches the memo card count the search page showed before clusters. */
+export const MEMO_SEARCH_LIMIT = 3

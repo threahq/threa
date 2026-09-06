@@ -182,16 +182,17 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       embeddingService,
     })
     const generalResearcher = new GeneralResearcher({ ai: ctx.ai, configResolver: ctx.configResolver })
+    const memoExplorerService = new MemoExplorerService({
+      pool: ctx.pool,
+      embeddingService,
+      reranker: new Reranker({ ai: ctx.ai, subject: "knowledge memos", functionId: "memo-rerank" }),
+    })
     const searchService = new SearchService({
       pool: ctx.pool,
       embeddingService,
       queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
       reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
-    })
-    const memoExplorerService = new MemoExplorerService({
-      pool: ctx.pool,
-      embeddingService,
-      reranker: new Reranker({ ai: ctx.ai, subject: "knowledge memos", functionId: "memo-rerank" }),
+      memoSearch: memoExplorerService,
     })
     const conversationSummaryService = new ConversationSummaryService({
       ai: ctx.ai,

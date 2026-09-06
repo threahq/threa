@@ -107,7 +107,7 @@ function serializeMemo(memo: Memo) {
   }
 }
 
-function serializeMemoResult(result: MemoExplorerResult) {
+export function serializeMemoResult(result: MemoExplorerResult) {
   return {
     memo: serializeMemo(result.memo),
     distance: result.distance,

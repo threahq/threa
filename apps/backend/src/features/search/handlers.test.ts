@@ -44,7 +44,9 @@ function createHandlers(overrides: { searchQueryLog?: "on" | "off"; record?: Sea
   const handlers = createSearchHandlers({
     pool: {} as Pool,
     searchService: {
-      search: mock(() => Promise.resolve({ results: [], conversations: [], excludedE2eStreamCount: 0 })),
+      searchClusters: mock(() =>
+        Promise.resolve({ results: [], conversations: [], memos: [], clusters: [], excludedE2eStreamCount: 0 })
+      ),
     } as unknown as SearchService,
     searchQueryLogService: { record, recordClick } as unknown as SearchQueryLogService,
     featureFlagService: {
@@ -66,7 +68,14 @@ describe("search handlers", () => {
 
     await handlers.search(createRequest({ body: { query: "deploy checklist" } }) as never, res as never)
 
-    expect(res.body).toEqual({ results: [], conversations: [], excludedE2eStreamCount: 0, queryLogId: null })
+    expect(res.body).toEqual({
+      results: [],
+      conversations: [],
+      clusters: [],
+      memos: [],
+      excludedE2eStreamCount: 0,
+      queryLogId: null,
+    })
   })
 
   it("records nothing for a click once the user's consent is off, and still answers 204", async () => {
@@ -116,7 +125,7 @@ describe("search handlers", () => {
 
     const err = await handlers
       .recordClick(
-        createRequest({ params: { id: "sqlog_1" }, body: { kind: "memo", id: "memo_1" } }) as never,
+        createRequest({ params: { id: "sqlog_1" }, body: { kind: "attachment", id: "att_1" } }) as never,
         res as never
       )
       .then(

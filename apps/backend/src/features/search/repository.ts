@@ -60,6 +60,22 @@ interface SearchResultRow {
   rank: number
 }
 
+/**
+ * Non-deleted span of a conversation aliased `h` (needs `h.message_ids`):
+ * count, opener id, first/last timestamps. A conversation whose messages
+ * are all deleted yields count 0 and null bounds.
+ */
+const CONVERSATION_SPAN_LATERAL = `
+      CROSS JOIN LATERAL (
+        SELECT
+          count(*)::int AS message_count,
+          (array_agg(m.id ORDER BY m.sequence ASC))[1] AS first_message_id,
+          min(m.created_at) AS first_message_at,
+          max(m.created_at) AS last_message_at
+        FROM messages m
+        WHERE m.id = ANY(h.message_ids) AND m.deleted_at IS NULL
+      ) span`
+
 function mapRowToSearchResult(row: SearchResultRow): SearchResult {
   return {
     id: row.id,
@@ -150,6 +166,19 @@ export interface ConversationSearchParams {
   filters: ResolvedFilters
   limit: number
   maxDistance: number
+}
+
+/** A conversation reached through one of its messages rather than by topic, so it carries no distance. */
+export type ConversationForMessage = Omit<ConversationSearchResult, "distance">
+
+export interface ConversationsForMessagesParams {
+  workspaceId: string
+  messageIds: string[]
+}
+
+export interface MessagesByIdsParams {
+  ids: string[]
+  streamIds: string[]
 }
 
 export interface HybridSearchParams {
@@ -521,15 +550,7 @@ export const SearchRepository = {
         span.first_message_at,
         span.last_message_at
       FROM hits h
-      CROSS JOIN LATERAL (
-        SELECT
-          count(*)::int AS message_count,
-          (array_agg(m.id ORDER BY m.sequence ASC))[1] AS first_message_id,
-          min(m.created_at) AS first_message_at,
-          max(m.created_at) AS last_message_at
-        FROM messages m
-        WHERE m.id = ANY(h.message_ids) AND m.deleted_at IS NULL
-      ) span
+      ${sql.raw(CONVERSATION_SPAN_LATERAL)}
       WHERE h.distance <= ${maxDistance}
       ORDER BY h.distance ASC
     `)
@@ -547,6 +568,104 @@ export const SearchRepository = {
       lastMessageAt: row.last_message_at,
       distance: Number(row.distance),
     }))
+  },
+
+  /**
+   * The conversation that owns each message as primary, keyed by message id
+   * (a message belongs to at most one primary conversation). Messages with
+   * no conversation are absent from the map. Spans exclude deleted messages.
+   */
+  async conversationsForMessages(
+    db: Querier,
+    params: ConversationsForMessagesParams
+  ): Promise<Map<string, ConversationForMessage>> {
+    const { workspaceId, messageIds } = params
+    if (messageIds.length === 0) {
+      return new Map()
+    }
+
+    const result = await db.query<Omit<ConversationSearchRow, "distance"> & { matched_message_id: string }>(sql`
+      WITH hits AS (
+        SELECT
+          c.id,
+          c.stream_id,
+          c.topic_summary,
+          c.summary,
+          c.status,
+          c.message_ids,
+          c.participant_ids
+        FROM conversations c
+        WHERE c.workspace_id = ${workspaceId}
+          AND c.message_ids && ${messageIds}::text[]
+      )
+      SELECT
+        h.id,
+        h.stream_id,
+        h.topic_summary,
+        h.summary,
+        h.status,
+        span.message_count,
+        h.participant_ids,
+        span.first_message_id,
+        span.first_message_at,
+        span.last_message_at,
+        matched.message_id AS matched_message_id
+      FROM hits h
+      ${sql.raw(CONVERSATION_SPAN_LATERAL)}
+      CROSS JOIN LATERAL unnest(h.message_ids) AS matched(message_id)
+      WHERE matched.message_id = ANY(${messageIds}::text[])
+    `)
+
+    const byMessageId = new Map<string, ConversationForMessage>()
+    for (const row of result.rows) {
+      byMessageId.set(row.matched_message_id, {
+        id: row.id,
+        streamId: row.stream_id,
+        topicSummary: row.topic_summary,
+        summary: row.summary,
+        status: row.status,
+        messageCount: Number(row.message_count),
+        participantIds: row.participant_ids,
+        firstMessageId: row.first_message_id,
+        firstMessageAt: row.first_message_at,
+        lastMessageAt: row.last_message_at,
+      })
+    }
+    return byMessageId
+  },
+
+  /**
+   * Specific non-deleted messages as search rows (rank 0), restricted to the
+   * given streams so a caller cannot reach content outside its access scope.
+   * Ordered by sequence so a memo's source messages read in posting order.
+   */
+  async messagesByIds(db: Querier, params: MessagesByIdsParams): Promise<SearchResult[]> {
+    const { ids, streamIds } = params
+    if (ids.length === 0 || streamIds.length === 0) {
+      return []
+    }
+
+    const result = await db.query<SearchResultRow>(sql`
+      SELECT
+        m.id,
+        m.stream_id,
+        m.content_markdown,
+        m.content_json,
+        m.author_id,
+        m.author_type,
+        m.sequence,
+        ${sql.raw(REPLY_COUNT_SUBQUERY("m"))},
+        m.metadata,
+        m.edited_at,
+        m.created_at,
+        0 AS rank
+      FROM messages m
+      WHERE m.id = ANY(${ids}::text[])
+        AND m.stream_id = ANY(${streamIds}::text[])
+        AND m.deleted_at IS NULL
+      ORDER BY m.sequence ASC
+    `)
+    return result.rows.map(mapRowToSearchResult)
   },
 
   /**

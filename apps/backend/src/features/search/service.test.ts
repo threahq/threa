@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { EmbeddingServiceLike, RerankerLike } from "../memos"
 import { SearchRepository, type SearchResult } from "./repository"
-import { SearchService, fuseRankedLists } from "./service"
+import { SearchService, fuseRankedLists, type MemoSearchLike } from "./service"
 import { SEARCH_DEEP_CANDIDATE_POOL, SEARCH_RERANK_CANDIDATE_LIMIT } from "./config"
 import type { QueryExpanderLike } from "./query-expansion"
 
@@ -17,6 +17,7 @@ function makeService(
     embeddingService?: EmbeddingServiceLike
     queryExpander?: QueryExpanderLike
     reranker?: RerankerLike
+    memoSearch?: MemoSearchLike
   } = {}
 ) {
   return new SearchService({
@@ -24,6 +25,7 @@ function makeService(
     embeddingService: overrides.embeddingService ?? { embed: async () => [], embedBatch: async () => [] },
     queryExpander: overrides.queryExpander ?? inertExpander,
     reranker: overrides.reranker ?? identityReranker,
+    memoSearch: overrides.memoSearch ?? { search: async () => [] },
   })
 }
 
@@ -332,5 +334,66 @@ describe("SearchService with the search flag off", () => {
 
     expect(hybridSearch).toHaveBeenCalledWith(pool, expect.objectContaining({ ranking: "improved" }))
     expect(conversationSearch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("SearchService memo leg", () => {
+  afterEach(() => {
+    pool.query.mockClear()
+    mock.restore()
+  })
+
+  const embedding = { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) }
+
+  test("should search memos with the query, phrases, stream scope and date filters, and fold the hit into a row", async () => {
+    spyOn(SearchRepository, "hybridSearch").mockResolvedValue([fakeResult("msg_1")])
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+    spyOn(SearchRepository, "conversationsForMessages").mockResolvedValue(new Map())
+    const messagesByIds = spyOn(SearchRepository, "messagesByIds").mockResolvedValue([fakeResult("msg_2")])
+    const memo = {
+      memo: { id: "memo_1", sourceMessageIds: ["msg_1", "msg_2"] },
+      distance: 0.1,
+      sourceStream: null,
+      rootStream: null,
+    } as never
+    const search = mock(async () => [memo])
+    const before = new Date("2026-02-01T00:00:00Z")
+    const service = makeService({ embeddingService: embedding, memoSearch: { search } })
+
+    const { memos, clusters } = await service.searchClusters({
+      searchFlag: "on",
+      workspaceId: "ws_1",
+      permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
+      query: "launch date",
+      phrases: ["mid June"],
+      filters: { before },
+    })
+
+    expect(search).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
+      query: "launch date mid June",
+      filters: { before, after: undefined },
+      limit: 3,
+    })
+    expect(messagesByIds).toHaveBeenCalledWith(pool, { ids: ["msg_2"], streamIds: ["stream_1"] })
+    expect(memos).toEqual([memo])
+    expect(clusters).toEqual([
+      expect.objectContaining({ hits: [fakeResult("msg_1")], memoIds: ["memo_1"], matchedVia: ["message", "memory"] }),
+    ])
+  })
+
+  test("should skip the memo leg for a from: filter, for the legacy ranking, and for plain search", async () => {
+    spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+    const search = mock(async () => [])
+    const service = makeService({ embeddingService: embedding, memoSearch: { search } })
+    const base = { workspaceId: "ws_1", permissions: { accessibleStreamIds: ["stream_1"] }, query: "launch date" }
+
+    await service.searchClusters({ ...base, searchFlag: "on", filters: { authorId: "usr_2" } })
+    await service.searchClusters({ ...base, searchFlag: "off" })
+    await service.search({ ...base, searchFlag: "on" })
+
+    expect(search).not.toHaveBeenCalled()
   })
 })

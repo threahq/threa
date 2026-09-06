@@ -7,11 +7,13 @@ export type SearchQueryMode = "normal" | "deep"
 export interface SearchQueryLogResultIds {
   messages: string[]
   conversations: string[]
+  memos: string[]
 }
 
 const RESULT_LIST_BY_KIND: Record<SearchClickKind, keyof SearchQueryLogResultIds> = {
   message: "messages",
   conversation: "conversations",
+  memo: "memos",
 }
 
 export interface InsertSearchQueryLogInput {
