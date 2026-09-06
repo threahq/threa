@@ -1685,6 +1685,21 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
     })
 
+    it("waits for the button to come up when contextmenu fires on mousedown, so the release selects nothing", async () => {
+      const user = await renderWithConversationRow()
+
+      fireEvent.contextMenu(conversationHeader(), { buttons: 2 })
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument()
+
+      fireEvent.mouseUp(window)
+      expect(await screen.findByRole("menu")).toBeInTheDocument()
+      expect(screen.getByRole("menuitem", { name: "Drop" })).toBeInTheDocument()
+      expect(mockSearchState.search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([])
+
+      await user.click(screen.getByRole("menuitem", { name: "Drop" }))
+      expect(document.querySelector('[data-search-refine="drop:conv_1"]')).toBeInTheDocument()
+    })
+
     it("confirms Copy link in place, with no toast and the menu still open", async () => {
       const user = await renderWithConversationRow()
       const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined)

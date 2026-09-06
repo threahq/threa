@@ -105,6 +105,16 @@ export function useSearchRowMenu(): SearchRowMenuState {
     event.stopPropagation()
   }, [])
 
+  // Linux and macOS fire contextmenu on mousedown, so a menu mounted right away
+  // sits under the still-held button and its first item takes the release as a
+  // click (Radix selects on pointerup). Open once the button is up instead.
+  const openOnMouseUpRef = useRef<(() => void) | null>(null)
+  useEffect(
+    () => () => {
+      if (openOnMouseUpRef.current) window.removeEventListener("mouseup", openOnMouseUpRef.current)
+    },
+    []
+  )
   const onContextMenu = useCallback(
     (event: React.MouseEvent) => {
       if (touchCapable) {
@@ -112,7 +122,17 @@ export function useSearchRowMenu(): SearchRowMenuState {
         return
       }
       event.preventDefault()
-      setMenuOpen(true)
+      if (event.buttons === 0) {
+        setMenuOpen(true)
+        return
+      }
+      if (openOnMouseUpRef.current) return
+      const open = () => {
+        openOnMouseUpRef.current = null
+        setMenuOpen(true)
+      }
+      openOnMouseUpRef.current = open
+      window.addEventListener("mouseup", open, { once: true })
     },
     [touchCapable, longPress.handlers]
   )
