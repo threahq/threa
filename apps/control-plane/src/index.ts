@@ -1,7 +1,7 @@
 import { startServer } from "./server"
 import { logger } from "@threa/backend-common"
 
-const { server, stop, fastShutdown, errorReporter } = await startServer()
+const { server, stop, fastShutdown, analyticsReporter } = await startServer()
 
 if (fastShutdown) {
   logger.info("Fast shutdown enabled - graceful shutdown disabled")
@@ -27,12 +27,12 @@ process.on("SIGHUP", () => shutdown(0))
 
 process.on("uncaughtException", (err) => {
   logger.fatal({ err }, "Uncaught exception in control plane")
-  errorReporter.captureException(err, { properties: { source: "uncaughtException", fatal: true } })
+  analyticsReporter.captureException(err, { properties: { source: "uncaughtException", fatal: true } })
   void shutdown(1)
 })
 
 process.on("unhandledRejection", (reason) => {
   logger.fatal({ reason }, "Unhandled rejection in control plane")
-  errorReporter.captureException(reason, { properties: { source: "unhandledRejection", fatal: true } })
+  analyticsReporter.captureException(reason, { properties: { source: "unhandledRejection", fatal: true } })
   void shutdown(1)
 })

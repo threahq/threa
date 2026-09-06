@@ -14,11 +14,11 @@ import {
   DebounceWithMaxWait,
   ensureListenerFromLatest,
   logger,
-  PostHogErrorReporter,
-  DisabledErrorReporter,
+  PostHogAnalyticsReporter,
+  DisabledAnalyticsReporter,
   type OutboxEvent,
   type ProcessResult,
-  type ErrorReporter,
+  type AnalyticsReporter,
 } from "@threa/backend-common"
 import type { Pool } from "pg"
 import path from "path"
@@ -78,16 +78,16 @@ export interface ControlPlaneInstance {
   pool: Pool
   port: number
   fastShutdown: boolean
-  errorReporter: ErrorReporter
+  analyticsReporter: AnalyticsReporter
   stop: () => Promise<void>
 }
 
 export async function startServer(): Promise<ControlPlaneInstance> {
   const config = loadControlPlaneConfig()
 
-  const errorReporter: ErrorReporter = config.posthog
-    ? new PostHogErrorReporter({ config: config.posthog, service: "control-plane", region: null })
-    : new DisabledErrorReporter()
+  const analyticsReporter: AnalyticsReporter = config.posthog
+    ? new PostHogAnalyticsReporter({ config: config.posthog, service: "control-plane", region: null })
+    : new DisabledAnalyticsReporter()
 
   const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
   const pool = createDatabasePool(config.databaseUrl, { max: 10 })
@@ -296,7 +296,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       workosDedicatedRedirectHosts: config.workosDedicatedRedirectHosts,
       rateLimits: config.rateLimits,
       githubWebhookSecret: config.githubWebhookSecret,
-      errorReporter,
+      analyticsReporter,
     })
 
     server = createServer(app)
@@ -355,13 +355,13 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     await startedAuthLogPoller.stop()
     await startedAuthLogRetention.stop()
     await outboxDispatcher.stop()
-    await errorReporter.shutdown()
+    await analyticsReporter.shutdown()
     await listenPool.end()
     await pool.end()
     logger.info("Control plane stopped")
   }
 
-  return { server: startedServer, pool, port: config.port, fastShutdown: config.fastShutdown, errorReporter, stop }
+  return { server: startedServer, pool, port: config.port, fastShutdown: config.fastShutdown, analyticsReporter, stop }
 }
 
 /** Dispatch a single outbox event to the appropriate service method (INV-34) */

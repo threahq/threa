@@ -256,6 +256,30 @@ describe("User Preferences - Sparse Override Pattern", () => {
     })
   })
 
+  describe("findOverrideForUsers", () => {
+    test("should return only the users that have an override for the key when reading a batch", async () => {
+      const userA = userId()
+      const userB = userId()
+      const userC = userId()
+      await UserPreferencesRepository.setOverride(pool, userA, "analyticsConsent", "granted")
+      await UserPreferencesRepository.setOverride(pool, userB, "analyticsConsent", "denied")
+
+      const result = await UserPreferencesRepository.findOverrideForUsers(
+        pool,
+        [userA, userB, userC],
+        "analyticsConsent"
+      )
+
+      expect(result).toEqual(
+        new Map([
+          [userA, "granted"],
+          [userB, "denied"],
+        ])
+      )
+      expect(await UserPreferencesRepository.findOverrideForUsers(pool, [], "analyticsConsent")).toEqual(new Map())
+    })
+  })
+
   describe("outbox events", () => {
     test("should publish outbox event with merged preferences", async () => {
       await service.updatePreferences(testWorkspaceId, testUserId, {

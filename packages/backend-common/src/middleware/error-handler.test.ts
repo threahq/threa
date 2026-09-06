@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
 import { HttpError } from "../errors"
-import type { ErrorReporter, ExceptionContext } from "../posthog/error-reporter"
+import type { AnalyticsEvent, AnalyticsReporter, ExceptionContext } from "../posthog/reporter"
 import { createErrorHandler } from "./error-handler"
 
 function makeRes(): Response & { statusCode: number; body: unknown } {
@@ -20,13 +20,14 @@ function makeRes(): Response & { statusCode: number; body: unknown } {
   return res as unknown as Response & { statusCode: number; body: unknown }
 }
 
-function makeRecordingReporter(): ErrorReporter & { calls: { error: unknown; context?: ExceptionContext }[] } {
+function makeRecordingReporter(): AnalyticsReporter & { calls: { error: unknown; context?: ExceptionContext }[] } {
   const calls: { error: unknown; context?: ExceptionContext }[] = []
   return {
     calls,
     captureException(error: unknown, context?: ExceptionContext) {
       calls.push({ error, context })
     },
+    captureEvent(_event: AnalyticsEvent) {},
     async shutdown() {},
   }
 }
@@ -37,7 +38,7 @@ const next = (() => {}) as unknown as NextFunction
 describe("errorHandler", () => {
   test("formats an HttpError with status, message, code, and details", () => {
     const res = makeRes()
-    const errorHandler = createErrorHandler({ errorReporter: makeRecordingReporter() })
+    const errorHandler = createErrorHandler({ analyticsReporter: makeRecordingReporter() })
 
     errorHandler(
       new HttpError("Validation failed", {
@@ -60,7 +61,7 @@ describe("errorHandler", () => {
 
   test("omits code and details when not provided", () => {
     const res = makeRes()
-    const errorHandler = createErrorHandler({ errorReporter: makeRecordingReporter() })
+    const errorHandler = createErrorHandler({ analyticsReporter: makeRecordingReporter() })
 
     errorHandler(new HttpError("Nope", { status: 404 }), req, res, next)
 
@@ -70,7 +71,7 @@ describe("errorHandler", () => {
 
   test("surfaces unknown errors as a 500", () => {
     const res = makeRes()
-    const errorHandler = createErrorHandler({ errorReporter: makeRecordingReporter() })
+    const errorHandler = createErrorHandler({ analyticsReporter: makeRecordingReporter() })
 
     errorHandler(new Error("boom"), req, res, next)
 
@@ -81,7 +82,7 @@ describe("errorHandler", () => {
   test("should capture an unexpected error with the request identity when the user is authenticated", () => {
     const res = makeRes()
     const reporter = makeRecordingReporter()
-    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const errorHandler = createErrorHandler({ analyticsReporter: reporter })
     const err = new Error("boom")
     const req = {
       path: "/x",
@@ -102,7 +103,7 @@ describe("errorHandler", () => {
   test("should replace entity ids in the reported path", () => {
     const res = makeRes()
     const reporter = makeRecordingReporter()
-    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const errorHandler = createErrorHandler({ analyticsReporter: reporter })
     const err = new Error("boom")
     const req = {
       path: "/api/streams/stream_01JQ8ZP4K6/read-state",
@@ -122,7 +123,7 @@ describe("errorHandler", () => {
   test("should capture with no distinct id when unauthenticated", () => {
     const res = makeRes()
     const reporter = makeRecordingReporter()
-    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const errorHandler = createErrorHandler({ analyticsReporter: reporter })
     const err = new Error("boom")
 
     errorHandler(err, req, res, next)
@@ -138,7 +139,7 @@ describe("errorHandler", () => {
   test("should not capture an HttpError", () => {
     const res = makeRes()
     const reporter = makeRecordingReporter()
-    const errorHandler = createErrorHandler({ errorReporter: reporter })
+    const errorHandler = createErrorHandler({ analyticsReporter: reporter })
 
     errorHandler(new HttpError("Nope", { status: 404 }), req, res, next)
 

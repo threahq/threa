@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express"
 import { HttpError } from "../errors"
 import { logger } from "../logger"
-import type { ErrorReporter } from "../posthog/error-reporter"
+import type { AnalyticsReporter } from "../posthog/reporter"
 
 /**
  * `/api/streams/stream_01H.../messages` becomes `/api/streams/:id/messages`.
@@ -25,7 +25,7 @@ export function sanitizeRoutePath(path: string): string {
  * Known `HttpError`s carry their own status/code; everything else is logged,
  * reported, and surfaced as a 500.
  */
-export function createErrorHandler(deps: { errorReporter: ErrorReporter }) {
+export function createErrorHandler(deps: { analyticsReporter: AnalyticsReporter }) {
   return function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
     if (err instanceof HttpError) {
       res.status(err.status).json({
@@ -36,7 +36,7 @@ export function createErrorHandler(deps: { errorReporter: ErrorReporter }) {
       return
     }
 
-    deps.errorReporter.captureException(err, {
+    deps.analyticsReporter.captureException(err, {
       ...(req.authUser?.id !== undefined && { distinctId: req.authUser.id }),
       properties: { path: sanitizeRoutePath(req.path), method: req.method, status_code: 500 },
     })

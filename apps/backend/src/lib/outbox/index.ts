@@ -46,6 +46,7 @@ export {
   type WorkspaceUserUpdatedOutboxPayload,
   type StreamMemberAddedOutboxPayload,
   type StreamMemberRemovedOutboxPayload,
+  type StreamMemberJoinedOutboxPayload,
   type StreamActivityOutboxPayload,
   type ConversationCreatedOutboxPayload,
   type ConversationUpdatedOutboxPayload,
