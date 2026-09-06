@@ -335,7 +335,7 @@ export class SearchService {
     // narrowed `streamIds` (the frontend sends status: on every request), but
     // from: has no memo equivalent and would be silently ignored, so it skips the leg.
     // The leg runs `fast`: no model call on the default path, the query
-    // embedding reused when the memo query is the same text. /refine is the
+    // embedding reused when the memo query is the same text. A refinement is the
     // one place a search waits on a model.
     const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
     const memoLeg =

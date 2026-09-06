@@ -2,9 +2,6 @@
  * Parse and serialize search queries with filter support.
  *
  * Supports filters: from:@user, with:@user, in:#channel, in:@user (DM), is:streamType, type:streamType (alias), status:archiveStatus, after:date, before:date
- *
- * `/refine <prose>` marks everything after it as a plain-language refinement of
- * the result list; it is carried separately and never searched as text.
  */
 import { MAX_SEARCH_REFINES, MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
 
@@ -22,11 +19,7 @@ export interface ParsedQuery {
   text: string
   phrases: string[]
   semanticText: string
-  /** Prose after `/refine`, `""` while only the marker is typed, null without one. */
-  refine: string | null
 }
-
-const REFINE_MARKER = /(?:^|\s)\/refine(?=\s|$)/
 
 /**
  * Parse a search query string into filters and remaining text.
@@ -38,20 +31,6 @@ const REFINE_MARKER = /(?:^|\s)\/refine(?=\s|$)/
  * - "is:scratchpad bug" → { filters: [{type: "type", value: "scratchpad"}], text: "bug" }
  */
 export function parseSearchQuery(query: string): ParsedQuery {
-  const { query: searchable, refine } = splitRefine(query)
-  return { ...parseSearchable(searchable), refine }
-}
-
-function splitRefine(query: string): { query: string; refine: string | null } {
-  const match = REFINE_MARKER.exec(query)
-  if (!match) return { query, refine: null }
-  return {
-    query: query.slice(0, match.index),
-    refine: query.slice(match.index + match[0].length).trim(),
-  }
-}
-
-function parseSearchable(query: string): Omit<ParsedQuery, "refine"> {
   const filters: ParsedFilter[] = []
   const textParts: string[] = []
   const semanticParts: string[] = []
@@ -131,15 +110,12 @@ function extractFilterType(prefix: string): FilterType | null {
 /**
  * Build a search query string from filters and text.
  */
-export function serializeSearchQuery(filters: ParsedFilter[], text: string, refine: string | null = null): string {
+export function serializeSearchQuery(filters: ParsedFilter[], text: string): string {
   const filterParts = filters.map((f) => f.raw)
   const parts = [...filterParts]
 
   if (text.trim()) {
     parts.push(text.trim())
-  }
-  if (refine !== null) {
-    parts.push(refine ? `/refine ${refine}` : "/refine")
   }
 
   return parts.join(" ")
@@ -149,14 +125,9 @@ export function serializeSearchQuery(filters: ParsedFilter[], text: string, refi
  * Remove a filter from the query string.
  */
 export function removeFilterFromQuery(query: string, filterIndex: number): string {
-  const { filters, text, refine } = parseSearchQuery(query)
+  const { filters, text } = parseSearchQuery(query)
   const newFilters = filters.filter((_, i) => i !== filterIndex)
-  return serializeSearchQuery(newFilters, text, refine)
-}
-
-/** The query without its `/refine …` tail, for after the refine has been committed as a chip. */
-export function removeRefineFromQuery(query: string): string {
-  return splitRefine(query).query.trim()
+  return serializeSearchQuery(newFilters, text)
 }
 
 /**
@@ -175,7 +146,7 @@ export function boundRefines(refines: string[]): string[] {
  * Add a filter to the query string.
  */
 export function addFilterToQuery(query: string, type: FilterType, value: string): string {
-  const { filters, text, refine } = parseSearchQuery(query)
+  const { filters, text } = parseSearchQuery(query)
 
   let raw: string
   switch (type) {
@@ -203,7 +174,7 @@ export function addFilterToQuery(query: string, type: FilterType, value: string)
   }
 
   const newFilter: ParsedFilter = { type, value, raw }
-  return serializeSearchQuery([...filters, newFilter], text, refine)
+  return serializeSearchQuery([...filters, newFilter], text)
 }
 
 /**

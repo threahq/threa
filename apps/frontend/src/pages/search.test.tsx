@@ -328,7 +328,33 @@ describe("SearchPage", () => {
   describe("refine", () => {
     const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
 
-    it("commits /refine prose to the URL on Enter and drops it when the chip is removed", async () => {
+    function refinePill() {
+      return screen.getByRole("button", { name: "Refine" })
+    }
+
+    async function commitRefine(user: ReturnType<typeof userEvent.setup>, text: string) {
+      await user.click(refinePill())
+      await user.type(await screen.findByLabelText("Refinement"), text)
+      await user.keyboard("{Enter}")
+    }
+
+    it("offers the pill only with a query", () => {
+      const empty = renderPage("/w/workspace_1/search", searchOn)
+      expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
+      empty.unmount()
+
+      renderPage(undefined, searchOn)
+      expect(refinePill()).toBeInTheDocument()
+    })
+
+    it("offers neither the pill nor the old hint under the pre-rework search flag", () => {
+      renderPage()
+
+      expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
+      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
+    })
+
+    it("commits the row's prose to the URL and drops it when the chip is removed", async () => {
       const user = userEvent.setup()
       renderPage(undefined, searchOn)
 
@@ -336,14 +362,18 @@ describe("SearchPage", () => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
       })
 
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, " /refine only decisions")
-      await user.keyboard("{Enter}")
+      await user.click(refinePill())
+      const field = await screen.findByLabelText("Refinement")
+      expect(field).toHaveFocus()
+      expect(screen.getByRole("button", { name: "Apply refinement" })).toBeDisabled()
 
+      await user.type(field, "only decisions")
+      await user.click(screen.getByRole("button", { name: "Apply refinement" }))
+
+      expect(screen.queryByLabelText("Refinement")).not.toBeInTheDocument()
       expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&refine=only+decisions")
       expect(document.querySelector('[data-search-refine="only decisions"]')).toBeInTheDocument()
-      // The committed refine is the only refined search; the pending prose never reached the backend
+      // The query itself never carried the prose
       await waitFor(() => {
         expect(search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
           ["hello", expect.any(Object), [], ["only decisions"]],
@@ -354,6 +384,67 @@ describe("SearchPage", () => {
       expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello")
       await waitFor(() => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
+      })
+    })
+
+    it("commits on Enter and closes the row on Escape without a chip", async () => {
+      const user = userEvent.setup()
+      renderPage(undefined, searchOn)
+
+      await user.click(refinePill())
+      await user.type(await screen.findByLabelText("Refinement"), "only decisions")
+      await user.keyboard("{Escape}")
+
+      expect(screen.queryByLabelText("Refinement")).not.toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
+      expect(refinePill()).toHaveFocus()
+
+      await commitRefine(user, "only decisions")
+
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&refine=only+decisions")
+    })
+
+    it("keeps the row open with the validation line when the prose is over the cap", async () => {
+      const user = userEvent.setup()
+      renderPage(undefined, searchOn)
+
+      await user.click(refinePill())
+      const field = await screen.findByLabelText("Refinement")
+      await user.paste("x".repeat(MAX_SEARCH_REFINE_CHARS + 1))
+
+      expect(
+        await screen.findByText(`A refinement is at most ${MAX_SEARCH_REFINE_CHARS} characters.`)
+      ).toBeInTheDocument()
+
+      await user.keyboard("{Enter}")
+
+      expect(field).toBeInTheDocument()
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello")
+      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
+    })
+
+    it("reopens the row prefilled from a chip and replaces that refine in the URL", async () => {
+      const user = userEvent.setup()
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions&refine=newest+first", searchOn)
+
+      await user.click(screen.getByRole("button", { name: "only decisions" }))
+      const field = await screen.findByLabelText("Refinement")
+      expect(field).toHaveValue("only decisions")
+
+      await user.clear(field)
+      await user.type(field, "only launch decisions")
+      await user.keyboard("{Enter}")
+
+      expect(screen.getByTestId("location")).toHaveTextContent(
+        "/w/workspace_1/search?q=hello&refine=only+launch+decisions&refine=newest+first"
+      )
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith(
+          "hello",
+          expect.any(Object),
+          [],
+          ["only launch decisions", "newest first"]
+        )
       })
     })
 
@@ -434,17 +525,6 @@ describe("SearchPage", () => {
       await waitFor(() => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["ok"])
       })
-    })
-
-    it("offers neither the /refine trigger nor its hint under the pre-rework search flag", async () => {
-      const user = userEvent.setup()
-      renderPage("/w/workspace_1/search")
-
-      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello /")
-      expect(screen.queryByText("/refine")).not.toBeInTheDocument()
     })
   })
 })

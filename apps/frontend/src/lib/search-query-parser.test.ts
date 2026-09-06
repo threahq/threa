@@ -4,7 +4,6 @@ import {
   parseSearchQuery,
   serializeSearchQuery,
   removeFilterFromQuery,
-  removeRefineFromQuery,
   boundRefines,
   addFilterToQuery,
   getFilterLabel,
@@ -190,36 +189,6 @@ describe("parseSearchQuery", () => {
       phrases: [],
     })
   })
-
-  it("carries everything after /refine as prose, outside the searched text", () => {
-    expect(parseSearchQuery('in:#general launch "plan b" /refine only decisions, skip from:@bot')).toEqual({
-      filters: [{ type: "in", value: "general", raw: "in:#general" }],
-      text: 'launch "plan b"',
-      semanticText: "launch",
-      phrases: ["plan b"],
-      refine: "only decisions, skip from:@bot",
-    })
-  })
-
-  it("reports an empty refine while only the marker is typed and none without it", () => {
-    expect(parseSearchQuery("launch /refine")).toMatchObject({ text: "launch", refine: "" })
-    expect(parseSearchQuery("launch /refine ")).toMatchObject({ text: "launch", refine: "" })
-    expect(parseSearchQuery("launch")).toMatchObject({ text: "launch", refine: null })
-  })
-
-  it("does not treat /refine inside a word or a longer command as the marker", () => {
-    expect(parseSearchQuery("docs/refine launch")).toMatchObject({ text: "docs/refine launch", refine: null })
-    expect(parseSearchQuery("launch /refining wheel")).toMatchObject({ text: "launch /refining wheel", refine: null })
-  })
-})
-
-describe("removeRefineFromQuery", () => {
-  it("drops the /refine tail and keeps the rest", () => {
-    expect(removeRefineFromQuery("in:#general launch /refine only decisions")).toBe("in:#general launch")
-    expect(removeRefineFromQuery("launch /refine")).toBe("launch")
-    expect(removeRefineFromQuery("/refine only decisions")).toBe("")
-    expect(removeRefineFromQuery("launch")).toBe("launch")
-  })
 })
 
 describe("boundRefines", () => {
@@ -273,13 +242,6 @@ describe("removeFilterFromQuery", () => {
 })
 
 describe("addFilterToQuery", () => {
-  it("keeps a pending /refine tail when a filter is added or removed", () => {
-    const withFilter = addFilterToQuery("launch /refine only decisions", "from", "martin")
-    expect(withFilter).toBe("from:@martin launch /refine only decisions")
-    expect(removeFilterFromQuery(withFilter, 0)).toBe("launch /refine only decisions")
-    expect(removeFilterFromQuery("launch /refine", 0)).toBe("launch /refine")
-  })
-
   it("should add from filter", () => {
     const result = addFilterToQuery("hello", "from", "martin")
     expect(result).toBe("from:@martin hello")

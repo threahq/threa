@@ -14,7 +14,7 @@ interface SearchPanelContextValue {
   /** The current search query (shared so reopening the panel restores it). */
   query: string
   setQuery: (query: string) => void
-  /** Committed `/refine` refinements, oldest first; each is a removable chip. */
+  /** Committed refinements, oldest first; each is a removable chip. */
   refines: string[]
   setRefines: (refines: string[]) => void
   /** Result the user last opened — drives the active row styling. */

@@ -4,12 +4,7 @@ import { ArrowLeft, Brain, Search as SearchIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 import { SidebarShell } from "@/components/layout/sidebar/sidebar-shell"
 import { StreamLoadingIndicator } from "@/components/loading"
-import {
-  RichInput,
-  SEARCH_FILTER_TRIGGERS,
-  SEARCH_TRIGGERS,
-  type RichInputRef,
-} from "@/components/quick-switcher/rich-input"
+import { RichInput, SEARCH_FILTER_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -22,12 +17,14 @@ import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
 import { SearchRefineChips } from "./search-refine-chips"
 import { SearchRefineStatus } from "./search-refine-status"
+import { SearchRefineRow } from "./search-refine-row"
+import { SearchRefineTrigger } from "./search-refine-trigger"
+import { useRefineControl } from "./use-refine-control"
 import { SearchFilterMenu } from "./search-filter-menu"
 import { SearchResults } from "./search-results"
 import { SearchClusterList, countClusterResults } from "./search-cluster-list"
 import { SearchResultDisplayToggle } from "./search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
-import { boundRefines, removeRefineFromQuery } from "@/lib/search-query-parser"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { cn } from "@/lib/utils"
 
@@ -51,7 +48,6 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     parsedFilters,
     searchText,
     hasQuery,
-    pendingRefine,
     refineNote,
     refineFailed,
     retryRefine,
@@ -60,6 +56,8 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   } = useMessageSearch(workspaceId, query, refines)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const refineEnabled = useFeatureFlag(workspaceId, "search") === "on"
+  const refineControl = useRefineControl({ refines, onChange: setRefines })
+  const canRefine = refineEnabled && hasQuery
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
   // Keyboard navigation walks the rows in the order they are on screen.
@@ -131,20 +129,6 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     }
   }
 
-  // Enter commits `/refine …` prose as a chip (an over-long one stays in the
-  // field with the validation error); the newest refine displaces the oldest
-  // past the backend's limit. Without pending prose it opens a result.
-  const handleSubmit = (withModifier: boolean) => {
-    const prose = pendingRefine?.trim()
-    if (!prose) {
-      openActiveResult(withModifier)
-      return
-    }
-    if (validationError) return
-    setRefines(boundRefines([...refines, prose]))
-    setQuery(removeRefineFromQuery(query))
-  }
-
   const handleKeyDown = (event: React.KeyboardEvent) => {
     // While a suggestion popover is open, TipTap owns the keyboard
     if (event.defaultPrevented || isPopoverActiveRef.current) return
@@ -199,11 +183,11 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 ref={inputRef}
                 value={query}
                 onChange={setQuery}
-                onSubmit={handleSubmit}
+                onSubmit={openActiveResult}
                 onPopoverActiveChange={(active) => {
                   isPopoverActiveRef.current = active
                 }}
-                triggers={refineEnabled ? SEARCH_TRIGGERS : SEARCH_FILTER_TRIGGERS}
+                triggers={SEARCH_FILTER_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
                 editorClassName="h-auto min-h-8 py-1.5 text-[13px]"
@@ -217,11 +201,30 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             <SearchRefineChips
               refines={refines}
               onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
+              onEdit={canRefine ? refineControl.edit : undefined}
               pending={isLoading && refines.length > 0}
               failed={refineFailed}
             />
             <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
+            {canRefine && (
+              <SearchRefineTrigger
+                ref={refineControl.triggerRef}
+                open={refineControl.isOpen}
+                onToggle={refineControl.toggle}
+              />
+            )}
           </div>
+
+          {canRefine && refineControl.isOpen && (
+            <div className="px-3 pb-2">
+              <SearchRefineRow
+                key={refineControl.editingIndex ?? "new"}
+                initialValue={refineControl.initialValue}
+                onCommit={refineControl.commit}
+                onClose={refineControl.close}
+              />
+            </div>
+          )}
 
           {hasQuery && !displayError && (
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 px-3 pb-2">
@@ -257,11 +260,6 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 <code className="rounded bg-muted px-1">in:#channel</code>,{" "}
                 <code className="rounded bg-muted px-1">before:2026-01-01</code>
               </p>
-              {refineEnabled && (
-                <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/60">
-                  Refine the list in plain words with <code className="rounded bg-muted px-1">/refine</code>
-                </p>
-              )}
             </div>
           )}
 

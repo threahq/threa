@@ -7,19 +7,22 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SidebarToggle } from "@/components/layout"
 import { StreamLoadingIndicator } from "@/components/loading"
-import { RichInput, SEARCH_FILTER_TRIGGERS, SEARCH_TRIGGERS } from "@/components/quick-switcher/rich-input"
+import { RichInput, SEARCH_FILTER_TRIGGERS } from "@/components/quick-switcher/rich-input"
 import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
 import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
 import { SearchRefineChips } from "@/components/search/search-refine-chips"
 import { SearchRefineStatus } from "@/components/search/search-refine-status"
+import { SearchRefineRow } from "@/components/search/search-refine-row"
+import { SearchRefineTrigger } from "@/components/search/search-refine-trigger"
+import { useRefineControl } from "@/components/search/use-refine-control"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResults } from "@/components/search/search-results"
 import { SearchClusterList, countClusterResults } from "@/components/search/search-cluster-list"
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
-import { boundRefines, removeRefineFromQuery } from "@/lib/search-query-parser"
+import { boundRefines } from "@/lib/search-query-parser"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -97,7 +100,6 @@ export function SearchPage() {
     parsedFilters,
     searchText,
     hasQuery,
-    pendingRefine,
     refineNote,
     refineFailed,
     retryRefine,
@@ -106,34 +108,12 @@ export function SearchPage() {
   } = useMessageSearch(workspaceId ?? "", localQuery, refines)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const refineEnabled = useFeatureFlag(workspaceId ?? "", "search") === "on"
+  const refineControl = useRefineControl({ refines, onChange: setRefines })
+  const canRefine = refineEnabled && hasQuery
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
   const resultCount = displayMode === "ranked" ? results.length : countClusterResults(clusters)
   const hasResults = displayMode === "ranked" ? results.length > 0 : clusters.length > 0
-
-  // Enter commits `/refine …` prose as a chip in the URL right away (no debounce,
-  // so the pending prose never lands in `?q=`); an over-long one stays in the
-  // field with the validation error, and the newest refine displaces the oldest
-  // past the backend's limit. Without pending prose Enter is left to the list.
-  function handleSubmit() {
-    const prose = pendingRefine?.trim()
-    if (!prose || validationError) return
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    const nextQuery = removeRefineFromQuery(localQuery)
-    const nextRefines = boundRefines([...refines, prose])
-    setLocalQuery(nextQuery)
-    setSearchParams(
-      (prev) => {
-        const params = new URLSearchParams(prev)
-        if (nextQuery) params.set("q", nextQuery)
-        else params.delete("q")
-        params.delete("refine")
-        for (const refine of nextRefines) params.append("refine", refine)
-        return params
-      },
-      { replace: true }
-    )
-  }
 
   const handleResultSelect = useCallback(
     (result: SearchResultItem) => {
@@ -164,8 +144,7 @@ export function SearchPage() {
               <RichInput
                 value={localQuery}
                 onChange={handleQueryChange}
-                onSubmit={handleSubmit}
-                triggers={refineEnabled ? SEARCH_TRIGGERS : SEARCH_FILTER_TRIGGERS}
+                triggers={SEARCH_FILTER_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
                 editorClassName="h-auto min-h-8 py-1.5"
@@ -184,6 +163,7 @@ export function SearchPage() {
           <SearchRefineChips
             refines={refines}
             onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
+            onEdit={canRefine ? refineControl.edit : undefined}
             pending={isLoading && refines.length > 0}
             failed={refineFailed}
           />
@@ -193,6 +173,14 @@ export function SearchPage() {
             onQueryChange={handleQueryChange}
             className="h-7"
           />
+          {canRefine && (
+            <SearchRefineTrigger
+              ref={refineControl.triggerRef}
+              open={refineControl.isOpen}
+              onToggle={refineControl.toggle}
+              className="h-7"
+            />
+          )}
           {hasQuery && !displayError && (
             <div className="ml-auto flex items-center gap-1">
               {searchText.trim().length > 0 && (
@@ -210,6 +198,18 @@ export function SearchPage() {
             <SearchRefineStatus note={refineNote} failed={refineFailed} onRetry={retryRefine} size="touch" />
           )}
         </div>
+
+        {canRefine && refineControl.isOpen && (
+          <div className="px-4 pb-2">
+            <SearchRefineRow
+              key={refineControl.editingIndex ?? "new"}
+              initialValue={refineControl.initialValue}
+              onCommit={refineControl.commit}
+              onClose={refineControl.close}
+              size="touch"
+            />
+          </div>
+        )}
         <StreamLoadingIndicator isLoading={isLoading} />
       </header>
 
@@ -231,11 +231,6 @@ export function SearchPage() {
                 <code className="rounded bg-muted px-1">in:#channel</code> or{" "}
                 <code className="rounded bg-muted px-1">before:2026-01-01</code>
               </p>
-              {refineEnabled && (
-                <p className="mt-1.5 max-w-[18rem] text-xs text-muted-foreground/50">
-                  Refine the list in plain words with <code className="rounded bg-muted px-1">/refine</code>
-                </p>
-              )}
             </div>
           )}
 
