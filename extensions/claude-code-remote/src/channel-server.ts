@@ -397,7 +397,7 @@ export async function runClaudeCommand(
         root,
         target,
         force: args === "--force",
-        start: prepareHarnessDone(runtimeSessionId),
+        start: prepareHarnessDone(runtimeSessionId, root),
       })
     }
     case "carry-on": {

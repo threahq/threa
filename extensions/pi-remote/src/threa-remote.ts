@@ -3805,6 +3805,30 @@ interface HarnessHandoffDeps {
   heartbeat?: typeof heartbeat
 }
 
+/**
+ * A handoff latches the session busy until the harness restarts it. `done` may
+ * instead refuse (the reaper's vetoes) and leave this pane alive, so the latch
+ * needs a deadline or the pane never accepts another claim. The Claude session
+ * carries the same 30 s fallback.
+ */
+export const HARNESS_HANDOFF_FALLBACK_MS = 30_000
+
+function armHandoffFallback(
+  lifecycleGeneration: number,
+  ctx: ExtensionContext,
+  sendHeartbeat: typeof heartbeat
+): void {
+  const timer = setTimeout(() => {
+    if (!reconnectPending || sessionTearingDown || sessionLifecycleGeneration !== lifecycleGeneration) return
+    reconnectPending = false
+    const enabled = isEnabled(ctx)
+    void sendHeartbeat(enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline", undefined, ctx).catch(
+      () => undefined
+    )
+  }, HARNESS_HANDOFF_FALLBACK_MS)
+  timer.unref?.()
+}
+
 async function runHarnessHandoffCommand(
   invocation: ClaimedInvocation,
   args: string,
@@ -3885,6 +3909,7 @@ async function runHarnessHandoffCommand(
       return
     }
     start()
+    armHandoffFallback(lifecycleGeneration, ctx, sendHeartbeat)
   } catch (error) {
     reconnectPending = false
     const enabled = isEnabled(ctx)
@@ -4042,7 +4067,7 @@ async function runDoneCommand(
       unavailableMessage: "Harness done is unavailable for this session.",
       ackMessage: "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
       heartbeatText: "Done handoff…",
-      prepare: ({ runtimeSessionId }) => deps.prepare(runtimeSessionId),
+      prepare: ({ runtimeSessionId, rootStreamId }) => deps.prepare(runtimeSessionId, rootStreamId),
     },
     isCurrent
   )
@@ -5430,6 +5455,7 @@ export const __testing = {
   scheduleRecoveredCompletion,
   runKeyCommand,
   reconnectPending: () => reconnectPending,
+  HARNESS_HANDOFF_FALLBACK_MS,
   reloadPending: () => reloadPending,
   sessionLifecycleGeneration: () => sessionLifecycleGeneration,
   sessionTearingDown: () => sessionTearingDown,

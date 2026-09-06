@@ -323,7 +323,7 @@ describe("prepareHarnessDone", () => {
       events.push(["spawn", ...args])
       return { on: () => undefined, unref }
     })
-    const start = prepareHarnessDone("runtime_exact", {
+    const start = prepareHarnessDone("runtime_exact", "stream_root", {
       entrypoint: "/repo/harnessd.ts",
       bunExecutable: "/bun",
       logPath: "/private/harnessd/done.log",
@@ -339,7 +339,12 @@ describe("prepareHarnessDone", () => {
       ["chmod", "/private/harnessd", 0o700],
       ["open", "/private/harnessd/done.log", "a", 0o600],
       ["chmod", "/private/harnessd/done.log", 0o600],
-      ["spawn", "/bun", ["/repo/harnessd.ts", "done", "runtime_exact"], { detached: true, stdio: ["ignore", 41, 41] }],
+      [
+        "spawn",
+        "/bun",
+        ["/repo/harnessd.ts", "done", "runtime_exact", "--root-stream-id", "stream_root"],
+        { detached: true, stdio: ["ignore", 41, 41] },
+      ],
       ["unref"],
       ["close", 41],
     ])
@@ -349,7 +354,7 @@ describe("prepareHarnessDone", () => {
   it("logs a sanitized asynchronous spawn error without crashing after acknowledgement", async () => {
     const events: unknown[] = []
     let emitError: ((error: Error & { code?: unknown }) => void) | undefined
-    const start = prepareHarnessDone("runtime_secret", {
+    const start = prepareHarnessDone("runtime_secret", "stream_root", {
       entrypoint: "/secret/harnessd.ts",
       bunExecutable: "/secret/bun",
       logPath: "/logs/done.log",
@@ -388,7 +393,12 @@ describe("prepareHarnessDone", () => {
       { runtime: "claude", name: "n", rootStreamId: "s", anchorId: "a" },
       { entrypoint: "/harnessd.ts", exists: () => true, fs: record(paths), spawn }
     )()
-    prepareHarnessDone("runtime", { entrypoint: "/harnessd.ts", exists: () => true, fs: record(paths), spawn })()
+    prepareHarnessDone("runtime", "stream_root", {
+      entrypoint: "/harnessd.ts",
+      exists: () => true,
+      fs: record(paths),
+      spawn,
+    })()
 
     expect(paths).toEqual([
       join(homedir(), ".threa", "harnessd", "spawn.log"),
@@ -398,9 +408,14 @@ describe("prepareHarnessDone", () => {
 
   it("preparation validates only identity and entrypoint", () => {
     const spawn = mock(() => ({ on: () => undefined, unref: () => undefined }))
-    expect(() => prepareHarnessDone(" ", { exists: () => true, spawn: spawn as never })).toThrow("Runtime session")
+    expect(() => prepareHarnessDone(" ", "stream_root", { exists: () => true, spawn: spawn as never })).toThrow(
+      "Runtime session"
+    )
+    expect(() => prepareHarnessDone("runtime", " ", { exists: () => true, spawn: spawn as never })).toThrow(
+      "Root stream id"
+    )
     expect(() =>
-      prepareHarnessDone("runtime", { entrypoint: "/missing", exists: () => false, spawn: spawn as never })
+      prepareHarnessDone("runtime", "stream_root", { entrypoint: "/missing", exists: () => false, spawn: spawn as never })
     ).toThrow("entrypoint not found")
     expect(spawn).not.toHaveBeenCalled()
   })

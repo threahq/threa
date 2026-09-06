@@ -1,6 +1,6 @@
 import { readHarnessLinks } from "@threa/harness-client"
 import { encryptAttachmentBytes } from "@threahq/bot-runtime-client"
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
@@ -2131,7 +2131,7 @@ describe("Pi spawn and done session control", () => {
     await __testing.runDoneCommand(invocation, "", context(true), deps(messages))
 
     expect({ prepared, order, messages }).toEqual({
-      prepared: [["runtime-exact"]],
+      prepared: [["runtime-exact", "stream-root-exact"]],
       order: ["complete", "start", "complete", "complete"],
       messages: [
         "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
@@ -2170,6 +2170,33 @@ describe("Pi spawn and done session control", () => {
         "A Threa invocation is still running; use `/stop` before finishing.",
       ],
       prepared: 1,
+    })
+  })
+
+  test("a done that never restarts this pane releases the busy latch on the fallback", async () => {
+    // harnessd refuses the wind-down whenever a reaper veto applies, and a
+    // refused `done` leaves this pane alive: without the deadline it stays
+    // latched busy and never accepts another claim.
+    __testing.setConfigForTesting(linkedConfig(threadLink) as never)
+    const heartbeats: string[] = []
+    const deps = {
+      available: () => true,
+      prepare: () => () => {},
+      complete: async () => true,
+      heartbeat: async (status: string) => void heartbeats.push(status),
+    } as never
+    jest.useFakeTimers()
+    try {
+      await __testing.runDoneCommand(invocation, "", context(true), deps)
+      expect(__testing.reconnectPending()).toBe(true)
+      jest.advanceTimersByTime(__testing.HARNESS_HANDOFF_FALLBACK_MS)
+    } finally {
+      jest.useRealTimers()
+    }
+
+    expect({ latched: __testing.reconnectPending(), heartbeats }).toEqual({
+      latched: false,
+      heartbeats: ["busy", "available"],
     })
   })
 

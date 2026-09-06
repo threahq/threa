@@ -129,8 +129,17 @@ export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarn
   return prepareDetachedHarnessCommand("spawn", args, options)
 }
 
-export function prepareHarnessDone(runtimeSessionId: string, options: PrepareHarnessClearOptions = {}): () => void {
+export function prepareHarnessDone(
+  runtimeSessionId: string,
+  rootStreamId: string,
+  options: PrepareHarnessClearOptions = {}
+): () => void {
   const session = requireId(runtimeSessionId, "Runtime session id")
+  const rootStream = requireId(rootStreamId, "Root stream id")
   const entrypoint = requireHarnessEntrypoint(options)
-  return prepareDetachedHarnessCommand("done", [entrypoint, "done", session], options)
+  return prepareDetachedHarnessCommand(
+    "done",
+    [entrypoint, "done", session, "--root-stream-id", rootStream],
+    options
+  )
 }
