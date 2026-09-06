@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react"
+import { useCallback, useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
@@ -90,6 +90,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { isOpen: isSearchOpen } = useSearchPanel()
   const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
+  const openLayoutEditor = useCallback(() => setIsEditorOpen(true), [])
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)
@@ -656,7 +657,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
               onCreateScratchpad={handleCreateScratchpad}
               onCreateChannel={handleCreateChannel}
               scratchpadAddMenuActions={scratchpadAddMenuActions}
-              onEditLayout={hasUserStreams && !isBoardPage ? () => setIsEditorOpen(true) : undefined}
+              onEditLayout={hasUserStreams && !isBoardPage ? openLayoutEditor : undefined}
               onShowGettingStarted={gettingStarted.canRestore ? gettingStarted.restore : undefined}
             />
           </>

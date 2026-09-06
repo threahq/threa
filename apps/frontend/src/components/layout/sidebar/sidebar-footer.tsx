@@ -655,7 +655,6 @@ function SidebarCreateButton({ actions, isTouch }: { actions: SidebarActionItem[
   return (
     <SidebarActionMenu
       actions={actions}
-      ariaLabel="New"
       side="top"
       align="end"
       contentClassName="w-56"

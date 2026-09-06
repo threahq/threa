@@ -1,4 +1,3 @@
-import { useState } from "react"
 import { Command, FileText, Search as SearchIcon, Terminal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useQuickSwitcher, usePreferences, useSidebar } from "@/contexts"
@@ -21,7 +20,6 @@ export function SidebarHeader({ workspaceName }: SidebarHeaderProps) {
   const { collapseOnMobile } = useSidebar()
   const { preferences } = usePreferences()
   const isTouch = useInputMode() === "touch"
-  const [switcherMenuOpen, setSwitcherMenuOpen] = useState(false)
   const customBindings = preferences?.keyboardShortcuts ?? {}
   const streamBinding = getEffectiveKeyBinding("openQuickSwitcher", customBindings)
   const commandBinding = getEffectiveKeyBinding("openCommands", customBindings)
@@ -54,52 +52,47 @@ export function SidebarHeader({ workspaceName }: SidebarHeaderProps) {
   ]
 
   return (
-    <div className="flex-shrink-0 border-b">
-      {/* Mirrors the h-12 page-header row so the sidebar toggle sits in the
-           identical viewport position whether the sidebar is open or not. */}
-      <div className="flex h-12 items-center gap-1 px-4">
-        <SidebarToggle location="sidebar" />
-        <Link
-          to="/workspaces"
-          className="flex min-w-0 items-center gap-2 truncate transition-opacity hover:opacity-80"
-          onClick={collapseOnMobile}
-        >
-          <ThreaLogo size="sm" />
-          <span className="truncate text-sm font-semibold">{workspaceName}</span>
-        </Link>
-        <div className="ml-auto flex items-center">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                aria-label={searchLabel}
-                onClick={() => openSearch()}
-              >
-                <SearchIcon className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="flex items-center gap-2">
-              <span>Search messages</span>
-              {searchBinding && <ShortcutHint binding={searchBinding} />}
-            </TooltipContent>
-          </Tooltip>
-          <SidebarActionMenu
-            actions={switcherActions}
-            ariaLabel="Jump to stream or command"
-            side="bottom"
-            align="end"
-            contentClassName="w-56"
-            open={switcherMenuOpen}
-            onOpenChange={setSwitcherMenuOpen}
-            trigger={
-              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Jump to stream or command">
-                <Command className="h-4 w-4" />
-              </Button>
-            }
-          />
-        </div>
+    // Mirrors the h-12 page-header row so the sidebar toggle sits in the
+    // identical viewport position whether the sidebar is open or not.
+    <div className="flex h-12 flex-shrink-0 items-center gap-1 border-b px-4">
+      <SidebarToggle location="sidebar" />
+      <Link
+        to="/workspaces"
+        className="flex min-w-0 items-center gap-2 truncate transition-opacity hover:opacity-80"
+        onClick={collapseOnMobile}
+      >
+        <ThreaLogo size="sm" />
+        <span className="truncate text-sm font-semibold">{workspaceName}</span>
+      </Link>
+      <div className="ml-auto flex items-center">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              aria-label={searchLabel}
+              onClick={() => openSearch()}
+            >
+              <SearchIcon className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex items-center gap-2">
+            <span>Search messages</span>
+            {searchBinding && <ShortcutHint binding={searchBinding} />}
+          </TooltipContent>
+        </Tooltip>
+        <SidebarActionMenu
+          actions={switcherActions}
+          side="bottom"
+          align="end"
+          contentClassName="w-56"
+          trigger={
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Jump to stream or command">
+              <Command className="h-4 w-4" />
+            </Button>
+          }
+        />
       </div>
     </div>
   )

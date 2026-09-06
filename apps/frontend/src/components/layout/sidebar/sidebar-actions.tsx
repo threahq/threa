@@ -119,48 +119,47 @@ function SidebarActionMenuEntry({ action }: { action: SidebarActionItem }) {
   )
 }
 
-function SidebarActionMenuRow({ action, className }: { action: SidebarActionItem; className?: string }) {
+function SidebarActionMenuRow({
+  action,
+  className,
+  onSelected,
+}: {
+  action: SidebarActionItem
+  className?: string
+  onSelected?: () => void
+}) {
   const isDestructive = action.variant === "destructive"
   const content = <SidebarActionContent action={action} iconClassName="mr-2 h-4 w-4" />
   const itemClassName = cn(isDestructive && "text-destructive focus:text-destructive", className)
+  // A `checked` entry picks one of a set, so the trailing glyph needs a state a
+  // screen reader can read, not just a rendered checkmark.
+  const checkedProps =
+    action.checked === undefined ? {} : { role: "menuitemradio" as const, "aria-checked": action.checked }
+  const run = () => {
+    onSelected?.()
+    void runSidebarAction(action)
+  }
 
   let item: ReactNode
   if (action.href && action.external) {
     item = (
-      <DropdownMenuItem asChild className={itemClassName}>
-        <a
-          href={action.href}
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => {
-            void runSidebarAction(action)
-          }}
-        >
+      <DropdownMenuItem asChild className={itemClassName} {...checkedProps}>
+        <a href={action.href} target="_blank" rel="noreferrer" onClick={run}>
           {content}
         </a>
       </DropdownMenuItem>
     )
   } else if (action.href) {
     item = (
-      <DropdownMenuItem asChild className={itemClassName}>
-        <Link
-          to={action.href}
-          onClick={() => {
-            void runSidebarAction(action)
-          }}
-        >
+      <DropdownMenuItem asChild className={itemClassName} {...checkedProps}>
+        <Link to={action.href} onClick={run}>
           {content}
         </Link>
       </DropdownMenuItem>
     )
   } else {
     item = (
-      <DropdownMenuItem
-        className={itemClassName}
-        onSelect={() => {
-          void runSidebarAction(action)
-        }}
-      >
+      <DropdownMenuItem className={itemClassName} onSelect={run} {...checkedProps}>
         {content}
       </DropdownMenuItem>
     )
@@ -185,11 +184,9 @@ function SidebarActionMenuGroup({ members }: { members: SidebarActionItem[] }) {
         </div>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger
-            className="cursor-pointer rounded-l-none border-l border-border/50 px-2 [&>svg.lucide-chevron-right]:hidden"
+            className="cursor-pointer rounded-l-none border-l border-border/50 px-2 text-muted-foreground [&>svg]:rotate-90"
             aria-label={`${primary.label} options`}
-          >
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-          </DropdownMenuSubTrigger>
+          />
           <DropdownMenuSubContent sideOffset={4} alignOffset={-4}>
             {rest.map((member) => (
               <SidebarActionMenuRow key={member.id} action={member} />
@@ -481,16 +478,7 @@ function SidebarActionDrawerGroup({ members, onClose }: { members: SidebarAction
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={4} className="min-w-[220px]">
             {rest.map((member) => (
-              <DropdownMenuItem
-                key={member.id}
-                className="cursor-pointer"
-                onSelect={() => {
-                  onClose()
-                  void runSidebarAction(member)
-                }}
-              >
-                <SidebarActionContent action={member} iconClassName="mr-2 h-4 w-4 text-muted-foreground" />
-              </DropdownMenuItem>
+              <SidebarActionMenuRow key={member.id} action={member} onSelected={onClose} />
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
