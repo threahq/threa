@@ -20,40 +20,16 @@ const here = dirname(fileURLToPath(import.meta.url)) // extensions/pi-remote
 const extensionsDir = join(homedir(), ".pi", "agent", "extensions")
 const dest = process.argv[2] ?? join(extensionsDir, "threa-remote")
 
-// Vendored sibling packages: dep specifier → source dir + runtime files (tests
-// are not needed at runtime).
+// Vendored sibling packages: dep specifier → source dir. Every non-test file is
+// vendored, so a module added to one of these packages can never be missing from
+// the install.
 const VENDORED = [
-  {
-    dep: "@threahq/bot-runtime-client",
-    src: resolve(here, "../bot-runtime-client"),
-    files: [
-      "index.ts",
-      "transport.ts",
-      "invocation-control.ts",
-      "types.ts",
-      "ws-hint.ts",
-      "crypto.ts",
-      "sealed.ts",
-      "archive-grace.ts",
-      "attachment-files.ts",
-    ],
-    dir: "bot-runtime-client",
-  },
-  {
-    dep: "@threa/harness-client",
-    src: resolve(here, "../harness-client"),
-    files: [
-      "index.ts",
-      "supervisor.ts",
-      "harness-kick.ts",
-      "harness-reconnect.ts",
-      "tmux-key.ts",
-      "tmux-window.ts",
-      "harness-links.ts",
-    ],
-    dir: "harness-client",
-  },
-]
+  { dep: "@threahq/bot-runtime-client", src: resolve(here, "../bot-runtime-client"), dir: "bot-runtime-client" },
+  { dep: "@threa/harness-client", src: resolve(here, "../harness-client"), dir: "harness-client" },
+].map((pkg) => ({
+  ...pkg,
+  files: readdirSync(join(pkg.src, "src")).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")),
+}))
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
 rmSync(join(extensionsDir, "threa-remote.ts"), { force: true })
@@ -68,9 +44,9 @@ cpSync(here, dest, {
 })
 
 // 3. Vendor each package's runtime source, then check every relative import in
-//    the vendored copies resolves inside the copy: a file added to a package and
-//    re-exported from its index but missing from `files` produces an install
-//    that cannot even be imported, and nothing notices until someone reloads Pi.
+//    the vendored copies resolves inside the copy: an import reaching outside a
+//    package's flat `src` produces an install that cannot even be imported, and
+//    nothing notices until someone reloads Pi.
 const vendorRoot = join(dest, "src", "vendor")
 for (const pkg of VENDORED) {
   const vendorDir = join(vendorRoot, pkg.dir)
