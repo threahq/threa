@@ -184,7 +184,7 @@ import {
   stripInaccessibleAgentRefs,
 } from "./features/agents"
 import { EmojiUsageHandler } from "./features/emoji"
-import { AnalyticsOutboxHandler } from "./features/analytics"
+import { AnalyticsCostRecorder, AnalyticsOutboxHandler } from "./features/analytics"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
 import { SyncService, SyncLogReconciliationWorker, SyncHeartbeatWorker, SyncLogRetentionWorker } from "./features/sync"
@@ -360,14 +360,19 @@ export async function startServer(): Promise<ServerInstance> {
   const costService = new AICostService({ pool })
   const budgetService = new AIBudgetService({ pool })
   const accessLogService = new AccessLogService({ pool })
+  const modelRegistry = createModelRegistry()
+  const analyticsReporter: AnalyticsReporter = config.posthog
+    ? new PostHogAnalyticsReporter({ config: config.posthog, service: "backend", region: config.region })
+    : new DisabledAnalyticsReporter()
 
   const ai = createAI({
     openrouter: { apiKey: config.ai.openRouterApiKey },
-    costRecorder: costService,
+    // The enclave reports its own usage straight to `costService`, so wrapping
+    // here is what keeps enclave AI calls out of PostHog.
+    costRecorder: new AnalyticsCostRecorder(costService, analyticsReporter, modelRegistry),
     budgetEnforcer: budgetService,
     accessLogSink: createAiAccessLogSink(accessLogService),
   })
-  const modelRegistry = createModelRegistry()
   const configResolver = createStaticConfigResolver()
   const messageFormatter = new MessageFormatter()
   const conversationService = new ConversationService(pool)
@@ -834,9 +839,6 @@ export async function startServer(): Promise<ServerInstance> {
   const giphyService = new GiphyService({ config: config.giphy })
 
   const isProduction = process.env.NODE_ENV === "production"
-  const analyticsReporter: AnalyticsReporter = config.posthog
-    ? new PostHogAnalyticsReporter({ config: config.posthog, service: "backend", region: config.region })
-    : new DisabledAnalyticsReporter()
   const logShipper = config.posthog
     ? attachPostHogLogShipping({
         config: config.posthog,
