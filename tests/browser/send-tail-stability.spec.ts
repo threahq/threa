@@ -10,23 +10,27 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  * above the true bottom — held there until the dead-band dock smooth-scrolls
  * back down. On a phone that reads as a bounce roughly a second after send.
  *
- * The sampler watches the sent row's own screen position every frame. Once the
- * list has settled at the bottom it must not move again.
+ * The sampler reads the list's distance from the bottom every frame. Once the
+ * sent row is mounted and pinned, the list must never sit off the bottom for
+ * two consecutive frames. One frame is the sampler, not the user:
+ * requestAnimationFrame runs before the same frame's ResizeObserver, so content
+ * landing inside the sent row after the echo (the conversation provenance chip,
+ * a link preview) reads as one unpinned frame that the re-pin corrects before
+ * paint. The row's own screen position is not asserted for the same reason — a
+ * pinned row that grows moves up, and that is correct.
  */
 
 test.describe.configure({ timeout: 120_000 })
 
 const MESSAGE = "Tail stability probe"
-/** Slack for sub-pixel rounding in getBoundingClientRect. */
-const STABLE_PX = 2
 /** Distance from the true bottom that still counts as pinned. */
 const AT_BOTTOM_PX = 8
 
 interface Sample {
   elapsedMs: number
   distance: number
-  lastTop: number
-  rows: number
+  /** True once the last row renders the message this test sent. */
+  sentRowMounted: boolean
 }
 
 async function seedMessages(page: Page, workspaceId: string, streamId: string, count: number): Promise<void> {
@@ -44,27 +48,29 @@ async function seedMessages(page: Page, workspaceId: string, streamId: string, c
   }
 }
 
-function startSampler(page: Page, durationMs: number): Promise<void> {
-  return page.evaluate((duration) => {
-    const out: Sample[] = []
-    ;(window as unknown as { __tailSamples: Sample[] }).__tailSamples = out
-    const start = performance.now()
-    const tick = () => {
-      const el = document.querySelector("[data-suppress-pull-refresh]")
-      if (el instanceof HTMLElement) {
-        const rows = el.querySelectorAll(".message-item")
-        const last = rows[rows.length - 1]
-        out.push({
-          elapsedMs: Math.round(performance.now() - start),
-          distance: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
-          lastTop: last ? Math.round(last.getBoundingClientRect().top) : -1,
-          rows: rows.length,
-        })
+function startSampler(page: Page, durationMs: number, message: string): Promise<void> {
+  return page.evaluate(
+    ({ duration, message }) => {
+      const out: Sample[] = []
+      ;(window as unknown as { __tailSamples: Sample[] }).__tailSamples = out
+      const start = performance.now()
+      const tick = () => {
+        const el = document.querySelector("[data-suppress-pull-refresh]")
+        if (el instanceof HTMLElement) {
+          const rows = el.querySelectorAll(".message-item")
+          const last = rows[rows.length - 1]
+          out.push({
+            elapsedMs: Math.round(performance.now() - start),
+            distance: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
+            sentRowMounted: last?.textContent?.includes(message) ?? false,
+          })
+        }
+        if (performance.now() - start < duration) requestAnimationFrame(tick)
       }
-      if (performance.now() - start < duration) requestAnimationFrame(tick)
-    }
-    requestAnimationFrame(tick)
-  }, durationMs)
+      requestAnimationFrame(tick)
+    },
+    { duration: durationMs, message }
+  )
 }
 
 test("sending a message never displaces the settled tail", async ({ page }) => {
@@ -84,7 +90,7 @@ test("sending a message never displaces the settled tail", async ({ page }) => {
   await editor.pressSequentially(MESSAGE)
   await expect(editor).toContainText(MESSAGE, { timeout: 10000 })
 
-  await startSampler(page, 6000)
+  await startSampler(page, 6000, MESSAGE)
   await page.getByRole("button", { name: "Send", exact: true }).first().click()
   // The echo lands within a second; sample well past it so a delayed correction
   // still shows up.
@@ -95,16 +101,11 @@ test("sending a message never displaces the settled tail", async ({ page }) => {
   )
   expect(samples.at(-1)?.elapsedMs, "sampler stopped before the post-echo window").toBeGreaterThanOrEqual(5_500)
 
-  const sentRows = samples[samples.length - 1].rows
   // Settled = the sent row is mounted and the list is pinned to the bottom.
-  const settledIdx = samples.findIndex((s) => s.rows === sentRows && s.distance <= AT_BOTTOM_PX && s.lastTop >= 0)
+  const settledIdx = samples.findIndex((s) => s.sentRowMounted && s.distance <= AT_BOTTOM_PX)
   expect(settledIdx, `never settled: ${JSON.stringify(samples.slice(-5))}`).toBeGreaterThanOrEqual(0)
 
   const settled = samples.slice(settledIdx)
-  const baseline = settled[0].lastTop
-  const moved = settled.filter((s) => Math.abs(s.lastTop - baseline) > STABLE_PX)
-  expect(moved, `tail moved after settling: ${JSON.stringify(moved.slice(0, 10))}`).toHaveLength(0)
-
-  const unpinned = settled.filter((s) => s.distance > AT_BOTTOM_PX)
-  expect(unpinned, `tail left the bottom after settling: ${JSON.stringify(unpinned.slice(0, 10))}`).toHaveLength(0)
+  const held = settled.filter((s, i) => i > 0 && s.distance > AT_BOTTOM_PX && settled[i - 1].distance > AT_BOTTOM_PX)
+  expect(held, `tail left the bottom after settling: ${JSON.stringify(held.slice(0, 10))}`).toHaveLength(0)
 })
