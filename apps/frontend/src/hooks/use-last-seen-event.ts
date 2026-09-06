@@ -401,6 +401,8 @@ export function useLastSeenEvent({
   // message is the last thing they did stays pinned to the dead temp_ id, and
   // auto-mark-as-read silently never advances past it (it refuses to persist a
   // temp_ id as the read pointer) until some other event nudges a re-scan.
+  // `readSeq` too: the pointer can turn knowable (older-page answer arrives)
+  // with the same index and the same rows.
   useEffect(() => {
     if (!enabled) return
     // Detect a genuine pointer move (the id changed), not a windowing artifact
@@ -431,7 +433,7 @@ export function useLastSeenEvent({
     prevLastReadIdRef.current = lastReadEventId
     const raf = requestAnimationFrame(recompute)
     return () => cancelAnimationFrame(raf)
-  }, [enabled, events, streamId, lastReadEventId, readIndex, recompute])
+  }, [enabled, events, streamId, lastReadEventId, readIndex, readSeq, recompute])
 
   return { lastSeenEventId, atLastRow, tailVisible, unreadAboveViewport }
 }

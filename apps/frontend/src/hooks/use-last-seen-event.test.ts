@@ -1120,11 +1120,13 @@ describe("useLastSeenEvent re-scan triggers", () => {
   it("holds a pointer below the window unknowable until older-page knowledge arrives", () => {
     const container = mountWindow({ e2: { top: 5, bottom: 50 } })
     const scrollContainerRef = { current: container }
+    // One events reference across renders: the answer arriving is the only change.
+    const events = seqEvents([2])
     const { result, rerender } = renderHook(
       ({ hasOlderEvents }: { hasOlderEvents: boolean | null }) =>
         useLastSeenEvent({
           scrollContainerRef,
-          events: seqEvents([2]),
+          events,
           streamId: "stream_1",
           lastReadEventId: "e_below_window",
           lastReadSequence: 1n,
