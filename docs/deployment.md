@@ -152,7 +152,7 @@ React 19 + Vite SPA deployed to the `threa-frontend` Cloudflare Pages project.
 - **SPA routing**: `apps/frontend/public/_redirects` contains `/* /index.html 200`.
 - **Domain sharing**: frontend and workspace-router share `app.threa.io`. Workers Routes take priority over Pages, so `/api/*` → workspace-router and everything else → Pages.
 - **API base URL**: relative paths only (`fetch("/api/...")`). No configurable base.
-- **Source maps**: the build emits hidden source maps (`build.sourcemap: "hidden"`), and `deploy-cloudflare.yml` uploads them to both regional PostHog projects (via `@posthog/cli`) so frontend `$exception` events symbolicate, then always deletes `*.map` files from `dist/` before the Pages deploy — maps are never shipped. Requires the GitHub Actions secrets `POSTHOG_CLI_TOKEN` (personal API key with source map write scope), `POSTHOG_ENV_ID_EU`, and `POSTHOG_ENV_ID_US` (project ids); upload is skipped, not failed, when `POSTHOG_CLI_TOKEN` is unset.
+- **Source maps**: the build emits hidden source maps (`build.sourcemap: "hidden"`), and `deploy-cloudflare.yml` uploads them to each regional PostHog project (via `@posthog/cli`) so frontend `$exception` events symbolicate, then always deletes `*.map` files from `dist/` before the Pages deploy — maps are never shipped. Requires the GitHub Actions secrets `POSTHOG_CLI_TOKEN` (personal API key with source map write scope) and `POSTHOG_ENV_ID_EU` (project id); the whole step is skipped, not failed, when either is unset. `POSTHOG_ENV_ID_US` adds a second upload and is only needed once a US project exists.
 
 ### Backoffice (`apps/backoffice/`)
 
