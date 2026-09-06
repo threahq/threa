@@ -29,6 +29,9 @@ export const SearchRefineTrigger = forwardRef<HTMLButtonElement, SearchRefineTri
       size="sm"
       aria-expanded={open}
       onClick={onToggle}
+      // The tooltip is for the pointer. Closing the row hands focus back here,
+      // and a focus-opened tooltip would sit over the results it explains.
+      onFocus={(event) => event.preventDefault()}
       className={cn("h-6 gap-1 rounded-full px-2 text-[11px] font-normal text-muted-foreground", className)}
     >
       <Sparkles className="h-3 w-3" aria-hidden="true" />

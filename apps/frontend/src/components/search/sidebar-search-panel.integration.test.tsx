@@ -1288,6 +1288,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(screen.queryByLabelText("Refinement")).not.toBeInTheDocument()
       expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
       expect(refinePill()).toHaveFocus()
+      // Focus alone does not open the tooltip; it would cover the results
+      expect(screen.queryByText(/Refine these results in plain words\./)).not.toBeInTheDocument()
       // The panel itself stayed open
       expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "true")
     })
