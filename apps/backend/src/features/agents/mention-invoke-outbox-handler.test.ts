@@ -8,6 +8,7 @@ import { PersonaRepository } from "./persona-repository"
 import { MentionInvokeHandler } from "./mention-invoke-outbox-handler"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
+import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -119,7 +120,7 @@ describe("MentionInvokeHandler", () => {
   it("ignores the message a slash command was persisted as", async () => {
     const event = makeMessageCreatedEvent(1n, {
       contentMarkdown: "/spawn claude sidebar @ariadne",
-      metadata: { "threa.command": "spawn" },
+      metadata: { [MESSAGE_METADATA_COMMAND_KEY]: "spawn" },
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)

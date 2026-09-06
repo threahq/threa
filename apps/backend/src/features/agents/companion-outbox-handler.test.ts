@@ -10,6 +10,7 @@ import { PersonaRepository } from "./persona-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository } from "./session-repository"
 import { SubagentRunRepository } from "../subagents"
+import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -167,7 +168,7 @@ describe("CompanionHandler", () => {
   })
 
   it("ignores the message a slash command was persisted as", async () => {
-    mockUserMessageEvent("stream_scratchpad_root", { "threa.command": "spawn" })
+    mockUserMessageEvent("stream_scratchpad_root", { [MESSAGE_METADATA_COMMAND_KEY]: "spawn" })
 
     const rootScratchpad = makeStream({
       id: "stream_scratchpad_root",

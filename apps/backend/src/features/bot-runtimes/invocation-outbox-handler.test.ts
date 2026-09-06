@@ -16,6 +16,7 @@ import { BotRepository } from "../public-api/bot-repository"
 import { EventService, type InvocationSourceState } from "../messaging"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import * as e2eStreams from "../e2e-streams"
+import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
 
 const pool = {} as Pool
 
@@ -121,7 +122,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
 
     const routes = await resolveCanonicalInvocationRoutes(
       pool,
-      source({ contentMarkdown: "/spawn claude sidebar", metadata: { "threa.command": "spawn" } })
+      source({ contentMarkdown: "/spawn claude sidebar", metadata: { [MESSAGE_METADATA_COMMAND_KEY]: "spawn" } })
     )
 
     expect({ routes, streamLookups: findStream.mock.calls.length }).toEqual({ routes: [], streamLookups: 0 })
