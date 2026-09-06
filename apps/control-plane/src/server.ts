@@ -14,8 +14,11 @@ import {
   DebounceWithMaxWait,
   ensureListenerFromLatest,
   logger,
+  PostHogErrorReporter,
+  DisabledErrorReporter,
   type OutboxEvent,
   type ProcessResult,
+  type ErrorReporter,
 } from "@threa/backend-common"
 import type { Pool } from "pg"
 import path from "path"
@@ -75,11 +78,16 @@ export interface ControlPlaneInstance {
   pool: Pool
   port: number
   fastShutdown: boolean
+  errorReporter: ErrorReporter
   stop: () => Promise<void>
 }
 
 export async function startServer(): Promise<ControlPlaneInstance> {
   const config = loadControlPlaneConfig()
+
+  const errorReporter: ErrorReporter = config.posthog
+    ? new PostHogErrorReporter({ config: config.posthog, service: "control-plane", region: null })
+    : new DisabledErrorReporter()
 
   const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
   const pool = createDatabasePool(config.databaseUrl, { max: 10 })
@@ -288,6 +296,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       workosDedicatedRedirectHosts: config.workosDedicatedRedirectHosts,
       rateLimits: config.rateLimits,
       githubWebhookSecret: config.githubWebhookSecret,
+      errorReporter,
     })
 
     server = createServer(app)
@@ -346,12 +355,13 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     await startedAuthLogPoller.stop()
     await startedAuthLogRetention.stop()
     await outboxDispatcher.stop()
+    await errorReporter.shutdown()
     await listenPool.end()
     await pool.end()
     logger.info("Control plane stopped")
   }
 
-  return { server: startedServer, pool, port: config.port, fastShutdown: config.fastShutdown, stop }
+  return { server: startedServer, pool, port: config.port, fastShutdown: config.fastShutdown, errorReporter, stop }
 }
 
 /** Dispatch a single outbox event to the appropriate service method (INV-34) */

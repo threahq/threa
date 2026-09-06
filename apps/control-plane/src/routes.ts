@@ -4,9 +4,10 @@ import {
   createAuthMiddleware,
   createRateLimit,
   getClientIp,
-  errorHandler,
+  createErrorHandler,
   type AuthService,
   type SessionCookies,
+  type ErrorReporter,
   StubAuthService,
 } from "@threa/backend-common"
 import { createControlPlaneAuthHandlers, createAuthStubHandlers } from "./features/auth"
@@ -54,6 +55,7 @@ interface Dependencies {
   workosDedicatedRedirectHosts: string[]
   rateLimits: RateLimitConfig
   githubWebhookSecret: string | null
+  errorReporter: ErrorReporter
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -292,5 +294,5 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.put("/internal/integration-routes", internalAuth, integrationRoutes.register)
   app.delete("/internal/integration-routes", internalAuth, integrationRoutes.unregister)
 
-  app.use(errorHandler)
+  app.use(createErrorHandler({ errorReporter: deps.errorReporter }))
 }

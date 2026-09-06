@@ -36,10 +36,15 @@ export { createMigrator, runMigrations } from "./db/migrations"
 
 export { HttpError, isUniqueViolation } from "./errors"
 
-export { errorHandler } from "./middleware/error-handler"
+export { createErrorHandler } from "./middleware/error-handler"
 export { createInternalAuthMiddleware, INTERNAL_API_KEY_HEADER } from "./middleware/internal-auth"
 export { createRateLimit, getClientIp } from "./middleware/rate-limit"
 export type { RateLimitOptions } from "./middleware/rate-limit"
+
+export { loadPostHogConfig } from "./posthog/config"
+export type { PostHogConfig } from "./posthog/config"
+export { PostHogErrorReporter, DisabledErrorReporter } from "./posthog/error-reporter"
+export type { ErrorReporter, ExceptionContext } from "./posthog/error-reporter"
 
 export { logger } from "./logger"
 export { extractWorkspaceIdFromGithubInstallState } from "./github-install-state"

@@ -1,5 +1,6 @@
 import { logger } from "./logger"
-import type { WorkosConfig } from "@threa/backend-common"
+import { loadPostHogConfig } from "@threa/backend-common"
+import type { PostHogConfig, WorkosConfig } from "@threa/backend-common"
 
 export type { WorkosConfig } from "@threa/backend-common"
 
@@ -131,6 +132,7 @@ export interface Config {
   enclaveInternalApiKey: string | null
   /** This instance's region name (e.g., "eu-north-1") */
   region: string | null
+  posthog: PostHogConfig | null
 }
 
 export function loadConfig(): Config {
@@ -259,6 +261,10 @@ export function loadConfig(): Config {
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
     region: process.env.REGION || null,
+    posthog: loadPostHogConfig(
+      { POSTHOG_PROJECT_TOKEN: process.env.POSTHOG_PROJECT_TOKEN, POSTHOG_HOST: process.env.POSTHOG_HOST },
+      { isProduction, service: "backend" }
+    ),
   }
 
   // Validate co-presence: VAPID vars must all be set or all be absent (INV-11)

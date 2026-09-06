@@ -1,4 +1,4 @@
-import { logger, type WorkosConfig } from "@threa/backend-common"
+import { logger, loadPostHogConfig, type WorkosConfig, type PostHogConfig } from "@threa/backend-common"
 
 export interface RegionConfig {
   internalUrl: string
@@ -79,6 +79,7 @@ export interface ControlPlaneConfig {
    * there is never a silent fallback secret (INV-11).
    */
   githubWebhookSecret: string | null
+  posthog: PostHogConfig | null
 }
 
 export function loadControlPlaneConfig(): ControlPlaneConfig {
@@ -181,6 +182,10 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
       fromEmail: process.env.WAITLIST_FROM_EMAIL?.trim() || "Threa <hello@threa.io>",
     },
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || null,
+    posthog: loadPostHogConfig(
+      { POSTHOG_PROJECT_TOKEN: process.env.POSTHOG_PROJECT_TOKEN, POSTHOG_HOST: process.env.POSTHOG_HOST },
+      { isProduction, service: "control-plane" }
+    ),
   }
 
   if (useStubAuth) {

@@ -27,6 +27,8 @@ function setBaseEnv() {
   delete process.env.CLOUDFLARE_REALTIME_APP_ID
   delete process.env.CLOUDFLARE_REALTIME_APP_SECRET
   delete process.env.CLOUDFLARE_REALTIME_API_BASE
+  delete process.env.POSTHOG_PROJECT_TOKEN
+  delete process.env.POSTHOG_HOST
 }
 
 afterEach(() => {
@@ -417,5 +419,47 @@ describe("loadConfig enclave credential separation (Phase 2.4c, E2EE-22)", () =>
     process.env.INTERNAL_API_KEY = "shared-key"
 
     expect(() => loadConfig()).toThrow("ENCLAVE_INTERNAL_API_KEY is required when CONTROL_PLANE_URL is set")
+  })
+})
+
+describe("loadConfig posthog configuration", () => {
+  test("should throw when POSTHOG_PROJECT_TOKEN is set without POSTHOG_HOST", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.POSTHOG_PROJECT_TOKEN = "phc_test"
+
+    expect(() => loadConfig()).toThrow("POSTHOG_HOST is required when POSTHOG_PROJECT_TOKEN is set")
+  })
+
+  test("should warn once and disable PostHog when production has no token", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+    process.env.S3_REGION = "us-east-1"
+
+    const warnSpy = spyOn(logger, "warn")
+
+    const config = loadConfig()
+
+    expect(config.posthog).toBeNull()
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    warnSpy.mockRestore()
+  })
+
+  test("should load posthog config when token and host are set", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.POSTHOG_PROJECT_TOKEN = "phc_test"
+    process.env.POSTHOG_HOST = "https://eu.i.posthog.com"
+
+    const config = loadConfig()
+    expect(config.posthog).toEqual({ projectToken: "phc_test", host: "https://eu.i.posthog.com" })
   })
 })
