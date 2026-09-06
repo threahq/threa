@@ -98,6 +98,8 @@ export interface DeliveredTurn {
  */
 export interface SessionControlInvocationContext {
   rootStreamId: string
+  /** The message the user typed the command into — what a command anchors its thread on. */
+  sourceMessageId: string
 }
 
 export interface SessionControlActuator {
@@ -1362,6 +1364,7 @@ export class RemoteSession {
           }
           const outcome = await actuator.runCommand(command.name, command.args, {
             rootStreamId: invocation.rootStreamId,
+            sourceMessageId: invocation.sourceMessageId,
           })
           if (this.isClaimCancelled(invocation)) return
           if (!outcome.afterAck) {

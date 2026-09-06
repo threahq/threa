@@ -240,7 +240,6 @@ export async function runClaudeCommand(
   keySender: typeof sendAllowedTmuxKey = sendAllowedTmuxKey,
   invocationContext?: SessionControlInvocationContext,
   activeStreamId?: () => string | undefined,
-  postMessage?: (streamId: string, content: string) => Promise<{ id: string }>,
   spawnLauncher: typeof prepareHarnessSpawn = prepareHarnessSpawn
 ): Promise<{
   ok: boolean
@@ -341,7 +340,7 @@ export async function runClaudeCommand(
       const parsed = parseSpawnCommandArgs(args)
       if ("error" in parsed) return { ok: false, message: parsed.error }
       const root = rootStreamId?.()
-      if (!root || !postMessage || !harnessReconnectAvailable()) {
+      if (!root || !harnessReconnectAvailable()) {
         throw new Error("Spawn is unavailable for this session.")
       }
       if (invocationContext?.rootStreamId !== root) {
@@ -354,16 +353,16 @@ export async function runClaudeCommand(
         throw new Error("Spawn is only available at the scratchpad itself, not inside a thread session.")
       }
       const runtime = parsed.runtime ?? "claude"
-      const anchor = await postMessage(root, `Starting **${parsed.name}** (${runtime})`)
+      // The thread hangs off the `/spawn` the user typed, so the agent's first
+      // message is a reply to it rather than to a separate "Starting…" post.
+      const anchorId = invocationContext.sourceMessageId
       // harnessd dies on a blank brief, so an empty prompt gets no file at all.
       const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
       try {
-        spawnLauncher({ runtime, name: parsed.name, rootStreamId: root, anchorId: anchor.id, briefFile })()
+        spawnLauncher({ runtime, name: parsed.name, rootStreamId: root, anchorId, briefFile })()
       } catch (error) {
         discardSpawnBrief(briefFile)
-        throw new Error(
-          `Posted the anchor ${anchor.id} but could not start ${parsed.name}: ${error instanceof Error ? error.message : String(error)}`
-        )
+        throw error
       }
       return {
         ok: true,
@@ -485,8 +484,7 @@ export function createClaudeSessionControl(
   restartDelegationsAfterReset?: () => void,
   reconnectTarget?: () => ReconnectTarget,
   reconnectReady?: () => boolean,
-  activeStreamId?: () => string | undefined,
-  postMessage?: (streamId: string, content: string) => Promise<{ id: string }>
+  activeStreamId?: () => string | undefined
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
@@ -544,8 +542,7 @@ export function createClaudeSessionControl(
         reconnectReady,
         sendAllowedTmuxKey,
         context,
-        activeStreamId,
-        postMessage
+        activeStreamId
       ),
   }
 }
@@ -650,8 +647,7 @@ export class ChannelServer {
             return { ...remote, rootStreamId: this.session.rootStreamId }
           },
           () => !this.shuttingDown,
-          () => this.session?.statusSnapshot.activeStreamId,
-          (streamId, content) => client.sendMessage(streamId, { content })
+          () => this.session?.statusSnapshot.activeStreamId
         ),
         // Record what this window owns so harnessd can reap it later: an archive
         // that lands while this process is dead has nothing else to go on.

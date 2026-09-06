@@ -3784,7 +3784,6 @@ interface ClearCommandDeps {
 
 interface SpawnCommandDeps {
   available: () => boolean
-  postMessage: typeof postStreamMessage
   prepare: typeof prepareHarnessSpawn
   complete: typeof completeInvocationWithMarkdown
 }
@@ -3980,24 +3979,12 @@ async function runClearCommand(
   )
 }
 
-async function postStreamMessage(streamId: string, content: string): Promise<string> {
-  if (!config) throw new Error("Threa remote config not loaded")
-  const body = await request<{ data?: { id?: string } }>(
-    `/api/v1/workspaces/${config.workspaceId}/streams/${streamId}/messages`,
-    { method: "POST", body: JSON.stringify({ content }) }
-  )
-  const id = body.data?.id
-  if (typeof id !== "string" || !id) throw new Error(`Threa API returned no message id for stream ${streamId}`)
-  return id
-}
-
 async function runSpawnCommand(
   invocation: ClaimedInvocation,
   args: string,
   ctx: ExtensionContext,
   deps: SpawnCommandDeps = {
     available: harnessReconnectAvailable,
-    postMessage: postStreamMessage,
     prepare: prepareHarnessSpawn,
     complete: completeInvocationWithMarkdown,
   },
@@ -4021,10 +4008,12 @@ async function runSpawnCommand(
     throw new Error("Spawn request no longer matches the linked scratchpad.")
   }
   const runtime = parsed.runtime ?? "pi"
-  // A replacement claim reruns this command, so anything past here would post a
-  // second anchor and start a second session for the one `/spawn` the user typed.
+  // A replacement claim reruns this command, so anything past here would start a
+  // second session for the one `/spawn` the user typed.
   if (!isCurrent()) return
-  const anchorId = await deps.postMessage(link.rootStreamId, `Starting **${parsed.name}** (${runtime})`)
+  // The thread hangs off the `/spawn` the user typed, so the agent's first
+  // message is a reply to it rather than to a separate "Starting…" post.
+  const anchorId = invocation.sourceMessageId
   // harnessd dies on a blank brief, so an empty prompt gets no file at all.
   const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
   if (!isCurrent()) {
@@ -4035,7 +4024,7 @@ async function runSpawnCommand(
     deps.prepare({ runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
   } catch (error) {
     discardSpawnBrief(briefFile)
-    throw new Error(`Spawn launch failed after posting anchor ${anchorId}: ${summarizeError(error)}`)
+    throw new Error(`Spawn launch failed: ${summarizeError(error)}`)
   }
   await deps.complete(
     invocation,
