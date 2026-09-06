@@ -712,7 +712,7 @@ describe("StreamService.createThread (via create)", () => {
     expect(memberAddedCalls).toHaveLength(0)
   })
 
-  test("emits stream:created to parent stream room when thread is newly created", async () => {
+  test("carries the parent stream on stream:created so it routes to the parent's room", async () => {
     mockMessageFindByIdForUpdate.mockResolvedValue({
       id: "msg_1",
       streamId: "stream_channel",
@@ -736,7 +736,8 @@ describe("StreamService.createThread (via create)", () => {
       "stream:created",
       expect.objectContaining({
         workspaceId: "ws_1",
-        streamId: "stream_channel",
+        streamId: thread.id,
+        stream: expect.objectContaining({ parentStreamId: "stream_channel" }),
       })
     )
   })

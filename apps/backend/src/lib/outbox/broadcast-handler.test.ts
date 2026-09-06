@@ -251,8 +251,8 @@ describe("BroadcastHandler", () => {
   it("should emit stream:created thread to parent stream room", async () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
-      streamId: "stream_parent",
-      stream: { id: "stream_thread", type: "thread", parentAnchorId: "msg_1" },
+      streamId: "stream_thread",
+      stream: { id: "stream_thread", type: "thread", parentAnchorId: "msg_1", parentStreamId: "stream_parent" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
@@ -271,8 +271,8 @@ describe("BroadcastHandler", () => {
   it("should emit event-anchored stream:created to the parent stream room", async () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
-      streamId: "stream_parent",
-      stream: { id: "stream_thread", type: "thread", parentAnchorId: "event_call" },
+      streamId: "stream_thread",
+      stream: { id: "stream_thread", type: "thread", parentAnchorId: "event_call", parentStreamId: "stream_parent" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])

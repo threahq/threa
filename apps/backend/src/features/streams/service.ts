@@ -1106,11 +1106,9 @@ export class StreamService {
     }
 
     if (created) {
-      // Broadcast stream:created to PARENT stream's room (not the new thread's room)
-      // This lets watchers of the parent see the thread indicator appear
       await OutboxRepository.insert(client, "stream:created", {
         workspaceId: params.workspaceId,
-        streamId: params.parentStreamId,
+        streamId: stream.id,
         stream,
       })
     }

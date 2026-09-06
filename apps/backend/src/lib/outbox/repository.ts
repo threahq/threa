@@ -436,9 +436,11 @@ export interface StreamBotAccessStatusChangedOutboxPayload extends StreamScopedP
   event: StreamEvent
 }
 
-// StreamCreatedOutboxPayload includes streamId for routing:
-// - For threads: streamId = parentStreamId (broadcast to parent stream room)
-// - For non-threads: streamId = stream.id (broadcast to workspace room)
+/**
+ * `streamId` is the created stream, like every other stream payload. A thread is
+ * broadcast to its parent's room rather than its own, which `stream.parentStreamId`
+ * already carries — the parent is the room, so no separate routing field.
+ */
 export interface StreamCreatedOutboxPayload extends WorkspaceScopedPayload {
   streamId: string
   stream: Stream

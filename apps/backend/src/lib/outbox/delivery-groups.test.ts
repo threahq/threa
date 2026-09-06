@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { WORKSPACE_PERMISSION_SCOPES, LabelableResourceTypes, Visibilities } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES, LabelableResourceTypes, Visibilities, StreamTypes } from "@threa/types"
 import {
   resolveDeliveryGroups,
   permissionGroupsForRole,
@@ -35,6 +35,35 @@ describe("resolveDeliveryGroups — internal events", () => {
         })
       )
     ).toEqual([])
+  })
+})
+
+describe("resolveDeliveryGroups — stream:created thread routing", () => {
+  it("routes to the parent's stream group named by the created thread", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream:created", {
+        workspaceId: "ws_1",
+        streamId: "stream_thread",
+        stream: {
+          id: "stream_thread",
+          type: StreamTypes.THREAD,
+          parentAnchorId: "msg_1",
+          parentStreamId: "stream_parent",
+        },
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_parent")])
+  })
+
+  it("falls back to streamId when the payload's stream carries no parent (legacy shape)", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream:created", {
+        workspaceId: "ws_1",
+        streamId: "stream_parent",
+        stream: { id: "stream_thread", type: StreamTypes.THREAD, parentAnchorId: "msg_1" },
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_parent")])
   })
 })
 

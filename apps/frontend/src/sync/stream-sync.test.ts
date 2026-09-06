@@ -5274,16 +5274,56 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
       archivedAt: null,
     })
 
-    await emit("stream:created", { workspaceId: "ws_1", streamId: hostId, stream: anchored("stream_aside_1", "aside") })
+    await emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_aside_1",
+      stream: anchored("stream_aside_1", "aside"),
+    })
     expect((await db.events.get("evt_anchor"))?.payload).not.toHaveProperty("threadId")
     expect(await db.streams.get("stream_aside_1")).toBeUndefined()
 
     await emit("stream:created", {
       workspaceId: "ws_1",
-      streamId: hostId,
+      streamId: "stream_thread_1",
       stream: anchored("stream_thread_1", "thread"),
     })
     expect((await db.events.get("evt_anchor"))?.payload).toMatchObject({ threadId: "stream_thread_1" })
+
+    cleanup()
+  })
+
+  it("still routes on streamId when the payload's stream carries no parent", async () => {
+    const hostId = "stream_host_aside_gate_legacy"
+    await db.events.put({
+      ...makeEvent({ id: "evt_anchor_legacy", streamId: hostId, sequence: "1", payload: { messageId: "msg_anchor" } }),
+      workspaceId: "ws_1",
+      _sequenceNum: 1,
+      _cachedAt: Date.now(),
+    })
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", hostId, queryClient)
+    const thread: Stream = {
+      id: "stream_thread_legacy",
+      workspaceId: "ws_1",
+      type: "thread",
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: null,
+      parentAnchorId: "msg_anchor",
+      rootStreamId: hostId,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "user_1",
+      createdAt: "2026-08-20T10:00:00.000Z",
+      updatedAt: "2026-08-20T10:00:00.000Z",
+      archivedAt: null,
+    }
+
+    await emit("stream:created", { workspaceId: "ws_1", streamId: hostId, stream: thread })
+    expect((await db.events.get("evt_anchor_legacy"))?.payload).toMatchObject({ threadId: "stream_thread_legacy" })
 
     cleanup()
   })
