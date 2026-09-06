@@ -113,7 +113,7 @@ export function useAutoMarkAsRead(
         : undefined
     const reportEventId = lastEventId ?? healEventId
     const reportPartial = lastEventId ? partial : true
-    if (!enabled || !reportEventId || !canAutoRead) {
+    if (!enabled || !canAutoRead) {
       // The gate closed with a mark still debouncing: drop it, matching the
       // pre-queue semantics — a blur cancels rather than commits, so content
       // glimpsed right before switching windows stays unread (never
@@ -121,6 +121,12 @@ export function useAutoMarkAsRead(
       queue.cancel(streamId)
       return
     }
+    // No frontier to report leaves a debouncing mark alone: the rows it names
+    // were seen while attentive, and the frontier clears for reasons that say
+    // nothing about that — the pointer caught up, or turned unknowable while
+    // the event window changed source. An explicit unread cancels through the
+    // queue itself (`runExplicitUnread`).
+    if (!reportEventId) return
 
     // D5 heal: a fully-read (`!partial`) open still fires one commit even when
     // nothing is locally elevated. `lastEventId` is then the true tail, so the

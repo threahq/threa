@@ -309,35 +309,6 @@ export function canActOnDeepLinkNavigation<T extends string>(args: {
   return args.hasEvents
 }
 
-/**
- * Remap a thread watermark that points at a suppressed membership event to the
- * nearest PRECEDING rendered event (null when none precedes it — "nothing read
- * yet", an equivalent read position since suppressed events aren't readable
- * content). A fresh thread member's watermark is seeded on their member_added
- * event by the backend, but threads hide membership events from the rendered
- * window — so the auto-read frontier (`useLastSeenEvent`), which resolves the
- * watermark's index in `displayEvents`, would see an unresolvable pointer and
- * give up: auto-read never fires, leaving the thread permanently unread (the
- * ghost-unread-thread bug). A watermark outside
- * the loaded window entirely is returned as-is: read progress is unknowable
- * there, and the consumers' existing suppression semantics must keep applying.
- */
-export function remapSuppressedWatermark(
-  lastReadEventId: string | null | undefined,
-  events: StreamEvent[],
-  displayEvents: StreamEvent[]
-): string | null | undefined {
-  if (!lastReadEventId) return lastReadEventId
-  const displayIds = new Set(displayEvents.map((e) => e.id))
-  if (displayIds.has(lastReadEventId)) return lastReadEventId
-  const idx = events.findIndex((e) => e.id === lastReadEventId)
-  if (idx < 0) return lastReadEventId
-  for (let i = idx - 1; i >= 0; i--) {
-    if (displayIds.has(events[i].id)) return events[i].id
-  }
-  return null
-}
-
 /** Lead distance (px) from either edge of the scroll range at which the next
  *  page is prefetched, so it lands before a fast scroll reaches the boundary. */
 export const EDGE_PREFETCH_PX = 1500
@@ -1131,20 +1102,6 @@ export function StreamContent({
       }).length,
     [displayEvents]
   )
-
-  // See remapSuppressedWatermark: a fresh thread member's watermark sits on a
-  // membership event that threads hide from the rendered window; the auto-read
-  // frontier (useLastSeenEvent) needs it remapped to a rendered position.
-  const frontierLastReadEventId = useMemo(
-    () => (isThread ? remapSuppressedWatermark(lastReadEventId, events, displayEvents) : lastReadEventId),
-    [isThread, lastReadEventId, events, displayEvents]
-  )
-  const frontierLastReadSequence = useMemo(() => {
-    if (frontierLastReadEventId === lastReadEventId) return frontierSequence
-    if (frontierLastReadEventId == null) return frontierLastReadEventId
-    const remapped = displayEvents.find((event) => event.id === frontierLastReadEventId)
-    return remapped ? BigInt(remapped.sequence) : undefined
-  }, [displayEvents, frontierLastReadEventId, frontierSequence, lastReadEventId])
 
   // Conversation lookup for the always-on provenance chips (mechanism A below).
   const conversationsById = useMemo(() => {
@@ -2437,8 +2394,9 @@ export function StreamContent({
     contentRef: useVirtualized ? virtualContentRef : plainContentRef,
     events: displayEvents,
     streamId,
-    lastReadEventId: frontierLastReadEventId,
-    lastReadSequence: frontierLastReadSequence,
+    lastReadEventId,
+    lastReadSequence: frontierSequence,
+    hasOlderEvents,
     enabled: autoMarkEnabled,
     programmaticScrollAtRef,
     sweepOriginRef,

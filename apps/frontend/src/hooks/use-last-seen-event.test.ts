@@ -1051,4 +1051,96 @@ describe("useLastSeenEvent re-scan triggers", () => {
     act(() => rerender({ lastReadEventId: "older_than_window" }))
     expect(result.current.lastSeenEventId).toBeUndefined()
   })
+
+  // The pointer's event is often not in the window: a thread's watermark is born
+  // on its hidden member_added event, and the cache may lack the row the
+  // watermark names. Resolution goes by sequence so the same rule holds on every
+  // surface; an id miss must never read as "unknowable".
+  function mountWindow(positions: Record<string, { top: number; bottom: number }>): HTMLDivElement {
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+    return container
+  }
+  const seqEvents = (seqs: number[]) =>
+    seqs.map((n) => ({ id: `e${n}`, sequence: String(n), eventType: "message_created" })) as unknown as StreamEvent[]
+
+  it("resolves a pointer whose event is missing from a head-loaded window by sequence (born-read hidden member_added)", () => {
+    const container = mountWindow({
+      e2: { top: 5, bottom: 35 },
+      e3: { top: 35, bottom: 65 },
+      e4: { top: 65, bottom: 95 },
+    })
+    const scrollContainerRef = { current: container }
+
+    const { result } = renderHook(() =>
+      useLastSeenEvent({
+        scrollContainerRef,
+        events: seqEvents([2, 3, 4]),
+        streamId: "stream_1",
+        lastReadEventId: "e_member_added",
+        lastReadSequence: 1n,
+        hasOlderEvents: false,
+        enabled: true,
+      })
+    )
+
+    expect(result.current.lastSeenEventId).toBe("e4")
+    expect(result.current.atLastRow).toBe(true)
+  })
+
+  it("keeps a pointer below a window with older pages unloaded unknowable", () => {
+    const container = mountWindow({
+      e2: { top: 5, bottom: 35 },
+      e3: { top: 35, bottom: 65 },
+      e4: { top: 65, bottom: 95 },
+    })
+    const scrollContainerRef = { current: container }
+
+    const { result } = renderHook(() =>
+      useLastSeenEvent({
+        scrollContainerRef,
+        events: seqEvents([2, 3, 4]),
+        streamId: "stream_1",
+        lastReadEventId: "e_below_window",
+        lastReadSequence: 1n,
+        hasOlderEvents: true,
+        enabled: true,
+      })
+    )
+
+    expect(result.current.lastSeenEventId).toBeUndefined()
+  })
+
+  it("resolves a pointer between loaded rows to the last row at or below it", () => {
+    // e2 is scrolled off the top; the viewport starts at e4. With the pointer
+    // resolved to e2 the viewport is contiguous with it and reads through to e6.
+    // Resolved to "nothing read" instead, e2 would be an unseen gap and nothing
+    // would be emitted.
+    const container = mountWindow({
+      e2: { top: -40, bottom: -10 },
+      e4: { top: 5, bottom: 50 },
+      e6: { top: 50, bottom: 95 },
+    })
+    const scrollContainerRef = { current: container }
+
+    const { result } = renderHook(() =>
+      useLastSeenEvent({
+        scrollContainerRef,
+        events: seqEvents([2, 4, 6]),
+        streamId: "stream_1",
+        lastReadEventId: "e_hidden_3",
+        lastReadSequence: 3n,
+        hasOlderEvents: false,
+        enabled: true,
+      })
+    )
+
+    expect(result.current.lastSeenEventId).toBe("e6")
+  })
 })

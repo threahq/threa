@@ -359,6 +359,26 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).not.toHaveBeenCalled()
   })
 
+  it("keeps a debouncing mark when the frontier clears while attention holds", () => {
+    // The frontier hook clears its target when the read pointer turns
+    // unresolvable mid-hydration (a thread's event window switching source). The
+    // rows the mark names were seen while attentive; dropping it here left the
+    // thread unread for good. Only attention loss cancels.
+    const { rerender } = renderHook(({ lastEventId }) => useAutoMarkAsRead("ws_123", "stream_a", lastEventId), {
+      initialProps: { lastEventId: "event_a" as string | undefined },
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(250)
+    })
+    rerender({ lastEventId: undefined })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_a", "event_a", { partial: false })
+  })
+
   it("heals an undismissable activity at the watermark when no frontier advance exists (born-read member_added)", () => {
     // Being added to a stream born-reads the member_added event — the watermark
     // IS the tail, so the frontier never advances and lastEventId stays
