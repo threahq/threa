@@ -54,6 +54,27 @@ async function stampSummaryOntoBootstrap(page: Page) {
   })
 }
 
+/**
+ * Drop everything the client cached, so the load that follows is a real cold
+ * open served only by the bootstrap above.
+ *
+ * The message is posted while the page is already sitting in the stream, so it
+ * also arrives on the socket and lands in IndexedDB — carrying no summary,
+ * because the server has no such memo and the summary is stamped onto the
+ * bootstrap alone. Left in place, the reload paints that cached copy first and
+ * the card grows when the bootstrap lands: a race between two fixtures rather
+ * than a measurement of the card. The delete is queued from an init script so
+ * it is ahead of the app's own open.
+ */
+async function dropClientCache(page: Page) {
+  const cached = await page.evaluate(async () =>
+    (await indexedDB.databases()).map((entry) => entry.name).filter((name): name is string => !!name)
+  )
+  await page.addInitScript((names: string[]) => {
+    for (const name of names) indexedDB.deleteDatabase(name)
+  }, cached)
+}
+
 test.describe("memo embed card", () => {
   test.describe.configure({ timeout: 120_000 })
 
@@ -71,6 +92,7 @@ test.describe("memo embed card", () => {
     expect(sendRes.ok()).toBeTruthy()
 
     await stampSummaryOntoBootstrap(page)
+    await dropClientCache(page)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
 
     const card = memoCards(page).first()
