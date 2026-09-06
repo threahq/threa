@@ -21,7 +21,7 @@ import * as mobileModule from "@/hooks/use-mobile"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
-import type { MemoExplorerResult, SearchCluster, SearchResultItem } from "@/api"
+import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchSteerOutcome } from "@/api"
 import * as apiModule from "@/api"
 
 const search = vi.fn()
@@ -32,6 +32,7 @@ const mockSearchState = {
   clusters: null as SearchCluster[] | null,
   memos: [] as MemoExplorerResult[],
   queryLogId: null as string | null,
+  steer: null as SearchSteerOutcome | null,
 }
 
 function LocationProbe() {
@@ -78,6 +79,7 @@ describe("SearchPage", () => {
     mockSearchState.clusters = null
     mockSearchState.memos = []
     mockSearchState.queryLogId = null
+    mockSearchState.steer = null
     vi.spyOn(hooksModule, "useSearch").mockImplementation(
       () =>
         ({
@@ -85,6 +87,7 @@ describe("SearchPage", () => {
           clusters: mockSearchState.clusters ?? strayClusters(mockSearchState.results),
           memos: mockSearchState.memos,
           queryLogId: mockSearchState.queryLogId,
+          steer: mockSearchState.steer,
           isLoading: false,
           error: null,
           search,
@@ -309,5 +312,54 @@ describe("SearchPage", () => {
 
     expect(await screen.findByText("No results")).toBeInTheDocument()
     expect(screen.queryByRole("radio", { name: "Ranked results" })).toBeInTheDocument()
+  })
+
+  describe("steer", () => {
+    it("commits /steer prose to the URL on Enter and drops it when the chip is removed", async () => {
+      const user = userEvent.setup()
+      renderPage()
+
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
+      })
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, " /steer only decisions")
+      await user.keyboard("{Enter}")
+
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&steer=only+decisions")
+      expect(document.querySelector('[data-search-steer="only decisions"]')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions"])
+      })
+
+      await user.click(screen.getByRole("button", { name: "Remove steer only decisions" }))
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello")
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
+      })
+    })
+
+    it("restores the steer trail from the URL and shows the outcome", async () => {
+      mockSearchState.steer = { applied: true, note: "Dropped the billing thread." }
+      renderPage("/w/workspace_1/search?q=hello&steer=only+decisions&steer=not+billing")
+
+      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual([
+        "only decisions",
+        "not billing",
+      ])
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions", "not billing"])
+      })
+      expect(await screen.findByText("Dropped the billing thread.")).toBeInTheDocument()
+    })
+
+    it("says so when the steer could not be applied", async () => {
+      mockSearchState.steer = { applied: false, note: null }
+      renderPage("/w/workspace_1/search?q=hello&steer=only+decisions")
+
+      expect(await screen.findByText(/Couldn't apply the steer/)).toBeInTheDocument()
+    })
   })
 })

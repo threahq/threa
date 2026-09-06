@@ -13,6 +13,9 @@ interface SearchPanelContextValue {
   /** The current search query (shared so reopening the panel restores it). */
   query: string
   setQuery: (query: string) => void
+  /** Committed `/steer` refinements, oldest first; each is a removable chip. */
+  steers: string[]
+  setSteers: (steers: string[]) => void
   /** Result the user last opened — drives the active row styling. */
   activeResultId: string | null
   setActiveResultId: (id: string | null) => void
@@ -38,6 +41,7 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
   const { state, isMobile, togglePinned, collapse } = useSidebar()
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState("")
+  const [steers, setSteers] = useState<string[]>([])
   const [activeResultId, setActiveResultId] = useState<string | null>(null)
 
   const focusInputRef = useRef<(() => void) | null>(null)
@@ -60,6 +64,7 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
 
       if (options?.query !== undefined) {
         setQuery(options.query)
+        setSteers([])
         setActiveResultId(null)
       }
       setIsOpen(true)
@@ -84,13 +89,15 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
       isOpen,
       query,
       setQuery,
+      steers,
+      setSteers,
       activeResultId,
       setActiveResultId,
       openSearch,
       closeSearch,
       registerFocusHandler,
     }),
-    [isOpen, query, activeResultId, openSearch, closeSearch, registerFocusHandler]
+    [isOpen, query, steers, activeResultId, openSearch, closeSearch, registerFocusHandler]
   )
 
   return <SearchPanelContext.Provider value={value}>{children}</SearchPanelContext.Provider>

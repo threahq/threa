@@ -51,6 +51,10 @@ import type { WorkspacePermissionSlug } from "./workspace-permissions"
 /** Maximum quoted phrase filters accepted by message search. */
 export const MAX_SEARCH_PHRASES = 5
 
+/** Maximum `/steer` instructions a search carries; each one is a plain-language refinement of the result list. */
+export const MAX_SEARCH_STEERS = 5
+export const MAX_SEARCH_STEER_CHARS = 200
+
 /**
  * What a user opened from a search result list, attributed to a `search_query_log` row.
  * Memo hits ride in the same response, so an opened memo is attributable too.

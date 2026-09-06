@@ -21,6 +21,17 @@ export interface SearchRequest {
   filters?: SearchFilters
   /** Use exact substring matching (ILIKE) instead of full-text/semantic search */
   exact?: boolean
+  /** Plain-language refinements applied to the clustered list, oldest first. */
+  steer?: string[]
+}
+
+/**
+ * What happened to a requested steer: `applied` with the model's one-line
+ * `note`, or not applied when the model call failed and the list is unsteered.
+ */
+export interface SearchSteerOutcome {
+  applied: boolean
+  note: string | null
 }
 
 export interface SearchResultItem {
@@ -71,6 +82,8 @@ export interface SearchResponse {
   memos: MemoExplorerResult[]
   /** Set only when the user opted into search query logging (`searchQueryLog` flag); pass it to `recordSearchClick`. */
   queryLogId: string | null
+  /** Null when the request carried no steer. */
+  steer: SearchSteerOutcome | null
 }
 
 export interface SearchClickTarget {
@@ -91,6 +104,7 @@ export async function searchMessages(workspaceId: string, request: SearchRequest
     after: request.filters?.after,
     exact: request.exact,
     limit: request.limit,
+    steer: request.steer,
   }
 
   return api.post<SearchResponse>(`/api/workspaces/${workspaceId}/search`, body)

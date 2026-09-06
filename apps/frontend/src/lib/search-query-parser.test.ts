@@ -3,6 +3,7 @@ import {
   parseSearchQuery,
   serializeSearchQuery,
   removeFilterFromQuery,
+  removeSteerFromQuery,
   addFilterToQuery,
   getFilterLabel,
 } from "./search-query-parser"
@@ -187,6 +188,36 @@ describe("parseSearchQuery", () => {
       phrases: [],
     })
   })
+
+  it("carries everything after /steer as prose, outside the searched text", () => {
+    expect(parseSearchQuery('in:#general launch "plan b" /steer only decisions, skip from:@bot')).toEqual({
+      filters: [{ type: "in", value: "general", raw: "in:#general" }],
+      text: 'launch "plan b"',
+      semanticText: "launch",
+      phrases: ["plan b"],
+      steer: "only decisions, skip from:@bot",
+    })
+  })
+
+  it("reports an empty steer while only the marker is typed and none without it", () => {
+    expect(parseSearchQuery("launch /steer")).toMatchObject({ text: "launch", steer: "" })
+    expect(parseSearchQuery("launch /steer ")).toMatchObject({ text: "launch", steer: "" })
+    expect(parseSearchQuery("launch")).toMatchObject({ text: "launch", steer: null })
+  })
+
+  it("does not treat /steer inside a word or a longer command as the marker", () => {
+    expect(parseSearchQuery("docs/steer launch")).toMatchObject({ text: "docs/steer launch", steer: null })
+    expect(parseSearchQuery("launch /steering wheel")).toMatchObject({ text: "launch /steering wheel", steer: null })
+  })
+})
+
+describe("removeSteerFromQuery", () => {
+  it("drops the /steer tail and keeps the rest", () => {
+    expect(removeSteerFromQuery("in:#general launch /steer only decisions")).toBe("in:#general launch")
+    expect(removeSteerFromQuery("launch /steer")).toBe("launch")
+    expect(removeSteerFromQuery("/steer only decisions")).toBe("")
+    expect(removeSteerFromQuery("launch")).toBe("launch")
+  })
 })
 
 describe("serializeSearchQuery", () => {
@@ -232,6 +263,13 @@ describe("removeFilterFromQuery", () => {
 })
 
 describe("addFilterToQuery", () => {
+  it("keeps a pending /steer tail when a filter is added or removed", () => {
+    const withFilter = addFilterToQuery("launch /steer only decisions", "from", "martin")
+    expect(withFilter).toBe("from:@martin launch /steer only decisions")
+    expect(removeFilterFromQuery(withFilter, 0)).toBe("launch /steer only decisions")
+    expect(removeFilterFromQuery("launch /steer", 0)).toBe("launch /steer")
+  })
+
   it("should add from filter", () => {
     const result = addFilterToQuery("hello", "from", "martin")
     expect(result).toBe("from:@martin hello")

@@ -30,6 +30,7 @@ export {
   type SearchClusterConversation,
   type SearchResponse,
   type SearchClickTarget,
+  type SearchSteerOutcome,
   type ArchiveStatus,
 } from "./search"
 export {

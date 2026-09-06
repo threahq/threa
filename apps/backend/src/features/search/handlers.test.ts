@@ -38,22 +38,32 @@ function createRequest(overrides: { params?: Record<string, string>; body?: unkn
   }
 }
 
-function createHandlers(overrides: { searchQueryLog?: "on" | "off"; record?: SearchQueryLogService["record"] }) {
+function createHandlers(overrides: {
+  searchQueryLog?: "on" | "off"
+  record?: SearchQueryLogService["record"]
+  steer?: { applied: boolean; note: string | null } | null
+}) {
   const recordClick = mock((_params: Parameters<SearchQueryLogService["recordClick"]>[0]) => Promise.resolve())
   const record = overrides.record ?? mock(() => Promise.resolve({ id: "sqlog_1" }))
+  const searchClusters = mock((_params: Parameters<SearchService["searchClusters"]>[0]) =>
+    Promise.resolve({
+      results: [],
+      conversations: [],
+      memos: [],
+      clusters: [],
+      excludedE2eStreamCount: 0,
+      steer: overrides.steer ?? null,
+    })
+  )
   const handlers = createSearchHandlers({
     pool: {} as Pool,
-    searchService: {
-      searchClusters: mock(() =>
-        Promise.resolve({ results: [], conversations: [], memos: [], clusters: [], excludedE2eStreamCount: 0 })
-      ),
-    } as unknown as SearchService,
+    searchService: { searchClusters } as unknown as SearchService,
     searchQueryLogService: { record, recordClick } as unknown as SearchQueryLogService,
     featureFlagService: {
       getFlags: mock(() => Promise.resolve({ search: "on", searchQueryLog: overrides.searchQueryLog ?? "on" })),
     } as unknown as FeatureFlagService,
   })
-  return { handlers, record, recordClick }
+  return { handlers, record, recordClick, searchClusters }
 }
 
 describe("search handlers", () => {
@@ -73,8 +83,41 @@ describe("search handlers", () => {
       clusters: [],
       memos: [],
       excludedE2eStreamCount: 0,
+      steer: null,
       queryLogId: null,
     })
+  })
+
+  it("passes the steer trail to the service, logs it with the params, and echoes the outcome", async () => {
+    spyOn(accessModule, "resolveUserAccessibleStreamIds").mockResolvedValue([])
+    const steer = { applied: true, note: "Kept the decisions" }
+    const { handlers, record, searchClusters } = createHandlers({ steer })
+    const res = createResponse()
+
+    await handlers.search(
+      createRequest({ body: { query: "deploy", steer: [" only decisions ", "newest first"] } }) as never,
+      res as never
+    )
+
+    expect(searchClusters).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "deploy", steer: ["only decisions", "newest first"] })
+    )
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ params: expect.objectContaining({ steer: ["only decisions", "newest first"] }) })
+    )
+    expect(res.body).toEqual(expect.objectContaining({ steer, queryLogId: "sqlog_1" }))
+  })
+
+  it("rejects a steer trail longer than the cap", async () => {
+    const { handlers, searchClusters } = createHandlers({})
+
+    await expect(
+      handlers.search(
+        createRequest({ body: { query: "deploy", steer: ["a", "b", "c", "d", "e", "f"] } }) as never,
+        createResponse() as never
+      )
+    ).rejects.toMatchObject({ status: 400 })
+    expect(searchClusters).not.toHaveBeenCalled()
   })
 
   it("records nothing for a click once the user's consent is off, and still answers 204", async () => {

@@ -23,7 +23,7 @@ import {
   strayClusters,
 } from "@/test/fixtures/search"
 import { ApiError } from "@/api"
-import type { MemoExplorerResult, SearchCluster } from "@/api"
+import type { MemoExplorerResult, SearchCluster, SearchSteerOutcome } from "@/api"
 import * as apiModule from "@/api"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -41,6 +41,7 @@ const mockSearchState = {
   clusters: null as SearchCluster[] | null,
   memos: [] as MemoExplorerResult[],
   queryLogId: null as string | null,
+  steer: null as SearchSteerOutcome | null,
   isLoading: false,
   search: vi.fn(),
   clear: vi.fn(),
@@ -170,6 +171,7 @@ function installSpies() {
         clusters: mockSearchState.clusters ?? strayClusters(mockSearchState.results),
         memos: mockSearchState.memos,
         queryLogId: mockSearchState.queryLogId,
+        steer: mockSearchState.steer,
         isLoading: mockSearchState.isLoading,
         error: null,
         search: mockSearchState.search,
@@ -230,6 +232,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
     mockSearchState.clusters = null
     mockSearchState.memos = []
     mockSearchState.queryLogId = null
+    mockSearchState.steer = null
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
@@ -242,6 +245,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       expect(screen.getByLabelText("Search messages")).toBeInTheDocument()
       expect(screen.getByText(/from:@user/)).toBeInTheDocument()
+      expect(screen.getByText("/steer")).toBeInTheDocument()
     })
 
     it("closes the panel from the back button", async () => {
@@ -1163,6 +1167,87 @@ describe("SidebarSearchPanel Integration Tests", () => {
         expect(screen.queryByRole("listbox", { name: /suggestions/i })).not.toBeInTheDocument()
       })
       expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "true")
+    })
+  })
+
+  describe("steer", () => {
+    const baseFilters = { status: ["active", "archived"] }
+
+    it("offers /steer on '/', commits the prose as a chip on Enter, and searches with it", async () => {
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello /")
+      await user.click(await screen.findByText("/steer"))
+      await user.type(editor, "only decisions")
+      await waitFor(() => {
+        expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello /steer only decisions")
+      })
+      // Pending prose is not part of the search
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters)
+      })
+
+      await user.keyboard("{Enter}")
+
+      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello")
+      expect(document.querySelector('[data-search-steer="only decisions"]')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters, [], ["only decisions"])
+      })
+      // Enter committed the steer instead of opening a result
+      expect(mockNavigate).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole("button", { name: "Remove steer only decisions" }))
+      expect(document.querySelector("[data-search-steer]")).not.toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters)
+      })
+    })
+
+    it("keeps the newest steers when the limit is exceeded", async () => {
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      for (const steer of ["one", "two", "three", "four", "five", "six"]) {
+        await user.type(editor, ` /steer ${steer}`)
+        await user.keyboard("{Enter}")
+      }
+
+      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual([
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+      ])
+    })
+
+    it("shows the model's note when the steer applied and a fallback when it did not", async () => {
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.steer = { applied: true, note: "Kept the decisions." }
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello /steer only decisions")
+      await user.keyboard("{Enter}")
+
+      expect(await screen.findByText("Kept the decisions.")).toBeInTheDocument()
+
+      mockSearchState.steer = { applied: false, note: null }
+      await user.type(editor, "!")
+      expect(await screen.findByText(/Couldn't apply the steer/)).toBeInTheDocument()
     })
   })
 })

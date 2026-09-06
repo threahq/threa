@@ -2,6 +2,9 @@
  * Parse and serialize search queries with filter support.
  *
  * Supports filters: from:@user, with:@user, in:#channel, in:@user (DM), is:streamType, type:streamType (alias), status:archiveStatus, after:date, before:date
+ *
+ * `/steer <prose>` marks everything after it as a plain-language refinement of
+ * the result list; it is carried separately and never searched as text.
  */
 
 export type FilterType = "from" | "with" | "in" | "type" | "status" | "after" | "before"
@@ -18,7 +21,11 @@ export interface ParsedQuery {
   text: string
   phrases: string[]
   semanticText: string
+  /** Prose after `/steer`, `""` while only the marker is typed, null without one. */
+  steer: string | null
 }
+
+const STEER_MARKER = /(?:^|\s)\/steer(?=\s|$)/
 
 /**
  * Parse a search query string into filters and remaining text.
@@ -30,6 +37,20 @@ export interface ParsedQuery {
  * - "is:scratchpad bug" → { filters: [{type: "type", value: "scratchpad"}], text: "bug" }
  */
 export function parseSearchQuery(query: string): ParsedQuery {
+  const { query: searchable, steer } = splitSteer(query)
+  return { ...parseSearchable(searchable), steer }
+}
+
+function splitSteer(query: string): { query: string; steer: string | null } {
+  const match = STEER_MARKER.exec(query)
+  if (!match) return { query, steer: null }
+  return {
+    query: query.slice(0, match.index),
+    steer: query.slice(match.index + match[0].length).trim(),
+  }
+}
+
+function parseSearchable(query: string): Omit<ParsedQuery, "steer"> {
   const filters: ParsedFilter[] = []
   const textParts: string[] = []
   const semanticParts: string[] = []
@@ -109,12 +130,15 @@ function extractFilterType(prefix: string): FilterType | null {
 /**
  * Build a search query string from filters and text.
  */
-export function serializeSearchQuery(filters: ParsedFilter[], text: string): string {
+export function serializeSearchQuery(filters: ParsedFilter[], text: string, steer: string | null = null): string {
   const filterParts = filters.map((f) => f.raw)
   const parts = [...filterParts]
 
   if (text.trim()) {
     parts.push(text.trim())
+  }
+  if (steer !== null) {
+    parts.push(steer ? `/steer ${steer}` : "/steer")
   }
 
   return parts.join(" ")
@@ -124,16 +148,21 @@ export function serializeSearchQuery(filters: ParsedFilter[], text: string): str
  * Remove a filter from the query string.
  */
 export function removeFilterFromQuery(query: string, filterIndex: number): string {
-  const { filters, text } = parseSearchQuery(query)
+  const { filters, text, steer } = parseSearchQuery(query)
   const newFilters = filters.filter((_, i) => i !== filterIndex)
-  return serializeSearchQuery(newFilters, text)
+  return serializeSearchQuery(newFilters, text, steer)
+}
+
+/** The query without its `/steer …` tail, for after the steer has been committed as a chip. */
+export function removeSteerFromQuery(query: string): string {
+  return splitSteer(query).query.trim()
 }
 
 /**
  * Add a filter to the query string.
  */
 export function addFilterToQuery(query: string, type: FilterType, value: string): string {
-  const { filters, text } = parseSearchQuery(query)
+  const { filters, text, steer } = parseSearchQuery(query)
 
   let raw: string
   switch (type) {
@@ -161,7 +190,7 @@ export function addFilterToQuery(query: string, type: FilterType, value: string)
   }
 
   const newFilter: ParsedFilter = { type, value, raw }
-  return serializeSearchQuery([...filters, newFilter], text)
+  return serializeSearchQuery([...filters, newFilter], text, steer)
 }
 
 /**

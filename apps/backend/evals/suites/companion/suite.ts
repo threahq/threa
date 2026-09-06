@@ -62,7 +62,7 @@ import {
   ContextBagRepository,
 } from "../../../src/features/agents"
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
-import { SearchService, SearchQueryExpander } from "../../../src/features/search"
+import { SearchService, SearchQueryExpander, SearchSteerer } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
 import { EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
@@ -370,6 +370,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
       reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
       memoSearch: memoExplorerService,
+      steerer: new SearchSteerer({ ai: ctx.ai }),
     })
 
     // Stub Socket.io server for tracing - evals don't need real-time updates

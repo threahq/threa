@@ -11,19 +11,22 @@ import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
 import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
+import { SearchSteerChips } from "@/components/search/search-steer-chips"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResults } from "@/components/search/search-results"
 import { SearchClusterList, countClusterResults } from "@/components/search/search-cluster-list"
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
+import { removeSteerFromQuery } from "@/lib/search-query-parser"
+import { MAX_SEARCH_STEERS } from "@threa/types"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useIsMobile } from "@/hooks/use-mobile"
 
 /**
  * Full-page message search — the mobile-native search surface (mirrors the
  * memory/file explorer layout: list with the search input pinned on top).
- * The query lives in the URL (`?q=`) so refresh, back/forward, and shared
- * links land on the same results (INV-59).
+ * The query (`?q=`) and committed steers (repeated `?steer=`) live in the URL
+ * so refresh, back/forward, and shared links land on the same results (INV-59).
  */
 export function SearchPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -39,6 +42,8 @@ export function SearchPage() {
   // Local state for typing; URL is written behind a debounce for bookmarkability.
   const [localQuery, setLocalQuery] = useState(() => searchParams.get("q") ?? "")
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+  const steersKey = searchParams.getAll("steer").join("\u0000")
+  const steers = useMemo(() => (steersKey ? steersKey.split("\u0000") : []), [steersKey])
 
   function handleQueryChange(value: string) {
     setLocalQuery(value)
@@ -67,6 +72,41 @@ export function SearchPage() {
     }
   }, [])
 
+  function setSteers(next: string[]) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev)
+        params.delete("steer")
+        for (const steer of next) params.append("steer", steer)
+        return params
+      },
+      { replace: true }
+    )
+  }
+
+  // Enter commits `/steer …` prose as a chip in the URL right away (no debounce,
+  // so the pending prose never lands in `?q=`); the newest steer displaces the
+  // oldest past the backend's limit. Without pending prose Enter is left to the list.
+  function handleSubmit() {
+    const prose = pendingSteer?.trim()
+    if (!prose) return
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    const nextQuery = removeSteerFromQuery(localQuery)
+    const nextSteers = [...steers, prose].slice(-MAX_SEARCH_STEERS)
+    setLocalQuery(nextQuery)
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev)
+        if (nextQuery) params.set("q", nextQuery)
+        else params.delete("q")
+        params.delete("steer")
+        for (const steer of nextSteers) params.append("steer", steer)
+        return params
+      },
+      { replace: true }
+    )
+  }
+
   const {
     results,
     clusters,
@@ -77,9 +117,11 @@ export function SearchPage() {
     parsedFilters,
     searchText,
     hasQuery,
+    pendingSteer,
+    steerNote,
     exploreHref,
     recordResultClick,
-  } = useMessageSearch(workspaceId ?? "", localQuery)
+  } = useMessageSearch(workspaceId ?? "", localQuery, steers)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
@@ -115,6 +157,7 @@ export function SearchPage() {
               <RichInput
                 value={localQuery}
                 onChange={handleQueryChange}
+                onSubmit={handleSubmit}
                 triggers={SEARCH_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
@@ -131,6 +174,7 @@ export function SearchPage() {
 
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 px-4 py-2">
           <SearchFilterChips query={localQuery} parsedFilters={parsedFilters} onQueryChange={handleQueryChange} />
+          <SearchSteerChips steers={steers} onRemove={(index) => setSteers(steers.filter((_, i) => i !== index))} />
           <SearchFilterMenu
             workspaceId={workspaceId}
             query={localQuery}
@@ -150,6 +194,11 @@ export function SearchPage() {
               <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} size="touch" />
             </div>
           )}
+          {steerNote && !isLoading && (
+            <p className="w-full text-xs leading-snug text-muted-foreground" data-search-steer-note>
+              {steerNote}
+            </p>
+          )}
         </div>
       </header>
 
@@ -165,6 +214,9 @@ export function SearchPage() {
                 Narrow results with <code className="rounded bg-muted px-1">from:@user</code>,{" "}
                 <code className="rounded bg-muted px-1">in:#channel</code> or{" "}
                 <code className="rounded bg-muted px-1">before:2026-01-01</code>
+              </p>
+              <p className="mt-1.5 max-w-[18rem] text-xs text-muted-foreground/50">
+                Refine the list in plain words with <code className="rounded bg-muted px-1">/steer</code>
               </p>
             </div>
           )}
