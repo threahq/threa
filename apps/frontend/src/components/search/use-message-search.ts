@@ -18,7 +18,7 @@ import {
   type SearchSteerOutcome,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threa/types"
+import { MAX_SEARCH_PHRASES, MAX_SEARCH_STEER_CHARS, STREAM_TYPES, type StreamType } from "@threa/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
@@ -74,7 +74,7 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     phrases,
     steer: pendingSteer,
   } = useMemo(() => parseSearchQuery(query), [query])
-  const hasTooManyPhrases = phrases.length > MAX_SEARCH_PHRASES
+  const validationError = validationErrorFor(phrases.length, pendingSteer)
 
   // Resolve filter slugs (user/stream handles) to ids the API understands.
   const apiFilters = useMemo((): SearchFilters => {
@@ -164,7 +164,7 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
   steersRef.current = steers
 
   useEffect(() => {
-    if (!hasQuery || hasTooManyPhrases) {
+    if (!hasQuery || validationError) {
       clear()
       return
     }
@@ -180,7 +180,7 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     }, SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [hasQuery, hasTooManyPhrases, semanticText, filtersKey, phrasesKey, steersKey, search, clear])
+  }, [hasQuery, validationError, semanticText, filtersKey, phrasesKey, steersKey, search, clear])
 
   const recordResultClick = useCallback(
     (target: SearchClickTarget) => {
@@ -198,7 +198,7 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     memos,
     isLoading,
     error,
-    validationError: hasTooManyPhrases ? `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.` : null,
+    validationError,
     parsedFilters,
     searchText,
     hasQuery,
@@ -208,6 +208,14 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     exploreHref: `/w/${workspaceId}/memory?q=${encodeURIComponent(searchText)}`,
     recordResultClick,
   }
+}
+
+function validationErrorFor(phraseCount: number, pendingSteer: string | null): string | null {
+  if (phraseCount > MAX_SEARCH_PHRASES) return `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.`
+  if (pendingSteer !== null && pendingSteer.length > MAX_SEARCH_STEER_CHARS) {
+    return `A steer is at most ${MAX_SEARCH_STEER_CHARS} characters.`
+  }
+  return null
 }
 
 function steerNoteFor(steer: SearchSteerOutcome | null): string | null {

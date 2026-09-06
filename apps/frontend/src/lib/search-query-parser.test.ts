@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest"
+import { MAX_SEARCH_STEER_CHARS } from "@threa/types"
 import {
   parseSearchQuery,
   serializeSearchQuery,
   removeFilterFromQuery,
   removeSteerFromQuery,
+  boundSteers,
   addFilterToQuery,
   getFilterLabel,
 } from "./search-query-parser"
@@ -217,6 +219,14 @@ describe("removeSteerFromQuery", () => {
     expect(removeSteerFromQuery("launch /steer")).toBe("launch")
     expect(removeSteerFromQuery("/steer only decisions")).toBe("")
     expect(removeSteerFromQuery("launch")).toBe("launch")
+  })
+})
+
+describe("boundSteers", () => {
+  it("keeps only the newest steers the backend accepts", () => {
+    expect(boundSteers([" one ", "", "   ", "x".repeat(MAX_SEARCH_STEER_CHARS + 1), "two"])).toEqual(["one", "two"])
+    expect(boundSteers(["a", "b", "c", "d", "e", "f", "g"])).toEqual(["c", "d", "e", "f", "g"])
+    expect(boundSteers(["x".repeat(MAX_SEARCH_STEER_CHARS)])).toEqual(["x".repeat(MAX_SEARCH_STEER_CHARS)])
   })
 })
 

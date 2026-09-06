@@ -105,7 +105,8 @@ export function buildSearchClusters(input: BuildSearchClustersInput): SearchClus
   return [...clusters.values()].sort((a, b) => b.score - a.score || latestAt(b) - latestAt(a))
 }
 
-function latestAt(cluster: SearchCluster): number {
+/** Newest activity in a row (hit or conversation), 0 when nothing carries a date. */
+export function latestAt(cluster: SearchCluster): number {
   const fromHits = cluster.hits.reduce((max, hit) => Math.max(max, hit.createdAt.getTime()), 0)
   return Math.max(fromHits, cluster.conversation?.lastMessageAt?.getTime() ?? 0)
 }

@@ -2,7 +2,7 @@ import type { AI, CostContext } from "@threa/agent-runtime"
 import { isAbortError } from "@threa/agent-runtime"
 import { logger } from "../../lib/logger"
 import type { MemoExplorerResult } from "../memos"
-import type { SearchCluster } from "./clusters"
+import { latestAt, type SearchCluster } from "./clusters"
 import {
   SEARCH_STEER_HITS_PER_ROW,
   SEARCH_STEER_MODEL_ID,
@@ -117,14 +117,17 @@ export function renderSteerPrompt(input: SearchSteerInput): string {
   const rows = input.clusters.map((cluster, index) => {
     const lines: string[] = []
     const { conversation } = cluster
+    const latest = latestAt(cluster)
+    const latestDay = latest > 0 ? isoDay(new Date(latest)) : null
     if (conversation) {
       const title = conversation.topicSummary ?? conversation.summary ?? "(untitled)"
-      lines.push(`[${index + 1}] Conversation: ${title} (${conversation.messageCount} messages)`)
+      const facts = [`${conversation.messageCount} messages`, ...(latestDay ? [`latest ${latestDay}`] : [])]
+      lines.push(`[${index + 1}] Conversation: ${title} (${facts.join(", ")})`)
     } else {
-      lines.push(`[${index + 1}] Message`)
+      lines.push(`[${index + 1}] Message${latestDay ? ` (${latestDay})` : ""}`)
     }
     for (const hit of cluster.hits.slice(0, SEARCH_STEER_HITS_PER_ROW)) {
-      lines.push(`  - ${hit.createdAt.toISOString().slice(0, 10)}: ${snippet(hit.content)}`)
+      lines.push(`  - ${isoDay(hit.createdAt)}: ${snippet(hit.content)}`)
     }
     for (const memoId of cluster.memoIds) {
       const memo = memoById.get(memoId)
@@ -135,6 +138,10 @@ export function renderSteerPrompt(input: SearchSteerInput): string {
 
   const steers = input.steers.map((steer, index) => `${index + 1}. ${steer}`)
   return [`Query: ${input.query || "(none)"}`, "", "Instructions:", ...steers, "", "Rows:", ...rows].join("\n")
+}
+
+function isoDay(date: Date): string {
+  return date.toISOString().slice(0, 10)
 }
 
 function snippet(content: string): string {

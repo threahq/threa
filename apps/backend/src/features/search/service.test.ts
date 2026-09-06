@@ -458,7 +458,8 @@ describe("SearchService steer", () => {
     ])
     expect(response).toEqual({
       ...response,
-      results: [fakeResult("msg_2", { streamId: "stream_2" }), fakeResult("msg_3", { streamId: "stream_3" })],
+      // Flat results follow the steered row order, not the hybrid rank.
+      results: [fakeResult("msg_3", { streamId: "stream_3" }), fakeResult("msg_2", { streamId: "stream_2" })],
       memos: [memo],
       clusters: [
         expect.objectContaining({ streamId: "stream_3" }),
@@ -476,6 +477,18 @@ describe("SearchService steer", () => {
 
     expect(response.clusters.map((cluster) => cluster.streamId)).toEqual(["stream_1", "stream_2", "stream_3"])
     expect(response.steer).toEqual({ applied: false, note: null })
+  })
+
+  test("should ignore the steer and report null under the pre-rework search flag", async () => {
+    stubLegs()
+    const steer = mock(async () => ({ keep: [], note: "" }))
+    const service = makeService({ embeddingService: embedding, steerer: { steer } })
+
+    const response = await service.searchClusters({ ...base, searchFlag: "off", steer: ["only decisions"] })
+
+    expect(steer).not.toHaveBeenCalled()
+    expect(response.steer).toBeNull()
+    expect(response.clusters.map((cluster) => cluster.streamId)).toEqual(["stream_1", "stream_2", "stream_3"])
   })
 
   test("should not call the steerer without a steer, and report null", async () => {

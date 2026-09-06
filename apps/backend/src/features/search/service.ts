@@ -200,7 +200,11 @@ export class SearchService {
   async searchClusters(params: SearchParams): Promise<SearchClustersResponse> {
     const { streamIds, ...legs } = await this.runLegs(params, { memos: true })
     const clusters = await this.clusterResults({ workspaceId: params.workspaceId, streamIds, ...legs })
-    const steers = params.steer?.filter((steer) => steer.trim().length > 0) ?? []
+    // The steer belongs to the reworked ranking; under the pre-rework flag value it is ignored.
+    const steers =
+      searchRankingForFlag(params.searchFlag) === "improved"
+        ? (params.steer?.filter((steer) => steer.trim().length > 0) ?? [])
+        : []
     if (steers.length === 0) return { ...legs, clusters, steer: null }
     if (clusters.length === 0) return { ...legs, clusters, steer: { applied: true, note: null } }
 
@@ -214,13 +218,16 @@ export class SearchService {
     if (!steered) return { ...legs, clusters, steer: { applied: false, note: null } }
 
     const kept = steered.keep.map((index) => clusters[index]!)
-    const keptHitIds = new Set(kept.flatMap((cluster) => cluster.hits.map((hit) => hit.id)))
+    // The flat list follows the steered row order; within a row the hits keep their rank (stable sort).
+    const keptHitRow = new Map(kept.flatMap((cluster, row) => cluster.hits.map((hit) => [hit.id, row] as const)))
     const keptConversationIds = new Set(
       kept.flatMap((cluster) => (cluster.conversation ? [cluster.conversation.id] : []))
     )
     const keptMemoIds = new Set(kept.flatMap((cluster) => cluster.memoIds))
     return {
-      results: legs.results.filter((result) => keptHitIds.has(result.id)),
+      results: legs.results
+        .filter((result) => keptHitRow.has(result.id))
+        .sort((a, b) => keptHitRow.get(a.id)! - keptHitRow.get(b.id)!),
       conversations: legs.conversations.filter((conversation) => keptConversationIds.has(conversation.id)),
       memos: legs.memos.filter((result) => keptMemoIds.has(result.memo.id)),
       excludedE2eStreamCount: legs.excludedE2eStreamCount,

@@ -49,6 +49,8 @@ function findSteerMatch(config: {
 
   const fullMatch = match[0]
   const query = match[2] || ""
+  // Only a prefix of "steer" opens the popup; `/tmp` or `/etc/hosts` stays plain text.
+  if (!"steer".startsWith(query.toLowerCase())) return null
   const matchStart = $position.pos - fullMatch.length + (fullMatch.startsWith(" ") ? 1 : 0)
 
   return {

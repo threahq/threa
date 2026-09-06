@@ -41,6 +41,24 @@ describe("SearchSteerer", () => {
     )
   })
 
+  it("should give up after the timeout, log at debug, and leave the list unsteered", async () => {
+    const debug = spyOn(logger, "debug").mockImplementation(() => logger)
+    try {
+      const steerer = new SearchSteerer({
+        timeoutMs: 5,
+        ai: {
+          generateObject: ({ abortSignal }: { abortSignal: AbortSignal }) =>
+            new Promise((_, reject) => abortSignal.addEventListener("abort", () => reject(abortSignal.reason))),
+        } as never,
+      })
+
+      expect(await steerer.steer(input)).toBeNull()
+      expect(debug).toHaveBeenCalledWith({ workspaceId: "ws_1" }, "Search steer timed out; showing the unsteered list")
+    } finally {
+      debug.mockRestore()
+    }
+  })
+
   it("should return null and log a warning when the model call throws", async () => {
     const warn = spyOn(logger, "warn").mockImplementation(() => logger)
     try {
@@ -89,10 +107,10 @@ describe("renderSteerPrompt", () => {
         "2. newest first",
         "",
         "Rows:",
-        "[1] Conversation: Railway cutover (12 messages)",
+        "[1] Conversation: Railway cutover (12 messages, latest 2026-03-01)",
         "  - 2026-03-01: We agreed to cut over Friday",
         "  memo (decision): Cutover decision",
-        "[2] Message",
+        "[2] Message (2026-03-02)",
         "  - 2026-03-02: lone message",
       ].join("\n")
     )

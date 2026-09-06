@@ -6,6 +6,7 @@
  * `/steer <prose>` marks everything after it as a plain-language refinement of
  * the result list; it is carried separately and never searched as text.
  */
+import { MAX_SEARCH_STEERS, MAX_SEARCH_STEER_CHARS } from "@threa/types"
 
 export type FilterType = "from" | "with" | "in" | "type" | "status" | "after" | "before"
 
@@ -156,6 +157,18 @@ export function removeFilterFromQuery(query: string, filterIndex: number): strin
 /** The query without its `/steer …` tail, for after the steer has been committed as a chip. */
 export function removeSteerFromQuery(query: string): string {
   return splitSteer(query).query.trim()
+}
+
+/**
+ * The steer trail the backend accepts: trimmed, non-empty, within the length
+ * cap, and only the newest `MAX_SEARCH_STEERS`. Applied when a steer is
+ * committed and when a trail is restored from a URL.
+ */
+export function boundSteers(steers: string[]): string[] {
+  return steers
+    .map((steer) => steer.trim())
+    .filter((steer) => steer.length > 0 && steer.length <= MAX_SEARCH_STEER_CHARS)
+    .slice(-MAX_SEARCH_STEERS)
 }
 
 /**

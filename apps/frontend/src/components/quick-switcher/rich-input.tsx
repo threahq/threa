@@ -42,7 +42,7 @@ export type TriggerType =
 /**
  * Preset trigger configurations for common use cases.
  */
-export const SEARCH_TRIGGERS: TriggerType[] = [
+export const SEARCH_FILTER_TRIGGERS: TriggerType[] = [
   "mention",
   "channel",
   "filterType",
@@ -52,8 +52,10 @@ export const SEARCH_TRIGGERS: TriggerType[] = [
   "inUserFilter",
   "inChannelFilter",
   "statusFilter",
-  "steer",
 ]
+
+/** The filter triggers plus `/steer`, for viewers on the reworked search (`search` flag on). */
+export const SEARCH_TRIGGERS: TriggerType[] = [...SEARCH_FILTER_TRIGGERS, "steer"]
 
 export const COMMAND_TRIGGERS: TriggerType[] = []
 

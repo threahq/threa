@@ -23,6 +23,10 @@ import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchSteerOutcome } from "@/api"
 import * as apiModule from "@/api"
+import type { WorkspaceBootstrap } from "@/api"
+import type { FeatureFlagLayers } from "@threa/types"
+import { MAX_SEARCH_STEER_CHARS } from "@threa/types"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 
 const search = vi.fn()
 const clear = vi.fn()
@@ -40,9 +44,14 @@ function LocationProbe() {
   return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
 }
 
-function renderPage(initialEntry = "/w/workspace_1/search?q=hello") {
+/** `featureFlags` seeds the bootstrap cache the `search` flag is read from; absent, every flag is at its default. */
+function renderPage(initialEntry = "/w/workspace_1/search?q=hello", featureFlags?: FeatureFlagLayers) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  if (featureFlags) {
+    queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), { featureFlags } as WorkspaceBootstrap)
+  }
   return render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
           <SidebarProvider>
@@ -315,9 +324,11 @@ describe("SearchPage", () => {
   })
 
   describe("steer", () => {
+    const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
+
     it("commits /steer prose to the URL on Enter and drops it when the chip is removed", async () => {
       const user = userEvent.setup()
-      renderPage()
+      renderPage(undefined, searchOn)
 
       await waitFor(() => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
@@ -330,8 +341,11 @@ describe("SearchPage", () => {
 
       expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&steer=only+decisions")
       expect(document.querySelector('[data-search-steer="only decisions"]')).toBeInTheDocument()
+      // The committed steer is the only steered search; the pending prose never reached the backend
       await waitFor(() => {
-        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions"])
+        expect(search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
+          ["hello", expect.any(Object), [], ["only decisions"]],
+        ])
       })
 
       await user.click(screen.getByRole("button", { name: "Remove steer only decisions" }))
@@ -360,6 +374,27 @@ describe("SearchPage", () => {
       renderPage("/w/workspace_1/search?q=hello&steer=only+decisions")
 
       expect(await screen.findByText(/Couldn't apply the steer/)).toBeInTheDocument()
+    })
+
+    it("drops an over-long steer from a shared URL and searches with the rest", async () => {
+      const tooLong = "x".repeat(MAX_SEARCH_STEER_CHARS + 1)
+      renderPage(`/w/workspace_1/search?q=hello&steer=${tooLong}&steer=ok`)
+
+      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual(["ok"])
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["ok"])
+      })
+    })
+
+    it("offers neither the /steer trigger nor its hint under the pre-rework search flag", async () => {
+      const user = userEvent.setup()
+      renderPage("/w/workspace_1/search")
+
+      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello /")
+      expect(screen.queryByText("/steer")).not.toBeInTheDocument()
     })
   })
 })

@@ -3,7 +3,12 @@ import { useNavigate } from "react-router-dom"
 import { ArrowLeft, Brain, Search as SearchIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 import { SidebarShell } from "@/components/layout/sidebar/sidebar-shell"
-import { RichInput, SEARCH_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
+import {
+  RichInput,
+  SEARCH_FILTER_TRIGGERS,
+  SEARCH_TRIGGERS,
+  type RichInputRef,
+} from "@/components/quick-switcher/rich-input"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -20,8 +25,8 @@ import { SearchResults } from "./search-results"
 import { SearchClusterList, countClusterResults } from "./search-cluster-list"
 import { SearchResultDisplayToggle } from "./search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
-import { removeSteerFromQuery } from "@/lib/search-query-parser"
-import { MAX_SEARCH_STEERS } from "@threa/types"
+import { boundSteers, removeSteerFromQuery } from "@/lib/search-query-parser"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 
 /**
  * Desktop sidebar in search mode — VS Code-style: the stream list swaps for a
@@ -49,6 +54,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     recordResultClick,
   } = useMessageSearch(workspaceId, query, steers)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
+  const steerEnabled = useFeatureFlag(workspaceId, "search") === "on"
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
   // Keyboard navigation walks the rows in the order they are on screen.
@@ -120,15 +126,17 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     }
   }
 
-  // Enter commits `/steer …` prose as a chip; the newest steer displaces the
-  // oldest past the backend's limit. Without pending prose it opens a result.
+  // Enter commits `/steer …` prose as a chip (an over-long one stays in the
+  // field with the validation error); the newest steer displaces the oldest
+  // past the backend's limit. Without pending prose it opens a result.
   const handleSubmit = (withModifier: boolean) => {
     const prose = pendingSteer?.trim()
     if (!prose) {
       openActiveResult(withModifier)
       return
     }
-    setSteers([...steers, prose].slice(-MAX_SEARCH_STEERS))
+    if (validationError) return
+    setSteers(boundSteers([...steers, prose]))
     setQuery(removeSteerFromQuery(query))
   }
 
@@ -190,7 +198,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 onPopoverActiveChange={(active) => {
                   isPopoverActiveRef.current = active
                 }}
-                triggers={SEARCH_TRIGGERS}
+                triggers={steerEnabled ? SEARCH_TRIGGERS : SEARCH_FILTER_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
                 editorClassName="h-auto min-h-8 py-1.5 text-[13px]"
@@ -238,9 +246,11 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 <code className="rounded bg-muted px-1">in:#channel</code>,{" "}
                 <code className="rounded bg-muted px-1">before:2026-01-01</code>
               </p>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/60">
-                Refine the list in plain words with <code className="rounded bg-muted px-1">/steer</code>
-              </p>
+              {steerEnabled && (
+                <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/60">
+                  Refine the list in plain words with <code className="rounded bg-muted px-1">/steer</code>
+                </p>
+              )}
             </div>
           )}
 
