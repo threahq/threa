@@ -4,6 +4,7 @@ import { adoptClaudeSession, adoptRefused } from "./adopt"
 import {
   parseAdopt,
   parseBackfill,
+  parseDone,
   parseReconnect,
   parseResolve,
   parseResume,
@@ -31,14 +32,24 @@ import {
   reapArchived,
   watchUnarchived,
 } from "./commands"
+import { defaultDoneDeps, doneAgent } from "./done"
 import { die } from "./errors"
 import { resolveIdentity } from "./identity"
 import { reconnectRuntime } from "./reconnect"
+import { defaultAttachedSpawnDeps, runAttachedSpawn } from "./spawn-attached"
 
 async function main(): Promise<void> {
   const [, , command, ...args] = process.argv
   if (!command || command === "help" || command === "--help" || command === "-h") usage()
-  if (command === "spawn") return spawnAgent(parseSpawn(args))
+  if (command === "spawn") {
+    const options = parseSpawn(args)
+    if (options.attach) {
+      await runAttachedSpawn(options, defaultAttachedSpawnDeps())
+      return
+    }
+    await spawnAgent(options)
+    return
+  }
   if (command === "list") return listAgents()
   if (command === "reconnect") return reconnectRuntime(parseReconnect(args))
   if (command === "adopt" || command === "takeover") {
@@ -65,6 +76,8 @@ async function main(): Promise<void> {
   if (command === "stop") return stopAgent(args[0] ?? die("stop requires an agent id or name"))
   if (command === "kick") return kickAgent(args[0] ?? die("kick requires an agent id, name, or runtime session id"))
   if (command === "clear") return clearAgent(args[0] ?? die("clear requires an agent id, name, or runtime session id"))
+  if (command === "done")
+    return doneAgent(parseDone(args), defaultDoneDeps())
   if (command === "interrupt") return interruptAgent(args[0] ?? die("interrupt requires an agent id or name"))
   if (command === "steer")
     return steerAgent(args[0] ?? die("steer requires an agent id or name"), args.slice(1).join(" "))

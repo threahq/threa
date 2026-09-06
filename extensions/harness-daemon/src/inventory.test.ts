@@ -155,6 +155,31 @@ test("opening an inventory created before tombstoned_at adds the column in place
   ])
 })
 
+test("opening an inventory created before active_stream_id adds the column in place and round-trips", () => {
+  const path = join(root, "pre-attach.sqlite")
+  const db = new Database(path)
+  db.exec(`
+    CREATE TABLE managed_agents (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, runtime TEXT NOT NULL, status TEXT NOT NULL,
+      worktree TEXT, branch TEXT, tmux_session TEXT, tmux_window TEXT, scratchpad_url TEXT,
+      command_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_output TEXT
+    )
+  `)
+  db.exec(
+    `INSERT INTO managed_agents (id, name, runtime, status, command_json, created_at, updated_at)
+     VALUES ('claude-1', 'feature', 'claude', 'offline', '[]', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')`
+  )
+  db.close()
+  process.env.THREA_HARNESSD_INVENTORY = path
+
+  expect(readInventory()).toEqual([agent({ command: [], worktree: undefined })])
+  upsertAgent(agent({ command: [], worktree: undefined, activeStreamId: "stream_thread" }))
+  expect(readInventory()).toEqual([agent({ command: [], worktree: undefined, activeStreamId: "stream_thread" })])
+  expect(readInventoryReadonly()).toEqual([
+    agent({ command: [], worktree: undefined, activeStreamId: "stream_thread" }),
+  ])
+})
+
 test("a pending fresh start round-trips, and dropping it writes NULL rather than keeping the old value", () => {
   // The marker is what makes a failed clear complete on the next revival instead
   // of resurrecting the conversation; a value that cannot be unset would make

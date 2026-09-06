@@ -9,6 +9,8 @@ import {
   mcpConfigPath,
   parkPiSessionFiles,
   piLaunchCommand,
+  prelinkThreadSession,
+  requireThreadSessionTarget,
   writeChannelMcpConfig,
 } from "./spawners"
 import { profileForWorktree, recordProfileSnapshot } from "./identity-store"
@@ -247,4 +249,123 @@ test("a cleared Claude resume passes no --resume id even when a transcript is re
     "e2b1f0c4-0000-4000-8000-000000000000"
   )
   expect(claudeResumeSessionId(false, undefined)).toBeUndefined()
+})
+
+let savedFetch: typeof fetch
+
+beforeEach(() => {
+  savedFetch = globalThis.fetch
+})
+
+afterEach(() => {
+  globalThis.fetch = savedFetch
+})
+
+test("the attach prelink body carries attachTo and neither ifArchived nor labelName", async () => {
+  let captured: { url: string; init: RequestInit } | undefined
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    captured = { url: String(url), init }
+    return new Response(JSON.stringify({ data: { rootStreamId: "stream_root", activeStreamId: "stream_thread" } }), {
+      status: 200,
+    })
+  }) as any
+
+  const link = await prelinkThreadSession(
+    { baseUrl: "https://app.threa.io", workspaceId: "workspace", apiKey: "key" },
+    {
+      runtimeKind: "claude-code-channel",
+      instanceId: "cc-1",
+      runtimeSessionId: "ccs-1",
+      displayName: "Claude Code - repo",
+      localCwd: "/repo",
+      attachTo: { rootStreamId: "stream_root", anchorId: "msg_anchor" },
+    }
+  )
+
+  expect(link).toEqual({ rootStreamId: "stream_root", activeStreamId: "stream_thread" })
+  expect(captured?.url).toBe("https://app.threa.io/api/v1/workspaces/workspace/bot-runtime/sessions")
+  expect(JSON.parse(String(captured?.init.body))).toEqual({
+    runtimeKind: "claude-code-channel",
+    instanceId: "cc-1",
+    runtimeSessionId: "ccs-1",
+    displayName: "Claude Code - repo",
+    localCwd: "/repo",
+    attachTo: { rootStreamId: "stream_root", anchorId: "msg_anchor" },
+  })
+})
+
+test("a non-2xx response to the attach prelink dies, never returning a link", async () => {
+  globalThis.fetch = (async () => new Response("conflict: already linked", { status: 409 })) as any
+
+  await expect(
+    prelinkThreadSession(
+      { baseUrl: "https://app.threa.io", workspaceId: "workspace", apiKey: "key" },
+      {
+        runtimeKind: "pi-local",
+        instanceId: "pi-1",
+        runtimeSessionId: "runtime-1",
+        displayName: "Pi - repo",
+        localCwd: "/repo",
+        attachTo: { rootStreamId: "stream_root", anchorId: "msg_anchor" },
+      }
+    )
+  ).rejects.toThrow("409")
+})
+
+test("a response missing rootStreamId or activeStreamId dies instead of returning a partial link", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ data: {} }), { status: 200 })) as any
+
+  await expect(
+    prelinkThreadSession(
+      { baseUrl: "https://app.threa.io", workspaceId: "workspace", apiKey: "key" },
+      {
+        runtimeKind: "pi-local",
+        instanceId: "pi-1",
+        runtimeSessionId: "runtime-1",
+        displayName: "Pi - repo",
+        localCwd: "/repo",
+        attachTo: { rootStreamId: "stream_root", anchorId: "msg_anchor" },
+      }
+    )
+  ).rejects.toThrow("missing rootStreamId/activeStreamId")
+})
+
+test("requireThreadSessionTarget dies loudly when Threa credentials are missing", () => {
+  const savedWorkspace = process.env.THREA_WORKSPACE_ID
+  const savedApiKey = process.env.THREA_API_KEY
+  delete process.env.THREA_WORKSPACE_ID
+  delete process.env.THREA_API_KEY
+  try {
+    expect(() => requireThreadSessionTarget({}, "link the Pi thread session")).toThrow(
+      "no Threa credentials found to link the Pi thread session"
+    )
+  } finally {
+    if (savedWorkspace === undefined) delete process.env.THREA_WORKSPACE_ID
+    else process.env.THREA_WORKSPACE_ID = savedWorkspace
+    if (savedApiKey === undefined) delete process.env.THREA_API_KEY
+    else process.env.THREA_API_KEY = savedApiKey
+  }
+})
+
+test("Pi remote linking rejects a link that landed on another scratchpad than the attached one", async () => {
+  await expect(
+    linkPiRemoteSession({
+      expectedInstanceId: "pi-instance",
+      expectedRootStreamId: "stream_attached",
+      attempts: 3,
+      bootWaitMs: 0,
+      responseWaitMs: 0,
+      retryBackoffMs: 0,
+      maxRetryBackoffMs: 0,
+      sleep: async () => {},
+      sendRemoteCommand: () => {
+        throw new Error("must not send after finding a link")
+      },
+      readSession: () => ({
+        instanceId: "pi-instance",
+        rootStreamId: "stream_elsewhere",
+        scratchpadUrl: "https://app.threa.io/w/workspace/s/stream_elsewhere",
+      }),
+    })
+  ).rejects.toThrow("Pi remote link scratchpad stream_elsewhere does not match the attached scratchpad stream_attached")
 })

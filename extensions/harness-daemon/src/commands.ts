@@ -59,6 +59,7 @@ import {
   type RuntimePreflightResult,
   type ScratchpadStatus,
 } from "./resume"
+import type { ThreaTarget } from "./threa-http"
 import { attachedTmuxSession, capturePane, ensureTmuxSession, sendKeys } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { createVanishedPaneSweep } from "./vanished"
@@ -105,7 +106,7 @@ function spawnCommand(options: SpawnOptions): string[] {
   return command
 }
 
-export async function spawnAgent(options: SpawnOptions): Promise<void> {
+export async function spawnAgent(options: SpawnOptions): Promise<SpawnResult> {
   const command = spawnCommand(options)
   const id = `${options.runtime}-${Date.now()}-${randomUUID().slice(0, 8)}`
   const createdAt = now()
@@ -136,12 +137,14 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
       scratchpadUrl: result.scratchpadUrl,
       instanceId: result.instanceId,
       runtimeSessionId: result.runtimeSessionId,
+      activeStreamId: result.activeStreamId,
       status: "online",
       updatedAt: now(),
       lastOutput: result.output.slice(-4000),
     })
     if (result.output) process.stdout.write(result.output)
     console.log(`harnessd: recorded ${id}`)
+    return result
   } catch (error) {
     const { output: _output, ...partial } = error instanceof RuntimeSpawnError ? error.partial : {}
     upsertAgent({
@@ -156,7 +159,7 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
 }
 
 /** The first Threa target the local configs and environment agree on, for a pass that must talk to the server. */
-function threaTarget(purpose: string): { baseUrl: string; workspaceId: string; apiKey: string } {
+export function threaTarget(purpose: string): ThreaTarget {
   const targetFor = (config: { baseUrl?: string; workspaceId?: string; apiKey?: string }) => {
     const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
     const apiKey = process.env.THREA_API_KEY || config.apiKey
@@ -911,9 +914,10 @@ export function listAgents(): void {
   }
   for (const agent of agents) {
     const tmux = agent.tmuxSession && agent.tmuxWindow ? `${agent.tmuxSession}:${agent.tmuxWindow}` : "-"
+    const thread = agent.activeStreamId ? `\t${agent.activeStreamId}` : ""
     const marker = agent.tombstonedAt ? "\ttombstoned" : ""
     console.log(
-      `${agent.id}\t${agent.status}\t${agent.runtime}\t${agent.name}\t${tmux}\t${agent.scratchpadUrl ?? "-"}${marker}`
+      `${agent.id}\t${agent.status}\t${agent.runtime}\t${agent.name}\t${tmux}\t${agent.scratchpadUrl ?? "-"}${thread}${marker}`
     )
   }
 }

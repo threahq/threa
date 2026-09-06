@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path"
 import { acceptClaudeBootPrompts, warnIfBlocked } from "./claude-boot"
 import { defaultClaudeDiskDeps, resumableClaudeTranscript } from "./claude-registry"
 import { die } from "./errors"
+import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
 import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
@@ -31,6 +32,68 @@ export function mcpConfigPath(runtimeSessionId: string): string {
 
 export function configuredThreaBaseUrl(config: ThreaChannelConfig): string {
   return (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
+}
+
+/** A missing credential dies (INV-11) before either spawner creates a tmux window. */
+export function requireThreadSessionTarget(config: ThreaChannelConfig, purpose: string): ThreaTarget {
+  const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
+  const apiKey = process.env.THREA_API_KEY || config.apiKey
+  if (!workspaceId || !apiKey) die(`harnessd: no Threa credentials found to ${purpose}`)
+  return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
+}
+
+export async function prelinkThreadSession(
+  target: ThreaTarget,
+  body: {
+    runtimeKind: string
+    instanceId: string
+    runtimeSessionId: string
+    displayName: string
+    localCwd: string
+    attachTo: { rootStreamId: string; anchorId: string }
+  }
+): Promise<{ rootStreamId: string; activeStreamId: string }> {
+  const response = await postThrea(target, "/bot-runtime/sessions", body)
+  if (!response.ok) die(`harnessd: could not link thread session: ${await failureExcerpt(response)}`)
+  const json = (await response.json()) as { data?: { rootStreamId?: string; activeStreamId?: string } }
+  const rootStreamId = json.data?.rootStreamId
+  const activeStreamId = json.data?.activeStreamId
+  if (!rootStreamId || !activeStreamId) {
+    die("harnessd: thread session link response missing rootStreamId/activeStreamId")
+  }
+  return { rootStreamId, activeStreamId }
+}
+
+interface AttachThreadSessionInput {
+  config: ThreaChannelConfig
+  purpose: string
+  runtimeKind: string
+  instanceId: string
+  runtimeSessionId: string
+  worktree: string
+  displayNameOverride?: string
+  attach: { rootStreamId: string; anchorId: string }
+}
+
+/** One call site for both spawners' `--attach` path, so Claude and Pi report and store the link identically. */
+async function linkAttachedThread(input: AttachThreadSessionInput): Promise<{
+  scratchpadUrl: string
+  activeStreamId: string
+}> {
+  const target = requireThreadSessionTarget(input.config, input.purpose)
+  const displayName = defaultDisplayName(input.worktree, process.env.THREA_DISPLAY_NAME || input.displayNameOverride)
+  const link = await prelinkThreadSession(target, {
+    runtimeKind: input.runtimeKind,
+    instanceId: input.instanceId,
+    runtimeSessionId: input.runtimeSessionId,
+    displayName,
+    localCwd: input.worktree,
+    attachTo: input.attach,
+  })
+  const scratchpadUrl = `${target.baseUrl}/w/${target.workspaceId}/s/${link.rootStreamId}`
+  console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
+  console.log(`harnessd: thread: ${target.baseUrl}/w/${target.workspaceId}/s/${link.activeStreamId}`)
+  return { scratchpadUrl, activeStreamId: link.activeStreamId }
 }
 
 export function piLaunchArgs(piBin: string, runtimeSessionId: string): string[] {
@@ -195,6 +258,8 @@ export function readPiRemoteSession(runtimeSessionId: string): PiRemoteSession |
 
 export interface PiRemoteLinkDeps {
   expectedInstanceId: string
+  /** Set only by an attached spawn: the scratchpad the pre-linked thread lives under. */
+  expectedRootStreamId?: string
   attempts: number
   bootWaitMs: number
   responseWaitMs: number
@@ -210,6 +275,14 @@ export async function linkPiRemoteSession(deps: PiRemoteLinkDeps): Promise<PiRem
     const link = deps.readSession()
     if (link && link.instanceId !== deps.expectedInstanceId) {
       die(`Pi remote link instance ${link.instanceId} does not match launched instance ${deps.expectedInstanceId}`)
+    }
+    // An attached spawn already has its thread on the server. A Pi that linked
+    // itself to some other scratchpad is not that session, and the caller
+    // reports the attached URL regardless — so the mismatch would be invisible.
+    if (link && deps.expectedRootStreamId && link.rootStreamId !== deps.expectedRootStreamId) {
+      die(
+        `Pi remote link scratchpad ${link.rootStreamId} does not match the attached scratchpad ${deps.expectedRootStreamId}`
+      )
     }
     return link
   }
@@ -334,6 +407,26 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     recordProfileSnapshot({ worktree, runtimeSessionId, runtimeKind: "pi-local", profile })
     const partial: Partial<SpawnResult> = { worktree, branch, tmuxSession: session, instanceId, runtimeSessionId }
     try {
+      let attachedScratchpadUrl: string | undefined
+      let activeStreamId: string | undefined
+      if (options.attach) {
+        const piConfig = readPiRemoteConfig()
+        const linked = await linkAttachedThread({
+          config: piConfig,
+          purpose: "link the Pi thread session",
+          runtimeKind: "pi-local",
+          instanceId,
+          runtimeSessionId,
+          worktree,
+          displayNameOverride: piConfig.defaultDisplayName,
+          attach: options.attach,
+        })
+        attachedScratchpadUrl = linked.scratchpadUrl
+        activeStreamId = linked.activeStreamId
+        partial.scratchpadUrl = attachedScratchpadUrl
+        partial.activeStreamId = activeStreamId
+      }
+
       const window = pickTmuxWindow(session, options.name)
       const { windowId, paneId } = createWindow(
         session,
@@ -350,6 +443,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
         ? undefined
         : await linkPiRemoteSession({
             expectedInstanceId: instanceId,
+            expectedRootStreamId: options.attach?.rootStreamId,
             attempts,
             bootWaitMs: Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000),
             responseWaitMs: Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000),
@@ -371,9 +465,13 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
         tmuxWindow: window,
         tmuxWindowId: windowId,
         tmuxPaneId: paneId,
-        scratchpadUrl: link?.scratchpadUrl ?? (options.noRemote ? firstScratchpadUrl(outputText) : undefined),
+        scratchpadUrl:
+          attachedScratchpadUrl ??
+          link?.scratchpadUrl ??
+          (options.noRemote ? firstScratchpadUrl(outputText) : undefined),
         instanceId,
         runtimeSessionId,
+        activeStreamId,
         output: outputText,
       }
     } catch (error) {
@@ -483,10 +581,29 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     try {
       const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
       const channelEntry = prepareClaudeChannel()
-      const scratchpadUrl = await this.prelinkScratchpad(worktree, identity, config)
-      if (scratchpadUrl) {
+      let scratchpadUrl: string | undefined
+      let activeStreamId: string | undefined
+      if (options.attach) {
+        const linked = await linkAttachedThread({
+          config,
+          purpose: "link the Claude thread session",
+          runtimeKind: "claude-code-channel",
+          instanceId: identity.instanceId,
+          runtimeSessionId: identity.runtimeSessionId,
+          worktree,
+          displayNameOverride: config.displayName,
+          attach: options.attach,
+        })
+        scratchpadUrl = linked.scratchpadUrl
+        activeStreamId = linked.activeStreamId
         partial.scratchpadUrl = scratchpadUrl
-        console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
+        partial.activeStreamId = activeStreamId
+      } else {
+        scratchpadUrl = await this.prelinkScratchpad(worktree, identity, config)
+        if (scratchpadUrl) {
+          partial.scratchpadUrl = scratchpadUrl
+          console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
+        }
       }
 
       const args = claudeLaunchArgs({
@@ -500,7 +617,10 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
       })
 
       const window = pickTmuxWindow(session, options.name)
-      const { windowId, paneId } = createWindow(session, window, worktree, claudeLaunchCommand(args, identity, config))
+      const launchCommand = options.attach
+        ? claudeLaunchCommand(args, identity, config, "wait", "error", options.attach.rootStreamId)
+        : claudeLaunchCommand(args, identity, config)
+      const { windowId, paneId } = createWindow(session, window, worktree, launchCommand)
       Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
 
@@ -517,6 +637,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         scratchpadUrl: scratchpadUrl ?? firstScratchpadUrl(outputText),
         instanceId: identity.instanceId,
         runtimeSessionId: identity.runtimeSessionId,
+        activeStreamId,
         output: outputText,
       }
     } catch (error) {

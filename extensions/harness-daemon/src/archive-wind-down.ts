@@ -17,7 +17,7 @@ import { dirname, resolve } from "node:path"
  * repository checkout — only linked worktrees.
  *
  * This lives in harnessd, not in the runtimes' shared client library, and has
- * exactly one caller: {@link reapLink}, which holds `resume-active.lock`. A
+ * two callers, {@link reapLink} and `done`, both holding `resume-active.lock`. A
  * revive can be recreating the very worktree this would force-remove, and the
  * two race the server independently — so the destructive half of the wind-down
  * belongs where that lock is held. A runtime that decides to wind down marks
