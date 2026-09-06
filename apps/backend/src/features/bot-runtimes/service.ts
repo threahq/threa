@@ -800,13 +800,19 @@ export class BotRuntimeService {
       }
       const thread = await StreamRepository.findByIdForWorkspace(db, link.activeStreamId, params.workspaceId)
       const anchorId = thread?.type === StreamTypes.THREAD ? thread.parentAnchorId : null
-      if (!anchorId?.startsWith("msg_")) {
-        throw new HttpError("Runtime session is not attached to a message thread", {
+      const anchor = anchorId?.startsWith("msg_")
+        ? await MessageRepository.findInvocationSourceStateForShare(db, {
+            workspaceId: params.workspaceId,
+            messageId: anchorId,
+          })
+        : null
+      if (!anchorId || !anchor || anchor.deleted) {
+        throw new HttpError("Runtime session is not attached to a live message thread", {
           status: 400,
           code: "SESSION_NOT_MESSAGE_ANCHORED",
         })
       }
-      const { invocation } = await this.createInvocationInTransaction(db, {
+      const { invocation, wasNewlyInserted } = await this.createInvocationInTransaction(db, {
         workspaceId: params.workspaceId,
         rootStreamId: link.rootStreamId,
         activeStreamId: link.rootStreamId,
@@ -820,6 +826,16 @@ export class BotRuntimeService {
         targetInstanceId: link.instanceId,
         targetRuntimeSessionId: link.runtimeSessionId,
       })
+      // A brief's identity is the anchor, so a second brief on the same anchor
+      // resolves to the invocation that is already there. Same prompt is the
+      // retry this makes safe; a different one was never delivered, and saying
+      // so beats a 201 the runtime will never act on.
+      if (!wasNewlyInserted && invocation.promptMarkdown !== params.contentMarkdown) {
+        throw new HttpError("An invocation for this thread's anchor is already in flight", {
+          status: 409,
+          code: "BRIEF_SOURCE_ALREADY_INVOKED",
+        })
+      }
       return { invocation }
     })
   }

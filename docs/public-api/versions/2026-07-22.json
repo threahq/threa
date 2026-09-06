@@ -1739,7 +1739,7 @@
         "operationId": "briefBotRuntimeSession",
         "summary": "Brief the linked runtime session with a prompt",
         "tags": ["Bot runtimes"],
-        "description": "Creates the invocation that delivers a prompt as a turn to the linked runtime session. The turn is sourced from the thread's anchor message and answered into the thread, so the brief writes no message of its own.",
+        "description": "Creates the invocation that delivers a prompt as a turn to the linked runtime session. The turn is sourced from the thread's anchor message and answered into the thread, so the brief writes no message of its own. That anchor is the brief's identity: repeating a brief with the same prompt returns the invocation already in flight, and a different prompt for the same anchor is refused with 409.",
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },

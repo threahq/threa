@@ -269,6 +269,79 @@ describe("briefRuntimeSession", () => {
     ).rejects.toMatchObject({ status: 400, code: "SESSION_NOT_MESSAGE_ANCHORED" })
   })
 
+  test("refuses a brief whose anchor message has been deleted", async () => {
+    const { anchor } = await attachThread("target-instance", "target-session")
+    await pool.query("UPDATE messages SET deleted_at = NOW() WHERE id = $1", [anchor.id])
+
+    await expect(
+      service().briefRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        ownerUserId: author,
+        instanceId: "target-instance",
+        runtimeSessionId: "target-session",
+        contentMarkdown: "brief content",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "SESSION_NOT_MESSAGE_ANCHORED" })
+
+    const invocations = await pool.query<{ count: string }>(
+      "SELECT count(*)::text FROM bot_invocations WHERE workspace_id = $1",
+      [workspace]
+    )
+    expect(invocations.rows[0]!.count).toBe("0")
+  })
+
+  test("a repeated brief with the same prompt resolves to the invocation already in flight", async () => {
+    await attachThread("target-instance", "target-session")
+    const brief = {
+      workspaceId: workspace,
+      botId: bot,
+      ownerUserId: author,
+      instanceId: "target-instance",
+      runtimeSessionId: "target-session",
+      contentMarkdown: "brief content",
+    }
+    const first = await service().briefRuntimeSession(brief)
+    const retry = await service().briefRuntimeSession(brief)
+
+    expect(retry!.invocation.id).toBe(first!.invocation.id)
+    const invocations = await pool.query<{ count: string }>(
+      "SELECT count(*)::text FROM bot_invocations WHERE workspace_id = $1",
+      [workspace]
+    )
+    expect(invocations.rows[0]!.count).toBe("1")
+  })
+
+  test("refuses a second brief carrying a different prompt for the same anchor", async () => {
+    await attachThread("target-instance", "target-session")
+    const first = await service().briefRuntimeSession({
+      workspaceId: workspace,
+      botId: bot,
+      ownerUserId: author,
+      instanceId: "target-instance",
+      runtimeSessionId: "target-session",
+      contentMarkdown: "brief content",
+    })
+
+    await expect(
+      service().briefRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        ownerUserId: author,
+        instanceId: "target-instance",
+        runtimeSessionId: "target-session",
+        contentMarkdown: "a different brief",
+      })
+    ).rejects.toMatchObject({ status: 409, code: "BRIEF_SOURCE_ALREADY_INVOKED" })
+
+    const stored = await pool.query<{ prompt_markdown: string }>(
+      "SELECT prompt_markdown FROM bot_invocations WHERE workspace_id = $1",
+      [workspace]
+    )
+    expect(stored.rows.map((row) => row.prompt_markdown)).toEqual(["brief content"])
+    expect(first!.invocation.promptMarkdown).toBe("brief content")
+  })
+
   test("returns null and creates no invocation for an ended or unknown identity", async () => {
     await attachThread("target-instance", "target-session")
     await service().endRuntimeSession({

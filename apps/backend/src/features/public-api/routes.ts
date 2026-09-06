@@ -1090,7 +1090,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "briefBotRuntimeSession",
     summary: "Brief the linked runtime session with a prompt",
     description:
-      "Creates the invocation that delivers a prompt as a turn to the linked runtime session. The turn is sourced from the thread's anchor message and answered into the thread, so the brief writes no message of its own.",
+      "Creates the invocation that delivers a prompt as a turn to the linked runtime session. The turn is sourced from the thread's anchor message and answered into the thread, so the brief writes no message of its own. That anchor is the brief's identity: repeating a brief with the same prompt returns the invocation already in flight, and a different prompt for the same anchor is refused with 409.",
     tags: ["Bot runtimes"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
     parameters: [workspaceIdParam],
