@@ -3075,9 +3075,14 @@ function normalizeThinkingLevel(input: string): ThinkingLevel | null {
   return THINKING_LEVELS.includes(normalized as ThinkingLevel) ? (normalized as ThinkingLevel) : null
 }
 
+/**
+ * Close a session-control invocation. `finalMessageMarkdown` undefined posts
+ * nothing at all, for a command whose visible outcome lands elsewhere
+ * (`/spawn`'s thread) — the same shape the E2E fallback below already uses.
+ */
 async function completeInvocationWithMarkdown(
   invocation: ClaimedInvocation,
-  finalMessageMarkdown: string,
+  finalMessageMarkdown: string | undefined,
   ctx?: ExtensionContext,
   deps: { sealAck?: typeof sealSessionControlAck } = {}
 ): Promise<boolean> {
@@ -3087,7 +3092,35 @@ async function completeInvocationWithMarkdown(
   const observed = observedInvocations.get(invocation) ?? null
   const isCurrent = () => isInvocationWriteCurrent(invocation, revision, observed)
   if (!isCurrent()) return false
+  const { workspaceId } = config
+  const postNoResponse = async (): Promise<void> => {
+    await request(`/api/v1/workspaces/${workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        sourceRevision: revision,
+        noResponse: true,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+          "pi.remote.noResponse": "true",
+        },
+      }),
+    })
+  }
   try {
+    if (finalMessageMarkdown === undefined) {
+      try {
+        await postNoResponse()
+        return true
+      } catch {
+        return false
+      } finally {
+        releaseObservation(invocation)
+      }
+    }
     const sealedReply = await (deps.sealAck ?? sealSessionControlAck)(invocation, finalMessageMarkdown)
     if (!isCurrent()) return false
     if (sealedReply) {
@@ -3139,21 +3172,7 @@ async function completeInvocationWithMarkdown(
       if (!(error instanceof ThreaApiError && error.code === "E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
       if (!isCurrent()) return false
       try {
-        await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-          method: "POST",
-          body: JSON.stringify({
-            instanceId,
-            claimToken: invocation.claimToken,
-            sourceRevision: revision,
-            noResponse: true,
-            metadata: {
-              "pi.remote.invocationId": invocation.id,
-              "pi.remote.instanceId": instanceId,
-              "pi.remote.sessionControl": "true",
-              "pi.remote.noResponse": "true",
-            },
-          }),
-        })
+        await postNoResponse()
       } catch {
         releaseObservation(invocation)
         return false
@@ -4026,13 +4045,10 @@ async function runSpawnCommand(
     discardSpawnBrief(briefFile)
     throw new Error(`Spawn launch failed: ${summarizeError(error)}`)
   }
-  await deps.complete(
-    invocation,
-    briefFile
-      ? `Spawning **${parsed.name}** as a ${runtime} thread; harnessd will brief it with your prompt.`
-      : `Spawning **${parsed.name}** as a ${runtime} thread.`,
-    ctx
-  )
+  // Nothing is posted in the scratchpad: the thread appearing under the user's
+  // own `/spawn` is the acknowledgement, and harnessd reports a failed launch
+  // there.
+  await deps.complete(invocation, undefined, ctx)
 }
 
 async function runDoneCommand(

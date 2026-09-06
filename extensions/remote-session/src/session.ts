@@ -125,7 +125,8 @@ export interface SessionControlActuator {
     context: SessionControlInvocationContext
   ): Promise<{
     ok: boolean
-    message: string
+    /** Ack markdown to post. Omitted closes the command with no post at all, for one whose visible outcome lands elsewhere (`/spawn`'s thread). */
+    message?: string
     afterAck?: () => unknown | Promise<unknown>
     onHandoffReset?: () => unknown | Promise<unknown>
   }>
@@ -1367,14 +1368,18 @@ export class RemoteSession {
             sourceMessageId: invocation.sourceMessageId,
           })
           if (this.isClaimCancelled(invocation)) return
+          const ack = (): Promise<boolean> =>
+            outcome.message === undefined
+              ? this.completeSilentAck(invocation)
+              : this.completeAck(invocation, outcome.message)
           if (!outcome.afterAck) {
-            await this.completeAck(invocation, outcome.message)
+            await ack()
             return
           }
           this.reconnectHandoff = true
           this.onHandoffReset = outcome.onHandoffReset
           await this.syncPresence()
-          const completed = await this.completeAck(invocation, outcome.message)
+          const completed = await ack()
           if (!completed || this.stopped || !this.link || this.archive.detached) {
             this.resetReconnectHandoff()
             return
@@ -1675,6 +1680,20 @@ export class RemoteSession {
       return false
     }
     this.releaseObservation(invocation.id)
+    return true
+  }
+
+  private async completeSilentAck(invocation: ClaimedInvocation): Promise<boolean> {
+    if (this.isClaimCancelled(invocation)) return false
+    try {
+      await this.completeTurn(invocation, {
+        noResponse: true,
+        metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
+      })
+    } catch (error) {
+      await this.failAfterTerminalWrite(invocation, error, "silent session-control acknowledgement")
+      return false
+    }
     return true
   }
 

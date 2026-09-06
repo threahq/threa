@@ -1380,7 +1380,7 @@ describe("Pi reconnect session control", () => {
     const messages: string[] = []
     await __testing.runKeyCommand(invocation, "ctrl-u", context(true), {
       send: (...args: unknown[]) => sent.push(args),
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },
@@ -1647,7 +1647,7 @@ describe("Pi reconnect session control", () => {
         prepared++
         return () => {}
       },
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },
@@ -1876,7 +1876,7 @@ describe("Pi clear session control", () => {
         prepared++
         return () => {}
       },
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },
@@ -1939,9 +1939,9 @@ describe("Pi spawn and done session control", () => {
     __testing.setConfigForTesting(undefined)
   })
 
-  test("anchors the spawn on the /spawn message, briefs harnessd with the prompt, and acks", async () => {
+  test("anchors the spawn on the /spawn message, briefs harnessd with the prompt, and posts nothing", async () => {
     const prepared: Array<Record<string, unknown>> = []
-    const messages: string[] = []
+    const messages: Array<string | undefined> = []
     let started = false
     await __testing.runSpawnCommand(invocation, "claude fix the parser\nLook at parser.ts\nand fix it", context(true), {
       available: () => true,
@@ -1951,7 +1951,7 @@ describe("Pi spawn and done session control", () => {
           started = true
         }
       },
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },
@@ -1970,7 +1970,7 @@ describe("Pi spawn and done session control", () => {
       },
       brief: "Look at parser.ts\nand fix it",
       started: true,
-      messages: ["Spawning **fix the parser** as a claude thread; harnessd will brief it with your prompt."],
+      messages: [undefined],
     })
   })
 
@@ -1998,14 +1998,14 @@ describe("Pi spawn and done session control", () => {
 
   test("defaults the runtime to pi and writes no brief without a prompt", async () => {
     const prepared: Array<Record<string, unknown>> = []
-    const messages: string[] = []
+    const messages: Array<string | undefined> = []
     await __testing.runSpawnCommand(invocation, "tidy up", context(true), {
       available: () => true,
       prepare: (spec: Record<string, unknown>) => {
         prepared.push(spec)
         return () => undefined
       },
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },
@@ -2020,7 +2020,7 @@ describe("Pi spawn and done session control", () => {
           briefFile: undefined,
         },
       ],
-      messages: ["Spawning **tidy up** as a pi thread."],
+      messages: [undefined],
     })
   })
 
@@ -2034,7 +2034,7 @@ describe("Pi spawn and done session control", () => {
         prepared++
         return () => undefined
       },
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },
@@ -2078,7 +2078,7 @@ describe("Pi spawn and done session control", () => {
         prepared++
         return () => undefined
       },
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },
@@ -2170,7 +2170,7 @@ describe("Pi spawn and done session control", () => {
         prepared++
         return () => {}
       },
-      complete: async (_invocation: unknown, message: string) => {
+      complete: async (_invocation: unknown, message: string | undefined) => {
         messages.push(message)
         return true
       },

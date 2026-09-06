@@ -444,7 +444,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     return { outcome, specs, started: spawnEffects.started, briefContent }
   }
 
-  it("anchors the thread on the /spawn message, writes the brief, and launches harnessd", async () => {
+  it("anchors the thread on the /spawn message, writes the brief, launches harnessd, and posts nothing", async () => {
     const { outcome, specs, started, briefContent } = await runSpawn("pi sidebar fix\nCollapse the sidebar.")
 
     expect({
@@ -453,10 +453,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       started,
       briefContent,
     }).toEqual({
-      outcome: {
-        ok: true,
-        message: "Spawning **sidebar fix** as a pi thread; harnessd will brief it with your prompt.",
-      },
+      outcome: { ok: true },
       spec: {
         runtime: "pi",
         name: "sidebar fix",
@@ -473,10 +470,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const { outcome, specs, started, briefContent } = await runSpawn("tidy up")
 
     expect({ outcome, spec: specs[0], started, briefContent }).toEqual({
-      outcome: {
-        ok: true,
-        message: "Spawning **tidy up** as a claude thread.",
-      },
+      outcome: { ok: true },
       spec: {
         runtime: "claude",
         name: "tidy up",
