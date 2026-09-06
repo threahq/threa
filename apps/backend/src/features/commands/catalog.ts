@@ -22,6 +22,8 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "reconnect",
   "clear",
   "key",
+  "spawn",
+  "done",
 ] as const
 export type SessionControlCommandName = (typeof SESSION_CONTROL_COMMAND_NAMES)[number]
 
@@ -157,6 +159,26 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "key", required: true, description: "Allowed key name" }],
+    },
+    {
+      name: "spawn",
+      description: "Start a coding session in a thread under this scratchpad",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [
+        {
+          name: "name",
+          required: true,
+          description: "Optional runtime (claude or pi) then the session name; lines after the first are the prompt",
+        },
+      ],
+    },
+    {
+      name: "done",
+      description: "Wind down this thread's session: commit, push, remove the worktree, end the link",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [{ name: "--force", required: false, description: "Finish despite local runtime activity" }],
     },
   ]
 }

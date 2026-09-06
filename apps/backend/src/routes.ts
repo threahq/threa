@@ -1953,6 +1953,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     renameBotRuntimeSession: publicApi.renameBotRuntimeSession,
     rebindBotRuntimeSession: publicApi.rebindBotRuntimeSession,
     endBotRuntimeSession: publicApi.endBotRuntimeSession,
+    briefBotRuntimeSession: publicApi.briefBotRuntimeSession,
     claimBotInvocation: publicApi.claimBotInvocation,
     renewBotInvocationClaim: publicApi.renewBotInvocationClaim,
     recordBotInvocationStep: publicApi.recordBotInvocationStep,

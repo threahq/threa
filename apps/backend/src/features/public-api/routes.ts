@@ -53,6 +53,7 @@ import {
   renameRuntimeSessionSchema,
   rebindRuntimeSessionSchema,
   endRuntimeSessionSchema,
+  briefRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
@@ -612,6 +613,12 @@ const endedRuntimeSessionLinkSchema = z.object({
   status: z.literal("ended"),
 })
 
+const briefedRuntimeSessionSchema = z.object({
+  invocationId: z.string(),
+  messageId: z.string(),
+  streamId: z.string(),
+})
+
 const delegationSchema = z.object({
   id: z.string(),
   streamId: z.string(),
@@ -815,6 +822,7 @@ export type OperationId =
   | "renameBotRuntimeSession"
   | "rebindBotRuntimeSession"
   | "endBotRuntimeSession"
+  | "briefBotRuntimeSession"
   | "claimBotInvocation"
   | "renewBotInvocationClaim"
   | "recordBotInvocationStep"
@@ -1076,6 +1084,22 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(endedRuntimeSessionLinkSchema),
     canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/brief",
+    operationId: "briefBotRuntimeSession",
+    summary: "Brief the runtime session with a bot-authored prompt",
+    description:
+      "Posts a bot-authored message into the linked runtime session's stream and creates the invocation that delivers it as a turn — for producers other than a human message, such as a scheduled or externally triggered brief.",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: briefRuntimeSessionSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(briefedRuntimeSessionSchema),
+    canReturn404: true,
+    successStatus: 201,
   },
   {
     method: "post",

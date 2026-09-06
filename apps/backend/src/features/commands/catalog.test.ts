@@ -19,5 +19,25 @@ describe("session-control command catalog", () => {
       scope: "stream",
       args: [{ name: "--force", required: false, description: "Clear despite local runtime activity" }],
     })
+    expect(commands.find((command) => command.name === "spawn")).toEqual({
+      name: "spawn",
+      description: "Start a coding session in a thread under this scratchpad",
+      kind: "bot-runtime",
+      scope: "stream",
+      args: [
+        {
+          name: "name",
+          required: true,
+          description: "Optional runtime (claude or pi) then the session name; lines after the first are the prompt",
+        },
+      ],
+    })
+    expect(commands.find((command) => command.name === "done")).toEqual({
+      name: "done",
+      description: "Wind down this thread's session: commit, push, remove the worktree, end the link",
+      kind: "bot-runtime",
+      scope: "stream",
+      args: [{ name: "--force", required: false, description: "Finish despite local runtime activity" }],
+    })
   })
 })

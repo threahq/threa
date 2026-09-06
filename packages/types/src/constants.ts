@@ -1478,14 +1478,23 @@ export const BotInvocationStatuses = {
   PARKED: "parked",
 } as const satisfies Record<string, BotInvocationStatus>
 
-export const BOT_INVOCATION_TRIGGERS = ["mention", "active-scratchpad", "session-control"] as const
+export const BOT_INVOCATION_TRIGGERS = ["mention", "active-scratchpad", "session-control", "brief"] as const
 export type BotInvocationTrigger = (typeof BOT_INVOCATION_TRIGGERS)[number]
 
 export const BotInvocationTriggers = {
   MENTION: "mention",
   ACTIVE_SCRATCHPAD: "active-scratchpad",
   SESSION_CONTROL: "session-control",
+  BRIEF: "brief",
 } as const satisfies Record<string, BotInvocationTrigger>
+
+/**
+ * Triggers whose invocations are written directly (a slash command, a brief),
+ * never derived from a message's mention/active-scratchpad routes. Route
+ * reconciliation must leave them alone: re-resolving their source message
+ * yields no route, so treating that as "routing changed" would cancel them.
+ */
+export const UNROUTED_BOT_INVOCATION_TRIGGERS: readonly BotInvocationTrigger[] = ["session-control", "brief"]
 
 export const BOT_INVOCATION_CAPABILITIES = ["mentionable", "active-scratchpad", "session-control"] as const
 export type BotInvocationCapability = (typeof BOT_INVOCATION_CAPABILITIES)[number]

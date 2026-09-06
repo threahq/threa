@@ -148,6 +148,7 @@ import {
   renameRuntimeSessionSchema,
   rebindRuntimeSessionSchema,
   endRuntimeSessionSchema,
+  briefRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
@@ -1458,6 +1459,45 @@ export function createPublicApiHandlers({
           rootStreamId: ended.rootStreamId,
           activeStreamId: ended.activeStreamId,
           status: "ended" as const,
+        },
+      })
+    },
+
+    async briefBotRuntimeSession(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(briefRuntimeSessionSchema, req.body)
+      const workspaceId = req.workspaceId!
+      const botId = req.botApiKey.botId
+      const bot = await BotRepository.findById(pool, workspaceId, botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      if (bot.type !== "personal") {
+        throw new HttpError("Runtime sessions require a personal bot owner", {
+          status: 400,
+          code: "PERSONAL_BOT_REQUIRED",
+        })
+      }
+      const contentMarkdown = normalizeMessage(data.content)
+      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+      // Same reason as sendMessage: a brief may carry `[x](attachment:att_x)`,
+      // and without the ids the create-time access gate never runs and the
+      // attachment_references projection is never written.
+      const attachmentIds = collectAttachmentReferenceIds(contentJson)
+      const briefed = await botRuntimeService.briefRuntimeSession({
+        workspaceId,
+        botId,
+        ownerUserId: bot.ownerUserId,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
+        contentJson,
+        contentMarkdown,
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+      })
+      if (!briefed) throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
+      res.status(201).json({
+        data: {
+          invocationId: briefed.invocation.id,
+          messageId: briefed.message.id,
+          streamId: briefed.invocation.activeStreamId,
         },
       })
     },
