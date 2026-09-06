@@ -8,7 +8,16 @@
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
-import { botApiPost, createBot, createBotKey, createWorkspace, loginAs, sendMessage, TestClient } from "../client"
+import {
+  botApiPost,
+  createBot,
+  createBotKey,
+  createWorkspace,
+  getStream,
+  loginAs,
+  sendMessage,
+  TestClient,
+} from "../client"
 
 setDefaultTimeout(60_000)
 
@@ -68,6 +77,11 @@ describe("POST /bot-runtime/sessions with attachTo", () => {
     // A thread under the desk's scratchpad, not a scratchpad of its own.
     expect(attached.data.data.rootStreamId).toBe(root)
     expect(attached.data.data.activeStreamId).not.toBe(root)
+
+    // The session name titles the thread. Nothing else ever will: no user
+    // message lands in an agent's own thread, so dynamic naming never fires.
+    const thread = await getStream(client, workspaceId, attached.data.data.activeStreamId)
+    expect(thread.displayName).toBe("fix the sidebar")
 
     // Repeating the create resumes the same thread session (every channel
     // restart in the same directory does this).

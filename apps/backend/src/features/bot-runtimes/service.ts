@@ -441,6 +441,10 @@ export class BotRuntimeService {
           workspaceId: params.workspaceId,
           parentStreamId: params.rootStreamId,
           parentAnchorId: params.anchorId,
+          // The session name is the only title this thread can get: nothing
+          // anchors it that a reader can skim, and dynamic naming only fires on
+          // a user's message, which never lands in an agent's own thread.
+          displayName: params.displayName,
           createdBy: params.botId,
           createdByType: "bot",
         }
