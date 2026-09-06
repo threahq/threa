@@ -4,7 +4,6 @@ export interface ThreaTarget {
   apiKey: string
 }
 
-/** Every harnessd write to Threa goes through here, so auth, timeout and URL shape are stated once. */
 export function postThrea(target: ThreaTarget, path: string, body: unknown): Promise<Response> {
   return fetch(`${target.baseUrl}/api/v1/workspaces/${target.workspaceId}${path}`, {
     method: "POST",
