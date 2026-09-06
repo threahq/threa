@@ -1806,6 +1806,12 @@ export interface WorkspaceBootstrap {
    */
   featureFlags?: FeatureFlagLayers
   /**
+   * Public PostHog config for this workspace's region, or null when the
+   * backend has none. The client inits PostHog only after the user's
+   * `analyticsConsent` is "granted".
+   */
+  analytics: { posthogToken: string; posthogHost: string } | null
+  /**
    * True when the viewer holds a control-plane platform-admin grant (synced
    * to the regional `platform_admin_access` mirror). Gates UI links into the
    * backoffice. Optional because bootstraps cached before this field shipped

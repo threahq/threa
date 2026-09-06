@@ -121,6 +121,9 @@ export const LabelRemoveOnMoveOptions = {
   NEVER: "never",
 } as const satisfies Record<string, LabelRemoveOnMove>
 
+export const ANALYTICS_CONSENT_OPTIONS = ["unset", "granted", "denied"] as const
+export type AnalyticsConsent = (typeof ANALYTICS_CONSENT_OPTIONS)[number]
+
 // Code block collapse threshold - line count above which blocks start collapsed.
 // Blocks with fewer lines render expanded by default. A user can always toggle
 // an individual block; this preference only controls the initial state.
@@ -276,6 +279,7 @@ export const SETTINGS_TAB_OPTIONS = [
   "notifications",
   "keyboard",
   "accessibility",
+  "privacy",
   "diagnostics",
 ] as const
 export type SettingsTab = (typeof SETTINGS_TAB_OPTIONS)[number]
@@ -446,6 +450,12 @@ export interface UserPreferences {
    * toggle is offered, and the upload endpoint re-checks both.
    */
   performanceDiagnosticsOptIn: boolean
+  /**
+   * The user's answer to the analytics consent banner. "unset" means never
+   * asked, so the banner shows; "granted"/"denied" means answered, and the
+   * client inits PostHog only after "granted".
+   */
+  analyticsConsent: AnalyticsConsent
   createdAt: string
   updatedAt: string
 }
@@ -497,6 +507,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   statusPresets: [],
   gettingStartedDismissed: false,
   performanceDiagnosticsOptIn: false,
+  analyticsConsent: "unset",
 }
 
 /**
@@ -546,6 +557,7 @@ export interface UpdateUserPreferencesInput {
   statusPresets?: StatusPreset[]
   gettingStartedDismissed?: boolean
   performanceDiagnosticsOptIn?: boolean
+  analyticsConsent?: AnalyticsConsent
 }
 
 /**

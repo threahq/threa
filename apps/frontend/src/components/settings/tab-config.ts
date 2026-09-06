@@ -68,4 +68,9 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     description: "Motion, contrast, fonts, and composer layout",
     keywords: ["font", "contrast", "motion", "a11y", "dyslexic", "left-handed", "handedness", "reach", "send"],
   },
+  privacy: {
+    label: "Privacy",
+    description: "Crash reports and usage data",
+    keywords: ["privacy", "analytics", "posthog", "consent", "tracking", "telemetry", "errors"],
+  },
 }

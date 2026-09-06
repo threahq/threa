@@ -79,6 +79,23 @@ describe("updatePreferencesSchema unreadOpenPosition", () => {
   })
 })
 
+describe("updatePreferencesSchema analyticsConsent", () => {
+  it("should accept analyticsConsent when the value is a known consent option", () => {
+    expect(updatePreferencesSchema.parse({ analyticsConsent: "granted" }).analyticsConsent).toBe("granted")
+    expect(updatePreferencesSchema.parse({ analyticsConsent: "denied" }).analyticsConsent).toBe("denied")
+    expect(updatePreferencesSchema.parse({ analyticsConsent: "unset" }).analyticsConsent).toBe("unset")
+  })
+
+  it("should reject the update when analyticsConsent is not a known consent option", () => {
+    expect(updatePreferencesSchema.safeParse({ analyticsConsent: "yes" }).success).toBe(false)
+  })
+
+  it("should treat the field as optional and default to unset", () => {
+    expect(updatePreferencesSchema.parse({}).analyticsConsent).toBeUndefined()
+    expect(DEFAULT_USER_PREFERENCES.analyticsConsent).toBe("unset")
+  })
+})
+
 describe("updatePreferencesSchema boardDefaultViewId", () => {
   it("accepts a view id", () => {
     expect(updatePreferencesSchema.parse({ boardDefaultViewId: "bview_1" }).boardDefaultViewId).toBe("bview_1")

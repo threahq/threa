@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { UserPreferencesService } from "./service"
 import {
+  ANALYTICS_CONSENT_OPTIONS,
   THEME_OPTIONS,
   MESSAGE_DISPLAY_OPTIONS,
   DATE_FORMAT_OPTIONS,
@@ -162,6 +163,7 @@ const updatePreferencesSchema = z.object({
   statusPresets: statusPresetsSchema.optional(),
   gettingStartedDismissed: z.boolean().optional(),
   performanceDiagnosticsOptIn: z.boolean().optional(),
+  analyticsConsent: z.enum(ANALYTICS_CONSENT_OPTIONS).optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({

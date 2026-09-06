@@ -30,7 +30,7 @@ function makeStreamService(archivedStreams: unknown[]) {
   }
 }
 
-function makeDeps(archivedStreams: unknown[]) {
+function makeDeps(archivedStreams: unknown[], analytics: { posthogToken: string; posthogHost: string } | null = null) {
   const streamService = makeStreamService(archivedStreams)
   return {
     workspaceService: {
@@ -54,6 +54,7 @@ function makeDeps(archivedStreams: unknown[]) {
     labelAssignmentService: { listForViewer: async () => [] },
     workosOrgService: {},
     pool: {} as import("pg").Pool,
+    analytics,
     // activityService intentionally omitted — bootstrap treats it as optional.
   } as unknown as Parameters<typeof createWorkspaceHandlers>[0]
 }
@@ -214,5 +215,33 @@ describe("workspace bootstrap handler", () => {
     await handlers.bootstrap(req, res)
 
     expect(getJson().data.featureFlags).toEqual({ workspace: { calls: "off" }, user: { newComposer: "on" } })
+  })
+
+  it("should carry analytics as null in the bootstrap payload when deps have no posthog config", async () => {
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
+    spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
+
+    const handlers = createWorkspaceHandlers(makeDeps([], null))
+    const { req, res, getJson } = makeReqRes()
+
+    await handlers.bootstrap(req, res)
+
+    expect(getJson().data.analytics).toBeNull()
+  })
+
+  it("should carry the posthog token and host in the bootstrap payload when deps have a posthog config", async () => {
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
+    spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
+
+    const handlers = createWorkspaceHandlers(
+      makeDeps([], { posthogToken: "phc_test", posthogHost: "https://eu.i.posthog.com" })
+    )
+    const { req, res, getJson } = makeReqRes()
+
+    await handlers.bootstrap(req, res)
+
+    expect(getJson().data.analytics).toEqual({ posthogToken: "phc_test", posthogHost: "https://eu.i.posthog.com" })
   })
 })

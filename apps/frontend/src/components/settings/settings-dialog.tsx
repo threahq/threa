@@ -22,6 +22,7 @@ import { ScheduleSettings } from "./schedule-settings"
 import { NotificationsSettings } from "./notifications-settings"
 import { KeyboardSettings } from "./keyboard-settings"
 import { AccessibilitySettings } from "./accessibility-settings"
+import { PrivacySettings } from "./privacy-settings"
 import { DiagnosticsSettings } from "./diagnostics-settings"
 import { useFeatureFlag } from "@/hooks"
 
@@ -109,6 +110,9 @@ export function SettingsDialog() {
               </TabsContent>
               <TabsContent value="accessibility" className="mt-0">
                 <AccessibilitySettings />
+              </TabsContent>
+              <TabsContent value="privacy" className="mt-0">
+                <PrivacySettings />
               </TabsContent>
               {perfDiagnostics === "available" && (
                 <TabsContent value="diagnostics" className="mt-0">

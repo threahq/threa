@@ -101,6 +101,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "statusPresets",
     "gettingStartedDismissed",
     "performanceDiagnosticsOptIn",
+    "analyticsConsent",
   ] as const
 
   for (const key of simpleKeys) {

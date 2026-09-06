@@ -32,6 +32,7 @@ function createWrapper(queryClient: QueryClient) {
 
 function makeWorkspaceBootstrap(): WorkspaceBootstrap {
   return {
+    analytics: null,
     workspace: {
       id: "ws_1",
       name: "Workspace",
@@ -102,6 +103,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       defaultCompanionPersonaId: null,
       gettingStartedDismissed: false,
       performanceDiagnosticsOptIn: false,
+      analyticsConsent: "unset",
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",

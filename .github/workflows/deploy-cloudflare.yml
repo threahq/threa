@@ -23,6 +23,8 @@ jobs:
     concurrency:
       group: deploy-frontend
       cancel-in-progress: true
+    env:
+      POSTHOG_CLI_TOKEN: ${{ secrets.POSTHOG_CLI_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,6 +71,34 @@ jobs:
         with:
           path: apps/frontend/.retained-assets
           key: frontend-retained-assets-prod-${{ github.run_id }}
+
+      # Skipped, not failed, without the token (forks) or without an EU project.
+      # `inject` also calls the PostHog API, so it runs under the EU project;
+      # its chunk ids are not project-specific, so one inject serves both
+      # uploads. The US upload waits for a US project to exist.
+      - name: Upload source maps to PostHog
+        if: env.POSTHOG_CLI_TOKEN != ''
+        env:
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_TOKEN }}
+          POSTHOG_ENV_ID_EU: ${{ secrets.POSTHOG_ENV_ID_EU }}
+          POSTHOG_ENV_ID_US: ${{ secrets.POSTHOG_ENV_ID_US }}
+        run: |
+          if [ -z "$POSTHOG_ENV_ID_EU" ]; then
+            echo "POSTHOG_ENV_ID_EU is unset, skipping source map upload"
+            exit 0
+          fi
+          POSTHOG_CLI_PROJECT_ID="$POSTHOG_ENV_ID_EU" POSTHOG_CLI_HOST=https://eu.posthog.com \
+            bunx @posthog/cli@0.18.0 sourcemap inject --directory apps/frontend/dist
+          POSTHOG_CLI_PROJECT_ID="$POSTHOG_ENV_ID_EU" POSTHOG_CLI_HOST=https://eu.posthog.com \
+            bunx @posthog/cli@0.18.0 sourcemap upload --directory apps/frontend/dist
+          if [ -n "$POSTHOG_ENV_ID_US" ]; then
+            POSTHOG_CLI_PROJECT_ID="$POSTHOG_ENV_ID_US" POSTHOG_CLI_HOST=https://us.posthog.com \
+              bunx @posthog/cli@0.18.0 sourcemap upload --directory apps/frontend/dist
+          fi
+
+      # Maps must never reach Pages, even when the upload was skipped.
+      - name: Strip source maps
+        run: find apps/frontend/dist -name '*.map' -type f -delete
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3

@@ -5,6 +5,7 @@ import { ErrorBoundary } from "./error-boundary"
 import * as swRecoveryModule from "@/lib/sw-recovery"
 import * as appUpdateModule from "@/hooks/use-app-update"
 import * as appBuildModule from "@/lib/app-build"
+import * as analyticsModule from "@/lib/analytics/posthog"
 
 function renderWithChunkError() {
   const Thrower = () => {
@@ -16,6 +17,21 @@ function renderWithChunkError() {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe("ErrorBoundary crash reporting", () => {
+  it("should hand the route error to analytics when a route crashes", async () => {
+    const capture = vi.spyOn(analyticsModule, "captureException").mockImplementation(() => {})
+    const crash = new Error("boom")
+    const Thrower = () => {
+      throw crash
+    }
+    const router = createMemoryRouter([{ path: "/", element: <Thrower />, errorElement: <ErrorBoundary /> }])
+
+    render(<RouterProvider router={router} />)
+
+    await waitFor(() => expect(capture).toHaveBeenCalledWith(crash))
+  })
 })
 
 describe("ErrorBoundary chunk-load recovery gating", () => {

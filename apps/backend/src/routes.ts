@@ -86,6 +86,7 @@ import {
   type SessionCookies,
   type ApiKeyService,
   type ErrorReporter,
+  type PostHogConfig,
 } from "@threa/backend-common"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./middleware/public-api-auth"
 import { createApiVersionGate } from "./middleware/api-version"
@@ -208,6 +209,7 @@ interface Dependencies {
   costService: AICostServiceLike
   accessLogService: AccessLogService
   errorReporter: ErrorReporter
+  posthog: PostHogConfig | null
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -278,6 +280,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     controlPlaneClient,
     accessLogService,
     errorReporter,
+    posthog,
   } = deps
 
   const audit = createAuditMiddleware(accessLogService)
@@ -322,6 +325,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workosOrgService,
     callService,
     pool,
+    analytics: posthog ? { posthogToken: posthog.projectToken, posthogHost: posthog.host } : null,
   })
   const streamBriefService = new StreamBriefService({ pool })
   const streamBrief = createStreamBriefHandlers({ pool, streamBriefService })

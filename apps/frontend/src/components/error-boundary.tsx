@@ -7,6 +7,7 @@ import { ErrorDetails } from "./error-details"
 import { chunkUrlFromError, isChunkLoadError, runSwRecovery } from "@/lib/sw-recovery"
 import { fetchLatestVersion, shouldRecoverForVersion } from "@/hooks/use-app-update"
 import { currentAppVersion } from "@/lib/app-build"
+import { captureException } from "@/lib/analytics/posthog"
 
 function formatError(error: unknown): string | null {
   if (error instanceof Error) {
@@ -29,6 +30,10 @@ function formatError(error: unknown): string | null {
 export function ErrorBoundary() {
   const error = useRouteError()
   const chunkLoadFailed = isChunkLoadError(error)
+
+  useEffect(() => {
+    if (error !== undefined) captureException(error)
+  }, [error])
 
   // "checking" while the staleness probe runs, "recovering" once the wipe is
   // in flight (both render the "Updating" spinner so the scary card doesn't

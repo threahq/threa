@@ -13,6 +13,7 @@ import * as datetimeSettingsModule from "./datetime-settings"
 import * as notificationsSettingsModule from "./notifications-settings"
 import * as keyboardSettingsModule from "./keyboard-settings"
 import * as accessibilitySettingsModule from "./accessibility-settings"
+import * as privacySettingsModule from "./privacy-settings"
 
 const useSettingsSpy = vi.fn()
 
@@ -50,6 +51,7 @@ describe("SettingsDialog", () => {
     vi.spyOn(accessibilitySettingsModule, "AccessibilitySettings").mockImplementation(() => (
       <div>Accessibility panel</div>
     ))
+    vi.spyOn(privacySettingsModule, "PrivacySettings").mockImplementation(() => <div>Privacy panel</div>)
 
     vi.spyOn(keyboardSettingsModule, "KeyboardSettings").mockImplementation(((props: {
       onCaptureStateChange?: (isCapturing: boolean) => void
