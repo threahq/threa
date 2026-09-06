@@ -29,6 +29,9 @@ export const ChannelExtension = createTriggerExtension<ChannelItem, ChannelNodeA
   // `##` narrows the list to channels, so the second `#` has to reach the query
   // instead of restarting the match (see `useChannelSuggestion`).
   allowToIncludeChar: true,
+  // Stream names are phrases ("CCH - Threa mention scratchpads"), and no single
+  // word of one narrows the list to it.
+  spacedQuery: true,
   attributes: {
     id: { dataAttr: "data-id" },
     slug: { dataAttr: "data-slug" },

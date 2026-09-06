@@ -14,6 +14,13 @@ import { ChannelExtension } from "./channel-extension"
 const STREAMS = [
   { id: "stream_pizza", type: "channel", slug: "pizza", displayName: null, archivedAt: null },
   { id: "stream_pi", type: "scratchpad", slug: null, displayName: "Pi remote control", archivedAt: null },
+  {
+    id: "stream_cch",
+    type: "scratchpad",
+    slug: null,
+    displayName: "CCH - Threa mention scratchpads",
+    archivedAt: null,
+  },
   { id: "stream_blank", type: "scratchpad", slug: null, displayName: null, archivedAt: null },
 ]
 
@@ -196,5 +203,65 @@ describe("# stream trigger", () => {
 
     const chip = editor!.getJSON().content?.[0].content?.[0]
     expect(chip).toMatchObject({ type: "channelLink", attrs: { id: "stream_pi", slug: "pi-remote-control" } })
+  })
+
+  it("keeps the popup open across spaces while the query still finds a stream", async () => {
+    await typeByKey("#CCH - Threa")
+
+    expect(active).toBe(true)
+    expect(screen.getByText("CCH - Threa mention scratchpads")).toBeInTheDocument()
+    expect(screen.queryByText("Pi remote control")).not.toBeInTheDocument()
+  })
+
+  it("replaces the whole spaced query when the stream is picked", async () => {
+    await typeByKey("#CCH - Threa")
+    await act(async () => {
+      pickHighlighted()
+    })
+    await settle()
+
+    const paragraph = editor!.getJSON().content?.[0].content
+    expect(paragraph?.[0]).toMatchObject({ type: "channelLink", attrs: { id: "stream_cch" } })
+    // The words before the caret went into the chip rather than surviving beside it:
+    // all that follows is the space the pick appends.
+    expect(paragraph?.map((node) => node.type)).toEqual(["channelLink", "text"])
+    expect(paragraph?.[1]).toMatchObject({ text: " " })
+  })
+
+  it("ends the match at the first space when the word before it matches nothing", async () => {
+    await typeByKey("#42 was")
+
+    expect(active).toBe(false)
+  })
+
+  it("closes once a word makes the query match nothing, so prose after a stream ends it", async () => {
+    await typeByKey("#pizza and then")
+
+    expect(active).toBe(false)
+  })
+
+  it("leaves a markdown heading alone — a query never starts with a space", async () => {
+    await typeByKey("# Threa notes")
+
+    expect(active).toBe(false)
+  })
+
+  it("leaves an h2 heading alone too", async () => {
+    await typeByKey("## Threa notes")
+
+    expect(active).toBe(false)
+  })
+
+  it("arms no row while the query ends in a space, so Enter still sends", async () => {
+    await typeByKey("#pizza ")
+    expect(screen.getByText("pizza")).toBeInTheDocument()
+    expect(screen.queryAllByRole("option", { selected: true })).toEqual([])
+
+    await act(async () => {
+      pickHighlighted()
+    })
+    await settle()
+
+    expect(docText().trim()).toBe("#pizza")
   })
 })
