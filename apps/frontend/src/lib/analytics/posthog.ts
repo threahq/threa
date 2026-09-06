@@ -1,9 +1,9 @@
-import posthog, { type CaptureResult, type Properties } from "posthog-js"
+import type { CaptureResult, PostHog, Properties } from "posthog-js"
 
-export type AnalyticsRoot = Pick<typeof posthog, "init">
+export type AnalyticsRoot = Pick<PostHog, "init">
 
 export type AnalyticsClient = Pick<
-  typeof posthog,
+  PostHog,
   | "opt_in_capturing"
   | "opt_out_capturing"
   | "identify"
@@ -82,6 +82,24 @@ interface ActiveAnalytics extends StartAnalyticsParams {
 
 let active: ActiveAnalytics | null = null
 
+// Counts consent decisions, so a start that is still fetching the SDK can tell
+// that consent was withdrawn underneath it and drop itself instead of arming
+// capture afterwards.
+let consentGeneration = 0
+
+let sdk: Promise<AnalyticsRoot> | null = null
+
+/**
+ * The SDK is imported here rather than at module scope for two reasons: nothing
+ * may load it before consent is granted, and a static import pulls it into the
+ * entry chunk, which then crosses the service worker's 2 MiB precache limit and
+ * fails the production build (see apps/frontend/vite.config.ts).
+ */
+function loadSdk(): Promise<AnalyticsRoot> {
+  sdk ??= import("posthog-js").then((module) => module.default)
+  return sdk
+}
+
 /**
  * Every call into posthog-js goes through here. These run inside render-path
  * effects, and a browser that blocks storage or an extension that patches fetch
@@ -96,7 +114,10 @@ function guard(what: string, action: () => void): void {
   }
 }
 
-export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot = posthog): void {
+export async function startAnalytics(
+  params: StartAnalyticsParams,
+  root?: AnalyticsRoot | PromiseLike<AnalyticsRoot>
+): Promise<void> {
   if (
     active &&
     active.token === params.token &&
@@ -106,12 +127,16 @@ export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot
     return
   }
 
+  const started = ++consentGeneration
+  const sdkRoot = await (root ?? loadSdk())
+  if (started !== consentGeneration) return
+
   guard("start", () => {
     // One instance per project token. posthog-js ignores a second `init` on an
     // instance it has already loaded, so a user who moves from an EU workspace to
     // a US one in the same tab would otherwise keep writing US activity into the
     // EU project. `api_host` is fixed at init, and travels with the token.
-    const client = root.init(
+    const client = sdkRoot.init(
       params.token,
       {
         api_host: params.host,
@@ -139,7 +164,7 @@ export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot
       `threa_${params.token}`
     )
 
-    stopAnalytics()
+    deactivate()
     client.opt_in_capturing()
     client.identify(params.distinctId)
     client.group("workspace", params.workspaceId)
@@ -148,7 +173,7 @@ export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot
   })
 }
 
-export function stopAnalytics(): void {
+function deactivate(): void {
   if (!active) return
   const { client } = active
   active = null
@@ -156,6 +181,11 @@ export function stopAnalytics(): void {
     client.reset()
     client.opt_out_capturing()
   })
+}
+
+export function stopAnalytics(): void {
+  consentGeneration++
+  deactivate()
 }
 
 /**

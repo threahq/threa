@@ -31,7 +31,7 @@ describe("AnalyticsConsentGate", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    start = vi.spyOn(posthogModule, "startAnalytics").mockImplementation(() => {})
+    start = vi.spyOn(posthogModule, "startAnalytics").mockImplementation(() => Promise.resolve())
     stop = vi.spyOn(posthogModule, "stopAnalytics").mockImplementation(() => {})
     replay = vi.spyOn(posthogModule, "setSessionReplay").mockImplementation(() => {})
   })
@@ -64,15 +64,15 @@ describe("AnalyticsConsentGate", () => {
     expect(stop).toHaveBeenCalled()
   })
 
-  it("should leave the recorder off until replay is opted into as well", () => {
+  it("should leave the recorder off until replay is opted into as well", async () => {
     mockInputs({ consent: "granted", analytics, userId: "usr_1" })
     const { rerender } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
-    expect(replay).toHaveBeenCalledWith(false)
+    await vi.waitFor(() => expect(replay).toHaveBeenCalledWith(false))
 
     mockInputs({ consent: "granted", analytics, userId: "usr_1", replay: true })
     rerender(<AnalyticsConsentGate workspaceId="ws_1" />)
 
-    expect(replay).toHaveBeenLastCalledWith(true)
+    await vi.waitFor(() => expect(replay).toHaveBeenLastCalledWith(true))
   })
 
   it("should stop when consent flips to denied without a remount", () => {

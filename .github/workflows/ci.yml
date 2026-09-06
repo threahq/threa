@@ -292,6 +292,29 @@ jobs:
         if: github.event_name == 'push' || steps.filter.outputs.site == 'true'
         run: bun run --cwd apps/public-site test
 
+  frontend-prod-build:
+    name: Frontend Production Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # The production build, not the E2E one. `build:e2e` sets the PWA plugin's
+      # globPatterns to [], so it never builds a precache manifest and never
+      # checks any asset against the 2 MiB per-file limit — a chunk that grows
+      # past it fails only in deploy-cloudflare.yml, after merge, with the
+      # frontend left on the previous release.
+      - name: Build frontend
+        run: bun run --cwd apps/frontend build
+
   workos-permissions:
     name: WorkOS Permissions
     runs-on: ubuntu-latest
