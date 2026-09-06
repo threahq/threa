@@ -18,6 +18,7 @@ import { SearchResults } from "@/components/search/search-results"
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 /**
  * Full-page message search — the mobile-native search surface (mirrors the
@@ -33,6 +34,9 @@ export function SearchPage() {
   // keyboard doesn't spring up on open; a mouse (even on a touchscreen laptop)
   // still autofocuses the search input.
   const autoFocusSearch = useInputMode() !== "touch"
+  // Phone widths start the memo/conversation groups collapsed so the message
+  // results are on screen without scrolling past them.
+  const isMobile = useIsMobile()
 
   // Local state for typing; URL is written behind a debounce for bookmarkability.
   const [localQuery, setLocalQuery] = useState(() => searchParams.get("q") ?? "")
@@ -177,11 +181,12 @@ export function SearchPage() {
             </div>
           )}
 
-          {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} />}
+          {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} defaultOpen={!isMobile} />}
           {hasQuery && !displayError && (
             <ConversationMatches
               workspaceId={workspaceId}
               conversations={conversations}
+              defaultOpen={!isMobile}
               onSelect={(conversation) => recordResultClick({ kind: "conversation", id: conversation.id })}
             />
           )}

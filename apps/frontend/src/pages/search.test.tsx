@@ -11,6 +11,7 @@ import { mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
+import * as mobileModule from "@/hooks/use-mobile"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
@@ -338,6 +339,44 @@ describe("SearchPage", () => {
       await user.click(await screen.findByText(/from the search results/))
       expect(recordSearchClick).not.toHaveBeenCalled()
     })
+  })
+
+  describe("on a phone", () => {
+    beforeEach(() => {
+      vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+    })
+
+    it("starts the Memories and Conversations groups collapsed, with the messages visible", async () => {
+      const user = userEvent.setup()
+      mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+      mockConversations = [buildConversationResult()]
+      renderPage()
+
+      const memories = await screen.findByRole("button", { name: "Memories 1" })
+      expect(screen.getAllByText("#general").length).toBeGreaterThan(0)
+      const conversations = screen.getByRole("button", { name: "Conversations 1" })
+      expect(memories).toHaveAttribute("aria-expanded", "false")
+      expect(conversations).toHaveAttribute("aria-expanded", "false")
+      expect(screen.queryByText("Launch decision")).not.toBeInTheDocument()
+      expect(screen.queryByText("Choosing the launch date")).not.toBeInTheDocument()
+      expect(screen.getByRole("link", { name: "See all" })).toBeInTheDocument()
+
+      await user.click(memories)
+      expect(memories).toHaveAttribute("aria-expanded", "true")
+      expect(screen.getByText("Launch decision")).toBeInTheDocument()
+      expect(screen.queryByText("Choosing the launch date")).not.toBeInTheDocument()
+    })
+  })
+
+  it("keeps the Memories and Conversations groups open on wider screens", async () => {
+    mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+    mockConversations = [buildConversationResult()]
+    renderPage()
+
+    expect(await screen.findByText("Launch decision")).toBeInTheDocument()
+    expect(screen.getByText("Choosing the launch date")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Memories 1" })).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("button", { name: "Conversations 1" })).toHaveAttribute("aria-expanded", "true")
   })
 
   describe("conversation matches", () => {
