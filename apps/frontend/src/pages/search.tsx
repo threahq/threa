@@ -181,9 +181,7 @@ export function SearchPage() {
             </div>
           )}
 
-          {hasQuery && !displayError && (
-            <MemoMatches memos={memos} exploreHref={exploreHref} defaultOpen={!isMobile} />
-          )}
+          {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} defaultOpen={!isMobile} />}
           {hasQuery && !displayError && (
             <ConversationMatches
               workspaceId={workspaceId}

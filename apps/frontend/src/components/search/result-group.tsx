@@ -23,7 +23,7 @@ export function ResultGroup({
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <section className="mb-3 border-b border-border/50 pb-3">
+    <div className="mb-3 border-b border-border/50 pb-3">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <button
           type="button"
@@ -41,6 +41,6 @@ export function ResultGroup({
         {action}
       </div>
       {open && children}
-    </section>
+    </div>
   )
 }
