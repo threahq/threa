@@ -238,12 +238,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
           {hasQuery && !displayError && (
             <div className="px-1 pt-1">
-              <MemoMatches
-                memos={memos}
-                exploreHref={exploreHref}
-                compact
-                onSelect={(result) => recordResultClick({ kind: "memo", id: result.memo.id })}
-              />
+              <MemoMatches memos={memos} exploreHref={exploreHref} compact />
               <ConversationMatches
                 workspaceId={workspaceId}
                 conversations={conversations}

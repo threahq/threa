@@ -46,17 +46,32 @@ describe("search query log", () => {
     expect(clicked!.clickedAt).toBeInstanceOf(Date)
   })
 
+  const refused = (params: Parameters<SearchQueryLogService["recordClick"]>[0]) =>
+    service.recordClick(params).then(
+      () => null,
+      (e: unknown) => ({ status: (e as HttpError).status, code: (e as HttpError).code })
+    )
+
   test("refuses a click on another user's entry", async () => {
     const { id } = await service.record(input)
     const other = userId()
 
-    const err = await service
-      .recordClick({ workspaceId: ws, userId: other, id, kind: "memo", targetId: "memo_1" })
-      .then(
-        () => null,
-        (e: unknown) => e as HttpError
-      )
-    expect({ status: err?.status, code: err?.code }).toEqual({ status: 404, code: "SEARCH_QUERY_LOG_NOT_FOUND" })
+    const err = await refused({ workspaceId: ws, userId: other, id, kind: "message", targetId: "msg_1" })
+    expect(err).toEqual({ status: 404, code: "SEARCH_QUERY_LOG_NOT_FOUND" })
+
+    const [row] = await SearchQueryLogRepository.listForUser(pool, ws, user, 1)
+    expect(row).toMatchObject({ id, clickedKind: null, clickedId: null })
+  })
+
+  test("refuses a target the search did not return, including a returned id under the wrong kind", async () => {
+    const { id } = await service.record(input)
+
+    const absent = await refused({ workspaceId: ws, userId: user, id, kind: "message", targetId: "msg_999" })
+    const wrongKind = await refused({ workspaceId: ws, userId: user, id, kind: "conversation", targetId: "msg_1" })
+    expect({ absent, wrongKind }).toEqual({
+      absent: { status: 404, code: "SEARCH_QUERY_LOG_NOT_FOUND" },
+      wrongKind: { status: 404, code: "SEARCH_QUERY_LOG_NOT_FOUND" },
+    })
 
     const [row] = await SearchQueryLogRepository.listForUser(pool, ws, user, 1)
     expect(row).toMatchObject({ id, clickedKind: null, clickedId: null })

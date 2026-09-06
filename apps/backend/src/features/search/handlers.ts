@@ -7,6 +7,7 @@ import type { FeatureFlagService } from "../feature-flags"
 import type { ConversationSearchResult, SearchResult } from "./repository"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
 import { searchRankingForFlag } from "./config"
+import { logger } from "../../lib/logger"
 import { validateRequest } from "../../lib/validation"
 import { setAuditSubjects } from "../access-log"
 import { MAX_SEARCH_PHRASES, SEARCH_CLICK_KINDS, STREAM_TYPES } from "@threa/types"
@@ -30,6 +31,10 @@ export const searchQuerySchema = z.object({
 
 export const searchClickSchema = z.object({
   kind: z.enum(SEARCH_CLICK_KINDS),
+  id: z.string().min(1),
+})
+
+const searchClickParamsSchema = z.object({
   id: z.string().min(1),
 })
 
@@ -144,31 +149,36 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
       ])
 
       // Consent is the user's or workspace's flag, resolved here, never sent by the client.
-      const queryLogId =
-        flags.searchQueryLog === "on"
-          ? (
-              await searchQueryLogService.record({
-                workspaceId,
-                userId,
-                query,
-                params: {
-                  phrases,
-                  from,
-                  with: withParticipants,
-                  in: inStreams,
-                  type,
-                  status,
-                  before,
-                  after,
-                  exact,
-                  limit,
-                },
-                mode: deep ? "deep" : "normal",
-                ranking: searchRankingForFlag(searchFlag),
-                resultIds: { messages: results.map((r) => r.id), conversations: conversations.map((c) => c.id) },
-              })
-            ).id
-          : null
+      let queryLogId: string | null = null
+      if (flags.searchQueryLog === "on") {
+        try {
+          queryLogId = (
+            await searchQueryLogService.record({
+              workspaceId,
+              userId,
+              query,
+              params: {
+                phrases,
+                from,
+                with: withParticipants,
+                in: inStreams,
+                type,
+                status,
+                before,
+                after,
+                exact,
+                limit,
+              },
+              mode: deep ? "deep" : "normal",
+              ranking: searchRankingForFlag(searchFlag),
+              resultIds: { messages: results.map((r) => r.id), conversations: conversations.map((c) => c.id) },
+            })
+          ).id
+        } catch (err) {
+          // The log is a side channel: the search already succeeded, so a failed write must not take it down.
+          logger.error({ err, workspaceId, userId }, "Failed to record search query log")
+        }
+      }
 
       res.json({
         results: results.map(serializeSearchResult),
@@ -179,14 +189,24 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
     },
 
     async recordClick(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { id } = validateRequest(searchClickParamsSchema, req.params)
       const { kind, id: targetId } = validateRequest(searchClickSchema, req.body)
-      await searchQueryLogService.recordClick({
-        workspaceId: req.workspaceId!,
-        userId: req.user!.id,
-        id: req.params.id!,
-        kind,
-        targetId,
-      })
+
+      // Consent is re-checked per click: a log id from before the flag was
+      // switched off must not keep writing behavioural data.
+      const flags = await featureFlagService.getFlags(workspaceId, req.user!.workosUserId)
+      if (flags.searchQueryLog !== "on") {
+        res.status(204).end()
+        return
+      }
+
+      await searchQueryLogService.recordClick({ workspaceId, userId, id, kind, targetId })
+      setAuditSubjects(res, [
+        { type: "search_query_log", id },
+        { type: kind, id: targetId },
+      ])
       res.status(204).end()
     },
   }

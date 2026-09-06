@@ -15,15 +15,12 @@ export function MemoResultItem({
   isActive,
   href,
   compact = false,
-  onSelect,
 }: {
   result: MemoExplorerResult
   isActive: boolean
   href: string
   /** Drops the tags row and clamps the abstract to one line, for tight spaces (sidebar search panel). */
   compact?: boolean
-  /** Fires when any link on the card is opened: the memo itself, its source anchor, or a source message. */
-  onSelect?: () => void
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const { memo } = result
@@ -51,7 +48,7 @@ export function MemoResultItem({
           : "border-border/50 hover:border-border hover:shadow-sm"
       )}
     >
-      <Link to={href} onClick={onSelect} className="block min-w-0 px-3.5 pt-3 pb-2">
+      <Link to={href} className="block min-w-0 px-3.5 pt-3 pb-2">
         <div className="flex min-w-0 items-start justify-between gap-2">
           <h3 className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground line-clamp-2">
             {memo.title}
@@ -98,7 +95,6 @@ export function MemoResultItem({
           {sourceHref ? (
             <Link
               to={sourceHref}
-              onClick={onSelect}
               className="min-w-0 truncate hover:text-foreground hover:underline"
               data-memo-source-link={memo.id}
             >
@@ -123,7 +119,7 @@ export function MemoResultItem({
         </div>
       )}
 
-      {sourcesOpen && <MemoSourceMessages workspaceId={memo.workspaceId} memoId={memo.id} onSelect={onSelect} />}
+      {sourcesOpen && <MemoSourceMessages workspaceId={memo.workspaceId} memoId={memo.id} />}
     </div>
   )
 }
@@ -150,15 +146,7 @@ function SourceLabel({
   )
 }
 
-function MemoSourceMessages({
-  workspaceId,
-  memoId,
-  onSelect,
-}: {
-  workspaceId: string
-  memoId: string
-  onSelect?: () => void
-}) {
+function MemoSourceMessages({ workspaceId, memoId }: { workspaceId: string; memoId: string }) {
   const { data, isLoading, error } = useMemoDetail(workspaceId, memoId)
   const messages = data?.memo.sourceMessages ?? []
 
@@ -185,7 +173,6 @@ function MemoSourceMessages({
         <li key={message.id}>
           <Link
             to={`/w/${workspaceId}/s/${message.streamId}?m=${message.id}`}
-            onClick={onSelect}
             className="block rounded-md border-l-2 border-transparent py-1 pl-2 pr-1.5 transition-colors hover:bg-muted/60"
           >
             <p className="text-xs leading-snug text-foreground/90 line-clamp-2">

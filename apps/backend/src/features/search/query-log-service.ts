@@ -28,7 +28,10 @@ export class SearchQueryLogService {
   }): Promise<void> {
     const updated = await SearchQueryLogRepository.recordClick(this.pool, params)
     if (!updated) {
-      throw new HttpError("Search query log entry not found", { status: 404, code: "SEARCH_QUERY_LOG_NOT_FOUND" })
+      throw new HttpError("Search query log entry not found, or the target was not among its results", {
+        status: 404,
+        code: "SEARCH_QUERY_LOG_NOT_FOUND",
+      })
     }
   }
 }

@@ -9,6 +9,11 @@ export interface SearchQueryLogResultIds {
   conversations: string[]
 }
 
+const RESULT_LIST_BY_KIND: Record<SearchClickKind, keyof SearchQueryLogResultIds> = {
+  message: "messages",
+  conversation: "conversations",
+}
+
 export interface InsertSearchQueryLogInput {
   id: string
   workspaceId: string
@@ -79,7 +84,11 @@ export const SearchQueryLogRepository = {
     `)
   },
 
-  /** Last click wins; the row must belong to the same workspace and user (INV-8). */
+  /**
+   * Last click wins. The row must belong to the same workspace and user (INV-8)
+   * and the target must be one of the row's own results, so a click can never
+   * attribute an id the search did not return.
+   */
   async recordClick(
     db: Querier,
     params: { workspaceId: string; userId: string; id: string; kind: SearchClickKind; targetId: string }
@@ -90,6 +99,7 @@ export const SearchQueryLogRepository = {
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
         AND user_id = ${params.userId}
+        AND result_ids -> ${RESULT_LIST_BY_KIND[params.kind]}::text ? ${params.targetId}
     `)
     return (result.rowCount ?? 0) > 0
   },

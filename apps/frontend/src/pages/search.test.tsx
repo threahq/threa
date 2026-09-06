@@ -309,7 +309,7 @@ describe("SearchPage", () => {
   })
 
   describe("search query log", () => {
-    it("attributes the opened message, memo, or conversation to the logged search", async () => {
+    it("attributes the opened message or conversation to the logged search", async () => {
       mockQueryLogId = "sqlog_1"
       mockConversations = [buildConversationResult()]
       mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
@@ -319,7 +319,6 @@ describe("SearchPage", () => {
       // Each open navigates off the page, so every kind gets its own mount.
       const opens: [() => Promise<HTMLElement>, apiModule.SearchClickTarget][] = [
         [() => screen.findByText(/from the search results/), { kind: "message", id: "msg_1" }],
-        [() => screen.findByRole("link", { name: "1 message in #general" }), { kind: "memo", id: "memo_1" }],
         [() => screen.findByText("Choosing the launch date"), { kind: "conversation", id: "conv_1" }],
       ]
       for (const [target, expected] of opens) {

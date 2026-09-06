@@ -177,13 +177,7 @@ export function SearchPage() {
             </div>
           )}
 
-          {hasQuery && !displayError && (
-            <MemoMatches
-              memos={memos}
-              exploreHref={exploreHref}
-              onSelect={(result) => recordResultClick({ kind: "memo", id: result.memo.id })}
-            />
-          )}
+          {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} />}
           {hasQuery && !displayError && (
             <ConversationMatches
               workspaceId={workspaceId}

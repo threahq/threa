@@ -6,14 +6,12 @@ export function MemoMatches({
   memos,
   exploreHref,
   compact = false,
-  onSelect,
 }: {
   memos: MemoExplorerResult[]
   /** `/w/<ws>/memory?q=<query>` — the memo explorer link this section points into; each card appends `&memo=<id>`. */
   exploreHref: string
   /** Drops tags/source rows and clamps to one line, for the sidebar panel's narrower column. */
   compact?: boolean
-  onSelect?: (result: MemoExplorerResult) => void
 }) {
   if (memos.length === 0) return null
 
@@ -33,7 +31,6 @@ export function MemoMatches({
               isActive={false}
               href={`${exploreHref}&memo=${result.memo.id}`}
               compact={compact}
-              onSelect={onSelect ? () => onSelect(result) : undefined}
             />
           </li>
         ))}
