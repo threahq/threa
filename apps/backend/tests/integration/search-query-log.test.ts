@@ -28,7 +28,7 @@ describe("search query log", () => {
     params: { phrases: ["deploy checklist"], in: ["stream_1"], exact: false, limit: 20 },
     mode: "deep" as const,
     ranking: "improved" as const,
-    resultIds: { messages: ["msg_1", "msg_2"], conversations: ["conv_1"] },
+    resultIds: { messages: ["msg_1", "msg_2"], conversations: ["conv_1"], memos: ["memo_1"] },
   }
 
   test("records the request and its results, then attributes the opened result", async () => {
@@ -40,9 +40,10 @@ describe("search query log", () => {
 
     await service.recordClick({ workspaceId: ws, userId: user, id, kind: "message", targetId: "msg_2" })
     await service.recordClick({ workspaceId: ws, userId: user, id, kind: "conversation", targetId: "conv_1" })
+    await service.recordClick({ workspaceId: ws, userId: user, id, kind: "memo", targetId: "memo_1" })
 
     const [clicked] = await SearchQueryLogRepository.listForUser(pool, ws, user, 10)
-    expect(clicked).toMatchObject({ id, clickedKind: "conversation", clickedId: "conv_1" })
+    expect(clicked).toMatchObject({ id, clickedKind: "memo", clickedId: "memo_1" })
     expect(clicked!.clickedAt).toBeInstanceOf(Date)
   })
 

@@ -53,9 +53,9 @@ export const MAX_SEARCH_PHRASES = 5
 
 /**
  * What a user opened from a search result list, attributed to a `search_query_log` row.
- * Memo matches come from a separate request, so they are not attributable to the row.
+ * Memo hits ride in the same response, so an opened memo is attributable too.
  */
-export const SEARCH_CLICK_KINDS = ["message", "conversation"] as const
+export const SEARCH_CLICK_KINDS = ["message", "conversation", "memo"] as const
 export type SearchClickKind = (typeof SEARCH_CLICK_KINDS)[number]
 
 interface CreateStreamInputBase {

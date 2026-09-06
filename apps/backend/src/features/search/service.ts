@@ -1,12 +1,14 @@
 import { Pool } from "pg"
 import { SearchRepository, type ConversationSearchResult, type SearchResult, type ResolvedFilters } from "./repository"
-import type { EmbeddingServiceLike, RerankerLike } from "../memos"
+import type { EmbeddingServiceLike, MemoExplorerResult, MemoExplorerSearchParams, RerankerLike } from "../memos"
+import { buildSearchClusters, type SearchCluster } from "./clusters"
 import { logger } from "../../lib/logger"
 import type { FeatureFlagValue, StreamType } from "@threa/types"
 import {
   CONVERSATION_SEARCH_LIMIT,
   CONVERSATION_SEARCH_MAX_DISTANCE,
   hybridWeightsForQuery,
+  MEMO_SEARCH_LIMIT,
   searchRankingForFlag,
   type SearchRanking,
   SEARCH_DEEP_CANDIDATE_POOL,
@@ -40,6 +42,8 @@ export interface SearchFilters {
  */
 export interface SearchPermissions {
   accessibleStreamIds: string[]
+  /** The person searching; gates user-scoped memos to their owner. Absent for bots and agents. */
+  userId?: string
 }
 
 export interface SearchParams {
@@ -80,11 +84,29 @@ export interface SearchResponse {
   excludedE2eStreamCount: number
 }
 
+export interface SearchClustersResponse extends SearchResponse {
+  /**
+   * Memos near the query, ranked. Empty on exact, keyword-only and legacy
+   * searches, and when a filter memo search cannot honour is set.
+   */
+  memos: MemoExplorerResult[]
+  /**
+   * `results`, `conversations` and `memos` folded into one ranked list of
+   * conversation rows; the user-facing shape of the search.
+   */
+  clusters: SearchCluster[]
+}
+
+export interface MemoSearchLike {
+  search(params: MemoExplorerSearchParams): Promise<MemoExplorerResult[]>
+}
+
 export interface SearchServiceDependencies {
   pool: Pool
   embeddingService: EmbeddingServiceLike
   queryExpander: QueryExpanderLike
   reranker: RerankerLike
+  memoSearch: MemoSearchLike
 }
 
 const DEFAULT_LIMIT = 20
@@ -128,12 +150,14 @@ export class SearchService {
   private embeddingService: EmbeddingServiceLike
   private queryExpander: QueryExpanderLike
   private reranker: RerankerLike
+  private memoSearch: MemoSearchLike
 
   constructor(deps: SearchServiceDependencies) {
     this.pool = deps.pool
     this.embeddingService = deps.embeddingService
     this.queryExpander = deps.queryExpander
     this.reranker = deps.reranker
+    this.memoSearch = deps.memoSearch
   }
 
   /**
@@ -152,6 +176,25 @@ export class SearchService {
    * This keeps SearchService auth-agnostic — it works for session auth, API keys, and agents.
    */
   async search(params: SearchParams): Promise<SearchResponse> {
+    const { results, conversations, excludedE2eStreamCount } = await this.runLegs(params, { memos: false })
+    return { results, conversations, excludedE2eStreamCount }
+  }
+
+  /**
+   * The search page's shape: `search` plus the memo leg, folded into one
+   * ranked list of conversation rows. Memo search costs an embedding and a
+   * rerank call, so only this entry point runs it.
+   */
+  async searchClusters(params: SearchParams): Promise<SearchClustersResponse> {
+    const { streamIds, ...legs } = await this.runLegs(params, { memos: true })
+    const clusters = await this.clusterResults({ workspaceId: params.workspaceId, streamIds, ...legs })
+    return { ...legs, clusters }
+  }
+
+  private async runLegs(
+    params: SearchParams,
+    legs: { memos: boolean }
+  ): Promise<Omit<SearchClustersResponse, "clusters"> & { streamIds: string[] }> {
     const {
       workspaceId,
       permissions,
@@ -185,7 +228,7 @@ export class SearchService {
 
     if (streamIds.length === 0) {
       logger.debug({ workspaceId, excludedE2eStreamCount }, "No accessible plaintext streams")
-      return { results: [], conversations: [], excludedE2eStreamCount }
+      return { results: [], conversations: [], memos: [], excludedE2eStreamCount, streamIds: [] }
     }
 
     const repoFilters: ResolvedFilters = {
@@ -204,7 +247,7 @@ export class SearchService {
         filters: repoFilters,
         limit,
       })
-      return { results, conversations: [], excludedE2eStreamCount }
+      return { results, conversations: [], memos: [], excludedE2eStreamCount, streamIds }
     }
 
     // One query embedding serves the message leg, the conversation leg and
@@ -244,8 +287,60 @@ export class SearchService {
             ranking,
           })
 
-    const [results, conversations] = await Promise.all([messageLeg, conversationLeg])
-    return { results, conversations, excludedE2eStreamCount }
+    // Memo search honours stream and date filters; with:/type:/status: already
+    // narrowed `streamIds` (the frontend sends status: on every request), but
+    // from: has no memo equivalent and would be silently ignored, so it skips the leg.
+    const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
+    const memoLeg =
+      legs.memos && ranking === "improved" && memoQuery.length > 0 && filters.authorId === undefined
+        ? this.memoSearch.search({
+            workspaceId,
+            permissions: { accessibleStreamIds: streamIds, userId: permissions.userId },
+            query: memoQuery,
+            filters: { before: filters.before, after: filters.after },
+            limit: MEMO_SEARCH_LIMIT,
+          })
+        : Promise.resolve([])
+
+    const [results, conversations, memos] = await Promise.all([messageLeg, conversationLeg, memoLeg])
+    return { results, conversations, memos, excludedE2eStreamCount, streamIds }
+  }
+
+  /**
+   * Joins the message hits and memo sources to their conversations, fetches
+   * the memo sources the message leg did not already return, and folds it
+   * all into rows. Two statements on the pool (INV-30), both restricted to
+   * the streams the requester may read (INV-62).
+   */
+  private async clusterResults(args: {
+    workspaceId: string
+    streamIds: string[]
+    results: SearchResult[]
+    conversations: ConversationSearchResult[]
+    memos: MemoExplorerResult[]
+  }): Promise<SearchCluster[]> {
+    const { workspaceId, streamIds, results, conversations, memos } = args
+    const resultIds = new Set(results.map((r) => r.id))
+    const sourceIds = new Set(memos.flatMap((m) => m.memo.sourceMessageIds))
+    const [conversationByMessageId, sourceMessages] = await Promise.all([
+      SearchRepository.conversationsForMessages(this.pool, {
+        workspaceId,
+        messageIds: [...new Set([...resultIds, ...sourceIds])],
+        streamIds,
+      }),
+      SearchRepository.messagesByIds(this.pool, {
+        ids: [...sourceIds].filter((id) => !resultIds.has(id)),
+        streamIds,
+      }),
+    ])
+    return buildSearchClusters({
+      results,
+      conversations,
+      memos,
+      conversationByMessageId,
+      sourceMessages,
+      k: SEARCH_RRF_K,
+    })
   }
 
   private async singleQuerySearch(params: {

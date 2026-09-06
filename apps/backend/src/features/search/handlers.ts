@@ -4,7 +4,9 @@ import type { Pool } from "pg"
 import type { SearchService } from "./service"
 import type { SearchQueryLogService } from "./query-log-service"
 import type { FeatureFlagService } from "../feature-flags"
-import type { ConversationSearchResult, SearchResult } from "./repository"
+import type { ConversationForMessage, ConversationSearchResult, SearchResult } from "./repository"
+import type { SearchCluster } from "./clusters"
+import { serializeMemoResult } from "../memos"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
 import { searchRankingForFlag } from "./config"
 import { logger } from "../../lib/logger"
@@ -52,6 +54,32 @@ export function serializeSearchResult(result: SearchResult) {
     ...(result.editedAt != null && { editedAt: result.editedAt.toISOString() }),
     createdAt: result.createdAt.toISOString(),
     rank: result.rank,
+  }
+}
+
+export function serializeConversationForMessage(result: ConversationForMessage) {
+  return {
+    id: result.id,
+    streamId: result.streamId,
+    topicSummary: result.topicSummary,
+    summary: result.summary,
+    status: result.status,
+    messageCount: result.messageCount,
+    participantIds: result.participantIds,
+    firstMessageId: result.firstMessageId,
+    firstMessageAt: result.firstMessageAt?.toISOString() ?? null,
+    lastMessageAt: result.lastMessageAt?.toISOString() ?? null,
+  }
+}
+
+export function serializeSearchCluster(cluster: SearchCluster) {
+  return {
+    conversation: cluster.conversation ? serializeConversationForMessage(cluster.conversation) : null,
+    streamId: cluster.streamId,
+    matchedVia: cluster.matchedVia,
+    hits: cluster.hits.map(serializeSearchResult),
+    memoIds: cluster.memoIds,
+    score: cluster.score,
   }
 }
 
@@ -109,7 +137,14 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
       if (inStreams && inStreams.length > 0) {
         resolvedInStreamIds = await resolveInFilterStreamIds(pool, workspaceId, userId, inStreams)
         if (resolvedInStreamIds.length === 0) {
-          res.json({ results: [], conversations: [], excludedE2eStreamCount: 0, queryLogId: null })
+          res.json({
+            results: [],
+            conversations: [],
+            clusters: [],
+            memos: [],
+            excludedE2eStreamCount: 0,
+            queryLogId: null,
+          })
           return
         }
       }
@@ -131,9 +166,9 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
       ])
       const searchFlag = flags.search
 
-      const { results, conversations, excludedE2eStreamCount } = await searchService.search({
+      const { results, conversations, memos, clusters, excludedE2eStreamCount } = await searchService.searchClusters({
         workspaceId,
-        permissions: { accessibleStreamIds },
+        permissions: { accessibleStreamIds, userId },
         query,
         phrases,
         filters,
@@ -146,6 +181,7 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
       setAuditSubjects(res, [
         ...results.map((r) => ({ type: "message", id: r.id })),
         ...conversations.map((c) => ({ type: "conversation", id: c.id })),
+        ...memos.map((m) => ({ type: "memo", id: m.memo.id })),
       ])
 
       // Consent is the user's or workspace's flag, resolved here, never sent by the client.
@@ -171,7 +207,11 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
               },
               mode: deep ? "deep" : "normal",
               ranking: searchRankingForFlag(searchFlag),
-              resultIds: { messages: results.map((r) => r.id), conversations: conversations.map((c) => c.id) },
+              resultIds: {
+                messages: results.map((r) => r.id),
+                conversations: [...new Set(clusters.flatMap((c) => (c.conversation ? [c.conversation.id] : [])))],
+                memos: memos.map((m) => m.memo.id),
+              },
             })
           ).id
         } catch (err) {
@@ -183,6 +223,8 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
       res.json({
         results: results.map(serializeSearchResult),
         conversations: conversations.map(serializeConversationSearchResult),
+        clusters: clusters.map(serializeSearchCluster),
+        memos: memos.map(serializeMemoResult),
         excludedE2eStreamCount,
         queryLogId,
       })

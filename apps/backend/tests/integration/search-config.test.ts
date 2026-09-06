@@ -46,6 +46,7 @@ describe("Per-message text-search config", () => {
       embeddingService: fakeEmbeddingService(),
       queryExpander: { expand: async () => [] },
       reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
+      memoSearch: { search: async () => [] },
     })
   }
 

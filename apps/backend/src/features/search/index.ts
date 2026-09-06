@@ -9,7 +9,7 @@ export {
   type SearchQueryLogResultIds,
 } from "./query-log-repository"
 export { SearchRepository } from "./repository"
-export { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "./config"
+export { hybridWeightsForQuery, searchRankingForFlag, SEARCH_RRF_K, type SearchRanking } from "./config"
 export { SearchQueryExpander } from "./query-expansion"
 export { StubQueryExpander } from "./query-expansion.stub"
 

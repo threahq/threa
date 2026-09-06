@@ -92,4 +92,4 @@ export type { EmbeddingWorkerDeps } from "./embedding-worker"
 export { registerMessageEmbeddingBackfill } from "./message-embedding-backfill"
 export { hashEmbeddingText } from "./message-embedding-text"
 
-export { createMemoHandlers } from "./handlers"
+export { createMemoHandlers, serializeMemoResult } from "./handlers"
