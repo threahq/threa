@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync }
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { harnessDaemonEntrypoint } from "./harness-kick"
+import { discardSpawnBrief } from "./spawn-command"
 
 type DetachedChild = { on(event: "error", listener: (error: Error & { code?: unknown }) => void): void; unref(): void }
 
@@ -44,10 +45,17 @@ function requireHarnessEntrypoint(options: PrepareHarnessClearOptions): string {
   return entrypoint
 }
 
+function requireId(value: string, label: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error(`${label} is missing.`)
+  return trimmed
+}
+
 function prepareDetachedHarnessCommand(
-  command: "reconnect" | "clear",
+  command: "reconnect" | "clear" | "spawn" | "done",
   args: string[],
-  options: PrepareHarnessClearOptions
+  options: PrepareHarnessClearOptions,
+  onLaunchError?: () => void
 ): () => void {
   let started = false
   return () => {
@@ -78,6 +86,7 @@ function prepareDetachedHarnessCommand(
         try {
           fs.appendFile(logPath, `Harness ${command} launch failed${code}\n`, { mode: 0o600 })
         } catch {}
+        onLaunchError?.()
       })
       child.unref()
     } finally {
@@ -91,16 +100,52 @@ export function prepareHarnessReconnect(
   rootStreamId: string,
   options: PrepareHarnessReconnectOptions = {}
 ): () => void {
-  if (!runtimeSessionId.trim()) throw new Error("Runtime session id is missing.")
-  if (!rootStreamId.trim()) throw new Error("Root stream id is missing.")
+  const session = requireId(runtimeSessionId, "Runtime session id")
+  const rootStream = requireId(rootStreamId, "Root stream id")
   const entrypoint = requireHarnessEntrypoint(options)
-  const args = [entrypoint, "reconnect", runtimeSessionId, "--root-stream-id", rootStreamId]
+  const args = [entrypoint, "reconnect", session, "--root-stream-id", rootStream]
   if (options.force) args.push("--force")
   return prepareDetachedHarnessCommand("reconnect", args, options)
 }
 
 export function prepareHarnessClear(runtimeSessionId: string, options: PrepareHarnessClearOptions = {}): () => void {
-  if (!runtimeSessionId.trim()) throw new Error("Runtime session id is missing.")
+  const session = requireId(runtimeSessionId, "Runtime session id")
   const entrypoint = requireHarnessEntrypoint(options)
-  return prepareDetachedHarnessCommand("clear", [entrypoint, "clear", runtimeSessionId], options)
+  return prepareDetachedHarnessCommand("clear", [entrypoint, "clear", session], options)
+}
+
+export interface HarnessSpawnSpec {
+  runtime: "claude" | "pi"
+  name: string
+  rootStreamId: string
+  anchorId: string
+  briefFile?: string
+}
+
+export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarnessClearOptions = {}): () => void {
+  const name = requireId(spec.name, "Agent name")
+  const rootStream = requireId(spec.rootStreamId, "Root stream id")
+  const anchor = requireId(spec.anchorId, "Anchor id")
+  const entrypoint = requireHarnessEntrypoint(options)
+  const args = [entrypoint, "spawn", spec.runtime, "--name", name, "--attach", rootStream, "--anchor", anchor]
+  if (spec.briefFile) args.push("--brief-file", spec.briefFile)
+  // A launch that fails after `spawn` returns reports through the child's async
+  // "error" event, out of reach of the caller's own catch — and harnessd, which
+  // unlinks the brief, never ran. Nobody else can clean the prompt up.
+  return prepareDetachedHarnessCommand("spawn", args, options, () => discardSpawnBrief(spec.briefFile))
+}
+
+export function prepareHarnessDone(
+  runtimeSessionId: string,
+  rootStreamId: string,
+  options: PrepareHarnessClearOptions = {}
+): () => void {
+  const session = requireId(runtimeSessionId, "Runtime session id")
+  const rootStream = requireId(rootStreamId, "Root stream id")
+  const entrypoint = requireHarnessEntrypoint(options)
+  return prepareDetachedHarnessCommand(
+    "done",
+    [entrypoint, "done", session, "--root-stream-id", rootStream],
+    options
+  )
 }

@@ -42,10 +42,15 @@ import {
   type SealingState,
 } from "@threahq/bot-runtime-client"
 import {
+  discardSpawnBrief,
   harnessReconnectAvailable,
+  parseSpawnCommandArgs,
   prepareHarnessClear,
+  prepareHarnessDone,
   prepareHarnessReconnect,
+  prepareHarnessSpawn,
   runHarnessKick,
+  writeSpawnBrief,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
   killOwnWindow,
@@ -136,6 +141,8 @@ const SESSION_CONTROL_COMMANDS = [
   "carry-on",
   "reconnect",
   "clear",
+  "spawn",
+  "done",
   "key",
 ] as const
 type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
@@ -895,12 +902,19 @@ function buildRuntimeCapabilities(
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
     sessionControlCommands: SESSION_CONTROL_COMMANDS.filter((command) => {
-      // `kick`, `reconnect`, and `clear` all act through the harnessd
-      // entrypoint, which finds this session by its tmux pane. None can run
-      // without a pane and an installed daemon — everything else here actuates
-      // in-process through the extension API and needs no tmux at all.
+      // Commands routed through the harnessd entrypoint need this session's tmux
+      // pane and an installed daemon; the rest actuates in-process through the
+      // extension API and needs no tmux at all.
       if (command === "kick" || command === "reconnect" || command === "clear") {
         return Boolean(ctx && currentReconnectLink(ctx, reconnectAvailable))
+      }
+      if (command === "spawn" || command === "done") {
+        const link = ctx ? currentReconnectLink(ctx, reconnectAvailable) : undefined
+        if (!link) return false
+        // `/spawn` opens a thread under the desk's root; `/done` winds down the
+        // thread session it is run from.
+        const onDesk = link.activeStreamId === link.rootStreamId
+        return command === "spawn" ? onDesk : !onDesk
       }
       if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
       return true
@@ -3768,6 +3782,13 @@ interface ClearCommandDeps {
   heartbeat?: typeof heartbeat
 }
 
+interface SpawnCommandDeps {
+  available: () => boolean
+  postMessage: typeof postStreamMessage
+  prepare: typeof prepareHarnessSpawn
+  complete: typeof completeInvocationWithMarkdown
+}
+
 interface HarnessHandoffSpec {
   usage: string
   pendingMessage: string
@@ -3782,6 +3803,30 @@ interface HarnessHandoffDeps {
   available: () => boolean
   complete: typeof completeInvocationWithMarkdown
   heartbeat?: typeof heartbeat
+}
+
+/**
+ * A handoff latches the session busy until the harness restarts it. `done` may
+ * instead refuse (the reaper's vetoes) and leave this pane alive, so the latch
+ * needs a deadline or the pane never accepts another claim. The Claude session
+ * carries the same 30 s fallback.
+ */
+export const HARNESS_HANDOFF_FALLBACK_MS = 30_000
+
+function armHandoffFallback(
+  lifecycleGeneration: number,
+  ctx: ExtensionContext,
+  sendHeartbeat: typeof heartbeat
+): void {
+  const timer = setTimeout(() => {
+    if (!reconnectPending || sessionTearingDown || sessionLifecycleGeneration !== lifecycleGeneration) return
+    reconnectPending = false
+    const enabled = isEnabled(ctx)
+    void sendHeartbeat(enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline", undefined, ctx).catch(
+      () => undefined
+    )
+  }, HARNESS_HANDOFF_FALLBACK_MS)
+  timer.unref?.()
 }
 
 async function runHarnessHandoffCommand(
@@ -3864,6 +3909,7 @@ async function runHarnessHandoffCommand(
       return
     }
     start()
+    armHandoffFallback(lifecycleGeneration, ctx, sendHeartbeat)
   } catch (error) {
     reconnectPending = false
     const enabled = isEnabled(ctx)
@@ -3929,6 +3975,107 @@ async function runClearCommand(
       ackMessage: "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
       heartbeatText: "Clear handoff…",
       prepare: ({ runtimeSessionId }) => deps.prepare(runtimeSessionId),
+    },
+    isCurrent
+  )
+}
+
+async function postStreamMessage(streamId: string, content: string): Promise<string> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const body = await request<{ data?: { id?: string } }>(
+    `/api/v1/workspaces/${config.workspaceId}/streams/${streamId}/messages`,
+    { method: "POST", body: JSON.stringify({ content }) }
+  )
+  const id = body.data?.id
+  if (typeof id !== "string" || !id) throw new Error(`Threa API returned no message id for stream ${streamId}`)
+  return id
+}
+
+async function runSpawnCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: SpawnCommandDeps = {
+    available: harnessReconnectAvailable,
+    postMessage: postStreamMessage,
+    prepare: prepareHarnessSpawn,
+    complete: completeInvocationWithMarkdown,
+  },
+  isCurrent: InvocationGuard = () => true
+): Promise<void> {
+  const parsed = parseSpawnCommandArgs(args)
+  if ("error" in parsed) {
+    await deps.complete(invocation, parsed.error, ctx)
+    return
+  }
+  const link = currentReconnectLink(ctx, deps.available)
+  if (!link) {
+    await deps.complete(invocation, "Spawn is unavailable for this session.", ctx)
+    return
+  }
+  if (link.activeStreamId !== link.rootStreamId) {
+    await deps.complete(invocation, "Spawn is only available on the scratchpad root.", ctx)
+    return
+  }
+  if (invocation.rootStreamId !== link.rootStreamId || invocation.claimedInstanceId !== link.instanceId) {
+    throw new Error("Spawn request no longer matches the linked scratchpad.")
+  }
+  const runtime = parsed.runtime ?? "pi"
+  // A replacement claim reruns this command, so anything past here would post a
+  // second anchor and start a second session for the one `/spawn` the user typed.
+  if (!isCurrent()) return
+  const anchorId = await deps.postMessage(link.rootStreamId, `Starting **${parsed.name}** (${runtime})`)
+  // harnessd dies on a blank brief, so an empty prompt gets no file at all.
+  const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
+  if (!isCurrent()) {
+    discardSpawnBrief(briefFile)
+    return
+  }
+  try {
+    deps.prepare({ runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
+  } catch (error) {
+    discardSpawnBrief(briefFile)
+    throw new Error(`Spawn launch failed after posting anchor ${anchorId}: ${summarizeError(error)}`)
+  }
+  await deps.complete(
+    invocation,
+    briefFile
+      ? `Spawning **${parsed.name}** as a ${runtime} thread; harnessd will brief it with your prompt.`
+      : `Spawning **${parsed.name}** as a ${runtime} thread.`,
+    ctx
+  )
+}
+
+async function runDoneCommand(
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext,
+  deps: HarnessHandoffDeps & { prepare: typeof prepareHarnessDone } = {
+    available: harnessReconnectAvailable,
+    prepare: prepareHarnessDone,
+    complete: completeInvocationWithMarkdown,
+    heartbeat,
+  },
+  isCurrent: InvocationGuard = () => true
+): Promise<void> {
+  const link = currentReconnectLink(ctx, deps.available)
+  if (link && link.activeStreamId === link.rootStreamId) {
+    await deps.complete(invocation, "Done is only available inside a thread session.", ctx)
+    return
+  }
+  await runHarnessHandoffCommand(
+    invocation,
+    args,
+    ctx,
+    deps,
+    {
+      usage: "Usage: `/done [--force]`.",
+      pendingMessage: "A Threa invocation is still running; use `/stop` before finishing.",
+      busyMessage: "Pi is busy; retry when idle or use `/done --force`.",
+      unavailableMessage: "Harness done is unavailable for this session.",
+      ackMessage: "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
+      heartbeatText: "Done handoff…",
+      prepare: ({ runtimeSessionId, rootStreamId }) => deps.prepare(runtimeSessionId, rootStreamId),
     },
     isCurrent
   )
@@ -4076,6 +4223,12 @@ async function handleSessionControlInvocation(
         return
       case "clear":
         await runClearCommand(invocation, command.args, ctx, undefined, isCurrent)
+        return
+      case "spawn":
+        await runSpawnCommand(invocation, command.args, ctx, undefined, isCurrent)
+        return
+      case "done":
+        await runDoneCommand(invocation, command.args, ctx, undefined, isCurrent)
         return
       case "key":
         await runKeyCommand(invocation, command.args, ctx, undefined, isCurrent)
@@ -5304,10 +5457,13 @@ export const __testing = {
   claimIfIdle,
   runReconnectCommand,
   runClearCommand,
+  runSpawnCommand,
+  runDoneCommand,
   runReloadCommand,
   scheduleRecoveredCompletion,
   runKeyCommand,
   reconnectPending: () => reconnectPending,
+  HARNESS_HANDOFF_FALLBACK_MS,
   reloadPending: () => reloadPending,
   sessionLifecycleGeneration: () => sessionLifecycleGeneration,
   sessionTearingDown: () => sessionTearingDown,

@@ -209,11 +209,14 @@ export class ThreaClient {
     })
   }
 
-  async sendMessage(streamId: string, body: Record<string, unknown>): Promise<void> {
-    await this.request(this.workspacePath(`/streams/${streamId}/messages`), {
+  async sendMessage(streamId: string, body: Record<string, unknown>): Promise<{ id: string }> {
+    const result = await this.request<{ data?: { id?: string } }>(this.workspacePath(`/streams/${streamId}/messages`), {
       method: "POST",
       body: JSON.stringify(body),
     })
+    const id = result?.data?.id
+    if (typeof id !== "string" || !id) throw new Error(`Threa API returned no message id for stream ${streamId}`)
+    return { id }
   }
 
   async sendInvocationMessage(invocationId: string, body: Record<string, unknown>): Promise<void> {

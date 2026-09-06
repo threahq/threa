@@ -1,7 +1,7 @@
 import { readHarnessLinks } from "@threa/harness-client"
 import { encryptAttachmentBytes } from "@threahq/bot-runtime-client"
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import threaRemote, { __testing } from "./threa-remote"
@@ -207,9 +207,8 @@ describe("Pi remote trace safety", () => {
   })
 
   test("advertises session-control command capabilities", () => {
-    // No ctx: nothing is linked yet, so the three commands that need a live
-    // link (kick and reconnect via harnessd, key via the pane) are withheld.
-    // What remains is everything Pi actuates in-process.
+    // No ctx: nothing is linked yet, so every command needing a live link is
+    // withheld. What remains is everything Pi actuates in-process.
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
       sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
@@ -1893,6 +1892,372 @@ describe("Pi clear session control", () => {
         "A Threa invocation is still running; use `/stop` before clearing.",
       ],
       prepared: 1,
+    })
+  })
+})
+
+describe("Pi spawn and done session control", () => {
+  const invocation = {
+    id: "binv_spawn",
+    claimToken: "claim",
+    claimedInstanceId: "pi-instance",
+    rootStreamId: "stream-root-exact",
+  } as never
+  const context = (idle: boolean) =>
+    ({
+      sessionManager: { getSessionId: () => "runtime-exact" },
+      modelRegistry: { getAvailable: () => [] },
+      isIdle: () => idle,
+    }) as never
+  const linkedConfig = (link: Record<string, unknown>) => ({
+    baseUrl: "https://app.threa.io",
+    workspaceId: "ws_123",
+    apiKey: "threa_bk_test",
+    linkedSessions: { "runtime-exact": link },
+  })
+  const deskLink = {
+    enabled: true,
+    instanceId: "pi-instance",
+    runtimeSessionId: "runtime-exact",
+    rootStreamId: "stream-root-exact",
+    activeStreamId: "stream-root-exact",
+    streamUrlPath: "/streams/stream-root-exact",
+  }
+  const threadLink = { ...deskLink, activeStreamId: "stream-thread-exact" }
+
+  beforeEach(() => {
+    process.env.TMUX_PANE = "%9"
+    __testing.setConfigForTesting(linkedConfig(deskLink) as never)
+  })
+
+  afterEach(() => {
+    delete process.env.TMUX_PANE
+    __testing.clearPendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("anchors the spawn in the root, briefs harnessd with the prompt, and acks", async () => {
+    const posted: unknown[][] = []
+    const prepared: Array<Record<string, unknown>> = []
+    const messages: string[] = []
+    let started = false
+    await __testing.runSpawnCommand(invocation, "claude fix the parser\nLook at parser.ts\nand fix it", context(true), {
+      available: () => true,
+      postMessage: async (...args: unknown[]) => {
+        posted.push(args)
+        return "msg_anchor"
+      },
+      prepare: (spec: Record<string, unknown>) => {
+        prepared.push(spec)
+        return () => {
+          started = true
+        }
+      },
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+    } as never)
+
+    const briefFile = prepared[0]?.briefFile as string | undefined
+    const brief = briefFile ? readFileSync(briefFile, "utf8") : undefined
+    if (briefFile) unlinkSync(briefFile)
+    expect({ posted, spec: { ...prepared[0], briefFile: undefined }, brief, started, messages }).toEqual({
+      posted: [["stream-root-exact", "Starting **fix the parser** (claude)"]],
+      spec: {
+        runtime: "claude",
+        name: "fix the parser",
+        rootStreamId: "stream-root-exact",
+        anchorId: "msg_anchor",
+        briefFile: undefined,
+      },
+      brief: "Look at parser.ts\nand fix it",
+      started: true,
+      messages: ["Spawning **fix the parser** as a claude thread; harnessd will brief it with your prompt."],
+    })
+  })
+
+  test("an unparseable first line posts nothing and returns the usage", async () => {
+    const messages: string[] = []
+    let posts = 0
+    let prepared = 0
+    for (const args of ["", "--force\nprompt", "claude"]) {
+      await __testing.runSpawnCommand(invocation, args, context(true), {
+        available: () => true,
+        postMessage: async () => {
+          posts++
+          return "msg_anchor"
+        },
+        prepare: () => {
+          prepared++
+          return () => undefined
+        },
+        complete: async (_invocation: unknown, message: string) => {
+          messages.push(message)
+          return true
+        },
+      } as never)
+    }
+    expect({ messages, posts, prepared }).toEqual({
+      messages: Array(3).fill("Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines."),
+      posts: 0,
+      prepared: 0,
+    })
+  })
+
+  test("defaults the runtime to pi and writes no brief without a prompt", async () => {
+    const prepared: Array<Record<string, unknown>> = []
+    const messages: string[] = []
+    await __testing.runSpawnCommand(invocation, "tidy up", context(true), {
+      available: () => true,
+      postMessage: async () => "msg_anchor",
+      prepare: (spec: Record<string, unknown>) => {
+        prepared.push(spec)
+        return () => undefined
+      },
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+    } as never)
+    expect({ prepared, messages }).toEqual({
+      prepared: [
+        {
+          runtime: "pi",
+          name: "tidy up",
+          rootStreamId: "stream-root-exact",
+          anchorId: "msg_anchor",
+          briefFile: undefined,
+        },
+      ],
+      messages: ["Spawning **tidy up** as a pi thread."],
+    })
+  })
+
+  test("refuses inside a thread without posting an anchor", async () => {
+    __testing.setConfigForTesting(linkedConfig(threadLink) as never)
+    const messages: string[] = []
+    let posts = 0
+    await __testing.runSpawnCommand(invocation, "pi tidy up", context(true), {
+      available: () => true,
+      postMessage: async () => {
+        posts++
+        return "msg_anchor"
+      },
+      prepare: () => () => undefined,
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+    } as never)
+    expect({ messages, posts }).toEqual({
+      messages: ["Spawn is only available on the scratchpad root."],
+      posts: 0,
+    })
+  })
+
+  test("a claim from another scratchpad or instance cannot spawn", async () => {
+    let posts = 0
+    const deps = {
+      available: () => true,
+      postMessage: async () => {
+        posts++
+        return "msg_anchor"
+      },
+      prepare: () => () => undefined,
+      complete: async () => true,
+    } as never
+    const stale = [
+      { ...(invocation as object), rootStreamId: "stream-other" },
+      { ...(invocation as object), claimedInstanceId: "pi-other" },
+    ]
+    for (const claim of stale) {
+      await expect(__testing.runSpawnCommand(claim as never, "pi tidy up", context(true), deps)).rejects.toThrow(
+        "Spawn request no longer matches the linked scratchpad."
+      )
+    }
+    expect(posts).toBe(0)
+  })
+
+  test("a replaced claim posts no anchor, and one replaced mid-post leaves no brief behind", async () => {
+    const messages: string[] = []
+    let posts = 0
+    let prepared = 0
+    const briefs = () => readdirSync(tmpdir()).filter((entry) => entry.startsWith("threa-spawn-"))
+    const before = briefs()
+    const deps = {
+      available: () => true,
+      postMessage: async () => {
+        posts++
+        return "msg_anchor"
+      },
+      prepare: () => {
+        prepared++
+        return () => undefined
+      },
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+    } as never
+
+    await __testing.runSpawnCommand(invocation, "pi tidy up\nfix it", context(true), deps, () => false)
+    let posted = false
+    await __testing.runSpawnCommand(invocation, "pi tidy up\nfix it", context(true), deps, () => {
+      const wasCurrent = !posted
+      posted = true
+      return wasCurrent
+    })
+
+    expect({ messages, posts, prepared, leaked: briefs().filter((brief) => !before.includes(brief)) }).toEqual({
+      messages: [],
+      posts: 1,
+      prepared: 0,
+      leaked: [],
+    })
+  })
+
+  test("a launch failure names the anchor, acks nothing, and removes the brief it wrote", async () => {
+    const messages: string[] = []
+    let briefFile: string | undefined
+    await expect(
+      __testing.runSpawnCommand(invocation, "pi broken\nfix the thing", context(true), {
+        available: () => true,
+        postMessage: async () => "msg_anchor",
+        prepare: (spec: Record<string, unknown>) => {
+          briefFile = spec.briefFile as string
+          return () => {
+            throw new Error("harnessd missing")
+          }
+        },
+        complete: async (_invocation: unknown, message: string) => {
+          messages.push(message)
+          return true
+        },
+      } as never)
+    ).rejects.toThrow("Spawn launch failed after posting anchor msg_anchor: harnessd missing")
+    expect({ messages, briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({
+      messages: [],
+      briefWritten: true,
+      briefLeft: false,
+    })
+  })
+
+  test("winds a thread session down through harnessd and refuses on the desk", async () => {
+    __testing.setConfigForTesting(linkedConfig(threadLink) as never)
+    const prepared: unknown[][] = []
+    const order: string[] = []
+    const messages: string[] = []
+    const deps = (record: string[]) =>
+      ({
+        available: () => true,
+        prepare: (...args: unknown[]) => {
+          prepared.push(args)
+          return () => order.push("start")
+        },
+        complete: async (_invocation: unknown, message: string) => {
+          order.push("complete")
+          record.push(message)
+          return true
+        },
+        heartbeat: async () => undefined,
+      }) as never
+    await __testing.runDoneCommand(invocation, "", context(true), deps(messages))
+    __testing.clearPendingForTesting()
+    await __testing.runDoneCommand(invocation, "extra", context(true), deps(messages))
+    __testing.setConfigForTesting(linkedConfig(deskLink) as never)
+    await __testing.runDoneCommand(invocation, "", context(true), deps(messages))
+
+    expect({ prepared, order, messages }).toEqual({
+      prepared: [["runtime-exact", "stream-root-exact"]],
+      order: ["complete", "start", "complete", "complete"],
+      messages: [
+        "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
+        "Usage: `/done [--force]`.",
+        "Done is only available inside a thread session.",
+      ],
+    })
+  })
+
+  test("done force bypasses only local busy state and never an owned Threa invocation", async () => {
+    __testing.setConfigForTesting(linkedConfig(threadLink) as never)
+    const messages: string[] = []
+    let prepared = 0
+    const deps = {
+      available: () => true,
+      prepare: () => {
+        prepared++
+        return () => {}
+      },
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+      heartbeat: async () => undefined,
+    } as never
+    await __testing.runDoneCommand(invocation, "", context(false), deps)
+    await __testing.runDoneCommand(invocation, "--force", context(false), deps)
+    __testing.clearPendingForTesting()
+    __testing.beginPendingInvocation({ id: "binv_owned", claimToken: "owned" } as never)
+    await __testing.runDoneCommand(invocation, "--force", context(false), deps)
+
+    expect({ messages, prepared }).toEqual({
+      messages: [
+        "Pi is busy; retry when idle or use `/done --force`.",
+        "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
+        "A Threa invocation is still running; use `/stop` before finishing.",
+      ],
+      prepared: 1,
+    })
+  })
+
+  test("a done that never restarts this pane releases the busy latch on the fallback", async () => {
+    // harnessd refuses the wind-down whenever a reaper veto applies, and a
+    // refused `done` leaves this pane alive: without the deadline it stays
+    // latched busy and never accepts another claim.
+    __testing.setConfigForTesting(linkedConfig(threadLink) as never)
+    const heartbeats: string[] = []
+    const deps = {
+      available: () => true,
+      prepare: () => () => {},
+      complete: async () => true,
+      heartbeat: async (status: string) => void heartbeats.push(status),
+    } as never
+    jest.useFakeTimers()
+    try {
+      await __testing.runDoneCommand(invocation, "", context(true), deps)
+      expect(__testing.reconnectPending()).toBe(true)
+      jest.advanceTimersByTime(__testing.HARNESS_HANDOFF_FALLBACK_MS)
+    } finally {
+      jest.useRealTimers()
+    }
+
+    expect({ latched: __testing.reconnectPending(), heartbeats }).toEqual({
+      latched: false,
+      heartbeats: ["busy", "available"],
+    })
+  })
+
+  test("advertises spawn only on the desk, done only inside a thread, and neither without a link", () => {
+    const ctx = context(true)
+    const advertised = (available: boolean) =>
+      (__testing.buildRuntimeCapabilities(ctx, () => available).sessionControlCommands as string[]).filter(
+        (name) => name === "spawn" || name === "done"
+      )
+
+    const desk = advertised(true)
+    const unavailable = advertised(false)
+    __testing.setConfigForTesting(linkedConfig(threadLink) as never)
+    const thread = advertised(true)
+    __testing.setConfigForTesting(linkedConfig(deskLink) as never)
+    delete process.env.TMUX_PANE
+    const unpaned = advertised(true)
+
+    expect({ desk, thread, unavailable, unpaned }).toEqual({
+      desk: ["spawn"],
+      thread: ["done"],
+      unavailable: [],
+      unpaned: [],
     })
   })
 })

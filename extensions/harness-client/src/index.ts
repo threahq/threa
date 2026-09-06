@@ -20,10 +20,14 @@ export { harnessDaemonEntrypoint, runHarnessKick, type HarnessKickResult } from 
 export {
   harnessReconnectAvailable,
   prepareHarnessClear,
+  prepareHarnessDone,
   prepareHarnessReconnect,
+  prepareHarnessSpawn,
+  type HarnessSpawnSpec,
   type PrepareHarnessClearOptions,
   type PrepareHarnessReconnectOptions,
 } from "./harness-reconnect"
+export { discardSpawnBrief, parseSpawnCommandArgs, writeSpawnBrief } from "./spawn-command"
 export {
   BotSupervisorTransport,
   type BotSessionRestoredPayload,
