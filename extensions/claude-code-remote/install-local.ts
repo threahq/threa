@@ -20,56 +20,19 @@ import { spawnSync } from "node:child_process"
 const here = dirname(fileURLToPath(import.meta.url)) // extensions/claude-code-remote
 const dest = process.argv[2] ?? join(homedir(), ".threa", "claude-code-remote")
 
-// Vendored sibling packages: dep specifier → source dir + runtime files (tests
-// are not needed at runtime).
+// Vendored sibling packages: dep specifier → source dir. Every runtime file is
+// vendored, so a module added to one of these packages can never be missing from
+// the install. "test" in a filename means test-only (`*.test.ts`, shared helpers
+// importing `bun:test`); dropping a runtime file that way fails the import check
+// below rather than shipping a broken install.
 const VENDORED = [
-  {
-    dep: "@threahq/bot-runtime-client",
-    src: resolve(here, "../bot-runtime-client"),
-    files: [
-      "index.ts",
-      "transport.ts",
-      "invocation-control.ts",
-      "types.ts",
-      "ws-hint.ts",
-      "crypto.ts",
-      "sealed.ts",
-      "archive-grace.ts",
-      "attachment-files.ts",
-    ],
-    dir: "bot-runtime-client",
-  },
-  {
-    dep: "@threa/harness-client",
-    src: resolve(here, "../harness-client"),
-    files: [
-      "index.ts",
-      "supervisor.ts",
-      "harness-kick.ts",
-      "harness-reconnect.ts",
-      "tmux-key.ts",
-      "tmux-window.ts",
-      "harness-links.ts",
-    ],
-    dir: "harness-client",
-  },
-  {
-    dep: "@threahq/remote-session",
-    src: resolve(here, "../remote-session"),
-    files: [
-      "index.ts",
-      "session.ts",
-      "turn-route.ts",
-      "client.ts",
-      "identity.ts",
-      "attachments.ts",
-      "lifecycle.ts",
-      "delegation-client.ts",
-      "delegation-runner.ts",
-    ],
-    dir: "remote-session",
-  },
-]
+  { dep: "@threahq/bot-runtime-client", src: resolve(here, "../bot-runtime-client"), dir: "bot-runtime-client" },
+  { dep: "@threa/harness-client", src: resolve(here, "../harness-client"), dir: "harness-client" },
+  { dep: "@threahq/remote-session", src: resolve(here, "../remote-session"), dir: "remote-session" },
+].map((pkg) => ({
+  ...pkg,
+  files: readdirSync(join(pkg.src, "src")).filter((f) => f.endsWith(".ts") && !f.includes("test")),
+}))
 
 // 1. Clean any prior install.
 rmSync(dest, { recursive: true, force: true })
