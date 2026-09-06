@@ -32,7 +32,7 @@ export function countClusterResults(clusters: SearchCluster[]): number {
   return clusters.reduce((count, cluster) => count + Math.max(cluster.hits.length, 1), 0)
 }
 
-export function clusterKey(cluster: SearchCluster, index: number): string {
+function clusterKey(cluster: SearchCluster, index: number): string {
   return cluster.conversation?.id ?? cluster.hits[0]?.id ?? `${cluster.streamId}:${index}`
 }
 
