@@ -419,6 +419,21 @@ export class BotRuntimeService {
         })
       }
 
+      // The bot writes the thread as itself, and a thread's access resolves
+      // through its root (INV-62), so it needs a grant on the scratchpad or
+      // `resolveLockedStreamAuthorities` refuses the create as a non-member.
+      // Same grant `createLinkedScratchpadSession` applies to the scratchpad it
+      // mints, and idempotent — the owner asking for the attach IS the approval
+      // a `bot_access_requests` card would collect, and the owner check above
+      // has already run.
+      await streamService.addBotToStreamOn(
+        client,
+        params.rootStreamId,
+        params.botId,
+        params.workspaceId,
+        params.ownerUserId
+      )
+
       const thread = await streamService.createThreadForPrincipalOn(
         client,
         { kind: "bot", botId: params.botId },

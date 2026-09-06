@@ -5,6 +5,8 @@ import { BotRuntimeService, BotRuntimeSessionLinkRepository } from "../../src/fe
 import { StreamService } from "../../src/features/streams"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { MessageRepository } from "../../src/features/messaging"
+import { BotRepository } from "../../src/features/public-api"
+import { BotChannelAccessRepository } from "../../src/features/api-keys"
 import { messageId, streamId, userId } from "../../src/lib/id"
 
 describe("attachRuntimeSessionToThread", () => {
@@ -83,6 +85,40 @@ describe("attachRuntimeSessionToThread", () => {
       activeStreamId: root,
     })
     expect(rootLink).toMatchObject({ id: desk.id })
+  })
+
+  test("grants the bot access to the root before creating the thread", async () => {
+    // `/spawn pi` in a scratchpad only the Claude bot can reach: without the
+    // grant the bot's own thread create is refused as STREAM_READ_ONLY /
+    // not_a_member by `resolveLockedStreamAuthorities`.
+    const stranger = `bot_${crypto.randomUUID().slice(0, 8)}`
+    await BotRepository.create(pool, {
+      id: stranger,
+      workspaceId: workspace,
+      type: "personal",
+      ownerUserId: author,
+      traits: ["active-scratchpad", "mentionable"],
+      slug: `bot-${crypto.randomUUID().slice(0, 8)}`,
+      name: "Ungranted bot",
+    })
+    expect(await BotChannelAccessRepository.getGrantedStreamIds(pool, workspace, stranger)).toEqual([])
+
+    const anchor = await anchorMessage()
+    const { stream } = await service().attachRuntimeSessionToThread({
+      workspaceId: workspace,
+      botId: stranger,
+      ownerUserId: author,
+      runtimeKind: "pi-local",
+      instanceId: "stranger-instance",
+      runtimeSessionId: "stranger-session",
+      rootStreamId: root,
+      anchorId: anchor.id,
+      displayName: "Fresh perspective",
+      traits: ["active-scratchpad"],
+    })
+
+    expect(stream).toMatchObject({ type: "thread", parentStreamId: root, parentAnchorId: anchor.id })
+    expect(await BotChannelAccessRepository.getGrantedStreamIds(pool, workspace, stranger)).toEqual([root])
   })
 
   test("refuses when the root scratchpad is archived", async () => {
