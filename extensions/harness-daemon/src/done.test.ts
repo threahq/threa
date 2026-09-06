@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import type { HarnessLink } from "@threahq/harness-client"
 import { parseDone } from "./cli"
-import { doneAgent, type DoneDeps } from "./done"
+import { doneAgent, type DoneDeps, type SessionEnd } from "./done"
 import type { LocalTmuxPane } from "./discovery"
 import { DEFAULT_PROFILE } from "./profiles"
 import type { ManagedAgent } from "./types"
@@ -18,6 +18,9 @@ const AGENT: ManagedAgent = {
   createdAt: "2026-08-10T00:00:00.000Z",
   updatedAt: "2026-08-10T00:00:00.000Z",
 }
+
+/** The thread the linked session lives in — where `/done` reports its outcome. */
+const THREAD = "stream_thread"
 
 const LINK: HarnessLink = {
   runtimeKind: "claude-code-channel",
@@ -54,14 +57,14 @@ function makeDoneDeps(
     worktreeExists?: boolean
     teardown?: { ok: boolean; reason?: string }
     windDownResult?: { pushed: boolean; removed: boolean; reason?: string }
-    endSessionResult?: "ended" | "not-found"
+    endSessionResult?: SessionEnd
   } = {}
 ): { deps: DoneDeps; recorded: Recorded } {
   const recorded: Recorded = { calls: [], logged: [], persisted: [] }
   const panes = options.panes ?? [PANE]
   const teardownResult = options.teardown ?? { ok: true }
   const windDownResult = options.windDownResult ?? { pushed: true, removed: true }
-  const endSessionResult = options.endSessionResult ?? "ended"
+  const endSessionResult = options.endSessionResult ?? { status: "ended" as const, activeStreamId: THREAD }
   const deps: DoneDeps = {
     findAgent: () => AGENT,
     links: () => [LINK],
@@ -99,13 +102,13 @@ function makeDoneDeps(
       recorded.calls.push("endSession")
       return endSessionResult
     },
-    postNotice: async (rootStreamId, content) => void recorded.calls.push(`postNotice:${rootStreamId}:${content}`),
+    postNotice: async (streamId, content) => void recorded.calls.push(`postNotice:${streamId}:${content}`),
   }
   return { deps, recorded }
 }
 
 describe("doneAgent", () => {
-  test("kills the pane, waits for exit, winds down, forgets the link, retires identities, ends the session, persists stopped, and reports to the root", async () => {
+  test("kills the pane, waits for exit, winds down, forgets the link, retires identities, ends the session, persists stopped, and reports in the thread", async () => {
     const { deps, recorded } = makeDoneDeps()
 
     await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
@@ -120,7 +123,7 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
-      "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
+      "postNotice:stream_thread:harnessd: done — worktree removed, link ended.",
       "release",
     ])
     expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])
@@ -139,7 +142,7 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
-      "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
+      "postNotice:stream_thread:harnessd: done — worktree removed, link ended.",
       "release",
     ])
   })
@@ -174,7 +177,7 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
-      "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree already gone, link ended.",
+      "postNotice:stream_thread:harnessd: done — worktree already gone, link ended.",
       "release",
     ])
   })
@@ -213,7 +216,7 @@ describe("doneAgent", () => {
         "forgetLink:ccs-sidebar",
         "endSession",
         "persist:stopped",
-        "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree left: branch protected, link ended.",
+        "postNotice:stream_thread:harnessd: done — worktree left: branch protected, link ended.",
         "release",
       ])
       expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])
@@ -226,11 +229,13 @@ describe("doneAgent", () => {
   test("a 404 from endSession completes as already ended", async () => {
     const log = spyOn(console, "log").mockImplementation(() => {})
     try {
-      const { deps, recorded } = makeDoneDeps({ endSessionResult: "not-found" })
+      const { deps, recorded } = makeDoneDeps({ endSessionResult: { status: "not-found" } })
 
       await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
 
       expect(recorded.logged).toContain("fix-sidebar: link already ended")
+      // An already-ended link names no thread, so the outcome falls back to the root.
+      expect(recorded.calls).toContain("postNotice:stream_root:harnessd: done — worktree removed, link already ended.")
       expect(log.mock.calls.at(-1)?.[0]).toBe("done\tfix-sidebar\tworktree removed\tlink already ended")
     } finally {
       log.mockRestore()
