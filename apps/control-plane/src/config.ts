@@ -183,7 +183,11 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
     },
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || null,
     posthog: loadPostHogConfig(
-      { POSTHOG_PROJECT_TOKEN: process.env.POSTHOG_PROJECT_TOKEN, POSTHOG_HOST: process.env.POSTHOG_HOST },
+      {
+        POSTHOG_PROJECT_TOKEN: process.env.POSTHOG_PROJECT_TOKEN,
+        POSTHOG_HOST: process.env.POSTHOG_HOST,
+        POSTHOG_LOGS_LEVEL: process.env.POSTHOG_LOGS_LEVEL,
+      },
       { isProduction, service: "control-plane" }
     ),
   }

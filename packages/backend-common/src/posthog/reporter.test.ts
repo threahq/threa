@@ -33,7 +33,7 @@ function okResponse(): FetchResponse {
 function createRecordingReporter(): { reporter: PostHogAnalyticsReporter; requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = []
   const reporter = new PostHogAnalyticsReporter({
-    config: { projectToken: "phc_test", host: "https://eu.i.posthog.com" },
+    config: { projectToken: "phc_test", host: "https://eu.i.posthog.com", logsLevel: null },
     service: "backend",
     region: "eu-north-1",
     fetch: async (url, options) => {
@@ -108,7 +108,7 @@ describe("PostHogAnalyticsReporter", () => {
 
   test("should resolve shutdown within the bound when the transport hangs", async () => {
     const reporter = new PostHogAnalyticsReporter({
-      config: { projectToken: "phc_test", host: "https://eu.i.posthog.com" },
+      config: { projectToken: "phc_test", host: "https://eu.i.posthog.com", logsLevel: null },
       service: "backend",
       region: null,
       shutdownTimeoutMs: 50,

@@ -262,7 +262,11 @@ export function loadConfig(): Config {
     enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
     region: process.env.REGION || null,
     posthog: loadPostHogConfig(
-      { POSTHOG_PROJECT_TOKEN: process.env.POSTHOG_PROJECT_TOKEN, POSTHOG_HOST: process.env.POSTHOG_HOST },
+      {
+        POSTHOG_PROJECT_TOKEN: process.env.POSTHOG_PROJECT_TOKEN,
+        POSTHOG_HOST: process.env.POSTHOG_HOST,
+        POSTHOG_LOGS_LEVEL: process.env.POSTHOG_LOGS_LEVEL,
+      },
       { isProduction, service: "backend" }
     ),
   }

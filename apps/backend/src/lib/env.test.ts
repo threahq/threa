@@ -460,6 +460,6 @@ describe("loadConfig posthog configuration", () => {
     process.env.POSTHOG_HOST = "https://eu.i.posthog.com"
 
     const config = loadConfig()
-    expect(config.posthog).toEqual({ projectToken: "phc_test", host: "https://eu.i.posthog.com" })
+    expect(config.posthog).toEqual({ projectToken: "phc_test", host: "https://eu.i.posthog.com", logsLevel: null })
   })
 })
