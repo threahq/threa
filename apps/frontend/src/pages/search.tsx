@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SidebarToggle } from "@/components/layout"
+import { StreamLoadingIndicator } from "@/components/loading"
 import { RichInput, SEARCH_FILTER_TRIGGERS, SEARCH_TRIGGERS } from "@/components/quick-switcher/rich-input"
 import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
@@ -21,6 +22,7 @@ import { boundRefines, removeRefineFromQuery } from "@/lib/search-query-parser"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { cn } from "@/lib/utils"
 
 /**
  * Full-page message search — the mobile-native search surface (mirrors the
@@ -96,6 +98,8 @@ export function SearchPage() {
     hasQuery,
     pendingRefine,
     refineNote,
+    refineFailed,
+    retryRefine,
     exploreHref,
     recordResultClick,
   } = useMessageSearch(workspaceId ?? "", localQuery, refines)
@@ -144,7 +148,7 @@ export function SearchPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
-      <header className="border-b bg-card/50">
+      <header className="relative border-b bg-card/50">
         <div className="flex h-12 items-center gap-2 px-4">
           <SidebarToggle location="page" />
           <Link to={`/w/${workspaceId}`} aria-label="Back to workspace">
@@ -170,7 +174,7 @@ export function SearchPage() {
           </div>
 
           <span className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground/50 sm:inline">
-            {hasQuery && !isLoading ? `${resultCount} result${resultCount === 1 ? "" : "s"}` : ""}
+            {hasQuery && (hasResults || !isLoading) ? `${resultCount} result${resultCount === 1 ? "" : "s"}` : ""}
           </span>
         </div>
 
@@ -179,6 +183,8 @@ export function SearchPage() {
           <SearchRefineChips
             refines={refines}
             onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
+            pending={isLoading && refines.length > 0}
+            failed={refineFailed}
           />
           <SearchFilterMenu
             workspaceId={workspaceId}
@@ -204,11 +210,34 @@ export function SearchPage() {
               {refineNote}
             </p>
           )}
+          {refineFailed && !isLoading && (
+            <p
+              className="flex w-full flex-wrap items-center gap-x-1 text-xs leading-snug text-destructive"
+              data-search-refine-failed
+            >
+              Couldn&apos;t apply the refinement after two tries. Showing all results.
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={retryRefine}
+              >
+                Retry
+              </Button>
+            </p>
+          )}
         </div>
+        <StreamLoadingIndicator isLoading={isLoading} />
       </header>
 
       <ScrollArea className="min-h-0 flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <div className="mx-auto w-full max-w-3xl p-2 [overflow-wrap:anywhere]">
+        <div
+          className={cn(
+            "mx-auto w-full max-w-3xl p-2 transition-opacity [overflow-wrap:anywhere]",
+            isLoading && hasResults && "opacity-60 delay-150"
+          )}
+        >
           {!hasQuery && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="mb-3 rounded-full bg-muted/50 p-3">

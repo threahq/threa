@@ -1242,7 +1242,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       ])
     })
 
-    it("shows the model's note when the refine applied and a fallback when it did not", async () => {
+    it("shows the model's note when the refine applied", async () => {
       mockSearchState.results = mockSearchResultsList
       mockSearchState.refine = { applied: true, note: "Kept the decisions." }
 
@@ -1255,10 +1255,90 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.keyboard("{Enter}")
 
       expect(await screen.findByText("Kept the decisions.")).toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine-failed]")).not.toBeInTheDocument()
+      expect(document.querySelector('[data-search-refine="only decisions"]')).not.toHaveAttribute(
+        "data-search-refine-state"
+      )
+    })
 
-      mockSearchState.refine = { applied: false, note: null }
+    it("spins the newest refine chip while a refined search is in flight", async () => {
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.isLoading = true
+
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello /refine only decisions")
+      await user.keyboard("{Enter}")
+
+      await waitFor(() => {
+        expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
+          "data-search-refine-state",
+          "pending"
+        )
+      })
+      // The refined results stay on screen with the count, dimmed, behind the progress line
+      expect(screen.getByText("#general")).toBeInTheDocument()
+      expect(screen.getByText("2 results in 2 streams")).toBeInTheDocument()
+      expect(screen.getByText("#general").closest(".opacity-60")).toBeInTheDocument()
+      expect(await screen.findByTestId("stream-loading-indicator")).toBeInTheDocument()
+    })
+
+    it("keeps the results on screen while a follow-up search loads", async () => {
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+
+      mockSearchState.isLoading = true
       await user.type(editor, "!")
-      expect(await screen.findByText(/Couldn't apply the refine/)).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(screen.getByText("#general").closest(".opacity-60")).toBeInTheDocument()
+      })
+      expect(screen.getByText("2 results in 2 streams")).toBeInTheDocument()
+      expect(screen.queryByText("Searching…")).not.toBeInTheDocument()
+    })
+
+    it("offers a manual retry once the refine failed, and reruns the same search", async () => {
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.refine = { applied: false, note: null }
+
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello /refine only decisions")
+      await user.keyboard("{Enter}")
+
+      expect(
+        await screen.findByText(/Couldn't apply the refinement after two tries\. Showing all results\./)
+      ).toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine-failed]")).toBeInTheDocument()
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
+        "data-search-refine-state",
+        "failed"
+      )
+      // The unrefined list is still the list on screen
+      expect(screen.getByText("#general")).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters, [], ["only decisions"])
+      })
+      const callsBeforeRetry = mockSearchState.search.mock.calls.length
+
+      await user.click(screen.getByRole("button", { name: "Retry" }))
+
+      expect(mockSearchState.search).toHaveBeenCalledTimes(callsBeforeRetry + 1)
+      expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters, [], ["only decisions"])
     })
 
     it("rejects a refine over the length cap and keeps it in the field", async () => {

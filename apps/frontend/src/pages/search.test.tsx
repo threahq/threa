@@ -37,6 +37,7 @@ const mockSearchState = {
   memos: [] as MemoExplorerResult[],
   queryLogId: null as string | null,
   refine: null as SearchRefineOutcome | null,
+  isLoading: false,
 }
 
 function LocationProbe() {
@@ -89,6 +90,7 @@ describe("SearchPage", () => {
     mockSearchState.memos = []
     mockSearchState.queryLogId = null
     mockSearchState.refine = null
+    mockSearchState.isLoading = false
     vi.spyOn(hooksModule, "useSearch").mockImplementation(
       () =>
         ({
@@ -97,7 +99,7 @@ describe("SearchPage", () => {
           memos: mockSearchState.memos,
           queryLogId: mockSearchState.queryLogId,
           refine: mockSearchState.refine,
-          isLoading: false,
+          isLoading: mockSearchState.isLoading,
           error: null,
           search,
           clear,
@@ -369,11 +371,59 @@ describe("SearchPage", () => {
       expect(await screen.findByText("Dropped the billing thread.")).toBeInTheDocument()
     })
 
-    it("says so when the refine could not be applied", async () => {
+    it("offers a manual retry once the refine failed, and reruns the same search", async () => {
+      const user = userEvent.setup()
       mockSearchState.refine = { applied: false, note: null }
-      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions")
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions", searchOn)
 
-      expect(await screen.findByText(/Couldn't apply the refine/)).toBeInTheDocument()
+      expect(
+        await screen.findByText(/Couldn't apply the refinement after two tries\. Showing all results\./)
+      ).toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine-failed]")).toBeInTheDocument()
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
+        "data-search-refine-state",
+        "failed"
+      )
+      // The unrefined list is still the list on screen
+      expect(screen.getByText("#general")).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions"])
+      })
+      const callsBeforeRetry = search.mock.calls.length
+
+      await user.click(screen.getByRole("button", { name: "Retry" }))
+
+      expect(search).toHaveBeenCalledTimes(callsBeforeRetry + 1)
+      expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions"])
+    })
+
+    it("spins the newest chip and keeps the count while a refined search is in flight", async () => {
+      mockSearchState.refine = { applied: true, note: "Kept the decisions." }
+      mockSearchState.isLoading = true
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions", searchOn)
+
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
+        "data-search-refine-state",
+        "pending"
+      )
+      // Results stay on screen with their count, dimmed, behind the progress line
+      expect(screen.getByText("2 results")).toBeInTheDocument()
+      expect(screen.getByText("#general").closest(".opacity-60")).toBeInTheDocument()
+      expect(await screen.findByTestId("stream-loading-indicator")).toBeInTheDocument()
+      // A stale outcome line never sits under a search that is still running
+      expect(screen.queryByText("Kept the decisions.")).not.toBeInTheDocument()
+    })
+
+    it("hides the count while the first search of a query is still loading", async () => {
+      mockSearchState.results = []
+      mockSearchState.clusters = []
+      mockSearchState.isLoading = true
+      renderPage("/w/workspace_1/search?q=hello", searchOn)
+
+      await waitFor(() => expect(search).toHaveBeenCalled())
+      expect(screen.queryByText("0 results")).not.toBeInTheDocument()
     })
 
     it("drops an over-long refine from a shared URL and searches with the rest", async () => {

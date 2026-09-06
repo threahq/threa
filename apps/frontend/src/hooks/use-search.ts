@@ -47,8 +47,16 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
       setError(null)
 
       try {
-        const response = await searchMessages(workspaceId, { query, filters, phrases, refine, limit })
+        const request = { query, filters, phrases, refine, limit }
+        let response = await searchMessages(workspaceId, request)
         if (requestId !== requestIdRef.current) return
+        // A refine the backend failed open on (`applied: false`) is usually a
+        // model timeout that a second attempt clears. `isLoading` stays true
+        // across the retry, so the two attempts read as one search.
+        if (refine && refine.length > 0 && response.refine?.applied === false) {
+          response = await searchMessages(workspaceId, request)
+          if (requestId !== requestIdRef.current) return
+        }
         setResults(response.results)
         setClusters(response.clusters)
         setMemos(response.memos)

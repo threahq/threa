@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { ArrowLeft, Brain, Search as SearchIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 import { SidebarShell } from "@/components/layout/sidebar/sidebar-shell"
+import { StreamLoadingIndicator } from "@/components/loading"
 import {
   RichInput,
   SEARCH_FILTER_TRIGGERS,
@@ -27,6 +28,7 @@ import { SearchResultDisplayToggle } from "./search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { boundRefines, removeRefineFromQuery } from "@/lib/search-query-parser"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
+import { cn } from "@/lib/utils"
 
 /**
  * Desktop sidebar in search mode — VS Code-style: the stream list swaps for a
@@ -50,6 +52,8 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     hasQuery,
     pendingRefine,
     refineNote,
+    refineFailed,
+    retryRefine,
     exploreHref,
     recordResultClick,
   } = useMessageSearch(workspaceId, query, refines)
@@ -163,7 +167,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   return (
     <SidebarShell
       header={
-        <div className="flex-shrink-0 border-b" onKeyDown={handleKeyDown}>
+        <div className="relative flex-shrink-0 border-b" onKeyDown={handleKeyDown}>
           <div className="flex h-12 items-center gap-1 px-3">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -212,6 +216,8 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             <SearchRefineChips
               refines={refines}
               onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
+              pending={isLoading && refines.length > 0}
+              failed={refineFailed}
             />
             <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
           </div>
@@ -235,12 +241,34 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                   {refineNote}
                 </p>
               )}
+              {refineFailed && !isLoading && (
+                <p
+                  className="flex w-full flex-wrap items-center gap-x-1 text-[11px] leading-snug text-destructive"
+                  data-search-refine-failed
+                >
+                  Couldn&apos;t apply the refinement after two tries. Showing all results.
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-1.5 text-[11px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={retryRefine}
+                  >
+                    Retry
+                  </Button>
+                </p>
+              )}
             </div>
           )}
+          <StreamLoadingIndicator isLoading={isLoading} />
         </div>
       }
       body={
-        <div ref={resultsRef} onKeyDown={handleKeyDown}>
+        <div
+          ref={resultsRef}
+          onKeyDown={handleKeyDown}
+          className={cn("transition-opacity", isLoading && hasResults && "opacity-60 delay-150")}
+        >
           {!hasQuery && (
             <div className="px-2 py-6 text-center">
               <p className="text-xs text-muted-foreground/80">Search every message in this workspace.</p>

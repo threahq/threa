@@ -15,7 +15,6 @@ import {
   type SearchCluster,
   type SearchFilters,
   type SearchResultItem,
-  type SearchRefineOutcome,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
 import { MAX_SEARCH_PHRASES, MAX_SEARCH_REFINE_CHARS, STREAM_TYPES, type StreamType } from "@threahq/types"
@@ -41,8 +40,12 @@ export interface MessageSearchState {
   hasQuery: boolean
   /** `/refine` prose still in the input, waiting for Enter to commit it; null without a marker. */
   pendingRefine: string | null
-  /** The line shown under the summary: the model's note, or why the list is unrefined; null when there is nothing to say. */
+  /** The model's one-line note about the refinement it applied; null when it had none to give. */
   refineNote: string | null
+  /** The refinement could not be applied, retry included — the list on screen is unrefined. */
+  refineFailed: boolean
+  /** Re-runs the current search with the current refinements, skipping the debounce. */
+  retryRefine: () => void
   /** `/w/<ws>/memory?q=<text>`: the memory explorer opened on the same words; memo chips append `&memo=<id>`. */
   exploreHref: string
   /** Attributes an opened result to the logged search; a no-op unless the user opted into query logging. */
@@ -161,24 +164,26 @@ export function useMessageSearch(workspaceId: string, query: string, refines: st
   const refinesRef = useRef(refines)
   refinesRef.current = refines
 
+  const runSearch = useCallback(() => {
+    if (refinesRef.current.length > 0) {
+      void search(semanticText, filtersRef.current, phrasesRef.current, refinesRef.current)
+    } else if (phrasesRef.current.length > 0) {
+      void search(semanticText, filtersRef.current, phrasesRef.current)
+    } else {
+      void search(semanticText, filtersRef.current)
+    }
+  }, [search, semanticText])
+
   useEffect(() => {
     if (!hasQuery || validationError) {
       clear()
       return
     }
 
-    const timer = setTimeout(() => {
-      if (refinesRef.current.length > 0) {
-        void search(semanticText, filtersRef.current, phrasesRef.current, refinesRef.current)
-      } else if (phrasesRef.current.length > 0) {
-        void search(semanticText, filtersRef.current, phrasesRef.current)
-      } else {
-        void search(semanticText, filtersRef.current)
-      }
-    }, SEARCH_DEBOUNCE_MS)
+    const timer = setTimeout(runSearch, SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [hasQuery, validationError, semanticText, filtersKey, phrasesKey, refinesKey, search, clear])
+  }, [hasQuery, validationError, filtersKey, phrasesKey, refinesKey, runSearch, clear])
 
   const recordResultClick = useCallback(
     (target: SearchClickTarget) => {
@@ -201,7 +206,9 @@ export function useMessageSearch(workspaceId: string, query: string, refines: st
     searchText,
     hasQuery,
     pendingRefine,
-    refineNote: refineNoteFor(refine),
+    refineNote: refine?.applied ? refine.note : null,
+    refineFailed: refine?.applied === false,
+    retryRefine: runSearch,
     exploreHref: `/w/${workspaceId}/memory?q=${encodeURIComponent(searchText)}`,
     recordResultClick,
   }
@@ -213,9 +220,4 @@ function validationErrorFor(phraseCount: number, pendingRefine: string | null): 
     return `A refinement is at most ${MAX_SEARCH_REFINE_CHARS} characters.`
   }
   return null
-}
-
-function refineNoteFor(refine: SearchRefineOutcome | null): string | null {
-  if (!refine) return null
-  return refine.applied ? refine.note : "Couldn't apply the refine; showing the unrefined list."
 }
