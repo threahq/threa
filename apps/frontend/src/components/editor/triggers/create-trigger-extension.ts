@@ -5,6 +5,7 @@ import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import { currentWordContainsBacktick } from "../markdown-guards"
 import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
+import { withSpacedQuery } from "./spaced-query-match"
 import { currentSuggestionRange } from "./suggestion-range"
 
 /**
@@ -33,6 +34,13 @@ export interface TriggerExtensionConfig<TItem, TAttrs extends object> {
    * `allowedPrefixes` check then rejects — which is what closes the popup.
    */
   allowToIncludeChar?: boolean
+  /**
+   * Let a space extend the query while it still matches, so a multi-word target
+   * is reachable (see `withSpacedQuery`). Off by default: for most triggers a
+   * space ends the mention, and only a synchronous item source can answer
+   * mid-transaction whether the query still matches.
+   */
+  spacedQuery?: boolean
   /** Attribute definitions for the node */
   attributes: Record<keyof TAttrs, AttributeConfig>
   /** Returns the CSS class(es) for the rendered node */
@@ -89,6 +97,16 @@ function definedAttributes(attrs: Record<string, unknown>): Record<string, strin
 }
 
 /**
+ * Whether a query would fill the popup. Only a synchronous item source can
+ * answer inside a transaction; an async one (server-backed search) hands back a
+ * promise, and firing a request per keystroke to decide a match is not worth it.
+ */
+function hasItems<TItem>(items: (props: { query: string }) => TItem[] | Promise<TItem[]>, query: string): boolean {
+  const result = items({ query })
+  return Array.isArray(result) && result.length > 0
+}
+
+/**
  * Factory function to create TipTap trigger extensions.
  * Reduces boilerplate for @mentions, #channels, /commands, and future triggers.
  */
@@ -99,6 +117,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
     char,
     startOfLine = false,
     allowToIncludeChar = false,
+    spacedQuery = false,
     attributes,
     getClassName,
     getText,
@@ -179,6 +198,9 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
       : {}),
 
     addProseMirrorPlugins() {
+      const { items } = this.options.suggestion
+      const matchSuggestion = withKeyboardCorrectionTolerance(pluginKey, this.editor)
+
       return [
         Suggestion({
           editor: this.editor,
@@ -187,7 +209,9 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
           allowSpaces: false,
           allowToIncludeChar,
           startOfLine,
-          findSuggestionMatch: withKeyboardCorrectionTolerance(pluginKey, this.editor),
+          findSuggestionMatch: spacedQuery
+            ? withSpacedQuery(matchSuggestion, (query) => hasItems(items, query))
+            : matchSuggestion,
           // Disable suggestions in code contexts (code blocks and inline code)
           allow: ({ state, range }) => {
             const $from = state.doc.resolve(range.from)

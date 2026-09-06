@@ -75,9 +75,11 @@ export function useChannelSuggestion() {
       command: (item: ChannelItem) => void
       query: string
     }) => {
-      // A bare `##` is also a markdown h2 marker. The rows show so the user
-      // knows the scope narrowed and to keep typing, but none is armed, so
-      // Enter still sends the message instead of picking a channel.
+      // Two states leave Enter to the editor rather than arming a row. A bare
+      // `##` is also a markdown h2 marker, and the rows only show so the user
+      // knows the scope narrowed and to keep typing. A query still ending in a
+      // space may equally be a finished mention followed by prose, so the word
+      // after the space is what re-arms the list.
       const { channelsOnly, term } = parseChannelQuery(props.query)
       return (
         <ChannelList
@@ -85,7 +87,7 @@ export function useChannelSuggestion() {
           items={props.items}
           clientRect={props.clientRect}
           command={props.command}
-          deferSelection={channelsOnly && !term.trim()}
+          deferSelection={(channelsOnly && !term.trim()) || term.endsWith(" ")}
         />
       )
     },
