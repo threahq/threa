@@ -1269,7 +1269,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
-      await user.type(editor, `hello /steer ${"x".repeat(MAX_SEARCH_STEER_CHARS + 1)}`)
+      await user.type(editor, "hello /steer ")
+      await user.paste("x".repeat(MAX_SEARCH_STEER_CHARS + 1))
       expect(await screen.findByText(`A steer is at most ${MAX_SEARCH_STEER_CHARS} characters.`)).toBeInTheDocument()
 
       await user.keyboard("{Enter}")
