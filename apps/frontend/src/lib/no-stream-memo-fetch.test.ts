@@ -25,9 +25,13 @@ const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * - `use-memo-embed-source` / `memo-embed-view` are the COMPOSER's chip: it
  *   resolves a pasted memo link's title so the serialized label isn't the
  *   generic "Memo" fallback. The composer is not the stream.
+ * - `memo-result-item` is the search / explorer result card. It fetches only
+ *   when the user expands the source-message list, never on render, and no
+ *   stream, thread panel, or board card renders it.
  */
 const ALLOWED = [
   "components/memo/memo-preview-dialog.tsx",
+  "components/memo/memo-result-item.tsx",
   "pages/memory.tsx",
   "hooks/use-memo-embed-source.ts",
   "components/editor/memo-embed-view.tsx",
