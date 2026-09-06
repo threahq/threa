@@ -186,6 +186,13 @@ const createThreadParamsSchema = z.object({
    */
   createdByType: z.enum(["user", "bot"]).optional(),
   /**
+   * Explicit title for the thread. Omitted = unnamed, which is right for a
+   * thread a reader opens from its anchor. A coding-session thread has no
+   * anchor to read and never receives a user message, so dynamic naming can
+   * never reach it — the caller's own name is the only one it will ever have.
+   */
+  displayName: z.string().trim().min(1).max(100).optional(),
+  /**
    * Caller-supplied stream id, for a create that must name the thread before it
    * exists — a subagent's `subagent:created` card carries `threadStreamId` in
    * its payload, and the thread anchors on that same card, so one of the two
@@ -1020,6 +1027,7 @@ export class StreamService {
       companionMode: inheritedCompanionMode,
       companionPersonaId: inheritedCompanionPersonaId,
       memoryMode: inheritedMemoryMode,
+      displayName: params.displayName,
       createdBy: params.createdBy,
     })
 
