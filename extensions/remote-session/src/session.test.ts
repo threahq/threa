@@ -2072,6 +2072,39 @@ describe("session control via the actuator", () => {
     })
   })
 
+  test("closes a command that returns no message without posting one", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer", "spawn"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true }),
+      },
+    })
+    const invocation = makeInvocation({
+      id: "binv_spawn",
+      trigger: "session-control",
+      promptMarkdown: "/spawn claude parser",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_2", name: "spawn", args: "claude parser" } },
+    })
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(invocation)
+
+    expect(calls.complete[0]?.body).toEqual({
+      instanceId: "rt-test",
+      claimToken: invocation.claimToken,
+      sourceRevision: invocation.sourceRevision,
+      noResponse: true,
+      metadata: {
+        "remote.invocationId": "binv_spawn",
+        "remote.sessionControl": "true",
+      },
+    })
+  })
+
   test("refreshes hello with the current nonaccepting handoff state", () => {
     const { client } = makeFakeClient()
     const { transport } = makeFakeTransport()

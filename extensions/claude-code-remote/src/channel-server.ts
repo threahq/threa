@@ -243,7 +243,7 @@ export async function runClaudeCommand(
   spawnLauncher: typeof prepareHarnessSpawn = prepareHarnessSpawn
 ): Promise<{
   ok: boolean
-  message: string
+  message?: string
   afterAck?: () => void | Promise<void>
   onHandoffReset?: () => void
 }> {
@@ -364,12 +364,10 @@ export async function runClaudeCommand(
         discardSpawnBrief(briefFile)
         throw error
       }
-      return {
-        ok: true,
-        message: briefFile
-          ? `Spawning **${parsed.name}** as a ${runtime} thread; harnessd will brief it with your prompt.`
-          : `Spawning **${parsed.name}** as a ${runtime} thread.`,
-      }
+      // Nothing is posted in the scratchpad: the thread appearing under the
+      // user's own `/spawn` is the acknowledgement, and harnessd reports a
+      // failed launch there.
+      return { ok: true }
     }
     case "done": {
       if (args !== "" && args !== "--force") {
