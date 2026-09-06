@@ -1,5 +1,5 @@
 import type { Server } from "socket.io"
-import { StreamTypes, type Stream } from "@threa/types"
+import { StreamTypes, type Stream } from "@threahq/types"
 
 /**
  * Where a session running inside a thread has to announce itself besides its own

@@ -15,7 +15,7 @@
 
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import { CompanionHandler } from "../../src/features/agents/companion-outbox-handler"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
 import { SubagentService } from "../../src/features/subagents"

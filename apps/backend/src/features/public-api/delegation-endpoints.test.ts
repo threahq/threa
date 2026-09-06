@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool, PoolClient } from "pg"
-import { AuthorTypes, DelegationStatuses, THREA_CALLBACK_TOKEN_HEADER } from "@threa/types"
+import { AuthorTypes, DelegationStatuses, THREA_CALLBACK_TOKEN_HEADER } from "@threahq/types"
 import * as db from "../../db"
 import * as streams from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"

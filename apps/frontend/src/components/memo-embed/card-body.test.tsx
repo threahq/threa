@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render } from "@testing-library/react"
-import type { MemoEmbedSummary } from "@threa/types"
+import type { MemoEmbedSummary } from "@threahq/types"
 import * as hooksModule from "@/hooks"
 import { formatDisplayDate, formatFullDateTime, formatRelativeTime, formatTime } from "@/lib/dates"
 import { MemoEmbedCardBody, MemoEmbedDate } from "./card-body"

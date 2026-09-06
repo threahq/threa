@@ -1,5 +1,5 @@
 import { MessageSquareReply } from "lucide-react"
-import type { StreamContextRef } from "@threa/types"
+import type { StreamContextRef } from "@threahq/types"
 import { useCachedStreamContextBag } from "@/hooks/use-cached-stream-context-bag"
 import { formatContextRefLabel } from "@/lib/context-bag/format-label"
 import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"

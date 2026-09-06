@@ -1,8 +1,8 @@
 import type { Pool } from "pg"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
 import type { QueueManager } from "../../../lib/queue"
-import type { PdfPageClassification, PdfSizeTier } from "@threa/types"
+import type { PdfPageClassification, PdfSizeTier } from "@threahq/types"
 
 export interface PdfProcessingServiceDeps {
   pool: Pool

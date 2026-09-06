@@ -1,5 +1,5 @@
 import { Resend } from "resend"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 
 /**
  * Sends the one-time waitlist confirmation (single opt-in). Kept behind an

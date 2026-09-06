@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { LinkPreviewStatuses, type JSONContent } from "@threa/types"
+import { LinkPreviewStatuses, type JSONContent } from "@threahq/types"
 import type { Querier } from "../../db"
 import { logger } from "../../lib/logger"
 import { escapeXmlAttr } from "../../lib/xml"

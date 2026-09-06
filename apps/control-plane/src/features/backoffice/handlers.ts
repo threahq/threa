@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import { HttpError, displayNameFromWorkos } from "@threa/backend-common"
+import { HttpError, displayNameFromWorkos } from "@threahq/backend-common"
 import type { BackofficeService } from "./service"
 
 interface Dependencies {

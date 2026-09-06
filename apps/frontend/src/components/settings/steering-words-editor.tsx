@@ -3,7 +3,7 @@ import { Plus, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threa/types"
+import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threahq/types"
 
 interface SteeringWordsEditorProps {
   title: string

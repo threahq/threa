@@ -4,7 +4,7 @@ import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { db } from "@/db"
-import { sharedMessageSlotKey, type SlotMap, type StreamEvent } from "@threa/types"
+import { sharedMessageSlotKey, type SlotMap, type StreamEvent } from "@threahq/types"
 import { useThreadAnchorEvent } from "./use-thread-anchor-event"
 
 const getEventsAround = vi.fn<StreamService["getEventsAround"]>()

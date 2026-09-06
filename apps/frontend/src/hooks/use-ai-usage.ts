@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { aiUsageApi } from "@/api"
-import type { UpdateAIBudgetInput, AIBudgetResponse } from "@threa/types"
+import type { UpdateAIBudgetInput, AIBudgetResponse } from "@threahq/types"
 
 // Usage and budget responses are bucketed into days and a month window by the
 // timezone the caller asks for, so the zone is part of the identity of the

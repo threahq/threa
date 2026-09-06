@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect } from "bun:test"
-import { BotInvocationCapabilities, BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { BotInvocationCapabilities, BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import {
   TestClient,
   loginAs,

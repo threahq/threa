@@ -1,4 +1,4 @@
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 
 interface SystemEventProps {
   event: StreamEvent

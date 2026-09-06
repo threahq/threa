@@ -1,4 +1,4 @@
-import type { JSONContent, VoiceReplacementAckStatus, VoiceTranscriptReplacementSourceV4 } from "@threa/types"
+import type { JSONContent, VoiceReplacementAckStatus, VoiceTranscriptReplacementSourceV4 } from "@threahq/types"
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react"
 import { Mic, Loader2, AlertTriangle, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"

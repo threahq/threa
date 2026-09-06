@@ -1,7 +1,7 @@
-import type { VoicePolishLevel } from "@threa/types"
-import type { AI, UsageWithCost } from "@threa/agent-runtime"
-import { parseMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import type { VoicePolishLevel } from "@threahq/types"
+import type { AI, UsageWithCost } from "@threahq/agent-runtime"
+import { parseMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
 import { logger } from "../../lib/logger"
 import { safeProviderError } from "./safe-error"
 import {

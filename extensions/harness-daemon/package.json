@@ -1,5 +1,5 @@
 {
-  "name": "@threa/harness-daemon",
+  "name": "@threahq/harness-daemon",
   "private": true,
   "type": "module",
   "bin": {
@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@threahq/bot-runtime-client": "file:../bot-runtime-client",
-    "@threa/harness-client": "file:../harness-client"
+    "@threahq/harness-client": "file:../harness-client"
   },
   "devDependencies": {
     "@types/bun": "latest",

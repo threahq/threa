@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { ATTACHMENT_SAFETY_STATUSES, AttachmentSafetyStatuses, SHAREABLE_SAFETY_STATUSES } from "@threa/types"
+import { ATTACHMENT_SAFETY_STATUSES, AttachmentSafetyStatuses, SHAREABLE_SAFETY_STATUSES } from "@threahq/types"
 import { createMalwareScanner, isAttachmentSafeForSharing, safetyStatusBlockReason } from "./upload-safety-policy"
 
 describe("attachment sharing safety", () => {

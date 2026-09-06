@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { BoardView } from "@threa/types"
+import type { BoardView } from "@threahq/types"
 import { savedViewHref, isViewActive, type BoardViewSelection } from "./board-saved-views"
 
 const view = (over: Partial<BoardView> = {}): BoardView => ({

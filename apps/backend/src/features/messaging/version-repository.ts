@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 interface MessageVersionRow {
   id: string

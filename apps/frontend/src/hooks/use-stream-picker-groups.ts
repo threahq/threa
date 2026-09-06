@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { StreamTypes, Visibilities, type StreamType } from "@threa/types"
+import { StreamTypes, Visibilities, type StreamType } from "@threahq/types"
 import {
   useWorkspaceStreams,
   useWorkspaceStreamMemberships,

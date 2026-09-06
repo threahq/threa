@@ -5,7 +5,7 @@ import {
   VOICE_STEERING_BASE_TERMS,
   type WorkspaceBootstrap,
   type WorkspaceSettings,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceSettingsApi } from "@/api"
 import { workspaceKeys, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"

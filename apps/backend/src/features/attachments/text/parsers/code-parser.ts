@@ -1,4 +1,4 @@
-import type { TextSection, CodeStructure } from "@threa/types"
+import type { TextSection, CodeStructure } from "@threahq/types"
 import type { ParseResult, TextParser } from "./types"
 import { EXTENSION_LANGUAGE_MAP, getFileExtension } from "../config"
 import { buildPreview } from "./preview"

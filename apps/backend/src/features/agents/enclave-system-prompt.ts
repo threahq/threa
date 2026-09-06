@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import type { UserPreferences } from "@threa/types"
+import type { UserPreferences } from "@threahq/types"
 import type { Stream } from "../streams"
 import { buildStreamContext } from "./context-builder"
 import { buildSystemPrompt, type SplitSystemPrompt } from "./companion/prompt/system-prompt"

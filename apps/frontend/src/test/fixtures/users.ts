@@ -1,4 +1,4 @@
-import type { User } from "@threa/types"
+import type { User } from "@threahq/types"
 
 export function createMockUser(overrides: Partial<User> & { id: string; workosUserId: string }): User {
   return {

@@ -3,14 +3,14 @@ import type { Command, CommandContext, CommandResult } from "./registry"
 import { StreamRepository, type Stream, type StreamService } from "../streams"
 import { UserRepository } from "../workspaces"
 import { BotRepository } from "../public-api"
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import {
   actorTypeFromMentionId,
   permissionsForRole,
   StreamTypes,
   WORKSPACE_PERMISSION_SCOPES,
   type JSONContent,
-} from "@threa/types"
+} from "@threahq/types"
 
 interface InviteCommandDeps {
   pool: Pool

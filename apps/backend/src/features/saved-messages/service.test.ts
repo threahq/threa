@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { AuthorTypes, CompanionModes, SavedStatuses, StreamTypes, Visibilities } from "@threa/types"
+import { AuthorTypes, CompanionModes, SavedStatuses, StreamTypes, Visibilities } from "@threahq/types"
 import { SavedMessagesService } from "./service"
 import { SavedMessagesRepository } from "./repository"
 // Streams before messaging to avoid a latent circular-init in public-api/schemas.ts.

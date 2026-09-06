@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import { AuthorTypes, DelegationStatuses } from "@threa/types"
+import { AuthorTypes, DelegationStatuses } from "@threahq/types"
 import { DelegationService } from "./service"
 import { DelegatedTaskRepository, type DelegatedTask } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"

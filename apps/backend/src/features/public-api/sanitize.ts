@@ -4,7 +4,7 @@ import {
   PI_TOOL_TRACE_SECTION_LABELS,
   PiToolTraceSectionLabels,
   type PiToolTraceSectionLabel,
-} from "@threa/types"
+} from "@threahq/types"
 
 const SENSITIVE_VALUE_PATTERNS = [
   /\b(?:sk|rk|pk|lf|wos|gh[a-z]|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{10,}\b/g,

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useLocation } from "react-router-dom"
-import type { BriefUpdatedEventPayload, StreamEvent } from "@threa/types"
+import type { BriefUpdatedEventPayload, StreamEvent } from "@threahq/types"
 import * as hooksModule from "@/hooks"
 import { BriefUpdatedEvent } from "./brief-updated-event"
 

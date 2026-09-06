@@ -6,7 +6,7 @@ import {
   type DelegationStatus,
   type FollowUpStatus,
   type KnowledgeType,
-} from "@threa/types"
+} from "@threahq/types"
 import type {
   StreamContextAttachmentDetail,
   StreamContextDelegationDetail,
@@ -14,7 +14,7 @@ import type {
   StreamContextLinkDetail,
   StreamContextMemoDetail,
   StreamContextThreadDetail,
-} from "@threa/types"
+} from "@threahq/types"
 import type { CachedStreamContextItem } from "@/db"
 import { linkPreviewBadge } from "./derive"
 import type { ContextItem } from "./types"

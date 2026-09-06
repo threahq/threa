@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AGENT_TOOL_NAMES, AgentToolNames, TOOL_TIERS_BY_NAME, ToolTiers } from "@threa/types"
+import { AGENT_TOOL_NAMES, AgentToolNames, TOOL_TIERS_BY_NAME, ToolTiers } from "@threahq/types"
 import { DRAFT_TEST_EXCLUDED_TOOLS, stripDraftTestExcludedTools } from "./config"
 
 describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import type { LanguageModel } from "ai"
-import { AgentStepTypes, type TraceSource } from "@threa/types"
+import { AgentStepTypes, type TraceSource } from "@threahq/types"
 import type { AgentRuntimeAI } from "./agent-runtime"
 import {
   TurnDigestCollector,

@@ -1,4 +1,4 @@
-import { BotRuntimeStatuses } from "@threa/types"
+import { BotRuntimeStatuses } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import type { ActiveBotPresence } from "@/hooks/use-active-bot-presence"
 

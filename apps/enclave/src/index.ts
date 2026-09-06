@@ -1,5 +1,5 @@
 import express from "express"
-import { logger as baseLogger } from "@threa/agent-runtime/logger"
+import { logger as baseLogger } from "@threahq/agent-runtime/logger"
 import { loadEnclaveConfig } from "./config"
 import { createEnclaveKeyPair } from "./keystore"
 import { registerWithBackend, revokeWithBackend } from "./register"

@@ -1,4 +1,4 @@
-import type { UserPreferences } from "@threa/types"
+import type { UserPreferences } from "@threahq/types"
 
 /**
  * Applies user preferences to the DOM.

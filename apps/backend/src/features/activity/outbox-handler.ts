@@ -6,9 +6,9 @@ import {
   type StreamMemberAddedOutboxPayload,
 } from "../../lib/outbox"
 import { parseMessagePayload } from "../../lib/outbox"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import { logger } from "../../lib/logger"
-import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
+import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threahq/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
 import type { ActivityService } from "./service"
 import { ActivityRepository, type Activity } from "./repository"

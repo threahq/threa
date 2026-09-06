@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { AgentToolName, PersonaResolvedConfig } from "@threa/types"
+import type { AgentToolName, PersonaResolvedConfig } from "@threahq/types"
 import { applyPatch, computeSparsePatch, isFieldOverridden, patchesEqual, toFormValues } from "./persona-form"
 
 function defaults(overrides: Partial<PersonaResolvedConfig> = {}): PersonaResolvedConfig {

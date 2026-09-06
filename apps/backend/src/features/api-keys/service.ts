@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { BotChannelAccessRepository } from "./repository"
 import { isStreamReadableAsOwner } from "./read-as-owner"
 import { SearchRepository, resolveUserAccessibleStreamIds } from "../search"

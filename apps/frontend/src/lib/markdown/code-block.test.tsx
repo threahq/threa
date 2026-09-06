@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD, type CodeBlockWrap } from "@threa/types"
+import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD, type CodeBlockWrap } from "@threahq/types"
 import { db } from "@/db"
 import CodeBlock from "./code-block"
 import { MarkdownBlockProvider, hashMarkdownBlock, composeBlockCollapseKey } from "./markdown-block-context"

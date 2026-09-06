@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import type { ThreadSummary } from "@threa/types"
+import type { ThreadSummary } from "@threahq/types"
 import { getStepLabel, type MessageAgentActivity, type ScopeDraftPreview } from "@/hooks"
 import { useTrace } from "@/contexts"
 import { cn } from "@/lib/utils"

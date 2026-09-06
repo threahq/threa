@@ -1,4 +1,4 @@
-import type { SearchClusterMatch } from "@threa/types"
+import type { SearchClusterMatch } from "@threahq/types"
 import type { MemoExplorerResult } from "../memos"
 import type { ConversationForMessage, ConversationSearchResult, SearchResult } from "./repository"
 

@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider } from "react-router-dom"
 import { MediaGalleryProvider } from "@/contexts"
 import { attachmentsApi } from "@/api"
 import { AttachmentList } from "./attachment-list"
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 
 const mockGetDownloadUrl = vi.fn()
 

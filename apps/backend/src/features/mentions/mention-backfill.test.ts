@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { JSONContent, MentionActorType } from "@threa/types"
+import type { JSONContent, MentionActorType } from "@threahq/types"
 import { resolveContentRows } from "./mention-backfill"
 import { chunkIds } from "../../lib/backfill"
 import type { MentionResolutionMaps } from "./resolution"

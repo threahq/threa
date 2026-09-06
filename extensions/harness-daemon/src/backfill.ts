@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { isSafeSessionFileName, readHarnessLinks, type HarnessLink } from "@threa/harness-client"
+import { isSafeSessionFileName, readHarnessLinks, type HarnessLink } from "@threahq/harness-client"
 import { liveClaudePidsIn } from "./claude-registry"
 import {
   attestedRuntimes,

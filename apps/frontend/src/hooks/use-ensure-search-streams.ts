@@ -3,7 +3,7 @@ import { ApiError } from "@/api"
 import { useStreamService } from "@/contexts"
 import { db } from "@/db"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import type { Stream } from "@threa/types"
+import type { Stream } from "@threahq/types"
 
 const MAX_HYDRATION_ATTEMPTS = 3
 

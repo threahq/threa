@@ -1,5 +1,5 @@
-import type { ModelRegistry } from "@threa/agent-runtime"
-import type { UserPreferences, WorkspaceSettings } from "@threa/types"
+import type { ModelRegistry } from "@threahq/agent-runtime"
+import type { UserPreferences, WorkspaceSettings } from "@threahq/types"
 import { resolveSubagentModels } from "./models"
 import { SubagentAlreadyActiveError } from "./repository"
 import type { CreateSubagentParams, SubagentService } from "./service"

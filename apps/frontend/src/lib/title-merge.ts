@@ -1,5 +1,5 @@
 import { db, type CachedStream } from "@/db"
-import type { ConversationWithStaleness, Stream } from "@threa/types"
+import type { ConversationWithStaleness, Stream } from "@threahq/types"
 
 const streamTitleFields = [
   "displayName",

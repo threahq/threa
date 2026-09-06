@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
-import { AGENT_OUTCOME_KINDS, AGENT_OUTCOME_SCOPES, AGENT_OUTCOME_STATES } from "@threa/types"
+import { AGENT_OUTCOME_KINDS, AGENT_OUTCOME_SCOPES, AGENT_OUTCOME_STATES } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { AgentOutcomeService } from "./service"
 

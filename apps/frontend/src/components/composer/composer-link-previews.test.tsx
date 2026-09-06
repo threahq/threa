@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import { ComposerLinkPreviews } from "./composer-link-previews"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 const origin = window.location.origin
 

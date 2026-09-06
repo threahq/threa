@@ -4,9 +4,9 @@ import type {
   AgentToolEffect,
   ToolVerificationStatus,
   TraceSource,
-} from "@threa/types"
-import { AgentSessionStatuses, AgentStepTypes, BotInvocationStatuses } from "@threa/types"
-import { isUniqueViolation } from "@threa/backend-common"
+} from "@threahq/types"
+import { AgentSessionStatuses, AgentStepTypes, BotInvocationStatuses } from "@threahq/types"
+import { isUniqueViolation } from "@threahq/backend-common"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 

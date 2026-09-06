@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { StreamTypes, type JSONContent, type Stream, type StreamType } from "@threa/types"
+import { StreamTypes, type JSONContent, type Stream, type StreamType } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { RichEditor, EditorActionBar, type RichEditorHandle } from "@/components/editor"

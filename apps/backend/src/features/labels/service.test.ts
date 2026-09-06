@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { LabelActorTypes, type Label } from "@threa/types"
+import { LabelActorTypes, type Label } from "@threahq/types"
 import { LabelService } from "./service"
 import { LabelRepository, LabelAssignmentRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"

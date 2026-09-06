@@ -1,5 +1,5 @@
 {
-  "name": "@threa/db-read-proxy",
+  "name": "@threahq/db-read-proxy",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "test": "bun test tests/"
   },
   "dependencies": {
-    "@threa/backend-common": "workspace:*",
+    "@threahq/backend-common": "workspace:*",
     "express": "^5",
     "helmet": "^8.1.0",
     "pg": "^8",

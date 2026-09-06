@@ -1,4 +1,4 @@
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 /**
  * The content a mounted message row was rendered from, keyed by message id.

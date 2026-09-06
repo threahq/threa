@@ -1,4 +1,4 @@
-import type { TextSection, MarkdownStructure } from "@threa/types"
+import type { TextSection, MarkdownStructure } from "@threahq/types"
 import type { ParseResult, TextParser } from "./types"
 import { buildPreview } from "./preview"
 

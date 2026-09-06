@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../../db"
-import type { VideoTranscodeStatus } from "@threa/types"
+import type { VideoTranscodeStatus } from "@threahq/types"
 
 interface VideoTranscodeJobRow {
   id: string

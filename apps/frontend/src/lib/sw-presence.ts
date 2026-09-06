@@ -1,4 +1,4 @@
-import { PRESENCE_INTERACTION_WINDOW_MS } from "@threa/types"
+import { PRESENCE_INTERACTION_WINDOW_MS } from "@threahq/types"
 
 /**
  * Device-presence signal shared between the page and the service worker.

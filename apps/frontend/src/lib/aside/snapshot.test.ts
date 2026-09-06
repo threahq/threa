@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { ContextIntents, ContextRefKinds, VIEWPORT_MAX_VISIBLE_IDS } from "@threa/types"
+import { ContextIntents, ContextRefKinds, VIEWPORT_MAX_VISIBLE_IDS } from "@threahq/types"
 import { buildAsideBag, buildViewportRef, captureViewportMessageIds, pickVisibleMessageIds } from "./snapshot"
 import type { VisibleRow } from "@/lib/timeline/visible-rows"
 

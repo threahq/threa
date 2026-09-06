@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { Editor } from "@tiptap/core"
 import { DOMParser as PMDOMParser, DOMSerializer, type Slice } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
-import { attachmentReferenceLabel } from "@threa/prosemirror"
+import { attachmentReferenceLabel } from "@threahq/prosemirror"
 import { createEditorExtensions } from "./editor-extensions"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 

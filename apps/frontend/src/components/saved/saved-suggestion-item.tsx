@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom"
 import { Check, Sparkles, X } from "lucide-react"
-import type { SavedSuggestionView } from "@threa/types"
+import type { SavedSuggestionView } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { RelativeTime } from "@/components/relative-time"

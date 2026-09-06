@@ -1,5 +1,5 @@
-import type { PdfPageClassification } from "@threa/types"
-import { PdfPageClassifications } from "@threa/types"
+import type { PdfPageClassification } from "@threahq/types"
+import { PdfPageClassifications } from "@threahq/types"
 import { PDF_TEXT_THRESHOLDS } from "./config"
 
 /** Text item with position, mirroring PDF.js TextContent items. */

@@ -1,4 +1,4 @@
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import type { EvalContext, EvalSuite } from "../../framework/types"
 import { createPolishTranscript, type PolishOutcome } from "../../../src/features/voice-transcription/polish"
 import { createDecideVoiceBoundaryScope } from "../../../src/features/voice-transcription/scope"

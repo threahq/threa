@@ -6,7 +6,7 @@ import {
   type StatusPreset,
   type WorkspaceBootstrap,
   type WorkspaceSettings,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as emojiHooks from "@/hooks/use-workspace-emoji"
 import { StatusesTab } from "./statuses-tab"

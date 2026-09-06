@@ -15,7 +15,7 @@ import { ConversationRepository } from "../../src/features/conversations"
 import { SyncLogRepository } from "../../src/features/sync"
 import { resolveDeliveryGroups, userGroup, type OutboxEvent } from "../../src/lib/outbox"
 import { userId, workspaceId, messageId, conversationId } from "../../src/lib/id"
-import type { AsideAnchoredEventPayload, Stream } from "@threa/types"
+import type { AsideAnchoredEventPayload, Stream } from "@threahq/types"
 
 describe("Aside anchor event", () => {
   let pool: Pool

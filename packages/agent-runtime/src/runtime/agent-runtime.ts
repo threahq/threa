@@ -1,6 +1,6 @@
 import type { LanguageModel, ModelMessage, Tool, ToolResultPart } from "ai"
-import type { SourceItem, TraceSource } from "@threa/types"
-import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview, resolveToolEffects } from "@threa/types"
+import type { SourceItem, TraceSource } from "@threahq/types"
+import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview, resolveToolEffects } from "@threahq/types"
 import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
 import { protectToolOutputText } from "./tool-trust-boundary"

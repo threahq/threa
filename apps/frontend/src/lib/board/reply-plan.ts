@@ -1,4 +1,4 @@
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 
 /**
  * The conversation's most-recently-active stream from its board projection: the

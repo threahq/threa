@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
-import { isRangeValid, serializeToMarkdown, sliceContent } from "@threa/prosemirror"
+import { isRangeValid, serializeToMarkdown, sliceContent } from "@threahq/prosemirror"
 import { db } from "@/db"
 import { useSharedMessageSlot } from "@/components/slots/context"
-import type { AttachmentSummary, ContentRange, JSONContent, StreamType, Visibility } from "@threa/types"
+import type { AttachmentSummary, ContentRange, JSONContent, StreamType, Visibility } from "@threahq/types"
 
 /**
  * Resolved preview for a shared-message pointer. `authorName` is optional at

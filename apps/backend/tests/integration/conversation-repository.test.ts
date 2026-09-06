@@ -19,7 +19,7 @@ import { MemoRepository } from "../../src/features/memos"
 import { sql } from "../../src/db"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId, conversationId, memoId } from "../../src/lib/id"
-import { ConversationStatuses, type BoardLens } from "@threa/types"
+import { ConversationStatuses, type BoardLens } from "@threahq/types"
 
 describe("ConversationRepository", () => {
   let pool: Pool

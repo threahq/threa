@@ -1,4 +1,4 @@
-import type { ActiveAgentSession } from "@threa/types"
+import type { ActiveAgentSession } from "@threahq/types"
 
 /** A running session as returned by `AgentSessionRepository.listRunningByWorkspace`. */
 export interface RunningSessionRow {

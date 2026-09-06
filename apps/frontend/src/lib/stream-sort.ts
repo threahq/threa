@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react"
-import type { Stream } from "@threa/types"
+import type { Stream } from "@threahq/types"
 import type { UrgencyLevel } from "@/components/layout/sidebar/types"
 import { getActivityTime } from "@/components/layout/sidebar/utils"
 import { scoreMatch } from "@/lib/match-score"

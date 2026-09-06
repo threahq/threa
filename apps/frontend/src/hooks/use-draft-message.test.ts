@@ -12,7 +12,7 @@ import {
 import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { getScopeResolveSeq, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { migrateLocalDraftScope } from "@/sync/draft-sync"
-import { ContextRefKinds, type JSONContent } from "@threa/types"
+import { ContextRefKinds, type JSONContent } from "@threahq/types"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { db } from "@/db"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Link, useLocation, useSearchParams } from "react-router-dom"
 import { Archive, Bookmark, Check, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react"
-import { BOARD_LENSES, DEFAULT_BOARD_LENS, type BoardLens, type BoardScopeStreamType } from "@threa/types"
+import { BOARD_LENSES, DEFAULT_BOARD_LENS, type BoardLens, type BoardScopeStreamType } from "@threahq/types"
 import { useSidebar, usePreferencesOptional } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { useBoardHome, useBoardViews, useDeleteBoardView, useUpdateBoardView } from "@/hooks/use-board-views"

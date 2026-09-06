@@ -1,4 +1,4 @@
-import type { TextFormat } from "@threa/types"
+import type { TextFormat } from "@threahq/types"
 import type { TextParser } from "./types"
 import { plainTextParser } from "./plain-text-parser"
 import { markdownParser } from "./markdown-parser"

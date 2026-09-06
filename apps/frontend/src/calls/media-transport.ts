@@ -1,4 +1,4 @@
-import { summarizeSdpMSections } from "@threa/types"
+import { summarizeSdpMSections } from "@threahq/types"
 import { api } from "@/api/client"
 import type { PublishedTrackKind } from "./config"
 

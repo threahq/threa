@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom"
 import { fireEvent, render, screen, waitFor } from "@/test"
-import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threa/types"
+import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threahq/types"
 import { ScratchpadItem } from "./scratchpad-item"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import type { StreamItemData } from "./types"

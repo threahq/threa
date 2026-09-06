@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { WORKSPACE_PERMISSION_SCOPES, type WorkSchedule, type WorkspaceBootstrap } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES, type WorkSchedule, type WorkspaceBootstrap } from "@threahq/types"
 import { workspaceSettingsApi } from "@/api"
 import { workspaceKeys, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceDefaultWorkSchedule } from "@/hooks/use-work-schedule"

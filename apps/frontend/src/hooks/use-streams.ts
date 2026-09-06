@@ -16,7 +16,7 @@ import type {
   NotificationLevel,
   CompanionMode,
   ToolPrivacyPolicy,
-} from "@threa/types"
+} from "@threahq/types"
 import type { CreateStreamInput, UpdateStreamInput } from "@/api"
 import { workspaceKeys } from "./use-workspaces"
 import { useOptionalSyncEngine, useSyncEngine } from "@/sync/sync-engine"

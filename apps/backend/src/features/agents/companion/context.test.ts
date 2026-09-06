@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { StreamBriefRepository, type StreamBrief } from "../../streams"
 import { buildAgentContext } from "./context"
 import type { Persona } from "../persona-repository"

@@ -1,4 +1,4 @@
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 /**
  * How many times each attachment is referenced in a draft. Derived from the

@@ -3,7 +3,7 @@ import {
   SUBAGENT_MODEL_CATALOG,
   WORKSPACE_PERMISSION_SCOPES,
   type SubagentModelCatalogEntry,
-} from "@threa/types"
+} from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
 import { hasPermission } from "@/lib/permissions"

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
-import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threa/types"
+import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threahq/types"
 import { db, type CachedDraft } from "@/db"
 import * as draftStore from "@/stores/draft-store"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"

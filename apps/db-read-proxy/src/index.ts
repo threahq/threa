@@ -1,4 +1,4 @@
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import { startServer } from "./server"
 
 const { stop, config } = await startServer()

@@ -29,7 +29,7 @@ import {
   type SidebarQuickLinkVisibility,
   type SidebarBasePreset,
   quickLinkHasActiveState,
-} from "@threa/types"
+} from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { useSidebarConfig } from "@/hooks/use-sidebar-config"

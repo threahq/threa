@@ -13,7 +13,7 @@ import {
   removeBoardConversationsForStream,
 } from "./board-store"
 import { seedConversationMessages } from "./conversation-messages-store"
-import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
+import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threahq/types"
 
 const WORKSPACE_ID = "ws_1"
 

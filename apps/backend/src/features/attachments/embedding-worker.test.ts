@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ExtractionContentTypes } from "@threa/types"
+import { ExtractionContentTypes } from "@threahq/types"
 import { AttachmentExtractionRepository, type AttachmentExtraction } from "./extraction-repository"
 import { createAttachmentEmbeddingWorker } from "./embedding-worker"
 import type { EmbeddingServiceLike } from "../memos"

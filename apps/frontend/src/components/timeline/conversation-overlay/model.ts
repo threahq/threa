@@ -1,4 +1,4 @@
-import type { ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threahq/types"
 
 /** Number of hues in the `--conversation-N` CSS palette (index.css). */
 export const CONVERSATION_COLOR_COUNT = 8

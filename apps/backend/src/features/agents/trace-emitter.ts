@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import type { AgentStepType, AgentToolEffect, ToolVerificationStatus, TraceSource } from "@threa/types"
+import type { AgentStepType, AgentToolEffect, ToolVerificationStatus, TraceSource } from "@threahq/types"
 import { AgentSessionRepository } from "./session-repository"
 import { emitAgentActivityEnded, emitAgentActivityStarted } from "./activity-indicator"
 import { stepId as generateStepId } from "../../lib/id"

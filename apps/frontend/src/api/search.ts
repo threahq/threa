@@ -1,6 +1,6 @@
 import api from "./client"
 import type { MemoExplorerResult } from "./memos"
-import type { AuthorType, ConversationStatus, SearchClickKind, SearchClusterMatch, StreamType } from "@threa/types"
+import type { AuthorType, ConversationStatus, SearchClickKind, SearchClusterMatch, StreamType } from "@threahq/types"
 
 export type ArchiveStatus = "active" | "archived"
 

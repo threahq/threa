@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import * as contextBuilder from "./context-builder"
 import * as systemPrompt from "./companion/prompt/system-prompt"
 import { buildEnclaveSystemPrompt } from "./enclave-system-prompt"

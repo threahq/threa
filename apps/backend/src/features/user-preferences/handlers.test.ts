@@ -20,7 +20,7 @@ import {
   VOICE_STEERING_WORDS_MAX,
   VOICE_STEERING_WORD_MAX_LENGTH,
   DEFAULT_USER_PREFERENCES,
-} from "@threa/types"
+} from "@threahq/types"
 import { updatePreferencesSchema } from "./handlers"
 
 describe("updatePreferencesSchema voiceSteeringWords", () => {

@@ -1,4 +1,4 @@
-import type { Activity, WorkspaceBootstrap } from "@threa/types"
+import type { Activity, WorkspaceBootstrap } from "@threahq/types"
 
 /**
  * Pure state math for the unread counter family.

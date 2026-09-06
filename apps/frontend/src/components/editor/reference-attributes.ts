@@ -1,4 +1,4 @@
-import type { ContentRange } from "@threa/types"
+import type { ContentRange } from "@threahq/types"
 
 export function parseRangeAttribute(raw: string | null): ContentRange | null {
   const match = raw?.match(/^(\d+)-(\d+)$/)

@@ -10,7 +10,7 @@ import {
   type DelegationCreatedEventPayload,
   type DelegationReopenReason,
   type DelegationStatusChangedEventPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import { assertStreamWritable, StreamEventRepository, StreamRepository, type StreamWritePrincipal } from "../streams"
 import { StreamContextRepository, contextSnippet } from "../stream-context"
 import { hashCallbackToken } from "../agents"

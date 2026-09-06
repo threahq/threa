@@ -1,4 +1,4 @@
-import type { AuthorType } from "@threa/types"
+import type { AuthorType } from "@threahq/types"
 import type { Querier } from "../../../db"
 import { formatAttachWithStreamTag, formatMemoTag, formatMsgRefToken, formatRetrievedMessageTag } from "../pointer-tags"
 import { UserRepository } from "../../workspaces"

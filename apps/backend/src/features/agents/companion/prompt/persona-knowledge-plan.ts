@@ -1,4 +1,4 @@
-import type { PersonaAttachmentContextMode } from "@threa/types"
+import type { PersonaAttachmentContextMode } from "@threahq/types"
 import { PERSONA_ATTACHMENT_BLOCK_MAX_CHARS, PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS } from "../../config"
 
 /**

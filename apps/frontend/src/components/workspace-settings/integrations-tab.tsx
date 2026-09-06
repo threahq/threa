@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Github, ExternalLink, RefreshCw, Plus, Settings } from "lucide-react"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { ApiError } from "@/api/client"
 import { integrationsApi } from "@/api/integrations"
 import { Button } from "@/components/ui/button"

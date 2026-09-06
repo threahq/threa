@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 import { buildShortcodeIndex, stripShortcodeColons } from "@/lib/emoji-picker"
 
 type ToEmoji = (shortcode: string) => string | null

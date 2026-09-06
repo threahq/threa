@@ -1,8 +1,8 @@
 import type { Pool } from "pg"
-import type { TextFormat, TextSizeTier, InjectionStrategy, TextMetadata } from "@threa/types"
+import type { TextFormat, TextSizeTier, InjectionStrategy, TextMetadata } from "@threahq/types"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
-import type { AI } from "@threa/agent-runtime"
-import { TextSizeTiers, InjectionStrategies } from "@threa/types"
+import type { AI } from "@threahq/agent-runtime"
+import { TextSizeTiers, InjectionStrategies } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { processAttachment } from "../process-attachment"
 import {

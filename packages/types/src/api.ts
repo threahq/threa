@@ -561,7 +561,7 @@ export type CreateMessageInput = CreateMessageInputJson | CreateMessageInputMark
  * recipient's long-term public key, for a given `keyGeneration`. The SSK
  * never leaves the client in plaintext; the server stores these opaque wrap
  * bytes (base64) and hands them back so a recipient can recover the SSK with
- * its private key. See @threa/crypto `wrapStreamKey` / `unwrapStreamKey`.
+ * its private key. See @threahq/crypto `wrapStreamKey` / `unwrapStreamKey`.
  */
 export interface E2eKeyWrap {
   keyGeneration: number
@@ -685,9 +685,9 @@ export interface E2eActorRewrapInput {
 
 /**
  * Message framing for SSK-sealed content on the enclave wire. Deliberately a
- * field-for-field mirror of `@threa/crypto`'s `StreamEnvelope` (`v`,
- * `keyGeneration`, `iv`, `aad`): `@threa/types` stays dependency-free, so it
- * doesn't pull `@threa/crypto` (and `@hpke/core`) into every consumer
+ * field-for-field mirror of `@threahq/crypto`'s `StreamEnvelope` (`v`,
+ * `keyGeneration`, `iv`, `aad`): `@threahq/types` stays dependency-free, so it
+ * doesn't pull `@threahq/crypto` (and `@hpke/core`) into every consumer
  * (frontend, control-plane, …) just to share four fields. The two are bridged
  * by structural typing where the enclave hands these to `openMessage`/
  * `sealMessage`; if `StreamEnvelope` ever gains a required field, that handoff
@@ -723,7 +723,7 @@ export interface EnclaveSskWrap {
  * enclave" — the stream is the axis. The producer mints each reply's id (a
  * `msg_…` ULID) and binds it into the seal AAD (`streamId|messageId|senderId`);
  * the backend stores the ciphertext under that same id. Citation sources ride
- * INSIDE the ciphertext (the sealed payload wrapper, `@threa/crypto`'s
+ * INSIDE the ciphertext (the sealed payload wrapper, `@threahq/crypto`'s
  * `serializeSealedPayload`) — they reveal what was researched, so they must
  * never appear as a cleartext column or wire field (E2EE-9).
  */
@@ -781,7 +781,7 @@ export interface EnclaveSealedSummary {
  * when tools land — their args/output) is sealed under the reply SSK, bound by
  * AAD to `streamId|stepId|senderId`, so the backend persists ciphertext it
  * can't read (INV-E7). A step's citation sources ride INSIDE the ciphertext
- * (the sealed payload wrapper, `@threa/crypto`'s `serializeSealedPayload`) —
+ * (the sealed payload wrapper, `@threahq/crypto`'s `serializeSealedPayload`) —
  * they reveal what was researched, so they must never appear as a cleartext
  * column or wire field (E2EE-14). The producer mints each step's id (a
  * `step_…` ULID) and the backend stores the ciphertext under it; the browser

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { addTestMember, setupTestDatabase, withTransaction } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamMemberRepository, StreamRepository, StreamService } from "../../src/features/streams"

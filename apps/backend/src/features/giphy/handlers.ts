@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express"
 import { z } from "zod"
-import type { GiphyConfigResponse, GiphySearchResponse } from "@threa/types"
+import type { GiphyConfigResponse, GiphySearchResponse } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import type { GiphyService } from "./service"
 import { GIPHY_MAX_PAGE_SIZE, GIPHY_MAX_QUERY_LENGTH, GIPHY_PAGE_SIZE } from "./config"

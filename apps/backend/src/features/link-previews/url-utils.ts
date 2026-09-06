@@ -1,11 +1,11 @@
-import { collectLinkUrls } from "@threa/prosemirror"
+import { collectLinkUrls } from "@threahq/prosemirror"
 import {
   BLOCKED_HOSTNAMES,
   BLOCKED_IP_PATTERNS,
   TRACKING_PARAMS,
   type JSONContent,
   type LinkPreviewContentType,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * A parsed reference to an in-app resource linked from a message.

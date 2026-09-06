@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AgentToolNames, AuthorTypes, StreamTypes } from "@threa/types"
+import { AgentToolNames, AuthorTypes, StreamTypes } from "@threahq/types"
 import * as dbModule from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"

@@ -1,5 +1,5 @@
 /**
- * @threa/prosemirror - Shared ProseMirror utilities
+ * @threahq/prosemirror - Shared ProseMirror utilities
  *
  * This package provides bidirectional conversion between Markdown text
  * and ProseMirror JSON format, ensuring consistent handling across
@@ -73,4 +73,4 @@ export {
   type GiphyEmbedRef,
 } from "./extractors"
 
-export type { ContentRange, JSONContent, JSONContentMark, ThreaDocument } from "@threa/types"
+export type { ContentRange, JSONContent, JSONContentMark, ThreaDocument } from "@threahq/types"

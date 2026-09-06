@@ -1,4 +1,4 @@
-import { type StreamType, StreamTypes } from "@threa/types"
+import { type StreamType, StreamTypes } from "@threahq/types"
 import { ALL_SECTIONS, SMART_SECTIONS } from "./config"
 import type { SidebarConfig, SidebarSection, SidebarSectionSpec } from "./sidebar-config"
 import type { SectionKey, StreamItemData } from "./types"

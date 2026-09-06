@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Response } from "express"
-import { SessionCookies, type AuthResult, type AuthService } from "@threa/backend-common"
+import { SessionCookies, type AuthResult, type AuthService } from "@threahq/backend-common"
 import { AccountsService } from "./service"
 
 const SESSION_COOKIE_NAME = "wos_session_test_accounts"

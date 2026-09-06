@@ -10,7 +10,7 @@ import {
   DEFAULT_BOARD_LEDGER_ROWS,
   DEFAULT_BOARD_LEAD_LINE_LENGTH,
   normalizeBoardMassBadge,
-} from "@threa/types"
+} from "@threahq/types"
 import { RelativeTime } from "@/components/relative-time"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"

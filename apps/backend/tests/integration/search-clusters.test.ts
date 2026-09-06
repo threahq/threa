@@ -21,7 +21,7 @@ import {
 } from "../../src/features/search"
 import type { Memo, MemoExplorerResult } from "../../src/features/memos"
 import { conversationId, memoId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { TitleSources } from "@threa/types"
+import { TitleSources } from "@threahq/types"
 
 const rrf = (...positions: number[]) => positions.reduce((sum, p) => sum + 1 / (SEARCH_RRF_K + p), 0)
 

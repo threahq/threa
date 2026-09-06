@@ -48,7 +48,7 @@ bun run extensions/claude-code-remote/install-local.ts [destDir]   # default: ~/
 ```
 
 The channel depends on sibling packages via `file:../…` links that only resolve inside the
-monorepo; `@threa/harness-client` is private (never on npm), so a standalone copy cannot install
+monorepo; `@threahq/harness-client` is private (never on npm), so a standalone copy cannot install
 it. The script vendors the siblings' source into the copy, repoints the imports, drops the
 dependencies, and runs `bun install` for the rest. It prints the exact
 `claude mcp add …` command (with the installed absolute path) to use in step 4.

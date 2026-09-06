@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore, type ChangeEvent, type RefObject } from "react"
 import { useDraftMessage } from "./use-draft-message"
 import { useAttachments, type PendingAttachment, type UploadResult } from "./use-attachments"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { generateLocalDraftId, type CachedDraft, type DraftAttachment } from "@/db"

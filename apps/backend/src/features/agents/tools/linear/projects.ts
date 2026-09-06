@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threahq/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { LinearToolDeps } from "./deps"
 import { isLinearToolError, toToolResult, withLinearClient } from "./client-accessor"

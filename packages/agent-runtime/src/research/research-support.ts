@@ -1,4 +1,4 @@
-import type { SourceType, TraceSource } from "@threa/types"
+import type { SourceType, TraceSource } from "@threahq/types"
 
 /**
  * Compose an {@link AbortSignal} that fires when an optional parent signal aborts

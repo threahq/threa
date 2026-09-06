@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import type { AuthorType } from "@threa/types"
+import type { AuthorType } from "@threahq/types"
 
 /**
  * Per-actor-type row styling — the single source of truth for how a message from

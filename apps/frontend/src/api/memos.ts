@@ -1,4 +1,4 @@
-import type { AuthorType, KnowledgeType, Memo, MemoScope, MemoStatus, MemoType } from "@threa/types"
+import type { AuthorType, KnowledgeType, Memo, MemoScope, MemoStatus, MemoType } from "@threahq/types"
 import api from "./client"
 
 export interface MemoExplorerStreamRef {

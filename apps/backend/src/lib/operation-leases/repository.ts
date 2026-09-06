@@ -1,4 +1,4 @@
-import { leaseId } from "@threa/backend-common"
+import { leaseId } from "@threahq/backend-common"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 

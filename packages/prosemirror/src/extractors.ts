@@ -4,7 +4,7 @@
  * checks and projection writes.
  */
 
-import { type JSONContent, actorTypeFromMentionId, isResolvedChannelLinkId, isResolvedMentionId } from "@threa/types"
+import { type JSONContent, actorTypeFromMentionId, isResolvedChannelLinkId, isResolvedMentionId } from "@threahq/types"
 
 /**
  * Resolved actor references for CONSUMERS (notifications, agent/bot dispatch).

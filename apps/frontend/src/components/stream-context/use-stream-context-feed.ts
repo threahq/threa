@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { streamContextApi, type ListStreamContextRequest } from "@/api"
 import { seedStreamContextItems } from "@/stores/stream-context-store"
-import type { ContextCategory, ListStreamContextResponse, StreamContextScope } from "@threa/types"
+import type { ContextCategory, ListStreamContextResponse, StreamContextScope } from "@threahq/types"
 
 export const streamContextKeys = {
   all: ["stream-context"] as const,

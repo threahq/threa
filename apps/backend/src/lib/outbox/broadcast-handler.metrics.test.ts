@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import type { Namespace, Server } from "socket.io"
-import { CursorLock } from "@threa/backend-common"
+import { CursorLock } from "@threahq/backend-common"
 import { BroadcastHandler } from "./broadcast-handler"
 import { OutboxRepository, type OutboxEvent } from "./repository"
 import {

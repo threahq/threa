@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import type { ThreadSummary } from "@threa/types"
+import type { ThreadSummary } from "@threahq/types"
 import * as hooksModule from "@/hooks"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as relativeTimeModule from "@/components/relative-time"

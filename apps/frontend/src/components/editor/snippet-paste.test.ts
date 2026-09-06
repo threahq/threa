@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { categoryFromMime } from "@threa/types"
+import { categoryFromMime } from "@threahq/types"
 import {
   shouldConvertPasteToSnippet,
   defaultSnippetFilename,

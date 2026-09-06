@@ -27,7 +27,7 @@ import { MemoService, resolveMemoScopeForStreamId } from "../../src/features/mem
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { resolveDeliveryGroups, userGroup, type OutboxEvent } from "../../src/lib/outbox"
 import { userId, workspaceId, messageId } from "../../src/lib/id"
-import { MemoScopes, StreamTypes, StreamErrorCodes, type Stream } from "@threa/types"
+import { MemoScopes, StreamTypes, StreamErrorCodes, type Stream } from "@threahq/types"
 
 const EMBEDDING_DIMENSIONS = 1536
 

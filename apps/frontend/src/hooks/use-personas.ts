@@ -7,7 +7,7 @@ import type {
   PersonaKind,
   PersonaListItem,
   WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 import { personasApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { cachedPersonaFromListItem } from "@/lib/personas"

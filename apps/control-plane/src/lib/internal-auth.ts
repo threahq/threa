@@ -1,4 +1,4 @@
 /**
- * Re-export from @threa/backend-common — single implementation for both apps.
+ * Re-export from @threahq/backend-common — single implementation for both apps.
  */
-export { createInternalAuthMiddleware } from "@threa/backend-common"
+export { createInternalAuthMiddleware } from "@threahq/backend-common"

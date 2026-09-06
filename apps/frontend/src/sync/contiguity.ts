@@ -1,4 +1,4 @@
-import type { MessagesMovedEventPayload } from "@threa/types"
+import type { MessagesMovedEventPayload } from "@threahq/types"
 
 /**
  * Read-side contiguity over the viewer-visible broadcast chain (INV-61).

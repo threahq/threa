@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Express, RequestHandler } from "express"
 import type { Server } from "socket.io"
-import { createAuthMiddleware } from "@threa/backend-common"
+import { createAuthMiddleware } from "@threahq/backend-common"
 import { createWorkspaceUserMiddleware } from "./middleware/workspace"
 import { createUploadMiddleware, createAvatarUploadMiddleware } from "./middleware/upload"
 import { createRateLimiters, type RateLimiterConfig } from "./middleware/rate-limit"
@@ -35,7 +35,7 @@ import { createBoardViewHandlers, BoardViewService } from "./features/board-view
 import { createUserE2eKeysHandlers } from "./features/user-e2e-keys"
 import { createAIUsageHandlers } from "./features/ai-usage"
 import type { AICostServiceLike } from "./features/ai-usage"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { createInvitationHandlers } from "./features/invitations"
 import { createActivityHandlers } from "./features/activity"
 import { createSyncHandlers } from "./features/sync"
@@ -87,10 +87,10 @@ import {
   type ApiKeyService,
   type AnalyticsReporter,
   type PostHogConfig,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./middleware/public-api-auth"
 import { createApiVersionGate } from "./middleware/api-version"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
 import type { EventService } from "./features/messaging"
@@ -127,7 +127,7 @@ import type { LinkPreviewService } from "./features/link-previews"
 import type { QueueManager } from "./lib/queue"
 import type { GiphyService } from "./features/giphy"
 import type { WorkspaceIntegrationService } from "./features/workspace-integrations"
-import type { WorkosOrgService } from "@threa/backend-common"
+import type { WorkosOrgService } from "@threahq/backend-common"
 import type { BotApiKeyService } from "./features/public-api"
 import {
   createAuditMiddleware,

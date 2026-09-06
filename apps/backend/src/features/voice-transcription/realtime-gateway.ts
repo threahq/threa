@@ -1,8 +1,8 @@
 import type { Server } from "socket.io"
 import { ulid } from "ulid"
 import { z } from "zod"
-import type { AuthService, SessionCookies } from "@threa/backend-common"
-import { parseMarkdown } from "@threa/prosemirror"
+import type { AuthService, SessionCookies } from "@threahq/backend-common"
+import { parseMarkdown } from "@threahq/prosemirror"
 import {
   VOICE_DRAFT_CONTEXT_MAX_CHARS,
   VOICE_LEGACY_PROTOCOL_VERSION,
@@ -13,7 +13,7 @@ import {
   type VoiceRelayPhase,
   type VoiceTerminationMode,
   type VoiceStoppedOutcome,
-} from "@threa/types"
+} from "@threahq/types"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"

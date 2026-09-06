@@ -1,4 +1,4 @@
-import type { ToolPrivacyPolicy } from "@threa/types"
+import type { ToolPrivacyPolicy } from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 

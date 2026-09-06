@@ -1,5 +1,5 @@
 import { createHighlighter, type HighlighterGeneric } from "shiki"
-import { CODE_LANGUAGE_PRELOAD_IDS, PLAINTEXT_LANGUAGE_ID, normalizeCodeLanguage } from "@threa/types"
+import { CODE_LANGUAGE_PRELOAD_IDS, PLAINTEXT_LANGUAGE_ID, normalizeCodeLanguage } from "@threahq/types"
 
 // Warmed at boot so common code blocks paint highlighted on first render.
 // Unknown langs fall through to `loadLanguage()` and then to plaintext.

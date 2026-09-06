@@ -8,7 +8,7 @@ import { API_BASE } from "@/api/client"
 import { AttachmentList } from "./attachment-list"
 import * as xhrTransport from "@/lib/uploads/xhr-upload"
 import { startUpload, resetUploadManager } from "@/lib/uploads/upload-manager"
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 
 const mockGetDownloadUrl = vi.fn()
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { contextRowsForMessage } from "./extract"
 
 const OCCURRED_AT = new Date("2026-07-20T10:00:00.000Z")

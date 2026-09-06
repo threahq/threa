@@ -1,4 +1,4 @@
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import type { OperationId } from "../routes"
 import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, type VersionChange } from "./types"
 

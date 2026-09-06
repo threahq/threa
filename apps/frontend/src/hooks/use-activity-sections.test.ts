@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { partitionActivitySections, resetActivitySectionLatch } from "./use-activity-sections"
-import type { Activity } from "@threa/types"
+import type { Activity } from "@threahq/types"
 
 const WS = "ws_1"
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest, mock, spyOn } from "bun:test"
 import type { Server } from "socket.io"
-import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
+import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threahq/types"
 import { logger } from "../../lib/logger"
 import { registerVoiceGateway } from "./realtime-gateway"
 import type { TranscriptionSession } from "./transcription/strategy"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { BoardView } from "@threa/types"
+import type { BoardView } from "@threahq/types"
 import { boardHomeHref } from "@/components/board/board-saved-views"
 
 const WS = "ws_1"

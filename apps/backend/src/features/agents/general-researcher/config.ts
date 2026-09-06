@@ -12,7 +12,7 @@
  * It is intentionally NOT a deep researcher: it answers in ~2 minutes.
  */
 
-import { AgentToolNames, type AgentToolName } from "@threa/types"
+import { AgentToolNames, type AgentToolName } from "@threahq/types"
 
 // Prompt + budgets + the model id are the runtime-agnostic source of truth and
 // live in the shared package so the enclave runs the identical loop (INV-33).
@@ -24,7 +24,7 @@ export {
   GENERAL_RESEARCH_TOTAL_BUDGET_MS,
   GENERAL_RESEARCH_MAX_BRIEF_CHARS,
   GENERAL_RESEARCH_SYSTEM_PROMPT,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 
 /**
  * Fixed tool policy for the research sub-agent. Gated only by dependency

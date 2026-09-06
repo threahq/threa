@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { AttachmentSafetyStatuses, PERSONA_ATTACHMENT_MAX_COUNT, StreamTypes } from "@threa/types"
+import { AttachmentSafetyStatuses, PERSONA_ATTACHMENT_MAX_COUNT, StreamTypes } from "@threahq/types"
 import { sql } from "../../src/db"
 import { attachmentId, extractionId, personaId, workspaceId as newWorkspaceId, userId } from "../../src/lib/id"
 import { PersonaAttachmentRepository } from "../../src/features/agents/persona-attachment-repository"

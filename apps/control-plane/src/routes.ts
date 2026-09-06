@@ -9,7 +9,7 @@ import {
   type SessionCookies,
   type AnalyticsReporter,
   StubAuthService,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 import { createControlPlaneAuthHandlers, createAuthStubHandlers } from "./features/auth"
 import { createAccountsHandlers, AccountsService } from "./features/accounts"
 import { createIntegrationHandlers } from "./features/integrations"

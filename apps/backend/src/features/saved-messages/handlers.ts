@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { SAVED_STATUSES } from "@threa/types"
+import { SAVED_STATUSES } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import type { SavedMessagesService } from "./service"
 

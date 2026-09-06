@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import * as db from "../../db"
 import * as agents from "../agents"
 import { AgentSessionRepository, ConversationSummaryRepository, hashCallbackToken } from "../agents"

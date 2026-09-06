@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import { HttpError, StreamNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { checkStreamAccess } from "./access"

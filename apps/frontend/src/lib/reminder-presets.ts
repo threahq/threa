@@ -17,7 +17,7 @@ import {
   startOfWorkForDay,
   firstWorkingWeekday,
   isWorkingDay,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * A labelled {@link StatusDuration}: the shared duration descriptor (minutes

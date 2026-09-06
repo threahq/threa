@@ -1,4 +1,4 @@
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import {
   StreamErrorCodes,
   StreamReadOnlyReasons,
@@ -8,7 +8,7 @@ import {
   type StreamViewerState,
   type StreamType,
   type Visibility,
-} from "@threa/types"
+} from "@threahq/types"
 import type { Querier } from "../../db"
 import { StreamNotFoundError } from "../../lib/errors"
 import { BotChannelAccessRepository, isStreamReadableAsOwner } from "../api-keys"

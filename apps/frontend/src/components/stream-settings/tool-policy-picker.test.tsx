@@ -5,7 +5,7 @@ import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
+import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threahq/types"
 import { ToolPolicyPicker } from "./tool-policy-picker"
 
 const updateToolPolicy =

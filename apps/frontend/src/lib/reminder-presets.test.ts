@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest"
-import { type WorkSchedule, type Weekday, type ShiftInterval } from "@threa/types"
+import { type WorkSchedule, type Weekday, type ShiftInterval } from "@threahq/types"
 import { computeRemindAt, type ReminderPreset } from "./reminder-presets"
 
 function schedule(days: Partial<Record<Weekday, ShiftInterval[]>>): WorkSchedule {

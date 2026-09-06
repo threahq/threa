@@ -11,8 +11,8 @@ import type {
   E2eActor,
   ThreaDocument,
   TitleSource,
-} from "@threa/types"
-import { StreamTypes, TitleSources } from "@threa/types"
+} from "@threahq/types"
+import { StreamTypes, TitleSources } from "@threahq/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, MemoryMode, ArchiveStatus }

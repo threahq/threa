@@ -23,7 +23,7 @@ import {
   companionPickerValue,
   companionPointerFromPickerValue,
 } from "@/components/stream-settings/companion-agent-select"
-import { type JSONContent } from "@threa/types"
+import { type JSONContent } from "@threahq/types"
 
 const MODIFIER_LABEL =
   typeof navigator !== "undefined" && navigator.platform?.toLowerCase().includes("mac") ? "Cmd" : "Ctrl"

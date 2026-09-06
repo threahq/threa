@@ -1,7 +1,7 @@
 import { useMemo } from "react"
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
-import { BOARD_LENSES, matchesBoardLens, type BoardLens } from "@threa/types"
+import { BOARD_LENSES, matchesBoardLens, type BoardLens } from "@threahq/types"
 import { db, type CachedBoardPost } from "@/db"
 
 /** Per-root-stream topic tally shown on a board-mode sidebar row. `topics` counts

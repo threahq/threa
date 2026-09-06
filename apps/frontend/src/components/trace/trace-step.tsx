@@ -12,7 +12,7 @@ import {
   type ToolVerificationStatus,
   type AgentToolEffect,
   type TraceSource,
-} from "@threa/types"
+} from "@threahq/types"
 import { useActors } from "@/hooks"
 import { cn } from "@/lib/utils"
 import { modelDisplayName } from "@/lib/model-display"

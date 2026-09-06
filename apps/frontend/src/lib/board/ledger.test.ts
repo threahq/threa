@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { AttachmentSummary, LinkPreviewSummary } from "@threa/types"
+import type { AttachmentSummary, LinkPreviewSummary } from "@threahq/types"
 
 import type { CachedEvent } from "@/db"
 import { formatFireTime } from "@/lib/dates"

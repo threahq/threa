@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai"
-import type { AI, ToolGuardian, ToolGuardianRequest, ToolGuardianVerdict } from "@threa/agent-runtime"
-import type { CostContext } from "@threa/agent-runtime"
+import type { AI, ToolGuardian, ToolGuardianRequest, ToolGuardianVerdict } from "@threahq/agent-runtime"
+import type { CostContext } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import { logger } from "../../../lib/logger"

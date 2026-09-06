@@ -1,6 +1,6 @@
 import { SmilePlus } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 
 interface EmojiQuickBarProps {
   /** Emojis the current user has already reacted with — shown with ring highlight */

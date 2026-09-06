@@ -23,7 +23,7 @@ import {
 import { buildMessageEmbeddingText } from "../../src/features/memos/message-embedding-text"
 import type { EmbeddingServiceLike, EmbeddingContext } from "../../src/features/memos"
 import { conversationId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
-import { AuthorTypes, StreamTypes, TitleSources, Visibilities } from "@threa/types"
+import { AuthorTypes, StreamTypes, TitleSources, Visibilities } from "@threahq/types"
 
 const EMBEDDING_DIM = 1536
 

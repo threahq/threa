@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { isSafeSessionFileName } from "@threa/harness-client"
+import { isSafeSessionFileName } from "@threahq/harness-client"
 import { canonicalOrRaw } from "./discovery"
 import { DEFAULT_PROFILE, parseProfileSnapshot, type Profile, UNKNOWN_PROFILE } from "./profiles"
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest"
-import type { ActiveCall } from "@threa/types"
+import type { ActiveCall } from "@threahq/types"
 import {
   seedActiveCalls,
   upsertActiveCall,

@@ -1,5 +1,5 @@
 import type { LanguageModel, ModelMessage } from "ai"
-import type { AuthorType, BotInvocationCapability, BotInvocationTrigger, SourceItem } from "@threa/types"
+import type { AuthorType, BotInvocationCapability, BotInvocationTrigger, SourceItem } from "@threahq/types"
 import type { CostContext } from "../ai/ai"
 import {
   AgentRuntime,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { DEFAULT_BOARD_LEDGER_ROWS } from "@threa/types"
+import { DEFAULT_BOARD_LEDGER_ROWS } from "@threahq/types"
 import { UserPreferencesService } from "./service"
 import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { PersonaListItem } from "@threa/types"
+import type { PersonaListItem } from "@threahq/types"
 import { personasApi } from "@/api"
 import { PersonaForkDialog } from "./persona-fork-dialog"
 

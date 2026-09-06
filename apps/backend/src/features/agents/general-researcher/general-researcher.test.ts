@@ -1,5 +1,5 @@
 import { describe, expect, test, mock } from "bun:test"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { defaultConfigResolver } from "../../../lib/ai/static-config-resolver"
 import { GENERAL_RESEARCH_MODEL_ID } from "./config"
@@ -7,7 +7,7 @@ import { GeneralResearcher } from "./general-researcher"
 
 /**
  * The bounded research LOOP is covered in the shared package
- * (`@threa/agent-runtime` `runGeneralResearch`). This suite covers only the
+ * (`@threahq/agent-runtime` `runGeneralResearch`). This suite covers only the
  * backend adapter's job: resolve the overridable config + model off the full
  * `AI`/`ConfigResolver` and forward them to the loop. We script a one-turn
  * text-only answer and assert the resolved values flowed through.

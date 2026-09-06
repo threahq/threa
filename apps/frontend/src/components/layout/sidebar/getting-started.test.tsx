@@ -4,7 +4,7 @@ import { render, screen, userEvent } from "@/test"
 import { GettingStarted, useGettingStarted, type UseGettingStartedOptions } from "./getting-started"
 import * as contextsModule from "@/contexts"
 import * as pushModule from "@/hooks/use-push-notifications"
-import type { User } from "@threa/types"
+import type { User } from "@threahq/types"
 
 const openSettings = vi.fn()
 const collapseOnMobile = vi.fn()

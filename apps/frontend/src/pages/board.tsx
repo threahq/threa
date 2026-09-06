@@ -78,7 +78,7 @@ import {
   MAX_BOARD_SCOPE_LABELS,
   type BoardLens,
   type ConversationWithStaleness,
-} from "@threa/types"
+} from "@threahq/types"
 
 /** Stable empty set so a fresh unread session never re-renders on identity alone. */
 const EMPTY_CLEARED_UNREAD: ReadonlySet<string> = new Set()

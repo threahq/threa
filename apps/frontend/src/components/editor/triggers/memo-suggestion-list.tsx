@@ -1,7 +1,7 @@
 import { forwardRef, type ReactNode } from "react"
 import type { Placement } from "@floating-ui/react"
 import { Hash } from "lucide-react"
-import type { Memo } from "@threa/types"
+import type { Memo } from "@threahq/types"
 import { getKnowledgeConfig } from "@/lib/memo-display"
 import { SuggestionList, type SuggestionListRef } from "./suggestion-list"
 

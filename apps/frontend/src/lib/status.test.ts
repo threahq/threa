@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { DEFAULT_WORK_SCHEDULE, SYSTEM_DEFAULT_STATUSES, type StatusPreset, type WorkSchedule } from "@threa/types"
+import { DEFAULT_WORK_SCHEDULE, SYSTEM_DEFAULT_STATUSES, type StatusPreset, type WorkSchedule } from "@threahq/types"
 import {
   STATUS_DURATION_OPTIONS,
   durationsEqual,

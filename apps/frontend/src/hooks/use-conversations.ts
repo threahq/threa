@@ -19,12 +19,12 @@ import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
 import { generateConversationId } from "@/lib/ids"
 import { mergeConversationByTitleRevision } from "@/lib/title-merge"
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import type { SplitGroupInput } from "@/api/conversations"
 import { ApiError } from "@/api/client"
 import { planBoardReply, type BoardReplyPlan } from "@/lib/board/reply-plan"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import type {
   BoardLens,
   BoardPost,
@@ -34,7 +34,7 @@ import type {
   ConversationWithStaleness,
   ConversationStatus,
   JSONContent,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * Where a board post lands: an existing channel/DM the user picked, or a

@@ -1,7 +1,7 @@
 import { tool } from "ai"
 import type { Tool } from "ai"
 import { z } from "zod"
-import type { SourceItem } from "@threa/types"
+import type { SourceItem } from "@threahq/types"
 
 const SendMessageSchema = z.object({
   content: z.string().describe("The message content to send"),

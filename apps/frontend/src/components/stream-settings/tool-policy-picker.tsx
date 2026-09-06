@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { useUpdateToolPolicy } from "@/hooks/use-streams"
-import { TOOL_PRIVACY_CATEGORY_LABELS, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
+import { TOOL_PRIVACY_CATEGORY_LABELS, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threahq/types"
 
 // `messaging` is intentionally excluded: the agent's own reply tool is always
 // allowed, so it is never offered as a toggle. The description is keyed by a

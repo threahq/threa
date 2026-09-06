@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { authLogId } from "@threa/backend-common"
+import { authLogId } from "@threahq/backend-common"
 import { AuthLogRetentionWorker } from "../../src/features/auth-log"
 import { setupTestDatabase } from "./setup"
 

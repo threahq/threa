@@ -11,7 +11,7 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { userId, workspaceId, messageId } from "../../src/lib/id"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 
 describe("Aside cross-type anchor sharing (post index drop)", () => {
   let pool: Pool

@@ -67,7 +67,7 @@ import {
   type StreamReadFrontier,
   type StreamReadFrontierSnapshot,
   TitleSources,
-} from "@threa/types"
+} from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { draftStreamUniquenessKey } from "../drafts"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"

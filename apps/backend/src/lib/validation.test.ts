@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { z } from "zod"
 import { validateRequest } from "./validation"
 

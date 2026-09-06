@@ -3,7 +3,7 @@ import { Pool } from "pg"
 import { UserPreferencesService, UserPreferencesRepository } from "../../src/features/user-preferences"
 import { workspaceId, userId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
-import { DEFAULT_USER_PREFERENCES } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES } from "@threahq/types"
 import { ARIADNE_AGENT_ID } from "../../src/features/agents"
 
 describe("User Preferences - Sparse Override Pattern", () => {

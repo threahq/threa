@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react"
 import { Link, Navigate, useParams } from "react-router-dom"
 import { ArrowLeft } from "lucide-react"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { SidebarToggle } from "@/components/layout"
 import { ThreadPanelSlot } from "@/components/layout/thread-panel-slot"

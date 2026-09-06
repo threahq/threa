@@ -6,7 +6,7 @@ import { UserRepository, type WorkspaceService } from "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
 import { invitationId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import type { InvitationSkipReason, InvitationStatus, WorkspaceInvitableRole } from "@threa/types"
+import type { InvitationSkipReason, InvitationStatus, WorkspaceInvitableRole } from "@threahq/types"
 
 const INVITATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000
 const LINK_TOKEN_BYTES = 32

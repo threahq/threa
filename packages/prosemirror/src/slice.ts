@@ -5,7 +5,7 @@
  * whole, and containers the cut empties out stay behind as empty nodes.
  */
 
-import type { ContentRange, JSONContent } from "@threa/types"
+import type { ContentRange, JSONContent } from "@threahq/types"
 
 import { docContentSize, LEAF_NODE_TYPES, nodeSize } from "./positions"
 

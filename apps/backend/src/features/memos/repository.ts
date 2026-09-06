@@ -1,6 +1,6 @@
 import { sql, type Querier } from "../../db"
 import { detectSearchConfig } from "../../lib/text-search-config"
-import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope, MemoEmbedSummary } from "@threa/types"
+import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope, MemoEmbedSummary } from "@threahq/types"
 import {
   MEMO_KNOWLEDGE_TYPE_BOOST,
   MEMO_STREAM_TYPE_BOOST,

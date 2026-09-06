@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AUTHOR_TYPES, EnclaveNamingInstructionSchema, TOOL_PRIVACY_CATEGORIES } from "@threa/types"
+import { AUTHOR_TYPES, EnclaveNamingInstructionSchema, TOOL_PRIVACY_CATEGORIES } from "@threahq/types"
 
 /**
  * Schema for a claimed session assignment — the body of a winning claim

@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core"
 import { ReactNodeViewRenderer } from "@tiptap/react"
-import type { ContentRange } from "@threa/types"
+import type { ContentRange } from "@threahq/types"
 import { SharedMessageView } from "./shared-message-view"
 import { referencePinAttributes } from "./reference-attributes"
 

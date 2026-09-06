@@ -5,7 +5,7 @@ import { Pool } from "pg"
 import { createApp } from "./app"
 import { DelegationService, createDelegationExpirySweep, validateDelegationContextRefs } from "./features/delegations"
 import { SubagentService, createSubagentExpirySweep, startSubagent, resolveSubagentModels } from "./features/subagents"
-import { SubagentFailureReasons } from "@threa/types"
+import { SubagentFailureReasons } from "@threahq/types"
 import { registerRoutes } from "./routes"
 import { errorHandler } from "./middleware/error-handler"
 import { registerSocketHandlers } from "./socket"
@@ -22,7 +22,7 @@ import {
   DisabledAnalyticsReporter,
   attachPostHogLogShipping,
   type AnalyticsReporter,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 import { BotChannelService } from "./features/api-keys"
 import { UserApiKeyService as UserApiKeyServiceImpl } from "./features/user-api-keys"
 import {
@@ -71,8 +71,8 @@ import {
   UserRepository,
 } from "./features/workspaces"
 import { InvitationService, InvitationShadowSyncHandler } from "./features/invitations"
-import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threa/backend-common"
-import { PartitionMaintenanceWorker } from "@threa/backend-common"
+import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threahq/backend-common"
+import { PartitionMaintenanceWorker } from "@threahq/backend-common"
 import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
 import { StreamService, StreamBriefService } from "./features/streams"
 import {
@@ -248,17 +248,17 @@ import {
   type VideoTranscodeCheckJobData,
   type AgentFollowUpFireJobData,
 } from "./lib/queue"
-import { AuthorTypes, ProcessingStatuses, resolveNotificationPause } from "@threa/types"
+import { AuthorTypes, ProcessingStatuses, resolveNotificationPause } from "@threahq/types"
 import { AttachmentRepository } from "./features/attachments"
 import { ulid } from "ulid"
 import { loadConfig } from "./lib/env"
 import { createCorsOriginChecker } from "./lib/cors"
-import type { AuthorType, ConversationDirective } from "@threa/types"
-import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
+import type { AuthorType, ConversationDirective } from "@threahq/types"
+import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
-import { createAI } from "@threa/agent-runtime"
-import { createModelRegistry } from "@threa/agent-runtime"
+import { createAI } from "@threahq/agent-runtime"
+import { createModelRegistry } from "@threahq/agent-runtime"
 import { createStaticConfigResolver } from "./lib/ai/static-config-resolver"
 import {
   QueueManager,

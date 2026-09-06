@@ -16,7 +16,7 @@ import {
   type JSONContent,
   type SlotMap,
   type SharedMessageSlot,
-} from "@threa/types"
+} from "@threahq/types"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { writeSlotCarrier } from "@/stores/slot-store"
 import { patchConversationMessage } from "@/stores/conversation-messages-store"

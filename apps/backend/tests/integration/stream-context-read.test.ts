@@ -26,7 +26,7 @@ import { createStreamContextService } from "../../src/features/stream-context"
 import { StreamContextRepository } from "../../src/features/stream-context/repository"
 import { linkPreviewId, memoId, streamContextItemId, userId, workspaceId } from "../../src/lib/id"
 import { sql } from "../../src/db"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { StreamTypes, Visibilities } from "@threahq/types"
 
 let pool: Pool
 

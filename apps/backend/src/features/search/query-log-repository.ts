@@ -1,4 +1,4 @@
-import type { SearchClickKind } from "@threa/types"
+import type { SearchClickKind } from "@threahq/types"
 import { sql, type Querier } from "../../db"
 import type { SearchRanking } from "./config"
 

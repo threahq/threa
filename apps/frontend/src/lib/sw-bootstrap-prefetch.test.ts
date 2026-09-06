@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { sharedMessageSlotKey, type StreamEvent } from "@threa/types"
+import { sharedMessageSlotKey, type StreamEvent } from "@threahq/types"
 import { ThreaDatabase, accountDbName, db } from "@/db"
 import { parsePersistedSyncTarget, respondToBootstrapRequest, runBootstrapSync } from "./sw-bootstrap-prefetch"
 

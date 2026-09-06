@@ -1,4 +1,4 @@
-import { ContextRefKinds, type ConversationContextRef } from "@threa/types"
+import { ContextRefKinds, type ConversationContextRef } from "@threahq/types"
 import { HttpError } from "../../../../lib/errors"
 import { MessageRepository } from "../../../messaging"
 import { ConversationRepository } from "../../../conversations"

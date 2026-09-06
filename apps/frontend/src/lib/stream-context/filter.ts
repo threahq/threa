@@ -1,4 +1,4 @@
-import { CONTEXT_CATEGORIES, type ContextCategory } from "@threa/types"
+import { CONTEXT_CATEGORIES, type ContextCategory } from "@threahq/types"
 import type { CachedStreamContextItem } from "@/db"
 
 export interface ContextRowFilters {

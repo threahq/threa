@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { DEFAULT_USER_PREFERENCES, StreamTypes, type UserPreferences } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, StreamTypes, type UserPreferences } from "@threahq/types"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
 import { buildSystemPrompt, SYSTEM_PROMPT_INPUT_STABILITY, type SystemPromptInputs } from "./system-prompt"

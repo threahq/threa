@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { SLUG_MAX_LENGTH } from "@threa/types"
+import { SLUG_MAX_LENGTH } from "@threahq/types"
 import { resolveDmDisplayName, resolveStreamName, streamChipSlug, streamLabel } from "./streams"
 
 describe("streamLabel", () => {

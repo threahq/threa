@@ -1,4 +1,4 @@
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
 import { streamChipParts } from "@/lib/streams"
 import { useChannelChipById } from "./channel-link-context"

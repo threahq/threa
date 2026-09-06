@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
-import type { UpdateInvitationLinkInput, WorkspaceInvitation } from "@threa/types"
+import type { UpdateInvitationLinkInput, WorkspaceInvitation } from "@threahq/types"
 import { invitationsApi } from "@/api/invitations"
 import { Button } from "@/components/ui/button"
 import {

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import type { AgentOutcomeSummary } from "@threa/types"
+import type { AgentOutcomeSummary } from "@threahq/types"
 import { agentOutcomesApi, type AgentOutcomeFilters } from "@/api/agent-outcomes"
 
 const PAGE_SIZE = 50

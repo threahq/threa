@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ProcessingStatuses } from "@threa/types"
+import { ProcessingStatuses } from "@threahq/types"
 import * as db from "../../../db"
 import { AttachmentRepository } from "../repository"
 import { VideoTranscodeJobRepository } from "./job-repository"

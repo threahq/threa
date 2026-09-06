@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { z } from "zod"
-import { AgentStepTypes, type ToolPrivacyCategory } from "@threa/types"
+import { AgentStepTypes, type ToolPrivacyCategory } from "@threahq/types"
 import type { AgentTool } from "./agent-tool"
 import { defineAgentTool } from "./agent-tool"
 import {

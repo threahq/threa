@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import type { BotConnectService } from "./service"
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { readFileSync } from "fs"
 import { join } from "path"
-import { AgentToolNames } from "@threa/types"
+import { AgentToolNames } from "@threahq/types"
 import {
   BUILT_IN_AGENTS,
   ARIADNE_AGENT_ID,

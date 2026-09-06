@@ -1,6 +1,6 @@
 import type { Querier } from "../../../db"
 import { sql } from "../../../db"
-import type { ContextBag, ContextIntent } from "@threa/types"
+import type { ContextBag, ContextIntent } from "@threahq/types"
 import { streamContextAttachmentId } from "../../../lib/id"
 import type { LastRenderedSnapshot, StoredContextBag } from "./types"
 

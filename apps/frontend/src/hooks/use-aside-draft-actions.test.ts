@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 import { toast } from "sonner"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import type { DraftComposerState } from "./use-draft-composer"
 import { useAsideDraftActions } from "./use-aside-draft-actions"
 

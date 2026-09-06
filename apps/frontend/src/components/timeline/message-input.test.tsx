@@ -29,7 +29,7 @@ import { toast } from "sonner"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 // eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
 import { db } from "@/db"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const makeDoc = (text: string): JSONContent => ({

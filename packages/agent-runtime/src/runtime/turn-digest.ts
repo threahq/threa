@@ -1,5 +1,5 @@
 import type { LanguageModel } from "ai"
-import type { TraceSource, TurnDigestStepContent } from "@threa/types"
+import type { TraceSource, TurnDigestStepContent } from "@threahq/types"
 import type { CostContext, TelemetryMetadataValue } from "../ai/ai"
 import type { AgentEvent } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"

@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger, Ticker } from "@threa/backend-common"
+import { logger, Ticker } from "@threahq/backend-common"
 import {
   GITHUB_WEBHOOK_RETENTION_DAYS,
   GITHUB_WEBHOOK_SWEEP_BATCH_SIZE,

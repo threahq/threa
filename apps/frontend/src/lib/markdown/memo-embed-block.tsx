@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useParams } from "react-router-dom"
-import type { MemoEmbedSummary } from "@threa/types"
+import type { MemoEmbedSummary } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { MemoEmbedCardBody, MemoEmbedDate } from "@/components/memo-embed/card-body"
 import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"

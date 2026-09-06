@@ -1,5 +1,5 @@
 import { api, postAvatarUpload } from "./client"
-import type { Bot, BotApiKey, BotTrait, CreateBotApiKeyResponse, WorkspacePermissionSlug } from "@threa/types"
+import type { Bot, BotApiKey, BotTrait, CreateBotApiKeyResponse, WorkspacePermissionSlug } from "@threahq/types"
 
 export interface CreateBotInput {
   type?: "shared" | "personal"

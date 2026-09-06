@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { READ_BLOCKING_EVENT_TYPES, type StreamEvent } from "@threa/types"
+import { READ_BLOCKING_EVENT_TYPES, type StreamEvent } from "@threahq/types"
 import { collectRowRects, pickVisibleRows, readViewportBounds, type VisibleRow } from "@/lib/timeline/visible-rows"
 
 export type { VisibleRow }

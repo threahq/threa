@@ -1,4 +1,4 @@
-import { INTERNAL_API_KEY_HEADER, ORIGINAL_HOST_HEADER } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, ORIGINAL_HOST_HEADER } from "@threahq/types"
 
 interface Env {
   WORKSPACE_REGIONS: KVNamespace

@@ -7,7 +7,7 @@ import { spyOnExport } from "@/test/spy"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import * as editorModule from "@/components/editor"
 import { serializeToMarkdown } from "@/components/editor/editor-markdown"
-import { StreamTypes, Visibilities, type JSONContent, type Stream } from "@threa/types"
+import { StreamTypes, Visibilities, type JSONContent, type Stream } from "@threahq/types"
 import { DescriptionSection } from "./description-section"
 
 // Capture the controlled editor's props so the test can drive onChange without

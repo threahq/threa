@@ -4,7 +4,7 @@ import type {
   DelegationStatusChangedEventPayload,
   StreamEvent,
   SubagentSummary,
-} from "@threa/types"
+} from "@threahq/types"
 import type { MessageAgentActivity } from "@/hooks"
 import { isSubagentAuthoredMessage, type SubagentThreadRun } from "@/lib/subagent-display"
 import type { BatchTimelineState } from "./event-list"

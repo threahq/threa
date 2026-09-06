@@ -1,4 +1,4 @@
-import type { GiphyGif } from "@threa/types"
+import type { GiphyGif } from "@threahq/types"
 import { GIPHY_API_BASE, GIPHY_FETCH_TIMEOUT_MS, GIPHY_PAGE_SIZE, GIPHY_RATING } from "./config"
 
 /** The shape we care about from a Giphy GIF object's `images` map. */

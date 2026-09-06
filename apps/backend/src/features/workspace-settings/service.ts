@@ -3,8 +3,8 @@ import { withTransaction } from "../../db"
 import { WorkspaceSettingsRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { assertAssignablePersona } from "../agents"
-import { type WorkspaceSettings, type UpdateWorkspaceSettingsInput, DEFAULT_WORKSPACE_SETTINGS } from "@threa/types"
-import type { ModelRegistry } from "@threa/agent-runtime"
+import { type WorkspaceSettings, type UpdateWorkspaceSettingsInput, DEFAULT_WORKSPACE_SETTINGS } from "@threahq/types"
+import type { ModelRegistry } from "@threahq/agent-runtime"
 import { HttpError } from "../../lib/errors"
 
 /** Merge sparse overrides onto code defaults to produce full settings. */

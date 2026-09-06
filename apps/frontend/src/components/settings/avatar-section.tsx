@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { useUploadAvatar, useRemoveAvatar } from "@/hooks"
-import { getAvatarUrl } from "@threa/types"
+import { getAvatarUrl } from "@threahq/types"
 import { getInitials } from "@/lib/initials"
 import { toast } from "sonner"
 

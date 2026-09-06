@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import type { CreateInvitationLinkResponse, UpdateInvitationLinkResponse, WorkspaceInvitation } from "@threa/types"
+import type { CreateInvitationLinkResponse, UpdateInvitationLinkResponse, WorkspaceInvitation } from "@threahq/types"
 import { hashInvitationToken } from "../../src/features/invitations/service"
 import { invitationId } from "../../src/lib/id"
 import { createWorkspace, loginAs, TestClient } from "../client"

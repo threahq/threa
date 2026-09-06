@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
 import { LinkPreviewCard } from "./link-preview-card"
-import type { LinkPreviewSummary } from "@threa/types"
+import type { LinkPreviewSummary } from "@threahq/types"
 
 function makeGitHubPreview(overrides: Partial<LinkPreviewSummary> = {}): LinkPreviewSummary {
   return {

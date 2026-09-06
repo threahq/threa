@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { CommandArgumentSuggestion } from "@threa/types"
+import type { CommandArgumentSuggestion } from "@threahq/types"
 import { findPickableArg, filterArgSuggestions } from "./use-command-arg-picker"
 import type { CommandItem } from "./types"
 

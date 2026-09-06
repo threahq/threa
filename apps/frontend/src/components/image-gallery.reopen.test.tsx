@@ -8,7 +8,7 @@ import { AttachmentList } from "@/components/timeline/attachment-list"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 
 const WIDTH = 400
 const mockGetDownloadUrl = vi.fn()

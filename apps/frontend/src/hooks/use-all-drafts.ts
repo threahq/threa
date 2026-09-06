@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react"
 import { db, type CachedBoardPost, type CachedDraft, type CachedStream } from "@/db"
 import { draftScopesSignature, useBoardDraftContext, useThreadAnchorContext } from "./use-board-draft-context"
 import { parseBoardDraftKey, type ParsedBoardDraftKey } from "@/lib/board/draft-keys"
-import { type CompanionMode } from "@threa/types"
+import { type CompanionMode } from "@threahq/types"
 import {
   deleteDraftScratchpadFromCache,
   useComposerLoadedFromStore,

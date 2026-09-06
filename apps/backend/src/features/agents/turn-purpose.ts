@@ -1,4 +1,4 @@
-import { AgentTriggers, type AgentSessionRerunContext } from "@threa/types"
+import { AgentTriggers, type AgentSessionRerunContext } from "@threahq/types"
 
 /**
  * Why a persona turn is running. One first-class answer replaces the four

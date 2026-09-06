@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { CompanionModes, ScheduledMessageStatuses, StreamTypes, Visibilities } from "@threa/types"
+import { CompanionModes, ScheduledMessageStatuses, StreamTypes, Visibilities } from "@threahq/types"
 import { ScheduledMessagesService } from "./service"
 import { ScheduledMessagesRepository, type ScheduledMessage } from "./repository"
 import { StreamRepository, StreamMemberRepository } from "../streams"

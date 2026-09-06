@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import { loadControlPlaneConfig } from "./config"
 
 const ORIGINAL_ENV = { ...process.env }

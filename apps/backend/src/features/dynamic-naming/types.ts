@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg"
-import type { TitleSource } from "@threa/types"
+import type { TitleSource } from "@threahq/types"
 import { z } from "zod"
 import { DYNAMIC_NAMING_CHECKPOINTS } from "./config"
 export {

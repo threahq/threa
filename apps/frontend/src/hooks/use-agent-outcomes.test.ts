@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { AgentOutcomeSummary } from "@threa/types"
+import type { AgentOutcomeSummary } from "@threahq/types"
 import { msUntilNextFollowUpFires } from "./use-agent-outcomes"
 
 const NOW = Date.parse("2026-07-20T10:00:00.000Z")

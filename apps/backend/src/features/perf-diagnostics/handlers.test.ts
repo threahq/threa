@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { Request, Response } from "express"
-import { HttpError } from "@threa/backend-common"
-import { PERF_CAPTURE_MAX_SAMPLES } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import { PERF_CAPTURE_MAX_SAMPLES } from "@threahq/types"
 import { createPerfDiagnosticsHandlers, PERF_CAPTURE_MAX_BYTES } from "./handlers"
 import type { PerfDiagnosticsService } from "./service"
 

@@ -10,7 +10,7 @@ import {
 } from "../stream-name-cache"
 import * as messageEnvelope from "../message-envelope"
 import { resolveStreamName, streamLabel } from "@/lib/streams"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 
 const STUB_OPTS = {
   privateKey: {} as CryptoKey,

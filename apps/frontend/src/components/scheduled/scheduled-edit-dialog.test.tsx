@@ -1,6 +1,6 @@
 import { forwardRef } from "react"
 import { fireEvent, render } from "@testing-library/react"
-import type { ScheduledMessageView } from "@threa/types"
+import type { ScheduledMessageView } from "@threahq/types"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { spyOnExport } from "@/test/spy"
 import * as contextsModule from "@/contexts"

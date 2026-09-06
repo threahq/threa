@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
-import { HttpError } from "@threa/backend-common"
-import { PERF_MARK_NAMES, performanceCaptureSchema } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import { PERF_MARK_NAMES, performanceCaptureSchema } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { PerfDiagnosticsService } from "./service"
 

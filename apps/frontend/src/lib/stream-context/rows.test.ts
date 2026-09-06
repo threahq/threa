@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { AttachmentSummary, JSONContent } from "@threa/types"
+import type { AttachmentSummary, JSONContent } from "@threahq/types"
 import type { CachedEvent } from "@/db"
 import { contextItemsFromEvent } from "./rows"
 

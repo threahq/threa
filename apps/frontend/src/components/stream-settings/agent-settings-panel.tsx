@@ -1,6 +1,6 @@
 import type { ComponentType } from "react"
 import { Moon, Sparkles } from "lucide-react"
-import { CompanionModes, type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
+import { CompanionModes, type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
 import type { ActiveBotPresence } from "@/hooks/use-active-bot-presence"

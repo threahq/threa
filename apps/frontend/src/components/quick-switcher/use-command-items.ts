@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { isDraftId, useFeatureFlag } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"

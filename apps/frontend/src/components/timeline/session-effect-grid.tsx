@@ -1,5 +1,5 @@
 import { useParams } from "react-router-dom"
-import type { AgentToolEffect } from "@threa/types"
+import type { AgentToolEffect } from "@threahq/types"
 import { useOptionalSettings } from "@/contexts"
 import { EffectRow } from "@/lib/effect-links"
 

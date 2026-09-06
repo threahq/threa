@@ -19,7 +19,7 @@ import {
   type ResolveDraftResponse,
   type UpsertDraftInput,
   type UpsertDraftResponse,
-} from "@threa/types"
+} from "@threahq/types"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { clearStagedDraft, listStagedDrafts, type StagedDraft } from "@/lib/drafts/draft-staging"
 import { isResolvedDraftEcho, markDraftMigrated } from "./draft-resolution-guard"

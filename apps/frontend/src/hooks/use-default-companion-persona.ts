@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { ARIADNE_PERSONA_SLUG, type WorkspaceBootstrap } from "@threa/types"
+import { ARIADNE_PERSONA_SLUG, type WorkspaceBootstrap } from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { usePreferencesOptional } from "@/contexts"
 import { useCompanionRoster } from "@/hooks/use-companion-roster"

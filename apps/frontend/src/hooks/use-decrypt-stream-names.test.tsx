@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, act, waitFor } from "@testing-library/react"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { StreamTypes, type StreamType } from "@threahq/types"
 import { db, type CachedStream } from "@/db"
 import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"

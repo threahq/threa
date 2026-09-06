@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import type { EmbeddingJobData, JobHandler } from "../../lib/queue"
 import { MessageRepository } from "../messaging"
 import type { EmbeddingServiceLike } from "./embedding-service"

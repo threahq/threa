@@ -1,4 +1,4 @@
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import type { StreamContext } from "../../context-builder"
 
 export function buildScratchpadPrompt(context: StreamContext, workspaceResearchEnabled: boolean): string {

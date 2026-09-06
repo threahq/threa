@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ContextIntents, ContextRefKinds, VIEWPORT_MAX_VISIBLE_IDS } from "@threa/types"
+import { ContextIntents, ContextRefKinds, VIEWPORT_MAX_VISIBLE_IDS } from "@threahq/types"
 import { contextBagSchema } from "./schemas"
 
 const viewportRef = {

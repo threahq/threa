@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { collectShareReferences, ShareService } from "./service"
 import { SharedMessageRepository } from "./repository"
 import * as accessCheck from "./access-check"

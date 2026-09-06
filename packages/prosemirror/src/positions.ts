@@ -10,7 +10,7 @@
  * two agree against the real tiptap schema.
  */
 
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 /**
  * Node types with no children — size 1 (or `text.length` for text). Kept in

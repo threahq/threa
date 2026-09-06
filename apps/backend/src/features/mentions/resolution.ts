@@ -3,12 +3,12 @@ import {
   type MentionActorType,
   MENTION_BROADCAST_HERE,
   MENTION_BROADCAST_CHANNEL,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   collectUnresolvedChannelLinkSlugs,
   collectUnresolvedMentionSlugs,
   mapMentionAndChannelNodes,
-} from "@threa/prosemirror"
+} from "@threahq/prosemirror"
 import type { Querier } from "../../db"
 import { UserRepository } from "../workspaces"
 import { PersonaRepository } from "../agents"

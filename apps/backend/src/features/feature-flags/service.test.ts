@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { FEATURE_FLAG_KEYS, defaultFeatureFlags } from "@threa/types"
+import { FEATURE_FLAG_KEYS, defaultFeatureFlags } from "@threahq/types"
 import { FeatureFlagService } from "./service"
 import { FeatureFlagOverrideRepository } from "./repository"
 import { UserRepository } from "../workspaces"

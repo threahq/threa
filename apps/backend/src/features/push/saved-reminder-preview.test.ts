@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, ENCRYPTED_MESSAGE_PREVIEW_LABEL } from "@threa/types"
+import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, ENCRYPTED_MESSAGE_PREVIEW_LABEL } from "@threahq/types"
 import { resolveSavedReminderPreview } from "./service"
 
 describe("resolveSavedReminderPreview (E2EE-19)", () => {

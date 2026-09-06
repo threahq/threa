@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { render, screen, userEvent } from "@/test"
-import type { BoardView } from "@threa/types"
+import type { BoardView } from "@threahq/types"
 import * as Contexts from "@/contexts"
 import * as BoardViewsHooks from "@/hooks/use-board-views"
 import * as ConversationsHooks from "@/hooks/use-conversations"

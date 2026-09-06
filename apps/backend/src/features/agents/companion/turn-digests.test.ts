@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { TurnDigestStepContent } from "@threa/types"
+import type { TurnDigestStepContent } from "@threahq/types"
 import type { AgentSessionStep, RecentDigestStep } from "../session-repository"
 import { buildTurnDigestPromptBlock } from "./turn-digests"
 

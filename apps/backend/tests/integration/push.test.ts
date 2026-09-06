@@ -10,7 +10,7 @@ import {
   StreamTypes,
   type PrefNotificationLevel,
   type StreamType,
-} from "@threa/types"
+} from "@threahq/types"
 import type { ActivityCreatedOutboxPayload } from "../../src/lib/outbox"
 
 // Stub web-push to avoid real HTTP calls

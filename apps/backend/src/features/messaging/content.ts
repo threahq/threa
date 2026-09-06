@@ -1,5 +1,5 @@
-import { serializeToMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import { serializeToMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
 import { normalizeMessage } from "../emoji"
 
 /**

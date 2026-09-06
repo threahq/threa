@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { StreamTypes, type StreamType } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { createMockStream } from "@/test/fixtures"
 import { isPostableStream } from "@/lib/board-post-target"

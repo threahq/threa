@@ -7,8 +7,8 @@ import {
   sealMessage,
   buildMessageAad,
   wrapStreamKey,
-} from "@threa/crypto"
-import type { SealedReply, EnclaveSessionAssignment, EnclaveSessionResult } from "@threa/types"
+} from "@threahq/crypto"
+import type { SealedReply, EnclaveSessionAssignment, EnclaveSessionResult } from "@threahq/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import type { BackendCallbacks } from "./backend-callbacks"

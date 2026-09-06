@@ -1,5 +1,5 @@
 import type { Querier } from "../../../db"
-import { LinkPreviewStatuses, type AttachmentSummary } from "@threa/types"
+import { LinkPreviewStatuses, type AttachmentSummary } from "@threahq/types"
 import { AttachmentRepository } from "../../attachments"
 import { LinkPreviewRepository, renderLinkPreviewContext } from "../../link-previews"
 import type { Message } from "../../messaging"

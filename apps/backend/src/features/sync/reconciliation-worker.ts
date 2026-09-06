@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { Ticker } from "@threa/backend-common"
+import { Ticker } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
 import { resolveDeliveryGroups, emitToGroups, type OutboxEvent } from "../../lib/outbox"
 import { SyncLogRepository, type SyncLogEntryInput } from "./repository"

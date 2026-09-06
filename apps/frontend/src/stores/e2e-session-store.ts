@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { clearAllDecrypted } from "@/lib/crypto/decrypted-cache"
-import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
+import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
 import { unwrapPrivateKeyFromDevice, wrapPrivateKeyForDevice } from "@/lib/crypto/device-wrap-key"
 import {

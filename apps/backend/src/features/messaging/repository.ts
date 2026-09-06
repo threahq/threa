@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { AuthorType, ConversationIntent, JSONContent } from "@threa/types"
+import type { AuthorType, ConversationIntent, JSONContent } from "@threahq/types"
 import { detectSearchConfig } from "../../lib/text-search-config"
 import type { MoveEventSequenceUpdate } from "../streams"
 

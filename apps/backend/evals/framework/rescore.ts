@@ -19,7 +19,7 @@
  */
 
 import type { EvalSuite, EvalContext, CaseResult, SuiteResult, PermutationResult } from "./types"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { createUsageAccumulator } from "./types"
 import { createEvalAI, createUsageTrackingAI, printSummary } from "./runner"
 import type { Pool } from "pg"

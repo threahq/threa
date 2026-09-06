@@ -1,5 +1,5 @@
-import { sliceContent } from "@threa/prosemirror"
-import type { ContentRange, JSONContent } from "@threa/types"
+import { sliceContent } from "@threahq/prosemirror"
+import type { ContentRange, JSONContent } from "@threahq/types"
 
 import { deriveContentMarkdown } from "../content"
 

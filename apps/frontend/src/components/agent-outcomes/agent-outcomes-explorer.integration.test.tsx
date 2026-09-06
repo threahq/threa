@@ -1,4 +1,4 @@
-import type { AgentOutcomeSummary, ListAgentOutcomesResponse } from "@threa/types"
+import type { AgentOutcomeSummary, ListAgentOutcomesResponse } from "@threahq/types"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"

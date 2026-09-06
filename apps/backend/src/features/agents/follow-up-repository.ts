@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { FollowUpStatuses, type FollowUpStatus } from "@threa/types"
+import { FollowUpStatuses, type FollowUpStatus } from "@threahq/types"
 
 interface AgentFollowUpRow {
   id: string

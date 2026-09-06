@@ -31,7 +31,7 @@ import {
   type StreamType,
   type NotificationLevel,
   type Visibility,
-} from "@threa/types"
+} from "@threahq/types"
 import { toast } from "sonner"
 
 interface GeneralTabProps {

@@ -1,4 +1,4 @@
-import { authLogId, type Querier } from "@threa/backend-common"
+import { authLogId, type Querier } from "@threahq/backend-common"
 import type { AuthLogRowInput } from "./mapper"
 
 export const AuthLogRepository = {

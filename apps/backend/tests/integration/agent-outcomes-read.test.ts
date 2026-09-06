@@ -28,7 +28,7 @@ import {
   type DelegationStatus,
   type FollowUpStatus,
   type SubagentStatus,
-} from "@threa/types"
+} from "@threahq/types"
 
 let pool: Pool
 

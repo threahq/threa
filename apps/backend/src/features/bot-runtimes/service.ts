@@ -10,7 +10,7 @@ import {
   MemoryModes,
   StreamTypes,
   type MemoryMode,
-} from "@threa/types"
+} from "@threahq/types"
 import type {
   BotInvocationCapability,
   BotInvocationTrigger,
@@ -18,7 +18,7 @@ import type {
   BotRuntimeManifest,
   BotRuntimeStatus,
   BotTrait,
-} from "@threa/types"
+} from "@threahq/types"
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
@@ -30,7 +30,7 @@ import {
   streamActiveActorId,
 } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import { HttpError, serializeBigInt } from "@threa/backend-common"
+import { HttpError, serializeBigInt } from "@threahq/backend-common"
 import {
   BOT_CLAIM_MAX_ATTEMPTS,
   BotInvocationRepository,

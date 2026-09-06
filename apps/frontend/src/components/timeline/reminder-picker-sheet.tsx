@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Bell, BellOff, Calendar as CalendarIcon, ChevronLeft, Clock } from "lucide-react"
 import { toast } from "sonner"
-import type { SavedMessageView } from "@threa/types"
+import type { SavedMessageView } from "@threahq/types"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"

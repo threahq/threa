@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import { db } from "@/db"
-import { sharedMessageSlotKey, type SharedMessageSlot, type SlotMap } from "@threa/types"
+import { sharedMessageSlotKey, type SharedMessageSlot, type SlotMap } from "@threahq/types"
 import { writeSlotCarrier, deleteStreamSlots, deleteSlotsForStreams } from "./slot-store"
 
 function slot(messageId: string, contentMarkdown = "body"): SharedMessageSlot {

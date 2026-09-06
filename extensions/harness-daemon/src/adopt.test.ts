@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { HarnessLink } from "@threa/harness-client"
+import type { HarnessLink } from "@threahq/harness-client"
 import { adoptClaudeSessionUnlocked, type AdoptDeps, type AdoptOptions } from "./adopt"
 import { acceptClaudeBootPrompts } from "./claude-boot"
 import {

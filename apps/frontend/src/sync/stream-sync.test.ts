@@ -22,7 +22,7 @@ import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { applyStreamReadOrdinal } from "./unread-counters"
-import { sharedMessageSlotKey } from "@threa/types"
+import { sharedMessageSlotKey } from "@threahq/types"
 import {
   __resetAgentActivityStore,
   getAgentActivityForStream,
@@ -41,7 +41,7 @@ import type {
   StreamMember,
   ThreadSummary,
   WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 
 // With fake-indexeddb loaded in test setup, Dexie works against a real
 // in-memory IndexedDB. No mocks needed — tests exercise actual queries.

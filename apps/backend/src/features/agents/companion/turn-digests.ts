@@ -3,7 +3,7 @@ import {
   formatTurnDigestsForPrompt,
   parseTurnDigestStepContent,
   type TurnDigestPromptEntry,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import type { Querier } from "../../../db"
 import { AgentSessionRepository, type RecentDigestStep } from "../session-repository"
 

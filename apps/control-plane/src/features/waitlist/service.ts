@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { waitlistId, logger } from "@threa/backend-common"
+import { waitlistId, logger } from "@threahq/backend-common"
 import { WaitlistRepository } from "./repository"
 import type { WaitlistEmailSender } from "./email"
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD } from "@threa/types"
+import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD } from "@threahq/types"
 import { db } from "@/db"
 import { BlockquoteBlock } from "./blockquote-block"
 import { MarkdownBlockProvider, composeBlockCollapseKey, hashMarkdownBlock } from "./markdown-block-context"

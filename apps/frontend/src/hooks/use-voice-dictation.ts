@@ -8,10 +8,10 @@ import {
   type VoiceTranscriptDelta,
   type VoiceTranscriptPolished,
   type VoiceTranscriptReplacementV4,
-} from "@threa/types"
+} from "@threahq/types"
 import { voiceApi } from "@/api/voice"
-import { parseMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { useDictationCoordinator, isDictationExternalHeld } from "@/contexts"
 

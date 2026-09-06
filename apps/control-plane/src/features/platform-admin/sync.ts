@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger, OutboxRepository, type Querier } from "@threa/backend-common"
+import { logger, OutboxRepository, type Querier } from "@threahq/backend-common"
 import { PlatformRoleRepository } from "../backoffice"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import type { RegionalClient } from "../../lib/regional-client"

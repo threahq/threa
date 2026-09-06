@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ENCLAVE_NAMING_CHECKPOINTS, type EnclaveNamingInstruction } from "@threa/types"
+import { ENCLAVE_NAMING_CHECKPOINTS, type EnclaveNamingInstruction } from "@threahq/types"
 import type { RawChatFn } from "../llm"
 
 const MAX_TITLE_CHARS = 60

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { z } from "zod"
-import { AuthorTypes, type DelegationSummary, type ListDelegationsResponse } from "@threa/types"
+import { AuthorTypes, type DelegationSummary, type ListDelegationsResponse } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { checkStreamAccess } from "../streams"

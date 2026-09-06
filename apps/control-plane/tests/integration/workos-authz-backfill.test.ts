@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { StubWorkosOrgService } from "@threa/backend-common"
+import { StubWorkosOrgService } from "@threahq/backend-common"
 import {
   OUTBOX_AUTHZ_MEMBERSHIP_CHANGED,
   OUTBOX_AUTHZ_MEMBERSHIP_REMOVED,

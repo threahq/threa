@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { LabelActorTypes, LabelableResourceTypes, type LabelAssignment } from "@threa/types"
+import { LabelActorTypes, LabelableResourceTypes, type LabelAssignment } from "@threahq/types"
 import { LabelMessageService } from "./label-message-service"
 import { LabelAssignmentRepository } from "./repository"
 import { MessageRepository, type Message } from "../messaging"

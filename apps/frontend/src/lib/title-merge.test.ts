@@ -5,7 +5,7 @@ import {
   persistStreamByTitleRevision,
 } from "./title-merge"
 import { db } from "@/db"
-import type { ConversationWithStaleness, Stream } from "@threa/types"
+import type { ConversationWithStaleness, Stream } from "@threahq/types"
 
 const stream = (revision: number): Stream =>
   ({

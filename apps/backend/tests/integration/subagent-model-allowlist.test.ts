@@ -12,8 +12,8 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { createModelRegistry, type ModelRegistry } from "@threa/agent-runtime"
-import { DEFAULT_SUBAGENT_MODELS } from "@threa/types"
+import { createModelRegistry, type ModelRegistry } from "@threahq/agent-runtime"
+import { DEFAULT_SUBAGENT_MODELS } from "@threahq/types"
 import { createStartSubagentTool } from "../../src/features/agents/tools"
 import { StreamEventRepository } from "../../src/features/streams"
 import { SubagentService, startSubagent, resolveSubagentModels } from "../../src/features/subagents"

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { StreamTypes, type StreamEvent } from "@threa/types"
+import { StreamTypes, type StreamEvent } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"

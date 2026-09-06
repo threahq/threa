@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { WorkosEvent } from "@threa/backend-common"
+import type { WorkosEvent } from "@threahq/backend-common"
 import { mapWorkosEventToAuthLogRow } from "../../src/features/auth-log"
 
 function event(partial: { id: string; event: string; createdAt?: string; data: Record<string, unknown> }): WorkosEvent {

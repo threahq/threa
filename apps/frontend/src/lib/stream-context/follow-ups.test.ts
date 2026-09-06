@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { AgentOutcomeSummary } from "@threa/types"
+import type { AgentOutcomeSummary } from "@threahq/types"
 import { followUpContextItems, withFollowUps } from "./follow-ups"
 import type { DerivedStreamContext, LinkContextItem } from "./types"
 

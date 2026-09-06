@@ -1,4 +1,4 @@
-import type { ScheduledMessageView } from "@threa/types"
+import type { ScheduledMessageView } from "@threahq/types"
 import type { ScheduledMessage } from "./repository"
 
 /**

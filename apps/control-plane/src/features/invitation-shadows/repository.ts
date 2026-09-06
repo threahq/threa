@@ -1,5 +1,5 @@
-import type { Querier } from "@threa/backend-common"
-import type { InvitationStatus, WorkspaceInvitableRole } from "@threa/types"
+import type { Querier } from "@threahq/backend-common"
+import type { InvitationStatus, WorkspaceInvitableRole } from "@threahq/types"
 
 export interface InvitationShadowRow {
   id: string

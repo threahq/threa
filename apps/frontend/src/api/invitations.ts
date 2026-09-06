@@ -10,7 +10,7 @@ import type {
   InvitationLinkLookupResponse,
   ClaimInvitationLinkInput,
   ClaimInvitationLinkResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 export const INVITATION_ERROR_CODES = {
   NOT_FOUND: "INVITATION_NOT_FOUND",

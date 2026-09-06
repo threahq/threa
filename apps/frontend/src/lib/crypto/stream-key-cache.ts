@@ -5,8 +5,8 @@ import {
   generateStreamKey,
   unwrapStreamKey,
   wrapStreamKey,
-} from "@threa/crypto"
-import type { E2eKeyRollRecipient, E2eKeyWrapsResponse } from "@threa/types"
+} from "@threahq/crypto"
+import type { E2eKeyRollRecipient, E2eKeyWrapsResponse } from "@threahq/types"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 import { registerDecryptedCache } from "./decrypted-cache"
 

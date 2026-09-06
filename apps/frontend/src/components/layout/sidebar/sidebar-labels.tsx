@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import { LabelableResourceTypes } from "@threa/types"
+import { LabelableResourceTypes } from "@threahq/types"
 import { useWorkspaceLabels, useWorkspaceLabelAssignments } from "@/stores/workspace-store"
 import { LabelGlyph } from "@/components/labels/label-chip"
 import type { CachedLabel } from "@/hooks"

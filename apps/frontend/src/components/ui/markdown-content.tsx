@@ -1,7 +1,7 @@
 import { memo, useMemo, type ReactNode } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { normalizeMarkdownTables, parseMentionPointerHref } from "@threa/prosemirror"
+import { normalizeMarkdownTables, parseMentionPointerHref } from "@threahq/prosemirror"
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"

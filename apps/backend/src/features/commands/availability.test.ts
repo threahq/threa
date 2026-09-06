@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { ASIDE_COMMAND, type CommandInfo, type StreamType } from "@threa/types"
+import { ASIDE_COMMAND, type CommandInfo, type StreamType } from "@threahq/types"
 import type { BotRuntimeInstance } from "../bot-runtimes"
 import type { Stream } from "../streams"
 import {

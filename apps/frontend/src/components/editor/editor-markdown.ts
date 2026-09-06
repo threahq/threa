@@ -1,7 +1,7 @@
 /**
  * Markdown ↔ ProseMirror JSON shim for the TipTap editor.
  *
- * The actual serializer / parser lives in `@threa/prosemirror`, shared with
+ * The actual serializer / parser lives in `@threahq/prosemirror`, shared with
  * the backend (AI agents, external integrators) so both sides agree on the
  * wire format. This file re-exports those entry points under the names the
  * editor's internals already use, plus the `ParseMarkdownOptions` flags
@@ -9,8 +9,8 @@
  * dispatching a slash command). The parsers stay unified so the two sides
  * can't drift.
  */
-import { parseMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
 
 export {
   serializeToMarkdown,
@@ -19,7 +19,7 @@ export {
   type MentionTypeLookup,
   type EmojiLookup,
   type ParseMarkdownOptions,
-} from "@threa/prosemirror"
+} from "@threahq/prosemirror"
 
 /**
  * Parse a standing-prompt markdown string (scratchpad custom prompt, persona

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, STREAM_TYPES, StreamTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, STREAM_TYPES, StreamTypes } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { searchDmStreamsByParticipant, StreamRepository } from "../../streams"
 import { SearchRepository } from "../../search"

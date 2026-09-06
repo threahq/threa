@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest"
-import type { StreamType } from "@threa/types"
+import type { StreamType } from "@threahq/types"
 import { getStreamName, streamFallbackLabel } from "@/lib/streams"
 import { getThreadRootContext } from "./breadcrumb-helpers"
 

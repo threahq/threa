@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ContextIntents, ContextRefKinds } from "@threa/types"
+import { ContextIntents, ContextRefKinds } from "@threahq/types"
 import { DiscussThreadIntent } from "./discuss-thread"
 import { renderStable } from "../render"
 import type { RenderableMessage } from "../types"

@@ -1,7 +1,7 @@
 import { useCallback } from "react"
 import { db } from "@/db"
 import type { DraftAttachment } from "@/db/database"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { generateDraftId } from "@/hooks/use-draft-scratchpads"
 import { getDraftMessageKey, upsertLoadedDraft } from "@/hooks/use-draft-message"
 import { attachmentsApi } from "@/api/attachments"

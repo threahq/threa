@@ -18,7 +18,7 @@ import type {
   SplitProposal,
 } from "./boundary-extraction/types"
 import { HttpError } from "../../lib/errors"
-import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
+import { collectQuoteReplyMessageIds } from "@threahq/prosemirror"
 import { addStalenessFields } from "./staleness"
 import { MessageConversationStateRepository } from "./settling-repository"
 import { SETTLING_CONFIDENCE_THRESHOLD } from "./boundary-extraction/config"
@@ -33,7 +33,7 @@ import {
   StreamTypes,
   THREAD_ANCHORABLE_EVENT_TYPES,
   TitleSources,
-} from "@threa/types"
+} from "@threahq/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5

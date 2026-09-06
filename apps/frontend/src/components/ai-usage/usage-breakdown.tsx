@@ -3,7 +3,7 @@ import { Bot, Cog } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { AIUsageByUser } from "@threa/types"
+import type { AIUsageByUser } from "@threahq/types"
 import { formatCurrency } from "./metrics"
 import { SectionLabel } from "./primitives"
 

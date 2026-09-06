@@ -1,6 +1,6 @@
 import { ulid } from "ulid"
-import { parseMarkdown } from "@threa/prosemirror"
-import type { VoicePolishLevel, VoiceReplacementAckStatus } from "@threa/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import type { VoicePolishLevel, VoiceReplacementAckStatus } from "@threahq/types"
 import { VOICE_POLISH_WIDEN_MAX_WINDOWS, VOICE_POLISH_WINDOW_MAX_CHARS, voicePolishConfig } from "./config"
 import { IncrementalVoiceEngine, scalarLength, type VoicePolishWindow } from "./incremental-engine"
 import type { PolishOutcome, PolishTranscript } from "./polish"

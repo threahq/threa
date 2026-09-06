@@ -1,5 +1,5 @@
 import { useRef, useCallback, useMemo } from "react"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import type { EditLastMessageContextValue } from "@/components/timeline/edit-last-message-context"
 
 /**

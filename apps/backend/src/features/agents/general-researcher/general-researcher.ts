@@ -1,9 +1,9 @@
-import type { AI, CostContext } from "@threa/agent-runtime"
+import type { AI, CostContext } from "@threahq/agent-runtime"
 import { runGeneralResearch, type AgentTool, type GeneralResearchResult } from "../runtime"
 import { COMPONENT_PATHS, type ConfigResolver, type GeneralResearcherConfig } from "../../../lib/ai/config-resolver"
 import { GENERAL_RESEARCH_MODEL_ID } from "./config"
 
-export type { GeneralResearchResult, GeneralResearchSubstep } from "@threa/agent-runtime"
+export type { GeneralResearchResult, GeneralResearchSubstep } from "@threahq/agent-runtime"
 
 export interface GeneralResearchInput {
   workspaceId: string
@@ -42,7 +42,7 @@ export interface GeneralResearcherDeps {
 /**
  * Backend adapter over the shared {@link runGeneralResearch} loop.
  *
- * The runtime-agnostic research loop lives in `@threa/agent-runtime` (so the
+ * The runtime-agnostic research loop lives in `@threahq/agent-runtime` (so the
  * enclave can run the same code next to decrypted plaintext); this class is the
  * backend's binding: it resolves the overridable model/temperature/iterations
  * through the ConfigResolver, materialises the model + telemetry off the full

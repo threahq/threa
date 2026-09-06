@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import * as contextsModule from "@/contexts"
 import { LinkPreviewList } from "./link-preview-list"
-import type { LinkPreviewSummary } from "@threa/types"
+import type { LinkPreviewSummary } from "@threahq/types"
 
 function renderList(previews: LinkPreviewSummary[]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

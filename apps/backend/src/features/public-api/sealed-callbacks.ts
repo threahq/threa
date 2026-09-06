@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
-import { HttpError } from "@threa/backend-common"
-import type { AgentStepType } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import type { AgentStepType } from "@threahq/types"
 import { withTransaction } from "../../db"
 import {
   AgentSessionRepository,

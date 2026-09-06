@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Plus } from "lucide-react"
-import { PERSONA_NAME_MAX_CHARS, type PersonaListItem } from "@threa/types"
+import { PERSONA_NAME_MAX_CHARS, type PersonaListItem } from "@threahq/types"
 import {
   Dialog,
   DialogClose,

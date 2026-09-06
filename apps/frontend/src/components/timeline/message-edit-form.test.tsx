@@ -7,10 +7,10 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as drawerModule from "@/components/ui/drawer"
 import * as editorModule from "@/components/editor"
-import * as prosemirrorModule from "@threa/prosemirror"
+import * as prosemirrorModule from "@threahq/prosemirror"
 import * as contextsModule from "@/contexts"
 import { MessageEditForm } from "./message-edit-form"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 let inputModeMockValue: inputModeModule.InputMode = "mouse"
 

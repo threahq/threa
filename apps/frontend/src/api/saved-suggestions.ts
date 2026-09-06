@@ -4,7 +4,7 @@ import type {
   SavedSuggestionListResponse,
   SavedSuggestionStatus,
   AcceptSavedSuggestionResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 export interface ListSuggestionsParams {
   status: SavedSuggestionStatus

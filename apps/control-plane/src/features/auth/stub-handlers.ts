@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import { HttpError, renderLoginPage, type SessionCookies, type StubAuthService } from "@threa/backend-common"
+import { HttpError, renderLoginPage, type SessionCookies, type StubAuthService } from "@threahq/backend-common"
 import type { AccountsService } from "../accounts"
 import { parseCallbackState, splitInnerState } from "./callback-state"
 

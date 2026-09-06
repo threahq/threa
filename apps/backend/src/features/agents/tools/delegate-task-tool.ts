@@ -6,7 +6,7 @@ import {
   DELEGATION_CONTEXT_REFS_MAX,
   DELEGATION_TITLE_MAX_CHARS,
   TOOL_CATEGORIES_BY_NAME,
-} from "@threa/types"
+} from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { DelegateTaskToolDeps } from "./tool-deps"

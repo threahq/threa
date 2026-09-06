@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { AgentTriggers, type AgentSessionRerunContext } from "@threa/types"
+import { AgentTriggers, type AgentSessionRerunContext } from "@threahq/types"
 import { resolveTurnPurpose, deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
 
 describe("resolveTurnPurpose", () => {

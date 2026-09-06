@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { Visibilities } from "@threa/types"
+import { Visibilities } from "@threahq/types"
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"

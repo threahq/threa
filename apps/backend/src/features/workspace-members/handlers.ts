@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
-import { WORKSPACE_USER_ROLES } from "@threa/types"
+import { WORKSPACE_USER_ROLES } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import type { ControlPlaneClient } from "../../lib/control-plane-client"
 import { UserRepository } from "../workspaces"

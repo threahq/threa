@@ -1,4 +1,4 @@
-import type { GiphyGif } from "@threa/types"
+import type { GiphyGif } from "@threahq/types"
 import type { GiphyConfig } from "../../lib/env"
 import { GiphyClient } from "./client"
 

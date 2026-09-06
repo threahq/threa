@@ -7,7 +7,7 @@ import type {
   Message,
   BoardPost,
   BoardPostMessage,
-} from "@threa/types"
+} from "@threahq/types"
 import type { ReadStateSnapshot } from "@/sync/read-state"
 
 export interface ListConversationsParams {

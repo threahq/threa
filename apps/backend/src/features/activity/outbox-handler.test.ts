@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { OutboxRepository } from "../../lib/outbox"
-import * as cursorLockModule from "@threa/backend-common"
+import * as cursorLockModule from "@threahq/backend-common"
 import * as dbModule from "../../db"
 import { ActivityFeedHandler } from "./outbox-handler"
 import type { ActivityService } from "./service"
 import { ActivityRepository } from "./repository"
-import type { ProcessResult } from "@threa/backend-common"
-import { AuthorTypes } from "@threa/types"
+import type { ProcessResult } from "@threahq/backend-common"
+import { AuthorTypes } from "@threahq/types"
 import { E2eStreamsRepository } from "../e2e-streams"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {

@@ -1,5 +1,5 @@
 import { useLiveQuery } from "dexie-react-hooks"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { db, type CachedEvent } from "@/db"
 
 /**

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import type { PerformanceCapture } from "@threa/types"
+import type { PerformanceCapture } from "@threahq/types"
 import { sendPerfCapture } from "./perf-diagnostics"
 import { ApiError } from "./client"
 

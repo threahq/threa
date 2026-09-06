@@ -5,7 +5,7 @@ import type {
   JsonStructure,
   CsvStructure,
   CodeStructure,
-} from "@threa/types"
+} from "@threahq/types"
 
 export interface ParseResult {
   format: TextFormat

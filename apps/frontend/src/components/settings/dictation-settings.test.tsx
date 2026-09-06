@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { DictationSettings } from "./dictation-settings"
-import type { VoicePolishLevel } from "@threa/types"
+import type { VoicePolishLevel } from "@threahq/types"
 import * as contextsModule from "@/contexts"
 
 const updatePreferenceMock = vi.fn().mockResolvedValue(undefined)

@@ -1,4 +1,4 @@
-# @threa/cli
+# @threahq/cli
 
 `threa` is a command-line client for one Threa workspace. It wraps Threa's public REST API so any local agent or script gets workspace access with one API key: read and search streams, users, messages, conversations, memos, and attachments; send, edit, and delete messages; manage labels; and run the delegation lifecycle end to end.
 

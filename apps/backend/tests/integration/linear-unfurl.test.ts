@@ -9,7 +9,7 @@ import {
 import { fetchLinearPreview } from "../../src/features/link-previews/linear-preview"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { workspaceId as makeWorkspaceId } from "../../src/lib/id"
-import { WorkspaceIntegrationProviders, WorkspaceIntegrationStatuses } from "@threa/types"
+import { WorkspaceIntegrationProviders, WorkspaceIntegrationStatuses } from "@threahq/types"
 
 /**
  * End-to-end happy path for Linear URL unfurling.

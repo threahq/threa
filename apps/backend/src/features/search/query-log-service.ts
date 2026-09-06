@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { HttpError } from "@threa/backend-common"
-import type { SearchClickKind } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import type { SearchClickKind } from "@threahq/types"
 import { searchQueryLogId } from "../../lib/id"
 import { SearchQueryLogRepository, type InsertSearchQueryLogInput } from "./query-log-repository"
 

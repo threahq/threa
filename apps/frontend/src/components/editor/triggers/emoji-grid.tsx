@@ -12,7 +12,7 @@ import {
   type GridGeometry,
 } from "@/lib/emoji-picker"
 import { useEmojiListFit } from "@/hooks/use-emoji-list-fit"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 import type { SuggestionListRef } from "./suggestion-list"
 
 const VirtuosoPadding = () => <div className="h-2" />

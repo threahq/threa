@@ -4,7 +4,7 @@ import type {
   DelegationStatus,
   FollowUpStatus,
   SubagentStatus,
-} from "@threa/types"
+} from "@threahq/types"
 import { composeSql, type Querier } from "../../db"
 import { KEYSET_EPOCH, type KeysetCursor } from "../../lib/keyset-cursor"
 import { streamAccessPredicateSql } from "../streams"

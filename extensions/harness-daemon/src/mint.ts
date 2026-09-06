@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { readHarnessLinks, type HarnessLink } from "@threa/harness-client"
+import { readHarnessLinks, type HarnessLink } from "@threahq/harness-client"
 import { liveClaudePidsIn } from "./claude-registry"
 import {
   attestedRuntimes,

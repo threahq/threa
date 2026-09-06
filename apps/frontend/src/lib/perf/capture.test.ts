@@ -1,4 +1,4 @@
-import { PERF_CAPTURE_MAX_SAMPLES } from "@threa/types"
+import { PERF_CAPTURE_MAX_SAMPLES } from "@threahq/types"
 import { describe, expect, it } from "vitest"
 import { PerfCapture } from "./capture"
 

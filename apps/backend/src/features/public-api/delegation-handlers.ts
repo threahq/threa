@@ -7,9 +7,9 @@ import {
   THREA_CALLBACK_TOKEN_HEADER,
   sentViaApiKey,
   type AuthorType,
-} from "@threa/types"
-import { HttpError } from "@threa/backend-common"
-import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
+} from "@threahq/types"
+import { HttpError } from "@threahq/backend-common"
+import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { withTransaction } from "../../db"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"

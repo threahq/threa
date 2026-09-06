@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg"
-import { STREAM_BRIEF_MAX_CHARS, type BriefUpdatedEventPayload } from "@threa/types"
+import { STREAM_BRIEF_MAX_CHARS, type BriefUpdatedEventPayload } from "@threahq/types"
 import { streamBriefId, streamBriefRevisionId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -12,7 +12,7 @@ import { StreamBriefRepository, type BriefAuthorKind, type StreamBrief } from ".
 /**
  * The cap is enforced here (not only in the endpoint's Zod schema) so the agent
  * tool path (roadmap 4.2) hits the same wall. Re-exported so existing importers
- * keep their `./brief-service` source; the value lives in `@threa/types` (INV-33).
+ * keep their `./brief-service` source; the value lives in `@threahq/types` (INV-33).
  */
 export { STREAM_BRIEF_MAX_CHARS }
 

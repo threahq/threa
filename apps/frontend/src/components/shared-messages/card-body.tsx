@@ -6,7 +6,7 @@ import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-co
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import { type SharedMessageSource } from "@/hooks/use-shared-message-source"
 import { streamFallbackLabel } from "@/lib/streams"
-import type { StreamType, Visibility } from "@threa/types"
+import type { StreamType, Visibility } from "@threahq/types"
 
 /**
  * Body renderer shared between the two pointer-card surfaces:

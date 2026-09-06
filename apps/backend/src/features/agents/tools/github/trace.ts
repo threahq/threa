@@ -1,4 +1,4 @@
-import type { SourceItem, TraceSource } from "@threa/types"
+import type { SourceItem, TraceSource } from "@threahq/types"
 
 /**
  * Convert SourceItem[] attached to a tool result into TraceSource[] for the session trace.

@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import { AttachmentUploadStatuses, type AttachmentUploadStatus } from "@threa/types"
+import { AttachmentUploadStatuses, type AttachmentUploadStatus } from "@threahq/types"
 
 interface AttachmentUploadRow {
   id: string

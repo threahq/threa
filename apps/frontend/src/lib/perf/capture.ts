@@ -1,4 +1,4 @@
-import { PERF_CAPTURE_MAX_SAMPLES, type PerfMarkName, type PerformanceSample } from "@threa/types"
+import { PERF_CAPTURE_MAX_SAMPLES, type PerfMarkName, type PerformanceSample } from "@threahq/types"
 
 const CAPTURE_STORAGE_KEY = "threa:perf:capture"
 const PINNED_MAX = 48

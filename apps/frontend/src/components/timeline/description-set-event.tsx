@@ -3,7 +3,7 @@ import {
   type AuthorType,
   type DescriptionSetEventPayload,
   type StreamEvent,
-} from "@threa/types"
+} from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { useActors } from "@/hooks"
 import { useUserProfile } from "@/components/user-profile"

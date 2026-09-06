@@ -8,7 +8,7 @@ import {
   SUBAGENT_MODEL_CATALOG,
   type WorkspaceBootstrap,
   type WorkspaceSettings,
-} from "@threa/types"
+} from "@threahq/types"
 import * as contextsModule from "@/contexts"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { PersonalSubagentModelsSection } from "./subagent-models-settings"

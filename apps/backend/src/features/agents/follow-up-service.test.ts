@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import { AuthorTypes, FollowUpStatuses } from "@threa/types"
+import { AuthorTypes, FollowUpStatuses } from "@threahq/types"
 import { AgentFollowUpService } from "./follow-up-service"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 import { JobQueues, QueueRepository } from "../../lib/queue"

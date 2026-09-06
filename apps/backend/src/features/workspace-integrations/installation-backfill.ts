@@ -1,6 +1,6 @@
 import { sql } from "../../db"
 import { registerBackfill, type BackfillContext } from "../../lib/backfill"
-import { WorkspaceIntegrationProviders, WorkspaceIntegrationStatuses } from "@threa/types"
+import { WorkspaceIntegrationProviders, WorkspaceIntegrationStatuses } from "@threahq/types"
 import type { WorkspaceIntegrationService } from "./service"
 
 export const GITHUB_INSTALLATION_BACKFILL_NAME = "github-installation-routes"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { generateStreamKey, openMessageAsString, parseSealedPayload } from "@threa/crypto"
-import type { SealedStep, SealedStepStart, EnclaveSealedSubstep } from "@threa/types"
+import { generateStreamKey, openMessageAsString, parseSealedPayload } from "@threahq/crypto"
+import type { SealedStep, SealedStepStart, EnclaveSealedSubstep } from "@threahq/types"
 import { EnclaveTraceObserver } from "./trace-observer"
 
 const STREAM_ID = "stream_x"

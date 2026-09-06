@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
-import { FollowUpStatuses } from "@threa/types"
+import { FollowUpStatuses } from "@threahq/types"
 import { AgentFollowUpRepository } from "./follow-up-repository"
 
 const NOW = new Date("2026-07-02T12:00:00.000Z")

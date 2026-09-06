@@ -1,4 +1,4 @@
-import { logger, loadPostHogConfig, type WorkosConfig, type PostHogConfig } from "@threa/backend-common"
+import { logger, loadPostHogConfig, type WorkosConfig, type PostHogConfig } from "@threahq/backend-common"
 
 export interface RegionConfig {
   internalUrl: string

@@ -1,4 +1,4 @@
-import { ExtractionContentTypes, type ExtractionContentType } from "@threa/types"
+import { ExtractionContentTypes, type ExtractionContentType } from "@threahq/types"
 
 /**
  * Content types whose AI-generated summary is too generic to make embedding

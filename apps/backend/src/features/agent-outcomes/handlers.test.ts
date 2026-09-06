@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Request, Response } from "express"
-import type { ListAgentOutcomesResponse } from "@threa/types"
+import type { ListAgentOutcomesResponse } from "@threahq/types"
 import { createAgentOutcomeHandlers } from "./handlers"
 import type { AgentOutcomeService, ListAgentOutcomesParams } from "./service"
 

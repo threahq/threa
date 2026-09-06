@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 import { useDraftComposer } from "./use-draft-composer"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import * as useDraftMessageModule from "./use-draft-message"
 import * as useAttachmentsModule from "./use-attachments"
 import { markDraftMigrated, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"

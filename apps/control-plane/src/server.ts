@@ -20,7 +20,7 @@ import {
   type OutboxEvent,
   type ProcessResult,
   type AnalyticsReporter,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 import type { Pool } from "pg"
 import path from "path"
 import { createApp } from "./app"

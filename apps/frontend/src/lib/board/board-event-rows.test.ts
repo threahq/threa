@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { BOARD_EVENT_ROW_TYPES, EVENT_TYPES, STREAM_ROW_SPEC, type EventType } from "@threa/types"
+import { BOARD_EVENT_ROW_TYPES, EVENT_TYPES, STREAM_ROW_SPEC, type EventType } from "@threahq/types"
 import type { CachedEvent } from "@/db"
 import { BOARD_RAIL_EVENT_TYPES } from "./board-rail-event-types"
 import { resolveBoardEventRows } from "./board-event-rows"

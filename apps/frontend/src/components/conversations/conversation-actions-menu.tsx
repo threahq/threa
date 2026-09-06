@@ -16,7 +16,7 @@ import {
   isAsideHostType,
   type Stream,
   type TitleSource,
-} from "@threa/types"
+} from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,

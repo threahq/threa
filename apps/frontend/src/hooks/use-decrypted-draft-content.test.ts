@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import type { CachedDraft } from "@/db"
 import { useDecryptedDraftContent } from "./use-decrypted-draft-content"
 import { requestDecryption, seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"

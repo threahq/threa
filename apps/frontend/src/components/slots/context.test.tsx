@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { renderHook } from "@testing-library/react"
-import { sharedMessageSlotKey, type SlotMap } from "@threa/types"
+import { sharedMessageSlotKey, type SlotMap } from "@threahq/types"
 import { SlotsProvider, useSharedMessageSlot } from "./context"
 
 const okSlot = {

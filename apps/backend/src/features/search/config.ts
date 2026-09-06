@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { FeatureFlagValue } from "@threa/types"
+import type { FeatureFlagValue } from "@threahq/types"
 import { classifyMemoQueryIntent, type MemoQueryIntent } from "../memos"
 
 /**

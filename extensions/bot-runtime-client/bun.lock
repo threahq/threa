@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@threa/bot-runtime-client",
+      "name": "@threahq/bot-runtime-client",
       "dependencies": {
         "@hpke/core": "^1.9.0",
         "@hpke/dhkem-x25519": "^1.6.0",

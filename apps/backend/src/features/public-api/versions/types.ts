@@ -1,7 +1,7 @@
 import type { OperationId } from "../routes"
-import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion } from "@threa/types"
+import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion } from "@threahq/types"
 
-// Version list lives in @threa/types so the frontend key-pin UI shares one
+// Version list lives in @threahq/types so the frontend key-pin UI shares one
 // source of truth; the change-registry machinery below stays backend-only
 // because it references OperationId.
 export { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion }

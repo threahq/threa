@@ -1,4 +1,4 @@
-import type { Draft as DraftView } from "@threa/types"
+import type { Draft as DraftView } from "@threahq/types"
 import type { Draft } from "./repository"
 
 /**

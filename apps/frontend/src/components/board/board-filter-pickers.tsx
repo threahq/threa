@@ -5,7 +5,7 @@ import {
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
   type BoardScopeStreamType,
-} from "@threa/types"
+} from "@threahq/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"

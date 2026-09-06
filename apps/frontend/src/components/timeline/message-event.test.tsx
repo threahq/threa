@@ -29,15 +29,15 @@ import {
 import { EditLastMessageContext } from "./edit-last-message-context"
 import * as editorModule from "@/components/editor"
 import * as hooksModule from "@/hooks"
-import * as prosemirrorModule from "@threa/prosemirror"
+import * as prosemirrorModule from "@threahq/prosemirror"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
 import * as authModule from "@/auth"
 import * as userProfileModule from "@/components/user-profile"
 import * as connectionStatusModule from "@/components/layout/connection-status"
 import userEvent from "@testing-library/user-event"
-import type { StreamEvent } from "@threa/types"
-import type { JSONContent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
+import type { JSONContent } from "@threahq/types"
 
 // Configurable mock state for usePendingMessages — tests can override per-describe
 let mockGetStatus: (id: string) => string | null = () => null

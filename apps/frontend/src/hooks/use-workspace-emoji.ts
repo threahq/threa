@@ -1,6 +1,6 @@
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { getWorkspaceEmojiIndexes } from "@/stores/actor-lookup"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 
 interface WorkspaceEmojiData {
   /** All available emojis in the workspace */

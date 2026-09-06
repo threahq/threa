@@ -1,4 +1,4 @@
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import type { CachedStream } from "@/stores/workspace-store"
 import type { BoardPostTarget } from "@/hooks/use-conversations"
 

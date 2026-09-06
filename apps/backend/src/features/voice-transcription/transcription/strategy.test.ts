@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { ModelRegistry } from "@threa/agent-runtime"
+import type { ModelRegistry } from "@threahq/agent-runtime"
 import { createTranscription } from "./strategy"
 
 function fakeRegistry(audioModels: Set<string>): ModelRegistry {

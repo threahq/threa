@@ -19,8 +19,8 @@ import {
   resolveMigratedDraftId,
 } from "@/sync/draft-resolution-guard"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { type JSONContent, draftStreamScope, draftThreadScope } from "@threahq/types"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { sealDraftContent, type SealedDraftFields } from "@/lib/crypto/seal-draft"

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Clock, Check, Loader2 } from "lucide-react"
-import type { AgentFollowUpScheduledEventPayload, StreamEvent } from "@threa/types"
+import type { AgentFollowUpScheduledEventPayload, StreamEvent } from "@threahq/types"
 import { Link, useSearchParams } from "react-router-dom"
 import { agentFollowUpsApi } from "@/api"
 import { outcomesSearch } from "@/components/agent-outcomes"

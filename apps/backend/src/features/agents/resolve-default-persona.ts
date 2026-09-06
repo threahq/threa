@@ -1,4 +1,4 @@
-import type { UserPreferences, WorkspaceSettings } from "@threa/types"
+import type { UserPreferences, WorkspaceSettings } from "@threahq/types"
 import type { Querier } from "../../db"
 import { UserPreferencesRepository } from "../user-preferences"
 import { WorkspaceSettingsRepository } from "../workspace-settings"

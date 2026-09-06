@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { render, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { EnclaveRewrapNeededPayload } from "@threa/types"
+import type { EnclaveRewrapNeededPayload } from "@threahq/types"
 import * as contexts from "@/contexts"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as e2eSessionStore from "@/stores/e2e-session-store"

@@ -6,7 +6,7 @@ import {
   type FeatureFlagScope,
   type FeatureFlagValue,
   type FeatureFlags,
-} from "@threa/types"
+} from "@threahq/types"
 import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"

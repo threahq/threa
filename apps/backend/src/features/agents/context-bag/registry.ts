@@ -1,4 +1,4 @@
-import { ContextIntents, ContextRefKinds, type ContextIntent, type ContextRef } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextIntent, type ContextRef } from "@threahq/types"
 import type { Querier } from "../../../db"
 import { ThreadResolver } from "./resolvers/thread-resolver"
 import { ConversationResolver } from "./resolvers/conversation-resolver"

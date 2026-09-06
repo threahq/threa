@@ -29,7 +29,7 @@
  * E2E drafts, which is the correct trade: there is no synchronous seal.
  */
 
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getPerfCapture } from "@/lib/perf/capture"
 

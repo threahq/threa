@@ -27,7 +27,7 @@ import {
   type GenerateObjectOptions,
   type GenerateTextOptions,
   type GenerateTextWithToolsOptions,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import type { UsageAccumulator } from "./types"
 import { createWorkspaceFixture, type WorkspaceFixture } from "../fixtures/workspace"
 import { loadConfigFile } from "./config-loader"

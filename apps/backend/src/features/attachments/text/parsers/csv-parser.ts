@@ -1,4 +1,4 @@
-import type { TextSection, CsvStructure } from "@threa/types"
+import type { TextSection, CsvStructure } from "@threahq/types"
 import type { ParseResult, TextParser } from "./types"
 import { buildPreview } from "./preview"
 

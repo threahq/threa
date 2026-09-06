@@ -8,7 +8,7 @@ import {
   QUICK_LINKS_SECTION_ID,
   type SidebarConfig,
   type RawSidebarConfig,
-} from "@threa/types"
+} from "@threahq/types"
 import { SidebarConfigService } from "./service"
 import { SidebarConfigRepository } from "./repository"
 import { updateSidebarConfigSchema } from "./handlers"

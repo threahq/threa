@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
 import { SavedMessagesRepository } from "./repository"
-import { SavedStatuses } from "@threa/types"
+import { SavedStatuses } from "@threahq/types"
 
 const NOW = new Date("2026-04-16T12:00:00.000Z")
 

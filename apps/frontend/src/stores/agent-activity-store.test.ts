@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest"
 import { renderHook, act } from "@testing-library/react"
-import type { ActiveAgentSession } from "@threa/types"
+import type { ActiveAgentSession } from "@threahq/types"
 import {
   seedAgentActivity,
   upsertAgentSession,

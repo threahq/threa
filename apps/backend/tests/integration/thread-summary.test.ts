@@ -21,7 +21,7 @@ import { StreamService, StreamRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { OutboxRepository, type ThreadUpdatedOutboxPayload } from "../../src/lib/outbox"
 import { userId, workspaceId } from "../../src/lib/id"
-import { Visibilities } from "@threa/types"
+import { Visibilities } from "@threahq/types"
 
 describe("Thread Summary", () => {
   let pool: Pool

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Link2, LogIn, MessageSquareReply, Phone, PhoneForwarded, Video } from "lucide-react"
 import { toast } from "sonner"
-import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent, ThreadSummary } from "@threa/types"
+import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent, ThreadSummary } from "@threahq/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useActors, useThreadDraft } from "@/hooks"
 import { useActiveCall } from "@/stores/active-calls-store"

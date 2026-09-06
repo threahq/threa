@@ -9,7 +9,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { StreamTypes, Visibilities, sharedMessageSlotKey } from "@threa/types"
+import { StreamTypes, Visibilities, sharedMessageSlotKey } from "@threahq/types"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"

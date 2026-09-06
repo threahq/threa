@@ -3,7 +3,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
 import { VoiceSteeringWords } from "./voice-steering-words"
-import { VOICE_TRANSCRIPTION_MODELS, type VoicePolishLevel } from "@threa/types"
+import { VOICE_TRANSCRIPTION_MODELS, type VoicePolishLevel } from "@threahq/types"
 
 const VOICE_POLISH_LEVEL_DESCRIPTIONS: ReadonlyArray<{
   value: VoicePolishLevel

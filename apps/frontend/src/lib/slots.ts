@@ -4,7 +4,7 @@ import {
   type SharedMessageRef,
   type SharedMessageSlot,
   type SlotMap,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * A stream-response carrier that may carry the canonical `slots` map and/or the

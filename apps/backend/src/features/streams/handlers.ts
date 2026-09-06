@@ -19,7 +19,7 @@ import type {
   E2eKeyWrapsResponse,
   ToolPrivacyPolicy,
   ToolPrivacyCategory,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   ARIADNE_PERSONA_SLUG,
   ContextIntents,
@@ -34,7 +34,7 @@ import {
   threaDocumentSchema,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   type SharedMessageRef,
-} from "@threa/types"
+} from "@threahq/types"
 import type { Pool } from "pg"
 import {
   PersonaRepository,
@@ -184,7 +184,7 @@ const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/
 
 // Sealed display name for an E2E stream: SSK-sealed ciphertext + its framing.
 // The server stores these opaque (it can't read them); the envelope shape
-// mirrors `StreamEnvelope` from @threa/crypto without importing it here.
+// mirrors `StreamEnvelope` from @threahq/crypto without importing it here.
 const sealedNameEnvelopeSchema = z.object({
   v: z.number(),
   keyGeneration: z.number().int().min(0),

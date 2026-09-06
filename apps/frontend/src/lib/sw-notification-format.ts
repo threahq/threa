@@ -1,4 +1,4 @@
-import { ActivityTypes } from "@threa/types"
+import { ActivityTypes } from "@threahq/types"
 
 /** A single message entry accumulated by the service worker for grouped notifications. */
 export interface NotificationMessage {

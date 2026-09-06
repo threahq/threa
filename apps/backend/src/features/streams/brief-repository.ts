@@ -1,4 +1,4 @@
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 

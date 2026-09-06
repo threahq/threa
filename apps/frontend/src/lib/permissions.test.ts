@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { hasPermission } from "./permissions"
 
 describe("hasPermission", () => {

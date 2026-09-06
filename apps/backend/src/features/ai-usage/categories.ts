@@ -1,4 +1,4 @@
-import type { AIUsageByDay, AIUsageCategory } from "@threa/types"
+import type { AIUsageByDay, AIUsageCategory } from "@threahq/types"
 import type { DayFunctionBreakdown } from "./usage-repository"
 
 export const FUNCTION_CATEGORY_MAP: Record<string, AIUsageCategory> = {

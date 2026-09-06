@@ -1,5 +1,5 @@
 import type { NavigateFunction } from "react-router-dom"
-import type { StreamMember, User } from "@threa/types"
+import type { StreamMember, User } from "@threahq/types"
 import type { UrgencyLevel } from "@/components/layout/sidebar/types"
 import type { useWorkspaceStreams } from "@/stores/workspace-store"
 

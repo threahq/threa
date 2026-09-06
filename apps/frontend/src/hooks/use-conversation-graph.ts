@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { db, type CachedBoardPost, type CachedStream } from "@/db"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { streamLabel } from "@/lib/streams"

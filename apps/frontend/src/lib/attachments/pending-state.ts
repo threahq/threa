@@ -1,4 +1,4 @@
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 
 /**
  * A bound attachment whose bytes/scan haven't settled — or that failed or was

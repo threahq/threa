@@ -5,7 +5,7 @@ import type {
   SavedStatus,
   SaveMessageInput,
   UpdateSavedMessageInput,
-} from "@threa/types"
+} from "@threahq/types"
 
 export interface ListSavedParams {
   status: SavedStatus

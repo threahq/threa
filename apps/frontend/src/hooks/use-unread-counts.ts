@@ -20,7 +20,7 @@ import {
   type ResolvedReadAllFrontier,
 } from "@/sync/read-state"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { WorkspaceBootstrap } from "@threahq/types"
 
 export type { ReadStateSnapshot }
 
@@ -225,7 +225,7 @@ export function useUnreadCounts(workspaceId: string) {
         mergeReadStateIntoBootstrapCache(queryClient, workspaceId, streamId, frontier)
         queryClient.setQueryData(
           streamKeys.bootstrap(workspaceId, streamId),
-          (old: import("@threa/types").StreamBootstrap | undefined) => {
+          (old: import("@threahq/types").StreamBootstrap | undefined) => {
             if (!old) return old
             return { ...old, readState: frontier }
           }

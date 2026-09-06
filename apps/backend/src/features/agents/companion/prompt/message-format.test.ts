@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AuthorTypes, StreamTypes } from "@threa/types"
+import { AuthorTypes, StreamTypes } from "@threahq/types"
 import type { MessageWithAttachments, StreamContext } from "../../context-builder"
 import { formatMessagesWithTemporal } from "./message-format"
 

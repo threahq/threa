@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express"
-import { THREA_VERSION_HEADER } from "@threa/types"
+import { THREA_VERSION_HEADER } from "@threahq/types"
 import type { OperationId } from "../features/public-api/routes"
 import * as versions from "../features/public-api/versions"
 import type { ApiVersion } from "../features/public-api/versions"

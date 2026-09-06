@@ -6,7 +6,7 @@ import type {
   ScheduleMessageInput,
   UpdateScheduledMessageInput,
   LockScheduledMessageResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 export interface ListScheduledParams {
   status: ScheduledMessageStatus

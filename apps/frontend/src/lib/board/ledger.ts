@@ -18,7 +18,7 @@ import {
   type SubagentStatusChangedEventPayload,
   SubagentStatuses,
   type ThreadSummary,
-} from "@threa/types"
+} from "@threahq/types"
 
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import { delegationAvailabilityLabel } from "@/lib/delegation-display"
@@ -31,7 +31,7 @@ const MAX_LINK_TITLE_CHARS = 28
 
 /**
  * The first meaningful line of a message, as inline text (INV-60 — the strip is
- * the shared `@threa/types` one, never a parallel implementation).
+ * the shared `@threahq/types` one, never a parallel implementation).
  *
  * The whole markdown is stripped before the split: fences are block-level, so a
  * line-first split would leave a bare ``` behind instead of the code's first

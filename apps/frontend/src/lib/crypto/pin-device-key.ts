@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
+import { base64ToBytes, bytesToBase64 } from "@threahq/crypto"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "./passphrase"
 import { unwrapPrivate, wrapPrivate } from "./keys"
 

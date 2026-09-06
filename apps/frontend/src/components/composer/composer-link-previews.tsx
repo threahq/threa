@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import {
   classifyDraftLink,
   extractDraftLinkUrls,

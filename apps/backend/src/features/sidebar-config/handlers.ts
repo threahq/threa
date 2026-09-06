@@ -9,7 +9,7 @@ import {
   SIDEBAR_QUICK_LINK_VISIBILITIES,
   MAX_CUSTOM_SECTION_NAME_LENGTH,
   MAX_CUSTOM_SECTION_STREAM_IDS,
-} from "@threa/types"
+} from "@threahq/types"
 
 const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("smart"), bucket: z.enum(SIDEBAR_SECTION_KEYS) }),

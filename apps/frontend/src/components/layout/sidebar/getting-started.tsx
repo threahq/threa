@@ -5,7 +5,7 @@ import { useSettings, useSidebar, usePreferencesOptional } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { cn } from "@/lib/utils"
-import { WORKSPACE_ROLE_SLUGS, type User } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS, type User } from "@threahq/types"
 
 interface GettingStartedTask {
   id: string

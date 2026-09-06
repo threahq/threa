@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { db, type CachedConversationMessage } from "@/db"
-import type { BoardPostMessage } from "@threa/types"
+import type { BoardPostMessage } from "@threahq/types"
 import {
   __resetConversationMessageSnapshots,
   conversationMessagesPrimed,

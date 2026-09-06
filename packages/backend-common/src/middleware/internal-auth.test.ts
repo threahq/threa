@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER } from "@threahq/types"
 import { HttpError } from "../errors"
 import { createInternalAuthMiddleware } from "./internal-auth"
 

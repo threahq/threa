@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
-import type { BoardLens, BoardScopeStreamType } from "@threa/types"
+import type { BoardLens, BoardScopeStreamType } from "@threahq/types"
 import * as boardStoreModule from "@/stores/board-store"
 import * as graphModule from "./use-conversation-graph"
 import type { CachedBoardPost } from "@/db"

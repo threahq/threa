@@ -30,7 +30,7 @@ import { STREAM_ICONS } from "@/lib/streams"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import type { AttachmentSummary } from "@/hooks/create-optimistic-bootstrap"
-import type { ComposeTrace, JSONContent } from "@threa/types"
+import type { ComposeTrace, JSONContent } from "@threahq/types"
 
 // Focus moving into one of these means a composer popover is open (inline
 // suggestion lists are `[role="listbox"]`; emoji/format/link popovers are Radix

@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import type { BoardPostMessage } from "@threa/types"
+import type { BoardPostMessage } from "@threahq/types"
 import { useConversationService } from "@/contexts/services-context"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { seedConversationMessages } from "@/stores/conversation-messages-store"

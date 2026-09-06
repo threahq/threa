@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { AgentToolNames } from "@threa/types"
+import { AgentToolNames } from "@threahq/types"
 import type { AgentEvent } from "./agent-events"
 import {
   EnclaveTurnDriver,

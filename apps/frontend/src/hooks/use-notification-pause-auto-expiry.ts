@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import type { UserNotificationPauseFields } from "@threa/types"
+import type { UserNotificationPauseFields } from "@threahq/types"
 import { useResumeNotifications } from "./use-workspaces"
 
 // setTimeout truncates delays past its signed-32-bit ceiling, firing almost

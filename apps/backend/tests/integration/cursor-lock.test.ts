@@ -9,7 +9,7 @@ import {
   type ProcessResult,
   type CursorLockConfig,
   type ProcessedIdsMap,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 import { OutboxRepository } from "../../src/lib/outbox"
 
 describe("CursorLock", () => {

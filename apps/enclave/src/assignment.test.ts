@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { EnclaveSessionAssignment } from "@threa/types"
+import type { EnclaveSessionAssignment } from "@threahq/types"
 import { sessionAssignmentSchema } from "./assignment"
 
 const BASE: EnclaveSessionAssignment = {

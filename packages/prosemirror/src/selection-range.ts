@@ -12,7 +12,7 @@
  * consumed as up to a handful of unmatched words).
  */
 
-import type { ContentRange, JSONContent } from "@threa/types"
+import type { ContentRange, JSONContent } from "@threahq/types"
 
 import { LEAF_NODE_TYPES, nodeSize } from "./positions"
 

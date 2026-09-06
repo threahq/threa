@@ -7,8 +7,8 @@ import {
   exportPublicKey,
   generateKeyPair,
   importRecipientPrivateKey,
-} from "@threa/crypto"
-import { logger as baseLogger } from "@threa/agent-runtime/logger"
+} from "@threahq/crypto"
+import { logger as baseLogger } from "@threahq/agent-runtime/logger"
 
 const logger = baseLogger.child({ name: "enclave-keystore" })
 

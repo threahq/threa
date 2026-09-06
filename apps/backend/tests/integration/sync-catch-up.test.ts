@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { setupTestDatabase } from "./setup"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../src/features/sync"
 import { permissionGroup } from "../../src/lib/outbox"

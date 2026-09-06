@@ -6,8 +6,8 @@ import {
   displayNameFromWorkos,
   type SessionCookies,
   type StubAuthService,
-} from "@threa/backend-common"
-import { WORKSPACE_INVITABLE_ROLES, WORKSPACE_ROLE_SLUGS } from "@threa/types"
+} from "@threahq/backend-common"
+import { WORKSPACE_INVITABLE_ROLES, WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import type { WorkspaceService } from "../features/workspaces"
 import type { StreamService } from "../features/streams"
 import type { InvitationService } from "../features/invitations"

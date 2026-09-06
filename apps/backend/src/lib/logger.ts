@@ -1,1 +1,1 @@
-export { logger } from "@threa/backend-common"
+export { logger } from "@threahq/backend-common"

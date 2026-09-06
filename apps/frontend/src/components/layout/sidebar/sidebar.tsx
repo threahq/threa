@@ -75,7 +75,7 @@ import {
 } from "@/components/board/board-filter-params"
 import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
-import { StreamTypes, LabelableResourceTypes } from "@threa/types"
+import { StreamTypes, LabelableResourceTypes } from "@threahq/types"
 
 /** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
 const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()

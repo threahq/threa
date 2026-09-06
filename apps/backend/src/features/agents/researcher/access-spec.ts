@@ -1,6 +1,6 @@
 import type { Querier } from "../../../db"
-import type { StreamType } from "@threa/types"
-import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threa/types"
+import type { StreamType } from "@threahq/types"
+import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threahq/types"
 import { StreamRepository, type Stream } from "../../streams"
 import { StreamMemberRepository } from "../../streams"
 

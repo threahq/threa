@@ -30,8 +30,8 @@ import {
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
   DELEGATION_STATUSES,
-} from "@threa/types"
-import type { WorkspacePermissionSlug } from "@threa/types"
+} from "@threahq/types"
+import type { WorkspacePermissionSlug } from "@threahq/types"
 import {
   publicSearchSchema,
   listMyBotsSchema,
@@ -509,7 +509,7 @@ const externalHistoryMessageSchema = z.object({
   createdAt: z.string().datetime(),
 })
 
-// Wire shape of `ExternalContextHandle` (@threa/agent-runtime): recent
+// Wire shape of `ExternalContextHandle` (@threahq/agent-runtime): recent
 // conversation from the invocation's own stream, oldest → newest, trigger
 // excluded (it travels as `promptMarkdown`). Discriminated on `kind` so a
 // fetch-back `ref` variant can be added later without a wire break; only the
@@ -519,7 +519,7 @@ const externalContextHandleSchema = z.object({
   messages: z.array(externalHistoryMessageSchema),
 })
 
-// Wire shape of `SealedTurnContext` (@threa/types): the sealed assignment handed
+// Wire shape of `SealedTurnContext` (@threahq/types): the sealed assignment handed
 // to an owner-granted external runner when the delivery verdict is `sealed`. The
 // backend never decrypts — it ships the SSK wraps addressed to the claiming bot's
 // BIK plus the sealed history/prompt ciphertext, and the bot opens them with its

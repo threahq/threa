@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
 import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./public-api-auth"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { CURRENT_API_VERSION } from "../features/public-api/versions"
 
 function createPoolStub() {

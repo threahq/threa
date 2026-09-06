@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
-import type { JSONContent } from "@threa/types"
-import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
+import type { JSONContent } from "@threahq/types"
+import { collectQuoteReplyMessageIds } from "@threahq/prosemirror"
 import {
   MessageRepository,
   MessageVersionRepository,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import type { EnclaveNamingInstruction } from "@threa/types"
+import type { EnclaveNamingInstruction } from "@threahq/types"
 import { advanceNamingInstruction, evaluateNaming, sanitizeTitle } from "./naming-evaluator"
 
 const instruction: EnclaveNamingInstruction = {

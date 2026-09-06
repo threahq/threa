@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
-import type { ActorHrefPointer } from "@threa/prosemirror"
+import type { ActorHrefPointer } from "@threahq/prosemirror"
 import { cn } from "@/lib/utils"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
 import { chipBase, triggerStyles } from "./chip-styles"
@@ -9,7 +9,7 @@ import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand } from "./command-list-context"
 import { StreamChip } from "./stream-chip"
-import { MENTION_PATTERN, isValidSlug } from "@threa/types"
+import { MENTION_PATTERN, isValidSlug } from "@threahq/types"
 
 interface TriggerChipProps {
   type: "mention" | "channel" | "command"

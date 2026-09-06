@@ -1,6 +1,6 @@
 import { useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { draftStreamScope, type JSONContent } from "@threa/types"
+import { draftStreamScope, type JSONContent } from "@threahq/types"
 import type { DraftAttachment } from "@/db"
 import { queueContentHandoff } from "@/stores/composer-handoff-store"
 import { setComposerTarget } from "./use-composer-target"

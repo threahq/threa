@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { EFFECTS_PER_SESSION_MAX, type AgentToolEffect } from "@threa/types"
+import { EFFECTS_PER_SESSION_MAX, type AgentToolEffect } from "@threahq/types"
 import { collectSessionEffects } from "./session-effects"
 
 const step = (...effects: AgentToolEffect[]) => ({ effects })

@@ -10,7 +10,7 @@ import {
   type LinkPreviewSummary,
   type MemoEmbedSummary,
   type StreamType,
-} from "@threa/types"
+} from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
@@ -49,7 +49,7 @@ import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useOpenAside } from "@/hooks/use-open-aside"
 import { useSettleConversationMessage } from "@/hooks/use-conversations"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useSwipeAction } from "@/hooks/use-swipe-action"

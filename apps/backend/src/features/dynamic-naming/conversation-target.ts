@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg"
-import { StreamTypes, TitleSources } from "@threa/types"
+import { StreamTypes, TitleSources } from "@threahq/types"
 import { withClient } from "../../db"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import { OutboxRepository } from "../../lib/outbox"

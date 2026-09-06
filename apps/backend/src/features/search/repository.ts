@@ -7,7 +7,7 @@ import {
   type ConversationStatus,
   type JSONContent,
   type StreamType,
-} from "@threa/types"
+} from "@threahq/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
 import { streamAccessPredicateSql } from "../streams"

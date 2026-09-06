@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { StreamTypes, type E2eActorKind, type WorkspaceBootstrap } from "@threa/types"
+import { StreamTypes, type E2eActorKind, type WorkspaceBootstrap } from "@threahq/types"
 import { e2eActorsApi } from "@/api/e2e-actors"
 import { rekeyStream } from "@/lib/crypto/stream-key-cache"
 import { useE2eSession } from "@/stores/e2e-session-store"

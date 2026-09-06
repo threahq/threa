@@ -12,7 +12,7 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { DraftsService } from "../../src/features/drafts/service"
 import { DraftsRepository } from "../../src/features/drafts/repository"
 import { userId, workspaceId, draftId } from "../../src/lib/id"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 describe("aside draft scopes", () => {
   let pool: Pool

@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
-import { CONTEXT_CATEGORIES, STREAM_CONTEXT_SCOPES } from "@threa/types"
+import { CONTEXT_CATEGORIES, STREAM_CONTEXT_SCOPES } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { StreamContextService } from "./service"
 

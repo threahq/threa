@@ -7,7 +7,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { BOARD_TAIL_MAX_ROWS } from "@threa/types"
+import { BOARD_TAIL_MAX_ROWS } from "@threahq/types"
 import { setupTestDatabase, testMessageContent, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"

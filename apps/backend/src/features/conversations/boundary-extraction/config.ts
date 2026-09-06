@@ -1,7 +1,7 @@
 // Co-located config (INV-43): production code and evals import from here.
 
 import { z } from "zod"
-import { CONVERSATION_STATUSES } from "@threa/types"
+import { CONVERSATION_STATUSES } from "@threahq/types"
 
 export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 

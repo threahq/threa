@@ -6,7 +6,7 @@ import { UserPreferencesService } from "../user-preferences"
 import { VoiceTranscriptionService } from "./service"
 import { VoiceSessionRepository, type VoiceSessionRow } from "./repository"
 import { voiceConfig } from "./config"
-import { DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threahq/types"
 
 const pool = {} as Pool
 

@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useParams } from "react-router-dom"
 import { CircleHelp, Smile } from "lucide-react"
-import { resolveActiveStatus } from "@threa/types"
+import { resolveActiveStatus } from "@threahq/types"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"

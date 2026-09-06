@@ -1,4 +1,4 @@
-import type { DelegationSummary, ListDelegationsResponse } from "@threa/types"
+import type { DelegationSummary, ListDelegationsResponse } from "@threahq/types"
 import { api } from "./client"
 
 /**

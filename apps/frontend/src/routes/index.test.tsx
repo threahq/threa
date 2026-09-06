@@ -11,7 +11,7 @@ import {
 } from "react-router-dom"
 import { PanelProvider, usePanel } from "@/contexts/panel-context"
 import { toast } from "sonner"
-import type { DelegationSummary } from "@threa/types"
+import type { DelegationSummary } from "@threahq/types"
 import { DelegationRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
 import { ApiError, delegationsApi } from "@/api"
 import * as useLastLocationModule from "@/hooks/use-last-location"

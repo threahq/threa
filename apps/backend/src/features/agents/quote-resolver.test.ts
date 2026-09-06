@@ -1,5 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import type { Querier } from "../../db"
 import { MessageRepository, type Message } from "../messaging"
 import { UserRepository } from "../workspaces"

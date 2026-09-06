@@ -1,10 +1,10 @@
 import type { Pool } from "pg"
-import type { WordMetadata } from "@threa/types"
+import type { WordMetadata } from "@threahq/types"
 import { withClient, withTransaction } from "../../../db"
 import { extractionId } from "../../../lib/id"
 import { AttachmentRepository } from "../repository"
 import { AttachmentExtractionRepository } from "../extraction-repository"
-import { ProcessingStatuses, TextSizeTiers, InjectionStrategies } from "@threa/types"
+import { ProcessingStatuses, TextSizeTiers, InjectionStrategies } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import type { WordProcessingServiceLike } from "./types"
 

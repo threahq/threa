@@ -1,7 +1,7 @@
-import type { ContextCategory, StreamContextRefKind } from "@threa/types"
+import type { ContextCategory, StreamContextRefKind } from "@threahq/types"
 
-export { CONTEXT_CATEGORIES, MESSAGE_BODY_CONTEXT_CATEGORIES, STREAM_CONTEXT_REF_KINDS } from "@threa/types"
-export type { ContextCategory, StreamContextRefKind } from "@threa/types"
+export { CONTEXT_CATEGORIES, MESSAGE_BODY_CONTEXT_CATEGORIES, STREAM_CONTEXT_REF_KINDS } from "@threahq/types"
+export type { ContextCategory, StreamContextRefKind } from "@threahq/types"
 
 export interface NewStreamContextItem {
   id: string

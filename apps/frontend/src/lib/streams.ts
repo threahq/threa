@@ -1,5 +1,5 @@
-import { SLUG_MAX_LENGTH, StreamTypes } from "@threa/types"
-import type { StreamType } from "@threa/types"
+import { SLUG_MAX_LENGTH, StreamTypes } from "@threahq/types"
+import type { StreamType } from "@threahq/types"
 import { Bell, FileText, Hash, MessageSquare, MessageSquareDashed, NotebookPen } from "lucide-react"
 import type { ComponentType } from "react"
 

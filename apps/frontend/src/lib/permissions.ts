@@ -1,4 +1,4 @@
-import type { WorkspacePermissionSlug } from "@threa/types"
+import type { WorkspacePermissionSlug } from "@threahq/types"
 
 /**
  * Checks whether the current viewer holds a specific workspace permission.

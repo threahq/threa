@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { sharedMessageSlotKey, type SharedMessageRef } from "@threa/types"
+import { sharedMessageSlotKey, type SharedMessageRef } from "@threahq/types"
 import {
   collectSharedMessageIds,
   collectSharedMessageRefs,

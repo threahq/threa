@@ -12,7 +12,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { AgentToolNames } from "@threa/types"
+import { AgentToolNames } from "@threahq/types"
 import { buildToolSet } from "../../src/features/agents/companion"
 import { canOfferSubagentDelegation } from "../../src/features/agents/tools"
 import { resolveTurnModel } from "../../src/features/agents/turn-model"

@@ -35,7 +35,7 @@ import type {
   DelegationLinkPreviewData,
   ConversationStatus,
   StreamType,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * Resolves in-app link data from one of two mutually-exclusive sources: a

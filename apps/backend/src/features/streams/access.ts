@@ -1,7 +1,7 @@
 import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
-import { Visibilities } from "@threa/types"
+import { Visibilities } from "@threahq/types"
 import { StreamRepository, type Stream } from "./repository"
 import { StreamMemberRepository } from "./member-repository"
 

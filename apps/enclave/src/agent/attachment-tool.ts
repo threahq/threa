@@ -1,7 +1,7 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
-import { base64ToBytes, bytesToBase64, decryptAttachmentBytes, type AttachmentRef } from "@threa/crypto"
-import { defineAgentTool, type AgentTool, type AgentToolResult } from "@threa/agent-runtime/runtime"
+import { AgentStepTypes } from "@threahq/types"
+import { base64ToBytes, bytesToBase64, decryptAttachmentBytes, type AttachmentRef } from "@threahq/crypto"
+import { defineAgentTool, type AgentTool, type AgentToolResult } from "@threahq/agent-runtime/runtime"
 
 /**
  * Everything the enclave holds about this turn's attachments: the refs

@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { Ticker, logger } from "@threa/backend-common"
+import { Ticker, logger } from "@threahq/backend-common"
 import { AuthLogRepository } from "./repository"
 
 export interface AuthLogRetentionWorkerConfig {

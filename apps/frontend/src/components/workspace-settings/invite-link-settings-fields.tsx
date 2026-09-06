@@ -1,7 +1,7 @@
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { roleDisplayName, WORKSPACE_ROLE_SLUGS, type WorkspaceRoleSlug } from "@threa/types"
+import { roleDisplayName, WORKSPACE_ROLE_SLUGS, type WorkspaceRoleSlug } from "@threahq/types"
 
 export interface InviteLinkSettingsValue {
   unlimited: boolean

@@ -2,7 +2,7 @@ import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { SidebarConfigRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
-import { type SidebarConfig, type RawSidebarConfig, DEFAULT_SIDEBAR_CONFIG, normalizeSidebarConfig } from "@threa/types"
+import { type SidebarConfig, type RawSidebarConfig, DEFAULT_SIDEBAR_CONFIG, normalizeSidebarConfig } from "@threahq/types"
 
 export class SidebarConfigService {
   constructor(private pool: Pool) {}

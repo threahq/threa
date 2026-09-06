@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { CornerDownRight } from "lucide-react"
-import type { StreamEvent, MessagesMovedEventPayload } from "@threa/types"
+import type { StreamEvent, MessagesMovedEventPayload } from "@threahq/types"
 import { useActors } from "@/hooks"
 import { MovedMessagesDrawer } from "./moved-messages-drawer"
 

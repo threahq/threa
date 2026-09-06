@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { Pool } from "pg"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { Message } from "../messaging"
 import { MessageRepository } from "../messaging"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"

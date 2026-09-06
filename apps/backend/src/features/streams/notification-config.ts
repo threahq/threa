@@ -1,5 +1,5 @@
-import { NOTIFICATION_CONFIG } from "@threa/types"
-import type { StreamType, NotificationLevel } from "@threa/types"
+import { NOTIFICATION_CONFIG } from "@threahq/types"
+import type { StreamType, NotificationLevel } from "@threahq/types"
 
 export { NOTIFICATION_CONFIG }
 

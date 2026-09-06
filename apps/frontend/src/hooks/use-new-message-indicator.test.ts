@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 import { useNewMessageIndicator } from "./use-new-message-indicator"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 
 function makeEvent(overrides: Partial<StreamEvent> & { id: string; sequence: string }): StreamEvent {
   return {

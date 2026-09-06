@@ -1,7 +1,7 @@
-import type { AttachmentSummary, ContextBag, ContextIntent, ContextRef, ContextRefKind } from "@threa/types"
+import type { AttachmentSummary, ContextBag, ContextIntent, ContextRef, ContextRefKind } from "@threahq/types"
 import type { Querier } from "../../../db"
 import type { LinkPreview } from "../../link-previews"
-import type { AI, CostContext } from "@threa/agent-runtime"
+import type { AI, CostContext } from "@threahq/agent-runtime"
 
 /**
  * Persisted bag row (before resolution). `lastRendered` is the snapshot

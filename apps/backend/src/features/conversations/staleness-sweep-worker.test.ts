@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ConversationStatuses } from "@threa/types"
+import { ConversationStatuses } from "@threahq/types"
 import * as dbModule from "../../db"
 import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"

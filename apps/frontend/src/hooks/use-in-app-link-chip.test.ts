@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { MessageLinkPreviewData } from "@threa/types"
+import type { MessageLinkPreviewData } from "@threahq/types"
 import { buildMessageChipLabel, buildLocalMessageParts } from "./use-in-app-link-chip"
 
 function messageData(overrides: Partial<MessageLinkPreviewData>): MessageLinkPreviewData {

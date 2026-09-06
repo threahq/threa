@@ -1,4 +1,4 @@
-import { getPersonaAvatarUrl, type PersonaListItem } from "@threa/types"
+import { getPersonaAvatarUrl, type PersonaListItem } from "@threahq/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { AriadneIcon } from "@/components/ariadne-icon"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID } from "@threa/types"
+import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID } from "@threahq/types"
 import {
   hasLabelSection,
   labelSectionId,

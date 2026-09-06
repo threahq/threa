@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { generateSlug } from "@threa/backend-common"
-import type { ModelRegistry } from "@threa/agent-runtime"
+import { generateSlug } from "@threahq/backend-common"
+import type { ModelRegistry } from "@threahq/agent-runtime"
 import {
   AttachmentSafetyStatuses,
   personaConfigPatchSchema,
@@ -25,7 +25,7 @@ import {
   type PersonaListItem,
   type PersonaModelOption,
   type PersonaResolvedConfig,
-} from "@threa/types"
+} from "@threahq/types"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"

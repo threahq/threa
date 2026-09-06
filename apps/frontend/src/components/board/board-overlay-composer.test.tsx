@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, userEvent, waitFor, spyOnExport } from "@/test"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import * as composerModule from "@/components/composer"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"

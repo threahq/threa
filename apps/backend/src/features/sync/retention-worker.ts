@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { Ticker } from "@threa/backend-common"
+import { Ticker } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
 import { SyncLogRepository } from "./repository"
 

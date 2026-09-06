@@ -4,7 +4,7 @@ import {
   ConversationIntents,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   sharedMessageSlotKey,
-} from "@threa/types"
+} from "@threahq/types"
 import { EventService } from "./event-service"
 import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"

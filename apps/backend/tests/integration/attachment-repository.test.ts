@@ -12,7 +12,7 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { AttachmentRepository, AttachmentExtractionRepository } from "../../src/features/attachments"
 import { userId, workspaceId, streamId, attachmentId, extractionId } from "../../src/lib/id"
-import type { ExtractionContentType } from "@threa/types"
+import type { ExtractionContentType } from "@threahq/types"
 
 describe("AttachmentRepository", () => {
   let pool: Pool

@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import type { MemoEmbedSummary } from "@threa/types"
+import type { MemoEmbedSummary } from "@threahq/types"
 import { extractMemoRefs } from "@/lib/markdown/memo-refs"
 import { MemoEmbedBlock } from "@/lib/markdown/memo-embed-block"
 

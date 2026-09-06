@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { CommandKinds, MessageErrorCodes } from "@threa/types"
+import { CommandKinds, MessageErrorCodes } from "@threahq/types"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "../streams"
 import { SteeredMessageService } from "./steered-message-service"

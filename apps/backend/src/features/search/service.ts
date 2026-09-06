@@ -3,7 +3,7 @@ import { SearchRepository, type ConversationSearchResult, type SearchResult, typ
 import type { EmbeddingServiceLike, MemoExplorerResult, MemoExplorerSearchParams, RerankerLike } from "../memos"
 import { buildSearchClusters, type SearchCluster } from "./clusters"
 import { logger } from "../../lib/logger"
-import type { FeatureFlagValue, StreamType } from "@threa/types"
+import type { FeatureFlagValue, StreamType } from "@threahq/types"
 import {
   CONVERSATION_SEARCH_LIMIT,
   CONVERSATION_SEARCH_MAX_DISTANCE,

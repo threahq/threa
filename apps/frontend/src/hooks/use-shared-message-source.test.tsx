@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook, waitFor } from "@testing-library/react"
-import { sharedMessageSlotKey, type AttachmentSummary } from "@threa/types"
+import { sharedMessageSlotKey, type AttachmentSummary } from "@threahq/types"
 import { SlotsProvider } from "@/components/slots/context"
 import { useSharedMessageSource } from "./use-shared-message-source"
 import { db } from "@/db"

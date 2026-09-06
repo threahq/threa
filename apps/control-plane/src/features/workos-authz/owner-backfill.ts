@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { logger } from "@threa/backend-common"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { logger } from "@threahq/backend-common"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import type { AdminActor, WorkosAuthzAdminService } from "./admin-service"
 import { WorkosAuthzRepository } from "./repository"

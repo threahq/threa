@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { VideoPreviewProvider } from "@threa/types"
+import type { VideoPreviewProvider } from "@threahq/types"
 import { buildVideoPreviewParams, detectVideoProvider } from "./video-preview"
 
 describe("detectVideoProvider", () => {

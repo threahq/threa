@@ -1,6 +1,6 @@
 import type { Querier } from "../../../db"
 import { sql } from "../../../db"
-import type { ContextRefKind } from "@threa/types"
+import type { ContextRefKind } from "@threahq/types"
 import { contextSummaryId } from "../../../lib/id"
 import type { SummaryInput } from "./types"
 

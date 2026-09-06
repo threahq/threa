@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { renderHook, act } from "@testing-library/react"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { pickVisibleRange, advanceFrontier, useLastSeenEvent, type VisibleRow } from "./use-last-seen-event"
 
 // Viewport spans y=0..100. Rows are in chronological (DOM) order.

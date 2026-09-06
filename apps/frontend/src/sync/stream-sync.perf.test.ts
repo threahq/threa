@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
-import type { PerformanceSample, StreamEvent } from "@threa/types"
+import type { PerformanceSample, StreamEvent } from "@threahq/types"
 import { db } from "@/db"
 import { NO_CAPTURE, PerfCapture, armPerfCapture, getPerfCapture } from "@/lib/perf/capture"
 import { registerStreamSocketHandlers } from "./stream-sync"

@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg"
-import type { AuthorType, KnowledgeType, MemoScope, MemoStatus, MemoType } from "@threa/types"
-import { MemoScopes } from "@threa/types"
+import type { AuthorType, KnowledgeType, MemoScope, MemoStatus, MemoType } from "@threahq/types"
+import { MemoScopes } from "@threahq/types"
 import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
 import { detectSearchConfig } from "../../lib/text-search-config"

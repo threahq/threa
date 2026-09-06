@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DELEGATION_REOPEN_REASONS, DELEGATION_STATUSES } from "@threa/types"
+import { DELEGATION_REOPEN_REASONS, DELEGATION_STATUSES } from "@threahq/types"
 import {
   DELEGATION_REOPEN_REASON_LABEL,
   DELEGATION_STATUS_LABEL,

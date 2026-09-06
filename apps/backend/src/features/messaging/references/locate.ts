@@ -1,5 +1,5 @@
-import { normalizeRange, parseMarkdown, resolveSelectionRange } from "@threa/prosemirror"
-import type { ContentRange, JSONContent } from "@threa/types"
+import { normalizeRange, parseMarkdown, resolveSelectionRange } from "@threahq/prosemirror"
+import type { ContentRange, JSONContent } from "@threahq/types"
 
 /** Text a reader would see, with atoms reduced to a separator. */
 export function docToPlainText(node: JSONContent): string {

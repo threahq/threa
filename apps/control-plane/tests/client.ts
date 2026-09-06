@@ -1,7 +1,7 @@
 /**
  * HTTP client for control-plane E2E tests with cookie jar support.
  */
-import { INTERNAL_API_KEY_HEADER } from "@threa/backend-common"
+import { INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
 
 function getBaseUrl(): string {
   return process.env.TEST_BASE_URL || "http://localhost:3003"

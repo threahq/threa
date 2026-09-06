@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { buildRevisionList } from "./message-history-dialog"
-import type { MessageVersion } from "@threa/types"
+import type { MessageVersion } from "@threahq/types"
 
 function createVersion(overrides: Partial<MessageVersion> = {}): MessageVersion {
   return {

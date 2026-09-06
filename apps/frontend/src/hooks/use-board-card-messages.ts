@@ -4,7 +4,7 @@ import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { useConversationBackfillMessages } from "@/stores/conversation-messages-store"
 import type { RenderableMessage } from "@/components/message/message-item"
-import { StreamTypes, type AuthorType } from "@threa/types"
+import { StreamTypes, type AuthorType } from "@threahq/types"
 import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
 import type { BoardViewPost } from "./use-stable-board-view"
 

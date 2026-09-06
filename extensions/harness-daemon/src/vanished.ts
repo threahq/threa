@@ -1,4 +1,4 @@
-import { readHarnessLinks } from "@threa/harness-client"
+import { readHarnessLinks } from "@threahq/harness-client"
 import { hostname } from "node:os"
 import { listLocalTmuxPanes, resolveManagedAgentPane, type LocalTmuxPane, type ManagedAgentPane } from "./discovery"
 import { readMintedIdentities } from "./identity-store"

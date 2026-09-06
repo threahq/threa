@@ -2,7 +2,7 @@ import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import type { SuggestionProps } from "@tiptap/suggestion"
 import { createEditorExtensions } from "../editor-extensions"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 
 const SHRUG: EmojiEntry = {
   shortcode: "shrug",

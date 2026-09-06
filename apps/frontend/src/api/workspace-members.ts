@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { WorkspaceRoleSlug } from "@threa/types"
+import type { WorkspaceRoleSlug } from "@threahq/types"
 
 export const workspaceMembersApi = {
   async changeRole(workspaceId: string, userId: string, roleSlug: WorkspaceRoleSlug): Promise<void> {

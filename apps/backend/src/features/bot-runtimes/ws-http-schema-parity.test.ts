@@ -15,7 +15,7 @@ import {
 
 // The `/bot` WebSocket frame schemas deliberately duplicate the HTTP body schemas
 // (importing the HTTP ones into bot-runtimes would create a value cycle back into
-// public-api). Shared `@threa/types` enums already prevent enum drift; this test
+// public-api). Shared `@threahq/types` enums already prevent enum drift; this test
 // is the guard against FIELD-level drift — a field tightened/loosened/added on one
 // side but not the other. Asserted only on the genuinely-shared fields; instanceId
 // is intentionally stricter on the WS side (it becomes a Socket.IO room segment),

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { clearStagedDraft, listStagedDrafts, readStagedDraft, stageDraftContent } from "./draft-staging"
 
 const workspaceId = "ws_1"

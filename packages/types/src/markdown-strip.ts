@@ -4,7 +4,7 @@
  * notification bodies). Notification text is built backend-side and rendered
  * by the service worker verbatim, so the strip has to happen before it ships
  * — there is no frontend render step to lean on (INV-60). Pure string work,
- * no runtime deps, so it lives in `@threa/types` where both sides import it.
+ * no runtime deps, so it lives in `@threahq/types` where both sides import it.
  */
 
 /**

@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { Loader2 } from "lucide-react"
-import { StreamTypes, type AsideAnchoredEventPayload, type StreamEvent } from "@threa/types"
+import { StreamTypes, type AsideAnchoredEventPayload, type StreamEvent } from "@threahq/types"
 import { useWorkspaceStreams, useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { useAsideState } from "@/stores/aside-store"

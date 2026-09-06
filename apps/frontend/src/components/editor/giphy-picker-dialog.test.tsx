@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
-import type { GiphyGif } from "@threa/types"
+import type { GiphyGif } from "@threahq/types"
 import { giphyApi } from "@/api"
 import { GiphyPickerDialog } from "./giphy-picker-dialog"
 

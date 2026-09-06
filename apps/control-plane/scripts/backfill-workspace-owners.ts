@@ -15,7 +15,7 @@
  */
 
 import path from "path"
-import { createDatabasePool, runMigrations, StubWorkosOrgService, WorkosOrgServiceImpl } from "@threa/backend-common"
+import { createDatabasePool, runMigrations, StubWorkosOrgService, WorkosOrgServiceImpl } from "@threahq/backend-common"
 import { loadControlPlaneConfig } from "../src/config"
 import { WorkosAuthzAdminService, WorkspaceOwnerBackfill } from "../src/features/workos-authz"
 

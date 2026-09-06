@@ -1,5 +1,5 @@
 import { type Page } from "@playwright/test"
-// Relative, not `@threa/types`: the repo root does not depend on the package,
+// Relative, not `@threahq/types`: the repo root does not depend on the package,
 // so the bare specifier does not resolve here. Type-only, so nothing of the
 // package is pulled in at runtime.
 import { type PerformanceCapture } from "../../packages/types/src/performance-capture"

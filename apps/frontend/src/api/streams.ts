@@ -15,7 +15,7 @@ import type {
   ToolPrivacyPolicy,
   StreamReadFrontier,
   MarkAsReadResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * Result shape for the events list endpoint. Carries the raw slot carrier

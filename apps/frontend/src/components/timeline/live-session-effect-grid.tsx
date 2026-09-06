@@ -4,7 +4,7 @@ import {
   ToolVerificationStatuses,
   type AgentSessionStep,
   type AgentToolEffect,
-} from "@threa/types"
+} from "@threahq/types"
 import { useAgentTrace } from "@/hooks/use-agent-trace"
 import { isDescribedEffect } from "@/lib/effect-links"
 import { SessionEffectGrid } from "./session-effect-grid"

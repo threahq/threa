@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { WorkspaceIntegrationProviders } from "@threa/types"
+import { WorkspaceIntegrationProviders } from "@threahq/types"
 import { DebouncedOutboxHandler, isOneOfOutboxEventType, isOutboxEventType, type OutboxEvent } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import type { ControlPlaneClient } from "../../lib/control-plane-client"

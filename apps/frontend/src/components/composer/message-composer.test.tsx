@@ -7,7 +7,7 @@ import { forwardRef, useEffect, useImperativeHandle, useState, type ForwardedRef
 import { MessageComposer } from "./message-composer"
 import type { CachedDraft } from "@/hooks"
 import type { PendingAttachment } from "@/hooks/use-attachments"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as usePointerModule from "@/hooks/use-pointer"
 import * as contextsModule from "@/contexts"

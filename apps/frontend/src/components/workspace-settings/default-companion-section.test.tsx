@@ -9,7 +9,7 @@ import {
   type WorkspaceBootstrap,
   type WorkspaceSettings,
   type WorkspacePermissionSlug,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { workspaceSettingsApi } from "@/api"
 import * as personasHooks from "@/hooks/use-personas"

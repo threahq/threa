@@ -18,7 +18,7 @@ import {
   type SearchSteerOutcome,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import { MAX_SEARCH_PHRASES, MAX_SEARCH_STEER_CHARS, STREAM_TYPES, type StreamType } from "@threa/types"
+import { MAX_SEARCH_PHRASES, MAX_SEARCH_STEER_CHARS, STREAM_TYPES, type StreamType } from "@threahq/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50

@@ -57,7 +57,7 @@ The script rebuilds `~/.pi/agent/extensions/threa-remote` from scratch each time
 ### Why a script and not `cp -R` + `bun install`
 
 The extension depends on sibling packages via `file:../…` links that resolve inside the
-monorepo only; `@threa/harness-client` is private (never on npm), so a standalone copy
+monorepo only; `@threahq/harness-client` is private (never on npm), so a standalone copy
 cannot install it.
 The script vendors the siblings' source into `src/vendor/`,
 repoints the imports, and drops the dependencies. Their only runtime dependency,

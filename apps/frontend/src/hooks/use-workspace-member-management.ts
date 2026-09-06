@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query"
-import type { User, WorkspaceBootstrap, WorkspaceRoleSlug } from "@threa/types"
+import type { User, WorkspaceBootstrap, WorkspaceRoleSlug } from "@threahq/types"
 import { workspaceMembersApi } from "@/api/workspace-members"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"

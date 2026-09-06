@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { useUnreadTabIndicator } from "./use-unread-tab-indicator"
 

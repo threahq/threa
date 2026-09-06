@@ -11,7 +11,7 @@
  * bot that only answers mentions keeps working unchanged.
  */
 
-import type { BotRuntimeKind } from "@threa/types"
+import type { BotRuntimeKind } from "@threahq/types"
 
 export type BotRuntimeKindConfig =
   | {

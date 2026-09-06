@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { ScheduledMessageStatuses } from "@threa/types"
+import { ScheduledMessageStatuses } from "@threahq/types"
 import { ScheduledMessagesRepository } from "../../src/features/scheduled-messages/repository"
 import { setupTestDatabase, withTestTransaction } from "./setup"
 

@@ -1,6 +1,6 @@
 import { createServer, type Server } from "http"
 import type { Pool } from "pg"
-import { createDatabasePool, logger } from "@threa/backend-common"
+import { createDatabasePool, logger } from "@threahq/backend-common"
 import { createApp } from "./app"
 import { loadConfig, type ProxyConfig } from "./config"
 

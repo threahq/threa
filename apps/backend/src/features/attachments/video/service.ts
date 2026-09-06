@@ -7,7 +7,7 @@ import { VideoTranscodeJobRepository } from "./job-repository"
 import { OutboxRepository } from "../../../lib/outbox"
 import type { ThreaMediaConvertClient } from "./mediaconvert-client"
 import type { S3Config } from "../../../lib/env"
-import { ProcessingStatuses } from "@threa/types"
+import { ProcessingStatuses } from "@threahq/types"
 import { VIDEO_TRANSCODE_MAX_AGE_MS } from "./config"
 
 export interface VideoTranscodingServiceDeps {

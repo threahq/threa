@@ -9,7 +9,7 @@ import {
   STATUS_TEXT_MAX_LENGTH,
   isStatusContentful,
   presetPausesNotifications,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   ResponsiveDialog,
   ResponsiveDialogBody,

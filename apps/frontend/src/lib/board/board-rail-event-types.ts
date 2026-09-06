@@ -1,4 +1,4 @@
-import { BOARD_EVENT_ROW_TYPES, type EventType } from "@threa/types"
+import { BOARD_EVENT_ROW_TYPES, type EventType } from "@threahq/types"
 
 /** Messages, board rows, and the patch-only events folded into scheduled, delegation and subagent cards. */
 export const BOARD_RAIL_EVENT_TYPES: EventType[] = [

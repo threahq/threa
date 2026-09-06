@@ -8,8 +8,8 @@ import type {
   AgentSessionSubstepPayload,
   AgentActivityStartedPayload,
   AgentActivityEndedPayload,
-} from "@threa/types"
-import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
+} from "@threahq/types"
+import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threahq/types"
 import { getStepInlineLabel } from "@/lib/step-config"
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
 import { deriveAgentSessionLifecycle } from "@/lib/agent-session-lifecycle"

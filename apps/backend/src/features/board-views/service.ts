@@ -1,7 +1,7 @@
 import { Pool } from "pg"
 import { HttpError } from "../../lib/errors"
 import { BoardViewRepository, type CreateBoardViewParams, type UpdateBoardViewParams } from "./repository"
-import type { BoardView } from "@threa/types"
+import type { BoardView } from "@threahq/types"
 
 /**
  * User-saved board lenses. Low-frequency

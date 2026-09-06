@@ -4,7 +4,7 @@ import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
   DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
   type UserPreferences,
-} from "@threa/types"
+} from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"

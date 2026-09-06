@@ -29,7 +29,7 @@ import {
 } from "../../src/features/agents"
 import type { PoolClient } from "pg"
 import { userId, workspaceId, streamId, messageId, sessionId, personaId } from "../../src/lib/id"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { StreamTypes, Visibilities } from "@threahq/types"
 
 type StreamType = (typeof StreamTypes)[keyof typeof StreamTypes]
 

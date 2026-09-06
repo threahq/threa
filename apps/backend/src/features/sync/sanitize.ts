@@ -4,7 +4,7 @@ import {
   sharedMessageSlotKey,
   type MemoEmbedSummary,
   type SharedMessageRef,
-} from "@threa/types"
+} from "@threahq/types"
 import { hydrateSharedMessageRefs, type HydratedSharedMessage } from "../messaging"
 import { resolveMemoSummariesByStream } from "../memos"
 import type { SyncLogEntry } from "./repository"

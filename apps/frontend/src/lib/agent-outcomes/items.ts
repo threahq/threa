@@ -1,4 +1,4 @@
-import type { AgentOutcomeKind, AgentOutcomeSummary } from "@threa/types"
+import type { AgentOutcomeKind, AgentOutcomeSummary } from "@threahq/types"
 import { DELEGATION_STATUS_LABEL, DELEGATION_TERMINAL, delegationStatusPillClass } from "@/lib/delegation-display"
 import { FOLLOW_UP_STATUS_LABEL, FOLLOW_UP_TERMINAL, followUpStatusPillClass } from "@/lib/follow-up-display"
 import {

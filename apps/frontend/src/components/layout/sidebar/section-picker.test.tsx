@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, userEvent, spyOnExport } from "@/test"
-import { SMART_SIDEBAR_CONFIG, type SidebarConfig } from "@threa/types"
+import { SMART_SIDEBAR_CONFIG, type SidebarConfig } from "@threahq/types"
 import * as sidebarConfigHook from "@/hooks/use-sidebar-config"
 import * as dialogModule from "@/components/ui/responsive-dialog"
 import { SectionPicker } from "./section-picker"

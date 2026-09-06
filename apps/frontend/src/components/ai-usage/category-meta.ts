@@ -1,5 +1,5 @@
 import { Bot, Brain, MessagesSquare, MoreHorizontal, Paperclip, type LucideIcon } from "lucide-react"
-import type { AIUsageCategory } from "@threa/types"
+import type { AIUsageCategory } from "@threahq/types"
 
 export const categoryMeta: Record<AIUsageCategory, { label: string; icon: LucideIcon }> = {
   memory: { label: "Memory (GAM)", icon: Brain },

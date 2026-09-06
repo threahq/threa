@@ -16,7 +16,7 @@ export {
   type SaveMemoToolDeps,
   type SaveMemoToolResult,
 } from "./tool-deps"
-// Web + send tools live in @threa/agent-runtime (shared with the enclave).
+// Web + send tools live in @threahq/agent-runtime (shared with the enclave).
 // Re-exported here so backend imports (`../tools`) keep working.
 export {
   createSendMessageTool,
@@ -29,7 +29,7 @@ export {
   createReadUrlTool,
   type ReadUrlInput,
   type ReadUrlResult,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 export {
   createSearchMessagesTool,
   createSearchStreamsTool,

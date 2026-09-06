@@ -1,5 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express"
-import { permissionsForRole, type WorkspacePermissionSlug } from "@threa/types"
+import { permissionsForRole, type WorkspacePermissionSlug } from "@threahq/types"
 import { HttpError } from "../lib/errors"
 
 const unauthenticated = () => new HttpError("Not authenticated", { status: 401, code: "UNAUTHENTICATED" })

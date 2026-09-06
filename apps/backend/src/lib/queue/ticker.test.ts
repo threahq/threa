@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "bun:test"
-import { Ticker } from "@threa/backend-common"
+import { Ticker } from "@threahq/backend-common"
 
 describe("Ticker", () => {
   let ticker: Ticker

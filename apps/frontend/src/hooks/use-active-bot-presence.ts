@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import type { BotRuntimePresenceSummary } from "@threa/types"
+import type { BotRuntimePresenceSummary } from "@threahq/types"
 import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import type { CachedBot } from "@/db/database"
 import { useWorkspaceBots } from "@/stores/workspace-store"

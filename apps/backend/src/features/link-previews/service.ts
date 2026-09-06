@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import pLimit from "p-limit"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import { withTransaction } from "../../db"
 import { linkPreviewId } from "../../lib/id"
 import type {
@@ -11,8 +11,8 @@ import type {
   LinkPreviewSummary,
   MessageLinkPreviewData,
   JSONContent,
-} from "@threa/types"
-import { getAvatarUrl, isInAppLinkContentType, stripMarkdownToInline, StreamTypes } from "@threa/types"
+} from "@threahq/types"
+import { getAvatarUrl, isInAppLinkContentType, stripMarkdownToInline, StreamTypes } from "@threahq/types"
 import { LinkPreviewRepository, type LinkPreview, type UpdateLinkPreviewParams } from "./repository"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"

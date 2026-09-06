@@ -7,7 +7,7 @@ import {
   type PersonaModelOption,
   type PersonaResolvedConfig,
   type TonePreset,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * The registry-derived assignable models with any off-allowlist ids (a current

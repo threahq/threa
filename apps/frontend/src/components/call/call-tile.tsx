@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { MicOff } from "lucide-react"
-import { getAvatarUrl } from "@threa/types"
+import { getAvatarUrl } from "@threahq/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"

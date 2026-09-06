@@ -3,7 +3,7 @@ import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
 import { NodeSelection, Plugin, PluginKey, Selection } from "@tiptap/pm/state"
 import { ReactNodeViewRenderer } from "@tiptap/react"
-import type { ContentRange } from "@threa/types"
+import type { ContentRange } from "@threahq/types"
 import { QuoteReplyView } from "./quote-reply-view"
 import { referencePinAttributes } from "./reference-attributes"
 

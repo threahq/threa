@@ -1,4 +1,4 @@
-import { BOT_INPUT_UPDATE_MODES } from "@threa/types"
+import { BOT_INPUT_UPDATE_MODES } from "@threahq/types"
 import { z } from "zod"
 
 export const botRuntimeManifestSchema = z.object({

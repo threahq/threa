@@ -1,4 +1,4 @@
-import type { TextFormat } from "@threa/types"
+import type { TextFormat } from "@threahq/types"
 import { BINARY_DETECTION, EXTENSION_FORMAT_MAP, getFileExtension } from "./config"
 
 /**

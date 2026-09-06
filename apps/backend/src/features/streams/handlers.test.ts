@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import type { LinkPreviewSummary } from "@threa/types"
+import type { LinkPreviewSummary } from "@threahq/types"
 import type { Request, Response } from "express"
 import type { StreamEvent } from "./event-repository"
 import { applyLinkPreviewStateToEvents, collectThreadAnchorIds, createStreamHandlers } from "./handlers"

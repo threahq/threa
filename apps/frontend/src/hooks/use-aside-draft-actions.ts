@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react"
 import { toast } from "sonner"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import type { DraftAttachment } from "@/db"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { DraftComposerState } from "./use-draft-composer"

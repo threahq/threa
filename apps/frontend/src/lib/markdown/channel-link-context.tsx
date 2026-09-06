@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import { type StreamType } from "@threa/types"
+import { type StreamType } from "@threahq/types"
 import { isLinkableStreamType, streamLabel } from "@/lib/streams"
 
 interface ChannelLinkContextValue {

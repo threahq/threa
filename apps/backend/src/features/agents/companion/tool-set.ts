@@ -1,5 +1,5 @@
-import { AgentToolNames } from "@threa/types"
-import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threa/agent-runtime"
+import { AgentToolNames } from "@threahq/types"
+import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threahq/agent-runtime"
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"

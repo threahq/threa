@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { DelegationStatuses, type DelegationStatus } from "@threa/types"
+import { DelegationStatuses, type DelegationStatus } from "@threahq/types"
 
 interface DelegatedTaskRow {
   id: string

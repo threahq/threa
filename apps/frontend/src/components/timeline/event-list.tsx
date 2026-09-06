@@ -7,7 +7,7 @@ import {
   type SubagentStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
 import type { MessageAgentActivity } from "@/hooks"
@@ -31,7 +31,7 @@ import type {
   ConversationRevival,
   ConversationRowAnnotation,
 } from "./conversation-overlay/model"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threahq/types"
 
 interface EventListProps {
   timelineItems: TimelineItem[]

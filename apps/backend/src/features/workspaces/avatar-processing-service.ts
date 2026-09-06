@@ -3,7 +3,7 @@ import { withTransaction } from "../../db"
 import { UserRepository } from "./user-repository"
 import { AvatarUploadRepository } from "./avatar-upload-repository"
 import { OutboxRepository } from "../../lib/outbox"
-import { serializeBigInt } from "@threa/backend-common"
+import { serializeBigInt } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
 import type { AvatarService } from "./avatar-service"
 

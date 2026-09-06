@@ -1,5 +1,5 @@
-import { normalizeRange, resolveSelectionRange, serializeToMarkdown, sliceContent } from "@threa/prosemirror"
-import type { ContentRange, JSONContent } from "@threa/types"
+import { normalizeRange, resolveSelectionRange, serializeToMarkdown, sliceContent } from "@threahq/prosemirror"
+import type { ContentRange, JSONContent } from "@threahq/types"
 
 /** A rendered text selection, as the DOM reports it. */
 export interface QuoteSelection {

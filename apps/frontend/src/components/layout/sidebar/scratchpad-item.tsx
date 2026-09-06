@@ -32,7 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
 import { copyStreamLink } from "@/lib/stream-links"
-import { CompanionModes, LabelableResourceTypes } from "@threa/types"
+import { CompanionModes, LabelableResourceTypes } from "@threahq/types"
 import {
   SidebarActionContextMenu,
   SidebarActionDrawer,

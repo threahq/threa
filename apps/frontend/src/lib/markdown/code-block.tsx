@@ -6,7 +6,7 @@ import {
   formatCodeLanguage,
   normalizeCodeLanguage,
   resolveCodeBlockWrap,
-} from "@threa/types"
+} from "@threahq/types"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useCodeViewerOptional } from "@/contexts/code-viewer-context"
 import { useBlockCollapse } from "./use-block-collapse"

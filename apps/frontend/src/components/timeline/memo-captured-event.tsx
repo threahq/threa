@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Sparkles } from "lucide-react"
-import type { MemosCapturedEventPayload, StreamEvent } from "@threa/types"
+import type { MemosCapturedEventPayload, StreamEvent } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 

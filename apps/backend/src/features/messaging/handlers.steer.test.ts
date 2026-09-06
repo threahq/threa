@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import { CommandKinds } from "@threa/types"
+import { CommandKinds } from "@threahq/types"
 import { createMessageHandlers, createMessageSchema } from "./handlers"
 import { SteeredMessageService } from "./steered-message-service"
 import { StreamEventRepository } from "../streams"

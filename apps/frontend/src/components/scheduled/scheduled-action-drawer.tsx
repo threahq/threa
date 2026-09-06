@@ -1,4 +1,4 @@
-import type { ScheduledMessageView } from "@threa/types"
+import type { ScheduledMessageView } from "@threahq/types"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { ScheduledActions } from "./scheduled-actions"

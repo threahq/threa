@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { Loader2, MessageSquareDashed } from "lucide-react"
-import { isAsideHostType, StreamTypes } from "@threa/types"
+import { isAsideHostType, StreamTypes } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"

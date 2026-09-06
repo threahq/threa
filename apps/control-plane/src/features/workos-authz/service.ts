@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger, OutboxRepository, withTransaction, type WorkosMembershipEvent } from "@threa/backend-common"
+import { logger, OutboxRepository, withTransaction, type WorkosMembershipEvent } from "@threahq/backend-common"
 import { WorkosAuthzRepository } from "./repository"
 import {
   OUTBOX_AUTHZ_MEMBERSHIP_CHANGED,

@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useMemo, type ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
-import { SETTINGS_TABS, type SettingsTab } from "@threa/types"
+import { SETTINGS_TABS, type SettingsTab } from "@threahq/types"
 
 interface SettingsContextValue {
   isOpen: boolean

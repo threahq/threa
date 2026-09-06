@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
-import type { ActiveAgentSession, StreamEvent } from "@threa/types"
+import type { ActiveAgentSession, StreamEvent } from "@threahq/types"
 import { deriveAgentSessionLifecycle, type AgentSessionLifecycle } from "@/lib/agent-session-lifecycle"
 
 /**

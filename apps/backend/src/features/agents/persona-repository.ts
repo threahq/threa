@@ -1,5 +1,5 @@
-import type { TonePreset, BrevityPreset, PersonaConfigPatch, PersonaCustomConfig } from "@threa/types"
-import { personaConfigPatchSchema } from "@threa/types"
+import type { TonePreset, BrevityPreset, PersonaConfigPatch, PersonaCustomConfig } from "@threahq/types"
+import { personaConfigPatchSchema } from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { personaId as generatePersonaId } from "../../lib/id"

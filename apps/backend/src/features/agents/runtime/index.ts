@@ -1,4 +1,4 @@
-// Re-export the shared agent runtime from @threa/agent-runtime so existing
+// Re-export the shared agent runtime from @threahq/agent-runtime so existing
 // backend imports (`../runtime`, `../../runtime`) keep working.
 export {
   defineAgentTool,
@@ -23,7 +23,7 @@ export {
   type NewMessageAwareness,
   runGeneralResearch,
   type GeneralResearchResult,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 
 // Backend-only sink: stays here because it writes to PostgreSQL via the
 // session trace emitter. The event → step state machine is the shared

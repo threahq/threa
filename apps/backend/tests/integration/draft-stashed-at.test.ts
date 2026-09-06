@@ -5,7 +5,7 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { DraftsService } from "../../src/features/drafts/service"
 import { DraftsRepository } from "../../src/features/drafts/repository"
 import { userId, workspaceId, draftId } from "../../src/lib/id"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 // INV-68: `stashed_at` is verified against the real schema — the column exists,
 // the insert and CAS-update statements actually run, and the value round-trips

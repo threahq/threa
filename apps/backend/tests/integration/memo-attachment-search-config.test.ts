@@ -24,7 +24,7 @@ import {
   processChunk as processExtractionConfigs,
 } from "../../src/features/attachments/search-config-backfill"
 import { userId, workspaceId, streamId, messageId, memoId, attachmentId, extractionId } from "../../src/lib/id"
-import { AttachmentSafetyStatuses } from "@threa/types"
+import { AttachmentSafetyStatuses } from "@threahq/types"
 
 function fakeEmbeddingService(): EmbeddingServiceLike {
   return { embed: async () => new Array(1536).fill(0), embedBatch: async () => [] }

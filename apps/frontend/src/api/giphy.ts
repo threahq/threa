@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { GiphyConfigResponse, GiphySearchResponse } from "@threa/types"
+import type { GiphyConfigResponse, GiphySearchResponse } from "@threahq/types"
 
 /**
  * Giphy picker API. Search/trending/config proxy through the backend so the API

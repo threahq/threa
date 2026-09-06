@@ -1,4 +1,4 @@
-import type { AgentStepType, AgentToolEffect, TraceSource, AuthorType, ToolVerificationStatus } from "@threa/types"
+import type { AgentStepType, AgentToolEffect, TraceSource, AuthorType, ToolVerificationStatus } from "@threahq/types"
 
 export interface NewMessageInfo {
   sequence: bigint

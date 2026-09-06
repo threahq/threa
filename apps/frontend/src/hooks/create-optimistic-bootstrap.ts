@@ -1,4 +1,4 @@
-import type { Stream, StreamEvent, StreamMember, StreamReadFrontier } from "@threa/types"
+import type { Stream, StreamEvent, StreamMember, StreamReadFrontier } from "@threahq/types"
 
 function generateOptimisticEventId(): string {
   const timestamp = Date.now().toString(36)

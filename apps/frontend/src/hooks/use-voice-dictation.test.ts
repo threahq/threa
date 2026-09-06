@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, it, expect, vi } from "vitest"
-import type { JSONContent, VoiceStartAck, VoiceTranscriptDelta } from "@threa/types"
+import type { JSONContent, VoiceStartAck, VoiceTranscriptDelta } from "@threahq/types"
 import {
   friendlyTranscriptionError,
   shouldWarnNoAudio,

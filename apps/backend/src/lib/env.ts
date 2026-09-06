@@ -1,8 +1,8 @@
 import { logger } from "./logger"
-import { loadPostHogConfig } from "@threa/backend-common"
-import type { PostHogConfig, WorkosConfig } from "@threa/backend-common"
+import { loadPostHogConfig } from "@threahq/backend-common"
+import type { PostHogConfig, WorkosConfig } from "@threahq/backend-common"
 
-export type { WorkosConfig } from "@threa/backend-common"
+export type { WorkosConfig } from "@threahq/backend-common"
 
 export interface AIConfig {
   openRouterApiKey: string

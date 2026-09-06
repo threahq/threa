@@ -36,7 +36,7 @@ import {
   type KnowledgeType,
   type MemoScope,
   type MemosCapturedEventPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   MEMO_GEM_CONFIDENCE_FLOOR,
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
@@ -126,7 +126,7 @@ export interface ProcessResult {
 interface MemoToCreate {
   id: string
   workspaceId: string
-  memoType: import("@threa/types").MemoType
+  memoType: import("@threahq/types").MemoType
   sourceMessageId?: string
   sourceConversationId?: string
   title: string
@@ -134,12 +134,12 @@ interface MemoToCreate {
   keyPoints: string[]
   sourceMessageIds: string[]
   participantIds: string[]
-  knowledgeType: import("@threa/types").KnowledgeType
+  knowledgeType: import("@threahq/types").KnowledgeType
   tags: string[]
-  status: import("@threa/types").MemoStatus
+  status: import("@threahq/types").MemoStatus
   embedding: number[]
   /** Visibility tier (roadmap 6.4): `user` for a private scratchpad's owner, else `workspace`. */
-  scope: import("@threa/types").MemoScope
+  scope: import("@threahq/types").MemoScope
   /** Owner for `user` scope; null otherwise (DB CHECK enforces the pairing). */
   scopeUserId: string | null
   /** Set at save time when this memo supersedes a prior capture from its conversation. */

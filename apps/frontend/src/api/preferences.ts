@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { UserPreferences, UpdateUserPreferencesInput } from "@threa/types"
+import type { UserPreferences, UpdateUserPreferencesInput } from "@threahq/types"
 
 export const preferencesApi = {
   async get(workspaceId: string): Promise<UserPreferences> {

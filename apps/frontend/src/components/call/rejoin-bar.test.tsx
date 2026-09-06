@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { StreamActiveCall } from "@threa/types"
+import type { StreamActiveCall } from "@threahq/types"
 import * as hooksModule from "@/hooks"
 import * as launchModule from "./call-launch-context"
 import * as callHooksModule from "./call-store-hooks"

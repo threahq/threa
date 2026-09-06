@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@threa/types": "workspace:*"
+    "@threahq/types": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250214.0",

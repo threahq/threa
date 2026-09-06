@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AgentToolNames } from "@threa/types"
+import { AgentToolNames } from "@threahq/types"
 import { ARIADNE_AGENT_ID, EMPTY_AGENT_ID } from "./built-in-agents"
 import { BUILT_IN_AGENT_CONFIG_TIMESTAMP, PersonaRepository } from "./persona-repository"
 

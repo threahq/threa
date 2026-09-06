@@ -4,7 +4,7 @@ import type {
   ListStreamContextOccurrencesResponse,
   ListStreamContextResponse,
   StreamContextScope,
-} from "@threa/types"
+} from "@threahq/types"
 
 /** The narrowing filters both routes accept. `from` is an author **id** — the
  *  panel resolves `from:@slug` against workspace users before calling. */

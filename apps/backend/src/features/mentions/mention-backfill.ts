@@ -1,5 +1,5 @@
-import type { JSONContent } from "@threa/types"
-import { collectUnresolvedChannelLinkSlugs, collectUnresolvedMentionSlugs } from "@threa/prosemirror"
+import type { JSONContent } from "@threahq/types"
+import { collectUnresolvedChannelLinkSlugs, collectUnresolvedMentionSlugs } from "@threahq/prosemirror"
 import { sql } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 // Barrel import (INV-52). The messaging barrel exports `deriveContentMarkdown`

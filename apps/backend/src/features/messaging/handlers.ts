@@ -13,15 +13,15 @@ import {
   type ComposeTrace,
   type ConversationDirective,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-} from "@threa/types"
-import { serializeBigInt, HttpError } from "@threa/backend-common"
+} from "@threahq/types"
+import { serializeBigInt, HttpError } from "@threahq/backend-common"
 import { MessageNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
-import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
+import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { deriveContentMarkdown } from "./content"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { messageMetadataSchema } from "./metadata-schema"
 import type { SteeredMessageService } from "./steered-message-service"
 
@@ -44,9 +44,9 @@ export const conversationDirectiveSchema = z.discriminatedUnion("intent", [
 ])
 
 // INV-31: this runtime schema is the wire guard; `ConversationDirective` in
-// @threa/types is the published contract. These two assignments fail the
+// @threahq/types is the published contract. These two assignments fail the
 // typecheck if either side gains/loses a member, so the shape can't drift
-// between validation and the shared type. (@threa/types carries no zod, so the
+// between validation and the shared type. (@threahq/types carries no zod, so the
 // type can't be inferred from the schema directly — this is the lock instead.)
 const _directiveSchemaToType = (d: z.infer<typeof conversationDirectiveSchema>): ConversationDirective => d
 const _directiveTypeToSchema = (d: ConversationDirective): z.infer<typeof conversationDirectiveSchema> => d
@@ -142,7 +142,7 @@ const e2eRecipientSchema = z.object({
   enc: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
   ct: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
 })
-// v1 — per-message recipient fan-out (@threa/crypto `Envelope`). The message
+// v1 — per-message recipient fan-out (@threahq/crypto `Envelope`). The message
 // key is wrapped to each recipient inline. Kept for read-compat; the SSK path
 // (v2) is the direction for new messages.
 const e2eEnvelopeV1Schema = z.object({
@@ -153,7 +153,7 @@ const e2eEnvelopeV1Schema = z.object({
   recipients: z.array(e2eRecipientSchema).min(1).max(MAX_E2E_RECIPIENTS),
 })
 
-// v2 — per-stream symmetric key (@threa/crypto `StreamEnvelope`). No inline
+// v2 — per-stream symmetric key (@threahq/crypto `StreamEnvelope`). No inline
 // recipients: the SSK is wrapped out of band in `stream_e2e_key_wraps`. The
 // envelope carries only the framing; the AES-GCM ciphertext rides the
 // top-level `ciphertext` field. `keyGeneration` selects which SSK generation
@@ -274,7 +274,7 @@ function serializeMessage(msg: Message) {
 
 // Plaintext consumers (search index, message-formatter, outbox handlers) gate
 // on `isE2eStream` before reading these fields, so the value never reaches a
-// user. `E2E_PLACEHOLDER_CONTENT_MARKDOWN` is shared from `@threa/types` so
+// user. `E2E_PLACEHOLDER_CONTENT_MARKDOWN` is shared from `@threahq/types` so
 // the frontend decrypt path can detect it byte-identically; we derive the
 // JSON doc shape locally because ProseMirror types aren't worth shipping.
 const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {

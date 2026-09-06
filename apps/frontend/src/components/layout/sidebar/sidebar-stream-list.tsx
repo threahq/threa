@@ -1,6 +1,6 @@
 import { Fragment, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
-import { MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
+import { MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
 import { useSidebar, type CollapseState } from "@/contexts"
 import { useBoardSelection } from "@/hooks/use-board-selection"
 import {

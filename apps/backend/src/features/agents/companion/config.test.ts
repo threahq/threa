@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { TONE_PRESETS, BREVITY_PRESETS } from "@threa/types"
+import { TONE_PRESETS, BREVITY_PRESETS } from "@threahq/types"
 import type { Persona } from "../persona-repository"
 import { TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS, resolvePersonaStyleSlots } from "./config"
 

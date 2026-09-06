@@ -3,9 +3,9 @@ import type { Pool } from "pg"
 import { withTransaction, sql } from "../../db"
 import { BotApiKeyRepository, type BotApiKeyRow } from "./bot-api-key-repository"
 import { botApiKeyId } from "../../lib/id"
-import { HttpError } from "@threa/backend-common"
-import type { WorkspacePermissionSlug } from "@threa/types"
-import { API_KEY_ELIGIBLE_SCOPES, BOT_KEY_PREFIX } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import type { WorkspacePermissionSlug } from "@threahq/types"
+import { API_KEY_ELIGIBLE_SCOPES, BOT_KEY_PREFIX } from "@threahq/types"
 import { CURRENT_API_VERSION, type ApiVersion } from "./versions"
 
 const KEY_BYTE_LENGTH = 32

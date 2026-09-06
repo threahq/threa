@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels } from "@threa/types"
+import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels } from "@threahq/types"
 import { sanitizeInvocationStepContent } from "./sanitize"
 
 function parse(content: string) {

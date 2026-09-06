@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import type { ModelCapabilities, ModelRegistry } from "@threa/agent-runtime"
+import type { ModelCapabilities, ModelRegistry } from "@threahq/agent-runtime"
 import {
   AgentToolNames,
   CompanionModes,
@@ -9,7 +9,7 @@ import {
   StreamPurposes,
   type PersonaConfigPatch,
   type PersonaCustomConfig,
-} from "@threa/types"
+} from "@threahq/types"
 import { PersonaConfigService, type PersonaCaller } from "./persona-config-service"
 import { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"

@@ -1,4 +1,4 @@
-import type { SubagentSummary } from "@threa/types"
+import type { SubagentSummary } from "@threahq/types"
 import { api } from "./client"
 
 /**

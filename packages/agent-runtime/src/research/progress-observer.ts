@@ -1,4 +1,4 @@
-import type { SourceItem, TraceSource } from "@threa/types"
+import type { SourceItem, TraceSource } from "@threahq/types"
 import type { AgentEvent } from "../runtime/agent-events"
 import type { AgentObserver } from "../runtime/agent-observer"
 import { normalizeSourceType, readStringField } from "./research-support"

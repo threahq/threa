@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { CommandKinds } from "@threa/types"
+import { CommandKinds } from "@threahq/types"
 import type { CommandDispatchedOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"

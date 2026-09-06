@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { parseTurnDigestStepContent } from "@threa/agent-runtime"
-import { AgentStepTypes, AuthorTypes } from "@threa/types"
+import { parseTurnDigestStepContent } from "@threahq/agent-runtime"
+import { AgentStepTypes, AuthorTypes } from "@threahq/types"
 import { MessageRepository } from "../messaging"
 import { AgentSessionRepository, type AgentSession } from "./session-repository"
 

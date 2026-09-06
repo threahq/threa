@@ -1,5 +1,5 @@
 import type { Request, Response } from "express"
-import { displayNameFromWorkos } from "@threa/backend-common"
+import { displayNameFromWorkos } from "@threahq/backend-common"
 import { HttpError } from "../lib/errors"
 
 export function createAuthHandlers() {

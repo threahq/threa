@@ -1,8 +1,8 @@
 import type { Pool } from "pg"
-import type { ExcelMetadata, TextSizeTier, InjectionStrategy, ExcelSheetInfo, ExcelChartInfo } from "@threa/types"
-import type { AI } from "@threa/agent-runtime"
+import type { ExcelMetadata, TextSizeTier, InjectionStrategy, ExcelSheetInfo, ExcelChartInfo } from "@threahq/types"
+import type { AI } from "@threahq/agent-runtime"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
-import { TextSizeTiers, InjectionStrategies } from "@threa/types"
+import { TextSizeTiers, InjectionStrategies } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { processAttachment, type ExtractionData } from "../process-attachment"
 import {

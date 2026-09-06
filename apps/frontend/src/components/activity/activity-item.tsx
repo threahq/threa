@@ -8,7 +8,7 @@ import { URGENCY_COLORS } from "@/components/layout/sidebar/config"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { ActivityContent } from "./activity-content"
-import type { Activity } from "@threa/types"
+import type { Activity } from "@threahq/types"
 
 /** Shape returned by `useActors(...).getActorAvatar`. Repeated here to avoid a
  *  cross-hook type import and to document what each field is used for. */

@@ -6,7 +6,7 @@ import {
   type ListStreamContextResponse,
   type StreamContextItem,
   type StreamContextScope,
-} from "@threa/types"
+} from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { decodeKeysetCursor, encodeKeysetCursor } from "../../lib/keyset-cursor"
 import { E2eStreamsRepository } from "../e2e-streams"

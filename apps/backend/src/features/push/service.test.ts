@@ -1,7 +1,7 @@
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test"
 import webpush from "web-push"
 import type { Pool } from "pg"
-import { ActivityTypes, PrefNotificationLevels, SavedStatuses, type PrefNotificationLevel } from "@threa/types"
+import { ActivityTypes, PrefNotificationLevels, SavedStatuses, type PrefNotificationLevel } from "@threahq/types"
 import { PushService } from "./service"
 import { PushSubscriptionRepository } from "./repository"
 import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../lib/outbox"

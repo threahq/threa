@@ -1,4 +1,4 @@
-import { type PersonaConfigPatch, type PersonaConfigRevision, type PersonaRevisionAuthorKind } from "@threa/types"
+import { type PersonaConfigPatch, type PersonaConfigRevision, type PersonaRevisionAuthorKind } from "@threahq/types"
 import { sql, type Querier } from "../../db"
 import { personaConfigRevisionId } from "../../lib/id"
 

@@ -1,7 +1,7 @@
 import { forwardRef } from "react"
 import type { Placement } from "@floating-ui/react"
 import { SlidersHorizontal } from "lucide-react"
-import type { CommandArgumentSuggestion } from "@threa/types"
+import type { CommandArgumentSuggestion } from "@threahq/types"
 import { SuggestionList, type SuggestionListRef } from "./suggestion-list"
 
 export type CommandArgPickerRef = SuggestionListRef

@@ -36,7 +36,7 @@ import { scheduledKeys } from "@/hooks/use-scheduled"
 import { activityKeys } from "@/hooks/use-activity"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { WorkspaceBootstrap } from "@threahq/types"
 
 type BootstrapOutcome = { status: "success" } | { status: "cancelled" } | { status: "error"; error: unknown }
 
@@ -52,7 +52,7 @@ interface SyncEngineDeps {
       workspaceId: string,
       streamId: string,
       params?: { after?: string }
-    ) => Promise<import("@threa/types").StreamBootstrap>
+    ) => Promise<import("@threahq/types").StreamBootstrap>
   }
   messageService?: {
     update: (workspaceId: string, messageId: string, data: any) => Promise<any>
@@ -65,16 +65,16 @@ interface SyncEngineDeps {
   scheduledService?: {
     create: (
       workspaceId: string,
-      input: import("@threa/types").ScheduleMessageInput
-    ) => Promise<import("@threa/types").ScheduledMessageView>
+      input: import("@threahq/types").ScheduleMessageInput
+    ) => Promise<import("@threahq/types").ScheduledMessageView>
     delete: (workspaceId: string, id: string) => Promise<void>
-    sendNow: (workspaceId: string, id: string) => Promise<import("@threa/types").ScheduledMessageView>
+    sendNow: (workspaceId: string, id: string) => Promise<import("@threahq/types").ScheduledMessageView>
   }
   /** Centralized drafts (Stage 3). `list` seeds the bootstrap reconcile on
    *  connect/reconnect (INV-53); `upsert`/`delete` replay the offline draft
    *  push queue. Absent (test deps) → drafts stay local-only. */
   draftsService?: DraftsServiceLike & {
-    list: (workspaceId: string) => Promise<{ drafts: import("@threa/types").Draft[] }>
+    list: (workspaceId: string) => Promise<{ drafts: import("@threahq/types").Draft[] }>
   }
   /** When provided, the engine runs the sync-log cursor: it pages catch-up on
    *  every connect/resume/heartbeat and applies entries through the live
@@ -85,7 +85,7 @@ interface SyncEngineDeps {
       workspaceId: string,
       params: { after: string; limit?: number },
       signal?: AbortSignal
-    ) => Promise<import("@threa/types").SyncCatchUpResponse>
+    ) => Promise<import("@threahq/types").SyncCatchUpResponse>
   }
 }
 
@@ -874,7 +874,7 @@ export class SyncEngine {
         if (!this.isAccountCurrent()) return { status: "cancelled" }
         this.assertSnapshotHeadAboveCursor(_isReconnect, localCursor, workspaceBootstrap)
 
-        const successfulStreamBootstraps = new Map<string, import("@threa/types").StreamBootstrap>()
+        const successfulStreamBootstraps = new Map<string, import("@threahq/types").StreamBootstrap>()
         const staleStreamIds = new Set<string>()
         const terminalStreamIds = new Set<string>()
         for (const result of streamResults) {

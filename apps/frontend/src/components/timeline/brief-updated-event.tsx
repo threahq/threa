@@ -1,5 +1,5 @@
 import { BookText } from "lucide-react"
-import type { BriefUpdatedEventPayload, StreamEvent } from "@threa/types"
+import type { BriefUpdatedEventPayload, StreamEvent } from "@threahq/types"
 import { useActors } from "@/hooks"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 

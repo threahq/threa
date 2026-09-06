@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import type { RegionalClient } from "../../lib/regional-client"
 import type { GithubWebhookDispatchPayload } from "./constants"
 import { GithubWebhookDeliveryRepository } from "./repository"

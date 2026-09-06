@@ -82,7 +82,7 @@ import {
   type CallEndedEventPayload,
   type UnreadOpenPosition,
   type AgentSessionStartedPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   EventList,
   TimelineItemContent,

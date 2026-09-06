@@ -1,5 +1,5 @@
-import type { ModelRegistry } from "@threa/agent-runtime"
-import type { UserPreferences, WorkspaceSettings } from "@threa/types"
+import type { ModelRegistry } from "@threahq/agent-runtime"
+import type { UserPreferences, WorkspaceSettings } from "@threahq/types"
 
 /**
  * The models a subagent may run on, in one place (INV-33). Three gates, in this

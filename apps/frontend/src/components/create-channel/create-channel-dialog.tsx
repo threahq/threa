@@ -19,7 +19,7 @@ import { useCreateStream } from "@/hooks"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useAuth } from "@/auth"
 import { toast } from "sonner"
-import type { Visibility } from "@threa/types"
+import type { Visibility } from "@threahq/types"
 
 function ChannelDialogHeader() {
   return (

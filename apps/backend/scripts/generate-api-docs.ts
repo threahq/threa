@@ -18,7 +18,7 @@ import {
   VERSION_CHANGES,
 } from "../src/features/public-api/versions"
 import type { ApiVersion, OpenApiSpec } from "../src/features/public-api/versions"
-import { API_KEY_ELIGIBLE_PICKER_SCOPES, THREA_VERSION_HEADER } from "@threa/types"
+import { API_KEY_ELIGIBLE_PICKER_SCOPES, THREA_VERSION_HEADER } from "@threahq/types"
 
 const REPO_ROOT = resolve(import.meta.dirname!, "../../..")
 const OUTPUT_PATH = resolve(REPO_ROOT, "docs/public-api/openapi.json")

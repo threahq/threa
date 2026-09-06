@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useCallback } from "react"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { useScrollToElement } from "./use-scroll-to-element"
 
 interface UseUnreadDividerOptions {

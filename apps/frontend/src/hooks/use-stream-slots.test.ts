@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { db } from "@/db"
-import { sharedMessageSlotKey, type SharedMessageSlot } from "@threa/types"
+import { sharedMessageSlotKey, type SharedMessageSlot } from "@threahq/types"
 import { useStreamSlots } from "./use-stream-slots"
 
 function slot(messageId: string): SharedMessageSlot {

@@ -1,4 +1,4 @@
-import { DEFAULT_WORKSPACE_SETTINGS, type WorkspaceSettings } from "@threa/types"
+import { DEFAULT_WORKSPACE_SETTINGS, type WorkspaceSettings } from "@threahq/types"
 import type { Querier } from "../../db"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
 import { isValidIanaTimezone, monthRangeInTimezone } from "../../lib/temporal"

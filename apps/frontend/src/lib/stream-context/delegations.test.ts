@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { DelegationSummary } from "@threa/types"
+import type { DelegationSummary } from "@threahq/types"
 import { delegationContextItems, withDelegations } from "./delegations"
 import type { DerivedStreamContext, LinkContextItem } from "./types"
 import { CONTEXT_CATEGORIES, type ContextCategory } from "./types"

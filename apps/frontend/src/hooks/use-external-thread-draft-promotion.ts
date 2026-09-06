@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { draftStreamScope, draftThreadScope } from "@threa/types"
+import { draftStreamScope, draftThreadScope } from "@threahq/types"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { relocateLoadedDraft, rescopeScopeDrafts } from "./use-draft-message"
 

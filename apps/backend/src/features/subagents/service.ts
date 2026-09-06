@@ -11,7 +11,7 @@ import {
   type SubagentCreatedEventPayload,
   type SubagentFailureReason,
   type SubagentStatusChangedEventPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import type { CreateThreadParams } from "../streams"
 import { SUBAGENT_EXPIRY_SWEEP_LIMIT, SUBAGENT_IDLE_EXPIRY_DAYS } from "./config"

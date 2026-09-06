@@ -2,7 +2,7 @@ import type { AttachmentRef } from "./attachment"
 
 /**
  * One citation source sealed into an E2E message payload. Structural twin of
- * `@threa/types`' `SourceItem` — this package stays dependency-free (it must
+ * `@threahq/types`' `SourceItem` — this package stays dependency-free (it must
  * not pull the whole types package into every crypto consumer), so the shape
  * is mirrored here and bridged by structural typing, exactly like
  * `EnclaveStreamEnvelope` mirrors `StreamEnvelope` on the types side.

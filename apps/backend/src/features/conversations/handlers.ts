@@ -14,7 +14,7 @@ import {
   BOARD_SCOPE_STREAM_TYPES,
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
-} from "@threa/types"
+} from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import { HttpError } from "../../lib/errors"
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import * as db from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository, type User } from "../workspaces"

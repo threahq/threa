@@ -15,7 +15,7 @@ import { SearchRepository } from "../../src/features/search"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { streamId, userId, workspaceId, personaId } from "../../src/lib/id"
 import { addTestMember, setupTestDatabase, testMessageContent } from "./setup"
-import { Visibilities } from "@threa/types"
+import { Visibilities } from "@threahq/types"
 
 describe("Stream Persona Participants", () => {
   let pool: Pool

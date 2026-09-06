@@ -1,4 +1,4 @@
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import type { CloudflareKvConfig } from "../config"
 
 export interface KvClient {

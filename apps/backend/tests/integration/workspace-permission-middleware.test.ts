@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { HttpError } from "../../src/lib/errors"
 import { createRequireWorkspacePermission } from "../../src/middleware/workspace-permission"
 

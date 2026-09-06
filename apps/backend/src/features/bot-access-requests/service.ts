@@ -8,7 +8,7 @@ import {
   type AuthorType,
   type BotAccessRequestedEventPayload,
   type BotAccessStatusChangedEventPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import { StreamEventRepository } from "../streams"
 import { BotAccessRequestRepository, type BotAccessRequest } from "./repository"
 

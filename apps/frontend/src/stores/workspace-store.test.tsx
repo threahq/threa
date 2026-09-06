@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { renderHook, act, render, waitFor } from "@testing-library/react"
-import { LabelableResourceTypes } from "@threa/types"
+import { LabelableResourceTypes } from "@threahq/types"
 import { db, type CachedLabelAssignment, type CachedStream, type CachedWorkspaceUser } from "@/db"
 import * as streamNameCache from "@/lib/crypto/stream-name-cache"
 import { resetWorkspaceTableRegistry } from "./workspace-table-registry"

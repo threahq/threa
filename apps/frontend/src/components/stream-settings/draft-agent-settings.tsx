@@ -1,4 +1,4 @@
-import { type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
+import { type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threahq/types"
 import { useDraftScratchpads } from "@/hooks/use-draft-scratchpads"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { useCompanionRoster } from "@/hooks/use-companion-roster"

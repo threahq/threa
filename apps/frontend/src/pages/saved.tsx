@@ -1,7 +1,7 @@
 import { Navigate, useParams } from "react-router-dom"
 import { Bookmark } from "lucide-react"
 import { toast } from "sonner"
-import { SAVED_STATUSES } from "@threa/types"
+import { SAVED_STATUSES } from "@threahq/types"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useSavedList, useUpdateSaved, useDeleteSaved } from "@/hooks"
 import { useSuggestedCount } from "@/hooks/use-saved-suggestions"
@@ -11,7 +11,7 @@ import { SavedSkeleton } from "@/components/saved/saved-skeleton"
 import { SavedQuickAdd } from "@/components/saved/saved-quick-add"
 import { SuggestedTab } from "@/components/saved/suggested-tab"
 import { PageHeaderTabs } from "@/components/layout"
-import type { SavedStatus } from "@threa/types"
+import type { SavedStatus } from "@threahq/types"
 
 // "suggested" is a view, not a saved status — it reads from a separate data
 // source (the quiet collector) but lives as a fourth tab on this page.

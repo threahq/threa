@@ -3,7 +3,7 @@ import {
   RefreshAndSealSessionDataFailureReason,
   WorkOS,
 } from "@workos-inc/node"
-import type { SocialProvider } from "@threa/types"
+import type { SocialProvider } from "@threahq/types"
 import { logger } from "../logger"
 import { WORKOS_REQUEST_TIMEOUT_MS, type WorkosConfig } from "./types"
 

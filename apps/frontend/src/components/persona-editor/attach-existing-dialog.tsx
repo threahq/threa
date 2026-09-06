@@ -6,7 +6,7 @@ import {
   isPersonaAttachmentMimeAllowed,
   PERSONA_ATTACHMENT_ALLOWED_MIME_TYPES,
   type AttachmentCategory,
-} from "@threa/types"
+} from "@threahq/types"
 import type { AttachmentSearchItem } from "@/api/attachments"
 import { ExplorerList, useAttachmentSearch, type ExplorerFilters } from "@/components/attachment-explorer"
 import {

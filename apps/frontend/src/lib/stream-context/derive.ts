@@ -6,8 +6,8 @@ import {
   type JSONContent,
   type LinkPreviewSummary,
   type ThreadSummary,
-} from "@threa/types"
-import { collectGiphyEmbeds, collectLinkUrls } from "@threa/prosemirror"
+} from "@threahq/types"
+import { collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import type { CachedEvent } from "@/db"
 import {

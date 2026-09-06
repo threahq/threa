@@ -16,7 +16,7 @@ import {
   buildAgentActivitySummary,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import type { MessageAgentActivity } from "@/hooks"
 
 const DEADLINE = 4000

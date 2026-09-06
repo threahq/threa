@@ -14,7 +14,7 @@ import {
   type EnclaveSessionHeartbeatResponse,
   type EnclaveStreamEnvelope,
   type JSONContent,
-} from "@threa/types"
+} from "@threahq/types"
 import { withTransaction } from "../../db"
 import { eventId, agentConversationSummaryId } from "../../lib/id"
 import { logger } from "../../lib/logger"
@@ -46,7 +46,7 @@ import {
 import type { AICostServiceLike } from "../ai-usage"
 import { enqueueEnclaveInvocation } from "./claim-service"
 import { EnclaveInvocationsRepository, ENCLAVE_CLAIM_TTL_SECONDS } from "./invocations-repository"
-import { parseModelId } from "@threa/agent-runtime"
+import { parseModelId } from "@threahq/agent-runtime"
 
 async function resolveInitiatingUserId(db: Pool | PoolClient, session: AgentSession): Promise<string> {
   if (!session.triggerMessageId) {

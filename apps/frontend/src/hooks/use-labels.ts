@@ -5,7 +5,7 @@ import { useLabelService } from "@/contexts"
 import { db, type CachedLabel, type CachedLabelAssignment, type CachedStream } from "@/db"
 import { useWorkspaceLabels, useWorkspaceLabelAssignments, useWorkspaceStreams } from "@/stores/workspace-store"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
-import { LabelableResourceTypes } from "@threa/types"
+import { LabelableResourceTypes } from "@threahq/types"
 import { hiddenStreamIds } from "@/lib/streams"
 import type {
   CreateLabelInput,
@@ -14,7 +14,7 @@ import type {
   LabelableResourceType,
   LabeledMessage,
   UpdateLabelInput,
-} from "@threa/types"
+} from "@threahq/types"
 
 export type { CachedLabel, CachedLabelAssignment }
 

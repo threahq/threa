@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Server } from "socket.io"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import type { BotRuntimeService } from "./service"
 import type { BotApiKeyService } from "../public-api"
 import type { BotInvocation, BotInvocationCancellation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"

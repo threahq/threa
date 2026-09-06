@@ -46,7 +46,7 @@ import type {
   LinearProjectPreviewData,
   LinkPreviewSummary,
   VideoPreview,
-} from "@threa/types"
+} from "@threahq/types"
 
 function isLinearPreview(
   preview: GitHubPreview | LinearPreview | VideoPreview | null | undefined

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo, type RefObject, type
 import { createPortal } from "react-dom"
 import type { Editor } from "@tiptap/react"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 import {
   DESKTOP_GRID_COLUMNS,
   MAX_RECENTLY_USED_ROWS,

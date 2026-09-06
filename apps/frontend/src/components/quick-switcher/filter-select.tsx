@@ -3,7 +3,7 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { Calendar } from "@/components/ui/calendar"
 import { formatISODate } from "@/lib/dates"
 import { useFormattedDate } from "@/hooks"
-import type { StreamType, User, Stream } from "@threa/types"
+import type { StreamType, User, Stream } from "@threahq/types"
 import { rankMatches } from "@/lib/match-score"
 import { getStreamName, streamLabel } from "@/lib/streams"
 

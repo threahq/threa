@@ -9,7 +9,7 @@ import { db } from "@/db"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
 import { useWorkspaceUsers, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
-import type { WorkspaceBootstrap, User } from "@threa/types"
+import type { WorkspaceBootstrap, User } from "@threahq/types"
 import type { WorkspaceListResult } from "@/api/workspaces"
 
 export const workspaceKeys = {

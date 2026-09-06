@@ -9,7 +9,7 @@ import {
   PI_TOOL_TRACE_REDACTED_BODIES,
   PiToolTraceSectionLabels,
   type AgentSessionStep,
-} from "@threa/types"
+} from "@threahq/types"
 import { TraceStep } from "./trace-step"
 import * as hooksModule from "@/hooks"
 import * as relativeTimeModule from "@/components/relative-time"

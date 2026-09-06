@@ -22,7 +22,7 @@ import {
   type DelegationStatusChangedEventPayload,
   type StreamEvent,
   type ThreadSummary,
-} from "@threa/types"
+} from "@threahq/types"
 import { delegationsApi } from "@/api"
 import { usePanel } from "@/contexts"
 import { useActors, useThreadDraft } from "@/hooks"

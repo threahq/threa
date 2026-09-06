@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { EXTRACTION_CONTENT_TYPES } from "@threa/types"
+import { EXTRACTION_CONTENT_TYPES } from "@threahq/types"
 
 export const IMAGE_CAPTION_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 

@@ -6,7 +6,7 @@ import {
   permissionsForRole,
   type WorkspacePermissionSlug,
   type WorkspaceRoleSlug,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   isStreamScopedEvent,
   isOutboxEventType,

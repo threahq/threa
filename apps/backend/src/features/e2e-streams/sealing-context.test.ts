@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test"
 import type { Querier } from "../../db"
 import { E2eStreamsRepository } from "./repository"
 import { E2eStreamActorsRepository } from "./actor-repository"
-import { EXTERNAL_SEALED_DELIVERY } from "@threa/agent-runtime"
+import { EXTERNAL_SEALED_DELIVERY } from "@threahq/agent-runtime"
 import { resolveSealingContext } from "./sealing-context"
 
 const db = { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Querier

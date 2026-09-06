@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, ToolPrivacyCategories, type FeatureFlagValue } from "@threa/types"
+import { AgentStepTypes, ToolPrivacyCategories, type FeatureFlagValue } from "@threahq/types"
 import type { WorkspaceAgentResult } from "../researcher"
 import { WORKSPACE_AGENT_TOTAL_BUDGET_MS } from "../researcher/config"
 import { defineAgentTool, type AgentToolResult } from "../runtime"

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { db } from "@/db"
 import {
   useScopeDraftPreview,

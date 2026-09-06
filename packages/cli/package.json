@@ -1,5 +1,5 @@
 {
-  "name": "@threa/cli",
+  "name": "@threahq/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",

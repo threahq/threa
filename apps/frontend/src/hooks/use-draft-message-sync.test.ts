@@ -10,7 +10,7 @@ import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { hasPendingDraftUpsert } from "@/sync/draft-sync"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 const workspaceId = "ws_1"
 const scope = "stream:stream_1"

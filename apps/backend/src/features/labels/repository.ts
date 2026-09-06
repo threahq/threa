@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { type Label, type LabelAssignment, type LabelableResourceType, type LabelActorType } from "@threa/types"
+import { type Label, type LabelAssignment, type LabelableResourceType, type LabelActorType } from "@threahq/types"
 
 interface LabelRow {
   id: string

@@ -1,4 +1,4 @@
-import type { AuthorType } from "@threa/types"
+import type { AuthorType } from "@threahq/types"
 import { Moon } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"

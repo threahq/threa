@@ -3,7 +3,7 @@
  * Single source of truth for all step type display properties.
  * Both inline activity indicators and trace dialog use this config.
  */
-import { type AgentStepType } from "@threa/types"
+import { type AgentStepType } from "@threahq/types"
 import {
   Inbox,
   Lightbulb,

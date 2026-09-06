@@ -6,7 +6,7 @@
  */
 
 import type { Pool } from "pg"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../src/lib/ai/config-resolver"
 import type { ComponentOverrides } from "./config-types"
 

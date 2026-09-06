@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { AuthorTypes, StreamTypes } from "@threa/types"
+import { AuthorTypes, StreamTypes } from "@threahq/types"
 import { ConversationRepository } from "../conversations"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamRepository } from "../streams"

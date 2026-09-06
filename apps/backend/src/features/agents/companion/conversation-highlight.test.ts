@@ -1,5 +1,5 @@
 import { describe, test, expect, spyOn, afterEach, mock } from "bun:test"
-import { ConversationStatuses } from "@threa/types"
+import { ConversationStatuses } from "@threahq/types"
 import { ConversationRepository, type Conversation } from "../../conversations"
 import { resolveEligibleConversation, loadConversationHighlight } from "./conversation-highlight"
 

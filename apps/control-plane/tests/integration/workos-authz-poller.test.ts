@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import type { Pool } from "pg"
-import { StubWorkosOrgService, type WorkosMembershipEvent } from "@threa/backend-common"
+import { StubWorkosOrgService, type WorkosMembershipEvent } from "@threahq/backend-common"
 import { WorkosAuthzRepository, WorkosAuthzPoller, WorkosAuthzService } from "../../src/features/workos-authz"
 import { WorkosEventPollerLock } from "../../src/lib/workos-event-poller-lock"
 import { setupTestDatabase } from "./setup"

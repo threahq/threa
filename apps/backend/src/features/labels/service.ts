@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg"
-import type { Label, LabelActor } from "@threa/types"
-import { generateSlug, generateUniqueSlug } from "@threa/backend-common"
+import type { Label, LabelActor } from "@threahq/types"
+import { generateSlug, generateUniqueSlug } from "@threahq/backend-common"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"

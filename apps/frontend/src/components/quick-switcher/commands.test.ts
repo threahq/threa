@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { SETTINGS_TABS, SIDEBAR_QUICK_LINKS, type SidebarQuickLinkKey } from "@threa/types"
+import { SETTINGS_TABS, SIDEBAR_QUICK_LINKS, type SidebarQuickLinkKey } from "@threahq/types"
 import { commands, type Command, type CommandContext } from "./commands"
 
 describe("commands", () => {

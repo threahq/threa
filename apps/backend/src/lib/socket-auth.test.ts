@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Socket } from "socket.io"
-import { SessionCookies, type AuthService } from "@threa/backend-common"
+import { SessionCookies, type AuthService } from "@threahq/backend-common"
 import { createSocketAuthMiddleware } from "./socket-auth"
 
 function fakeSocket(cookie?: string) {

@@ -4,7 +4,7 @@
  */
 
 import type { Socket } from "socket.io-client"
-import { INTERNAL_API_KEY_HEADER } from "@threa/backend-common"
+import { INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
 import {
   WORKSPACE_ROLE_SLUGS,
   type CommandInfo,
@@ -12,7 +12,7 @@ import {
   type ValidateMoveMessagesToThreadResponse,
   type WorkspaceInvitableRole,
   type WorkspacePermissionSlug,
-} from "@threa/types"
+} from "@threahq/types"
 
 function getBaseUrl(): string {
   // Read at call time, not import time, so setup.ts can set it

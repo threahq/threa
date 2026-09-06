@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, userEvent } from "@/test"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import { createMockStream } from "@/test/fixtures"

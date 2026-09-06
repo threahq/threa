@@ -7,7 +7,7 @@ import {
   serializeSealedPayload,
   wrapStreamKey,
   type StreamEnvelope,
-} from "@threa/crypto"
+} from "@threahq/crypto"
 import { generateUIK } from "../keys"
 import {
   parseSealedPayload,

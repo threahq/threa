@@ -1,6 +1,6 @@
 import { type ReactNode } from "react"
 import { Hash } from "lucide-react"
-import type { MemoEmbedSummary } from "@threa/types"
+import type { MemoEmbedSummary } from "@threahq/types"
 import { RelativeTime } from "@/components/relative-time"
 import { getKnowledgeConfig } from "@/lib/memo-display"
 import { cn } from "@/lib/utils"

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { parseMessagePayload } from "./payload-parsers"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 
 describe("parseMessagePayload", () => {
   describe("modern format", () => {

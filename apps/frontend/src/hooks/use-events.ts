@@ -12,7 +12,7 @@ import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { writeSlotCarrier } from "@/stores/slot-store"
 import type { SlotCarrier } from "@/lib/slots"
-import type { StreamEvent, EventsAroundResponse } from "@threa/types"
+import type { StreamEvent, EventsAroundResponse } from "@threahq/types"
 
 export const eventKeys = {
   all: ["events"] as const,

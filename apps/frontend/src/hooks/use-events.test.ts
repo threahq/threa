@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { db, type CachedEvent } from "@/db"
 import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
 import {

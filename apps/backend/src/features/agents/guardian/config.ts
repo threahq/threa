@@ -1,7 +1,7 @@
 // Co-located config (INV-44): production code and evals import from here.
 
 import { z } from "zod"
-import { DELEGATION_BRIEF_MAX_CHARS } from "@threa/types"
+import { DELEGATION_BRIEF_MAX_CHARS } from "@threahq/types"
 
 export const TOOL_GUARDIAN_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 

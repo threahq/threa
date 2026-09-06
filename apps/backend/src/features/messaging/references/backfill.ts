@@ -1,4 +1,4 @@
-import type { ContentRange, JSONContent } from "@threa/types"
+import type { ContentRange, JSONContent } from "@threahq/types"
 
 import { sql } from "../../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../../lib/backfill"

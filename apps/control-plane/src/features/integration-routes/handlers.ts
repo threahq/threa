@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { z } from "zod/v4"
-import { HttpError, integrationRouteId } from "@threa/backend-common"
+import { HttpError, integrationRouteId } from "@threahq/backend-common"
 import { IntegrationRouteRepository } from "./repository"
 
 interface Dependencies {

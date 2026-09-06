@@ -21,7 +21,7 @@ import {
 import { EventService } from "../../src/features/messaging"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, messageId, eventId, streamId } from "../../src/lib/id"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { StreamTypes, Visibilities } from "@threahq/types"
 
 describe("Thread Graph", () => {
   let pool: Pool

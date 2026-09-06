@@ -1,4 +1,4 @@
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 /**
  * Canonical empty ProseMirror document — one empty paragraph, which is the

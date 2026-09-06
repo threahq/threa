@@ -1,4 +1,4 @@
-import { AuthorTypes, MemoScopes, StreamTypes, type JSONContent, type MemoScope } from "@threa/types"
+import { AuthorTypes, MemoScopes, StreamTypes, type JSONContent, type MemoScope } from "@threahq/types"
 import { sql } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 import { streamContextItemId } from "../../lib/id"

@@ -10,7 +10,7 @@ import {
   type MemoScope,
   type MemoStatus,
   type MemoType,
-} from "@threa/types"
+} from "@threahq/types"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { useArchiveMemo, useDeleteMemo, useMemoDetail, useMemoSearch, useUnarchiveMemo, useUpdateMemo } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"

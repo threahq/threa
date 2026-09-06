@@ -1,12 +1,12 @@
-import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
-import { collectMentionActorRefs, collectMentionSlugs } from "@threa/prosemirror"
+import { resolveDeliveryVerdict, TrustTiers } from "@threahq/agent-runtime"
+import { collectMentionActorRefs, collectMentionSlugs } from "@threahq/prosemirror"
 import {
   AuthorTypes,
   StreamTypes,
   botHasCapability,
   type BotInvocationCapability,
   type BotInvocationTrigger,
-} from "@threa/types"
+} from "@threahq/types"
 import type { Querier } from "../../db"
 import { logger } from "../../lib/logger"
 import { resolveSealingContext } from "../e2e-streams"

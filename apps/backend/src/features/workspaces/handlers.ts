@@ -23,7 +23,7 @@ import { SyncLogRepository } from "../sync"
 import { BotRepository, serializeBot } from "../public-api"
 import { AgentSessionRepository } from "../agents"
 import { projectActiveAgentSessions } from "./active-agent-sessions"
-import { displayNameFromWorkos, type WorkosOrgService } from "@threa/backend-common"
+import { displayNameFromWorkos, type WorkosOrgService } from "@threahq/backend-common"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { setStatusSchema, setNotificationPauseSchema } from "../../lib/schemas"
@@ -34,7 +34,7 @@ import {
   LabelActorTypes,
   type WorkspacePermissionSlug,
   type StreamReadFrontier,
-} from "@threa/types"
+} from "@threahq/types"
 
 const createWorkspaceSchema = z.object({
   name: z.string().min(1, "name is required"),

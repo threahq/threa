@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
-import { createRateLimit } from "@threa/backend-common"
+import { createRateLimit } from "@threahq/backend-common"
 
 interface MockResponse {
   headers: Map<string, string>

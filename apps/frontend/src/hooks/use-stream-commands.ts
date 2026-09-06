@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import type { CommandInfo } from "@threa/types"
+import type { CommandInfo } from "@threahq/types"
 import { commandsApi } from "@/api"
 import { streamKeys } from "@/hooks/use-streams"
 import { isDraftId } from "@/hooks/use-coordinated-stream-queries"

@@ -1,4 +1,4 @@
-import { createJsonRepair } from "@threa/agent-runtime"
+import { createJsonRepair } from "@threahq/agent-runtime"
 
 /**
  * JSON repair for the extractor output. The model occasionally omits the

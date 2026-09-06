@@ -1,4 +1,4 @@
-import { API_VERSIONS, CURRENT_API_VERSION } from "@threa/types"
+import { API_VERSIONS, CURRENT_API_VERSION } from "@threahq/types"
 import { ChevronDown } from "lucide-react"
 import {
   DropdownMenu,

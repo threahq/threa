@@ -1,4 +1,4 @@
-import { getBotAvatarUrl } from "@threa/types"
+import { getBotAvatarUrl } from "@threahq/types"
 import { BotIcon } from "lucide-react"
 
 interface BotAvatarProps {

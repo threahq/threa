@@ -13,7 +13,7 @@ import {
   ProcessingStatuses,
   type AttachmentSafetyStatus,
   type AttachmentUploadStatus,
-} from "@threa/types"
+} from "@threahq/types"
 import { isAttachmentSafeForSharing, safetyStatusBlockReason, type MalwareScanner } from "./upload-safety-policy"
 import { attachmentUploadId, extractionId } from "../../lib/id"
 import { logger } from "../../lib/logger"

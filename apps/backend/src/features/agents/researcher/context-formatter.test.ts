@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AuthorType } from "@threa/types"
+import type { AuthorType } from "@threahq/types"
 import { StreamRepository } from "../../streams"
 import { UserRepository } from "../../workspaces"
 import { PersonaRepository } from "../persona-repository"

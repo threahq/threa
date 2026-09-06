@@ -14,7 +14,7 @@ import { BotRepository, serializeTraceStep } from "../../src/features/public-api
 import { StreamEventRepository } from "../../src/features/streams"
 import * as streamsModule from "../../src/features/streams"
 import { streamId, sessionId, personaId, messageId, stepId } from "../../src/lib/id"
-import { AgentStepTypes, AgentToolNames, type AgentToolEffect } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, type AgentToolEffect } from "@threahq/types"
 
 const SETTINGS_EFFECTS: AgentToolEffect[] = [
   { kind: "settings", label: "Theme", target: "theme", before: "light", after: "dark" },

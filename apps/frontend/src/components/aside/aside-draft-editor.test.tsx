@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { spyOnExport } from "@/test"
 import * as draftComposerModule from "@/hooks/use-draft-composer"
 import * as composerModule from "@/components/composer"

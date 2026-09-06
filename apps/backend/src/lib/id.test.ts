@@ -17,7 +17,7 @@ import {
   invitationId,
   sessionId,
   stepId,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 
 describe("ID Generation", () => {
   describe("format", () => {

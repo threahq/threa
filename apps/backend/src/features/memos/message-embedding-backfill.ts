@@ -1,4 +1,4 @@
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import { composeSql, sql } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 import { logger } from "../../lib/logger"

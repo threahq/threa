@@ -1,5 +1,5 @@
 import { Lock } from "lucide-react"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { STREAM_ICONS } from "@/lib/streams"
 
 export const AsideGlyph = STREAM_ICONS[StreamTypes.ASIDE]

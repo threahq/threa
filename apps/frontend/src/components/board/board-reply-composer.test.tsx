@@ -8,7 +8,7 @@ import * as useMobileModule from "@/hooks/use-mobile"
 import * as hooksModule from "@/hooks"
 import * as conversationsModule from "@/hooks/use-conversations"
 import type { ComponentProps } from "react"
-import type { BoardPost } from "@threa/types"
+import type { BoardPost } from "@threahq/types"
 
 type InlineComposerFormProps = ComponentProps<typeof inlineComposerModule.InlineComposerForm>
 

@@ -1,5 +1,5 @@
 import pinoHttp from "pino-http"
-import { logger as baseLogger } from "@threa/agent-runtime/logger"
+import { logger as baseLogger } from "@threahq/agent-runtime/logger"
 import { randomUUID } from "crypto"
 
 /**

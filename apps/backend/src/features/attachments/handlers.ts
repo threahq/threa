@@ -19,7 +19,7 @@ import { isImageAttachment } from "./image-caption"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { MAX_FILE_SIZE } from "../../middleware/upload"
-import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threa/types"
+import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threahq/types"
 
 declare module "express" {
   interface Request {

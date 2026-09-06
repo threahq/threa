@@ -1,5 +1,5 @@
 import { ArchiveX } from "lucide-react"
-import { LabelableResourceTypes, StreamTypes } from "@threa/types"
+import { LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { Badge } from "@/components/ui/badge"
 import { SidebarActionDrawer, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { LiveAgentSettings } from "@/components/stream-settings/live-agent-settings"

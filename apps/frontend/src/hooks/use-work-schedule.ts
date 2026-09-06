@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { type WorkspaceBootstrap, type WorkSchedule, DEFAULT_WORK_SCHEDULE } from "@threa/types"
+import { type WorkspaceBootstrap, type WorkSchedule, DEFAULT_WORK_SCHEDULE } from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { usePreferencesOptional } from "@/contexts"
 import { resolveWorkSchedule } from "@/lib/work-schedule"

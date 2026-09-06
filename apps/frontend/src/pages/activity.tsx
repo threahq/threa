@@ -18,7 +18,7 @@ import { ActivitySkeleton } from "@/components/activity/activity-skeleton"
 import { PageHeaderTabs } from "@/components/layout"
 import { commitCounterMutation } from "@/sync/catch-up-batch"
 import { reconcileActivities } from "@/sync/unread-counters"
-import type { AuthorType, Activity } from "@threa/types"
+import type { AuthorType, Activity } from "@threahq/types"
 
 type ActivityFilter = "all" | "unread" | "me"
 

@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger, type WorkosMembershipStatus } from "@threa/backend-common"
+import { logger, type WorkosMembershipStatus } from "@threahq/backend-common"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import type { RegionalClient } from "../../lib/regional-client"
 

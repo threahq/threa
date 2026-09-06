@@ -9,7 +9,7 @@ import type {
   MoveMessagesToThreadResponse,
   ValidateMoveMessagesToThreadInput,
   ValidateMoveMessagesToThreadResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 export type { CreateMessageInput, CreateDmMessageInput, UpdateMessageInput, MoveMessagesToThreadInput }
 

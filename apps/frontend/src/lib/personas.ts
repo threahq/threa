@@ -1,4 +1,4 @@
-import type { PersonaKind, PersonaListItem } from "@threa/types"
+import type { PersonaKind, PersonaListItem } from "@threahq/types"
 import type { CachedPersona } from "@/db"
 
 /**

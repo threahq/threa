@@ -21,7 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
-import { API_KEY_ELIGIBLE_PICKER_SCOPES, WORKSPACE_PERMISSIONS, type WorkspacePermissionSlug } from "@threa/types"
+import { API_KEY_ELIGIBLE_PICKER_SCOPES, WORKSPACE_PERMISSIONS, type WorkspacePermissionSlug } from "@threahq/types"
 import { Check, ChevronDown, Copy, Key, Plus, Trash2, Eye, EyeOff } from "lucide-react"
 import { ApiKeyVersionControl } from "./api-key-version-control"
 

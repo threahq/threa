@@ -14,7 +14,7 @@
  */
 
 import type { CachedEvent } from "@/db"
-import type { Stream } from "@threa/types"
+import type { Stream } from "@threahq/types"
 
 export interface DraftPromotion {
   draftId: string

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { VOICE_POLISH_WIDEN_MAX_WINDOWS, voicePolishConfig, type VoicePolishConfig } from "./config"
 import type { VoicePolishAttemptObserver } from "./polish"
 import { logger } from "../../lib/logger"

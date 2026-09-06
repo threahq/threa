@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { categoryFromMime } from "@threa/types"
+import { categoryFromMime } from "@threahq/types"
 import { Hash, ExternalLink } from "lucide-react"
 import { attachmentsApi, type AttachmentSearchItem } from "@/api/attachments"
 import { useFormattedDate } from "@/hooks"

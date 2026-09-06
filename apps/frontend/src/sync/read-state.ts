@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query"
-import type { StreamBootstrap, StreamReadFrontier, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threa/types"
+import type { StreamBootstrap, StreamReadFrontier, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threahq/types"
 import { db, getActiveDb, type CachedStreamReadState, type ThreaDatabase } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"

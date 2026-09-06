@@ -1,6 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks"
 import { useMemo } from "react"
-import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threa/types"
+import { THREAD_ANCHORABLE_EVENT_TYPES } from "@threahq/types"
 import { db, type CachedBoardPost } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 

@@ -16,7 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { cn } from "@/lib/utils"
-import type { ComposerActionSide } from "@threa/types"
+import type { ComposerActionSide } from "@threahq/types"
 import { EditorToolbar } from "./editor-toolbar"
 import type { RichEditorHandle } from "./rich-editor"
 

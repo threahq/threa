@@ -1,5 +1,5 @@
-import type { JSONContent } from "@threa/types"
-import { collectLinkUrls } from "@threa/prosemirror"
+import type { JSONContent } from "@threahq/types"
+import { collectLinkUrls } from "@threahq/prosemirror"
 
 /** Mirrors the backend `parseInAppLink` path shapes (`url-utils.ts`). */
 const STREAM_PATH = /^\/w\/[^/]+\/s\/([^/]+)$/

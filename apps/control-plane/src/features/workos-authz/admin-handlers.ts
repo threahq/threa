@@ -1,8 +1,8 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import type { Pool } from "pg"
-import { HttpError } from "@threa/backend-common"
-import { WORKSPACE_USER_ROLES } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import { WORKSPACE_USER_ROLES } from "@threahq/types"
 import type { AdminActor, WorkosAuthzAdminService } from "./admin-service"
 import { WorkspaceRegistryRepository } from "../workspaces"
 

@@ -12,7 +12,7 @@ import {
   isStatusContentful,
   STATUS_TEXT_MAX_LENGTH,
   MAX_STATUS_PRESETS,
-} from "@threa/types"
+} from "@threahq/types"
 
 export const streamTypeSchema = z.enum(STREAM_TYPES)
 export const streamPurposeSchema = z.enum(STREAM_PURPOSES)

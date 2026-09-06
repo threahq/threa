@@ -1,10 +1,10 @@
 import type { Pool } from "pg"
-import type { ExcelMetadata } from "@threa/types"
+import type { ExcelMetadata } from "@threahq/types"
 import { withClient, withTransaction } from "../../../db"
 import { extractionId } from "../../../lib/id"
 import { AttachmentRepository } from "../repository"
 import { AttachmentExtractionRepository } from "../extraction-repository"
-import { ProcessingStatuses, TextSizeTiers, InjectionStrategies } from "@threa/types"
+import { ProcessingStatuses, TextSizeTiers, InjectionStrategies } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import type { ExcelProcessingServiceLike } from "./types"
 

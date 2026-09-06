@@ -1,5 +1,5 @@
 {
-  "name": "@threa/pi-remote-extension",
+  "name": "@threahq/pi-remote-extension",
   "private": true,
   "type": "module",
   "keywords": [
@@ -7,7 +7,7 @@
   ],
   "dependencies": {
     "@threahq/bot-runtime-client": "file:../bot-runtime-client",
-    "@threa/harness-client": "file:../harness-client",
+    "@threahq/harness-client": "file:../harness-client",
     "socket.io-client": "^4.8.1"
   },
   "scripts": {

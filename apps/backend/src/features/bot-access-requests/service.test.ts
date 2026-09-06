@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import { AuthorTypes, BotAccessRequestStatuses } from "@threa/types"
+import { AuthorTypes, BotAccessRequestStatuses } from "@threahq/types"
 import { BotAccessRequestService, type BotGrantWriter } from "./service"
 import { BotAccessRequestRepository, type BotAccessRequest } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"

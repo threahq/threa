@@ -1,6 +1,6 @@
 import { useCallback } from "react"
 import { commandsApi } from "@/api"
-import { CommandKinds } from "@threa/types"
+import { CommandKinds } from "@threahq/types"
 import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 export function useSteerAgentSession(workspaceId: string, streamId: string) {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { BoardView, WorkspaceBootstrap } from "@threa/types"
+import type { BoardView, WorkspaceBootstrap } from "@threahq/types"
 import { useBoardViewService, usePreferencesOptional } from "@/contexts"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import type { SaveBoardViewInput, UpdateBoardViewInput } from "@/api"

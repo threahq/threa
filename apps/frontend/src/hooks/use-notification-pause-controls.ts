@@ -1,5 +1,5 @@
 import { toast } from "sonner"
-import { resolveNotificationPause, type ActiveNotificationPause } from "@threa/types"
+import { resolveNotificationPause, type ActiveNotificationPause } from "@threahq/types"
 import { useCurrentWorkspaceUser, usePauseNotifications, useResumeNotifications } from "@/hooks"
 import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 import { parseLocalDateTime } from "@/lib/dates"

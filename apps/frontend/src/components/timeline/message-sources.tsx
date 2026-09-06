@@ -1,4 +1,4 @@
-import type { SealedSourceItem } from "@threa/crypto"
+import type { SealedSourceItem } from "@threahq/crypto"
 import { ChevronRight, FileText } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"

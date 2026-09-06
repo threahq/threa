@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react"
-import type { JSONContent, StreamEvent } from "@threa/types"
+import type { JSONContent, StreamEvent } from "@threahq/types"
 import {
   getCachedDecryption,
   requestDecryption,
@@ -10,7 +10,7 @@ import { resolveDecryptContext } from "@/lib/crypto/decrypt-context"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
-import type { SealedSourceItem } from "@threa/crypto"
+import type { SealedSourceItem } from "@threahq/crypto"
 
 /**
  * Render-time decryption hook for E2E `message_created` events.

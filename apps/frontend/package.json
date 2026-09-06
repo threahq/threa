@@ -1,5 +1,5 @@
 {
-  "name": "@threa/frontend",
+  "name": "@threahq/frontend",
   "private": true,
   "type": "module",
   "scripts": {
@@ -47,9 +47,9 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@radix-ui/themes": "^3.3.0",
     "@tanstack/react-query": "^5.90.12",
-    "@threa/crypto": "workspace:*",
-    "@threa/prosemirror": "workspace:*",
-    "@threa/types": "workspace:*",
+    "@threahq/crypto": "workspace:*",
+    "@threahq/prosemirror": "workspace:*",
+    "@threahq/types": "workspace:*",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-blockquote": "^3.22.3",
     "@tiptap/extension-bold": "^3.22.3",

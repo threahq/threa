@@ -8,7 +8,7 @@ import { ComposerDisabledNotice } from "@/components/composer/composer-disabled-
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { cn } from "@/lib/utils"
-import type { BoardPost } from "@threa/types"
+import type { BoardPost } from "@threahq/types"
 
 interface BoardReplyComposerProps {
   workspaceId: string

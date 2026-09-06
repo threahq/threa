@@ -1,4 +1,4 @@
-import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threa/types"
+import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threahq/types"
 import type { CachedEvent, ThreaDatabase } from "../db/database"
 import { putEventsBounded } from "../db/event-writes"
 import { writeSlotCarrier } from "../stores/slot-store"

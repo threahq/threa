@@ -10,7 +10,7 @@ import {
   type EmojiEntry,
   type Persona,
   type User,
-} from "@threa/types"
+} from "@threahq/types"
 // Namespace imports so a test can spy the shared builders against the module (INV-48).
 import * as emojiPicker from "@/lib/emoji-picker"
 import * as perfCapture from "@/lib/perf/capture"

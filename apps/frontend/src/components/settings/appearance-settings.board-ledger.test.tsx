@@ -9,7 +9,7 @@ import {
   DEFAULT_BOARD_LEDGER_ROWS,
   DEFAULT_BOARD_LEAD_LINE_LENGTH,
   BOARD_LEDGER_ROWS_MAX,
-} from "@threa/types"
+} from "@threahq/types"
 
 const WS = "ws_1"
 

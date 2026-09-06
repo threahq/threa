@@ -22,7 +22,7 @@ import {
   type DelegationSummary,
   type ListStreamContextResponse,
   type StreamContextItem,
-} from "@threa/types"
+} from "@threahq/types"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
 
 const WS = "ws_1"

@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { KNOWLEDGE_TYPES, MEMO_SCOPES, MEMO_STATUSES, MEMO_TYPES } from "@threa/types"
+import { KNOWLEDGE_TYPES, MEMO_SCOPES, MEMO_STATUSES, MEMO_TYPES } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS } from "./config"
 import { resolveUserAccessibleStreamIds, SearchRepository } from "../search"

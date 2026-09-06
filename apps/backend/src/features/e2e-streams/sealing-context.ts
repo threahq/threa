@@ -1,4 +1,4 @@
-import { EXTERNAL_SEALED_DELIVERY, type SealingContext } from "@threa/agent-runtime"
+import { EXTERNAL_SEALED_DELIVERY, type SealingContext } from "@threahq/agent-runtime"
 import type { Querier } from "../../db"
 import { E2eStreamsRepository } from "./repository"
 import { E2eStreamActorsRepository } from "./actor-repository"

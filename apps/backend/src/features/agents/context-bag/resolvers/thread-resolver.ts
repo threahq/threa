@@ -1,5 +1,5 @@
 import type { Querier } from "../../../../db"
-import { ContextIntents, ContextRefKinds, type ContextRef } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextRef } from "@threahq/types"
 import { HttpError } from "../../../../lib/errors"
 import type { Message } from "../../../messaging"
 import { MessageRepository } from "../../../messaging"

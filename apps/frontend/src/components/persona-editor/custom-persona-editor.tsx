@@ -19,7 +19,7 @@ import {
   type JSONContent,
   type PersonaAttachmentContextMode,
   type PersonaConfigResponse,
-} from "@threa/types"
+} from "@threahq/types"
 import { ApiError } from "@/api/client"
 import type { PersonaCustomConflict, PersonaOverrideConflict } from "@/api"
 import {

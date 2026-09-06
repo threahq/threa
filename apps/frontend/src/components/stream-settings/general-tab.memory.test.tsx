@@ -6,7 +6,7 @@ import { ServicesProvider, type StreamService } from "@/contexts"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as e2eSession from "@/stores/e2e-session-store"
 import * as descriptionSectionModule from "./description-section"
-import { StreamTypes, Visibilities, MemoryModes, type Stream } from "@threa/types"
+import { StreamTypes, Visibilities, MemoryModes, type Stream } from "@threahq/types"
 import { GeneralTab } from "./general-tab"
 
 const WS = "ws_1"

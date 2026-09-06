@@ -1,4 +1,4 @@
-import type { AgentSessionStartedPayload, AgentStepType, StreamEvent } from "@threa/types"
+import type { AgentSessionStartedPayload, AgentStepType, StreamEvent } from "@threahq/types"
 
 export interface RunningAgentSessionEvent {
   sessionId: string

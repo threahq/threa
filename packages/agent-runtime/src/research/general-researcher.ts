@@ -1,5 +1,5 @@
 import type { LanguageModel } from "ai"
-import type { SourceItem } from "@threa/types"
+import type { SourceItem } from "@threahq/types"
 import type { CostContext } from "../ai/ai"
 import { AgentRuntime, mergeSourceItems } from "../runtime/agent-runtime"
 import type { AgentRuntimeAI } from "../runtime/agent-runtime"

@@ -47,9 +47,9 @@ import {
 } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { MessageComposeTraceRepository } from "./compose-trace-repository"
-import { collectAgentBlockAuthorIds, collectMemoEmbedIds } from "@threa/prosemirror"
+import { collectAgentBlockAuthorIds, collectMemoEmbedIds } from "@threahq/prosemirror"
 import { withDerivedMessageMetadata } from "./metadata-schema"
-import { serializeBigInt } from "@threa/backend-common"
+import { serializeBigInt } from "@threahq/backend-common"
 import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
 import { OperationLeaseRepository } from "../../lib/operation-leases"
@@ -80,7 +80,7 @@ import {
   type StreamEvent as WireStreamEvent,
   type MessagesMovedEventPayload,
   type MovedMessagePreview,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * Adapter that lets `ShareService.validateAndRecordShares` consume the

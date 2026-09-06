@@ -1,5 +1,5 @@
 {
-  "name": "@threa/enclave",
+  "name": "@threahq/enclave",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,10 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@threa/agent-runtime": "workspace:*",
-    "@threa/crypto": "workspace:*",
-    "@threa/prosemirror": "workspace:*",
-    "@threa/types": "workspace:*",
+    "@threahq/agent-runtime": "workspace:*",
+    "@threahq/crypto": "workspace:*",
+    "@threahq/prosemirror": "workspace:*",
+    "@threahq/types": "workspace:*",
     "ai": "^7",
     "express": "^5",
     "pino": "^9",

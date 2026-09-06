@@ -2,7 +2,7 @@ import { describe, test, expect, mock, beforeEach } from "bun:test"
 import { LLMBoundaryExtractor, formatRelativeAge } from "./llm-extractor"
 import type { ExtractionContext, ConversationSummary } from "./types"
 import type { Message } from "../../messaging"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { ConfigResolver, AnyComponentConfig } from "../../../lib/ai/config-resolver"
 
 import { NoObjectGeneratedError } from "ai"

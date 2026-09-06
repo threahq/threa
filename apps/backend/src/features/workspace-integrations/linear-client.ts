@@ -8,7 +8,7 @@
  * - https://linear.app/developers/rate-limiting
  */
 
-import type { LinearRateLimit } from "@threa/types"
+import type { LinearRateLimit } from "@threahq/types"
 import { logger } from "../../lib/logger"
 import type { WorkspaceIntegrationService } from "./service"
 import type { WorkspaceIntegrationRecord } from "./repository"

@@ -5,7 +5,7 @@ import {
   type CommandEventType,
   type CommandFailedPayload,
   type StreamEvent,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * Command-group primitives, shared by the timeline (`event-list.tsx`) and the

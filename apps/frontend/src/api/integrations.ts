@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { GitHubWorkspaceIntegration, LinearWorkspaceIntegration } from "@threa/types"
+import type { GitHubWorkspaceIntegration, LinearWorkspaceIntegration } from "@threahq/types"
 
 export interface GitHubIntegrationResponse {
   configured: boolean

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { ORIGINAL_HOST_HEADER } from "@threa/types"
+import { ORIGINAL_HOST_HEADER } from "@threahq/types"
 import { TestClient, loginAs } from "../client"
 
 describe("Auth", () => {

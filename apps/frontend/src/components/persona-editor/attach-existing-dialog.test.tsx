@@ -38,8 +38,8 @@ function makeItem(
 }
 
 function personaAttachment(
-  overrides: Partial<import("@threa/types").PersonaAttachmentItem> = {}
-): import("@threa/types").PersonaAttachmentItem {
+  overrides: Partial<import("@threahq/types").PersonaAttachmentItem> = {}
+): import("@threahq/types").PersonaAttachmentItem {
   return {
     id: "att_copy",
     filename: "handbook.md",

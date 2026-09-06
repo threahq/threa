@@ -6,8 +6,8 @@ import {
   TitleSources,
   type EnclaveSessionAssignment,
   type EnclaveStreamEnvelope,
-} from "@threa/types"
-import { TURN_DIGEST_INJECT_COUNT } from "@threa/agent-runtime"
+} from "@threahq/types"
+import { TURN_DIGEST_INJECT_COUNT } from "@threahq/agent-runtime"
 import { sessionId as newSessionId, eventId, enclaveInvocationId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { withTransaction, type Querier } from "../../db"

@@ -6,7 +6,7 @@ import {
   useDraftScratchpadsFromStore,
 } from "@/stores/draft-store"
 import { purgeScopeDrafts } from "./use-draft-message"
-import type { CompanionMode } from "@threa/types"
+import type { CompanionMode } from "@threahq/types"
 
 export function generateDraftId(): string {
   const timestamp = Date.now().toString(36)

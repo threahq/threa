@@ -12,7 +12,7 @@ import {
   type BotRuntimeKind,
   type CommandArgumentSuggestion,
   type CommandInfo,
-} from "@threa/types"
+} from "@threahq/types"
 import { withClient, type Querier } from "../../db"
 import { checkStreamAccess, projectStreamForUser, StreamRepository, type Stream } from "../streams"
 import { BotRepository } from "../public-api"

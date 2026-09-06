@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { MemoryRouter, Routes, Route } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { WorkspaceBootstrap } from "@threahq/types"
 import { render, screen, userEvent, waitFor } from "@/test"
 import * as authModule from "@/auth"
 import { workspaceKeys } from "@/hooks/use-workspaces"
