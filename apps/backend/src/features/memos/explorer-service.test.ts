@@ -85,6 +85,10 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
   // itself is covered against real rows in tests/integration/memo-card-updates.
   beforeEach(() => {
     spyOn(MemoRepository, "findCitingStreamIds").mockResolvedValue([])
+    // The stemmer is detected from the memo read under lock inside the write
+    // transaction; the race that lock closes is covered against real rows in
+    // tests/integration/memo-attachment-search-config.
+    spyOn(MemoRepository, "findByIdForUpdate").mockResolvedValue(fakeMemo())
   })
 
   it("re-embeds when the abstract changes and persists both in one transaction", async () => {
