@@ -171,6 +171,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "invitations.list",
   "invitations.send",
   "invitations.create_link",
+  "invitations.update",
   "invitations.revoke",
   "invitations.resend",
   // AI usage

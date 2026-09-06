@@ -1937,6 +1937,15 @@ export interface CreateInvitationLinkInput {
   note?: string
 }
 
+export interface UpdateInvitationLinkInput {
+  maxUses?: number | null
+  expiresAt?: string | null
+}
+
+export interface UpdateInvitationLinkResponse {
+  invitation: WorkspaceInvitation
+}
+
 export interface CreateInvitationLinkResponse {
   invitation: WorkspaceInvitation
   /** The plaintext claim token. Returned exactly once at create time; never retrievable again. */
@@ -1955,6 +1964,8 @@ export interface ClaimInvitationLinkInput {
 
 export interface ClaimInvitationLinkResponse {
   ok: true
+  /** The email-bound child invitation accepted after authentication. */
+  invitationId?: string
   /** Set when the email already belongs to a workspace member; frontend can deep-link to login. */
   alreadyMember?: { workspaceId: string }
 }

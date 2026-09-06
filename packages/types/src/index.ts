@@ -671,6 +671,8 @@ export type {
   InvitationSkipReason,
   CreateInvitationLinkInput,
   CreateInvitationLinkResponse,
+  UpdateInvitationLinkInput,
+  UpdateInvitationLinkResponse,
   InvitationLinkLookupResponse,
   ClaimInvitationLinkInput,
   ClaimInvitationLinkResponse,

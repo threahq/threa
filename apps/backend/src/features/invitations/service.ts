@@ -8,13 +8,12 @@ import { invitationId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import type { InvitationSkipReason, InvitationStatus, WorkspaceInvitableRole } from "@threa/types"
 
-const INVITATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
-const LINK_TOKEN_BYTES = 32 // 256 bits → ~43 base64url chars
+const INVITATION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000
+const LINK_TOKEN_BYTES = 32
 
 function generateLinkToken(): { token: string; tokenHash: string } {
   const token = randomBytes(LINK_TOKEN_BYTES).toString("base64url")
-  const tokenHash = createHash("sha256").update(token).digest("hex")
-  return { token, tokenHash }
+  return { token, tokenHash: createHash("sha256").update(token).digest("hex") }
 }
 
 export function hashInvitationToken(token: string): string {
@@ -23,7 +22,7 @@ export function hashInvitationToken(token: string): string {
 
 interface SendInvitationsParams {
   workspaceId: string
-  invitedBy: string // user_id
+  invitedBy: string
   emails: string[]
   role: WorkspaceInvitableRole
 }
@@ -37,12 +36,10 @@ interface CreateLinkParams {
 
 export interface CreateLinkResult {
   invitation: Invitation
-  /** Plaintext claim token. Returned exactly once; never persisted. */
   token: string
 }
 
 export interface ClaimLinkResult {
-  /** When the email already belongs to a workspace member; the link is consumed and the caller should be redirected to login. */
   alreadyMember?: { workspaceId: string }
 }
 
@@ -52,7 +49,7 @@ interface SendResult {
 }
 
 export interface AcceptPendingResult {
-  accepted: string[] // workspace IDs
+  accepted: string[]
   failed: Array<{ invitationId: string; email: string; error: string }>
 }
 
@@ -60,6 +57,29 @@ export interface WorkosIdentity {
   workosUserId: string
   email: string
   name: string
+}
+
+function isExpired(invitation: Invitation, now = new Date()): boolean {
+  return invitation.expiresAt !== null && invitation.expiresAt <= now
+}
+
+function assertLinkAvailable(invitation: Invitation): void {
+  if (invitation.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
+  if (isExpired(invitation)) throw new InvitationLinkError("INVITATION_EXPIRED")
+  if (invitation.maxUses !== null && invitation.useCount >= invitation.maxUses) {
+    throw new InvitationLinkError("INVITATION_EXHAUSTED")
+  }
+}
+
+function linkState(invitation: Invitation) {
+  return {
+    parentInvitationId: invitation.id,
+    expiresAt: invitation.expiresAt?.toISOString() ?? null,
+    maxUses: invitation.maxUses,
+    useCount: invitation.useCount,
+    revision: invitation.revision,
+    status: invitation.status,
+  }
 }
 
 export class InvitationService {
@@ -70,54 +90,41 @@ export class InvitationService {
 
   async sendInvitations(params: SendInvitationsParams): Promise<SendResult> {
     const { workspaceId, invitedBy, role } = params
-    const emails = params.emails.map((e) => e.toLowerCase().trim())
-
+    const emails = params.emails.map((email) => email.toLowerCase().trim())
     const skipped: SendResult["skipped"] = []
-
-    // Look up the inviter's WorkOS user ID for the outbox payload
-    // (the control-plane uses this to send the WorkOS email)
     const inviterWorkosUserId = (await this.getInviterWorkosUserId(workspaceId, invitedBy)) ?? undefined
-
     const existingUserEmails = await UserRepository.findEmails(this.pool, workspaceId, emails)
-
     const pendingInvitations = await InvitationRepository.findPendingByEmailsAndWorkspace(
       this.pool,
       emails,
       workspaceId
     )
-    const pendingEmails = new Set(pendingInvitations.map((inv) => inv.email))
-
+    const pendingEmails = new Set(pendingInvitations.map((invitation) => invitation.email))
     const emailsToSend: string[] = []
+
     for (const email of emails) {
       if (existingUserEmails.has(email)) {
         skipped.push({ email, reason: "already_user" })
-        continue
-      }
-      if (pendingEmails.has(email)) {
+      } else if (pendingEmails.has(email)) {
         skipped.push({ email, reason: "pending_invitation" })
-        continue
+      } else {
+        emailsToSend.push(email)
       }
-      emailsToSend.push(email)
     }
-
     if (emailsToSend.length === 0) return { sent: [], skipped }
 
-    // Single transaction — all invitation inserts + outbox events
     const sent = await withTransaction(this.pool, async (client) => {
       const invitations: Invitation[] = []
       for (const email of emailsToSend) {
         const id = invitationId()
-        const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS)
-
-        const inv = await InvitationRepository.insert(client, {
+        const invitation = await InvitationRepository.insert(client, {
           id,
           workspaceId,
           email,
           role,
           invitedBy,
-          expiresAt,
+          expiresAt: new Date(Date.now() + INVITATION_EXPIRY_MS),
         })
-
         await OutboxRepository.insert(client, "invitation:sent", {
           workspaceId,
           invitationId: id,
@@ -125,19 +132,15 @@ export class InvitationService {
           role,
           inviterWorkosUserId,
         })
-
-        invitations.push(inv)
+        invitations.push(invitation)
       }
       return invitations
     })
-
     return { sent, skipped }
   }
 
   async acceptInvitation(invitationId: string, identity: WorkosIdentity): Promise<string | null> {
-    return withTransaction(this.pool, async (client) => {
-      return this.acceptInvitationInTransaction(client, invitationId, identity)
-    })
+    return withTransaction(this.pool, (client) => this.acceptInvitationInTransaction(client, invitationId, identity))
   }
 
   private async acceptInvitationInTransaction(
@@ -145,156 +148,156 @@ export class InvitationService {
     invitationId: string,
     identity: WorkosIdentity
   ): Promise<string | null> {
-    const now = new Date()
-    const updated = await InvitationRepository.updateStatus(client, invitationId, "accepted", {
-      acceptedAt: now,
-      notExpiredAt: now,
-    })
+    const initial = await InvitationRepository.findById(client, invitationId)
+    if (!initial) return null
+    const email = identity.email.toLowerCase().trim()
+    if (!initial.email || initial.email.toLowerCase() !== email) {
+      throw new InvitationAcceptanceError("INVITATION_EMAIL_MISMATCH")
+    }
 
-    if (!updated) {
-      // Invitation not in pending state — check if this is an idempotent replay.
-      // The control-plane retries acceptance if its local DB write failed after the
-      // regional call succeeded, so we must return success when the user is already
-      // a workspace member (rather than 404, which would leave the shadow stuck).
-      const invitation = await InvitationRepository.findById(client, invitationId)
-      if (invitation?.status === "accepted") {
-        const isMember = await UserRepository.isMember(client, invitation.workspaceId, identity.workosUserId)
-        if (isMember) return invitation.workspaceId
+    await InvitationRepository.lockMembershipIdentity(client, initial.workspaceId, identity.workosUserId)
+    const parentId = initial.parentLinkId ?? (initial.kind === "link" ? initial.id : null)
+    const parent = parentId ? await InvitationRepository.findByIdForUpdate(client, parentId) : null
+    const invitation =
+      parentId === invitationId ? parent : await InvitationRepository.findByIdForUpdate(client, invitationId)
+    if (
+      !invitation ||
+      invitation.workspaceId !== initial.workspaceId ||
+      invitation.parentLinkId !== initial.parentLinkId
+    ) {
+      return null
+    }
+    if (!invitation.email || invitation.email.toLowerCase() !== email) {
+      throw new InvitationAcceptanceError("INVITATION_EMAIL_MISMATCH")
+    }
+
+    const isMember = await UserRepository.isMember(client, invitation.workspaceId, identity.workosUserId)
+    if (invitation.status === "accepted") {
+      if (isMember && (!invitation.acceptedWorkosUserId || invitation.acceptedWorkosUserId === identity.workosUserId)) {
+        return invitation.workspaceId
       }
       return null
     }
+    if (invitation.status !== "pending") return null
 
-    const invitation = await InvitationRepository.findById(client, invitationId)
-    if (!invitation) return null
+    if (parent) {
+      try {
+        assertLinkAvailable(parent)
+      } catch (error) {
+        if (error instanceof InvitationLinkError) throw new InvitationAcceptanceError(error.code)
+        throw error
+      }
+    } else if (isExpired(invitation)) {
+      throw new InvitationAcceptanceError("INVITATION_EXPIRED")
+    }
 
-    // Check if already in the workspace (race condition safety)
-    const isMember = await UserRepository.isMember(client, invitation.workspaceId, identity.workosUserId)
-    if (isMember) return invitation.workspaceId
+    let consumedByWorkosUserId: string | null = null
+    if (!isMember) {
+      await this.workspaceService.createUserInTransaction(client, {
+        workspaceId: invitation.workspaceId,
+        workosUserId: identity.workosUserId,
+        email,
+        name: identity.name,
+        role: invitation.role,
+        setupCompleted: false,
+      })
+      consumedByWorkosUserId = identity.workosUserId
+    }
 
-    await this.workspaceService.createUserInTransaction(client, {
-      workspaceId: invitation.workspaceId,
-      workosUserId: identity.workosUserId,
-      email: identity.email,
-      name: identity.name,
-      role: invitation.role,
-      setupCompleted: false,
-    })
-
-    // By the time an invitation is acceptable, email is bound — either it was
-    // an email invite (set at creation) or a link invite that's been claimed.
-    // Fall back to the authenticated identity's email defensively.
+    const accepted = await InvitationRepository.accept(
+      client,
+      invitation.id,
+      new Date(),
+      consumedByWorkosUserId,
+      consumedByWorkosUserId !== null
+    )
+    if (!accepted) return null
+    if (parent && consumedByWorkosUserId) await InvitationRepository.incrementRevision(client, parent.id)
+    const currentParent = parent ? await InvitationRepository.findById(client, parent.id) : null
     await OutboxRepository.insert(client, "invitation:accepted", {
       workspaceId: invitation.workspaceId,
       invitationId: invitation.id,
-      email: invitation.email ?? identity.email,
+      email,
       workosUserId: identity.workosUserId,
       userName: identity.name,
+      ...(currentParent ? linkState(currentParent) : {}),
     })
-
     return invitation.workspaceId
   }
 
   async acceptPendingForEmail(email: string, identity: WorkosIdentity): Promise<AcceptPendingResult> {
-    const pending = await InvitationRepository.findPendingByEmail(this.pool, email.toLowerCase())
+    const normalizedEmail = email.toLowerCase().trim()
+    const pending = await InvitationRepository.findPendingByEmail(this.pool, normalizedEmail)
     if (pending.length === 0) return { accepted: [], failed: [] }
 
     return withTransaction(this.pool, async (client) => {
       const accepted: string[] = []
       const failed: AcceptPendingResult["failed"] = []
-
       for (const invitation of pending) {
         try {
-          // Savepoint allows partial success: if one invitation fails,
-          // we rollback just that one and continue with the rest
           await client.query("SAVEPOINT accept_inv")
-          const wsId = await this.acceptInvitationInTransaction(client, invitation.id, identity)
+          const workspaceId = await this.acceptInvitationInTransaction(client, invitation.id, identity)
           await client.query("RELEASE SAVEPOINT accept_inv")
-
-          if (wsId) {
-            accepted.push(wsId)
-          }
-        } catch (err) {
+          if (workspaceId) accepted.push(workspaceId)
+        } catch (error) {
           await client.query("ROLLBACK TO SAVEPOINT accept_inv")
-          logger.error({ err, invitationId: invitation.id, email }, "Failed to accept invitation")
+          logger.error({ err: error, invitationId: invitation.id, email }, "Failed to accept invitation")
           failed.push({
             invitationId: invitation.id,
-            email: invitation.email ?? email,
-            error: err instanceof Error ? err.message : String(err),
+            email: invitation.email ?? normalizedEmail,
+            error: error instanceof Error ? error.message : String(error),
           })
         }
       }
-
       return { accepted, failed }
     })
   }
 
   async revokeInvitation(invitationId: string, workspaceId: string): Promise<boolean> {
-    // Update local status + outbox event in one transaction.
-    // The outbox event triggers shadow sync → CP handles WorkOS revocation.
-    const revoked = await withTransaction(this.pool, async (client) => {
-      const inv = await InvitationRepository.findById(client, invitationId)
-      if (!inv || inv.workspaceId !== workspaceId) return false
-
-      const updated = await InvitationRepository.updateStatus(client, invitationId, "revoked", {
-        revokedAt: new Date(),
+    return withTransaction(this.pool, async (client) => {
+      const invitation = await InvitationRepository.revoke(client, invitationId, workspaceId, new Date())
+      if (!invitation) return false
+      await OutboxRepository.insert(client, "invitation:revoked", {
+        workspaceId,
+        invitationId,
+        ...(invitation.kind === "link" && !invitation.parentLinkId ? linkState(invitation) : {}),
       })
-
-      if (updated) {
-        await OutboxRepository.insert(client, "invitation:revoked", {
-          workspaceId,
-          invitationId,
-        })
-      }
-
-      return updated
+      return true
     })
-
-    return revoked
   }
 
   async resendInvitation(invitationId: string, workspaceId: string): Promise<Invitation | null> {
     const invitation = await InvitationRepository.findById(this.pool, invitationId)
-    if (!invitation || invitation.workspaceId !== workspaceId || invitation.status !== "pending") {
+    if (
+      !invitation ||
+      invitation.workspaceId !== workspaceId ||
+      invitation.status !== "pending" ||
+      invitation.kind !== "email" ||
+      !invitation.email
+    ) {
       return null
     }
-    // Resend only makes sense for email invites. Link invites without a bound
-    // email have nothing to resend; once a link is claimed, the recipient gets
-    // the WorkOS email automatically. Admin can revoke + create a new link.
-    if (invitation.kind !== "email" || !invitation.email) {
-      return null
-    }
-
     await this.revokeInvitation(invitationId, workspaceId)
-
     const result = await this.sendInvitations({
       workspaceId,
       invitedBy: invitation.invitedBy,
       emails: [invitation.email],
       role: invitation.role,
     })
-
     return result.sent[0] ?? null
   }
 
   async listInvitations(workspaceId: string, status?: InvitationStatus): Promise<Invitation[]> {
-    // Lazy expiration: mark expired before listing
     await InvitationRepository.markExpired(this.pool, workspaceId)
     return InvitationRepository.listByWorkspace(this.pool, workspaceId, status ? { status } : undefined)
   }
 
-  /**
-   * Create an unclaimed link invitation. The plaintext token is returned exactly
-   * once; only the SHA-256 hash is persisted. The recipient's email is bound
-   * later via `claimLinkByToken`. WorkOS is not contacted at create time —
-   * there's no email yet to invite.
-   */
   async createLink(params: CreateLinkParams): Promise<CreateLinkResult> {
     const { token, tokenHash } = generateLinkToken()
     const id = invitationId()
     const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS)
-
     const invitation = await withTransaction(this.pool, async (client) => {
-      const inv = await InvitationRepository.insertLink(client, {
+      const created = await InvitationRepository.insertLink(client, {
         id,
         workspaceId: params.workspaceId,
         role: params.role,
@@ -302,84 +305,60 @@ export class InvitationService {
         tokenHash,
         note: params.note,
         expiresAt,
+        maxUses: 1,
       })
-
-      // Mirror to control-plane via outbox so the public /join lookup can
-      // resolve workspace metadata without a regional round-trip.
       await OutboxRepository.insert(client, "invitation:link-created", {
         workspaceId: params.workspaceId,
         invitationId: id,
         tokenHash,
         role: params.role,
-        expiresAt: expiresAt.toISOString(),
+        ...linkState(created),
       })
-
-      return inv
+      return created
     })
-
     return { invitation, token }
   }
 
-  /**
-   * Atomic single-use claim. Binds an email to a previously unclaimed link
-   * invitation, then triggers the existing WorkOS-invite path so the recipient
-   * receives a verification email. Returns `alreadyMember` if the email
-   * already belongs to a workspace member; the row is consumed in that case
-   * so the link can't be reused.
-   */
   async claimLinkByToken(token: string, rawEmail: string): Promise<ClaimLinkResult> {
     const email = rawEmail.toLowerCase().trim()
     const tokenHash = hashInvitationToken(token)
+    return withTransaction(this.pool, async (client) => {
+      const root = await InvitationRepository.findRootByTokenHashForUpdate(client, tokenHash)
+      if (!root) throw new InvitationLinkError("INVITATION_NOT_FOUND")
 
-    // Look up first to surface specific error codes (revoked vs. expired vs. claimed)
-    const existing = await InvitationRepository.findByTokenHash(this.pool, tokenHash)
-    if (!existing || existing.kind !== "link") {
-      throw new InvitationLinkError("INVITATION_NOT_FOUND")
-    }
-    if (existing.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
-    if (existing.status === "expired" || existing.expiresAt <= new Date()) {
-      throw new InvitationLinkError("INVITATION_EXPIRED")
-    }
-    if (existing.status === "accepted" || existing.email !== null) {
-      throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
-    }
+      const hasChildren = await InvitationRepository.hasLinkChildren(client, root.workspaceId, root.id)
+      if (root.maxUses !== 1 || root.expiresAt === null || hasChildren) {
+        throw new InvitationLinkError("INVITATION_ROLLOUT_UNAVAILABLE")
+      }
+      if (root.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
+      if (isExpired(root)) throw new InvitationLinkError("INVITATION_EXPIRED")
+      if (root.status === "accepted" || root.email !== null) {
+        throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
+      }
 
-    // Atomic claim: bind email + write outbox event in one tx.
-    // Concurrent claimers race on the WHERE clause; loser sees null and 409s.
-    const claimed = await withTransaction(this.pool, async (client) => {
-      const updated = await InvitationRepository.claimLinkByTokenHash(client, tokenHash, email)
-      if (!updated) return null
-
+      const claimed = await InvitationRepository.claimLegacyLinkById(client, root.workspaceId, root.id, email)
+      if (!claimed) throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
       const inviterWorkosUserId =
-        (await this.getInviterWorkosUserId(updated.workspaceId, updated.invitedBy)) ?? undefined
-
+        (await this.getInviterWorkosUserId(claimed.workspaceId, claimed.invitedBy, client)) ?? undefined
       await OutboxRepository.insert(client, "invitation:link-claimed", {
-        workspaceId: updated.workspaceId,
-        invitationId: updated.id,
+        workspaceId: claimed.workspaceId,
+        invitationId: claimed.id,
         email,
-        role: updated.role,
+        role: claimed.role,
         inviterWorkosUserId,
       })
-
-      return updated
+      const memberMatches = await UserRepository.findEmails(client, claimed.workspaceId, [email])
+      if (memberMatches.has(email)) return { alreadyMember: { workspaceId: claimed.workspaceId } }
+      return {}
     })
-
-    if (!claimed) throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
-
-    // If the email is already a member of this workspace, short-circuit:
-    // they don't need a new WorkOS invite, they just need to log in. The link
-    // is consumed regardless so it can't be reused.
-    const memberMatches = await UserRepository.findEmails(this.pool, claimed.workspaceId, [email])
-    if (memberMatches.has(email)) {
-      return { alreadyMember: { workspaceId: claimed.workspaceId } }
-    }
-
-    return {}
   }
 
-  private async getInviterWorkosUserId(workspaceId: string, invitedBy: string): Promise<string | null> {
-    const inviterUser = await UserRepository.findById(this.pool, workspaceId, invitedBy)
-    return inviterUser?.workosUserId ?? null
+  private async getInviterWorkosUserId(
+    workspaceId: string,
+    invitedBy: string,
+    db: Querier = this.pool
+  ): Promise<string | null> {
+    return (await UserRepository.findById(db, workspaceId, invitedBy))?.workosUserId ?? null
   }
 }
 
@@ -387,11 +366,22 @@ export type InvitationLinkErrorCode =
   | "INVITATION_NOT_FOUND"
   | "INVITATION_REVOKED"
   | "INVITATION_EXPIRED"
+  | "INVITATION_EXHAUSTED"
   | "INVITATION_ALREADY_CLAIMED"
+  | "INVITATION_ROLLOUT_UNAVAILABLE"
 
 export class InvitationLinkError extends Error {
   constructor(public readonly code: InvitationLinkErrorCode) {
     super(code)
     this.name = "InvitationLinkError"
+  }
+}
+
+export type InvitationAcceptanceErrorCode = InvitationLinkErrorCode | "INVITATION_EMAIL_MISMATCH"
+
+export class InvitationAcceptanceError extends Error {
+  constructor(public readonly code: InvitationAcceptanceErrorCode) {
+    super(code)
+    this.name = "InvitationAcceptanceError"
   }
 }

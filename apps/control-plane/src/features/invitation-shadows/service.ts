@@ -375,6 +375,9 @@ export class InvitationShadowService {
         if (code === "INVITATION_NOT_FOUND") {
           throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 404, code })
         }
+        if (code === "INVITATION_ROLLOUT_UNAVAILABLE") {
+          throw new HttpError(code, { status: 503, code })
+        }
       }
       throw err
     }

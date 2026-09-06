@@ -1214,6 +1214,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireMembersWrite,
     invitation.createLink
   )
+  app.patch(
+    "/api/workspaces/:workspaceId/invitations/:invitationId",
+    ...authed,
+    audit("invitations.update", "write"),
+    requireMembersWrite,
+    invitation.updateLink
+  )
   app.post(
     "/api/workspaces/:workspaceId/invitations/:invitationId/revoke",
     ...authed,

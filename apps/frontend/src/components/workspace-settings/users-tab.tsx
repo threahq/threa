@@ -289,7 +289,9 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                           {invitation.role}
                         </Badge>
                         <span className="text-xs text-muted-foreground">
-                          Expires {formatDate(new Date(invitation.expiresAt))}
+                          {invitation.expiresAt
+                            ? `Expires ${formatDate(new Date(invitation.expiresAt))}`
+                            : "Never expires"}
                         </span>
                       </div>
                     </div>
@@ -303,7 +305,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    {unclaimedLink ? (
+                    {isLink ? (
                       <Button
                         size="sm"
                         variant={tokenInMemory ? "outline" : "ghost"}

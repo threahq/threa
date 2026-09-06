@@ -523,6 +523,30 @@ describe("multi-use invitation shadows", () => {
     await expect(regionalService.claimByToken(token, "strip@example.com")).resolves.toEqual({ ok: true })
   })
 
+  test("preserves the retryable regional rollout error", async () => {
+    const token = "regional-rollout-unavailable"
+    await service.createShadow({
+      id: "inv_regional_rollout_unavailable",
+      workspaceId,
+      region: "local",
+      kind: "link",
+      email: null,
+      tokenHash: createHash("sha256").update(token).digest("hex"),
+      roleSlug: WORKSPACE_ROLE_SLUGS.MEMBER,
+      expiresAt: future,
+    })
+    service["regionalClient"] = {
+      claimInvitationLink: async () => {
+        throw new RegionalInvitationError(503, JSON.stringify({ code: "INVITATION_ROLLOUT_UNAVAILABLE" }))
+      },
+    } as unknown as RegionalClient
+
+    await expect(service.claimByToken(token, "waiting@example.com")).rejects.toMatchObject({
+      status: 503,
+      code: "INVITATION_ROLLOUT_UNAVAILABLE",
+    })
+  })
+
   test("reconciles a regional join after CP rollback and a reordered parent revoke", async () => {
     await createParent()
     await service.acceptLinkClaim({
