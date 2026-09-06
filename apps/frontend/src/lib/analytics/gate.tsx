@@ -20,13 +20,14 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
   // crash we most want. Consent changes and workspace switches re-run the effect.
   useEffect(() => {
     if (consent === "granted" && analytics && distinctId) {
-      startAnalytics({
+      // Replay is applied once the SDK is up. A withdrawal that lands first
+      // leaves nothing active, and `setSessionReplay` is a no-op then.
+      void startAnalytics({
         token: analytics.posthogToken,
         host: analytics.posthogHost,
         distinctId,
         workspaceId,
-      })
-      setSessionReplay(replayOptIn)
+      }).then(() => setSessionReplay(replayOptIn))
       return
     }
     stopAnalytics()
