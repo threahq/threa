@@ -74,6 +74,7 @@ import {
   BotRuntimeInstanceRepository,
   assertManifestAllows,
   type BotInvocation,
+  type BotRuntimeSessionLink,
   type BotRuntimeWriteOps,
 } from "../bot-runtimes"
 import {
@@ -81,7 +82,7 @@ import {
   insertCommandFailedEvent,
   parseRuntimeCommandInvocationMetadata,
 } from "../commands"
-import { HttpError } from "@threa/backend-common"
+import { HttpError, isUniqueViolation } from "@threa/backend-common"
 import { invocationClaimNotFound, invocationInputStale } from "./errors"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
@@ -146,6 +147,7 @@ import {
   createRuntimeSessionSchema,
   renameRuntimeSessionSchema,
   rebindRuntimeSessionSchema,
+  endRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
@@ -1139,15 +1141,14 @@ export function createPublicApiHandlers({
       }
 
       const requiredRuntimeTraits = ["active-scratchpad"] as const
-
-      const existingLink = await botRuntimeService.findActivePiRemoteSession({
+      const identity = {
         workspaceId: req.workspaceId!,
         botId: bot.id,
         instanceId: data.instanceId,
         runtimeSessionId: data.runtimeSessionId,
         runtimeKind: data.runtimeKind,
-      })
-      if (existingLink) {
+      }
+      const resumeLink = async (link: BotRuntimeSessionLink) => {
         await withTransaction(pool, (client) =>
           botRuntimeService.repairBotTraitsInTransaction(client, {
             workspaceId: req.workspaceId!,
@@ -1157,14 +1158,67 @@ export function createPublicApiHandlers({
         )
         return res.json({
           data: {
-            linkId: existingLink.id,
-            rootStreamId: existingLink.rootStreamId,
-            activeStreamId: existingLink.activeStreamId,
-            runtimeSessionId: existingLink.runtimeSessionId,
-            streamUrlPath: `/w/${req.workspaceId!}/s/${existingLink.activeStreamId}`,
+            linkId: link.id,
+            rootStreamId: link.rootStreamId,
+            activeStreamId: link.activeStreamId,
+            runtimeSessionId: link.runtimeSessionId,
+            streamUrlPath: `/w/${req.workspaceId!}/s/${link.activeStreamId}`,
             // The resumed scratchpad's actual encryption state — a harness that
             // asked for e2e can detect a plaintext resume (and vice versa).
-            e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, existingLink.rootStreamId),
+            e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, link.rootStreamId),
+          },
+        })
+      }
+      // Unique violation on the runtime-session identity: another writer (the
+      // unarchive consumer, a concurrent create for the same identity) linked
+      // it between our reads above and the insert. The whole create rolled
+      // back (no orphan stream) — resume that link instead of surfacing a 500.
+      const resumeAfterIdentityConflict = async (error: unknown) => {
+        if (!isUniqueViolation(error)) throw error
+        const revived = await botRuntimeService.findActivePiRemoteSession(identity)
+        // An archive-ended link keeps its runtime_session_id (only `/done`
+        // retires it), so that identity attached to a different scratchpad
+        // lands here with nothing to resume. Typed so it is not a 500 (INV-32).
+        if (!revived) {
+          throw new HttpError("A conflicting runtime session link already exists for this identity", {
+            status: 409,
+            code: "RUNTIME_SESSION_CONFLICT",
+            cause: error as Error,
+          })
+        }
+        return resumeLink(revived)
+      }
+
+      const existingLink = await botRuntimeService.findActivePiRemoteSession(identity)
+      if (existingLink) return resumeLink(existingLink)
+
+      if (data.attachTo) {
+        let attached: Awaited<ReturnType<typeof botRuntimeService.attachRuntimeSessionToThread>>
+        try {
+          attached = await botRuntimeService.attachRuntimeSessionToThread({
+            workspaceId: req.workspaceId!,
+            botId: bot.id,
+            ownerUserId: bot.ownerUserId,
+            runtimeKind: data.runtimeKind,
+            instanceId: data.instanceId,
+            runtimeSessionId: data.runtimeSessionId,
+            rootStreamId: data.attachTo.rootStreamId,
+            anchorId: data.attachTo.anchorId,
+            displayName: data.displayName,
+            localCwd: data.localCwd,
+            traits: requiredRuntimeTraits,
+          })
+        } catch (error) {
+          return resumeAfterIdentityConflict(error)
+        }
+        return res.json({
+          data: {
+            linkId: attached.link.id,
+            rootStreamId: attached.link.rootStreamId,
+            activeStreamId: attached.link.activeStreamId,
+            runtimeSessionId: attached.link.runtimeSessionId,
+            streamUrlPath: `/w/${req.workspaceId!}/s/${attached.stream.id}`,
+            e2eEnabled: attached.stream.e2eEnabled === true,
           },
         })
       }
@@ -1196,25 +1250,7 @@ export function createPublicApiHandlers({
           code: "SCRATCHPAD_ARCHIVED",
         })
       }
-      if (reattach.status === "reattached") {
-        await withTransaction(pool, (client) =>
-          botRuntimeService.repairBotTraitsInTransaction(client, {
-            workspaceId: req.workspaceId!,
-            botId: bot.id,
-            traits: requiredRuntimeTraits,
-          })
-        )
-        return res.json({
-          data: {
-            linkId: reattach.link.id,
-            rootStreamId: reattach.link.rootStreamId,
-            activeStreamId: reattach.link.activeStreamId,
-            runtimeSessionId: reattach.link.runtimeSessionId,
-            streamUrlPath: `/w/${req.workspaceId!}/s/${reattach.link.activeStreamId}`,
-            e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, reattach.link.rootStreamId),
-          },
-        })
-      }
+      if (reattach.status === "reattached") return resumeLink(reattach.link)
 
       if (data.ifMissing === "error") {
         throw new HttpError("No runtime session link exists for this identity", {
@@ -1241,39 +1277,7 @@ export function createPublicApiHandlers({
           ...(data.e2e ? { e2e: { ownerKeyId: data.e2e.ownerKeyId } } : {}),
         })
       } catch (error) {
-        // Unique violation on the runtime-session identity: the unarchive
-        // consumer revived the archived link between our reads above and this
-        // insert. The whole create rolled back (no orphan scratchpad) — resume
-        // the revived link instead of surfacing a 500.
-        if ((error as { code?: string }).code === "23505") {
-          const revived = await botRuntimeService.findActivePiRemoteSession({
-            workspaceId: req.workspaceId!,
-            botId: bot.id,
-            instanceId: data.instanceId,
-            runtimeSessionId: data.runtimeSessionId,
-            runtimeKind: data.runtimeKind,
-          })
-          if (revived) {
-            await withTransaction(pool, (client) =>
-              botRuntimeService.repairBotTraitsInTransaction(client, {
-                workspaceId: req.workspaceId!,
-                botId: bot.id,
-                traits: requiredRuntimeTraits,
-              })
-            )
-            return res.json({
-              data: {
-                linkId: revived.id,
-                rootStreamId: revived.rootStreamId,
-                activeStreamId: revived.activeStreamId,
-                runtimeSessionId: revived.runtimeSessionId,
-                streamUrlPath: `/w/${req.workspaceId!}/s/${revived.activeStreamId}`,
-                e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, revived.rootStreamId),
-              },
-            })
-          }
-        }
-        throw error
+        return resumeAfterIdentityConflict(error)
       }
       const { link, stream } = created
 
@@ -1432,6 +1436,28 @@ export function createPublicApiHandlers({
           activeStreamId: link.activeStreamId,
           runtimeSessionId: link.runtimeSessionId,
           streamUrlPath: `/w/${req.workspaceId!}/s/${link.activeStreamId}`,
+        },
+      })
+    },
+
+    async endBotRuntimeSession(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(endRuntimeSessionSchema, req.body)
+      const ended = await botRuntimeService.endRuntimeSession({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
+      })
+      if (!ended) {
+        throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
+      }
+      res.json({
+        data: {
+          linkId: ended.id,
+          rootStreamId: ended.rootStreamId,
+          activeStreamId: ended.activeStreamId,
+          status: "ended" as const,
         },
       })
     },

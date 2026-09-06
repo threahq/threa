@@ -1952,6 +1952,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     provisionStreamE2eKeyWraps: publicApi.provisionStreamE2eKeyWraps,
     renameBotRuntimeSession: publicApi.renameBotRuntimeSession,
     rebindBotRuntimeSession: publicApi.rebindBotRuntimeSession,
+    endBotRuntimeSession: publicApi.endBotRuntimeSession,
     claimBotInvocation: publicApi.claimBotInvocation,
     renewBotInvocationClaim: publicApi.renewBotInvocationClaim,
     recordBotInvocationStep: publicApi.recordBotInvocationStep,

@@ -334,6 +334,20 @@ export const StreamRepository = {
   },
 
   /**
+   * Share-locks the stream row so a concurrent archive (an UPDATE of
+   * `archived_at`) cannot commit between this read and the caller's own writes
+   * in the same transaction (INV-20). The archive's consumer only ends links it
+   * can see committed, so an unlocked read lets an attach land an active link
+   * on a scratchpad that is already archived, and nothing later corrects it.
+   */
+  async findByIdForWorkspaceForShare(db: Querier, id: string, workspaceId: string): Promise<Stream | null> {
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ${id} AND s.workspace_id = ${workspaceId} FOR SHARE OF s`
+    )
+    return result.rows[0] ? mapRowToStream(result.rows[0]) : null
+  },
+
+  /**
    * Locks the stream row for update, skipping if already locked.
    * Returns null if not found or already locked by another transaction.
    */

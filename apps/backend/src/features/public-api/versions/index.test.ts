@@ -254,6 +254,35 @@ describe("VERSION_CHANGES: the anchorId stream change (first real entry)", () =>
     expect(streamNode(spec).properties.anchorId).toBeDefined()
     expect(streamNode(spec).properties.parentMessageId).toBeUndefined()
   })
+
+  test("downgradeSpec leaves a non-stream anchorId body alone", () => {
+    // The bot-runtime `attachTo` body anchors a thread too. Rewriting it left
+    // `required: ["rootStreamId", "anchorId"]` next to a property list that no
+    // longer had `anchorId`, under `additionalProperties: false`.
+    const attachTo = {
+      type: "object",
+      properties: { rootStreamId: { type: "string", minLength: 1 }, anchorId: { type: "string", minLength: 1 } },
+      required: ["rootStreamId", "anchorId"],
+      additionalProperties: false,
+    }
+    const spec: OpenApiSpec = {
+      paths: {
+        "/bot-runtime/sessions": {
+          post: {
+            requestBody: {
+              content: {
+                "application/json": { schema: { type: "object", properties: { attachTo } } },
+              },
+            },
+          },
+        },
+      },
+    }
+    const out = anchorChange.downgradeSpec!(spec) as any
+    expect(out.paths["/bot-runtime/sessions"].post.requestBody.content["application/json"].schema.properties).toEqual({
+      attachTo,
+    })
+  })
 })
 
 describe("VERSION_CHANGES: the 2026-07-24 slots change", () => {

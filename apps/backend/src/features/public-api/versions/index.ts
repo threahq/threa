@@ -28,7 +28,10 @@ function restoreParentMessageIdInSpec(node: unknown): unknown {
   if (node && typeof node === "object") {
     const obj = node as Record<string, unknown>
     const props = obj.properties as Record<string, unknown> | undefined
-    if (props && "anchorId" in props) {
+    // `id` too: the bot-runtime `attachTo` request body also declares an
+    // `anchorId`, and rewriting that one left a body whose `required` named a
+    // property it no longer declared under `additionalProperties: false`.
+    if (props && "anchorId" in props && "id" in props) {
       const { anchorId: _anchorId, ...restProps } = props
       return {
         ...obj,

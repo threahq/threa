@@ -1,6 +1,13 @@
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
-import { AuthorTypes, LabelActorTypes, LabelableResourceTypes, MemoryModes, type MemoryMode } from "@threa/types"
+import {
+  AuthorTypes,
+  LabelActorTypes,
+  LabelableResourceTypes,
+  MemoryModes,
+  StreamTypes,
+  type MemoryMode,
+} from "@threa/types"
 import type {
   BotInvocationCapability,
   BotInvocationTrigger,
@@ -20,7 +27,7 @@ import {
   streamActiveActorId,
 } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import { serializeBigInt } from "@threa/backend-common"
+import { HttpError, serializeBigInt } from "@threa/backend-common"
 import {
   BOT_CLAIM_MAX_ATTEMPTS,
   BotInvocationRepository,
@@ -43,7 +50,7 @@ import {
   type StreamService,
 } from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
-import { E2eStreamActorsRepository } from "../e2e-streams"
+import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import { MessageRepository, type InvocationSourceState } from "../messaging"
 import {
   buildCanonicalInvocationPrompt,
@@ -53,7 +60,10 @@ import {
 
 interface BotRuntimeServiceDeps {
   pool: Pool
-  streamService?: Pick<StreamService, "createScratchpadInTransaction" | "addBotToStreamOn">
+  streamService?: Pick<
+    StreamService,
+    "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
+  >
   labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
 }
 
@@ -83,7 +93,10 @@ function serializeBotForOutbox(bot: Bot) {
 
 export class BotRuntimeService {
   private readonly pool: Pool
-  private readonly streamService?: Pick<StreamService, "createScratchpadInTransaction" | "addBotToStreamOn">
+  private readonly streamService?: Pick<
+    StreamService,
+    "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
+  >
   private readonly labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
 
   constructor(deps: BotRuntimeServiceDeps) {
@@ -356,6 +369,96 @@ export class BotRuntimeService {
     })
   }
 
+  /**
+   * Link a runtime session to a NEW thread under a scratchpad the caller
+   * already owns and the bot already has channel access to, rather than
+   * minting a fresh scratchpad. One transaction: thread create, then the same
+   * presence/active-actor/link writes `createLinkedScratchpadSession` does,
+   * so a failed link insert rolls back the thread too (INV-4/6/7). A thread
+   * that already carries an active link is refused rather than stolen.
+   */
+  async attachRuntimeSessionToThread(params: {
+    workspaceId: string
+    botId: string
+    ownerUserId: string
+    runtimeKind: BotRuntimeKind
+    instanceId: string
+    runtimeSessionId: string
+    rootStreamId: string
+    anchorId: string
+    displayName: string
+    localCwd?: string
+    traits: readonly BotTrait[]
+  }): Promise<{ link: BotRuntimeSessionLink; stream: Stream }> {
+    const { streamService } = this
+    if (!streamService) {
+      throw new Error("BotRuntimeService missing scratchpad session dependencies")
+    }
+
+    return withTransaction(this.pool, async (client) => {
+      const root = await StreamRepository.findByIdForWorkspaceForShare(client, params.rootStreamId, params.workspaceId)
+      if (!root) throw new HttpError("Scratchpad not found", { status: 404, code: "NOT_FOUND" })
+      if (root.type !== StreamTypes.SCRATCHPAD) {
+        throw new HttpError("attachTo root must be a scratchpad", { status: 400, code: "ATTACH_ROOT_NOT_SCRATCHPAD" })
+      }
+      if (root.archivedAt) {
+        throw new HttpError("Scratchpad is archived", { status: 409, code: "SCRATCHPAD_ARCHIVED" })
+      }
+      if (root.createdBy !== params.ownerUserId) {
+        throw new HttpError("Scratchpad belongs to another user", { status: 403, code: "FORBIDDEN" })
+      }
+      // The brief that follows an attach is plaintext, so an E2E root would leave a
+      // thread, a link and a running agent that can never be briefed (INV-11).
+      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.rootStreamId)) {
+        throw new HttpError("Scratchpad is end-to-end encrypted; attach is unsupported", {
+          status: 400,
+          code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+        })
+      }
+
+      const thread = await streamService.createThreadForPrincipalOn(
+        client,
+        { kind: "bot", botId: params.botId },
+        {
+          workspaceId: params.workspaceId,
+          parentStreamId: params.rootStreamId,
+          parentAnchorId: params.anchorId,
+          createdBy: params.botId,
+          createdByType: "bot",
+        }
+      )
+
+      await this.repairBotTraitsInTransaction(client, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        traits: params.traits,
+      })
+      const linkParams = {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeKind: params.runtimeKind,
+        instanceId: params.instanceId,
+        runtimeSessionId: params.runtimeSessionId,
+        rootStreamId: params.rootStreamId,
+        activeStreamId: thread.id,
+        linkedBy: params.ownerUserId,
+        metadata: { displayName: params.displayName, localCwd: params.localCwd ?? null },
+      }
+      await this.preparePiRemoteSessionInTransaction(client, linkParams)
+      const link = await BotRuntimeSessionLinkRepository.upsertUnlessActive(client, {
+        id: botRuntimeSessionLinkId(),
+        ...linkParams,
+      })
+      if (!link) {
+        throw new HttpError("A runtime session is already linked to this thread", {
+          status: 409,
+          code: "THREAD_SESSION_EXISTS",
+        })
+      }
+      return { link, stream: thread }
+    })
+  }
+
   async createOrLinkPiRemoteSessionInTransaction(
     db: Querier,
     params: {
@@ -370,15 +473,7 @@ export class BotRuntimeService {
       metadata?: Record<string, unknown>
     }
   ): Promise<BotRuntimeSessionLink> {
-    await this.upsertPiRemoteSessionPresenceInTransaction(db, params)
-
-    await this.setActiveActorInTransaction(db, {
-      workspaceId: params.workspaceId,
-      rootStreamId: params.rootStreamId,
-      actorType: "bot",
-      actorId: params.botId,
-      createdBy: params.linkedBy,
-    })
+    await this.preparePiRemoteSessionInTransaction(db, params)
     return BotRuntimeSessionLinkRepository.upsert(db, {
       id: botRuntimeSessionLinkId(),
       workspaceId: params.workspaceId,
@@ -390,6 +485,28 @@ export class BotRuntimeService {
       activeStreamId: params.activeStreamId,
       linkedBy: params.linkedBy,
       metadata: params.metadata,
+    })
+  }
+
+  private async preparePiRemoteSessionInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+      rootStreamId: string
+      linkedBy: string
+    }
+  ): Promise<void> {
+    await this.upsertPiRemoteSessionPresenceInTransaction(db, params)
+    await this.setActiveActorInTransaction(db, {
+      workspaceId: params.workspaceId,
+      rootStreamId: params.rootStreamId,
+      actorType: "bot",
+      actorId: params.botId,
+      createdBy: params.linkedBy,
     })
   }
 
@@ -614,6 +731,38 @@ export class BotRuntimeService {
         "Retired archived runtime session link for replacement"
       )
       return true
+    })
+  }
+
+  /** Ends the link and cancels the invocations still routed at it, in one transaction (INV-4/6/7). */
+  async endRuntimeSession(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+    runtimeSessionId: string
+  }): Promise<BotRuntimeSessionLink | null> {
+    return withTransaction(this.pool, async (db) => {
+      const ended = await BotRuntimeSessionLinkRepository.endActiveByRuntimeSession(db, params)
+      if (!ended) return null
+      const cancelled = await BotInvocationRepository.cancelActiveByTargetRuntimeSession(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeSessionId: params.runtimeSessionId,
+      })
+      await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
+      await this.emitCancellationHints(db, cancelled)
+      logger.info(
+        {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          rootStreamId: ended.rootStreamId,
+          activeStreamId: ended.activeStreamId,
+          linkId: ended.id,
+          cancelledInvocations: cancelled.length,
+        },
+        "Ended runtime session link"
+      )
+      return ended
     })
   }
 

@@ -95,6 +95,32 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
       false
     )
   })
+
+  it("accepts attachTo alone", () => {
+    expect(
+      createRuntimeSessionSchema.safeParse({
+        ...base,
+        runtimeKind: "pi-local",
+        attachTo: { rootStreamId: "stream_root", anchorId: "msg_1" },
+      }).success
+    ).toBe(true)
+  })
+
+  it("rejects attachTo combined with fresh-scratchpad options", () => {
+    const attachTo = { rootStreamId: "stream_root", anchorId: "msg_1" }
+    for (const extra of [
+      { description: "handover note" },
+      { labelName: "Pi remote" },
+      { memoryMode: "auto" },
+      { e2e: { ownerKeyId: "uik_1" } },
+      { ifArchived: "replace" },
+      { ifMissing: "error" },
+    ]) {
+      expect(
+        createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", attachTo, ...extra }).success
+      ).toBe(false)
+    }
+  })
 })
 
 describe("searchAttachmentsSchema query", () => {

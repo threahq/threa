@@ -659,6 +659,38 @@ export const BotRuntimeSessionLinkRepository = {
   },
 
   /**
+   * Same insert as `upsert`, but an ACTIVE link on (workspace, bot, root,
+   * active) is never replaced: the conflicting row is left alone and null
+   * comes back. The unique index serializes concurrent inserts, so two
+   * callers racing for the same stream cannot both win (INV-20). Ended or
+   * archived rows are revived like `upsert` does.
+   */
+  async upsertUnlessActive(
+    db: Querier,
+    params: {
+      id: string
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+      rootStreamId: string
+      activeStreamId: string
+      linkedBy: string
+      metadata?: Record<string, unknown>
+    }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result =
+      await db.query<BotRuntimeSessionLinkRow>(sql`INSERT INTO bot_runtime_session_links (id, workspace_id, bot_id, runtime_kind, instance_id, runtime_session_id, root_stream_id, active_stream_id, linked_by, metadata, last_seen_at)
+      VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.runtimeSessionId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.linkedBy}, ${params.metadata ?? {}}, NOW())
+      ON CONFLICT (workspace_id, bot_id, root_stream_id, active_stream_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, instance_id = EXCLUDED.instance_id, runtime_session_id = EXCLUDED.runtime_session_id, linked_by = EXCLUDED.linked_by, status = 'active', metadata = EXCLUDED.metadata, last_seen_at = NOW(), updated_at = NOW()
+      WHERE bot_runtime_session_links.status <> 'active'
+      RETURNING *`)
+    const row = result.rows[0]
+    return row ? mapSessionLink(row) : null
+  },
+
+  /**
    * End every active link rooted at a stream (its scratchpad was archived) and
    * return the ended rows so the caller can notify each runtime. Writes the
    * recoverable 'archived' status — not terminal 'ended' — so a later
@@ -790,6 +822,28 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  /**
+   * Frees the identity by appending `:retired:<id>` to `runtime_session_id` —
+   * the (kind, instance, session) unique key is unconditional, so a plain
+   * 'ended' row would block a future session from reusing it.
+   */
+  async endActiveByRuntimeSession(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string; runtimeSessionId: string }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(sql`
+      UPDATE bot_runtime_session_links
+      SET status = 'ended', runtime_session_id = runtime_session_id || ':retired:' || id, updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId}
+        AND bot_id = ${params.botId}
+        AND instance_id = ${params.instanceId}
+        AND runtime_session_id = ${params.runtimeSessionId}
+        AND status = 'active'
+      RETURNING *
+    `)
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
   /** Newest archive-ended link for one runtime session identity (regardless of the stream's archive state). */
   async findArchivedByRuntimeSession(
     db: Querier,
@@ -840,6 +894,24 @@ export const BotRuntimeSessionLinkRepository = {
   ): Promise<BotRuntimeSessionLink | null> {
     const result = await db.query<BotRuntimeSessionLinkRow>(
       sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND root_stream_id = ${params.rootStreamId} AND active_stream_id = ${params.activeStreamId} AND status = 'active'`
+    )
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
+  /**
+   * Route resolution's read of the link it is about to target (INV-20). The share
+   * lock serializes against `endActiveByRuntimeSession`: without it a reconcile
+   * that read the link a moment before `/done` ended it goes on to insert an
+   * invocation targeted at a session that no longer exists, and since claiming
+   * requires `target_runtime_session_id IS NULL OR = <claimer>`, no other session
+   * can ever pick it up — the message silently gets no reply.
+   */
+  async findActiveByStreamForShare(
+    db: Querier,
+    params: { workspaceId: string; botId: string; rootStreamId: string; activeStreamId: string }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND root_stream_id = ${params.rootStreamId} AND active_stream_id = ${params.activeStreamId} AND status = 'active' FOR SHARE`
     )
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
@@ -1149,6 +1221,29 @@ export const BotInvocationRepository = {
       RETURNING *
     `)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  /**
+   * Claimed rows are cancelled here too, unlike a routing change: the session
+   * this invocation names is ending, so its turn will never complete and the
+   * target filter on the claim query means no other session may take it over.
+   * Rows merely claimed BY that session with no target are left alone — those
+   * fall back to any claimer once the claim expires.
+   */
+  async cancelActiveByTargetRuntimeSession(
+    db: Querier,
+    params: { workspaceId: string; botId: string; runtimeSessionId: string }
+  ): Promise<BotInvocation[]> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET status = 'cancelled', cancellation_reason = 'routing_changed', updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot' AND actor_id = ${params.botId}
+        AND status IN ('pending', 'claimed')
+        AND target_runtime_session_id = ${params.runtimeSessionId}
+      RETURNING *
+    `)
+    return result.rows.map(mapInvocation)
   },
 
   async cancelActiveBySource(

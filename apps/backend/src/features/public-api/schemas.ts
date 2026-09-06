@@ -183,11 +183,32 @@ export const createRuntimeSessionSchema = z
     // Supervisors preflighting a known inventory row must not create a new
     // scratchpad when its runtime identity no longer has any link.
     ifMissing: z.enum(["create", "error"]).optional(),
+    // Link this session to a new thread under an existing scratchpad instead of
+    // minting one. `rootStreamId` must be a scratchpad the bot already has access
+    // to; `anchorId` is the message/event it threads under.
+    attachTo: z.object({ rootStreamId: z.string().min(1), anchorId: z.string().min(1) }).optional(),
   })
   .refine((data) => data.ifMissing !== "error" || data.ifArchived !== "replace", {
     message: 'ifMissing="error" cannot be combined with ifArchived="replace"',
     path: ["ifArchived"],
   })
+  .refine(
+    (data) =>
+      !data.attachTo ||
+      (data.description === undefined &&
+        data.labelName === undefined &&
+        data.memoryMode === undefined &&
+        data.e2e === undefined &&
+        data.ifArchived !== "replace" &&
+        data.ifMissing !== "error"),
+    {
+      // attachTo joins an existing scratchpad; these options only make sense
+      // when the call is minting a fresh one.
+      message:
+        'attachTo cannot be combined with description, labelName, memoryMode, e2e, ifArchived="replace", or ifMissing="error"',
+      path: ["attachTo"],
+    }
+  )
 
 // Generation-0 SSK wraps a sealed harness provisions right after creating its
 // E2E scratchpad: one wrap for the stream owner's UIK and one for its own BIK.
@@ -218,6 +239,11 @@ export const rebindRuntimeSessionSchema = z.object({
   instanceId: z.string().min(1).max(128),
   runtimeSessionId: z.string().min(1).max(256),
   newInstanceId: z.string().min(1).max(128),
+})
+
+export const endRuntimeSessionSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  runtimeSessionId: z.string().min(1).max(256),
 })
 
 export const claimInvocationSchema = z.object({
