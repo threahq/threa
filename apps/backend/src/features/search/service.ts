@@ -194,8 +194,7 @@ export class SearchService {
 
   /**
    * The search page's shape: `search` plus the memo leg, folded into one
-   * ranked list of conversation rows. Memo search costs an embedding and a
-   * rerank call, so only this entry point runs it.
+   * ranked list of conversation rows; only this entry point runs the memo leg.
    */
   async searchClusters(params: SearchParams): Promise<SearchClustersResponse> {
     const { streamIds, ...legs } = await this.runLegs(params, { memos: true })
@@ -335,6 +334,9 @@ export class SearchService {
     // Memo search honours stream and date filters; with:/type:/status: already
     // narrowed `streamIds` (the frontend sends status: on every request), but
     // from: has no memo equivalent and would be silently ignored, so it skips the leg.
+    // The leg runs `fast`: no model call on the default path, the query
+    // embedding reused when the memo query is the same text. /steer is the
+    // one place a search waits on a model.
     const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
     const memoLeg =
       legs.memos && ranking === "improved" && memoQuery.length > 0 && filters.authorId === undefined
@@ -344,6 +346,8 @@ export class SearchService {
             query: memoQuery,
             filters: { before: filters.before, after: filters.after },
             limit: MEMO_SEARCH_LIMIT,
+            mode: "fast",
+            ...(memoQuery === normalizedQuery && queryEmbedding.length > 0 ? { embedding: queryEmbedding } : {}),
           })
         : Promise.resolve([])
 

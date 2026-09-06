@@ -62,7 +62,7 @@ function buildService() {
     embeddingService,
     reranker,
   })
-  return { service, embed }
+  return { service, embed, rerank: reranker.rerank as ReturnType<typeof mock> }
 }
 
 function stubSourceStreamResolution() {
@@ -294,6 +294,29 @@ describe("MemoExplorerService — user-scope owner gate (roadmap 6.4)", () => {
       expect.anything(),
       expect.objectContaining({ filters: expect.objectContaining({ viewerUserId: "usr_owner", scope: "user" }) })
     )
+  })
+
+  it("reranks by default and skips both the embedding and the reranker for a fast search with a caller embedding", async () => {
+    const { service, embed, rerank } = buildService()
+    const hybrid = spyOn(MemoRepository, "hybridSearch").mockResolvedValue([
+      { memo: fakeMemo({ id: "memo_a" }), distance: 0.1, sourceStream: null, rootStream: null },
+      { memo: fakeMemo({ id: "memo_b" }), distance: 0.2, sourceStream: null, rootStream: null },
+    ])
+    const base = { workspaceId: WORKSPACE_ID, permissions: OWNER, query: "prefs" }
+
+    await service.search(base)
+    expect(embed).toHaveBeenCalledTimes(1)
+    expect(rerank).toHaveBeenCalledTimes(1)
+    expect(hybrid).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ embedding: [0.42], limit: 50 })
+    )
+
+    const fast = await service.search({ ...base, mode: "fast", embedding: [0.9] })
+    expect(embed).toHaveBeenCalledTimes(1)
+    expect(rerank).toHaveBeenCalledTimes(1)
+    expect(hybrid).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ embedding: [0.9], limit: 30 }))
+    expect(fast.map((r) => r.memo.id)).toEqual(["memo_a", "memo_b"])
   })
 
   it("deletes a user-scoped memo the caller owns", async () => {
