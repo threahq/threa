@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { CONVERSATION_STATUSES } from "@threa/types"
+import { CONVERSATION_STATUSES } from "@threahq/types"
 import type { Message } from "../../messaging"
 import type { LinkPreview } from "../../link-previews"
 

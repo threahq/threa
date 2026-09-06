@@ -1,6 +1,6 @@
 import { PoolClient } from "pg"
 import { sql } from "../../db"
-import type { PendingItemType } from "@threa/types"
+import type { PendingItemType } from "@threahq/types"
 
 interface PendingItemRow {
   id: string

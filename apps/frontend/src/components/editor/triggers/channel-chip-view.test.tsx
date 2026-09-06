@@ -6,7 +6,7 @@ import { EditorContent, useEditor } from "@tiptap/react"
 import Document from "@tiptap/extension-document"
 import Paragraph from "@tiptap/extension-paragraph"
 import Text from "@tiptap/extension-text"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { ChannelLinkProvider } from "@/lib/markdown/channel-link-context"
 import { ChannelExtension } from "./channel-extension"
 

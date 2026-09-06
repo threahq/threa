@@ -7,7 +7,7 @@
 import { ulid } from "ulid"
 import type { Memo } from "../../src/features/memos"
 import type { Conversation } from "../../src/features/conversations"
-import { MemoStatuses, MemoTypes, ConversationStatuses } from "@threa/types"
+import { MemoStatuses, MemoTypes, ConversationStatuses } from "@threahq/types"
 import { renderMessagesXml } from "../../src/lib/ai/message-formatter"
 import type { EvalClassifierMessage } from "../suites/memo-classifier/types"
 

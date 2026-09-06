@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { Visibilities } from "@threa/types"
+import { Visibilities } from "@threahq/types"
 import { sql, composeSql, withTransaction, type Querier } from "../../db"
 import { rootReadableConditionSql } from "../streams"
 

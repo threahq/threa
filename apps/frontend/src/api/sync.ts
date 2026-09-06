@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { SyncCatchUpResponse } from "@threa/types"
+import type { SyncCatchUpResponse } from "@threahq/types"
 
 export const syncApi = {
   /**

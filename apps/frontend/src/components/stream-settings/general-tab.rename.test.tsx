@@ -10,7 +10,7 @@ import * as messageEnvelope from "@/lib/crypto/message-envelope"
 import { streamsApi } from "@/api/streams"
 import * as descriptionSectionModule from "./description-section"
 import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
-import { StreamTypes, Visibilities, type Stream } from "@threa/types"
+import { StreamTypes, Visibilities, type Stream } from "@threahq/types"
 import { GeneralTab } from "./general-tab"
 
 const WS = "ws_1"

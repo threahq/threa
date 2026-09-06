@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import type { EnclaveRewrapNeededPayload } from "@threa/types"
+import type { EnclaveRewrapNeededPayload } from "@threahq/types"
 import { useSocket } from "@/contexts"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"

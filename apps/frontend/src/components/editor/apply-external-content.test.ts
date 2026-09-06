@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { applyExternalEditorContent, type ExternalContentEditor } from "./apply-external-content"
 
 const DOC: JSONContent = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { DEFAULT_BOARD_LENS, MAX_BOARD_VIEW_NAME_LENGTH, type BoardLens, type BoardView } from "@threa/types"
+import { DEFAULT_BOARD_LENS, MAX_BOARD_VIEW_NAME_LENGTH, type BoardLens, type BoardView } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {

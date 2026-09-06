@@ -16,7 +16,7 @@
  * project convention of one router worker per concern, and avoids coupling
  * workspace routing logic to the backoffice surface.
  */
-import { ORIGINAL_HOST_HEADER } from "@threa/types"
+import { ORIGINAL_HOST_HEADER } from "@threahq/types"
 
 interface Env {
   /** Base URL for the control-plane service (handles backoffice + auth). */

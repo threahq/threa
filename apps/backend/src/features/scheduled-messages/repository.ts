@@ -5,7 +5,7 @@ import {
   type ScheduledMessageStatus,
   type JSONContent,
   type ConversationDirective,
-} from "@threa/types"
+} from "@threahq/types"
 
 interface ScheduledMessageRow {
   id: string

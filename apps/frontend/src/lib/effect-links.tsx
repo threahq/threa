@@ -7,7 +7,7 @@ import {
   type AgentToolEffect,
   type SettingsTab,
   type ToolEffectKind,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   Bot,
   Clock,

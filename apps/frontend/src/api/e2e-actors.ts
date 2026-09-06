@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { E2eActorKind, InviteActorResponse } from "@threa/types"
+import type { E2eActorKind, InviteActorResponse } from "@threahq/types"
 
 export const e2eActorsApi = {
   /**

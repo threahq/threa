@@ -60,7 +60,7 @@ import {
   snippetMimeForFilename,
   SNIPPET_FALLBACK_FILENAME,
 } from "./snippet-paste"
-import type { GiphyGif } from "@threa/types"
+import type { GiphyGif } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
@@ -71,7 +71,7 @@ import type {
   JSONContent,
   VoiceReplacementAckStatus,
   VoiceTranscriptReplacementSourceV4,
-} from "@threa/types"
+} from "@threahq/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 
 export interface RichEditorHandle {

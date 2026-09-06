@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import { extractGiphyRefs } from "./giphy-refs"
 
 const GIF_URL = "https://media3.giphy.com/media/abc123/200w.gif?cid=xyz&rid=200w.gif"

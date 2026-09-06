@@ -12,7 +12,7 @@ import {
   type FeatureFlagScope,
   type FeatureFlagValue,
   type WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 

@@ -6,8 +6,8 @@ import {
   TOOL_TIERS_BY_NAME,
   ToolTiers,
   type UserPreferences,
-} from "@threa/types"
-import { tierOfBuiltTool } from "@threa/agent-runtime"
+} from "@threahq/types"
+import { tierOfBuiltTool } from "@threahq/agent-runtime"
 import {
   canOfferUserSettings,
   createUpdateUserSettingsTool,

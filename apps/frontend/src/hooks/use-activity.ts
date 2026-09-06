@@ -3,7 +3,7 @@ import { useActivityService } from "@/contexts"
 import { workspaceKeys } from "./use-workspaces"
 import { db } from "@/db"
 import { deriveActivityCounts } from "@/sync/unread-counters"
-import type { Activity, WorkspaceBootstrap } from "@threa/types"
+import type { Activity, WorkspaceBootstrap } from "@threahq/types"
 
 export const activityKeys = {
   all: ["activity"] as const,

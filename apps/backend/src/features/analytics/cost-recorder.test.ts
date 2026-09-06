@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { createModelRegistry, type CostRecorder } from "@threa/agent-runtime"
+import { createModelRegistry, type CostRecorder } from "@threahq/agent-runtime"
 import { AnalyticsCostRecorder } from "./cost-recorder"
 
 const EMBEDDING_MODEL = "openai/text-embedding-3-small"

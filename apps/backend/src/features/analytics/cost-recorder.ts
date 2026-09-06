@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
-import type { CostRecorder, ModelRegistry, UsageWithCost } from "@threa/agent-runtime"
-import type { AnalyticsReporter } from "@threa/backend-common"
+import type { CostRecorder, ModelRegistry, UsageWithCost } from "@threahq/agent-runtime"
+import type { AnalyticsReporter } from "@threahq/backend-common"
 
 type RecordUsageParams = Parameters<CostRecorder["recordUsage"]>[0]
 

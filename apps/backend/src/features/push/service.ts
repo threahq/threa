@@ -13,7 +13,7 @@ import {
   stripMarkdownToInline,
   type PrefNotificationLevel,
   type StreamType,
-} from "@threa/types"
+} from "@threahq/types"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import type {
@@ -104,7 +104,7 @@ const CURRENTLY_FOCUSED_WINDOW_MS = 60_000
  * pick up next.
  */
 // Shared with the frontend SW's push-suppression check so the two layers agree
-// on what "present" means (@threa/types).
+// on what "present" means (@threahq/types).
 const RECENT_INTERACTION_WINDOW_MS = PRESENCE_INTERACTION_WINDOW_MS
 
 /**

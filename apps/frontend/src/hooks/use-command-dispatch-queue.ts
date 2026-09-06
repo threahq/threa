@@ -6,7 +6,7 @@ import { enqueueOperation } from "@/sync/operation-queue"
 import { getLatestPersistedSequence } from "@/sync/stream-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import { AuthorTypes, CommandKinds, type StreamEvent } from "@threa/types"
+import { AuthorTypes, CommandKinds, type StreamEvent } from "@threahq/types"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 
 /**

@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { InvitationStatus, WorkspaceInvitableRole, WorkspaceInvitationKind } from "@threa/types"
+import type { InvitationStatus, WorkspaceInvitableRole, WorkspaceInvitationKind } from "@threahq/types"
 
 interface InvitationRow {
   id: string

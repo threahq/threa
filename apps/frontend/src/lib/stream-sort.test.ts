@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { StreamTypes } from "@threa/types"
-import type { Stream } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
+import type { Stream } from "@threahq/types"
 import type { UrgencyLevel } from "@/components/layout/sidebar/types"
 import {
   compareStreamEntries,

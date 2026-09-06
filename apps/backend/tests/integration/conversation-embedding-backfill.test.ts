@@ -20,7 +20,7 @@ import {
 } from "../../src/features/conversations/embedding-backfill"
 import { hashEmbeddingText, type EmbeddingServiceLike, type EmbeddingContext } from "../../src/features/memos"
 import { conversationId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
-import { AuthorTypes, StreamTypes, TitleSources, Visibilities } from "@threa/types"
+import { AuthorTypes, StreamTypes, TitleSources, Visibilities } from "@threahq/types"
 
 const EMBEDDING_DIM = 1536
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ContextIntents, ContextRefKinds } from "@threa/types"
+import { ContextIntents, ContextRefKinds } from "@threahq/types"
 import { AsideIntent } from "./aside"
 import { getIntentConfig } from "../registry"
 

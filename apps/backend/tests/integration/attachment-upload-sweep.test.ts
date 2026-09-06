@@ -16,7 +16,7 @@ import { StreamRepository } from "../../src/features/streams"
 import { AttachmentRepository, AttachmentUploadRepository, AttachmentService } from "../../src/features/attachments"
 import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, attachmentId, messageId } from "../../src/lib/id"
-import { AttachmentSafetyStatuses, AttachmentUploadStatuses } from "@threa/types"
+import { AttachmentSafetyStatuses, AttachmentUploadStatuses } from "@threahq/types"
 
 const HOUR_MS = 60 * 60 * 1000
 

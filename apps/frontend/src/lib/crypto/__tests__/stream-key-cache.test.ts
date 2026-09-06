@@ -6,7 +6,7 @@ import {
   generateStreamKey,
   unwrapStreamKey,
   wrapStreamKey,
-} from "@threa/crypto"
+} from "@threahq/crypto"
 import { generateUIK, type UserIdentityKey } from "../keys"
 import {
   clearStreamKeyCache,

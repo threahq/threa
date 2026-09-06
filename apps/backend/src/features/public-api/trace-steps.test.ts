@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes } from "@threahq/types"
 import * as db from "../../db"
 import { AgentSessionRepository, type AgentSessionStep } from "../agents"
 import { botInvocationStepEvents, createBotInvocationTraceProjector, synthesizeReplyOnlyBotTrace } from "./trace-steps"

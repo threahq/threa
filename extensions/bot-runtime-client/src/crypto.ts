@@ -1,9 +1,9 @@
 /**
- * Vendored subset of `@threa/crypto` (the repo's `packages/crypto`).
+ * Vendored subset of `@threahq/crypto` (the repo's `packages/crypto`).
  *
  * The bot-runtime extensions ship standalone — they are copied to the user's
  * machine (e.g. `~/.pi/agent/extensions/`) and installed there, where the
- * private, unpublished `@threa/crypto` workspace package cannot resolve. So the
+ * private, unpublished `@threahq/crypto` workspace package cannot resolve. So the
  * slice the sealed (E2EE) bot path needs is copied here verbatim and depends
  * only on the published `@hpke/*` packages plus WebCrypto. Both harnesses
  * (pi-remote, claude-code-remote via remote-session) consume this one copy.
@@ -272,7 +272,7 @@ export interface WrapStreamKeyInput {
 /**
  * HPKE-wrap an SSK to a recipient — used when a harness PROVISIONS a fresh
  * stream key for its own E2E scratchpad (wrapping to the owner's UIK and its
- * own BIK). Wire-identical to `@threa/crypto`'s `wrapStreamKey`; the parity
+ * own BIK). Wire-identical to `@threahq/crypto`'s `wrapStreamKey`; the parity
  * test asserts a vendored wrap opens with the vendored unwrap under the same
  * AAD binding.
  */
@@ -415,7 +415,7 @@ export async function decryptAttachmentBytes(input: {
 
 export const E2E_PAYLOAD_VERSION = 1
 
-/** One citation source sealed into a payload (structural twin of `@threa/types`' `SourceItem`). */
+/** One citation source sealed into a payload (structural twin of `@threahq/types`' `SourceItem`). */
 export interface SealedSourceItem {
   type?: string
   title: string
@@ -423,7 +423,7 @@ export interface SealedSourceItem {
   snippet?: string
 }
 
-/** A per-file attachment key sealed into a payload (structural twin of `@threa/crypto`'s `AttachmentRef`). */
+/** A per-file attachment key sealed into a payload (structural twin of `@threahq/crypto`'s `AttachmentRef`). */
 export interface AttachmentRef {
   attachmentId: string
   key: string

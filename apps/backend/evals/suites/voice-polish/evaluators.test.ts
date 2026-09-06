@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import type { PolishOutcome } from "../../../src/features/voice-transcription/polish"
 import {
   attemptBoundsEvaluator,

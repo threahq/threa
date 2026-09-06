@@ -16,7 +16,7 @@ import { usePushNotifications } from "@/hooks/use-push-notifications"
 import { useNotificationPauseControls } from "@/hooks/use-notification-pause-controls"
 import { toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { NOTIFICATION_PAUSE_OPTIONS, formatNotificationPauseLabel } from "@/lib/status"
-import { PREF_NOTIFICATION_LEVEL_OPTIONS, type PrefNotificationLevel } from "@threa/types"
+import { PREF_NOTIFICATION_LEVEL_OPTIONS, type PrefNotificationLevel } from "@threahq/types"
 
 const NOTIFICATION_LABELS: Record<PrefNotificationLevel, string> = {
   all: "All messages",

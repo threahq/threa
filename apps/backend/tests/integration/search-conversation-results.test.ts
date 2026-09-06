@@ -19,7 +19,7 @@ import {
 } from "../../src/features/search"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { conversationId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { TitleSources } from "@threa/types"
+import { TitleSources } from "@threahq/types"
 
 const EMBEDDING_DIMS = 1536
 

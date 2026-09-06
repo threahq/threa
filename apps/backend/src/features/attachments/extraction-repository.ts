@@ -10,7 +10,7 @@ import type {
   TextMetadata,
   WordMetadata,
   ExcelMetadata,
-} from "@threa/types"
+} from "@threahq/types"
 
 interface AttachmentExtractionRow {
   id: string

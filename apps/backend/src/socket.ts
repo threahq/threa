@@ -1,12 +1,12 @@
 import type { Server, Socket, DefaultEventsMap } from "socket.io"
 import crypto from "crypto"
-import type { AuthService, SessionCookies } from "@threa/backend-common"
+import type { AuthService, SessionCookies } from "@threahq/backend-common"
 import { createSocketAuthMiddleware } from "./lib/socket-auth"
 import { socketConnectionId } from "./lib/id"
 import { socketHandshakeIp } from "./lib/socket-ip"
 import type { AccessLogService, AuditSubjectRef } from "./features/access-log"
 import { SubscribeCoalescer, unionSubjectChunks } from "./features/access-log"
-import { DEVICE_KEY_LENGTH, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threa/types"
+import { DEVICE_KEY_LENGTH, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
 import type { StreamService } from "./features/streams"
 import type { PushService } from "./features/push"
 import type { UserSocketRegistry } from "./lib/user-socket-registry"
@@ -96,7 +96,7 @@ interface Dependencies {
 
 /**
  * Derives a device key from user-agent.
- * Algorithm contract documented in @threa/types (DEVICE_KEY_LENGTH).
+ * Algorithm contract documented in @threahq/types (DEVICE_KEY_LENGTH).
  * Must match frontend's getDeviceKey (use-push-notifications.ts).
  */
 function deriveDeviceKey(userAgent: string | undefined): string {

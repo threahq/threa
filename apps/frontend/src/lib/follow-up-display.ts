@@ -1,4 +1,4 @@
-import { FOLLOW_UP_TERMINAL_STATUSES, type FollowUpStatus } from "@threa/types"
+import { FOLLOW_UP_TERMINAL_STATUSES, type FollowUpStatus } from "@threahq/types"
 
 /** Display labels for follow-up statuses — shared by the "In this stream" panel and the outcomes surfaces. */
 export const FOLLOW_UP_STATUS_LABEL: Record<FollowUpStatus, string> = {

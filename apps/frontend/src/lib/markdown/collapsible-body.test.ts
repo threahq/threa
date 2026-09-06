@@ -4,7 +4,7 @@ import {
   DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
   DEFAULT_USER_PREFERENCES,
   type UserPreferences,
-} from "@threa/types"
+} from "@threahq/types"
 import { resolveMessageCollapseSettings } from "./collapsible-body"
 
 function preferences(overrides: Partial<UserPreferences> = {}): UserPreferences {

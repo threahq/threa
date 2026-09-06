@@ -9,7 +9,7 @@ import type {
   ChartData,
   TableData,
   DiagramData,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   StreamTypes,
   AuthorTypes,
@@ -17,7 +17,7 @@ import {
   PdfSizeTiers,
   InjectionStrategies,
   DEFAULT_USER_PREFERENCES,
-} from "@threa/types"
+} from "@threahq/types"
 import { StreamRepository, StreamMemberRepository, type Stream } from "../streams"
 import { MessageRepository, type Message } from "../messaging"
 import { UserRepository } from "../workspaces"

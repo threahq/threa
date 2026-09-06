@@ -1,4 +1,4 @@
-// Mirrors @threa/types constants; inlined because @threa/cli stays dependency-light
+// Mirrors @threahq/types constants; inlined because @threahq/cli stays dependency-light
 // against the version-pinned public API.
 export const CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system", "aside"] as const

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Bot, Check, Loader2, X } from "lucide-react"
-import type { BotAccessRequestedEventPayload, BotAccessStatusChangedEventPayload, StreamEvent } from "@threa/types"
+import type { BotAccessRequestedEventPayload, BotAccessStatusChangedEventPayload, StreamEvent } from "@threahq/types"
 import { botAccessApi } from "@/api"
 import { cn } from "@/lib/utils"
 

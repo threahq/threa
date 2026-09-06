@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { parseMarkdown } from "@threa/prosemirror"
-import type { Draft, JSONContent } from "@threa/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import type { Draft, JSONContent } from "@threahq/types"
 import { db } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { sealDraftContent } from "@/lib/crypto/seal-draft"

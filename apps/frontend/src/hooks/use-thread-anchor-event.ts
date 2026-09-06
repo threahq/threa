@@ -4,7 +4,7 @@ import { useStreamService } from "@/contexts"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { db } from "@/db"
 import { writeSlotCarrier } from "@/stores/slot-store"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 
 export const threadAnchorEventKeys = {
   detail: (workspaceId: string, parentStreamId: string, anchorId: string) =>

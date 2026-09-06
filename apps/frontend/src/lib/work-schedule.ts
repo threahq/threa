@@ -1,4 +1,4 @@
-import { type WorkSchedule, DEFAULT_WORK_SCHEDULE } from "@threa/types"
+import { type WorkSchedule, DEFAULT_WORK_SCHEDULE } from "@threahq/types"
 
 /**
  * Resolve the working schedule that applies to a viewer: their personal

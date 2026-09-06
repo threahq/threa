@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
-import type { ComposeTrace } from "@threa/types"
+import type { ComposeTrace } from "@threahq/types"
 import { sequenceToNum } from "@/db"
 import { getLatestPersistedSequence } from "@/sync/stream-sync"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"

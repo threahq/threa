@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { cn } from "@/lib/utils"
-import type { ComposerActionSide } from "@threa/types"
+import type { ComposerActionSide } from "@threahq/types"
 
 /**
  * Approximate rendered width of one 28px icon button plus its 4px flex gap.

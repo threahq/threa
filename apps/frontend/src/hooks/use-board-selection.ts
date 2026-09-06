@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useLocation } from "react-router-dom"
-import type { BoardLens } from "@threa/types"
+import type { BoardLens } from "@threahq/types"
 import type { BoardViewSelection } from "@/components/board/board-saved-views"
 import {
   BOARD_LENS_PARAM,

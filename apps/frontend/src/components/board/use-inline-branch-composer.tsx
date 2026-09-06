@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { CornerDownRight } from "lucide-react"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { useQueueDraftMessage } from "@/hooks/use-queue-draft-message"
 import { useBoardSubtopicDraftIndex, useScopeDraftPreview, useStashParamDraftRow } from "@/hooks"
 import type { SubtopicDraftEntry } from "@/hooks"

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threahq/types"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { GENERAL_RESEARCH_TOTAL_BUDGET_MS } from "./config"
 import type { GeneralResearchResult } from "./general-researcher"

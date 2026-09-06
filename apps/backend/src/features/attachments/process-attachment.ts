@@ -14,7 +14,7 @@ import { withClient, withTransaction } from "../../db"
 import { extractionId } from "../../lib/id"
 import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentExtractionRepository, type InsertAttachmentExtractionParams } from "./extraction-repository"
-import { ProcessingStatuses } from "@threa/types"
+import { ProcessingStatuses } from "@threahq/types"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
 

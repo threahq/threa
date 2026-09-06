@@ -1,16 +1,16 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { serializeBigInt } from "@threa/backend-common"
-import { parseMarkdown } from "@threa/prosemirror"
+import { serializeBigInt } from "@threahq/backend-common"
+import { parseMarkdown } from "@threahq/prosemirror"
 import {
   AuthorTypes,
   BotInvocationCapabilities,
   BotInvocationTriggers,
   BotRuntimeKinds,
   CommandKinds,
-} from "@threa/types"
-import type { BotRuntimeKind, CommandDispatchedPayload } from "@threa/types"
+} from "@threahq/types"
+import type { BotRuntimeKind, CommandDispatchedPayload } from "@threahq/types"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { commandId as generateCommandId, eventId as generateEventId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"

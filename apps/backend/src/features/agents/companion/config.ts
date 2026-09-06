@@ -1,4 +1,4 @@
-import type { TonePreset, BrevityPreset } from "@threa/types"
+import type { TonePreset, BrevityPreset } from "@threahq/types"
 import { BUILT_IN_AGENTS, ARIADNE_AGENT_ID } from "../built-in-agents"
 import type { Persona } from "../persona-repository"
 

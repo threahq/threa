@@ -6,7 +6,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { AttachmentSafetyStatuses, ExtractionContentTypes, KnowledgeTypes, MemoTypes } from "@threa/types"
+import { AttachmentSafetyStatuses, ExtractionContentTypes, KnowledgeTypes, MemoTypes } from "@threahq/types"
 import { AttachmentExtractionRepository, AttachmentRepository } from "../../src/features/attachments"
 import { MemoRepository } from "../../src/features/memos"
 import { attachmentId, extractionId, memoId } from "../../src/lib/id"

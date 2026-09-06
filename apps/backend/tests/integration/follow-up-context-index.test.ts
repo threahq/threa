@@ -20,7 +20,7 @@ import { plan, processChunk } from "../../src/features/stream-context/backfill"
 import { DelegationService } from "../../src/features/delegations"
 import { streamContextItemId, workspaceId } from "../../src/lib/id"
 import { sql } from "../../src/db"
-import { AuthorTypes, StreamTypes, Visibilities, type StreamContextFollowUpDetail } from "@threa/types"
+import { AuthorTypes, StreamTypes, Visibilities, type StreamContextFollowUpDetail } from "@threahq/types"
 
 describe("follow-up context index against the real schema", () => {
   let pool: Pool

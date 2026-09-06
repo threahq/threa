@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import * as e2eSessionModule from "@/stores/e2e-session-store"
 import * as decryptCacheModule from "@/lib/crypto/decrypt-cache"
 import * as streamStoreModule from "@/stores/stream-store"

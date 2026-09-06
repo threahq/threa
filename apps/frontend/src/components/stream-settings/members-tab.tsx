@@ -26,7 +26,7 @@ import { botsApi } from "@/api/bots"
 import { useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
 import { hasPermission } from "@/lib/permissions"
-import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamMember } from "@threa/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamMember } from "@threahq/types"
 import { toast } from "sonner"
 
 interface MembersTabProps {

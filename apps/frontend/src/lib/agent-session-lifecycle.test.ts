@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { deriveAgentSessionLifecycle, isAgentSessionLifecycleEvent } from "./agent-session-lifecycle"
 
 function event(eventType: StreamEvent["eventType"], payload: StreamEvent["payload"], sequence: string): StreamEvent {

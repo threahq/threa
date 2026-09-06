@@ -1,6 +1,6 @@
 // Reuses JSON structure types since YAML maps to the JSON data model.
 import yaml from "js-yaml"
-import type { TextSection, JsonStructure } from "@threa/types"
+import type { TextSection, JsonStructure } from "@threahq/types"
 import type { ParseResult, TextParser } from "./types"
 import { buildPreview } from "./preview"
 

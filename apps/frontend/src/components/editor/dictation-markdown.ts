@@ -1,4 +1,4 @@
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 
 function serializeCut(doc: ProseMirrorNode, from: number, to: number): string | null {

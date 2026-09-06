@@ -2,13 +2,13 @@ import type { Querier } from "../../db"
 import { MessageRepository, type Message } from "../messaging"
 import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { agentConversationSummaryId } from "../../lib/id"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import {
   foldRollingSummary,
   ROLLING_SUMMARY_BATCH_SIZE,
   ROLLING_SUMMARY_MAX_BATCHES,
   type RollingSummaryMessage,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import { ConversationSummaryRepository } from "./conversation-summary-repository"
 import { logger } from "../../lib/logger"
 
@@ -29,7 +29,7 @@ export interface ConversationSummaryServiceDeps {
 /**
  * Maintains rolling summaries for conversation segments dropped from active
  * context windows. The fold itself — prompt, bounds, per-message formatting — is
- * the shared `foldRollingSummary` (`@threa/agent-runtime`) the in-enclave
+ * the shared `foldRollingSummary` (`@threahq/agent-runtime`) the in-enclave
  * summarizer runs too, so a summary built on either surface reads identically
  * (no drift, INV-35/37). This service owns only the plaintext orchestration: the
  * incremental cursor, batching, and the repository upsert.

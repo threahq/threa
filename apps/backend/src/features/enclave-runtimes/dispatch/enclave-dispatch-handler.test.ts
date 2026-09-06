@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import { CursorLock } from "@threa/backend-common"
+import { CursorLock } from "@threahq/backend-common"
 import * as outbox from "../../../lib/outbox"
 import { OutboxRepository } from "../../../lib/outbox"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../../e2e-streams"

@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils"
 import { useInviteActor } from "@/hooks/use-invite-actor"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceBots, type CachedBot } from "@/stores/workspace-store"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
 // `shrink-0` + nowrap: these pills live in the header's scrollable chip strip —

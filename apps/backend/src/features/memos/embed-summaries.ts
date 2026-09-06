@@ -1,5 +1,5 @@
-import { collectMemoEmbedIds } from "@threa/prosemirror"
-import type { JSONContent, MemoEmbedSummary } from "@threa/types"
+import { collectMemoEmbedIds } from "@threahq/prosemirror"
+import type { JSONContent, MemoEmbedSummary } from "@threahq/types"
 import type { Querier } from "../../db"
 import { StreamRepository } from "../streams"
 import { MemoRepository } from "./repository"

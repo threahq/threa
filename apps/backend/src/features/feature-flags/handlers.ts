@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express"
 import { z } from "zod"
-import { FEATURE_FLAG_SCOPES } from "@threa/types"
+import { FEATURE_FLAG_SCOPES } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import type { FeatureFlagService } from "./service"
 

@@ -4,7 +4,7 @@ import type {
   BotRuntimeManifest,
   BotRuntimeStatus,
   InvocationControlState,
-} from "@threa/types"
+} from "@threahq/types"
 import type { BotRuntimeInstance } from "./repository"
 
 /**

@@ -1,5 +1,5 @@
 import type { Querier } from "../../../db"
-import { ConversationStatuses } from "@threa/types"
+import { ConversationStatuses } from "@threahq/types"
 import { ConversationRepository, type Conversation } from "../../conversations"
 
 /**

@@ -4,7 +4,7 @@ import {
   type DelegationStatusChangedEventPayload,
   type MemosCapturedEventPayload,
   type SubagentStatusChangedEventPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import type { CachedEvent } from "@/db"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/components/timeline/session-grouping"
 import { getCommandId, isOwnCommandEvent } from "@/components/timeline/command-grouping"

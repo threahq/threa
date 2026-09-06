@@ -5,7 +5,7 @@ import {
   MAX_BOARD_SCOPE_STREAMS,
   type BoardLens,
   type BoardScopeStreamType,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * The board's URL filter vocabulary — one source of truth (INV-33) for every

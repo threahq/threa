@@ -12,7 +12,7 @@ import type {
   UpdateUserPreferencesInput,
   AccessibilityPreferences,
   WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 
 const APPEARANCE_STORAGE_KEY = "threa-appearance"
 

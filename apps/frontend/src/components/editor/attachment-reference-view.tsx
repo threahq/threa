@@ -1,5 +1,5 @@
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
-import { attachmentReferenceLabel } from "@threa/prosemirror"
+import { attachmentReferenceLabel } from "@threahq/prosemirror"
 import { Loader2, FileIcon, AlertCircle, ImageIcon } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"

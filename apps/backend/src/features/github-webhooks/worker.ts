@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import type { Job, JobHandler, QueueManager } from "../../lib/queue"
 import type { GithubWebhookProcessJobData } from "../../lib/queue/job-queue"
 import { findGithubPreviewMatches, type LinkPreviewService } from "../link-previews"

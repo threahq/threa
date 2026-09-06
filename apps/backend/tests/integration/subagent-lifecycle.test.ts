@@ -12,7 +12,7 @@
 
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthorTypes, SubagentFailureReasons, SubagentStatuses, type SubagentFailureReason } from "@threa/types"
+import { AuthorTypes, SubagentFailureReasons, SubagentStatuses, type SubagentFailureReason } from "@threahq/types"
 import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { createReportBackTool } from "../../src/features/agents/tools"

@@ -1,6 +1,6 @@
 import { createCipheriv, createHmac, randomBytes } from "crypto"
 import { describe, expect, test } from "bun:test"
-import { WorkspaceIntegrationProviders, type WorkspaceIntegrationProvider } from "@threa/types"
+import { WorkspaceIntegrationProviders, type WorkspaceIntegrationProvider } from "@threahq/types"
 import {
   createGithubInstallState,
   createLinearInstallState,

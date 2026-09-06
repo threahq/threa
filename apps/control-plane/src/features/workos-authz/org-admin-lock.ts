@@ -1,6 +1,6 @@
 import { createHash } from "crypto"
 import type { Pool } from "pg"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 
 /**
  * Serialize WorkOS admin writes for a single organization across CP instances.

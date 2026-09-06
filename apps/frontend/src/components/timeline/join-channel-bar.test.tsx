@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { streamsApi } from "@/api"
 import { JoinChannelBar } from "./join-channel-bar"
-import type { StreamMember } from "@threa/types"
+import type { StreamMember } from "@threahq/types"
 
 const mockJoin = vi.fn()
 

@@ -3,7 +3,7 @@ import { Hash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { streamsApi } from "@/api"
 import { useComposerHeightPublish } from "@/hooks"
-import type { StreamMember } from "@threa/types"
+import type { StreamMember } from "@threahq/types"
 
 interface JoinChannelBarProps {
   workspaceId: string

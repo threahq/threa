@@ -10,7 +10,7 @@ import {
   type Stream,
 } from "../streams"
 import { PersonaRepository } from "../agents"
-import { collectMentionActorRefs } from "@threa/prosemirror"
+import { collectMentionActorRefs } from "@threahq/prosemirror"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
 import {
@@ -22,7 +22,7 @@ import {
   MENTION_BROADCAST_HERE,
   MENTION_BROADCAST_CHANNEL,
   type JSONContent,
-} from "@threa/types"
+} from "@threahq/types"
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository, type ActivityReadOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"

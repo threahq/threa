@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { logger } from "../../../lib/logger"
 import { processAttachment } from "../process-attachment"
 import {

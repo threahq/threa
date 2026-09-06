@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { LinkPreviewRepository, type LinkPreview } from "./repository"
 import type { LinkPreviewService } from "./service"

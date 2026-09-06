@@ -5,7 +5,7 @@ import {
   VOICE_STEERING_WORD_MAX_LENGTH,
   MAX_PENDING_FOLLOW_UPS_MIN,
   MAX_PENDING_FOLLOW_UPS_MAX,
-} from "@threa/types"
+} from "@threahq/types"
 import type { WorkspaceSettingsService } from "./service"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"

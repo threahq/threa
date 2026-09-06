@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, userEvent, spyOnExport } from "@/test"
-import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID, type SidebarConfig } from "@threa/types"
+import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID, type SidebarConfig } from "@threahq/types"
 import * as sidebarConfigHook from "@/hooks/use-sidebar-config"
 import * as workspaceStore from "@/stores/workspace-store"
 import * as contexts from "@/contexts"

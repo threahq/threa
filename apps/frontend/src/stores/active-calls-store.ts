@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react"
-import type { ActiveCall } from "@threa/types"
+import type { ActiveCall } from "@threahq/types"
 
 /**
  * Ephemeral, non-persisted store of the calls live RIGHT NOW (roadmap 1.4),

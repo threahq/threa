@@ -2,7 +2,7 @@ import { useMemo } from "react"
 import { toast } from "sonner"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import { useScheduledService } from "@/contexts"
 import { useSyncEngine, useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useUser } from "@/auth"
@@ -18,7 +18,7 @@ import type {
   ScheduleMessageInput,
   UpdateScheduledMessageInput,
   JSONContent,
-} from "@threa/types"
+} from "@threahq/types"
 
 export const scheduledKeys = {
   all: ["scheduled"] as const,

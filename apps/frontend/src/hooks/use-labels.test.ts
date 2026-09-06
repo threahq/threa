@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
-import { LabelableResourceTypes, type Label, type LabelAssignment } from "@threa/types"
+import { LabelableResourceTypes, type Label, type LabelAssignment } from "@threahq/types"
 import { db } from "@/db"
 import * as contextsModule from "@/contexts"
 import {

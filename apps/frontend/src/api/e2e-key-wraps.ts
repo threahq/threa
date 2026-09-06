@@ -1,4 +1,4 @@
-import type { E2eKeyWrapsResponse, E2eOwnerKeyWrapInput, E2eKeyRollInput, E2eActorRewrapInput } from "@threa/types"
+import type { E2eKeyWrapsResponse, E2eOwnerKeyWrapInput, E2eKeyRollInput, E2eActorRewrapInput } from "@threahq/types"
 import { api } from "./client"
 
 /**

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
 import type { Socket } from "socket.io-client"
-import { AuthorTypes, type StreamEvent } from "@threa/types"
+import { AuthorTypes, type StreamEvent } from "@threahq/types"
 import * as contextsModule from "@/contexts"
 import { __resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { useAgentActivity } from "./use-agent-activity"

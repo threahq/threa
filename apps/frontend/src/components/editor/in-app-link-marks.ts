@@ -1,4 +1,4 @@
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { classifyDraftLink, type DraftLinkRef } from "@/lib/in-app-links"
 
 /** The in-app stream/message ref of a node by its link mark's href (run membership). */

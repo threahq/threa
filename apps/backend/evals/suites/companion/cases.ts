@@ -6,7 +6,7 @@
  */
 
 import type { EvalCase } from "../../framework/types"
-import type { StreamType, AgentTrigger } from "@threa/types"
+import type { StreamType, AgentTrigger } from "@threahq/types"
 
 /**
  * Input for companion evaluation.

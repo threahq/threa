@@ -1,5 +1,5 @@
 {
-  "name": "@threa/harness-client",
+  "name": "@threahq/harness-client",
   "version": "0.1.0",
   "private": true,
   "type": "module",

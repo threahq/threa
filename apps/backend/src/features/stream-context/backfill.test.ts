@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { plan, processChunk, type StreamContextChunk } from "./backfill"
 import { contextRowsForMessage } from "./extract"
 import type { BackfillContext } from "../../lib/backfill"

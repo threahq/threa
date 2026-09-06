@@ -6,7 +6,7 @@ import {
   ENCRYPTED_MESSAGE_PREVIEW_LABEL,
   type SavedMessageView,
   type SavedStatus,
-} from "@threa/types"
+} from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"

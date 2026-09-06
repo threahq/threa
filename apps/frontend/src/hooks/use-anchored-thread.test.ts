@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { renderHook } from "@testing-library/react"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import type { CachedStream } from "@/db"
 import * as workspaceStore from "@/stores/workspace-store"
 import { useAnchoredThreadId } from "./use-anchored-thread"

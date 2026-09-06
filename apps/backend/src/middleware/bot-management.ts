@@ -1,8 +1,8 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express"
 import type { Pool } from "pg"
 import { BotRepository, type Bot } from "../features/public-api/bot-repository"
-import { BotTypes, permissionsForRole, WORKSPACE_PERMISSION_SCOPES, type WorkspacePermissionSlug } from "@threa/types"
-import { HttpError } from "@threa/backend-common"
+import { BotTypes, permissionsForRole, WORKSPACE_PERMISSION_SCOPES, type WorkspacePermissionSlug } from "@threahq/types"
+import { HttpError } from "@threahq/backend-common"
 
 const unauthenticated = () => new HttpError("Not authenticated", { status: 401, code: "UNAUTHENTICATED" })
 const insufficient = () => new HttpError("Insufficient permissions", { status: 403, code: "FORBIDDEN" })

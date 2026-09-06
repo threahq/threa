@@ -1,7 +1,7 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Loader2, Send, Trash2 } from "lucide-react"
 import type { Editor } from "@tiptap/react"
-import { DEFAULT_USER_PREFERENCES, type JSONContent, type ScheduledMessageView } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, type JSONContent, type ScheduledMessageView } from "@threahq/types"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { Button } from "@/components/ui/button"
@@ -28,7 +28,7 @@ import { usePreferences } from "@/contexts"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import { toast } from "sonner"
-import { collectAttachmentReferenceIds } from "@threa/prosemirror"
+import { collectAttachmentReferenceIds } from "@threahq/prosemirror"
 import { EMPTY_DOC, ensureTrailingParagraph } from "@/lib/prosemirror-utils"
 
 interface ScheduledEditDialogProps {

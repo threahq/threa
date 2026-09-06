@@ -23,7 +23,7 @@ import {
   totalCount,
   type GridGeometry,
 } from "@/lib/emoji-picker"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 
 const MOBILE_EMOJI_SIZE = 44
 const MOBILE_ROW_HEIGHT = 46

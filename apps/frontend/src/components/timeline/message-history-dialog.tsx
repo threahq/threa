@@ -13,7 +13,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useMessageService } from "@/contexts"
 import { messageKeys } from "@/api/messages"
 import { cn } from "@/lib/utils"
-import type { MessageVersion } from "@threa/types"
+import type { MessageVersion } from "@threahq/types"
 
 interface MessageHistoryDialogProps {
   open: boolean

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoCapturedEvent } from "./memo-captured-event"
-import type { MemosCapturedEventPayload, StreamEvent } from "@threa/types"
+import type { MemosCapturedEventPayload, StreamEvent } from "@threahq/types"
 
 function createEvent(payload: MemosCapturedEventPayload): StreamEvent {
   return {

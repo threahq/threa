@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { StreamTypes } from "@threa/types"
-import { createReadUrlTool, createWebSearchTool } from "@threa/agent-runtime"
+import { StreamTypes } from "@threahq/types"
+import { createReadUrlTool, createWebSearchTool } from "@threahq/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
 import { createWorkspaceResearchTool } from "../../tools"

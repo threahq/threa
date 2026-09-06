@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom"
 import { ChevronRight, Pencil } from "lucide-react"
-import type { ThreadSummary } from "@threa/types"
+import type { ThreadSummary } from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
 import { useActors } from "@/hooks"

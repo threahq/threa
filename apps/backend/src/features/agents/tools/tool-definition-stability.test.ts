@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { z } from "zod"
-import { MUTATING_TOOL_NAMES } from "@threa/types"
+import { MUTATING_TOOL_NAMES } from "@threahq/types"
 import { buildToolSet } from "../companion/tool-set"
 
 /**

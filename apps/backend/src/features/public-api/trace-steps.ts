@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
-import { AgentStepTypes, type AgentStepType, type AuthorType } from "@threa/types"
+import { AgentStepTypes, type AgentStepType, type AuthorType } from "@threahq/types"
 import {
   TraceProjector,
   type AgentEvent,
@@ -9,7 +9,7 @@ import {
   type TraceStepRecord,
   type TraceStepSink,
   type TraceSubstepEntry,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import { withTransaction, type Querier } from "../../db"
 import { stepId as generateStepId } from "../../lib/id"
 import { AgentSessionRepository, type AgentSessionStep, type ParentActivityTarget } from "../agents"

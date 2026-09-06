@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import type { BackofficeService } from "./service"
 
 interface Dependencies {

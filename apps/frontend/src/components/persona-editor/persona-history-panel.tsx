@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { History, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
-import type { PersonaConfigPatch, PersonaConfigRevision, PersonaKind } from "@threa/types"
+import type { PersonaConfigPatch, PersonaConfigRevision, PersonaKind } from "@threahq/types"
 import { ApiError } from "@/api/client"
 import type { PersonaCustomConflict, PersonaOverrideConflict } from "@/api"
 import {

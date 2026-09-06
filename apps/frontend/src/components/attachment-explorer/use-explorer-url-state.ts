@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
-import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threa/types"
+import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threahq/types"
 
 export const EXPLORER_PARAM = "explorer"
 const STREAMS_PARAM = "streams"

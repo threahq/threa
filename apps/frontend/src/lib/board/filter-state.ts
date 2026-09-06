@@ -1,4 +1,4 @@
-import { DEFAULT_BOARD_LENS, type BoardLens, type BoardScopeStreamType } from "@threa/types"
+import { DEFAULT_BOARD_LENS, type BoardLens, type BoardScopeStreamType } from "@threahq/types"
 
 /** The board's live view — lens plus every filter axis — matched against a saved
  *  view to mark which one you're currently looking at, and against the unfiltered

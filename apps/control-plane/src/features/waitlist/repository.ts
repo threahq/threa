@@ -1,4 +1,4 @@
-import type { Querier } from "@threa/backend-common"
+import type { Querier } from "@threahq/backend-common"
 
 export interface WaitlistRow {
   id: string

@@ -1,4 +1,4 @@
-import type { AttachmentCategory, DelegationStatus, FollowUpStatus, KnowledgeType } from "@threa/types"
+import type { AttachmentCategory, DelegationStatus, FollowUpStatus, KnowledgeType } from "@threahq/types"
 
 /**
  * The buckets the "In this stream" panel groups derived context into. `"all"`

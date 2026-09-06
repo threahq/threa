@@ -4,7 +4,7 @@ import { Editor } from "@tiptap/core"
 import Document from "@tiptap/extension-document"
 import Paragraph from "@tiptap/extension-paragraph"
 import Text from "@tiptap/extension-text"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 import { useEmojiSuggestion } from "./use-emoji-suggestion"
 import { EmojiExtension } from "./emoji-extension"
 

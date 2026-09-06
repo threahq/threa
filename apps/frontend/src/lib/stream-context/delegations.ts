@@ -1,4 +1,4 @@
-import type { DelegationSummary } from "@threa/types"
+import type { DelegationSummary } from "@threahq/types"
 import type { DelegationContextItem, DerivedStreamContext } from "./types"
 
 /**

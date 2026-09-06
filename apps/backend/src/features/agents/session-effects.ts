@@ -1,4 +1,4 @@
-import { EFFECTS_PER_SESSION_MAX, type AgentToolEffect } from "@threa/types"
+import { EFFECTS_PER_SESSION_MAX, type AgentToolEffect } from "@threahq/types"
 
 /** The one field this reads — any step shape carrying effects fits. */
 type StepWithEffects = { effects?: AgentToolEffect[] }

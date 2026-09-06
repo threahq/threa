@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, ToolTiers } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, ToolTiers } from "@threahq/types"
 import { buildToolPromptSections, defineAgentTool, tierOfBuiltTool, type AgentTool } from "./agent-tool"
 
 function makeTool(name: string, promptBlock?: string): AgentTool {

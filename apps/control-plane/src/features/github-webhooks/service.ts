@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import type { Querier } from "@threa/backend-common"
-import { OutboxRepository, githubWebhookDeliveryId, logger, withTransaction } from "@threa/backend-common"
+import type { Querier } from "@threahq/backend-common"
+import { OutboxRepository, githubWebhookDeliveryId, logger, withTransaction } from "@threahq/backend-common"
 import { IntegrationRouteRepository } from "../integration-routes"
 import {
   FORWARDED_GITHUB_EVENT_TYPES,

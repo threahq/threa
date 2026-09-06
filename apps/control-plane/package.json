@@ -1,5 +1,5 @@
 {
-  "name": "@threa/control-plane",
+  "name": "@threahq/control-plane",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,8 +12,8 @@
     "test:integration": "bun test tests/integration/"
   },
   "dependencies": {
-    "@threa/backend-common": "workspace:*",
-    "@threa/types": "workspace:*",
+    "@threahq/backend-common": "workspace:*",
+    "@threahq/types": "workspace:*",
     "cookie-parser": "^1",
     "cors": "^2",
     "express": "^5",

@@ -11,7 +11,7 @@ import type {
   CreateUserApiKeyResponse,
   WorkspacePermissionSlug,
   MarkAllAsReadResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 export type { WorkspaceBootstrap, CreateWorkspaceInput }
 

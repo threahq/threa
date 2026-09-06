@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test"
 import { Pool } from "pg"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import { executeReadOnly } from "../src/query"
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgresql://threa:threa@localhost:5454/postgres"

@@ -9,7 +9,7 @@ import {
   type Visibility,
   type ActiveCall,
   type StreamActiveCall,
-} from "@threa/types"
+} from "@threahq/types"
 import { withTransaction, withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"

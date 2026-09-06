@@ -18,7 +18,7 @@ import {
   PdfProcessingJobRepository,
 } from "../../src/features/attachments"
 import { userId, workspaceId, streamId, attachmentId, pdfPageId, pdfJobId } from "../../src/lib/id"
-import { ProcessingStatuses, PdfJobStatuses, PdfPageClassifications } from "@threa/types"
+import { ProcessingStatuses, PdfJobStatuses, PdfPageClassifications } from "@threahq/types"
 
 describe("PDF Repositories", () => {
   let pool: Pool

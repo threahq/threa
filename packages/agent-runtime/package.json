@@ -1,5 +1,5 @@
 {
-  "name": "@threa/agent-runtime",
+  "name": "@threahq/agent-runtime",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -17,7 +17,7 @@
     "@langchain/core": "^1.1.5",
     "@langchain/openai": "^1.2.0",
     "@openrouter/ai-sdk-provider": "^3",
-    "@threa/types": "workspace:*",
+    "@threahq/types": "workspace:*",
     "ai": "^7",
     "ipaddr.js": "^2.3.0",
     "node-html-markdown": "^2.0.0",

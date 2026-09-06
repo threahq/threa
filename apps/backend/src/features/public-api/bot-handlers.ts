@@ -10,10 +10,10 @@ import type { AvatarService } from "../workspaces"
 import type { BotApiKeyService } from "./bot-api-key-service"
 import { serializeBot } from "./handlers"
 import { botId, botChannelAccessId } from "../../lib/id"
-import { generateSlug } from "@threa/backend-common"
+import { generateSlug } from "@threahq/backend-common"
 import { sql, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { isUniqueViolation } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { API_VERSIONS, type ApiVersion } from "./versions"
@@ -27,7 +27,7 @@ import {
   type BotApiKey,
   type BotTrait,
   type WorkspacePermissionSlug,
-} from "@threa/types"
+} from "@threahq/types"
 
 const ALL_BOT_TRAITS = BOT_TRAITS as readonly BotTrait[]
 

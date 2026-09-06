@@ -1,6 +1,6 @@
 import { Share2 } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
-import type { ContentRange } from "@threa/types"
+import type { ContentRange } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
-import type { ToolPrivacyCategory } from "@threa/types"
+import type { AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
+import type { ToolPrivacyCategory } from "@threahq/types"
 import type { LanguageModel } from "ai"
 import { buildEnclaveTools } from "./tools"
 

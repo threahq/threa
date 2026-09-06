@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react"
 import { LayoutGrid, User } from "lucide-react"
-import { type BoardLens } from "@threa/types"
+import { type BoardLens } from "@threahq/types"
 
 export interface BoardLensDef {
   value: BoardLens

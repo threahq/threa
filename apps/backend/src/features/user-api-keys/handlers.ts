@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import { validateRequest } from "../../lib/validation"
 import type { UserApiKeyService } from "./service"
 import type { UserApiKeyRow } from "./repository"
-import { API_KEY_ELIGIBLE_SCOPES, type WorkspacePermissionSlug, type UserApiKey } from "@threa/types"
+import { API_KEY_ELIGIBLE_SCOPES, type WorkspacePermissionSlug, type UserApiKey } from "@threahq/types"
 import { API_VERSIONS, type ApiVersion } from "../public-api/versions"
 
 const createKeySchema = z.object({

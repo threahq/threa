@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import type { LabelableResourceType } from "@threa/types"
+import type { LabelableResourceType } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { useResourceLabelAssignments } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"

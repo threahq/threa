@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useParams } from "react-router-dom"
-import type { FeatureFlagScope } from "@threa/types"
+import type { FeatureFlagScope } from "@threahq/types"
 import { Section } from "@/components/layout/section"
 import { InlineBanner } from "@/components/inline-banner"
 import { Label } from "@/components/ui/label"
@@ -230,7 +230,7 @@ function FlagsBody({
   if (!flags || flags.flags.length === 0 || !workspaceId) {
     return (
       <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">
-        No flags in the registry — add a key to FEATURE_FLAGS in @threa/types to start a rollout.
+        No flags in the registry — add a key to FEATURE_FLAGS in @threahq/types to start a rollout.
       </div>
     )
   }

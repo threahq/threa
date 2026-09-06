@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AuthorTypes, ENCLAVE_CALLBACK_TOKEN_HEADER } from "@threa/types"
+import { AuthorTypes, ENCLAVE_CALLBACK_TOKEN_HEADER } from "@threahq/types"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
 import {

@@ -11,7 +11,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { AttachmentSafetyStatuses, ExtractionContentTypes, KnowledgeTypes, MemoTypes } from "@threa/types"
+import { AttachmentSafetyStatuses, ExtractionContentTypes, KnowledgeTypes, MemoTypes } from "@threahq/types"
 import { TestClient, loginAs, createWorkspace, createChannel, sendMessage } from "../client"
 import {
   PUBLIC_API_ROUTES,

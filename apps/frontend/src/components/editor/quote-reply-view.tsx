@@ -8,7 +8,7 @@ import { useUserProfile } from "@/components/user-profile"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import type { QuoteReplyAttrs } from "./quote-reply-extension"
-import type { AuthorType } from "@threa/types"
+import type { AuthorType } from "@threahq/types"
 
 export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
   const attrs = node.attrs as QuoteReplyAttrs

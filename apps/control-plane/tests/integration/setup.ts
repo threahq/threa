@@ -8,7 +8,7 @@
 
 import path from "path"
 import { Pool } from "pg"
-import { createDatabasePool, runMigrations } from "@threa/backend-common"
+import { createDatabasePool, runMigrations } from "@threahq/backend-common"
 
 const ADMIN_DATABASE_URL = "postgresql://threa:threa@localhost:5454/postgres"
 const TEST_DATABASE_URL = "postgresql://threa:threa@localhost:5454/threa_control_plane_test"

@@ -1,4 +1,4 @@
-import type { AgentOutcomeSummary, FollowUpOutcomeSummary } from "@threa/types"
+import type { AgentOutcomeSummary, FollowUpOutcomeSummary } from "@threahq/types"
 import type { DerivedStreamContext, FollowUpContextItem } from "./types"
 
 /**

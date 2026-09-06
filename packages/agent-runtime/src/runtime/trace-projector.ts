@@ -5,7 +5,7 @@ import {
   type AgentToolEffect,
   type ToolVerificationStatus,
   type TraceSource,
-} from "@threa/types"
+} from "@threahq/types"
 import type { AgentEvent, TraceContextMessage } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"
 

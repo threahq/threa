@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { Visibilities, SavedStatuses, type SavedStatus, type SavedMessageView } from "@threa/types"
+import { Visibilities, SavedStatuses, type SavedStatus, type SavedMessageView } from "@threahq/types"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 // Side-effect import: preloads workspaces → public-api → schemas → messaging

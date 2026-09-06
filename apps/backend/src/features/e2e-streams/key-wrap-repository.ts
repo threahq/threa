@@ -1,7 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { streamE2eKeyWrapId } from "../../lib/id"
-import type { E2eKeyWrapRecipientKind } from "@threa/types"
+import type { E2eKeyWrapRecipientKind } from "@threahq/types"
 
 interface StreamE2eKeyWrapRow {
   key_generation: number

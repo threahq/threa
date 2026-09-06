@@ -3,7 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useSocketConnected, useMessageService, useStreamService, usePendingMessages } from "@/contexts"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { db, sequenceToNum } from "@/db"
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { setParentThreadId } from "@/sync/stream-sync"
 import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
@@ -17,7 +17,7 @@ import {
   StreamTypes,
   draftStreamScope,
   draftThreadScope,
-} from "@threa/types"
+} from "@threahq/types"
 import type { PendingMessage } from "@/db"
 import type {
   AttachmentSummary,
@@ -25,7 +25,7 @@ import type {
   CreateStreamInput,
   Stream,
   StreamWithPreview,
-} from "@threa/types"
+} from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"

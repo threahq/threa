@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test"
-import type { HarnessLink } from "@threa/harness-client"
+import type { HarnessLink } from "@threahq/harness-client"
 import { parseDone } from "./cli"
 import { doneAgent, type DoneDeps } from "./done"
 import type { LocalTmuxPane } from "./discovery"

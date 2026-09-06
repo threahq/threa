@@ -13,7 +13,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AuthorTypes, SubagentFailureReasons, SubagentStatuses } from "@threa/types"
+import { AuthorTypes, SubagentFailureReasons, SubagentStatuses } from "@threahq/types"
 import { withCompanionSession } from "../../src/features/agents/companion"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
 import { createOrphanSessionCleanup } from "../../src/features/agents/orphan-session-cleanup"

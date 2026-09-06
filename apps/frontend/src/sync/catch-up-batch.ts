@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query"
-import type { LastMessagePreview, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threa/types"
+import type { LastMessagePreview, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threahq/types"
 import { db } from "@/db"
 import { getAccountGeneration } from "@/db/event-writes"
 import { getPerfCapture } from "@/lib/perf/capture"

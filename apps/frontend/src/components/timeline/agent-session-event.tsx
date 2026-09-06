@@ -10,7 +10,7 @@ import type {
   AgentSessionFailedPayload,
   AgentSessionInterruptedPayload,
   AgentSessionDeletedPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import { useTrace } from "@/contexts"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"

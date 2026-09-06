@@ -1,4 +1,4 @@
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@tiptap/react"
 import {
   base64ToBytes,
@@ -16,20 +16,20 @@ import {
   type Envelope,
   type SealedSourceItem,
   type StreamEnvelope,
-} from "@threa/crypto"
+} from "@threahq/crypto"
 import { resolveStreamKey } from "./stream-key-cache"
 
 // Parsing/serializing the sealed payload (and the AttachmentRef shape) is shared
 // crypto so the enclave strips the same wrapper (INV-35). Re-export the parser
 // and its result type for callers that import them from this module.
-export { parseSealedPayload, type ParsedSealedPayload } from "@threa/crypto"
+export { parseSealedPayload, type ParsedSealedPayload } from "@threahq/crypto"
 
 // The placeholder text the backend stores in `contentMarkdown` / `contentJson`
-// for E2E messages is the single source of truth in @threa/types so the
+// for E2E messages is the single source of truth in @threahq/types so the
 // backend insert path and the frontend decrypt path stay byte-identical.
 // Re-exported so callers of this module don't have to cross the type-barrier
 // for both the envelope helpers and the placeholder constant.
-export { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
+export { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threahq/types"
 
 export interface SealStreamMessageInput {
   contentMarkdown: string

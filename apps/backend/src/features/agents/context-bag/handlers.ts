@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import type { AI } from "@threa/agent-runtime"
-import type { ContextIntent } from "@threa/types"
+import type { AI } from "@threahq/agent-runtime"
+import type { ContextIntent } from "@threahq/types"
 import { withClient } from "../../../db"
 import { validateRequest } from "../../../lib/validation"
 import {

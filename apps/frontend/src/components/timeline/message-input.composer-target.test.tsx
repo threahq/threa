@@ -33,7 +33,7 @@ import {
 // eslint-disable-next-line no-restricted-imports -- seeds/asserts the real draft + composer-target rows
 import { db } from "@/db"
 import { MessageInput } from "./message-input"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 // The real draft composer runs here (only `useAttachments` is stubbed), so this
 // file covers what a mocked composer cannot: which draft row the editor renders

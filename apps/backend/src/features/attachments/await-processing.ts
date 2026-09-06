@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { ProcessingStatuses } from "@threa/types"
+import { ProcessingStatuses } from "@threahq/types"
 import { AttachmentRepository } from "./repository"
 import { logger } from "../../lib/logger"
 

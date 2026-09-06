@@ -5,9 +5,9 @@ import {
   negotiateCapabilities,
   runGeneralResearch,
   type AgentTool,
-} from "@threa/agent-runtime/runtime"
-import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
-import type { ToolPrivacyCategory } from "@threa/types"
+} from "@threahq/agent-runtime/runtime"
+import type { AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
+import type { ToolPrivacyCategory } from "@threahq/types"
 import type { LanguageModel } from "ai"
 import { createEnclaveReadAttachmentTool, type EnclaveAttachmentStore } from "./attachment-tool"
 

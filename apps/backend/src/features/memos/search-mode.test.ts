@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { KNOWLEDGE_TYPES, STREAM_TYPES } from "@threa/types"
+import { KNOWLEDGE_TYPES, STREAM_TYPES } from "@threahq/types"
 import {
   DEFAULT_MEMO_SEARCH_MODE,
   MEMO_BOOST_DEFAULT,

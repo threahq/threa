@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import { base64ToBytes, bytesToBase64, openMessage, STREAM_ENVELOPE_VERSION, utf8Encode } from "@threa/crypto"
+import { base64ToBytes, bytesToBase64, openMessage, STREAM_ENVELOPE_VERSION, utf8Encode } from "@threahq/crypto"
 import {
   clearAttachmentRefCache,
   decryptAttachmentBytes,

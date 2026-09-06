@@ -2,7 +2,7 @@ import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedStreamContextItem } from "@/db"
 import { getPerfCapture } from "@/lib/perf/capture"
-import { MESSAGE_BODY_CONTEXT_CATEGORIES, type StreamContextItem, type StreamContextScope } from "@threa/types"
+import { MESSAGE_BODY_CONTEXT_CATEGORIES, type StreamContextItem, type StreamContextScope } from "@threahq/types"
 
 export type { CachedStreamContextItem }
 

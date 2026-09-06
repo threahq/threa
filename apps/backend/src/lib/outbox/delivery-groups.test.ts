@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { WORKSPACE_PERMISSION_SCOPES, LabelableResourceTypes, Visibilities, StreamTypes } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES, LabelableResourceTypes, Visibilities, StreamTypes } from "@threahq/types"
 import {
   resolveDeliveryGroups,
   permissionGroupsForRole,

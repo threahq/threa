@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../../db"
-import type { PdfPageClassification, ProcessingStatus } from "@threa/types"
+import type { PdfPageClassification, ProcessingStatus } from "@threahq/types"
 
 interface PdfPageExtractionRow {
   id: string

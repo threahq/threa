@@ -1,4 +1,4 @@
-import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODEL_CATALOG } from "@threa/types"
+import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODEL_CATALOG } from "@threahq/types"
 import { usePreferences } from "@/contexts"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { modelDisplayName } from "@/lib/model-display"

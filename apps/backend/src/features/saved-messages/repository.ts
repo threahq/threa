@@ -1,7 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { savedMessageId } from "../../lib/id"
-import { SavedStatuses, type SavedStatus } from "@threa/types"
+import { SavedStatuses, type SavedStatus } from "@threahq/types"
 
 interface SavedMessageRow {
   id: string

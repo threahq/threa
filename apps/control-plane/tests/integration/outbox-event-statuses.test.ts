@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { OutboxRepository } from "@threa/backend-common"
+import { OutboxRepository } from "@threahq/backend-common"
 import { setupTestDatabase } from "./setup"
 
 const LISTENER = "test-listener"

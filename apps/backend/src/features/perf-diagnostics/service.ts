@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { HttpError } from "@threa/backend-common"
-import type { FeatureFlagValue, PerformanceCapture } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import type { FeatureFlagValue, PerformanceCapture } from "@threahq/types"
 import { perfCaptureId } from "../../lib/id"
 import { PerformanceCaptureRepository } from "./repository"
 

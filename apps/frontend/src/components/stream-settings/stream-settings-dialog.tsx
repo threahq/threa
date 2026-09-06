@@ -20,7 +20,7 @@ import {
   useWorkspaceUsers,
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
-import { StreamTypes, type Stream, type StreamBootstrap, type NotificationLevel } from "@threa/types"
+import { StreamTypes, type Stream, type StreamBootstrap, type NotificationLevel } from "@threahq/types"
 import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 

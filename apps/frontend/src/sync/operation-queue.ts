@@ -1,6 +1,6 @@
 import { db, sequenceToNum } from "@/db"
 import type { CachedEvent, PendingOperation } from "@/db/database"
-import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threa/types"
+import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threahq/types"
 import { ApiError, commandsApi, isPermanentApiError } from "@/api"
 import { persistScheduledRows, removeScheduledRow, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
@@ -179,7 +179,7 @@ async function executeOperation(
   switch (type) {
     case "edit_message":
       await messageService.update(workspaceId, payload.messageId as string, {
-        contentJson: payload.contentJson as import("@threa/types").JSONContent,
+        contentJson: payload.contentJson as import("@threahq/types").JSONContent,
       })
       break
 

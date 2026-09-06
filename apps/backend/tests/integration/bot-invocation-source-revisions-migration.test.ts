@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { resolve } from "node:path"
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import { setupIsolatedTestDatabase } from "./setup"
 import { AgentSessionRepository } from "../../src/features/agents"
 import { BotRuntimeService } from "../../src/features/bot-runtimes"

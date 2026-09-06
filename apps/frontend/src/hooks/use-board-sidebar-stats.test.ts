@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { ConversationStatus } from "@threa/types"
+import type { ConversationStatus } from "@threahq/types"
 import type { CachedBoardPost } from "@/db"
 import { aggregateBoardSidebarStats } from "./use-board-sidebar-stats"
 

@@ -2,7 +2,7 @@ import { Bot } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { useInviteActor, canInviteActor, isActorInvited, E2E_ACTOR_LABELS } from "@/hooks/use-invite-actor"
-import type { E2eActorKind } from "@threa/types"
+import type { E2eActorKind } from "@threahq/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
 // `shrink-0` + nowrap: these pills live in the header's scrollable chip strip —

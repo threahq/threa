@@ -1,5 +1,5 @@
 import { beforeEach, describe, test, expect, mock } from "bun:test"
-import { ORIGINAL_HOST_HEADER } from "@threa/types"
+import { ORIGINAL_HOST_HEADER } from "@threahq/types"
 import worker, { clearRegionCache } from "./index"
 
 const REGIONS_JSON = JSON.stringify({

@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { parseMemoHref, parseSharedMessageHref } from "@threa/prosemirror"
-import { AttachmentSafetyStatuses } from "@threa/types"
+import { parseMemoHref, parseSharedMessageHref } from "@threahq/prosemirror"
+import { AttachmentSafetyStatuses } from "@threahq/types"
 import { MessageRepository } from "../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../attachments"
 import { MemoRepository } from "../memos"

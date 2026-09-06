@@ -5,7 +5,7 @@ import {
   type ContextBag,
   type ContextRef,
   type ViewportContextRef,
-} from "@threa/types"
+} from "@threahq/types"
 import { collectRowRects, pickVisibleRows, readViewportBounds, type VisibleRow } from "@/lib/timeline/visible-rows"
 
 /**

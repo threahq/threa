@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { CompanionMode, StreamBootstrap, ToolPrivacyPolicy } from "@threa/types"
+import type { CompanionMode, StreamBootstrap, ToolPrivacyPolicy } from "@threahq/types"
 import { streamKeys } from "@/hooks"
 import { useUpdateCompanionMode, useUpdateToolPolicy } from "@/hooks/use-streams"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"

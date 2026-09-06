@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { isUtilityStream } from "@/lib/streams"
-import { isAsideHostType } from "@threa/types"
+import { isAsideHostType } from "@threahq/types"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
-import { LabelableResourceTypes } from "@threa/types"
+import { LabelableResourceTypes } from "@threahq/types"
 import { ResponsiveDialog, ResponsiveDialogContent } from "@/components/ui/responsive-dialog"
 import {
   ResponsiveAlertDialog,

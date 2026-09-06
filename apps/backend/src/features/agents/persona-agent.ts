@@ -13,7 +13,7 @@ import {
   type ConversationDirective,
   type FeatureFlagValue,
   type SourceItem,
-} from "@threa/types"
+} from "@threahq/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { assertStreamWritable, StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from "../streams"
@@ -28,17 +28,17 @@ import { AttachmentRepository } from "../attachments"
 import { awaitAttachmentProcessing } from "../attachments"
 import type { TraceEmitter } from "./trace-emitter"
 import type { SessionAbortRegistry } from "./session-abort-registry"
-import type { AI, CostContext } from "@threa/agent-runtime"
+import type { AI, CostContext } from "@threahq/agent-runtime"
 import type { SearchService } from "../search"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
 import type { MemoExplorerService } from "../memos"
 import type { StorageProvider } from "../../lib/storage/s3-client"
-import type { ModelRegistry } from "@threa/agent-runtime"
+import type { ModelRegistry } from "@threahq/agent-runtime"
 import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
-import { repairMessageReferences } from "@threa/prosemirror"
+import { repairMessageReferences } from "@threahq/prosemirror"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
 import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
 import { resolveTurnModel } from "./turn-model"
@@ -63,7 +63,7 @@ import {
   negotiateCapabilities,
   type TurnRequest,
   type TurnSink,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import type { SessionTrace } from "./trace-emitter"
 import {
   SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS,
@@ -336,7 +336,7 @@ export interface PersonaAgentDeps {
     client: Querier
     workspaceId: string
     threadStreamId: string
-    reason: import("@threa/types").SubagentFailureReason
+    reason: import("@threahq/types").SubagentFailureReason
   }) => Promise<unknown>
   /**
    * Stamp this thread's live subagent run with when it last spoke, bound to
@@ -366,10 +366,10 @@ export interface PersonaAgentDeps {
     abstract: string
     keyPoints: string[]
     tags: string[]
-    knowledgeType: import("@threa/types").KnowledgeType
+    knowledgeType: import("@threahq/types").KnowledgeType
     sourceMessageIds: string[]
     invokingUserId?: string | null
-    scope?: import("@threa/types").MemoScope
+    scope?: import("@threahq/types").MemoScope
   }) => Promise<import("./tools/tool-deps").SaveMemoToolResult>
 }
 

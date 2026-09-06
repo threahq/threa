@@ -1,4 +1,4 @@
-import { readHarnessLinks } from "@threa/harness-client"
+import { readHarnessLinks } from "@threahq/harness-client"
 import { encryptAttachmentBytes } from "@threahq/bot-runtime-client"
 import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"

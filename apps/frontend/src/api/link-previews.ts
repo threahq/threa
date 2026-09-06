@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { LinkPreviewSummary, InAppLinkPreviewData } from "@threa/types"
+import type { LinkPreviewSummary, InAppLinkPreviewData } from "@threahq/types"
 
 export interface LinkPreviewWithDismissed extends LinkPreviewSummary {
   dismissed: boolean

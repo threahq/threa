@@ -29,7 +29,7 @@ import {
 import { StreamContentSkeleton } from "@/components/loading"
 import { ApiError } from "@/api/client"
 import { markInitialRevealComplete } from "@/sync/reveal-gate"
-import { getAvatarUrl } from "@threa/types"
+import { getAvatarUrl } from "@threahq/types"
 
 /**
  * Global coordinated loading phase - only applies during initial app load.

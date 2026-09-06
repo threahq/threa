@@ -16,7 +16,7 @@ import {
   differenceInDays,
   startOfDay,
 } from "date-fns"
-import type { DateFormat, TimeFormat } from "@threa/types"
+import type { DateFormat, TimeFormat } from "@threahq/types"
 
 const DATE_FORMAT_MAP: Record<DateFormat, string> = {
   "YYYY-MM-DD": "yyyy-MM-dd",

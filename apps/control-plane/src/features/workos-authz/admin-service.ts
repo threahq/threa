@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { HttpError, logger, type WorkosOrganizationMembership, type WorkosOrgService } from "@threa/backend-common"
-import { rolesGrant, WORKSPACE_PERMISSION_SCOPES, WORKSPACE_USER_ROLES, type WorkspaceRoleSlug } from "@threa/types"
+import { HttpError, logger, type WorkosOrganizationMembership, type WorkosOrgService } from "@threahq/backend-common"
+import { rolesGrant, WORKSPACE_PERMISSION_SCOPES, WORKSPACE_USER_ROLES, type WorkspaceRoleSlug } from "@threahq/types"
 import { withOrganizationAdminLock } from "./org-admin-lock"
 
 interface Dependencies {

@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { AgentStepTypes, type TraceSource } from "@threa/types"
+import { AgentStepTypes, type TraceSource } from "@threahq/types"
 import { createSessionTraceProjector } from "./session-trace-sink"
 import type { ActiveStep, SessionTrace } from "../trace-emitter"
 

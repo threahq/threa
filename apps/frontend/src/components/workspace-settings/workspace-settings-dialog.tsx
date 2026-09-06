@@ -15,7 +15,7 @@ import {
   WS_SETTINGS_PARAM,
   type WorkspaceSettingsTab,
 } from "./tab-config"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { useOverriddenFeatureFlags } from "@/hooks/use-feature-flags"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"

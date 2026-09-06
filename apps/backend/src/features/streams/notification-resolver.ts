@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { NotificationLevel } from "@threa/types"
+import type { NotificationLevel } from "@threahq/types"
 import type { Stream } from "./repository"
 import type { StreamMember } from "./member-repository"
 import { getDefaultLevel } from "./notification-config"

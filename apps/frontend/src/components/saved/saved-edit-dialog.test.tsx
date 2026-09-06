@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type SavedMessageView } from "@threa/types"
+import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type SavedMessageView } from "@threahq/types"
 import { SavedEditDialog } from "./saved-edit-dialog"
 import { ServicesProvider } from "@/contexts"
 import * as workspaceStoreModule from "@/stores/workspace-store"

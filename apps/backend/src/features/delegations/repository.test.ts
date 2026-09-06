@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
-import { DelegationStatuses } from "@threa/types"
+import { DelegationStatuses } from "@threahq/types"
 import { DelegatedTaskRepository } from "./repository"
 
 const NOW = new Date("2026-07-09T12:00:00.000Z")

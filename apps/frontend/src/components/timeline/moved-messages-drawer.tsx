@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom"
 import { X } from "lucide-react"
-import type { StreamEvent, MessagesMovedEventPayload, MovedMessagePreview } from "@threa/types"
+import type { StreamEvent, MessagesMovedEventPayload, MovedMessagePreview } from "@threahq/types"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,

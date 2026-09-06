@@ -10,7 +10,7 @@ import {
   type ToolTier,
   type TraceSource,
   type SourceItem,
-} from "@threa/types"
+} from "@threahq/types"
 
 export interface AgentToolResult {
   /** What the LLM sees as the tool result */
@@ -139,7 +139,7 @@ export function defineAgentTool<TSchema extends z.ZodTypeAny>(config: AgentToolC
  * Falls back to the name-keyed table, NOT to tier 1. `defineAgentTool` stamps
  * `tier` on everything it builds, but an `AgentTool` is a plain structural type
  * — a host that assembles the literal itself, or one compiled against a
- * pre-tier `@threa/types`, produces a registered tool with no `tier`. Defaulting
+ * pre-tier `@threahq/types`, produces a registered tool with no `tier`. Defaulting
  * that to `UNCHECKED` would silently hand a guarded tool an unguarded path;
  * re-reading the table by name makes the table the answer either way. An
  * unregistered name is genuinely host-local and tier 1.

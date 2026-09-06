@@ -19,9 +19,9 @@ import {
 import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
 import { logger } from "../logger"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
-import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
-import type { OutboxHandler } from "@threa/backend-common"
-import type { DelegationStatusChangedEventPayload } from "@threa/types"
+import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threahq/backend-common"
+import type { OutboxHandler } from "@threahq/backend-common"
+import type { DelegationStatusChangedEventPayload } from "@threahq/types"
 import { invalidatePointersForEvent } from "../../features/messaging/sharing"
 import {
   outboxBatchSize,

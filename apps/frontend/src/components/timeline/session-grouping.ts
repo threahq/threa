@@ -1,5 +1,5 @@
-import { AGENT_SESSION_EVENT_TYPES, type AgentSessionEventType, type AgentSessionStartedPayload } from "@threa/types"
-import type { StreamEvent } from "@threa/types"
+import { AGENT_SESSION_EVENT_TYPES, type AgentSessionEventType, type AgentSessionStartedPayload } from "@threahq/types"
+import type { StreamEvent } from "@threahq/types"
 
 /**
  * Agent-session grouping primitives, shared by the timeline (`event-list.tsx`) and

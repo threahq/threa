@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { TitleSources } from "@threa/types"
+import { TitleSources } from "@threahq/types"
 import { withTransaction } from "../../db"
 import { assertStreamWritable } from "../streams"
 import { dynamicNamingClaimsTotal, dynamicNamingDecisionsTotal } from "../../lib/observability/metrics"

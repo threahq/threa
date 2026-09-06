@@ -21,7 +21,7 @@ import {
 } from "../../src/features/conversations"
 import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, conversationId } from "../../src/lib/id"
-import { ConversationIntents } from "@threa/types"
+import { ConversationIntents } from "@threahq/types"
 import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "../../src/features/conversations"
 
 class StubExtractor implements BoundaryExtractor {

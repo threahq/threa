@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { AI_USAGE_CATEGORIES } from "@threa/types"
+import { AI_USAGE_CATEGORIES } from "@threahq/types"
 import { FUNCTION_CATEGORY_MAP, categorizeFunction, aggregateUsageByDay } from "./categories"
 
 describe("categorizeFunction", () => {

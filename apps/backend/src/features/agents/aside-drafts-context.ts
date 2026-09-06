@@ -1,4 +1,4 @@
-import { asideDraftScopePrefix } from "@threa/types"
+import { asideDraftScopePrefix } from "@threahq/types"
 import type { Querier } from "../../db"
 import { DraftsRepository, type Draft } from "../drafts"
 import { formatCurrentTime, type TemporalContext } from "../../lib/temporal"

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ContextIntents, ContextRefKinds, type ContextRef } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextRef } from "@threahq/types"
 import { precomputeRefSummaries } from "./precompute-service"
 import { ThreadResolver } from "./resolvers/thread-resolver"
 import { SummaryRepository } from "./summary-repository"

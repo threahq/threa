@@ -7,7 +7,7 @@ import {
   type Activity,
   type StreamMember,
   type WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 import type { Socket } from "socket.io-client"
 import Dexie from "dexie"
 import { db } from "@/db"

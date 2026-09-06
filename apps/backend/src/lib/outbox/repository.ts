@@ -1,6 +1,6 @@
-import { OutboxRepository as BaseOutboxRepository, type Querier } from "@threa/backend-common"
+import { OutboxRepository as BaseOutboxRepository, type Querier } from "@threahq/backend-common"
 import { z } from "zod"
-import { BOT_INVOCATION_CANCELLATION_REASONS } from "@threa/types"
+import { BOT_INVOCATION_CANCELLATION_REASONS } from "@threahq/types"
 import type { Stream } from "../../features/streams"
 import type { StreamEvent } from "../../features/streams"
 import type { User } from "../../features/workspaces"
@@ -31,7 +31,7 @@ import type {
   AttachmentUploadStatus,
   PersonaListItem,
   StreamReadFrontierSnapshot,
-} from "@threa/types"
+} from "@threahq/types"
 
 export type OutboxEventType =
   | "message:created"
@@ -264,7 +264,7 @@ export interface MessagesMovedOutboxPayload extends StreamScopedPayload {
    * `thread:updated` ships, included here so the card preview/participants
    * land alongside the move without waiting for a second event.
    */
-  parentThreadSummary: import("@threa/types").ThreadSummary | null
+  parentThreadSummary: import("@threahq/types").ThreadSummary | null
   /**
    * The SOURCE stream's `message_created` count AFTER the move relocated rows
    * out of it. The move drops the source's true message ordinal, but no client
@@ -304,7 +304,7 @@ export interface ThreadUpdatedOutboxPayload extends StreamScopedPayload {
   anchorId: string
   threadId: string
   replyCount?: number
-  threadSummary?: import("@threa/types").ThreadSummary | null
+  threadSummary?: import("@threahq/types").ThreadSummary | null
 }
 
 export interface ReactionOutboxPayload extends StreamScopedPayload {
@@ -324,7 +324,7 @@ export interface ReactionOutboxPayload extends StreamScopedPayload {
 export interface StreamDisplayNameUpdatedPayload extends StreamScopedPayload {
   displayName: string
   visibility: string
-  source: import("@threa/types").TitleSource
+  source: import("@threahq/types").TitleSource
   revision: number
 }
 
@@ -532,7 +532,7 @@ export interface AttachmentUploadStatusChangedOutboxPayload extends WorkspaceSco
  */
 export interface AttachmentExtractionCompletedOutboxPayload extends WorkspaceScopedPayload {
   attachmentId: string
-  contentType: import("@threa/types").ExtractionContentType
+  contentType: import("@threahq/types").ExtractionContentType
 }
 
 export interface WorkspaceUserAddedOutboxPayload extends WorkspaceScopedPayload {
@@ -1234,7 +1234,7 @@ export interface LabelUnassignedOutboxPayload extends WorkspaceScopedPayload {
 // Link preview event payloads
 export interface LinkPreviewReadyOutboxPayload extends StreamScopedPayload {
   messageId: string
-  previews: import("@threa/types").LinkPreviewSummary[]
+  previews: import("@threahq/types").LinkPreviewSummary[]
 }
 
 export interface LinkPreviewDismissedOutboxPayload extends WorkspaceScopedPayload {
@@ -1566,8 +1566,8 @@ export function isBotScopedEvent(event: OutboxEvent): event is OutboxEvent<BotSc
   return BOT_SCOPED_EVENTS.includes(event.eventType as BotScopedEventType)
 }
 
-export { OUTBOX_CHANNEL } from "@threa/backend-common"
-export type { DeleteRetainedOutboxEventsParams } from "@threa/backend-common"
+export { OUTBOX_CHANNEL } from "@threahq/backend-common"
+export type { DeleteRetainedOutboxEventsParams } from "@threahq/backend-common"
 
 /**
  * Type-safe wrapper around the generic OutboxRepository.

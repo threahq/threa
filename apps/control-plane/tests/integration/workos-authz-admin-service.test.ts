@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { HttpError, StubWorkosOrgService } from "@threa/backend-common"
-import { WORKSPACE_ROLE_SLUGS, type WorkspaceRoleSlug } from "@threa/types"
+import { HttpError, StubWorkosOrgService } from "@threahq/backend-common"
+import { WORKSPACE_ROLE_SLUGS, type WorkspaceRoleSlug } from "@threahq/types"
 import { WorkosAuthzAdminService, WorkosAuthzRepository, type AdminActor } from "../../src/features/workos-authz"
 import { setupTestDatabase } from "./setup"
 
@@ -349,7 +349,7 @@ function stubMembership(
   organizationId: string,
   userId: string,
   roleSlug: string
-): import("@threa/backend-common").WorkosOrganizationMembership {
+): import("@threahq/backend-common").WorkosOrganizationMembership {
   return {
     id,
     organizationId,

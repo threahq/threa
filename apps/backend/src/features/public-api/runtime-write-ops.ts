@@ -2,15 +2,15 @@ import type { Pool, PoolClient } from "pg"
 import { withClient } from "../../db"
 import type { Server } from "socket.io"
 import { withTransaction } from "../../db"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { invocationClaimNotFound } from "./errors"
 import {
   BotInvocationTriggers,
   BotRuntimeKinds,
   type BotInvocationCancellationReason,
   type InvocationInputUpdateWire,
-} from "@threa/types"
-import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
+} from "@threahq/types"
+import { resolveDeliveryVerdict, TrustTiers } from "@threahq/agent-runtime"
 import {
   assertManifestAllows,
   type BotInvocation,

@@ -10,7 +10,7 @@ import * as workspaceStore from "@/stores/workspace-store"
 import { resetActivitySectionLatch } from "@/hooks/use-activity-sections"
 import { SidebarProvider, PreferencesProvider } from "@/contexts"
 import { ActivityPage } from "./activity"
-import type { Activity } from "@threa/types"
+import type { Activity } from "@threahq/types"
 
 const WS = "ws_1"
 

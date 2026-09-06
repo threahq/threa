@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import type { StreamBootstrap, StreamMember } from "@threa/types"
+import type { StreamBootstrap, StreamMember } from "@threahq/types"
 import type { VirtualizerHandle } from "virtua"
 import { ChevronDown, ChevronRight, Search, WifiOff, X } from "lucide-react"
 import { streamContextApi } from "@/api"

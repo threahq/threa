@@ -1,4 +1,4 @@
-import { StreamTypes, type SubagentCreatedEventPayload } from "@threa/types"
+import { StreamTypes, type SubagentCreatedEventPayload } from "@threahq/types"
 import type { Querier } from "../../db"
 import { StreamEventRepository, type Stream } from "../streams"
 

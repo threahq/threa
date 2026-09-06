@@ -1,6 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/db"
-import type { SlotMap } from "@threa/types"
+import type { SlotMap } from "@threahq/types"
 
 /**
  * Canonical live read of a stream's slot map (Amendment A3). Backed by

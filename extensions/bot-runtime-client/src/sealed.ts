@@ -74,7 +74,7 @@ export interface SealedMessageWire {
 
 /**
  * The sealed work handed to an owner-granted external bot on a winning claim
- * when the delivery verdict is `sealed`. Mirrors `@threa/types`' `SealedTurnContext`
+ * when the delivery verdict is `sealed`. Mirrors `@threahq/types`' `SealedTurnContext`
  * (which standalone extensions can't import). The backend never decrypts: it
  * ships ciphertext + SSK wraps addressed to this bot's BIK; the bot unwraps
  * with its identity private key, opens history/prompt, runs its turn, and seals

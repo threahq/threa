@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { hashCallbackToken } from "./callback-token"
 import { SessionStatuses, type AgentSession } from "./session-repository"
 

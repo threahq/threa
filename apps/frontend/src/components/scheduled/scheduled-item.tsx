@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { AlertCircle } from "lucide-react"
-import type { ScheduledMessageView } from "@threa/types"
+import type { ScheduledMessageView } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatSendCountdown } from "@/lib/dates"

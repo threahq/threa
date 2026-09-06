@@ -1,4 +1,4 @@
-import type { FeatureFlagLayers, FeatureFlagScope } from "@threa/types"
+import type { FeatureFlagLayers, FeatureFlagScope } from "@threahq/types"
 import { sql, type Querier } from "../../db"
 
 interface OverrideRow {

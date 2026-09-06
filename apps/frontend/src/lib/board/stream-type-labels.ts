@@ -1,4 +1,4 @@
-import type { BoardScopeStreamType } from "@threa/types"
+import type { BoardScopeStreamType } from "@threahq/types"
 
 /** Display labels per board root-stream grain (INV-33). Shared by the filter
  *  bar's type picker/chips and the board-mode sidebar chips so the two can't

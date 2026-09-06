@@ -1,4 +1,4 @@
-import { WORKSPACE_USER_ROLES, resolveActiveStatus, type WorkspaceRoleSlug } from "@threa/types"
+import { WORKSPACE_USER_ROLES, resolveActiveStatus, type WorkspaceRoleSlug } from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { HttpError } from "../../lib/errors"

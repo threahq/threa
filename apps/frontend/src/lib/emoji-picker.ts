@@ -1,4 +1,4 @@
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 import { rankMatches } from "@/lib/match-score"
 
 export const EMOJI_GROUP_ORDER = [

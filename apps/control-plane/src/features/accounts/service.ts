@@ -7,7 +7,7 @@ import {
   pickSealed,
   type AuthService,
   type SessionCookies,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 
 /**
  * One account as seen by the multi-account switcher.

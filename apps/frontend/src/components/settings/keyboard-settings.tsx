@@ -20,7 +20,7 @@ import {
   resolveShortcutBindingUpdate,
   type ShortcutAction,
 } from "@/lib/keyboard-shortcuts"
-import { DEFAULT_USER_PREFERENCES, MESSAGE_SEND_MODE_OPTIONS, type MessageSendMode } from "@threa/types"
+import { DEFAULT_USER_PREFERENCES, MESSAGE_SEND_MODE_OPTIONS, type MessageSendMode } from "@threahq/types"
 
 const SEND_MODE_CONFIG: Record<MessageSendMode, { label: string; description: string }> = {
   enter: {

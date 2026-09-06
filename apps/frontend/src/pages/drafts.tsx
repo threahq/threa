@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { CompanionModes } from "@threa/types"
+import { CompanionModes } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confirm-dialog"
 import { DraftContextMenu } from "@/components/drafts/draft-context-menu"

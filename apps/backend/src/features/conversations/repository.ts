@@ -9,7 +9,7 @@ import {
   type BoardLens,
   type TitleSource,
   TitleSources,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * The board-lens WHERE fragment — the SQL half of the seed/pagination filter,
@@ -222,7 +222,7 @@ interface ConversationRow {
 }
 
 /**
- * Internal backend type with native Date objects. The wire type in @threa/types
+ * Internal backend type with native Date objects. The wire type in @threahq/types
  * uses ISO 8601 strings for JSON serialization.
  *
  * `messageIds` lists the messages whose PRIMARY conversation is this one,

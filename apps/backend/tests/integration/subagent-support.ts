@@ -11,7 +11,7 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { PersonaRepository, type Persona } from "../../src/features/agents"
 import { addTestMember } from "./setup"
-import { Visibilities, type Stream } from "@threa/types"
+import { Visibilities, type Stream } from "@threahq/types"
 
 export interface SubagentTestContext {
   pool: Pool

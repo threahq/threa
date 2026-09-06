@@ -1,5 +1,5 @@
 import { Bell, FileEdit, Hash, MessageSquareText, User, type LucideIcon } from "lucide-react"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 
 /**
  * The leading visual for a stream type — glyph + tile tint. The single source of

@@ -44,4 +44,4 @@ export type {
   CachedSlot,
   CachedStreamContextItem,
 } from "./database"
-export type { EventType } from "@threa/types"
+export type { EventType } from "@threahq/types"

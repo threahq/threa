@@ -1,5 +1,5 @@
 import type { Querier } from "../../db"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import type { Stream } from "../streams"
 import { MessageRepository } from "../messaging"
 import { AgentSessionRepository } from "./session-repository"

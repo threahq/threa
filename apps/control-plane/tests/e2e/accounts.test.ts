@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { Pool } from "pg"
-import { MAX_ACCOUNTS } from "@threa/backend-common"
+import { MAX_ACCOUNTS } from "@threahq/backend-common"
 import { TestClient, loginAs, createWorkspace } from "../client"
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL || "postgresql://threa:threa@localhost:5454/threa_control_plane_test"

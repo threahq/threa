@@ -1,4 +1,4 @@
-import { StreamTypes, type Conversation, type Stream } from "@threa/types"
+import { StreamTypes, type Conversation, type Stream } from "@threahq/types"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { isDecryptedStreamNameOverlay } from "@/lib/crypto/stream-name-cache"
 

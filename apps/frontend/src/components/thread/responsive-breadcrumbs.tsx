@@ -3,7 +3,7 @@ import { Breadcrumb, BreadcrumbList, BreadcrumbItem, BreadcrumbSeparator } from 
 import { Skeleton } from "@/components/ui/skeleton"
 import { AncestorBreadcrumbItem, CurrentBreadcrumbItem } from "./breadcrumb-helpers"
 import { BreadcrumbEllipsisDropdown } from "./breadcrumb-ellipsis-dropdown"
-import type { StreamType } from "@threa/types"
+import type { StreamType } from "@threahq/types"
 
 interface StreamInfo {
   id: string

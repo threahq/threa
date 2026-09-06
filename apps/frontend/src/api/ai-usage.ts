@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { AIUsageResponse, AIRecentUsageResponse, AIBudgetResponse, UpdateAIBudgetInput } from "@threa/types"
+import type { AIUsageResponse, AIRecentUsageResponse, AIBudgetResponse, UpdateAIBudgetInput } from "@threahq/types"
 
 // The dashboard's day buckets and month window are drawn server-side in the
 // timezone the caller names — the viewer's device zone or the workspace's

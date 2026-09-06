@@ -1,6 +1,6 @@
 import { logger } from "./logger"
-import { HttpError, INTERNAL_API_KEY_HEADER } from "@threa/backend-common"
-import type { InvitationStatus, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threa/types"
+import { HttpError, INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
+import type { InvitationStatus, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threahq/types"
 
 const REQUEST_TIMEOUT_MS = 10_000
 

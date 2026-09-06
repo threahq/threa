@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AgentToolNames, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threa/types"
+import { AgentToolNames, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threahq/types"
 import { buildToolSet, type ToolSetConfig } from "./tool-set"
 import type { WorkspaceToolDeps } from "../tools/tool-deps"
 

@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger, type WorkosEvent } from "@threa/backend-common"
+import { logger, type WorkosEvent } from "@threahq/backend-common"
 import {
   AUTH_LOG_CP_BACKOFFICE_REQUEST,
   AUTH_LOG_CP_CALLBACK_FAILED,

@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { buildSessionDigest } from "./session-digest"
 import { logger } from "../../lib/logger"

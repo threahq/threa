@@ -1,4 +1,4 @@
-import { parseGiphyHref } from "@threa/prosemirror"
+import { parseGiphyHref } from "@threahq/prosemirror"
 
 /**
  * Giphy reference scanned out of a message's `contentMarkdown`. The title is the

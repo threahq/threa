@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { WORKSPACE_PERMISSION_SCOPES, type BotTrait } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES, type BotTrait } from "@threahq/types"
 import { botsApi, type CreateBotInput } from "@/api/bots"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"

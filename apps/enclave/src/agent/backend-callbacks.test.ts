@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ENCLAVE_CALLBACK_TOKEN_HEADER, INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { ENCLAVE_CALLBACK_TOKEN_HEADER, INTERNAL_API_KEY_HEADER } from "@threahq/types"
 import { createBackendCallbacks } from "./backend-callbacks"
 import type { EnclaveConfig } from "../config"
 

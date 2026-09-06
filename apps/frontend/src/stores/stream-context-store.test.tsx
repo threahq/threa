@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { db } from "@/db"
-import type { StreamContextItem } from "@threa/types"
+import type { StreamContextItem } from "@threahq/types"
 import { contextItemsFromEvent } from "@/lib/stream-context/rows"
 import type { CachedEvent } from "@/db"
 import {

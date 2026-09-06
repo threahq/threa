@@ -1,4 +1,4 @@
-import { AttachmentSafetyStatuses, SHAREABLE_SAFETY_STATUSES, type AttachmentSafetyStatus } from "@threa/types"
+import { AttachmentSafetyStatuses, SHAREABLE_SAFETY_STATUSES, type AttachmentSafetyStatus } from "@threahq/types"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { logger } from "../../lib/logger"
 

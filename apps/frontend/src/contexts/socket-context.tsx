@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react"
 import { io, Socket } from "socket.io-client"
-import { HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threa/types"
+import { HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
 import { api } from "@/api/client"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { setPreviewVisibilityEmitter } from "@/lib/preview-visibility"

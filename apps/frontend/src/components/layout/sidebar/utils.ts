@@ -1,4 +1,4 @@
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import {
   AuthorTypes,
   StreamTypes,
@@ -6,7 +6,7 @@ import {
   type AuthorType,
   type JSONContent,
   type StreamWithPreview,
-} from "@threa/types"
+} from "@threahq/types"
 import { createDmDraftId } from "@/hooks/use-stream-or-draft"
 import { stripMarkdownToInline, truncateInline } from "@/lib/markdown"
 import { getStreamName, isHiddenStreamType } from "@/lib/streams"

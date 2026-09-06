@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { ReactNode } from "react"
 import { MediaGalleryProvider } from "@/contexts"
 import { SharedMessageCardBody } from "./card-body"
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 import type { SharedMessageSource } from "@/hooks/use-shared-message-source"
 
 function renderUnderRoute(node: ReactNode, initialPath = "/w/ws_1/s/current") {

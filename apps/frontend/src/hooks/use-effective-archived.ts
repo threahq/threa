@@ -1,4 +1,4 @@
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { useStreamFromStore } from "@/stores/stream-store"
 
 export interface EffectiveArchivedInput {

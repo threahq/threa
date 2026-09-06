@@ -16,7 +16,7 @@ import { StreamService, StreamRepository, StreamMemberRepository, type Stream } 
 import { getEffectiveDisplayName, formatParticipantNames } from "../../src/features/streams/display-name"
 import { setupTestDatabase } from "./setup"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
+import { StreamTypes, Visibilities, CompanionModes } from "@threahq/types"
 import { MessageRepository } from "../../src/features/messaging"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
 import {

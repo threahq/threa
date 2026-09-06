@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import type { StreamType } from "@threa/types"
+import type { StreamType } from "@threahq/types"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 
 interface ThreadAncestor {

@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Request, Response } from "express"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { createSyncHandlers } from "./handlers"
 import { HttpError } from "../../lib/errors"
 import { permissionGroup } from "../../lib/outbox"

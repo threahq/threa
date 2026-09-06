@@ -1,8 +1,8 @@
-import { type AttachmentRef } from "@threa/crypto"
+import { type AttachmentRef } from "@threahq/crypto"
 import { registerDecryptedCache } from "./decrypted-cache"
 
 // The `AttachmentRef` type and the encrypt/decrypt primitives are canonical in
-// @threa/crypto so the enclave and the bot-runtime SDK share them (INV-35).
+// @threahq/crypto so the enclave and the bot-runtime SDK share them (INV-35).
 // Re-export them here so existing call sites that import from this module keep
 // working.
 export {
@@ -10,7 +10,7 @@ export {
   encryptAttachmentBytes,
   type AttachmentRef,
   type EncryptedAttachment,
-} from "@threa/crypto"
+} from "@threahq/crypto"
 
 // In-memory bridge from upload time (where the per-attachment key/iv are
 // minted) to send time (where they're sealed into the message). Keyed by the

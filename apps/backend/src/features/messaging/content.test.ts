@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { deriveContentMarkdown } from "./content"
 import { createMessageSchema, normalizeContent, updateMessageSchema } from "./handlers"
 

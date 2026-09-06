@@ -1,4 +1,4 @@
-import { DELEGATION_TERMINAL_STATUSES, type DelegationReopenReason, type DelegationStatus } from "@threa/types"
+import { DELEGATION_TERMINAL_STATUSES, type DelegationReopenReason, type DelegationStatus } from "@threahq/types"
 
 /** Display labels for delegation statuses shared by first-party surfaces. */
 export const DELEGATION_STATUS_LABEL: Record<DelegationStatus, string> = {

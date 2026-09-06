@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { PersonaConfigPatch, PersonaResolvedConfig } from "@threa/types"
+import type { PersonaConfigPatch, PersonaResolvedConfig } from "@threahq/types"
 import { useDiscardPersonaDraft, useSavePersonaDraft } from "@/hooks/use-personas"
 import {
   applyPatch,

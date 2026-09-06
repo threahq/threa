@@ -1,5 +1,5 @@
 import type { Request, Response } from "express"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import type { GithubWebhookService } from "./service"
 
 interface Dependencies {

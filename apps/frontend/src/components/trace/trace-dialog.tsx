@@ -19,7 +19,7 @@ import { queueComposerCommandRequest } from "@/stores/composer-command-request-s
 import { X } from "lucide-react"
 import { toast } from "sonner"
 import { formatDuration } from "@/lib/dates"
-import { CommandKinds, type AgentSession, type AgentSessionRerunContext, type AgentSessionStatus } from "@threa/types"
+import { CommandKinds, type AgentSession, type AgentSessionRerunContext, type AgentSessionStatus } from "@threahq/types"
 
 type SessionControlCommand = "steer" | "stop"
 

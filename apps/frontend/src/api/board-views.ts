@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { BoardView, BoardLens, BoardScopeStreamType } from "@threa/types"
+import type { BoardView, BoardLens, BoardScopeStreamType } from "@threahq/types"
 
 export interface SaveBoardViewInput {
   name: string

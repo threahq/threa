@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { MAX_SEARCH_STEER_CHARS } from "@threa/types"
+import { MAX_SEARCH_STEER_CHARS } from "@threahq/types"
 import {
   parseSearchQuery,
   serializeSearchQuery,

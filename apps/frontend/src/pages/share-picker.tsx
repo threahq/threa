@@ -14,8 +14,8 @@ import {
   Clock,
   ArrowDownAZ,
 } from "lucide-react"
-import { StreamTypes, getAvatarUrl } from "@threa/types"
-import type { StreamType } from "@threa/types"
+import { StreamTypes, getAvatarUrl } from "@threahq/types"
+import type { StreamType } from "@threahq/types"
 import {
   useWorkspaceStreams,
   useWorkspaceDmPeers,

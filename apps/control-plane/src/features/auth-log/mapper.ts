@@ -1,4 +1,4 @@
-import type { WorkosEvent } from "@threa/backend-common"
+import type { WorkosEvent } from "@threahq/backend-common"
 import type { AuthLogOutcome } from "./constants"
 
 /** A row ready to insert into `auth_log`. `id` is minted by the repository. */

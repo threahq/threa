@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { ExtractionContentTypes } from "@threa/types"
+import { ExtractionContentTypes } from "@threahq/types"
 import { isContentTypeEmbeddable } from "./embedding-config"
 
 describe("isContentTypeEmbeddable", () => {

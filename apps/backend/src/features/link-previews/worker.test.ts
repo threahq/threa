@@ -6,7 +6,7 @@ import {
   extractOEmbedDescription,
   parseHtmlMeta,
 } from "./worker"
-import { GitHubPreviewTypes } from "@threa/types"
+import { GitHubPreviewTypes } from "@threahq/types"
 
 /** Encode a string as ISO-8859-1 (Latin-1) bytes. Each char with code ≤ 0xFF becomes one byte. */
 function latin1Bytes(input: string): Uint8Array {

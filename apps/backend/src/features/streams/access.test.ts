@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { QueryConfig } from "pg"
-import { Visibilities } from "@threa/types"
+import { Visibilities } from "@threahq/types"
 import { listRoomReadableStreamIds, resolveEffectiveAccessStreams } from "./access"
 import { StreamRepository, type Stream } from "./repository"
 

@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { ContextBag, ContextIntent, ContextRef, ContextRefKind } from "@threa/types"
+import type { ContextBag, ContextIntent, ContextRef, ContextRefKind } from "@threahq/types"
 
 /**
  * Per-ref result from `POST /context-bag/precompute`.

@@ -14,7 +14,7 @@
  * (DATABASE_URL, WORKOS_API_KEY, USE_STUB_AUTH, ...).
  */
 
-import { createDatabasePool, runMigrations, WorkosOrgServiceImpl, StubWorkosOrgService } from "@threa/backend-common"
+import { createDatabasePool, runMigrations, WorkosOrgServiceImpl, StubWorkosOrgService } from "@threahq/backend-common"
 import path from "path"
 import { loadControlPlaneConfig } from "../src/config"
 import { WorkosAuthzBackfill, WORKOS_EVENT_POLLER_NAME } from "../src/features/workos-authz"

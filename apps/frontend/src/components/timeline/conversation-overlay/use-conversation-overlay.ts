@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threahq/types"
 import {
   useConversations,
   useReassignConversationMessage,

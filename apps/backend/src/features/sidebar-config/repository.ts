@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import type { SidebarConfig, RawSidebarConfig } from "@threa/types"
+import type { SidebarConfig, RawSidebarConfig } from "@threahq/types"
 
 interface SidebarConfigRow {
   config: RawSidebarConfig

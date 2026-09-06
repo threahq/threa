@@ -19,7 +19,7 @@ import {
   type LinearRateLimit,
   type LinearWorkspaceIntegration,
   type ToolPrivacyCategory,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   decryptJson,
   encryptJson,

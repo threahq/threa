@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 
 /**
  * Tracks messages that arrive via socket while the stream is open,

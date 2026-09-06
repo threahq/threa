@@ -17,7 +17,7 @@ import { EventService } from "../../src/features/messaging"
 import { MemoExplorerService, MemoRepository } from "../../src/features/memos"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { userId, workspaceId, streamId, messageId, memoId } from "../../src/lib/id"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 function bodyCiting(text: string, id: string): { contentJson: JSONContent; contentMarkdown: string } {
   return {
@@ -376,7 +376,7 @@ describe("memo:updated", () => {
   // reaching no one. The other tests hand-write their markdown and cannot see
   // that drift.
   test("the citation scan matches what the real serializer stores", async () => {
-    const { serializeToMarkdown } = await import("@threa/prosemirror")
+    const { serializeToMarkdown } = await import("@threahq/prosemirror")
     const canary = memoId()
     const sourceMsg = messageId()
     await withTransaction(pool, async (client) => {

@@ -15,7 +15,7 @@ export type AccessOutcome = (typeof ACCESS_OUTCOMES)[number]
 
 /**
  * Actor types for the audit log. Overlaps but is NOT `AUTHOR_TYPES` in
- * `@threa/types` — `api_key` is not an author, and audit collapses external
+ * `@threahq/types` — `api_key` is not an author, and audit collapses external
  * key holders onto their underlying `user`/`bot`. Kept local on purpose.
  */
 export const ACTOR_TYPES = ["user", "persona", "bot", "system"] as const

@@ -1,4 +1,4 @@
-import type { Querier } from "@threa/backend-common"
+import type { Querier } from "@threahq/backend-common"
 import { GITHUB_WEBHOOK_DELIVERY_STATUS } from "./constants"
 
 export interface GithubWebhookDeliveryRow {

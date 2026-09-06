@@ -7,7 +7,7 @@ import {
   type WorkspaceBootstrap,
   type WorkspaceSettings,
   type WorkspacePermissionSlug,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { workspaceSettingsApi } from "@/api"
 import { FollowUpLimitSection } from "./follow-up-limit-section"

@@ -1,5 +1,5 @@
-import { logger as baseLogger } from "@threa/agent-runtime/logger"
-import type { EnclaveSessionAssignment } from "@threa/types"
+import { logger as baseLogger } from "@threahq/agent-runtime/logger"
+import type { EnclaveSessionAssignment } from "@threahq/types"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import type { BackendCallbacks } from "./backend-callbacks"

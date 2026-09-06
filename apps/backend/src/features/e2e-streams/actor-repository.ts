@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { E2eActorKind } from "@threa/types"
+import type { E2eActorKind } from "@threahq/types"
 
 interface E2eStreamActorRow {
   kind: E2eActorKind

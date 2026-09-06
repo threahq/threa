@@ -12,7 +12,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { ConversationIntents, ConversationStatuses } from "@threa/types"
+import { ConversationIntents, ConversationStatuses } from "@threahq/types"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository, conversationAssigner } from "../../src/features/conversations"
 import { BoundaryExtractionService, type BoundaryExtractor } from "../../src/features/conversations"

@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react"
 import { Loader2, CheckCircle2, XCircle } from "lucide-react"
 import { streamsApi } from "@/api/streams"
-import { isValidSlug } from "@threa/types"
+import { isValidSlug } from "@threahq/types"
 
 type SlugStatus = "idle" | "checking" | "available" | "taken" | "invalid"
 

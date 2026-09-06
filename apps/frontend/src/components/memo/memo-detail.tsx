@@ -14,7 +14,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { Link } from "react-router-dom"
-import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS, MemoScopes, type StreamType } from "@threa/types"
+import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS, MemoScopes, type StreamType } from "@threahq/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {

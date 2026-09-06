@@ -1,12 +1,12 @@
 import type { Pool } from "pg"
-import { HttpError, withTransaction, logger, OutboxRepository } from "@threa/backend-common"
+import { HttpError, withTransaction, logger, OutboxRepository } from "@threahq/backend-common"
 import {
   defaultFeatureFlagValue,
   flagAllowsScope,
   isFeatureFlagKey,
   isFeatureFlagValue,
   type FeatureFlagScope,
-} from "@threa/types"
+} from "@threahq/types"
 import { FeatureFlagOverrideRepository, type FeatureFlagOverrideRecord } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import type { RegionalClient } from "../../lib/regional-client"

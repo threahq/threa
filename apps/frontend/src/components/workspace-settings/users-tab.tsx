@@ -8,7 +8,7 @@ import {
   WORKSPACE_PERMISSION_SCOPES,
   WORKSPACE_USER_ROLES,
   type WorkspaceRoleSlug,
-} from "@threa/types"
+} from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"

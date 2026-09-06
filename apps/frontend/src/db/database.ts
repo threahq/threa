@@ -23,7 +23,7 @@ import type {
   ToolPrivacyCategory,
   ToolPrivacyPolicy,
   WorkspaceRoleSlug,
-} from "@threa/types"
+} from "@threahq/types"
 import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 

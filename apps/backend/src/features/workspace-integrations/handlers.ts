@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { WorkspaceIntegrationProvider } from "@threa/types"
+import type { WorkspaceIntegrationProvider } from "@threahq/types"
 import { WorkspaceIntegrationService } from "./service"
 import { validateRequest } from "../../lib/validation"
 

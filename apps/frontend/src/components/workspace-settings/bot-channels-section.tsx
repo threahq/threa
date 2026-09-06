@@ -1,7 +1,7 @@
 import { useMemo } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { botsApi } from "@/api/bots"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"

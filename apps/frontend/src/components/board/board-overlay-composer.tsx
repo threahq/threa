@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { type JSONContent } from "@threa/types"
+import { type JSONContent } from "@threahq/types"
 import { MessageComposer, StreamTargetPicker } from "@/components/composer"
 import { OverlayComposerShell } from "@/components/composer/overlay-composer-shell"
 import { useDraftComposer } from "@/hooks"

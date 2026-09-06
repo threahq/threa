@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { render, screen, userEvent, waitFor } from "@/test"
-import type { CreateInvitationLinkResponse, UpdateInvitationLinkResponse, WorkspaceInvitation } from "@threa/types"
+import type { CreateInvitationLinkResponse, UpdateInvitationLinkResponse, WorkspaceInvitation } from "@threahq/types"
 import * as invitationsModule from "@/api/invitations"
 import { CreateInviteLinkDialog } from "./create-invite-link-dialog"
 import { buildInviteLinkPatch, EditInviteLinkDialog } from "./edit-invite-link-dialog"

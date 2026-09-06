@@ -5,7 +5,7 @@
  * Handles: .txt, .log, .cfg, .ini, .env, and any unrecognized text files.
  */
 
-import type { TextSection } from "@threa/types"
+import type { TextSection } from "@threahq/types"
 import type { ParseResult, TextParser } from "./types"
 import { buildPreview } from "./preview"
 

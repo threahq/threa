@@ -20,7 +20,7 @@ import { BoundaryExtractionService } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, messageId, conversationId, eventId } from "../../src/lib/id"
-import { ConversationStatuses } from "@threa/types"
+import { ConversationStatuses } from "@threahq/types"
 import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "../../src/features/conversations"
 
 /**

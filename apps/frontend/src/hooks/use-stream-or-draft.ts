@@ -18,7 +18,7 @@ import { hasSeededDraftCache } from "@/stores/draft-store"
 import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { resolveDmDisplayName } from "@/lib/streams"
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import {
   getDraftPromotionStream,
   getPromotedStreamId,
@@ -38,8 +38,8 @@ import type {
   StreamWithPreview,
   E2eActor,
   ToolPrivacyPolicy,
-} from "@threa/types"
-import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
+} from "@threahq/types"
+import { StreamTypes, Visibilities, CompanionModes } from "@threahq/types"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 import { useRenameStream } from "./use-rename-stream"
 

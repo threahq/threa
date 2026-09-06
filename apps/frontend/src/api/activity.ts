@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { Activity } from "@threa/types"
+import type { Activity } from "@threahq/types"
 
 export interface ListActivityParams {
   limit?: number

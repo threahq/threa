@@ -1,4 +1,4 @@
-import { AgentTriggers, type AgentSessionRerunContext, type JSONContent } from "@threa/types"
+import { AgentTriggers, type AgentSessionRerunContext, type JSONContent } from "@threahq/types"
 import type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
 export type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
 

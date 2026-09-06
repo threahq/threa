@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AttachmentSafetyStatuses, type JSONContent } from "@threa/types"
+import { AttachmentSafetyStatuses, type JSONContent } from "@threahq/types"
 import { MessageRepository } from "../../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../../attachments"
 import { MemoRepository } from "../../memos"

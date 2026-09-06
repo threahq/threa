@@ -6,7 +6,7 @@
  * `/steer <prose>` marks everything after it as a plain-language refinement of
  * the result list; it is carried separately and never searched as text.
  */
-import { MAX_SEARCH_STEERS, MAX_SEARCH_STEER_CHARS } from "@threa/types"
+import { MAX_SEARCH_STEERS, MAX_SEARCH_STEER_CHARS } from "@threahq/types"
 
 export type FilterType = "from" | "with" | "in" | "type" | "status" | "after" | "before"
 

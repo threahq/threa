@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import type { Activity } from "@threa/types"
+import type { Activity } from "@threahq/types"
 
 /**
  * Unread from the viewer's perspective. Self rows are inserted already-read by

@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { WorkspaceSettings, UpdateWorkspaceSettingsInput } from "@threa/types"
+import type { WorkspaceSettings, UpdateWorkspaceSettingsInput } from "@threahq/types"
 
 export const workspaceSettingsApi = {
   async get(workspaceId: string): Promise<WorkspaceSettings> {

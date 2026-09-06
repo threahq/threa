@@ -3,7 +3,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { TimezonePicker } from "@/components/ui/timezone-picker"
 import { usePreferences } from "@/contexts"
-import { DATE_FORMAT_OPTIONS, TIME_FORMAT_OPTIONS, type DateFormat, type TimeFormat } from "@threa/types"
+import { DATE_FORMAT_OPTIONS, TIME_FORMAT_OPTIONS, type DateFormat, type TimeFormat } from "@threahq/types"
 
 const DATE_FORMAT_LABELS: Record<DateFormat, string> = {
   "YYYY-MM-DD": "2025-01-15 (ISO)",

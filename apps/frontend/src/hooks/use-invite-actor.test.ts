@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { StreamTypes, E2eActorKinds } from "@threa/types"
+import { StreamTypes, E2eActorKinds } from "@threahq/types"
 import { canInviteActor, isActorInvited } from "./use-invite-actor"
 import type { VirtualStream } from "./use-stream-or-draft"
 

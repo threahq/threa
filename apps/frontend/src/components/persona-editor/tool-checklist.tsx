@@ -8,7 +8,7 @@ import {
   TOOL_PRIVACY_CATEGORY_LABELS,
   type AgentToolName,
   type ToolPrivacyCategory,
-} from "@threa/types"
+} from "@threahq/types"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 

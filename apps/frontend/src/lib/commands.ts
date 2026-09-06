@@ -15,7 +15,7 @@
  * context.
  */
 
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 export interface ExtractedCommand {
   name: string

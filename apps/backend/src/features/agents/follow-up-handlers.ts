@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { checkStreamAccess } from "../streams"
 import type { AgentFollowUpService } from "./follow-up-service"

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, createEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { DEFAULT_WORK_SCHEDULE } from "@threa/types"
+import { DEFAULT_WORK_SCHEDULE } from "@threahq/types"
 import { spyOnExport } from "@/test/spy"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ScheduledMessagesPicker } from "./scheduled-messages-picker"

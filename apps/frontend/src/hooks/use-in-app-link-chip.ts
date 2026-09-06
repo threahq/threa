@@ -1,7 +1,7 @@
 import { useMemo, type ComponentType } from "react"
 import { Hash, MessageSquare, Lock, Globe } from "lucide-react"
 import { useLiveQuery } from "dexie-react-hooks"
-import type { MessageLinkPreviewData } from "@threa/types"
+import type { MessageLinkPreviewData } from "@threahq/types"
 import { db } from "@/db"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { useActors } from "@/hooks/use-actors"

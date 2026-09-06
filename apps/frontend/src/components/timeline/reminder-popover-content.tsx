@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
 import { Bell, BellOff, Archive, Check, Clock, Trash2, Undo2 } from "lucide-react"
 import { toast } from "sonner"
-import type { SavedMessageView, SavedStatus } from "@threa/types"
+import type { SavedMessageView, SavedStatus } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useSaveMessage, useUpdateSaved, useDeleteSaved } from "@/hooks/use-saved"

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import { HttpError } from "@threa/backend-common"
-import { FEATURE_FLAG_DEFINITIONS, FEATURE_FLAG_KEYS, FEATURE_FLAG_SCOPES } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import { FEATURE_FLAG_DEFINITIONS, FEATURE_FLAG_KEYS, FEATURE_FLAG_SCOPES } from "@threahq/types"
 import type { ControlPlaneFeatureFlagService } from "./service"
 
 const setFlagSchema = z.object({

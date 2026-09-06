@@ -1,7 +1,7 @@
 /**
  * Sync WorkOS authorization config from code definitions.
  *
- * Reads WORKSPACE_PERMISSIONS and WORKSPACE_ROLE_DEFINITIONS from @threa/types
+ * Reads WORKSPACE_PERMISSIONS and WORKSPACE_ROLE_DEFINITIONS from @threahq/types
  * and ensures they exist in WorkOS. Creates missing permissions, updates
  * name/description on existing ones, and ensures roles match the catalog.
  *

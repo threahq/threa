@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react"
-import { matchesBoardLens, type BoardLens, type BoardScopeStreamType } from "@threa/types"
+import { matchesBoardLens, type BoardLens, type BoardScopeStreamType } from "@threahq/types"
 import { useBoardPosts } from "@/stores/board-store"
 import { projectNestedBoardView } from "@/lib/board/nested-board-view"
 import {

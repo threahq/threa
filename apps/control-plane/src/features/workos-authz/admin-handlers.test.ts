@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { createBackofficeAuthzAdminHandlers, createInternalAuthzAdminHandlers } from "./admin-handlers"
 import type { WorkosAuthzAdminService } from "./admin-service"
 

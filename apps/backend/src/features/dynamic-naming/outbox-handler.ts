@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { AuthorTypes, StreamTypes, TitleSources } from "@threa/types"
+import { AuthorTypes, StreamTypes, TitleSources } from "@threahq/types"
 import { logger } from "../../lib/logger"
 import { isOutboxEventType, parseMessagePayload } from "../../lib/outbox"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"

@@ -1,4 +1,4 @@
-import type { PersonaKind } from "@threa/types"
+import type { PersonaKind } from "@threahq/types"
 import type { PersonaCustomConflict, PersonaOverrideConflict } from "@/api"
 import {
   AlertDialog,

@@ -1,7 +1,7 @@
 import type { Querier } from "../../../db"
 import { HttpError } from "../../../lib/errors"
 import { sharedMessageId } from "../../../lib/id"
-import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes } from "@threa/types"
+import { type JSONContent, ShareFlavors, type ShareFlavor, ShareErrorCodes } from "@threahq/types"
 import { MessageRepository } from "../repository"
 import {
   crossesPrivacyBoundary,

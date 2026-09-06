@@ -8,7 +8,7 @@ import { EventService } from "../../src/features/messaging/event-service"
 import { SearchService, resolveUserAccessibleStreamIds, type SearchPermissions } from "../../src/features/search"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { userId, workspaceId, streamId } from "../../src/lib/id"
-import { Visibilities, StreamTypes } from "@threa/types"
+import { Visibilities, StreamTypes } from "@threahq/types"
 
 const EMBEDDING_DIMS = 1536
 

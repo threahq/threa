@@ -1,7 +1,7 @@
 import { StreamContent } from "@/components/timeline"
 import { AgentBlockProvider, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
-import type { Stream } from "@threa/types"
+import type { Stream } from "@threahq/types"
 
 interface AsideConversationProps {
   workspaceId: string

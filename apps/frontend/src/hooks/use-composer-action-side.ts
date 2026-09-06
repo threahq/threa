@@ -1,5 +1,5 @@
 import { usePreferencesOptional } from "@/contexts"
-import { DEFAULT_ACCESSIBILITY, type ComposerActionSide } from "@threa/types"
+import { DEFAULT_ACCESSIBILITY, type ComposerActionSide } from "@threahq/types"
 
 /**
  * Which end of the composer's action row holds Send.

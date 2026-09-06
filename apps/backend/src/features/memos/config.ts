@@ -13,11 +13,11 @@ import {
   type AuthoredByKind,
   type KnowledgeType,
   type StreamType,
-} from "@threa/types"
+} from "@threahq/types"
 import { formatDate } from "../../lib/temporal"
 
 // Re-exported so the edit-validation caps sit with the other memo config the
-// handlers import (source of truth is @threa/types — INV-33).
+// handlers import (source of truth is @threahq/types — INV-33).
 export { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS }
 
 export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"

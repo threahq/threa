@@ -1,5 +1,5 @@
 import { NoObjectGeneratedError } from "ai"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import type {
@@ -16,7 +16,7 @@ import type {
 import type { Message } from "../../messaging"
 import { renderLinkPreviewContext } from "../../link-previews"
 import { logger } from "../../../lib/logger"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import {
   extractionResponseSchema,
   BOUNDARY_EXTRACTION_SYSTEM_PROMPT,

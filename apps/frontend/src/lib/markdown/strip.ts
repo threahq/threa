@@ -1,8 +1,8 @@
-// The strip implementation moved to `@threa/types` so the backend push path
+// The strip implementation moved to `@threahq/types` so the backend push path
 // can reuse it (INV-60 — notification bodies are stripped before they ship,
 // the SW renders them verbatim). Re-exported here so existing frontend
 // imports keep their `@/lib/markdown/strip` path and there's one impl, not two.
-export { stripMarkdown, stripMarkdownKeepingCode, stripMarkdownToInline, resolveEmojiShortcodes } from "@threa/types"
+export { stripMarkdown, stripMarkdownKeepingCode, stripMarkdownToInline, resolveEmojiShortcodes } from "@threahq/types"
 
 /**
  * Truncate stripped inline text to `maxChars` code POINTS — a `.slice()` on

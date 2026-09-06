@@ -56,7 +56,7 @@ import {
   killOwnWindow,
   markHarnessLinkWoundDown,
   recordHarnessLink,
-} from "@threa/harness-client"
+} from "@threahq/harness-client"
 import type {
   ExtensionAPI,
   ExtensionCommandContext,

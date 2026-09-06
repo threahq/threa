@@ -2,7 +2,7 @@ import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedBoardPost } from "@/db"
 import { deleteConversationMessages, pruneConversationMessagesToMembership } from "./conversation-messages-store"
-import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threa/types"
+import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threahq/types"
 import { mergeConversationByTitleRevision } from "@/lib/title-merge"
 
 function lastActivityMs(conversation: { lastActivityAt: string }): number {

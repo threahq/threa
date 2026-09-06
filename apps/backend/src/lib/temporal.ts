@@ -1,4 +1,4 @@
-import type { DateFormat, TimeFormat } from "@threa/types"
+import type { DateFormat, TimeFormat } from "@threahq/types"
 
 export interface TemporalContext {
   /** Current time in ISO format at invocation */
@@ -25,11 +25,11 @@ export interface ParticipantTemporal {
  * Client-reported timezones must pass this before being persisted — an invalid
  * zone would make every downstream Intl.DateTimeFormat call throw.
  *
- * Lives in `@threa/backend-common` because the control plane validates the same
+ * Lives in `@threahq/backend-common` because the control plane validates the same
  * contract before handing a workspace's timezone to its region; re-exported here
  * so callers import the name they always have (INV-33 — one implementation).
  */
-export { isValidIanaTimezone } from "@threa/backend-common"
+export { isValidIanaTimezone } from "@threahq/backend-common"
 
 /**
  * Get the UTC offset string for a timezone (e.g., "UTC+1", "UTC-5").

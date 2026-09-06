@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react"
 import { Bot, Clock, MessageSquareDashed, Sparkles, SquareSlash, TerminalSquare } from "lucide-react"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { isContinuation } from "@/lib/message-grouping"
 import { type RenderableMessage } from "@/components/message/message-item"

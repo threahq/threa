@@ -17,7 +17,7 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as draftMessageModule from "@/hooks/use-draft-message"
 import type { MessageComposerProps } from "@/components/composer"
-import type { FeatureFlagLayers, JSONContent, WorkspaceBootstrap } from "@threa/types"
+import type { FeatureFlagLayers, JSONContent, WorkspaceBootstrap } from "@threahq/types"
 import * as streamSyncModule from "@/sync/stream-sync"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { decryptPayloadAsString, encryptPayload } from "@threa/crypto"
+import { decryptPayloadAsString, encryptPayload } from "@threahq/crypto"
 import { generateUIK } from "../keys"
 import { unwrapPrivateKeyFromDevice, wrapPrivateKeyForDevice } from "../device-wrap-key"
 

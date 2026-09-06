@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threa/types"
+import { VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threahq/types"
 import { updateWorkspaceSettingsSchema } from "./handlers"
 import { WorkspaceSettingsRepository } from "./repository"
 

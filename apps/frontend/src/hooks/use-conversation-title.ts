@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react"
-import type { Conversation } from "@threa/types"
+import type { Conversation } from "@threahq/types"
 import { useStreamFromStore } from "@/stores/stream-store"
 import {
   getCachedStreamName,

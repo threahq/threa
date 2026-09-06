@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { render, screen, userEvent } from "@/test"
-import type { AIUsageByFunction, AIUsageByModel } from "@threa/types"
+import type { AIUsageByFunction, AIUsageByModel } from "@threahq/types"
 import { CapabilityBreakdown } from "./capability-breakdown"
 
 const byFunction: AIUsageByFunction[] = [

@@ -1,5 +1,5 @@
 {
-  "name": "@threa/backend",
+  "name": "@threahq/backend",
   "private": true,
   "type": "module",
   "scripts": {
@@ -25,10 +25,10 @@
     "@msgpack/msgpack": "^3.1.2",
     "@openrouter/ai-sdk-provider": "^3",
     "@socket.io/postgres-adapter": "^0.4",
-    "@threa/agent-runtime": "workspace:*",
-    "@threa/backend-common": "workspace:*",
-    "@threa/prosemirror": "workspace:*",
-    "@threa/types": "workspace:*",
+    "@threahq/agent-runtime": "workspace:*",
+    "@threahq/backend-common": "workspace:*",
+    "@threahq/prosemirror": "workspace:*",
+    "@threahq/types": "workspace:*",
     "@types/multer-s3": "^3.0.3",
     "@workos-inc/node": "^7",
     "ai": "^7",

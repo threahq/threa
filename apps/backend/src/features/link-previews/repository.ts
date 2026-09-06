@@ -1,4 +1,4 @@
-import { sql, type Querier } from "@threa/backend-common"
+import { sql, type Querier } from "@threahq/backend-common"
 import {
   type GitHubPreview,
   type LinearPreview,
@@ -7,7 +7,7 @@ import {
   type LinkPreviewContentType,
   type LinkPreviewStatus,
   isInAppLinkContentType,
-} from "@threa/types"
+} from "@threahq/types"
 
 /** Union of all rich provider preview types persisted in `link_previews.preview_type`. */
 /** Union of all rich provider preview payloads stored in `link_previews.preview_data`. */

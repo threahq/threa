@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { TEXT_SIZE_TIERS, INJECTION_STRATEGIES } from "@threa/types"
+import { TEXT_SIZE_TIERS, INJECTION_STRATEGIES } from "@threahq/types"
 
 export const EXCEL_SUMMARY_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { KnowledgeTypes, MemoTypes } from "@threa/types"
+import { KnowledgeTypes, MemoTypes } from "@threahq/types"
 import { MemoRepository } from "../../src/features/memos"
 import { memoId } from "../../src/lib/id"
 import {

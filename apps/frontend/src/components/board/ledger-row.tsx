@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode
 import { Link, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { ChevronUp, ChevronDown, ChevronRight, CornerDownRight, Paperclip, Link2, Pencil } from "lucide-react"
-import { LabelableResourceTypes, LinkPreviewContentTypes } from "@threa/types"
+import { LabelableResourceTypes, LinkPreviewContentTypes } from "@threahq/types"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"

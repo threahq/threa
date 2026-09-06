@@ -8,7 +8,7 @@ import {
   typicalStartMinutes,
   minutesToHHMM,
   parseHHMM,
-} from "@threa/types"
+} from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"

@@ -1,4 +1,4 @@
-import { ARIADNE_PERSONA_SLUG, type PersonaListItem } from "@threa/types"
+import { ARIADNE_PERSONA_SLUG, type PersonaListItem } from "@threahq/types"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PersonaListAvatar } from "@/components/persona-avatar"
 

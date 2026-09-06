@@ -1,7 +1,7 @@
 import { useMemo, useRef, type ReactNode } from "react"
 import { Quote, ChevronDown, ChevronRight } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
-import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type AuthorType } from "@threa/types"
+import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type AuthorType } from "@threahq/types"
 import { useActors } from "@/hooks"
 import { useUserProfile } from "@/components/user-profile"
 import { PersonaAvatar } from "@/components/persona-avatar"

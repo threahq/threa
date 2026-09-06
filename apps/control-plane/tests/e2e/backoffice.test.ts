@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { Pool } from "pg"
-import { waitlistId } from "@threa/backend-common"
+import { waitlistId } from "@threahq/backend-common"
 import { TestClient, loginAs, createWorkspace } from "../client"
 import { PlatformRoleRepository } from "../../src/features/backoffice"
 import { WaitlistRepository } from "../../src/features/waitlist"

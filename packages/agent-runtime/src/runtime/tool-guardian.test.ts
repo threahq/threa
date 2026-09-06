@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, ToolTiers, ToolVerificationStatuses } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, ToolTiers, ToolVerificationStatuses } from "@threahq/types"
 import type { AgentEvent } from "./agent-events"
 import { AgentRuntime } from "./agent-runtime"
 import { defineAgentTool, tierOfBuiltTool, type AgentTool } from "./agent-tool"

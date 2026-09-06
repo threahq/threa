@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threahq/types"
 import { ConversationOverlayRow, ConversationPickerDrawer } from "./conversation-overlay"
 import { buildConversationOverlayModel, type ConversationOverlayContext } from "./model"
 

@@ -4,8 +4,8 @@ import helmet from "helmet"
 import cookieParser from "cookie-parser"
 import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
-import { logger, createCorsOriginChecker } from "@threa/backend-common"
+import { INTERNAL_API_KEY_HEADER } from "@threahq/types"
+import { logger, createCorsOriginChecker } from "@threahq/backend-common"
 import { GITHUB_WEBHOOK_PATH } from "./features/github-webhooks"
 
 interface CreateAppOptions {

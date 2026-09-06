@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import type { PersonaAgentJobData, JobHandler } from "../../lib/queue"
 import { JobQueues } from "../../lib/queue"
-import { AgentTriggers } from "@threa/types"
+import { AgentTriggers } from "@threahq/types"
 import type { QueueManager } from "../../lib/queue"
 import type { PersonaAgentInput, PersonaAgentResult } from "./persona-agent"
 import { resolveTurnPurpose } from "./turn-purpose"

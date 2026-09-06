@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { getSchema } from "@tiptap/core"
 import type { JSONContent } from "@tiptap/react"
-import { CONTAINER_NODE_TYPES, LEAF_NODE_TYPES, docContentSize, sliceContent } from "@threa/prosemirror"
+import { CONTAINER_NODE_TYPES, LEAF_NODE_TYPES, docContentSize, sliceContent } from "@threahq/prosemirror"
 import { createEditorExtensions } from "./editor-extensions"
 
 /**
- * `@threa/prosemirror` computes document positions from JSON alone, with no
+ * `@threahq/prosemirror` computes document positions from JSON alone, with no
  * schema — the backend and the workers have no editor to ask. This file is the
  * drift guard: it builds the real tiptap schema and proves the schema-less
  * numbers are the schema's numbers. It fails when an extension adds a node, or

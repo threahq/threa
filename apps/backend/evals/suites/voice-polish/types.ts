@@ -1,4 +1,4 @@
-import type { JSONContent, VoicePolishLevel, VoiceReplacementAckStatus } from "@threa/types"
+import type { JSONContent, VoicePolishLevel, VoiceReplacementAckStatus } from "@threahq/types"
 import type { PolishOutcome, VoicePolishAttempt } from "../../../src/features/voice-transcription/polish"
 import type { IncrementalPolishResult } from "../../../src/features/voice-transcription/incremental-coordinator"
 

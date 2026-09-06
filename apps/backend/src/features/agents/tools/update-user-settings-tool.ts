@@ -8,7 +8,7 @@ import {
   type AgentSettablePreferences,
   type AgentSessionRerunCause,
   type StreamType,
-} from "@threa/types"
+} from "@threahq/types"
 import { updatePreferencesSchema } from "../../user-preferences"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"

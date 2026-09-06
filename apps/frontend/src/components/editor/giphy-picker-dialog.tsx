@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Search, Loader2, Film, SearchX, ImageOff } from "lucide-react"
-import type { GiphyGif } from "@threa/types"
+import type { GiphyGif } from "@threahq/types"
 import { giphyApi } from "@/api"
 import {
   ResponsiveDialog,

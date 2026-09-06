@@ -1,5 +1,5 @@
 import { Bookmark } from "lucide-react"
-import type { SavedStatus } from "@threa/types"
+import type { SavedStatus } from "@threahq/types"
 
 const MESSAGES: Record<SavedStatus, { title: string; body: string }> = {
   saved: {

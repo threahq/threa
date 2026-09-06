@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { ControlPlaneClient } from "./control-plane-client"
 
 const originalFetch = globalThis.fetch

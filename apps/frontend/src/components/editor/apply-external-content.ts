@@ -1,4 +1,4 @@
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 /**
  * The minimal editor surface the external-content sync touches. Kept structural

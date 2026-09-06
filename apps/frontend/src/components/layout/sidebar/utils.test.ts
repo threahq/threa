@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import * as prosemirror from "@threa/prosemirror"
-import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threa/types"
+import * as prosemirror from "@threahq/prosemirror"
+import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threahq/types"
 import {
   buildVirtualDmDrafts,
   calculateUrgency,

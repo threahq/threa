@@ -34,7 +34,7 @@ import {
   type StreamWithPreview,
   type WorkspaceBootstrap,
   type Activity,
-} from "@threa/types"
+} from "@threahq/types"
 import { assignmentId } from "@/hooks/use-labels"
 import { getAgentActivityForStream, getAgentSession, __resetAgentActivityStore } from "@/stores/agent-activity-store"
 import * as agentSubstep from "@/lib/crypto/agent-substep"

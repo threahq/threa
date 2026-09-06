@@ -18,7 +18,7 @@ import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { plan, processChunk } from "../../src/features/stream-context/backfill"
 import { memoId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
 import { sql } from "../../src/db"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { StreamTypes, Visibilities } from "@threahq/types"
 
 describe("stream-context backfill against the real schema", () => {
   let pool: Pool

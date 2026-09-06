@@ -1,4 +1,4 @@
-import { areToolCategoriesAllowed, type ToolPrivacyCategory } from "@threa/types"
+import { areToolCategoriesAllowed, type ToolPrivacyCategory } from "@threahq/types"
 import type { AgentTool } from "./agent-tool"
 
 /**

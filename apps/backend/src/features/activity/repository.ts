@@ -1,7 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { activityId } from "../../lib/id"
-import { ActivityTypes } from "@threa/types"
+import { ActivityTypes } from "@threahq/types"
 
 interface ActivityRow {
   id: string

@@ -1,4 +1,4 @@
-import type { Querier } from "@threa/backend-common"
+import type { Querier } from "@threahq/backend-common"
 
 export const BOT_CONNECT_STATUSES = ["pending", "approved", "claimed", "denied"] as const
 export type BotConnectStatus = (typeof BOT_CONNECT_STATUSES)[number]

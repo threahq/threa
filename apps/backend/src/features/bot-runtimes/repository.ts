@@ -15,7 +15,7 @@ import {
   type BotRuntimeManifest,
   type BotRuntimeSessionLinkStatus,
   type BotRuntimeStatus,
-} from "@threa/types"
+} from "@threahq/types"
 import type { Pool, QueryConfig } from "pg"
 import { composeSql, sql, withTransaction, type Querier } from "../../db"
 

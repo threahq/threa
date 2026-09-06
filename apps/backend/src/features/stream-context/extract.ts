@@ -1,5 +1,5 @@
-import { collectGiphyEmbeds } from "@threa/prosemirror"
-import { categoryFromMime, stripMarkdownToInline, type AttachmentSummary, type JSONContent } from "@threa/types"
+import { collectGiphyEmbeds } from "@threahq/prosemirror"
+import { categoryFromMime, stripMarkdownToInline, type AttachmentSummary, type JSONContent } from "@threahq/types"
 import { streamContextItemId } from "../../lib/id"
 import { extractUrls, normalizeUrl, getAppOrigins } from "../link-previews"
 import type { ContextCategory, StreamContextRefKind, NewStreamContextItem } from "./types"

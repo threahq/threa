@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
@@ -14,7 +14,7 @@ import {
   VIEWPORT_WINDOW_TOTAL,
 } from "../../src/features/agents"
 import { userId, workspaceId, messageId, conversationId } from "../../src/lib/id"
-import { ContextIntents, ContextRefKinds, type ContextRef, type Stream, type ViewportContextRef } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextRef, type Stream, type ViewportContextRef } from "@threahq/types"
 
 describe("Aside viewport snapshot", () => {
   let pool: Pool

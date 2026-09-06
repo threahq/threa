@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AttachmentSafetyStatuses } from "@threa/types"
+import { AttachmentSafetyStatuses } from "@threahq/types"
 import * as db from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"

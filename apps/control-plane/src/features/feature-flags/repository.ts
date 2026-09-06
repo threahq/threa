@@ -1,5 +1,5 @@
-import type { Querier } from "@threa/backend-common"
-import type { FeatureFlagScope } from "@threa/types"
+import type { Querier } from "@threahq/backend-common"
+import type { FeatureFlagScope } from "@threahq/types"
 
 export interface FeatureFlagOverrideRow {
   subject_type: FeatureFlagScope

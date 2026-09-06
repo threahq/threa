@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { Editor } from "@tiptap/core"
 import type { JSONContent } from "@tiptap/react"
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import { createEditorExtensions } from "./editor-extensions"
 import { serializeToMarkdown } from "./editor-markdown"
 

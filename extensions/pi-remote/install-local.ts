@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Build a self-contained standalone install of the Threa Pi remote extension.
 //
-// Inside the monorepo, `@threahq/bot-runtime-client` and `@threa/harness-client`
+// Inside the monorepo, `@threahq/bot-runtime-client` and `@threahq/harness-client`
 // resolve via sibling `file:` deps. The install target
 // (~/.pi/agent/extensions/threa-remote) has no siblings and harness-client is
 // private (not on npm), so a plain copy + `bun install` can't resolve them. We
@@ -27,7 +27,7 @@ const dest = process.argv[2] ?? join(extensionsDir, "threa-remote")
 // below rather than shipping a broken install.
 const VENDORED = [
   { dep: "@threahq/bot-runtime-client", src: resolve(here, "../bot-runtime-client"), dir: "bot-runtime-client" },
-  { dep: "@threa/harness-client", src: resolve(here, "../harness-client"), dir: "harness-client" },
+  { dep: "@threahq/harness-client", src: resolve(here, "../harness-client"), dir: "harness-client" },
 ].map((pkg) => ({
   ...pkg,
   files: readdirSync(join(pkg.src, "src")).filter((f) => f.endsWith(".ts") && !f.includes("test")),

@@ -16,7 +16,7 @@ import {
   type WorkspaceBootstrap,
   type StreamBootstrap,
   type SyncCatchUpResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 import {
   MockSocket,

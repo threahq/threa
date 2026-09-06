@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { spyOnExport } from "@/test"
 import { createMockStream } from "@/test/fixtures"
 import * as workspaceStoreModule from "@/stores/workspace-store"

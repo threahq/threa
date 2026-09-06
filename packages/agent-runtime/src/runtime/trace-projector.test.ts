@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { AgentStepTypes, type AgentToolEffect, type TraceSource } from "@threa/types"
+import { AgentStepTypes, type AgentToolEffect, type TraceSource } from "@threahq/types"
 import type { NewMessageInfo } from "./agent-events"
 import {
   TraceProjector,

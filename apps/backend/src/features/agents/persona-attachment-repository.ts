@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import { ProcessingStatuses, type ProcessingStatus } from "@threa/types"
+import { ProcessingStatuses, type ProcessingStatus } from "@threahq/types"
 
 /**
  * A persona file whose extraction pipeline gave up: no extraction landed and the

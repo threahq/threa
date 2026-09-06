@@ -17,7 +17,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process"
 import { cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
-import { BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import {
   TestClient,
   createBot,

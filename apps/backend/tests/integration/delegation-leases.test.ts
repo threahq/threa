@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test"
 import type { Pool } from "pg"
-import { DelegationStatuses } from "@threa/types"
+import { DelegationStatuses } from "@threahq/types"
 import { DelegatedTaskRepository, type DelegatedTask } from "../../src/features/delegations/repository"
 import { setupIsolatedTestDatabase } from "./setup"
 

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react"
-import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels, type AgentSessionStep, type AgentStepType } from "@threa/types"
+import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels, type AgentSessionStep, type AgentStepType } from "@threahq/types"
 import type { StreamingSubstep } from "@/hooks/use-agent-trace"
 import { getCachedDecryption, getDecryptCacheVersion, subscribeDecryptCacheVersion } from "@/lib/crypto/decrypt-cache"
 import { TraceStep } from "./trace-step"

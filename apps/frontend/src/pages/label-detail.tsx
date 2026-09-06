@@ -36,7 +36,7 @@ import {
   useWorkspaceUsers,
   type CachedStream,
 } from "@/stores/workspace-store"
-import type { LabeledMessage, StreamType } from "@threa/types"
+import type { LabeledMessage, StreamType } from "@threahq/types"
 
 /**
  * Route is `/w/:workspaceId/labels/:labelId` — a label's landing page. Opens

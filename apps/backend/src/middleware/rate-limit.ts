@@ -1,6 +1,6 @@
 import { createHash } from "crypto"
 import type { Request, RequestHandler } from "express"
-import { createRateLimit, getClientIp } from "@threa/backend-common"
+import { createRateLimit, getClientIp } from "@threahq/backend-common"
 
 export interface RateLimiterSet {
   globalBaseline: RequestHandler

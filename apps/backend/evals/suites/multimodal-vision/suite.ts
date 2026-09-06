@@ -62,11 +62,11 @@ import {
   AttachmentService,
   createMalwareScanner,
 } from "../../../src/features/attachments"
-import { createModelRegistry, type ModelRegistry } from "@threa/agent-runtime"
+import { createModelRegistry, type ModelRegistry } from "@threahq/agent-runtime"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import type { Server } from "socket.io"
-import { parseMarkdown } from "@threa/prosemirror"
-import { AuthorTypes, StreamTypes, ExtractionContentTypes, ProcessingStatuses } from "@threa/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import { AuthorTypes, StreamTypes, ExtractionContentTypes, ProcessingStatuses } from "@threahq/types"
 import { ulid } from "ulid"
 import {
   streamId as generateStreamId,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { WORKSPACE_USER_ROLES } from "@threa/types"
+import { WORKSPACE_USER_ROLES } from "@threahq/types"
 import type { Pool } from "pg"
 import type { ControlPlaneClient } from "../../lib/control-plane-client"
 import { createWorkspaceMemberManagementHandlers } from "./handlers"

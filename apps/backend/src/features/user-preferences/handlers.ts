@@ -44,7 +44,7 @@ import {
   BOARD_LEAD_LINE_LENGTH_MAX,
   BOARD_MASS_BADGE_MODES,
   degradeBoardLens,
-} from "@threa/types"
+} from "@threahq/types"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
 

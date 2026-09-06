@@ -5,7 +5,7 @@ import {
   type ScheduledMessageView,
   type JSONContent,
   type ConversationDirective,
-} from "@threa/types"
+} from "@threahq/types"
 import { withTransaction } from "../../db"
 import { HttpError, isUniqueViolation } from "../../lib/errors"
 // Side-effect import: matches the load-order workaround used by other features

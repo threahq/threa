@@ -3,9 +3,9 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@threa/pi-remote-extension",
+      "name": "@threahq/pi-remote-extension",
       "dependencies": {
-        "@threa/harness-client": "file:../harness-client",
+        "@threahq/harness-client": "file:../harness-client",
         "@threahq/bot-runtime-client": "file:../bot-runtime-client",
         "socket.io-client": "^4.8.1",
       },
@@ -20,7 +20,7 @@
 
     "@socket.io/component-emitter": ["@socket.io/component-emitter@3.1.2", "", {}, "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA=="],
 
-    "@threa/harness-client": ["@threa/harness-client@file:../harness-client", { "dependencies": { "@threa/bot-runtime-client": "file:../bot-runtime-client" }, "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
+    "@threahq/harness-client": ["@threahq/harness-client@file:../harness-client", { "dependencies": { "@threahq/bot-runtime-client": "file:../bot-runtime-client" }, "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
 
     "@threahq/bot-runtime-client": ["@threahq/bot-runtime-client@file:../bot-runtime-client", { "dependencies": { "@hpke/core": "^1.9.0", "@hpke/dhkem-x25519": "^1.6.0", "ulid": "^2.3.0" }, "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
 
@@ -52,6 +52,6 @@
 
     "xmlhttprequest-ssl": ["xmlhttprequest-ssl@2.1.2", "", {}, "sha512-TEU+nJVUUnA4CYJFLvK5X9AOeH4KvDvhIfm0vV1GaQRtchnG0hgK5p8hw/xjv8cunWYCsiPCSDzObPyhEwq3KQ=="],
 
-    "@threa/harness-client/@threa/bot-runtime-client": ["@threa/bot-runtime-client@file:../bot-runtime-client", { "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
+    "@threahq/harness-client/@threahq/bot-runtime-client": ["@threahq/bot-runtime-client@file:../bot-runtime-client", { "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
   }
 }

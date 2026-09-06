@@ -18,7 +18,7 @@ import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { ResolvedPos } from "@tiptap/pm/model"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
-import type { Memo } from "@threa/types"
+import type { Memo } from "@threahq/types"
 import { getParentTextBefore } from "../markdown-guards"
 
 export const MemoSearchPluginKey = new PluginKey("memoSearch")

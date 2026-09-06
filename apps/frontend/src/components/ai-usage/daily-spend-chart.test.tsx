@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { render, screen } from "@/test"
-import type { AIUsageByDay } from "@threa/types"
+import type { AIUsageByDay } from "@threahq/types"
 import { buildDailySpendData, DailySpendChart } from "./daily-spend-chart"
 
 const byDay: AIUsageByDay[] = [

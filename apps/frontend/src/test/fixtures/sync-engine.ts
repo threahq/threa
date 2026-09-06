@@ -8,7 +8,7 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 
 type EventHandler = (...args: unknown[]) => void
 

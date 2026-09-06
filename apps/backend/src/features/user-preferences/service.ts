@@ -9,7 +9,7 @@ import {
   type AccessibilityPreferences,
   DEFAULT_USER_PREFERENCES,
   DEFAULT_ACCESSIBILITY,
-} from "@threa/types"
+} from "@threahq/types"
 
 function mergeOverrides(
   workspaceId: string,

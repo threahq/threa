@@ -1,4 +1,4 @@
-import { TONE_PRESETS, BREVITY_PRESETS, type BrevityPreset, type TonePreset } from "@threa/types"
+import { TONE_PRESETS, BREVITY_PRESETS, type BrevityPreset, type TonePreset } from "@threahq/types"
 
 /**
  * Display metadata for the built-in persona's style-preset pickers (INV-46 — the

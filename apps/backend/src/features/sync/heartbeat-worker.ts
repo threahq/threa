@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import type { SyncHeartbeatPayload } from "@threa/types"
-import { Ticker } from "@threa/backend-common"
+import type { SyncHeartbeatPayload } from "@threahq/types"
+import { Ticker } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
 import { SyncLogRepository } from "./repository"
 

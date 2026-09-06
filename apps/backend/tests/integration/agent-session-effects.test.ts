@@ -8,7 +8,7 @@ import {
   withCompanionSession,
 } from "../../src/features/agents"
 import { streamId, workspaceId, personaId, messageId, sessionId, stepId, userId } from "../../src/lib/id"
-import { AgentStepTypes, type AgentToolEffect } from "@threa/types"
+import { AgentStepTypes, type AgentToolEffect } from "@threahq/types"
 
 const MEMO_EFFECT: AgentToolEffect = { kind: "memo", label: "Deploy runbook", target: "memo_01" }
 const SETTINGS_EFFECT: AgentToolEffect = {

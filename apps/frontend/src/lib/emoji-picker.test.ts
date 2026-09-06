@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 import {
   EMOJI_LIST_MAX_HEIGHT,
   EMOJI_LIST_MIN_HEIGHT,

@@ -7,7 +7,7 @@ import {
   type GitHubWorkspaceIntegration,
   type WorkspaceBootstrap,
   type WorkspacePermissionSlug,
-} from "@threa/types"
+} from "@threahq/types"
 import { ApiError } from "@/api/client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { integrationsApi } from "@/api/integrations"

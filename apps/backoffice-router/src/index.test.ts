@@ -1,5 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test"
-import { ORIGINAL_HOST_HEADER } from "@threa/types"
+import { ORIGINAL_HOST_HEADER } from "@threahq/types"
 import worker from "./index"
 
 interface EnvOverrides {

@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react"
 import { useParams } from "react-router-dom"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import type { ChannelItem } from "./types"
 import { ChannelList } from "./channel-list"
 import { useWorkspaceStreams } from "@/stores/workspace-store"

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ContextIntents, ContextRefKinds, Visibilities } from "@threa/types"
+import { ContextIntents, ContextRefKinds, Visibilities } from "@threahq/types"
 import { ThreadResolver } from "./thread-resolver"
 import { AttachmentRepository, type Attachment } from "../../../attachments"
 import { MessageRepository } from "../../../messaging"

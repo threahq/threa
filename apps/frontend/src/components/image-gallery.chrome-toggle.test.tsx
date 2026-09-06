@@ -9,7 +9,7 @@ import * as useMobileModule from "@/hooks/use-mobile"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
 import { DOUBLE_TAP_MS } from "@/hooks/use-zoom-pan"
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 
 const WIDTH = 400
 

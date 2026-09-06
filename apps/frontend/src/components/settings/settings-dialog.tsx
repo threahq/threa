@@ -10,7 +10,7 @@ import {
 import { ResponsiveSettingsNav, SETTINGS_DIALOG_LAYOUT_CLASSNAMES } from "@/components/ui/responsive-settings-nav"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { useSettings } from "@/contexts"
-import { SETTINGS_TABS, type SettingsTab } from "@threa/types"
+import { SETTINGS_TABS, type SettingsTab } from "@threahq/types"
 import { SETTINGS_TAB_CONFIG } from "./tab-config"
 import { AISettings } from "./ai-settings"
 import { DictationSettings } from "./dictation-settings"

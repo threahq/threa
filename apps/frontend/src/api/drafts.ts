@@ -6,7 +6,7 @@ import type {
   ResolveDraftResponse,
   UpsertDraftInput,
   UpsertDraftResponse,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * Centralized-draft REST client. Drafts are user-scoped on the backend (auth

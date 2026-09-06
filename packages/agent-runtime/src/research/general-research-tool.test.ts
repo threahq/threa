@@ -1,5 +1,5 @@
 import { describe, expect, test, mock } from "bun:test"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes } from "@threahq/types"
 import type { GeneralResearchResult } from "./general-researcher"
 import { createGeneralResearchTool, type RunGeneralResearchOptions } from "./general-research-tool"
 

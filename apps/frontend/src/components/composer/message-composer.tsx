@@ -25,7 +25,7 @@ import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
 import { getDictationMarkdownContext } from "@/components/editor/dictation-markdown"
-import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
+import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threahq/types"
 import type { RichEditorHandle } from "@/components/editor"
 import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { Button } from "@/components/ui/button"
@@ -57,7 +57,7 @@ import {
   type MessageSendMode,
   type JSONContent,
   type VoiceTranscriptReplacementV4,
-} from "@threa/types"
+} from "@threahq/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import type { Editor } from "@tiptap/react"
 import { consumeComposerCommandRequest, subscribeComposerCommandRequest } from "@/stores/composer-command-request-store"

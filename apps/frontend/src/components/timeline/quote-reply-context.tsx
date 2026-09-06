@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useMemo, useRef } from "react"
 import type { ReactNode } from "react"
-import type { ContentRange, JSONContent } from "@threa/types"
+import type { ContentRange, JSONContent } from "@threahq/types"
 
 export interface QuoteReplyData {
   messageId: string

@@ -17,7 +17,7 @@ import {
 } from "../../src/features/memos/message-embedding-text"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { workspaceId } from "../../src/lib/id"
-import { AuthorTypes, StreamTypes, Visibilities } from "@threa/types"
+import { AuthorTypes, StreamTypes, Visibilities } from "@threahq/types"
 
 const EMBEDDING_DIM = 1536
 

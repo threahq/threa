@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ContextRefKinds, Visibilities } from "@threa/types"
+import { ContextRefKinds, Visibilities } from "@threahq/types"
 import { ConversationResolver } from "./conversation-resolver"
 import { AttachmentRepository } from "../../../attachments"
 import { MessageRepository } from "../../../messaging"

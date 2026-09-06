@@ -2,7 +2,7 @@
  * Persona-Style Evaluation Types
  */
 
-import type { TonePreset, BrevityPreset } from "@threa/types"
+import type { TonePreset, BrevityPreset } from "@threahq/types"
 
 export interface PersonaStyleInput {
   /** Which style slot the case exercises (`control` sets neither slot). */

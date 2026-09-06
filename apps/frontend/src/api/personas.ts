@@ -9,7 +9,7 @@ import type {
   PersonaListItem,
   PersonaResolvedConfig,
   UpdatePersonaCustomInput,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * The stored override as it rides on a `PERSONA_OVERRIDE_CONFLICT` (409)

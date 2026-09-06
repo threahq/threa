@@ -5,7 +5,7 @@ import { AIBudgetRepository } from "./budget-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { aiUsageId, aiAlertId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import type { UsageWithCost, ParsedModel } from "@threa/agent-runtime"
+import type { UsageWithCost, ParsedModel } from "@threahq/agent-runtime"
 
 const ALERT_THRESHOLDS = [
   { percent: 50, type: "budget_50", alertField: "alertThreshold50" as const },

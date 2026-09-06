@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import type { CachedEvent } from "@/db"
 import { deriveStreamContext } from "./derive"
 import type { FileContextItem, LinkContextItem, MediaContextItem, ThreadContextItem } from "./types"

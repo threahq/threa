@@ -2,7 +2,7 @@
  * Boundary Extraction Evaluation Types
  */
 
-import type { ConversationStatus } from "@threa/types"
+import type { ConversationStatus } from "@threahq/types"
 
 /**
  * Simplified conversation summary for eval input.

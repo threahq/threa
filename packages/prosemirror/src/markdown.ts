@@ -6,8 +6,8 @@
  * backend (AI agents, external integrators).
  */
 
-import type { ContentRange, JSONContent, JSONContentMark } from "@threa/types"
-import { actorTypeFromMentionId, isResolvedChannelLinkId } from "@threa/types"
+import type { ContentRange, JSONContent, JSONContentMark } from "@threahq/types"
+import { actorTypeFromMentionId, isResolvedChannelLinkId } from "@threahq/types"
 import {
   escapeMarkdownLinkText,
   parseAttachmentMetadata,

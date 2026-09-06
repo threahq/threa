@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { ConversationStatuses } from "@threa/types"
+import { ConversationStatuses } from "@threahq/types"
 import { withTransaction, addTestMember, setupTestDatabase } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"

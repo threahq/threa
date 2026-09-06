@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import * as agentRuntime from "@threa/agent-runtime"
+import * as agentRuntime from "@threahq/agent-runtime"
 import { createBotRuntimeWriteOps } from "./runtime-write-ops"
 import * as e2eStreams from "../e2e-streams"
 import { E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test"
 import { attachmentReferenceLabel, normalizeMarkdownTables, parseMarkdown, serializeToMarkdown } from "./markdown"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
-describe("@threa/prosemirror markdown links", () => {
+describe("@threahq/prosemirror markdown links", () => {
   it("parses links whose URLs contain nested balanced parentheses", () => {
     const parsed = parseMarkdown("[Wikipedia](https://en.wikipedia.org/wiki/Foo_(bar_(baz_(qux))))")
 
@@ -83,7 +83,7 @@ describe("@threa/prosemirror markdown links", () => {
   })
 })
 
-describe("@threa/prosemirror markdown attachment metadata", () => {
+describe("@threahq/prosemirror markdown attachment metadata", () => {
   it("uses a legacy ordinal only when attachment metadata has no filename", () => {
     expect(attachmentReferenceLabel({ filename: "photo.png", imageIndex: 2 })).toBe("photo.png")
     expect(attachmentReferenceLabel({ filename: "", imageIndex: 2 })).toBe("Image #2")
@@ -265,7 +265,7 @@ describe("@threa/prosemirror markdown attachment metadata", () => {
   })
 })
 
-describe("@threa/prosemirror emoji parsing", () => {
+describe("@threahq/prosemirror emoji parsing", () => {
   it("can parse emoji shortcodes as editable text for composer surfaces", () => {
     const parsed = parseMarkdown(":rocket: launch", undefined, (shortcode) => (shortcode === "rocket" ? "🚀" : null), {
       emojiAsText: true,
@@ -288,7 +288,7 @@ describe("@threa/prosemirror emoji parsing", () => {
   })
 })
 
-describe("@threa/prosemirror quote reply round-trip", () => {
+describe("@threahq/prosemirror quote reply round-trip", () => {
   it("serializes quoteReply to blockquote with attribution link", () => {
     const doc: JSONContent = {
       type: "doc",
@@ -623,7 +623,7 @@ describe("@threa/prosemirror quote reply round-trip", () => {
   })
 })
 
-describe("@threa/prosemirror memo embed round-trip", () => {
+describe("@threahq/prosemirror memo embed round-trip", () => {
   it("round-trips an inline memoEmbed node losslessly", () => {
     const doc: JSONContent = {
       type: "doc",
@@ -693,7 +693,7 @@ describe("@threa/prosemirror memo embed round-trip", () => {
   })
 })
 
-describe("@threa/prosemirror in-app link node serialization", () => {
+describe("@threahq/prosemirror in-app link node serialization", () => {
   it("serializes an inAppLink node to a normal [name](url) markdown link", () => {
     const doc: JSONContent = {
       type: "doc",
@@ -796,7 +796,7 @@ describe("@threa/prosemirror in-app link node serialization", () => {
   })
 })
 
-describe("@threa/prosemirror giphy embed round-trip", () => {
+describe("@threahq/prosemirror giphy embed round-trip", () => {
   const GIF_URL = "https://media3.giphy.com/media/abc123/200w.gif?cid=xyz&rid=200w.gif"
 
   it("round-trips an inline giphyEmbed node losslessly", () => {
@@ -887,7 +887,7 @@ describe("@threa/prosemirror giphy embed round-trip", () => {
   })
 })
 
-describe("@threa/prosemirror mention/channel pointer round-trip (INV-64)", () => {
+describe("@threahq/prosemirror mention/channel pointer round-trip (INV-64)", () => {
   const cases: Array<{ name: string; node: JSONContent; md: string }> = [
     {
       name: "user",
@@ -1058,7 +1058,7 @@ describe("slash command boundary", () => {
   })
 })
 
-describe("@threa/prosemirror table round-trip", () => {
+describe("@threahq/prosemirror table round-trip", () => {
   function cell(type: "tableHeader" | "tableCell", text: string): JSONContent {
     return {
       type,
@@ -1214,7 +1214,7 @@ describe("@threa/prosemirror table round-trip", () => {
   })
 })
 
-describe("@threa/prosemirror normalizeMarkdownTables", () => {
+describe("@threahq/prosemirror normalizeMarkdownTables", () => {
   it("collapses blank lines between pipe rows so LLM tables parse", () => {
     const input = ["| a | b |", "| --- | --- |", "", "| 1 | 2 |", "", "| 3 | 4 |"].join("\n")
     const normalized = normalizeMarkdownTables(input)
@@ -1248,7 +1248,7 @@ describe("@threa/prosemirror normalizeMarkdownTables", () => {
   })
 })
 
-describe("@threa/prosemirror nested list round-trip", () => {
+describe("@threahq/prosemirror nested list round-trip", () => {
   const nestedBulletDoc: JSONContent = {
     type: "doc",
     content: [
@@ -1322,7 +1322,7 @@ describe("@threa/prosemirror nested list round-trip", () => {
   })
 })
 
-describe("@threa/prosemirror blockquote paragraph round-trip", () => {
+describe("@threahq/prosemirror blockquote paragraph round-trip", () => {
   it("round-trips a multi-paragraph blockquote", () => {
     const doc: JSONContent = {
       type: "doc",
@@ -1347,7 +1347,7 @@ describe("@threa/prosemirror blockquote paragraph round-trip", () => {
   })
 })
 
-describe("@threa/prosemirror blockquote empty-paragraph round-trip", () => {
+describe("@threahq/prosemirror blockquote empty-paragraph round-trip", () => {
   it("preserves an empty paragraph between quoted paragraphs", () => {
     const doc: JSONContent = {
       type: "doc",
@@ -1368,7 +1368,7 @@ describe("@threa/prosemirror blockquote empty-paragraph round-trip", () => {
   })
 })
 
-describe("@threa/prosemirror reference pins", () => {
+describe("@threahq/prosemirror reference pins", () => {
   const pinnedQuote: JSONContent = {
     type: "quoteReply",
     attrs: {
@@ -1458,7 +1458,7 @@ describe("@threa/prosemirror reference pins", () => {
   })
 })
 
-describe("@threa/prosemirror agent block round-trip", () => {
+describe("@threahq/prosemirror agent block round-trip", () => {
   const block = (content: JSONContent[], attrs?: Record<string, unknown>): JSONContent => ({
     type: "doc",
     content: [

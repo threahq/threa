@@ -9,7 +9,7 @@
 
 import type { Evaluator, EvalContext, EvaluatorResult, RunEvaluator, CaseResult } from "../../framework/types"
 import { llmJudgeEvaluator } from "../../framework/evaluators/llm-judge"
-import type { TonePreset } from "@threa/types"
+import type { TonePreset } from "@threahq/types"
 import type { PersonaStyleOutput, PersonaStyleExpected } from "./types"
 import { PERSONA_STYLE_JUDGE_MODEL, STYLE_ACCURACY_GATE } from "./config"
 

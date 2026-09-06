@@ -8,7 +8,7 @@ import {
   type FeatureFlagKey,
   type FeatureFlagLayers,
   type WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 import { db } from "@/db"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { workspaceKeys } from "./use-workspaces"
@@ -24,7 +24,7 @@ function createWrapper(queryClient: QueryClient) {
 // that the shipped registry doesn't carry, so inject a stand-in registry
 // (visible to the code-bound predicates + resolver, which read
 // FEATURE_FLAG_DEFINITIONS dynamically) and clear it after each test rather
-// than committing test-only flags to @threa/types. `warmStart` is default-on: the
+// than committing test-only flags to @threahq/types. `warmStart` is default-on: the
 // case the persistence fix protects — a warm paint must not flash the default.
 const STANDIN_REGISTRY = {
   warmStart: { values: ["off", "on"], scopes: ["workspace", "user"], default: "on" },

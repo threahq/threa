@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
-import { BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import {
   archiveStream,
   botApiGet,

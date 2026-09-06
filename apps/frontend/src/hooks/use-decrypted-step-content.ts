@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react"
-import { TRACE_SOURCE_TYPES, type AgentSessionStep, type TraceSource, type TraceSourceType } from "@threa/types"
-import type { SealedSourceItem } from "@threa/crypto"
+import { TRACE_SOURCE_TYPES, type AgentSessionStep, type TraceSource, type TraceSourceType } from "@threahq/types"
+import type { SealedSourceItem } from "@threahq/crypto"
 import {
   getCachedDecryption,
   requestDecryption,

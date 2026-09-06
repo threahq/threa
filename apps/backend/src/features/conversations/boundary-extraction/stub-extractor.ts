@@ -1,6 +1,6 @@
 import type { BoundaryExtractor, ExtractionContext, ExtractionResult, SplitContext, SplitProposal } from "./types"
 import { logger } from "../../../lib/logger"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 
 /**
  * Stub boundary extractor for CI/test environments where the LLM API is not available.

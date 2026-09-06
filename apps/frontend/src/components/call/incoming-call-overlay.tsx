@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useMatch, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Phone, PhoneOff, BellOff, Video } from "lucide-react"
-import { PrefNotificationLevels, resolveNotificationPause } from "@threa/types"
+import { PrefNotificationLevels, resolveNotificationPause } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { api } from "@/api/client"
 import { cn } from "@/lib/utils"

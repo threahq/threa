@@ -21,7 +21,7 @@ import { db } from "@/db"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
 import { resetRowConfirmations } from "@/sync/bootstrap-diff"
 import { makeStreamBootstrap, makeWorkspaceBootstrap } from "@/test/fixtures/sync-engine"
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { WorkspaceBootstrap } from "@threahq/types"
 
 type MockQueryResult = {
   status: "pending" | "success" | "error"

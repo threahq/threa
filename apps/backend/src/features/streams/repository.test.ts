@@ -1,5 +1,5 @@
 import { describe, expect, test, mock } from "bun:test"
-import { StreamPurposes } from "@threa/types"
+import { StreamPurposes } from "@threahq/types"
 import { StreamRepository } from "./repository"
 import type { Querier } from "../../db"
 

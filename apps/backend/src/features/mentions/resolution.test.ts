@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { JSONContent, MentionActorType } from "@threa/types"
+import type { JSONContent, MentionActorType } from "@threahq/types"
 import { applyMentionResolution, type MentionResolutionMaps } from "./index"
 
 const mention = (id: string, slug: string, mentionType: string): JSONContent => ({

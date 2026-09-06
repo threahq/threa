@@ -20,7 +20,7 @@ import type {
   StepVerificationPayload,
   SessionTerminalPayload,
   AgentStepType,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * In-memory snapshot of substep history for an in-flight tool step.

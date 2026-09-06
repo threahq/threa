@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { MAX_DRAFTS_PER_USER, type DraftCommand, type JSONContent } from "@threa/types"
+import { MAX_DRAFTS_PER_USER, type DraftCommand, type JSONContent } from "@threahq/types"
 
 /**
  * `uniqueness_key` of a scratchpad promoted from a client draft. Keyed per

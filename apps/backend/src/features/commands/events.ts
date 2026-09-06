@@ -1,11 +1,11 @@
-import { serializeBigInt } from "@threa/backend-common"
+import { serializeBigInt } from "@threahq/backend-common"
 import {
   AuthorTypes,
   CommandKinds,
   type CommandCompletedPayload,
   type CommandDispatchedPayload,
   type CommandFailedPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import type { Querier } from "../../db"
 import { eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"

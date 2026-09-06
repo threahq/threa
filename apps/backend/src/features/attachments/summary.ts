@@ -1,4 +1,4 @@
-import type { AttachmentSummary, AttachmentUploadStatus } from "@threa/types"
+import type { AttachmentSummary, AttachmentUploadStatus } from "@threahq/types"
 import type { Querier } from "../../db"
 import type { Attachment } from "./repository"
 import { AttachmentUploadRepository } from "./upload-repository"

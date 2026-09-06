@@ -5,8 +5,8 @@
  */
 
 import { describe, expect, test } from "bun:test"
-import { createModelRegistry } from "@threa/agent-runtime"
-import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODEL_CATALOG } from "@threa/types"
+import { createModelRegistry } from "@threahq/agent-runtime"
+import { DEFAULT_SUBAGENT_MODELS, SUBAGENT_MODEL_CATALOG } from "@threahq/types"
 import { resolveSubagentModels } from "./models"
 
 const registry = createModelRegistry()

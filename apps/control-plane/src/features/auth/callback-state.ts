@@ -1,4 +1,4 @@
-import { decodeAndSanitizeRedirectState } from "@threa/backend-common"
+import { decodeAndSanitizeRedirectState } from "@threahq/backend-common"
 
 /**
  * Peel the optional `add|` multi-account sentinel off the OAuth `state`.

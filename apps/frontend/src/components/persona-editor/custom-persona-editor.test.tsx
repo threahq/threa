@@ -14,7 +14,7 @@ import {
   type PersonaResolvedConfig,
   type WorkspaceBootstrap,
   type WorkspaceSettings,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { personasApi } from "@/api"
 import { ApiError } from "@/api/client"

@@ -1,4 +1,4 @@
-import type { WorkosEventName } from "@threa/backend-common"
+import type { WorkosEventName } from "@threahq/backend-common"
 
 /** Lease identifier for the singleton auth_log WorkOS event poller. */
 export const AUTH_LOG_EVENT_POLLER_NAME = "auth-log-events"

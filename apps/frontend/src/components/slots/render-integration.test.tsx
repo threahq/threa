@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react"
 import { useMemo } from "react"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real slot read path
 import { db } from "@/db"
-import { sharedMessageSlotKey, type SharedMessageSlot, type SlotMap } from "@threa/types"
+import { sharedMessageSlotKey, type SharedMessageSlot, type SlotMap } from "@threahq/types"
 import { useStreamSlots } from "@/hooks/use-stream-slots"
 import { SlotsProvider, useSharedMessageSlot } from "./context"
 

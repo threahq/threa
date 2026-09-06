@@ -1,4 +1,4 @@
-import { StreamTypes, type AgentSessionRerunContext } from "@threa/types"
+import { StreamTypes, type AgentSessionRerunContext } from "@threahq/types"
 import { formatCurrentTime } from "../../../../lib/temporal"
 import type { StreamContext } from "../../context-builder"
 import type { TurnPurpose } from "../../turn-purpose"

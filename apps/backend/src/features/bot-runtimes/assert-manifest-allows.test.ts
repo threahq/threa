@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { assertManifestAllows } from "./assert-manifest-allows"
 
 describe("assertManifestAllows", () => {

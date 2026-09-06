@@ -5,7 +5,7 @@ import {
   VIEWPORT_MAX_VISIBLE_IDS,
   type ContextIntent,
   type ContextRefKind,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * Shared Zod schemas for the ContextBag wire format.

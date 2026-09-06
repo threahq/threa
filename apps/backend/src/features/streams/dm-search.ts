@@ -1,5 +1,5 @@
-import type { StreamType } from "@threa/types"
-import { StreamTypes } from "@threa/types"
+import type { StreamType } from "@threahq/types"
+import { StreamTypes } from "@threahq/types"
 import type { Querier } from "../../db"
 import { UserRepository } from "../workspaces"
 import { StreamRepository } from "./repository"

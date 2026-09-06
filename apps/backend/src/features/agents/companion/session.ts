@@ -1,6 +1,6 @@
 import { APICallError } from "ai"
 import type { Pool } from "pg"
-import type { AgentSessionRerunContext } from "@threa/types"
+import type { AgentSessionRerunContext } from "@threahq/types"
 import { withTransaction, type Querier } from "../../../db"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../session-repository"
 import { collectSessionEffects } from "../session-effects"

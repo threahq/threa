@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
-import { AgentSessionStatuses, AgentStepTypes } from "@threa/types"
+import { AgentSessionStatuses, AgentStepTypes } from "@threahq/types"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { BotRepository } from "./bot-repository"

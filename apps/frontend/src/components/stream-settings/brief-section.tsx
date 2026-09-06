@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { StreamTypes, STREAM_BRIEF_MAX_CHARS, type Stream } from "@threa/types"
+import { StreamTypes, STREAM_BRIEF_MAX_CHARS, type Stream } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"

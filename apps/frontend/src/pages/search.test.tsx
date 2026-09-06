@@ -24,8 +24,8 @@ import { SearchPage } from "./search"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchSteerOutcome } from "@/api"
 import * as apiModule from "@/api"
 import type { WorkspaceBootstrap } from "@/api"
-import type { FeatureFlagLayers } from "@threa/types"
-import { MAX_SEARCH_STEER_CHARS } from "@threa/types"
+import type { FeatureFlagLayers } from "@threahq/types"
+import { MAX_SEARCH_STEER_CHARS } from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 
 const search = vi.fn()

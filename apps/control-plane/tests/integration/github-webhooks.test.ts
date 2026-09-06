@@ -4,7 +4,7 @@ import { createServer, type Server } from "http"
 import type { AddressInfo } from "net"
 import express from "express"
 import type { Pool } from "pg"
-import { createRateLimit, getClientIp } from "@threa/backend-common"
+import { createRateLimit, getClientIp } from "@threahq/backend-common"
 import { createApp } from "../../src/app"
 import {
   createGithubWebhookHandlers,

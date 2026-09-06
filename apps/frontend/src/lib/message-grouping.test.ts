@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { AUTHOR_RUN_WINDOW_MS, isContinuation, isSameAuthorRun } from "./message-grouping"
 import { annotateAuthorGroups, type TimelineItem } from "@/components/timeline/event-list"
 import { type RenderableMessage } from "@/components/message/message-item"

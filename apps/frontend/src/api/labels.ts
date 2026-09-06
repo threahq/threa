@@ -6,7 +6,7 @@ import type {
   LabelableResourceType,
   LabeledMessage,
   UpdateLabelInput,
-} from "@threa/types"
+} from "@threahq/types"
 
 export type { CreateLabelInput, UpdateLabelInput }
 

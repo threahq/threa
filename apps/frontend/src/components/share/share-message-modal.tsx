@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { StreamTypes, type StreamType } from "@threahq/types"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,

@@ -1,4 +1,4 @@
-import { BOT_TRAITS, BOT_TYPES, BotTypes, type Bot as SerializedBot, type BotTrait, type BotType } from "@threa/types"
+import { BOT_TRAITS, BOT_TYPES, BotTypes, type Bot as SerializedBot, type BotTrait, type BotType } from "@threahq/types"
 import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
@@ -95,7 +95,7 @@ function mapRowToBot(row: BotRow): Bot {
   return { ...base, type: "shared", ownerUserId: null, readsAsOwner: false }
 }
 
-/** Wire shape (`@threa/types` Bot): ISO-string dates, no apiKeyId. */
+/** Wire shape (`@threahq/types` Bot): ISO-string dates, no apiKeyId. */
 export function serializeBot(bot: Bot): SerializedBot {
   const common = {
     id: bot.id,

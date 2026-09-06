@@ -1,4 +1,4 @@
-import { exportPrivateKey, exportPublicKey, generateKeyPair, importRecipientPrivateKey } from "@threa/crypto"
+import { exportPrivateKey, exportPublicKey, generateKeyPair, importRecipientPrivateKey } from "@threahq/crypto"
 
 /**
  * UIK lifecycle: generate → wrap-with-KEK → store ciphertext on server →

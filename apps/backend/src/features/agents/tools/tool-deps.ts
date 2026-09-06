@@ -5,7 +5,7 @@ import type {
   KnowledgeType,
   MemoScope,
   UserPreferences,
-} from "@threa/types"
+} from "@threahq/types"
 import type { AttachmentService } from "../../attachments"
 import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"

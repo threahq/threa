@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from "react"
 import { AlertTriangle, ChevronLeft, Minimize2, Pin } from "lucide-react"
-import { getAvatarUrl } from "@threa/types"
+import { getAvatarUrl } from "@threahq/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
 import { getInitials } from "@/lib/initials"

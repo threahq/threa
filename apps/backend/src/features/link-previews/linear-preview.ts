@@ -11,7 +11,7 @@ import {
   type LinearPreview,
   type LinearProjectPreviewData,
   type LinearTeam,
-} from "@threa/types"
+} from "@threahq/types"
 import type { UpdateLinkPreviewParams } from "./repository"
 import { parseLinearUrl, type LinearUrlMatch } from "./url-utils"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"

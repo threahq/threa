@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { BotAccessRequestedEventPayload, BotAccessStatusChangedEventPayload, StreamEvent } from "@threa/types"
+import type { BotAccessRequestedEventPayload, BotAccessStatusChangedEventPayload, StreamEvent } from "@threahq/types"
 import { toast } from "sonner"
 import { botAccessApi } from "@/api"
 import { BotAccessEvent } from "./bot-access-event"

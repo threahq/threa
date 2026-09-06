@@ -9,8 +9,8 @@ import {
   displayNameFromWorkos,
   OutboxRepository,
   type WorkosOrgService,
-} from "@threa/backend-common"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+} from "@threahq/backend-common"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { WorkspaceRegistryRepository } from "./repository"
 import type { RegionalClient } from "../../lib/regional-client"
 import type { KvClient } from "../../lib/cloudflare-kv-client"

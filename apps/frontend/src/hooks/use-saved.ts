@@ -12,7 +12,7 @@ import type {
   SavedStatus,
   SaveMessageInput,
   UpdateSavedMessageInput,
-} from "@threa/types"
+} from "@threahq/types"
 
 export const savedKeys = {
   all: ["saved"] as const,

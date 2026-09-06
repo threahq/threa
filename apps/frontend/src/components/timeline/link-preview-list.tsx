@@ -7,7 +7,7 @@ import { usePreferences } from "@/contexts"
 import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
 import { LinkPreviewCard } from "./link-preview-card"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
-import { isInAppLinkContentType, LinkPreviewContentTypes, type LinkPreviewSummary } from "@threa/types"
+import { isInAppLinkContentType, LinkPreviewContentTypes, type LinkPreviewSummary } from "@threahq/types"
 
 const DEFAULT_VISIBLE_COUNT = 3
 

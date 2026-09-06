@@ -1,4 +1,4 @@
-import { type PerfDeviceClass, type PerformanceCapture, performanceCaptureSchema } from "@threa/types"
+import { type PerfDeviceClass, type PerformanceCapture, performanceCaptureSchema } from "@threahq/types"
 import { ulid } from "ulid"
 import { currentAppVersion } from "@/lib/app-build"
 import { type PerfCaptureLike } from "./capture"

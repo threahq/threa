@@ -6,7 +6,7 @@ import {
   type SubagentFailureReason,
   type SubagentStatus,
   type ThreadSummary,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * What the subagent card says it is doing. An `active` run splits three ways:

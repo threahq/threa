@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ContextIntents, ContextRefKinds } from "@threa/types"
+import { ContextIntents, ContextRefKinds } from "@threahq/types"
 import { createContextBagHandlers } from "./handlers"
 import * as precomputeService from "./precompute-service"
 import * as dbModule from "../../../db"

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { invitationsApi } from "@/api/invitations"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import {
   defaultInviteExpiry,
   InviteLinkSettingsFields,

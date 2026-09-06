@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import type { StreamContextBagPayload } from "@threa/types"
+import type { StreamContextBagPayload } from "@threahq/types"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 
 const EMPTY: StreamContextBagPayload = { bag: null, refs: [] }

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import * as backendCommon from "@threa/backend-common"
-import { HttpError, OutboxRepository } from "@threa/backend-common"
-import { FEATURE_FLAG_DEFINITIONS, type FeatureFlagDefinition } from "@threa/types"
+import * as backendCommon from "@threahq/backend-common"
+import { HttpError, OutboxRepository } from "@threahq/backend-common"
+import { FEATURE_FLAG_DEFINITIONS, type FeatureFlagDefinition } from "@threahq/types"
 import { ControlPlaneFeatureFlagService, OUTBOX_FEATURE_FLAGS_SYNC } from "./service"
 import { FeatureFlagOverrideRepository } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
@@ -13,7 +13,7 @@ const WORKOS_USER_ID = "workos_user_1"
 // The shipped FEATURE_FLAGS is empty between rollouts, so inject a stand-in
 // registry (visible to the code-bound predicates, which read
 // FEATURE_FLAG_DEFINITIONS dynamically) and clear it after each test rather
-// than committing a fake flag to @threa/types.
+// than committing a fake flag to @threahq/types.
 const STANDIN_REGISTRY = {
   wsOnly: { values: ["off", "on"], scopes: ["workspace"], default: "off" },
   userOnly: { values: ["off", "on"], scopes: ["user"], default: "off" },

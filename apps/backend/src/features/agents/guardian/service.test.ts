@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { ModelMessage } from "ai"
-import { DELEGATION_BRIEF_MAX_CHARS } from "@threa/types"
+import { DELEGATION_BRIEF_MAX_CHARS } from "@threahq/types"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { TOOL_GUARDIAN_MESSAGE_CHARS, TOOL_GUARDIAN_HISTORY_MESSAGES } from "./config"
 import { ToolGuardianService, renderGuardianArguments, renderGuardianConversation } from "./service"

@@ -1,7 +1,7 @@
 import { useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { Download, FileLock2, Loader2 } from "lucide-react"
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 import { type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { requestAttachmentBytes } from "@/lib/crypto/attachment-cache"
 import { fetchAndDecryptAttachment, useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"

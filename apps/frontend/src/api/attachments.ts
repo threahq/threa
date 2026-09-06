@@ -1,5 +1,5 @@
 import { api, API_BASE, ApiError, parseApiError } from "./client"
-import type { Attachment, AttachmentCategory } from "@threa/types"
+import type { Attachment, AttachmentCategory } from "@threahq/types"
 
 export interface AttachmentSearchExtractionExcerpt {
   contentType: string

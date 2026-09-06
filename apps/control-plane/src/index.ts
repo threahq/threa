@@ -1,5 +1,5 @@
 import { startServer } from "./server"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 
 const { server, stop, fastShutdown, analyticsReporter } = await startServer()
 

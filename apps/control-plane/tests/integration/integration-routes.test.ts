@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { createIntegrationRouteHandlers, IntegrationRouteRepository } from "../../src/features/integration-routes"
 import { setupTestDatabase } from "./setup"
 

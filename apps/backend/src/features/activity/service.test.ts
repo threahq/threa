@@ -7,7 +7,7 @@ import {
   NotificationLevels,
   StreamTypes,
   Visibilities,
-} from "@threa/types"
+} from "@threahq/types"
 import { ActivityService } from "./service"
 import { ActivityRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"

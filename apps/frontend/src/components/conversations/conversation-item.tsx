@@ -11,7 +11,7 @@ import { useConversationService, usePanel, createConversationPanelId } from "@/c
 import { useActors } from "@/hooks"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
-import type { AuthorType, ConversationWithStaleness, Message } from "@threa/types"
+import type { AuthorType, ConversationWithStaleness, Message } from "@threahq/types"
 
 interface ConversationItemProps {
   workspaceId: string

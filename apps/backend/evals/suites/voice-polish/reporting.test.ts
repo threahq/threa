@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseMarkdown } from "@threa/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import { voicePolishConfig } from "../../../src/features/voice-transcription/config"
 import { decideVoicePolishComparison } from "./reporting"
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { EvalContext } from "../../framework/types"
 import { runVoicePolishTask } from "./suite"
 

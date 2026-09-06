@@ -3,8 +3,8 @@
  * and is read via ModelRegistry (INV-33).
  */
 
-import { parseModelId, type ReasoningEffort } from "@threa/agent-runtime"
-import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX } from "@threa/types"
+import { parseModelId, type ReasoningEffort } from "@threahq/agent-runtime"
+import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX } from "@threahq/types"
 
 export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
 

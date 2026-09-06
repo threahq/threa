@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai"
-import { AuthorTypes, StreamTypes, type ChartData, type DiagramData, type TableData } from "@threa/types"
+import { AuthorTypes, StreamTypes, type ChartData, type DiagramData, type TableData } from "@threahq/types"
 import { formatDate, formatTime, getDateKey } from "../../../../lib/temporal"
 import type { AttachmentContext, MessageWithAttachments, StreamContext } from "../../context-builder"
 import { formatAttachImageTag, formatAttachTag, formatMsgAuthorTag } from "../../pointer-tags"

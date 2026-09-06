@@ -1,7 +1,7 @@
 import { Separator } from "@/components/ui/separator"
 import { EventItem } from "@/components/timeline"
 import type { MessageAgentActivity } from "@/hooks"
-import type { StreamEvent, SubagentSummary } from "@threa/types"
+import type { StreamEvent, SubagentSummary } from "@threahq/types"
 
 interface ThreadParentEventProps {
   event: StreamEvent

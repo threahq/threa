@@ -3,7 +3,7 @@ import type { Mark as ProseMirrorMark } from "@tiptap/pm/model"
 import { TextSelection, type Transaction, Plugin } from "@tiptap/pm/state"
 import type { EditorState } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
-import type { MessageSendMode } from "@threa/types"
+import type { MessageSendMode } from "@threahq/types"
 import { deleteAdjacentInlineAtom, handleEnterTextBehavior, toggleMultilineBlock } from "./multiline-blocks"
 import { matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 

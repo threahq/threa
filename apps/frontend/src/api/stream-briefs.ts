@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { AuthorType } from "@threa/types"
+import type { AuthorType } from "@threahq/types"
 
 /**
  * A stream brief (roadmap 4.1) as it arrives on the wire — `Date` columns are

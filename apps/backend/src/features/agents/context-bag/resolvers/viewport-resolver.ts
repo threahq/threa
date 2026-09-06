@@ -1,5 +1,5 @@
 import type { Querier } from "../../../../db"
-import { ContextRefKinds, type ViewportContextRef } from "@threa/types"
+import { ContextRefKinds, type ViewportContextRef } from "@threahq/types"
 import { HttpError } from "../../../../lib/errors"
 import type { Message } from "../../../messaging"
 import { MessageRepository } from "../../../messaging"

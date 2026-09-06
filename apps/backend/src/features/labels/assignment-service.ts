@@ -6,8 +6,8 @@ import {
   type LabelActor,
   type LabelAssignment,
   type LabelableResourceType,
-} from "@threa/types"
-import { generateSlug } from "@threa/backend-common"
+} from "@threahq/types"
+import { generateSlug } from "@threahq/backend-common"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"

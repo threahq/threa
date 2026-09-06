@@ -237,10 +237,10 @@ export type {
   EnrichAttachmentsOptions,
 } from "./context-builder"
 
-// Tool trust boundary (lives in @threa/agent-runtime; re-exported for backend
+// Tool trust boundary (lives in @threahq/agent-runtime; re-exported for backend
 // callers that still import from this barrel)
-export { protectToolOutputText, protectToolOutputBlocks } from "@threa/agent-runtime"
-export type { MultimodalContentBlock } from "@threa/agent-runtime"
+export { protectToolOutputText, protectToolOutputBlocks } from "@threahq/agent-runtime"
+export type { MultimodalContentBlock } from "@threahq/agent-runtime"
 
 export { WorkspaceAgent } from "./researcher"
 export type { WorkspaceAgentResult, WorkspaceAgentInput, WorkspaceAgentDeps, WorkspaceSourceItem } from "./researcher"

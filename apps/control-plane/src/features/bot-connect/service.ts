@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomInt } from "node:crypto"
 import type { Pool } from "pg"
-import { HttpError, botConnectRequestId, logger } from "@threa/backend-common"
+import { HttpError, botConnectRequestId, logger } from "@threahq/backend-common"
 import { BotConnectRepository, type BotConnectRequestRow } from "./repository"
 
 export const BOT_CONNECT_REQUEST_TTL_MS = 15 * 60 * 1000

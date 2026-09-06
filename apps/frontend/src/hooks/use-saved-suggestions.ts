@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSavedSuggestionsService } from "@/contexts"
 import { persistSavedRows, savedKeys } from "./use-saved"
-import type { SavedSuggestionStatus, SavedSuggestionView } from "@threa/types"
+import type { SavedSuggestionStatus, SavedSuggestionView } from "@threahq/types"
 
 export const savedSuggestionKeys = {
   all: ["saved-suggestions"] as const,

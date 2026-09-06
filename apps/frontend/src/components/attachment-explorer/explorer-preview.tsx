@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery, type UseQueryResult } from "@tanstack/react-query"
-import { categoryFromMime } from "@threa/types"
+import { categoryFromMime } from "@threahq/types"
 import { Check, ChevronDown, ChevronUp, Code2, Copy, Download, ExternalLink, Eye, Hash } from "lucide-react"
 import { attachmentsApi, type AttachmentExtractionContent, type AttachmentSearchItem } from "@/api/attachments"
 import { Button } from "@/components/ui/button"

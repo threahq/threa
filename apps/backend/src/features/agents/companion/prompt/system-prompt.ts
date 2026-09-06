@@ -1,5 +1,5 @@
-import { buildToolPromptSections, formatConversationMemoryForPrompt, type AgentTool } from "@threa/agent-runtime"
-import type { UserPreferences } from "@threa/types"
+import { buildToolPromptSections, formatConversationMemoryForPrompt, type AgentTool } from "@threahq/agent-runtime"
+import type { UserPreferences } from "@threahq/types"
 import { buildTemporalPromptSection } from "../../../../lib/temporal"
 import type { Persona } from "../../persona-repository"
 import type { PersonaAttachmentContentItem } from "../../persona-attachment-repository"

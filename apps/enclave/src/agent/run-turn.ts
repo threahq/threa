@@ -1,7 +1,7 @@
 import type { LanguageModel, ModelMessage } from "ai"
 import { ulid } from "ulid"
-import { logger as baseLogger } from "@threa/agent-runtime/logger"
-import { repairMessageReferences } from "@threa/prosemirror/message-reference-repair"
+import { logger as baseLogger } from "@threahq/agent-runtime/logger"
+import { repairMessageReferences } from "@threahq/prosemirror/message-reference-repair"
 import {
   base64ToBytes,
   buildMessageAad,
@@ -16,7 +16,7 @@ import {
   serializeSealedPayload,
   unwrapStreamKey,
   type AttachmentRef,
-} from "@threa/crypto"
+} from "@threahq/crypto"
 import type {
   EnclaveMidTurnMessage,
   EnclaveSessionAssignment,
@@ -28,7 +28,7 @@ import type {
   EnclaveSealedSummary,
   EnclaveNamingDecision,
   EnclaveSskWrap,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   EnclaveTurnDriver,
   TurnDeliveries,
@@ -48,7 +48,7 @@ import {
   type TurnDigestPromptEntry,
   type TurnRequest,
   type TurnSink,
-} from "@threa/agent-runtime/runtime"
+} from "@threahq/agent-runtime/runtime"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"

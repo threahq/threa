@@ -1,5 +1,5 @@
 import type { Response } from "express"
-import { bigIntReplacer } from "@threa/backend-common"
+import { bigIntReplacer } from "@threahq/backend-common"
 import { bootstrapServeDurationSeconds, bootstrapServeEntitiesReturned, bootstrapServePayloadBytes } from "./metrics"
 
 export type BootstrapKind = "workspace" | "stream"

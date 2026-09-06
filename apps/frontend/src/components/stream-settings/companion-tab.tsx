@@ -12,7 +12,7 @@ import {
   type Stream,
   type ToolPrivacyCategory,
   type ToolPrivacyPolicy,
-} from "@threa/types"
+} from "@threahq/types"
 import { CompanionAgentSelect, resolveCompanionSelection } from "./companion-agent-select"
 import { ToolPolicyPicker } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"

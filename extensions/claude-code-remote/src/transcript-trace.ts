@@ -31,7 +31,7 @@ import { basename, join } from "node:path"
 // (`apps/frontend/src/components/trace/trace-step.tsx`; canonical constants in
 // `packages/types`). Duplicated here for the same reason pi-remote duplicates
 // it: this package installs standalone (install-local vendoring), so it cannot
-// depend on @threa/types.
+// depend on @threahq/types.
 const TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SECTION_LABELS = {
   ARGUMENTS: "Arguments",

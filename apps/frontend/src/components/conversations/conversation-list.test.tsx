@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threahq/types"
 import { ConversationList } from "./conversation-list"
 import { PanelProvider } from "@/contexts"
 import * as contextsModule from "@/contexts"

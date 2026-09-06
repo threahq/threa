@@ -3,7 +3,7 @@ import { usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { db, sequenceToNum, type CachedStream, type PendingStreamCreation } from "@/db"
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown } from "@threahq/prosemirror"
 import {
   StreamTypes,
   Visibilities,
@@ -11,7 +11,7 @@ import {
   type ConversationDirective,
   type JSONContent,
   type StreamEvent,
-} from "@threa/types"
+} from "@threahq/types"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { getLatestPersistedSequence, optimisticReplyCountUpdate } from "@/sync/stream-sync"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"

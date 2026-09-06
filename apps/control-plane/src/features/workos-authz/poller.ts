@@ -1,4 +1,4 @@
-import { logger, type WorkosOrgService } from "@threa/backend-common"
+import { logger, type WorkosOrgService } from "@threahq/backend-common"
 import type { WorkosEventPollerLock } from "../../lib/workos-event-poller-lock"
 import type { WorkosAuthzService } from "./service"
 

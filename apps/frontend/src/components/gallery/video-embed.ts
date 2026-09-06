@@ -1,4 +1,4 @@
-import type { GitHubPreview, LinearPreview, VideoPreview, VideoPreviewProvider } from "@threa/types"
+import type { GitHubPreview, LinearPreview, VideoPreview, VideoPreviewProvider } from "@threahq/types"
 
 /**
  * Narrow a link preview's `previewData` union to the video-embed variant.

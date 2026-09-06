@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useLiveQuery } from "dexie-react-hooks"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { db } from "@/db"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import {

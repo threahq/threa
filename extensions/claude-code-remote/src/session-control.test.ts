@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
-import type { HarnessSpawnSpec } from "@threa/harness-client"
+import type { HarnessSpawnSpec } from "@threahq/harness-client"
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
 
 function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T): T {

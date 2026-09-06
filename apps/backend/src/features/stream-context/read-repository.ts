@@ -8,8 +8,8 @@ import type {
   StreamContextItem,
   StreamContextItemDetail,
   StreamContextScope,
-} from "@threa/types"
-import { CONTEXT_CATEGORIES, streamContextItemKey } from "@threa/types"
+} from "@threahq/types"
+import { CONTEXT_CATEGORIES, streamContextItemKey } from "@threahq/types"
 import { composeSql, sql, type Querier } from "../../db"
 import { KEYSET_EPOCH, type KeysetCursor } from "../../lib/keyset-cursor"
 

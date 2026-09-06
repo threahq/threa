@@ -1,4 +1,4 @@
-import { AgentToolNames, type AgentToolName } from "@threa/types"
+import { AgentToolNames, type AgentToolName } from "@threahq/types"
 
 /**
  * Persona agent supersede rerun response validation config (INV-44).
@@ -11,7 +11,7 @@ export const SUPERSEDE_RESPONSE_VALIDATOR_TEMPERATURE = 0
 /**
  * Turn digest (C-1) findings model for companion turns (INV-44). One cheap
  * post-turn call condensing the loop's tool work; generation bounds live with
- * the shared component (`@threa/agent-runtime` turn-digest). The enclave uses
+ * the shared component (`@threahq/agent-runtime` turn-digest). The enclave uses
  * its own pinned turn model instead — it has exactly one egress-approved model.
  */
 export const TURN_DIGEST_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
@@ -20,7 +20,7 @@ export const TURN_DIGEST_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
  * Follow-up scheduling bounds (`schedule_follow_up` tool, roadmap 1.1).
  *
  * `DEFAULT_MAX_PENDING_FOLLOW_UPS` is the code default pending-per-stream cap,
- * re-exported from `@threa/types` where `DEFAULT_WORKSPACE_SETTINGS.maxPendingFollowUps`
+ * re-exported from `@threahq/types` where `DEFAULT_WORKSPACE_SETTINGS.maxPendingFollowUps`
  * seeds from the same number (INV-33). The workspace override is merged onto that
  * default inside `WorkspaceSettingsService.getSettings`; the follow-up service reads
  * the already-merged value (roadmap 1.4) and so does not import this constant — it
@@ -30,7 +30,7 @@ export const TURN_DIGEST_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
  * these are minutes-to-days "check back later" nudges, not long-horizon jobs
  * (the anti-goal behind proposed INV-64).
  */
-export { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "@threa/types"
+export { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "@threahq/types"
 export const MAX_FOLLOW_UP_HORIZON_DAYS = 30
 
 /**
@@ -38,7 +38,7 @@ export const MAX_FOLLOW_UP_HORIZON_DAYS = 30
  * attachments, decision 6). SERVER-ONLY — these bound how much extracted text a
  * persona's standing files inject into the system prompt and never cross the
  * wire, so they live in the agents feature config next to the prompt code
- * (INV-33/44), not in `@threa/types`.
+ * (INV-33/44), not in `@threahq/types`.
  *
  * `PERSONA_ATTACHMENT_INLINE_FULLTEXT_MAX_CHARS`: a single file's full extracted
  * text is inlined verbatim only up to this length; a larger file degrades to its

@@ -20,7 +20,7 @@ import { EventService, MessageRepository } from "../../src/features/messaging"
 import { MemoRepository } from "../../src/features/memos"
 import type { MessageCreatedPayload, MessageEditedPayload } from "../../src/features/messaging"
 import { userId, workspaceId, streamId, messageId, memoId } from "../../src/lib/id"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 /** A body citing `memoIds`, as the composer and the markdown parser both build it. */
 function bodyCiting(text: string, memoIds: string[]): { contentJson: JSONContent; contentMarkdown: string } {

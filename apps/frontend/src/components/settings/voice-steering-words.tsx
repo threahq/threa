@@ -1,5 +1,5 @@
 import { usePreferences } from "@/contexts"
-import { VOICE_STEERING_BASE_TERMS } from "@threa/types"
+import { VOICE_STEERING_BASE_TERMS } from "@threahq/types"
 import { SteeringWordsEditor } from "./steering-words-editor"
 
 const BAKED_IN_LABEL = VOICE_STEERING_BASE_TERMS.join(", ")

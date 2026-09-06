@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
-import type { BoardPostMessage, LinkPreviewSummary } from "@threa/types"
+import type { BoardPostMessage, LinkPreviewSummary } from "@threahq/types"
 import { db } from "@/db"
 import { registerStreamSocketHandlers } from "./stream-sync"
 import { seedConversationMessages, __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"

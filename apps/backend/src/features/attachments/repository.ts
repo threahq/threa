@@ -11,7 +11,7 @@ import {
   type ExtractionContentType,
   type AttachmentSafetyStatus,
   type AttachmentCategory,
-} from "@threa/types"
+} from "@threahq/types"
 
 interface AttachmentRow {
   id: string

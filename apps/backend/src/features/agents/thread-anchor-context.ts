@@ -1,5 +1,5 @@
 import type { Querier } from "../../db"
-import type { AuthorType, JSONContent, CallStartedEventPayload, DelegationCreatedEventPayload } from "@threa/types"
+import type { AuthorType, JSONContent, CallStartedEventPayload, DelegationCreatedEventPayload } from "@threahq/types"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamEventRepository, type Stream } from "../streams"
 

@@ -6,7 +6,7 @@ import {
   permissionsForRole,
   PERSONA_NAME_MAX_CHARS,
   WORKSPACE_PERMISSION_SCOPES,
-} from "@threa/types"
+} from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { getVisibleBuiltInAgentConfig } from "./built-in-agents"

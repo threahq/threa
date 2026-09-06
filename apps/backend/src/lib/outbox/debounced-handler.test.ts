@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import * as cursorLockModule from "@threa/backend-common"
-import type { ProcessResult } from "@threa/backend-common"
+import * as cursorLockModule from "@threahq/backend-common"
+import type { ProcessResult } from "@threahq/backend-common"
 import { OutboxRepository } from "./repository"
 import type { OutboxEvent } from "./repository"
 import { DebouncedOutboxHandler } from "./debounced-handler"

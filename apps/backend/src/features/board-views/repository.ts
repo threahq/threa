@@ -1,6 +1,6 @@
 import { sql, type Querier } from "../../db"
 import { boardViewId } from "../../lib/id"
-import { degradeBoardLens, type BoardView, type BoardLens, type BoardScopeStreamType } from "@threa/types"
+import { degradeBoardLens, type BoardView, type BoardLens, type BoardScopeStreamType } from "@threahq/types"
 
 interface BoardViewRow {
   id: string

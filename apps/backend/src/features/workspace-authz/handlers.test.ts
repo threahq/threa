@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { createWorkspaceAuthzHandlers } from "./handlers"
 import type { ApplyMembershipChangeInput, ApplyMembershipRemovalInput, WorkspaceAuthzService } from "./service"

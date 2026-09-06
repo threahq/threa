@@ -13,7 +13,7 @@ import {
   type StreamMember,
   type StreamReadFrontier,
   type WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import { streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"

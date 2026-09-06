@@ -1,5 +1,5 @@
 import { describe, expect, mock, spyOn, test } from "bun:test"
-import type { FeatureFlagValue } from "@threa/types"
+import type { FeatureFlagValue } from "@threahq/types"
 import { createGetStreamMessagesTool, createSearchMessagesTool, createSearchStreamsTool } from "./search-workspace-tool"
 import type { WorkspaceToolDeps } from "./tool-deps"
 import { MessageRepository, type Message } from "../../messaging"

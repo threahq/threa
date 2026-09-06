@@ -1,7 +1,7 @@
 import { describe, expect, it, mock, spyOn } from "bun:test"
 import { buildPolishUserMessage, createPolishTranscript, scrubDashes } from "./polish"
 import { voicePolishConfig } from "./config"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 
 type GenerateTextArgs = Parameters<AI["generateText"]>[0]

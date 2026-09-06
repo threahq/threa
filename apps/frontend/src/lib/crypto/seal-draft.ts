@@ -1,6 +1,6 @@
-import { serializeToMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
-import type { AttachmentRef } from "@threa/crypto"
+import { serializeToMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
+import type { AttachmentRef } from "@threahq/crypto"
 import { sealOutgoingMessage } from "./seal-send"
 
 /** The E2E triple persisted at rest in place of a draft's plaintext (E2EE-4),

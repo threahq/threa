@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import type { StreamBootstrap } from "@threa/types"
+import type { StreamBootstrap } from "@threahq/types"
 import { contextBagApi, type StreamContextBagResponse } from "@/api"
 import { streamKeys } from "./use-streams"
 

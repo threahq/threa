@@ -1,4 +1,4 @@
-import { parseMarkdown, serializeToMarkdown } from "@threa/prosemirror"
+import { parseMarkdown, serializeToMarkdown } from "@threahq/prosemirror"
 import type { CaseResult, Evaluator, EvaluatorResult, PermutationResult, RunEvaluator } from "../../framework/types"
 import type { VoicePolishExpected, VoicePolishOutput, VoicePolishStepOutput } from "./types"
 import {

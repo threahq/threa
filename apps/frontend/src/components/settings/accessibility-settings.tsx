@@ -11,7 +11,7 @@ import {
   type FontSize,
   type FontFamily,
   type ComposerActionSide,
-} from "@threa/types"
+} from "@threahq/types"
 
 const FONT_SIZE_LABELS: Record<FontSize, string> = {
   small: "Small (14px)",

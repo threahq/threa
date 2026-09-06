@@ -82,7 +82,7 @@ export async function loginAndCreateWorkspace(
  * sections, so it pins the deterministic All preset at setup. Smart-bucket
  * resolution has its own unit coverage (`resolve-sections.test.ts`).
  *
- * Body mirrors `ALL_SIDEBAR_CONFIG` in `@threa/types` (not importable from the
+ * Body mirrors `ALL_SIDEBAR_CONFIG` in `@threahq/types` (not importable from the
  * repo-root test runtime); `quickLinks` is omitted because the PATCH schema
  * defaults + normalizes it to the full set. The backend Zod schema rejects any
  * drift loudly, so a stale literal fails fast rather than silently.
@@ -110,7 +110,7 @@ async function setAllSidebarPreset(page: Page, workspaceId: string): Promise<voi
  * *type* (Channels / Scratchpads / DMs) and so never include threads. Threads
  * only surface in the Smart preset's urgency buckets, so tests that assert on a
  * sidebar thread entry must opt back into Smart. Body mirrors
- * `SMART_SIDEBAR_CONFIG` in `@threa/types` (not importable from the repo-root
+ * `SMART_SIDEBAR_CONFIG` in `@threahq/types` (not importable from the repo-root
  * test runtime); the backend Zod schema rejects drift loudly.
  */
 export async function setSmartSidebarPreset(page: Page): Promise<void> {

@@ -1,7 +1,7 @@
 import { useCallback } from "react"
 import { useParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import type { Memo } from "@threa/types"
+import type { Memo } from "@threahq/types"
 import { searchMemos } from "@/api"
 import { memoKeys } from "@/hooks/use-memos"
 import { MemoSuggestionList } from "./memo-suggestion-list"

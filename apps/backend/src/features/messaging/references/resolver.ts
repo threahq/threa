@@ -1,5 +1,5 @@
-import { isEmptySlice, isRangeValid, normalizeRange } from "@threa/prosemirror"
-import { MessageReferenceErrorCodes, type ContentRange, type JSONContent } from "@threa/types"
+import { isEmptySlice, isRangeValid, normalizeRange } from "@threahq/prosemirror"
+import { MessageReferenceErrorCodes, type ContentRange, type JSONContent } from "@threahq/types"
 
 import type { Querier } from "../../../db"
 import { HttpError } from "../../../lib/errors"

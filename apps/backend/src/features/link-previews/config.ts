@@ -1,4 +1,4 @@
-import { threaFetchUserAgent } from "@threa/types"
+import { threaFetchUserAgent } from "@threahq/types"
 
 export const MAX_PREVIEWS_PER_MESSAGE = 5
 

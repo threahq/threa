@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Check, Copy, WrapText, X } from "lucide-react"
-import { formatCodeLanguage, resolveCodeBlockWrap, type CodeBlockWrap } from "@threa/types"
+import { formatCodeLanguage, resolveCodeBlockWrap, type CodeBlockWrap } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"

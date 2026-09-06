@@ -1,5 +1,5 @@
 import { CornerDownRight } from "lucide-react"
-import type { MovedFromProvenance } from "@threa/types"
+import type { MovedFromProvenance } from "@threahq/types"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { RelativeTime } from "@/components/relative-time"
 import { useActors } from "@/hooks"

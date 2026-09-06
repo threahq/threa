@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import type { Stream } from "@threa/types"
+import type { Stream } from "@threahq/types"
 import { useStreamService } from "@/contexts"
 import { sealStreamRename } from "@/lib/crypto/stream-rename"
 import { mergeStreamByTitleRevision, persistStreamByTitleRevision } from "@/lib/title-merge"

@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core"
 import { ReactNodeViewRenderer } from "@tiptap/react"
-import { attachmentReferenceLabel } from "@threa/prosemirror"
+import { attachmentReferenceLabel } from "@threahq/prosemirror"
 import { AttachmentReferenceView } from "./attachment-reference-view"
 
 export type AttachmentStatus = "uploading" | "uploaded" | "error"

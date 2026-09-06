@@ -39,7 +39,7 @@ import {
 } from "@/stores/agent-activity-store"
 import { seedActiveCalls, upsertActiveCall, removeActiveCall } from "@/stores/active-calls-store"
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
-import type { CallStartedEventPayload } from "@threa/types"
+import type { CallStartedEventPayload } from "@threahq/types"
 import type { SyncEventSource } from "./socket-event-gate"
 import type { QueryClient } from "@tanstack/react-query"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
@@ -87,7 +87,7 @@ import type {
   DraftUpsertedPayload,
   DraftDeletedPayload,
   PersonaListItem,
-} from "@threa/types"
+} from "@threahq/types"
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
@@ -115,7 +115,7 @@ import {
   StreamPurposes,
   Visibilities,
   normalizeSidebarConfig,
-} from "@threa/types"
+} from "@threahq/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -1077,7 +1077,7 @@ export function registerWorkspaceSocketHandlers(
       const existingSeq = existingFrontier?.lastReadSequence != null ? BigInt(existingFrontier.lastReadSequence) : null
       if (existingSeq == null || advanceSeq == null || advanceSeq >= existingSeq) {
         mergeReadStateIntoBootstrapCache(queryClient, workspaceId, payload.streamId, advanceFrontier)
-        queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
+        queryClient.setQueryData<import("@threahq/types").StreamBootstrap | undefined>(
           streamKeys.bootstrap(workspaceId, payload.streamId),
           (old) => (old ? { ...old, readState: advanceFrontier } : old)
         )
@@ -1128,7 +1128,7 @@ export function registerWorkspaceSocketHandlers(
       lastReadAt: new Date().toISOString(),
     }
     mergeReadStateIntoBootstrapCache(queryClient, workspaceId, payload.streamId, frontier)
-    queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
+    queryClient.setQueryData<import("@threahq/types").StreamBootstrap | undefined>(
       streamKeys.bootstrap(workspaceId, payload.streamId),
       (old) => (old ? { ...old, readState: frontier } : old)
     )
@@ -1251,7 +1251,7 @@ export function registerWorkspaceSocketHandlers(
     })
 
     // Stream bootstrap membership mirror — drives the settings dialog's level.
-    queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
+    queryClient.setQueryData<import("@threahq/types").StreamBootstrap | undefined>(
       streamKeys.bootstrap(workspaceId, payload.streamId),
       (old) => {
         if (!old?.membership) return old

@@ -3,7 +3,7 @@ import {
   WorkspaceIntegrationStatuses,
   type WorkspaceIntegrationProvider,
   type WorkspaceIntegrationStatus,
-} from "@threa/types"
+} from "@threahq/types"
 
 export interface WorkspaceIntegrationRecord {
   id: string

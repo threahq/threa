@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AuthorTypes, CompanionModes, StreamTypes, Visibilities } from "@threa/types"
+import { AuthorTypes, CompanionModes, StreamTypes, Visibilities } from "@threahq/types"
 import { StreamRepository } from "../streams"
 import { InvitationRepository } from "../invitations"
 import { UserRepository } from "../workspaces"

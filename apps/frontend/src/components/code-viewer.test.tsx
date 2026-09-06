@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { CodeBlockWrap } from "@threa/types"
+import type { CodeBlockWrap } from "@threahq/types"
 import { CodeViewerProvider, useCodeViewerOptional } from "@/contexts/code-viewer-context"
 import * as preferencesModule from "@/contexts/preferences-context"
 import * as highlighterModule from "@/lib/markdown/highlighter"

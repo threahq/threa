@@ -4,8 +4,8 @@ import {
   type TraceStepRecord,
   type TraceStepSink,
   type TraceSubstepEntry,
-} from "@threa/agent-runtime"
-import type { AgentStepType, AgentToolEffect, ToolVerificationStatus } from "@threa/types"
+} from "@threahq/agent-runtime"
+import type { AgentStepType, AgentToolEffect, ToolVerificationStatus } from "@threahq/types"
 import type { ActiveStep, SessionTrace } from "../trace-emitter"
 import { logger } from "../../../lib/logger"
 

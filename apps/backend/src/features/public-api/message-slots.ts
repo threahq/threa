@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import type { JSONContent, SharedMessageRef } from "@threa/types"
+import type { JSONContent, SharedMessageRef } from "@threahq/types"
 import {
   collectSharedMessageRefs,
   hydrateSharedMessageRefsForAccessibleSet,

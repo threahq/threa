@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { Visibilities } from "@threa/types"
+import { Visibilities } from "@threahq/types"
 import { StreamRepository, type Stream } from "./repository"
 import { HttpError } from "../../lib/errors"
 import { createStreamBriefHandlers } from "./brief-handlers"

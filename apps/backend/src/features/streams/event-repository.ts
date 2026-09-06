@@ -7,7 +7,7 @@ import {
   type AgentSessionRerunContext,
   type AuthorType,
   type EventType,
-} from "@threa/types"
+} from "@threahq/types"
 
 interface StreamEventRow {
   id: string

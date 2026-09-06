@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { stashLoadedDraft, restoreStashedDraftToComposer, upsertLoadedDraft } from "./use-draft-message"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { useStashedDrafts } from "./use-stashed-drafts"

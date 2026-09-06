@@ -3,7 +3,7 @@ import { QueryClient } from "@tanstack/react-query"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { LiveCommitBatch } from "./catch-up-batch"
-import type { Activity } from "@threa/types"
+import type { Activity } from "@threahq/types"
 import {
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
@@ -639,7 +639,7 @@ describe("mergeBootstrapUnreadFields", () => {
     readMessageIds: { s2: ["m1"] },
     mutedStreamIds: ["s9"],
     unreadActivities: [act("a1", "s1"), act("a2", "s2")],
-  } as unknown as import("@threa/types").WorkspaceBootstrap
+  } as unknown as import("@threahq/types").WorkspaceBootstrap
 
   it("takes the server snapshot wholesale when nothing local was touched during the fetch", () => {
     const merged = mergeBootstrapUnreadFields(

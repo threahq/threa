@@ -58,11 +58,11 @@ import {
   StreamBriefRepository,
 } from "../../../src/features/streams"
 import { EventService } from "../../../src/features/messaging"
-import { createModelRegistry } from "@threa/agent-runtime"
+import { createModelRegistry } from "@threahq/agent-runtime"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import type { Server } from "socket.io"
-import { parseMarkdown } from "@threa/prosemirror"
-import { AuthorTypes, StreamTypes } from "@threa/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import { AuthorTypes, StreamTypes } from "@threahq/types"
 import { streamId as generateStreamId } from "../../../src/lib/id"
 import { insertEvalPersona } from "../../framework/eval-persona"
 

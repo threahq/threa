@@ -567,7 +567,7 @@ While dictating, an in-place hypothesis renders:
 
 ### 9.4 Send modes
 
-Per the type signature (`MessageSendMode` from `@threa/types`) — surfaced as a "send-mode hint" on the action bar, paired with the `Send` button (`ArrowUp` icon). Other action-bar icons: `X` (close/clear), `Plus`, `AtSign`, `Slash`, `Paperclip`, `Maximize2` (fullscreen — see Composer redesign notes in memory).
+Per the type signature (`MessageSendMode` from `@threahq/types`) — surfaced as a "send-mode hint" on the action bar, paired with the `Send` button (`ArrowUp` icon). Other action-bar icons: `X` (close/clear), `Plus`, `AtSign`, `Slash`, `Paperclip`, `Maximize2` (fullscreen — see Composer redesign notes in memory).
 
 ### 9.5 Mobile sheet
 

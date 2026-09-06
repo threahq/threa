@@ -1,4 +1,4 @@
-import type { AgentOutcomeSummary } from "@threa/types"
+import type { AgentOutcomeSummary } from "@threahq/types"
 import { describe, expect, it } from "vitest"
 import { toOutcomeItem, toOutcomeItems } from "./items"
 

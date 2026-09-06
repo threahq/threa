@@ -9,7 +9,7 @@ import {
   type Visibility,
   StreamTypes,
   sharedMessageSlotKey,
-} from "@threa/types"
+} from "@threahq/types"
 import { MessageRepository, type Message } from "../repository"
 import { MessageVersionRepository, messageVersionKey, type MessageVersionKey } from "../version-repository"
 import { sliceReferenceContent } from "../references/slice"

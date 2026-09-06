@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import type { SharedMessageRef } from "@threa/types"
+import type { SharedMessageRef } from "@threahq/types"
 import { isOutboxEventType, type OutboxEvent } from "../../../lib/outbox"
 import { collectSharedMessageRefs, hydrateSharedMessageRefsForRoom, toDualSlotMaps } from "./hydration"
 import { SharedMessageRepository } from "./repository"

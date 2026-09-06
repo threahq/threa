@@ -37,7 +37,7 @@ import {
   isResolvedChannelLinkId,
   MENTION_BROADCAST_CHANNEL,
   MENTION_BROADCAST_HERE,
-} from "@threa/types"
+} from "@threahq/types"
 
 /**
  * The pin a `quote:`/`shared-message:` href can carry as a `?v=<n>[&r=<from>-<to>]`

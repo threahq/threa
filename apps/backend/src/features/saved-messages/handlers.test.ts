@@ -1,6 +1,6 @@
 import { describe, expect, it, mock, spyOn, afterEach } from "bun:test"
 import type { Request, Response } from "express"
-import { SavedStatuses } from "@threa/types"
+import { SavedStatuses } from "@threahq/types"
 import { createSavedMessagesHandlers } from "./handlers"
 import { HttpError } from "../../lib/errors"
 

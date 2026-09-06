@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { StreamTypes, CompanionModes, MemoryModes } from "@threa/types"
+import { StreamTypes, CompanionModes, MemoryModes } from "@threahq/types"
 import * as dbModule from "../../db"
 import { StreamRepository, StreamStateRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"

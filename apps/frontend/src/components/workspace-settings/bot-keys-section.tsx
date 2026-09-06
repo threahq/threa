@@ -27,7 +27,7 @@ import {
   BOT_KEY_PREFIX,
   type WorkspacePermissionSlug,
   type BotApiKey,
-} from "@threa/types"
+} from "@threahq/types"
 import { Check, ChevronDown, Copy, Eye, EyeOff, Key, Plus, Trash2 } from "lucide-react"
 import { ApiKeyVersionControl } from "./api-key-version-control"
 

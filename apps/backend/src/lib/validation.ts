@@ -1,4 +1,4 @@
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { z } from "zod"
 
 /**

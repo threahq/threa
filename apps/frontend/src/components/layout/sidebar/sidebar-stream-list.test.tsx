@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { render, screen } from "@/test"
-import { StreamTypes, Visibilities, MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
+import { StreamTypes, Visibilities, MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import type { StreamItemData } from "./types"
 import type { SidebarBoardMode } from "./board-sidebar-mode"

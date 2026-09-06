@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { resolveActiveStatus, type UserStatusFields } from "@threa/types"
+import { resolveActiveStatus, type UserStatusFields } from "@threahq/types"
 import { useClearStatus } from "./use-workspaces"
 
 // setTimeout truncates delays past its signed-32-bit ceiling, firing almost

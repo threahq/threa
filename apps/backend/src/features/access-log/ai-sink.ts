@@ -1,4 +1,4 @@
-import type { AccessLogSink } from "@threa/agent-runtime"
+import type { AccessLogSink } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 import type { AccessLogService } from "./service"
 import { aiOperation } from "./operations"

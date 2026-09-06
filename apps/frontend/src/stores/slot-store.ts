@@ -1,6 +1,6 @@
 import { Dexie } from "dexie"
 import type { ThreaDatabase, CachedSlot } from "@/db/database"
-import type { Slot, StreamEvent } from "@threa/types"
+import type { Slot, StreamEvent } from "@threahq/types"
 import { collectReferencedSlotKeys, normalizeSlotCarrier, type SlotCarrier } from "@/lib/slots"
 
 /**

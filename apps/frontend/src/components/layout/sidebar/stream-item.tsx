@@ -55,7 +55,7 @@ import {
   Visibilities,
   type AuthorType,
   type StreamWithPreview,
-} from "@threa/types"
+} from "@threahq/types"
 import type { StreamItemData } from "./types"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"

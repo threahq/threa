@@ -8,8 +8,8 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { HttpError } from "@threa/backend-common"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import { StreamTypes, Visibilities } from "@threahq/types"
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { assertStreamWritable, StreamRepository, StreamMemberRepository } from "../../src/features/streams"

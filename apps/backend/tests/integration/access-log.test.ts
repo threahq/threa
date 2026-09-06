@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, setupIsolatedTestDatabase } from "./setup"
-import { ensureMonthlyPartitions, dropExpiredMonthlyPartitions, monthlyPartitionName } from "@threa/backend-common"
+import { ensureMonthlyPartitions, dropExpiredMonthlyPartitions, monthlyPartitionName } from "@threahq/backend-common"
 import { AccessLogService } from "../../src/features/access-log"
 import { AccessLogRepository } from "../../src/features/access-log"
 

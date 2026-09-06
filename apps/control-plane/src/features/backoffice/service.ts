@@ -8,8 +8,8 @@ import {
   type OutboxEventStatus,
   type WorkosOrgService,
   type WorkosUserSummary,
-} from "@threa/backend-common"
-import type { WorkspaceInvitableRole } from "@threa/types"
+} from "@threahq/backend-common"
+import type { WorkspaceInvitableRole } from "@threahq/types"
 import { PlatformRoleRepository } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import { WorkosAuthzBackfill, WorkosAuthzRepository } from "../workos-authz"

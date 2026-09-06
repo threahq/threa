@@ -4,7 +4,7 @@ import {
   readHarnessLinks,
   type BotSessionRestoredPayload,
   type HarnessLink,
-} from "@threa/harness-client"
+} from "@threahq/harness-client"
 import { existsSync } from "node:fs"
 import { basename, join } from "node:path"
 import { backfillIdentities, defaultBackfillDeps, summarizeBackfill, type BackfillOutcome } from "./backfill"

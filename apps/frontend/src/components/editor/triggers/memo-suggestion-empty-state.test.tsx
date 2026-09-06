@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { SuggestionProps } from "@tiptap/suggestion"
-import type { Memo } from "@threa/types"
+import type { Memo } from "@threahq/types"
 import { api } from "@/api/client"
 import { useMemoSuggestion } from "./use-memo-suggestion"
 

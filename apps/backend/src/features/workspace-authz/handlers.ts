@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express"
 import { z } from "zod"
-import { WORKOS_MEMBERSHIP_STATUSES } from "@threa/backend-common"
+import { WORKOS_MEMBERSHIP_STATUSES } from "@threahq/backend-common"
 import { HttpError } from "../../lib/errors"
 import type { WorkspaceAuthzService } from "./service"
 

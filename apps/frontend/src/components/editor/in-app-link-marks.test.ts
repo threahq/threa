@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { inAppLinkMarksToNodes } from "./in-app-link-marks"
 
 const ORIGIN = "https://app.threa.io"

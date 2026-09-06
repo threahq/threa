@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { DispatchCommandInput, DispatchCommandResponse, DispatchCommandError, CommandInfo } from "@threa/types"
+import type { DispatchCommandInput, DispatchCommandResponse, DispatchCommandError, CommandInfo } from "@threahq/types"
 
 export type { DispatchCommandInput, DispatchCommandResponse, DispatchCommandError, CommandInfo }
 

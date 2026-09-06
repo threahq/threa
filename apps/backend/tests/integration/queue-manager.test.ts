@@ -12,7 +12,7 @@ import type {
   ImageCaptionJobData,
 } from "../../src/lib/queue"
 import type { Querier } from "../../src/db"
-import { ProcessingStatuses, type ProcessingStatus } from "@threa/types"
+import { ProcessingStatuses, type ProcessingStatus } from "@threahq/types"
 
 const TEST_QUEUE = "test.dlq-hook" as JobQueueName
 const IMAGE_CAPTION_TEST_QUEUE = "test.image-caption.dlq-hook" as JobQueueName

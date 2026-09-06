@@ -1,4 +1,4 @@
-import type { StreamType } from "@threa/types"
+import type { StreamType } from "@threahq/types"
 import type {
   SidebarConfig,
   SidebarSection,
@@ -8,20 +8,20 @@ import type {
   SidebarQuickLink,
   SidebarQuickLinkKey,
   SidebarQuickLinkVisibility,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   SMART_SIDEBAR_CONFIG,
   ALL_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
   QUICK_LINKS_SECTION_ID,
   quickLinkHasActiveState,
-} from "@threa/types"
+} from "@threahq/types"
 import type { CollapseState } from "@/contexts"
 import { SMART_SECTIONS } from "./config"
 
 /**
  * The sidebar renders an ordered list of typed **sections** described by a
- * {@link SidebarConfig} (the persisted wire contract lives in `@threa/types`).
+ * {@link SidebarConfig} (the persisted wire contract lives in `@threahq/types`).
  * This module adds the purely-presentational layer on top: how each section's
  * `spec` maps to a label, icon, and collapse behavior at render time.
  */

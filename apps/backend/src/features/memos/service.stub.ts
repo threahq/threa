@@ -6,7 +6,7 @@ import type {
   CaptureSessionReflectionParams,
   CaptureSessionReflectionResult,
 } from "./service"
-import { MemoScopes } from "@threa/types"
+import { MemoScopes } from "@threahq/types"
 import { memoId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import type { StreamWritePrincipal } from "../streams"

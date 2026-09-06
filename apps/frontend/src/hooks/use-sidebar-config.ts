@@ -8,7 +8,7 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   sidebarConfigForPreset,
   normalizeSidebarConfig,
-} from "@threa/types"
+} from "@threahq/types"
 import { sidebarConfigApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { useWorkspaceSidebarConfig } from "@/stores/workspace-store"

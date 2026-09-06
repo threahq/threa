@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { BOARD_EVENT_ROW_TYPES, type EventType } from "@threa/types"
+import { BOARD_EVENT_ROW_TYPES, type EventType } from "@threahq/types"
 // eslint-disable-next-line no-restricted-imports -- test builds the rail's own row type, not a component data read
 import type { CachedEvent } from "@/db"
 import * as hooksModule from "@/hooks"

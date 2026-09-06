@@ -9,7 +9,7 @@ import {
   type WorkspaceBootstrap,
   type WorkspacePermissionSlug,
   type WorkspaceSettings,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { workspaceSettingsApi } from "@/api"
 import { SubagentModelsSection } from "./subagent-models-section"

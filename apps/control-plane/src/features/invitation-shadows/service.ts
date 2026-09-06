@@ -7,11 +7,11 @@ import {
   HttpError,
   logger,
   type WorkosOrgService,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"
 import { InvitationShadowRepository, type InvitationShadowRow } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import { RegionalInvitationError, type RegionalClient } from "../../lib/regional-client"
-import type { InvitationLinkLookupResponse, PendingInvitation, WorkspaceInvitableRole } from "@threa/types"
+import type { InvitationLinkLookupResponse, PendingInvitation, WorkspaceInvitableRole } from "@threahq/types"
 // Type-only to avoid a runtime module cycle; injected by the composition root.
 import type { PlatformAdminSyncService } from "../platform-admin"
 

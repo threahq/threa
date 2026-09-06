@@ -1,5 +1,5 @@
 {
-  "name": "@threa/backend-common",
+  "name": "@threahq/backend-common",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -12,7 +12,7 @@
     "test": "bun test src/"
   },
   "dependencies": {
-    "@threa/types": "workspace:*",
+    "@threahq/types": "workspace:*",
     "@workos-inc/node": "^7",
     "cookie-parser": "^1",
     "express": "^5",

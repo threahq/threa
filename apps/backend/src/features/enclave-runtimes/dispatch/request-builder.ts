@@ -3,7 +3,7 @@ import type {
   EnclaveSessionAssignment,
   EnclaveStreamEnvelope,
   ToolPrivacyPolicy,
-} from "@threa/types"
+} from "@threahq/types"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import type { Message } from "../../messaging"
 

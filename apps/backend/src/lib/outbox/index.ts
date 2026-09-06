@@ -1,6 +1,6 @@
-// Generic outbox infrastructure — re-exported from @threa/backend-common
-export { OutboxDispatcher, type OutboxHandler, type OutboxDispatcherConfig } from "@threa/backend-common"
-export { OutboxRetentionWorker, type OutboxRetentionWorkerConfig } from "@threa/backend-common"
+// Generic outbox infrastructure — re-exported from @threahq/backend-common
+export { OutboxDispatcher, type OutboxHandler, type OutboxDispatcherConfig } from "@threahq/backend-common"
+export { OutboxRetentionWorker, type OutboxRetentionWorkerConfig } from "@threahq/backend-common"
 
 // Domain-specific outbox code
 export { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig } from "./debounced-handler"

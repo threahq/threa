@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { HttpError } from "@threa/backend-common"
-import { StreamErrorCodes, StreamReadOnlyReasons } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import { StreamErrorCodes, StreamReadOnlyReasons } from "@threahq/types"
 import type { Querier } from "../../db"
 import { BotChannelAccessRepository } from "../api-keys"
 import { StreamMemberRepository } from "./member-repository"

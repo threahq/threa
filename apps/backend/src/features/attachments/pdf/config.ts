@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { PDF_PAGE_CLASSIFICATIONS, PDF_SIZE_TIERS } from "@threa/types"
+import { PDF_PAGE_CLASSIFICATIONS, PDF_SIZE_TIERS } from "@threahq/types"
 
 export const PDF_LAYOUT_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 

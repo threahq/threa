@@ -1,5 +1,5 @@
-import type { SavedMessageView, SavedMessageSnapshot } from "@threa/types"
-import { Visibilities } from "@threa/types"
+import type { SavedMessageView, SavedMessageSnapshot } from "@threahq/types"
+import { Visibilities } from "@threahq/types"
 import { type Querier } from "../../db"
 // Streams must import before messaging — see service.ts for why.
 import { StreamRepository, StreamMemberRepository, type Stream } from "../streams"

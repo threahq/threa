@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Editor } from "@tiptap/react"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { ComposerPillDragPluginKey } from "./composer-pill-drag-extension"
 import { ComposerPillCopyButton } from "./composer-pill-copy-button"
 import { createEditorExtensions } from "./editor-extensions"

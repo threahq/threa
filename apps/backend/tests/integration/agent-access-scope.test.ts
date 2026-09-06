@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threa/types"
+import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threahq/types"
 import { computeAgentAccessSpec, type AgentAccessSpec } from "../../src/features/agents"
 import { AttachmentExtractionRepository, AttachmentRepository } from "../../src/features/attachments"
 import { SearchRepository } from "../../src/features/search"

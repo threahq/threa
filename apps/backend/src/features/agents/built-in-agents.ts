@@ -4,12 +4,12 @@ import {
   personaConfigPatchSchema,
   personaConfigStatusSchema,
   personaResolvedConfigSchema,
-} from "@threa/types"
+} from "@threahq/types"
 
 export const ARIADNE_AGENT_ID = "persona_system_ariadne"
 export const EMPTY_AGENT_ID = "persona_system_empty"
 
-// The full built-in agent config shape is single-sourced in `@threa/types`
+// The full built-in agent config shape is single-sourced in `@threahq/types`
 // (INV-31) so the wire type (`PersonaResolvedConfig`) and this backend type
 // cannot drift. `escalationModel` is the stronger model for per-turn escalation
 // (roadmap 2.3, documented in docs/model-reference.md per INV-16); `e2eCapable`

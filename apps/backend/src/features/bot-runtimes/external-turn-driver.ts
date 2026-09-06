@@ -7,7 +7,7 @@ import {
   type TurnDispatchBinding,
   type TurnDispatchReceipt,
   type TurnSinkResolution,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import type { BotRuntimeService } from "./service"
 
 /**

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { ConversationWithStaleness, StreamEvent } from "@threa/types"
+import type { ConversationWithStaleness, StreamEvent } from "@threahq/types"
 import {
   annotateAuthorGroups,
   annotateConversationRevivals,

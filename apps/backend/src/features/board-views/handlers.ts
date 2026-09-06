@@ -8,7 +8,7 @@ import {
   MAX_BOARD_SCOPE_STREAMS,
   MAX_BOARD_SCOPE_LABELS,
   MAX_BOARD_VIEW_NAME_LENGTH,
-} from "@threa/types"
+} from "@threahq/types"
 
 const boardViewParamsSchema = z.object({ boardViewId: z.string().min(1) })
 

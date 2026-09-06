@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useLocation } from "react-router-dom"
 import { toast } from "sonner"
-import { ContextRefKinds, StreamTypes, draftStreamScope, type ContextRef } from "@threa/types"
+import { ContextRefKinds, StreamTypes, draftStreamScope, type ContextRef } from "@threahq/types"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { useCreateStream } from "./use-streams"
 import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"

@@ -1,4 +1,4 @@
-import type { SettingsTab } from "@threa/types"
+import type { SettingsTab } from "@threahq/types"
 
 export interface SettingsTabConfig {
   label: string

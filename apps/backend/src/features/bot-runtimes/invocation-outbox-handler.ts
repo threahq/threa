@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
-import { parseMarkdown } from "@threa/prosemirror"
-import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
+import { AuthorTypes } from "@threahq/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threahq/backend-common"
 import {
   OutboxRepository,
   parseMessagePayload,

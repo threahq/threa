@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { createOptimisticBootstrap } from "./create-optimistic-bootstrap"
-import type { Stream } from "@threa/types"
+import type { Stream } from "@threahq/types"
 
 const mockStream: Stream = {
   id: "stream_01TEST",

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type SavedMessageView } from "@threa/types"
+import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type SavedMessageView } from "@threahq/types"
 import { SavedItem } from "./saved-item"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as inputModeModule from "@/hooks/use-input-mode"

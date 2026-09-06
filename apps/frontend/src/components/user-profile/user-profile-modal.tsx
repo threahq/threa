@@ -19,7 +19,7 @@ import { useCallLaunch } from "@/components/call"
 import { useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAuth } from "@/auth"
-import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
+import { getAvatarUrl, resolveActiveStatus, type User } from "@threahq/types"
 import { getInitials } from "@/lib/initials"
 import { formatStatusClearLabel } from "@/lib/status"
 

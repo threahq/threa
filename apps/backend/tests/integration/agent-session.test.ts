@@ -4,7 +4,7 @@ import { withClient } from "./setup"
 import { EventService, MessageRepository } from "../../src/features/messaging"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
 import { streamId, userId, workspaceId, sessionId, personaId, messageId, stepId } from "../../src/lib/id"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes } from "@threahq/types"
 import { setupTestDatabase, testMessageContent } from "./setup"
 
 describe("Agent Session Repository", () => {

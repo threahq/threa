@@ -1,4 +1,4 @@
-import type { CommandArgumentInfo, CommandKind, CommandScope } from "@threa/types"
+import type { CommandArgumentInfo, CommandKind, CommandScope } from "@threahq/types"
 
 export interface Mentionable {
   id: string

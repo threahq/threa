@@ -25,7 +25,7 @@ const baseOptions = {
 //
 // The enclave routes its module loggers through this (the `./logger` subpath),
 // using the same pino-pretty options the regional backend's logger
-// (`@threa/backend-common`) uses — colorized, `HH:MM:ss`, pid/hostname ignored —
+// (`@threahq/backend-common`) uses — colorized, `HH:MM:ss`, pid/hostname ignored —
 // so the two render the same way in dev. Production stays plain JSON on stdout
 // (no pretty) for log aggregation. (The backend keeps its own logger because the
 // enclave can't import backend-common; both share these options by convention.)

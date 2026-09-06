@@ -1,7 +1,7 @@
 import type { Socket } from "socket.io"
 import type { ExtendedError } from "socket.io"
-import { parseCookies } from "@threa/backend-common"
-import type { AuthService, SessionCookies } from "@threa/backend-common"
+import { parseCookies } from "@threahq/backend-common"
+import type { AuthService, SessionCookies } from "@threahq/backend-common"
 
 interface Dependencies {
   authService: AuthService

@@ -1,5 +1,5 @@
 import type { Querier } from "../../../db"
-import { Visibilities, type Visibility } from "@threa/types"
+import { Visibilities, type Visibility } from "@threahq/types"
 
 /**
  * Minimal structural shape needed to answer the source-visibility check.

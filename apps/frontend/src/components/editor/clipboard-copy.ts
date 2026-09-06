@@ -19,8 +19,8 @@
 import { Fragment, type Mark, type Node as PMNode, type Slice } from "@tiptap/pm/model"
 import { TextSelection } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
-import { serializeToMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import { serializeToMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
 
 export function serializeClipboardSlice(slice: Slice, view?: EditorView): string {
   if (slice.content.size === 0) return ""

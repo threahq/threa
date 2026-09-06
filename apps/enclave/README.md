@@ -1,4 +1,4 @@
-# @threa/enclave
+# @threahq/enclave
 
 Per-instance Express service that runs the AI loop for end-to-end encrypted
 scratchpads invited to the built-in Ariadne persona. It holds no database

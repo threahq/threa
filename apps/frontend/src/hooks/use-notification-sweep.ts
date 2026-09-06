@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { WorkspaceBootstrap } from "@threahq/types"
 import { workspaceKeys } from "./use-workspaces"
 import { sweepStaleStreamNotifications } from "@/lib/notification-sweep"
 

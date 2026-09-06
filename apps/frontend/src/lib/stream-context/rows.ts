@@ -1,4 +1,4 @@
-import { collectGiphyEmbeds, collectLinkUrls } from "@threa/prosemirror"
+import { collectGiphyEmbeds, collectLinkUrls } from "@threahq/prosemirror"
 import {
   BLOCKED_HOSTNAMES,
   BLOCKED_IP_PATTERNS,
@@ -11,7 +11,7 @@ import {
   type JSONContent,
   type StreamContextItemDetail,
   type StreamContextRefKind,
-} from "@threa/types"
+} from "@threahq/types"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import type { CachedEvent, CachedStreamContextItem } from "@/db"
 

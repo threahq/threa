@@ -13,7 +13,7 @@ import {
   TrustTiers,
   type DeliveryVerdict,
   type ExternalContextHandle,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import {
   StreamRepository,
   StreamEventRepository,
@@ -68,7 +68,7 @@ import {
   type AuthorType,
   type JSONContent,
   type SealedTurnContext,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   BotRuntimeService,
   BotRuntimeInstanceRepository,
@@ -82,11 +82,11 @@ import {
   insertCommandFailedEvent,
   parseRuntimeCommandInvocationMetadata,
 } from "../commands"
-import { HttpError, isUniqueViolation } from "@threa/backend-common"
+import { HttpError, isUniqueViolation } from "@threahq/backend-common"
 import { invocationClaimNotFound, invocationInputStale } from "./errors"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
-import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
+import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { randomUUID } from "crypto"
 import { botId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"

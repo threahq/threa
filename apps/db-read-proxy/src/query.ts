@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 
 export interface QueryRequest {
   sql: string

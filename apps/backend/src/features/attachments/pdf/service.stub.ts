@@ -11,7 +11,7 @@ import {
   PdfPageClassifications,
   PdfSizeTiers,
   type PdfSizeTier,
-} from "@threa/types"
+} from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { PDF_SIZE_THRESHOLDS } from "./config"
 import type { PdfProcessingServiceLike } from "./types"

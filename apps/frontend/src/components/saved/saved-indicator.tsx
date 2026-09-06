@@ -1,5 +1,5 @@
 import { Archive, Bookmark, Check } from "lucide-react"
-import type { SavedMessageView } from "@threa/types"
+import type { SavedMessageView } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { ReminderBadge } from "./reminder-badge"
 

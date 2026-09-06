@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { createEditorExtensions } from "@/components/editor/editor-extensions"
 import { collapsedComposerPreview } from "./collapsed-composer-preview"
 

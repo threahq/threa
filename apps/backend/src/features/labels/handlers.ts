@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { LABELABLE_RESOURCE_TYPES, LabelActorTypes } from "@threa/types"
+import { LABELABLE_RESOURCE_TYPES, LabelActorTypes } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import type { LabelService } from "./service"
 import type { LabelAssignmentService } from "./assignment-service"

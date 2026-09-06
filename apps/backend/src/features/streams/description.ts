@@ -1,5 +1,5 @@
-import { parseMarkdown, serializeToMarkdown } from "@threa/prosemirror"
-import { type JSONContent, type ThreaDocument, validateContent } from "@threa/types"
+import { parseMarkdown, serializeToMarkdown } from "@threahq/prosemirror"
+import { type JSONContent, type ThreaDocument, validateContent } from "@threahq/types"
 import { normalizeMessage, toEmoji } from "../emoji"
 
 export interface StreamDescriptionInput {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { DEVICE_KEY_LENGTH } from "@threa/types"
+import { DEVICE_KEY_LENGTH } from "@threahq/types"
 import { ApiError, api } from "@/api/client"
 import { useAccountScopeOptional } from "@/auth/account-scope"
 
@@ -89,7 +89,7 @@ function toSubscriptionError(err: unknown): PushSubscriptionError {
 
 /**
  * Derives a device key from user-agent.
- * Algorithm contract documented in @threa/types (DEVICE_KEY_LENGTH).
+ * Algorithm contract documented in @threahq/types (DEVICE_KEY_LENGTH).
  * Must match backend's deriveDeviceKey (socket.ts).
  */
 async function getDeviceKey(): Promise<string> {

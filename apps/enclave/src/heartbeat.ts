@@ -1,5 +1,5 @@
-import { logger as baseLogger } from "@threa/agent-runtime/logger"
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { logger as baseLogger } from "@threahq/agent-runtime/logger"
+import { INTERNAL_API_KEY_HEADER } from "@threahq/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
 

@@ -1,6 +1,6 @@
 import { Archive, Code, File, FileSpreadsheet, FileText, Headphones, Image, Presentation, Video } from "lucide-react"
 import type { ComponentType } from "react"
-import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threa/types"
+import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threahq/types"
 
 export interface CategoryMeta {
   /** UI label shown in chip rail / picker. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { appendBagToSystemPrompt } from "./prompt"
 import type { ResolvedBag } from "./resolve"
-import { ContextIntents } from "@threa/types"
+import { ContextIntents } from "@threahq/types"
 
 function makeBag(overrides: Partial<ResolvedBag> = {}): ResolvedBag {
   return {

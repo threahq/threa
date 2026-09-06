@@ -8,8 +8,8 @@ import {
   parseMentionPointerHref,
   parseQuoteHref,
   parseSharedMessageHref,
-} from "@threa/prosemirror"
-import type { ContentRange } from "@threa/types"
+} from "@threahq/prosemirror"
+import type { ContentRange } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { buildConversationPanelPath } from "@/lib/stream-links"

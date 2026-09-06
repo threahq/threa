@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { HttpError, StubWorkosOrgService } from "@threa/backend-common"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { HttpError, StubWorkosOrgService } from "@threahq/backend-common"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { BackofficeService } from "../../src/features/backoffice/service"
 import { setupTestDatabase } from "./setup"
 

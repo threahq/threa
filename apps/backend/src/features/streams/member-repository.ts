@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { NotificationLevel } from "@threa/types"
+import type { NotificationLevel } from "@threahq/types"
 
 interface StreamMemberRow {
   stream_id: string

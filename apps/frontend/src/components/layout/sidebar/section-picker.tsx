@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useSidebarConfig } from "@/hooks/use-sidebar-config"
-import { MAX_CUSTOM_SECTION_NAME_LENGTH } from "@threa/types"
+import { MAX_CUSTOM_SECTION_NAME_LENGTH } from "@threahq/types"
 import {
   createCustomSection,
   customSections,

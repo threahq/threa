@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import { sharedMessageSlotKey, type ContentRange, type SharedMessageSlot, type SlotMap } from "@threa/types"
+import { sharedMessageSlotKey, type ContentRange, type SharedMessageSlot, type SlotMap } from "@threahq/types"
 
 interface SlotsContextValue {
   getSharedMessage: (messageId: string, version: number | null, range: ContentRange | null) => SharedMessageSlot | null

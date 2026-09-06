@@ -16,7 +16,7 @@ import { Extension, type Editor } from "@tiptap/core"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import { TextSelection } from "@tiptap/pm/state"
 import { Fragment } from "@tiptap/pm/model"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { parseMarkdown } from "./editor-markdown"
 
 type TableConversion = {

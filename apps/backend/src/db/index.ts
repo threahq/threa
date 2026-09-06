@@ -6,5 +6,5 @@ export {
   withTransaction,
   withClient,
   warmPool,
-} from "@threa/backend-common"
-export type { Querier, DatabasePools } from "@threa/backend-common"
+} from "@threahq/backend-common"
+export type { Querier, DatabasePools } from "@threahq/backend-common"

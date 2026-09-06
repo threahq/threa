@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import { HttpError, isValidIanaTimezone } from "@threa/backend-common"
+import { HttpError, isValidIanaTimezone } from "@threahq/backend-common"
 import type { ControlPlaneWorkspaceService } from "./service"
 import type { InvitationShadowService } from "../invitation-shadows"
 

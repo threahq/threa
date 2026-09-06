@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 export interface AgentBlockData {
   /** `persona_…` / `bot_…` — the agent credited with the text (INV-64). */

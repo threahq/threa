@@ -1,4 +1,4 @@
-import type { FeatureFlagScope, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threa/types"
+import type { FeatureFlagScope, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threahq/types"
 import { api } from "./client"
 
 /**
@@ -137,7 +137,7 @@ export interface WorkspaceFeatureFlagDefinition {
 }
 
 export interface WorkspaceFeatureFlags {
-  /** Flags currently in the code registry (@threa/types FEATURE_FLAGS). */
+  /** Flags currently in the code registry (@threahq/types FEATURE_FLAGS). */
   flags: WorkspaceFeatureFlagDefinition[]
   /** Stored overrides; absence of an override for a subject means the default value. */
   overrides: WorkspaceFeatureFlagOverride[]

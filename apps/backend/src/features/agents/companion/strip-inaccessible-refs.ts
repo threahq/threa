@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
-import { serializeToMarkdown } from "@threa/prosemirror"
-import { AttachmentSafetyStatuses, type JSONContent } from "@threa/types"
+import { serializeToMarkdown } from "@threahq/prosemirror"
+import { AttachmentSafetyStatuses, type JSONContent } from "@threahq/types"
 import { MessageRepository } from "../../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../../attachments"
 import { MemoRepository } from "../../memos"

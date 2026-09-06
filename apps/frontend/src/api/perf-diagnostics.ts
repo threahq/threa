@@ -1,4 +1,4 @@
-import type { PerformanceCapture } from "@threa/types"
+import type { PerformanceCapture } from "@threahq/types"
 import { api } from "./client"
 
 /**

@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { SidebarConfig } from "@threa/types"
+import type { SidebarConfig } from "@threahq/types"
 
 export const sidebarConfigApi = {
   async get(workspaceId: string): Promise<SidebarConfig> {

@@ -11,7 +11,7 @@ import { useUser } from "@/auth"
 import { rankMatches } from "@/lib/match-score"
 import { useStreamBootstrap } from "./use-streams"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
-import { getPersonaAvatarUrl, StreamTypes, type StreamType } from "@threa/types"
+import { getPersonaAvatarUrl, StreamTypes, type StreamType } from "@threahq/types"
 
 /**
  * Stream context for filtering which broadcast mentions are available.

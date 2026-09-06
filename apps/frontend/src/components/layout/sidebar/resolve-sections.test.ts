@@ -5,7 +5,7 @@ import {
   ALL_SIDEBAR_CONFIG,
   SMART_SIDEBAR_CONFIG,
   SIDEBAR_CONFIG_VERSION,
-} from "@threa/types"
+} from "@threahq/types"
 import { resolveSections, findSourceLabelId, type ResolveSectionsInput } from "./resolve-sections"
 import { customSectionId, labelSectionId } from "./sidebar-config"
 import type { SectionKey, StreamItemData, UrgencyLevel } from "./types"

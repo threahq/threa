@@ -2,7 +2,7 @@ import { useCallback } from "react"
 import type { Socket } from "socket.io-client"
 import { toast } from "sonner"
 import { commandsApi } from "@/api"
-import { CommandKinds } from "@threa/types"
+import { CommandKinds } from "@threahq/types"
 import { useAbortSession } from "./use-abort-session"
 
 function advertisesRuntimeStop(commands: Awaited<ReturnType<typeof commandsApi.listForStream>>): boolean {

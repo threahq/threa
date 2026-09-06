@@ -1,5 +1,5 @@
 import { ulid } from "ulid"
-import type { JSONContent, VoiceReplacementAckStatus } from "@threa/types"
+import type { JSONContent, VoiceReplacementAckStatus } from "@threahq/types"
 import {
   VOICE_POLISH_WINDOW_MAX_CHARS,
   VOICE_POLISH_WINDOW_MAX_FINALS,

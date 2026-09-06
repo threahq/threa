@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { APICallError } from "ai"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import * as dbModule from "../../../db"
 import { OutboxRepository } from "../../../lib/outbox"
 import { StreamEventRepository } from "../../streams"

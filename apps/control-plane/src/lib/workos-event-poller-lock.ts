@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import type { Pool } from "pg"
-import { calculateBackoffMs, logger, sql, withClient } from "@threa/backend-common"
+import { calculateBackoffMs, logger, sql, withClient } from "@threahq/backend-common"
 
 export interface WorkosEventPollerLockConfig {
   pool: Pool

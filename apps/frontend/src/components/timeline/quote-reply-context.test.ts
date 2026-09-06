@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
 
 const DATA: QuoteReplyData = {

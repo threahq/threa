@@ -1,6 +1,6 @@
 import { beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import * as messageEventModule from "@/components/timeline/message-event"
 import * as delegationEventModule from "@/components/timeline/delegation-event"
 import { ThreadParentEvent } from "./thread-parent-event"

@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import type { ReactNode } from "react"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { db } from "@/db"
 import {
   __resetShareHandoffStoreForTesting,

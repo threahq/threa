@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { rescoreReport } from "./rescore"
-import type { AI } from "@threa/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import type { EvalSuite, EvaluatorResult } from "./types"
 
 const stubAi = {} as AI

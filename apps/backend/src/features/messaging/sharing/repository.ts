@@ -1,6 +1,6 @@
 import type { Querier } from "../../../db"
 import { sql } from "../../../db"
-import { type ShareFlavor } from "@threa/types"
+import { type ShareFlavor } from "@threahq/types"
 import { listAccessibleStreamIds, listRoomReadableStreamIds } from "../../streams"
 
 // Internal row type (snake_case, not exported)

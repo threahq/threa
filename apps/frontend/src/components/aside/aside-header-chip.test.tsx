@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { openAside, resetAsideStoreCache } from "@/stores/aside-store"

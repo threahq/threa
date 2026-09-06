@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { BotAccessRequestStatuses, type BotAccessRequestStatus } from "@threa/types"
+import { BotAccessRequestStatuses, type BotAccessRequestStatus } from "@threahq/types"
 
 interface BotAccessRequestRow {
   id: string

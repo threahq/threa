@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
 import type { ReactNode } from "react"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threahq/types"
 import { SyncEngineContext, type SyncEngine } from "@/sync/sync-engine"
 import { useBoardStreamSubscriptions } from "./use-board-stream-subscriptions"
 import type { BoardViewPost } from "./use-stable-board-view"

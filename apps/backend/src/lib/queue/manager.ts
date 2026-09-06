@@ -4,7 +4,7 @@ import pLimit from "p-limit"
 import type { QueueRepository } from "./repository"
 import type { TokenPoolRepository } from "./token-pool-repository"
 import { CronRepository, type CronTick } from "./cron-repository"
-import { calculateBackoffMs } from "@threa/backend-common"
+import { calculateBackoffMs } from "@threahq/backend-common"
 import { logger } from "../logger"
 import type {
   JobDataMap,

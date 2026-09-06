@@ -17,7 +17,7 @@ import {
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
   writeSpawnBrief,
-} from "@threa/harness-client"
+} from "@threahq/harness-client"
 import {
   DelegationClient,
   DelegationRunner,

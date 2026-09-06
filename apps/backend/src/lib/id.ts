@@ -88,4 +88,4 @@ export {
   callEndpointId,
   perfCaptureId,
   searchQueryLogId,
-} from "@threa/backend-common"
+} from "@threahq/backend-common"

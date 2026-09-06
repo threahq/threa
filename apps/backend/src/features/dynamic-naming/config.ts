@@ -1,4 +1,4 @@
-import { ENCLAVE_NAMING_CHECKPOINTS } from "@threa/types"
+import { ENCLAVE_NAMING_CHECKPOINTS } from "@threahq/types"
 
 export const DYNAMIC_NAMING_CHECKPOINTS = ENCLAVE_NAMING_CHECKPOINTS
 export const DYNAMIC_NAMING_QUIET_MS = 5_000

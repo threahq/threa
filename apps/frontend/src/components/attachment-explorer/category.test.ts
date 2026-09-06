@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threa/types"
+import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threahq/types"
 import { CATEGORY_META, CATEGORY_OPTIONS } from "./category"
 
 describe("CATEGORY_META", () => {
@@ -15,7 +15,7 @@ describe("CATEGORY_META", () => {
 })
 
 describe("CATEGORY_OPTIONS", () => {
-  it("matches the canonical category order from @threa/types", () => {
+  it("matches the canonical category order from @threahq/types", () => {
     expect(CATEGORY_OPTIONS.map((o) => o.value)).toEqual(ATTACHMENT_CATEGORIES)
   })
 

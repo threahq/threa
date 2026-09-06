@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { useWorkspaceStreamsRaw } from "@/stores/workspace-store"
 
 /**

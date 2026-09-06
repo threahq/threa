@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@threa/harness-client",
+      "name": "@threahq/harness-client",
       "dependencies": {
         "@threahq/bot-runtime-client": "file:../bot-runtime-client",
       },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import type { ThreadSummary } from "@threa/types"
-import type { SubagentCreatedEventPayload, SubagentStatus } from "@threa/types"
+import type { ThreadSummary } from "@threahq/types"
+import type { SubagentCreatedEventPayload, SubagentStatus } from "@threahq/types"
 import {
   isSubagentAuthoredMessage,
   resolveSubagentCardState,

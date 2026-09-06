@@ -1,4 +1,4 @@
-import type { SavedSuggestionView } from "@threa/types"
+import type { SavedSuggestionView } from "@threahq/types"
 import type { SavedSuggestion } from "./repository"
 
 /** Map a persisted suggestion to its wire shape (ISO timestamps). */

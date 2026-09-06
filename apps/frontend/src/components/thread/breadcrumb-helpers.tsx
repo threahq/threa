@@ -3,7 +3,7 @@ import { BreadcrumbItem, BreadcrumbLink, BreadcrumbPage, BreadcrumbSeparator } f
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useStreamTitlePreview } from "@/components/layout/stream-title-preview"
 import { streamLabel } from "@/lib/streams"
-import type { StreamType } from "@threa/types"
+import type { StreamType } from "@threahq/types"
 
 interface StreamInfo {
   id: string

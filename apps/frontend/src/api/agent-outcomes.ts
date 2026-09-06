@@ -1,4 +1,4 @@
-import type { AgentOutcomeKind, AgentOutcomeScope, AgentOutcomeState, ListAgentOutcomesResponse } from "@threa/types"
+import type { AgentOutcomeKind, AgentOutcomeScope, AgentOutcomeState, ListAgentOutcomesResponse } from "@threahq/types"
 import { api } from "./client"
 
 export interface AgentOutcomeFilters {

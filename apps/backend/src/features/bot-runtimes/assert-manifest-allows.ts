@@ -1,5 +1,5 @@
-import type { BotOutputManifest, BotRuntimeManifest } from "@threa/types"
-import { HttpError } from "@threa/backend-common"
+import type { BotOutputManifest, BotRuntimeManifest } from "@threahq/types"
+import { HttpError } from "@threahq/backend-common"
 
 /**
  * Reject-undeclared at the verb boundary (INV-11): a runtime that declared a

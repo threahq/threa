@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
 import { toast } from "sonner"
-import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threa/types"
+import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threahq/types"
 import { spyOnExport } from "@/test"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as dispatchQueueModule from "@/hooks/use-command-dispatch-queue"

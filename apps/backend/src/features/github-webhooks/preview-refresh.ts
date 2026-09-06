@@ -1,4 +1,4 @@
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import type { Job, JobHandler, QueueManager } from "../../lib/queue"
 import { JobQueues } from "../../lib/queue"
 import type { GithubPreviewRefreshJobData } from "../../lib/queue/job-queue"

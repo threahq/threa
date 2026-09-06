@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { Aes256Gcm, CipherSuite, HkdfSha256 } from "@hpke/core"
 import { DhkemX25519HkdfSha256 } from "@hpke/dhkem-x25519"
 import * as vendored from "./crypto"
-// Canonical source of truth. Imported by relative path because `@threa/crypto`
+// Canonical source of truth. Imported by relative path because `@threahq/crypto`
 // is a private workspace package that doesn't resolve from this standalone
 // extension by its bare specifier. This file is a dev/CI drift guard — it never
 // ships with a standalone install.
 import * as canonical from "../../../packages/crypto/src/index"
 
-// Wrap an SSK the way the owner's client does (`@threa/crypto`'s `wrapStreamKey`:
+// Wrap an SSK the way the owner's client does (`@threahq/crypto`'s `wrapStreamKey`:
 // HPKE-seal under the recipient's public key, bound by `buildWrapAad`). Built on
 // the noble KEM so it runs under Bun — `canonical.wrapStreamKey` uses the native
 // `@hpke/core` KEM, whose X25519 encap throws under Bun's WebCrypto. The two KEMs
@@ -38,7 +38,7 @@ const KEY_GENERATION = 3
 const SENDER_ID = "bot_01HZY"
 const RECIPIENT_KEY_ID = "bik_01HZZ"
 
-describe("vendored crypto stays byte-compatible with @threa/crypto", () => {
+describe("vendored crypto stays byte-compatible with @threahq/crypto", () => {
   test("envelope/payload versions match", () => {
     expect(vendored.STREAM_ENVELOPE_VERSION).toBe(canonical.STREAM_ENVELOPE_VERSION)
     expect(vendored.E2E_PAYLOAD_VERSION).toBe(canonical.E2E_PAYLOAD_VERSION)

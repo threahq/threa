@@ -1,6 +1,6 @@
 import { useMemo, useRef, type ReactNode } from "react"
 import { ChevronDown, ChevronRight } from "lucide-react"
-import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD } from "@threa/types"
+import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"

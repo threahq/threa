@@ -1,5 +1,5 @@
-import type { Querier } from "@threa/backend-common"
-import { StreamTypes, type Visibility } from "@threa/types"
+import type { Querier } from "@threahq/backend-common"
+import { StreamTypes, type Visibility } from "@threahq/types"
 import { StreamRepository, type Stream } from "../streams"
 import { MessageRepository } from "../messaging"
 

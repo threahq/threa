@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { isPostableStream, targetForValue, NEW_SCRATCHPAD, NEW_QUICK_NOTE } from "./board-post-target"
 
 describe("targetForValue", () => {

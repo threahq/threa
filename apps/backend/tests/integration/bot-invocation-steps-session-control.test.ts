@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import type { Server } from "socket.io"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { setupTestDatabase } from "./setup"
 import { createBotRuntimeWriteOps } from "../../src/features/public-api"
 import { BotInvocationRepository } from "../../src/features/bot-runtimes"

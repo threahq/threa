@@ -4,7 +4,7 @@ import { AgentSessionRepository } from "./session-repository"
 import { StreamEventRepository, checkStreamAccess } from "../streams"
 import { PersonaRepository } from "./persona-repository"
 import { BotRepository } from "../public-api"
-import type { AgentSessionWithSteps, AgentStepType } from "@threa/types"
+import type { AgentSessionWithSteps, AgentStepType } from "@threahq/types"
 
 interface Dependencies {
   pool: Pool

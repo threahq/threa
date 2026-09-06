@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
-import { HttpError } from "@threa/backend-common"
-import { WORKSPACE_INVITABLE_ROLES, WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { HttpError } from "@threahq/backend-common"
+import { WORKSPACE_INVITABLE_ROLES, WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import type { InvitationShadowService } from "./service"
 
 interface Dependencies {

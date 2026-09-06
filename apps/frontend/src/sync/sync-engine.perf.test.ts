@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { SyncCatchUpResponse } from "@threa/types"
+import type { SyncCatchUpResponse } from "@threahq/types"
 import { db } from "@/db"
 import { NO_CAPTURE, PerfCapture, armPerfCapture, getPerfCapture } from "@/lib/perf/capture"
 import { resetApplyWindow } from "@/stores/apply-window"

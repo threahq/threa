@@ -2,7 +2,7 @@
  * Compact "pointer tags" annotated on prompt context surfaces (conversation
  * history, retrieved-knowledge entries, attachment descriptions). These are
  * NOT the renderable pointer URLs (`shared-message:`, `quote:`, `attachment:`
- * — those live in `@threa/prosemirror/pointer-urls`); they are the prompt-
+ * — those live in `@threahq/prosemirror/pointer-urls`); they are the prompt-
  * only id-surfacing format that lets the agent compose pointer URLs without
  * extra tool calls.
  *
@@ -11,7 +11,7 @@
  * The `## Referring to messages and attachments` prompt section documents
  * which surfaces use which tags — keep both in sync if you change a prefix.
  */
-import type { AuthorType } from "@threa/types"
+import type { AuthorType } from "@threahq/types"
 
 /** Bare `[msg:m_x]` — used for messages with no author surface. */
 export function formatMsgTag(messageId: string): string {

@@ -7,7 +7,7 @@ import {
   type ConversationWithStaleness,
   type Stream,
   type TitleSource,
-} from "@threa/types"
+} from "@threahq/types"
 import { conversationsApi } from "@/api/conversations"
 import { streamsApi } from "@/api/streams"
 import { sealStreamRename } from "@/lib/crypto/stream-rename"

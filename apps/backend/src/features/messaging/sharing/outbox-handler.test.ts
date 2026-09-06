@@ -4,7 +4,7 @@ import { SharedMessageRepository } from "./repository"
 import { MessageRepository } from "../repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
 import * as hydration from "./hydration"
-import { sharedMessageSlotKey } from "@threa/types"
+import { sharedMessageSlotKey } from "@threahq/types"
 
 beforeEach(() => {
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)

@@ -8,7 +8,7 @@ import {
   type AuthzMembershipChangedPayload,
   type AuthzMembershipRemovedPayload,
 } from "../../src/features/workos-authz"
-import type { WorkosMembershipEvent } from "@threa/backend-common"
+import type { WorkosMembershipEvent } from "@threahq/backend-common"
 import { setupTestDatabase } from "./setup"
 import { cleanupAuthzOutbox, fetchAuthzOutbox } from "./_helpers/authz-outbox"
 

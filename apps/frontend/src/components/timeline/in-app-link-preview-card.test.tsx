@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
-import type { InAppLinkPreviewData, LinkPreviewSummary } from "@threa/types"
+import type { InAppLinkPreviewData, LinkPreviewSummary } from "@threahq/types"
 
 const mockResolveInAppLink = vi.fn<typeof linkPreviewsApi.resolveInAppLink>()
 

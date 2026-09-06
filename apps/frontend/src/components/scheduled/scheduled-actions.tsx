@@ -1,6 +1,6 @@
 import { Pencil, Send, Trash2 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import type { ScheduledMessageView } from "@threa/types"
+import type { ScheduledMessageView } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 

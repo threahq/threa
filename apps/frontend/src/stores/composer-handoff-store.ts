@@ -1,4 +1,4 @@
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
 import type { DraftAttachment } from "@/db"
 

@@ -1,6 +1,6 @@
 import type { Server } from "socket.io"
 import { z } from "zod"
-import type { AuthService, SessionCookies } from "@threa/backend-common"
+import type { AuthService, SessionCookies } from "@threahq/backend-common"
 import type { Pool } from "pg"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"

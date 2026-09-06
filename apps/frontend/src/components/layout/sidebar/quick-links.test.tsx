@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { render, screen, userEvent } from "@/test"
-import { DEFAULT_QUICK_LINKS } from "@threa/types"
+import { DEFAULT_QUICK_LINKS } from "@threahq/types"
 import * as Contexts from "@/contexts"
 import type { CollapseState } from "@/contexts"
 import { SidebarQuickLinks } from "./quick-links"

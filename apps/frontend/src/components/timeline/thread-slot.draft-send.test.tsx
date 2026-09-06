@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useState } from "react"
 import { MemoryRouter } from "react-router-dom"
-import type { JSONContent, ThreadSummary } from "@threa/types"
+import type { JSONContent, ThreadSummary } from "@threahq/types"
 // eslint-disable-next-line no-restricted-imports -- test seeds/inspects IDB directly to drive the real draft registry
 import { db } from "@/db"
 import { renderHook } from "@testing-library/react"

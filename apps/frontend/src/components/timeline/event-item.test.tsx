@@ -6,7 +6,7 @@ import * as memoCapturedEventModule from "./memo-captured-event"
 import * as descriptionSetEventModule from "./description-set-event"
 import * as systemEventModule from "./system-event"
 import { EventItem } from "./event-item"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 
 beforeEach(() => {
   vi.restoreAllMocks()

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { MarkdownContent } from "@/components/ui/markdown-content"
-import { sharedMessageSlotKey } from "@threa/types"
+import { sharedMessageSlotKey } from "@threahq/types"
 import { SlotsProvider } from "@/components/slots/context"
 import { db } from "@/db"
 

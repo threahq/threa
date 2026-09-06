@@ -1,7 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { isUniqueViolation } from "../../lib/errors"
-import { SubagentStatuses, type SubagentFailureReason, type SubagentStatus } from "@threa/types"
+import { SubagentStatuses, type SubagentFailureReason, type SubagentStatus } from "@threahq/types"
 
 interface SubagentRunRow {
   id: string

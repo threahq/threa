@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, type ReactNode } from "react"
 import { ChevronsUpDown, PenSquare, StickyNote } from "lucide-react"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { StreamTypes, type StreamType } from "@threahq/types"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"

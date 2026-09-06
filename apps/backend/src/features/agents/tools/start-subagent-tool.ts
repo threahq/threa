@@ -5,7 +5,7 @@ import {
   SUBAGENT_BRIEF_MAX_CHARS,
   SUBAGENT_TITLE_MAX_CHARS,
   TOOL_CATEGORIES_BY_NAME,
-} from "@threa/types"
+} from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { StartSubagentToolDeps } from "./tool-deps"

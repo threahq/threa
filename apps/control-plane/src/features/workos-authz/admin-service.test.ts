@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { StubWorkosOrgService, type WorkosOrganizationMembership } from "@threa/backend-common"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { StubWorkosOrgService, type WorkosOrganizationMembership } from "@threahq/backend-common"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { WorkosAuthzAdminService, type AdminActor } from "./admin-service"
 
 const ORG_ID = "org_test_authz"

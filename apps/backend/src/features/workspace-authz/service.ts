@@ -4,8 +4,8 @@ import {
   WORKSPACE_USER_ROLES,
   type WorkspacePermissionSlug,
   type WorkspaceRoleSlug,
-} from "@threa/types"
-import { logger, serializeBigInt, type WorkosMembershipStatus } from "@threa/backend-common"
+} from "@threahq/types"
+import { logger, serializeBigInt, type WorkosMembershipStatus } from "@threahq/backend-common"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"

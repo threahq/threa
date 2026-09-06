@@ -7,7 +7,7 @@ import {
   type LabeledMessage,
   type LinkPreviewSummary,
   type MemoEmbedSummary,
-} from "@threa/types"
+} from "@threahq/types"
 import { MessageRepository, type Message } from "../messaging"
 import { AttachmentRepository, hydrateAttachmentSummaries } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"

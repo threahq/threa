@@ -20,7 +20,7 @@
  */
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
-import { BotTraits, E2E_PLACEHOLDER_CONTENT_MARKDOWN, WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { BotTraits, E2E_PLACEHOLDER_CONTENT_MARKDOWN, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import {
   botApiGet,
   botApiPost,

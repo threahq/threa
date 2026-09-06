@@ -1,4 +1,4 @@
-import { ASIDE_COMMAND, CommandKinds, CommandScopes, type CommandInfo } from "@threa/types"
+import { ASIDE_COMMAND, CommandKinds, CommandScopes, type CommandInfo } from "@threahq/types"
 import type { CommandRegistry } from "./registry"
 
 // Canonical session-control command names, shared across runtimes that drive a

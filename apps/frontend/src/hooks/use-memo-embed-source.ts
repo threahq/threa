@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useParams } from "react-router-dom"
-import type { KnowledgeType, MemoType } from "@threa/types"
+import type { KnowledgeType, MemoType } from "@threahq/types"
 import { useMemoDetail } from "./use-memos"
 
 /**

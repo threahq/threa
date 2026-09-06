@@ -14,7 +14,7 @@ import { rankMatches } from "@/lib/match-score"
 import { cn } from "@/lib/utils"
 import { LabelGlyph } from "./label-chip"
 import { useAssignLabel, useLabelsView, useResourceLabelAssignments, useUnassignLabel, type CachedLabel } from "@/hooks"
-import type { LabelableResourceType } from "@threa/types"
+import type { LabelableResourceType } from "@threahq/types"
 
 interface LabelPickerProps {
   workspaceId: string

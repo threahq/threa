@@ -1,8 +1,8 @@
 import type { Pool } from "pg"
-import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
+import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threahq/backend-common"
 import { logger } from "../logger"
 import { OutboxRepository, type OutboxEvent } from "./repository"
-import type { OutboxHandler } from "@threa/backend-common"
+import type { OutboxHandler } from "@threahq/backend-common"
 
 /**
  * Tunables shared by every debounced outbox handler. All optional — omitted

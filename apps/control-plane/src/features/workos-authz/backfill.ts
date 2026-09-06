@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { logger, OutboxRepository, withTransaction, type WorkosOrgService } from "@threa/backend-common"
+import { logger, OutboxRepository, withTransaction, type WorkosOrgService } from "@threahq/backend-common"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import { WorkosAuthzRepository } from "./repository"
 import {

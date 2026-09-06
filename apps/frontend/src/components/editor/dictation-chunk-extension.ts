@@ -2,7 +2,7 @@ import { Extension } from "@tiptap/core"
 import { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state"
 import { Decoration, DecorationSet } from "@tiptap/pm/view"
-import type { JSONContent, VoiceReplacementAckStatus, VoiceTranscriptReplacementSourceV4 } from "@threa/types"
+import type { JSONContent, VoiceReplacementAckStatus, VoiceTranscriptReplacementSourceV4 } from "@threahq/types"
 import { canonicalContentSlice } from "./multiline-blocks"
 
 export interface DictationChunkInfo {

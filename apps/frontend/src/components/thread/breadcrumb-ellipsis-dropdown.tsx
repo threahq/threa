@@ -2,7 +2,7 @@ import { Link } from "react-router-dom"
 import { BreadcrumbItem, BreadcrumbEllipsis, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { streamLabel } from "@/lib/streams"
-import type { StreamType } from "@threa/types"
+import type { StreamType } from "@threahq/types"
 
 interface StreamInfo {
   id: string

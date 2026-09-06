@@ -1,6 +1,6 @@
 import { Pool } from "pg"
 import path from "path"
-import { runMigrations as runMigrationsBase, createMigrator as createMigratorBase } from "@threa/backend-common"
+import { runMigrations as runMigrationsBase, createMigrator as createMigratorBase } from "@threahq/backend-common"
 
 const BACKEND_MIGRATIONS_GLOB = path.join(import.meta.dirname, "migrations/*.sql")
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
-import { THREA_CALLBACK_TOKEN_HEADER } from "@threa/types"
+import { THREA_CALLBACK_TOKEN_HEADER } from "@threahq/types"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { BotRepository } from "./bot-repository"
 import { StreamEventRepository, StreamRepository } from "../streams"

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER } from "@threahq/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
 import { registerWithBackend, revokeWithBackend } from "./register"

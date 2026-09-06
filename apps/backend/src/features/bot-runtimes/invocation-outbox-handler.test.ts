@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import { AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
+import { AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threahq/types"
 import { BotInvocationOutboxHandler } from "./invocation-outbox-handler"
 import { resolveCanonicalInvocationRoutes } from "./invocation-route-resolver"
 import { BotRuntimeService } from "./service"

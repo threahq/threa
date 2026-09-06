@@ -14,7 +14,7 @@ import {
   type FollowUpStatus,
   type ListAgentOutcomesResponse,
   type SubagentStatus,
-} from "@threa/types"
+} from "@threahq/types"
 import { decodeKeysetCursor, encodeKeysetCursor } from "../../lib/keyset-cursor"
 import { AgentOutcomeReadRepository, type AgentOutcomeRow } from "./read-repository"
 

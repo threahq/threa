@@ -24,7 +24,7 @@ import {
   SOURCE_TYPES,
   LABELABLE_RESOURCE_TYPES,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
-} from "@threa/types"
+} from "@threahq/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 
@@ -275,7 +275,7 @@ export const renewInvocationClaimSchema = z.object({
 
 // Citations a bot attaches to its reply. `url` is a plain bounded string (not a
 // strict URL) because workspace sources carry internal navigation links, not
-// just web URLs — mirrors `SourceItem` in @threa/types.
+// just web URLs — mirrors `SourceItem` in @threahq/types.
 export const sourceItemSchema = z.object({
   type: z.enum(SOURCE_TYPES).optional(),
   title: z.string().min(1).max(500),

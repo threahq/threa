@@ -16,7 +16,7 @@ import {
   messageMetadataSchema,
 } from "../../src/features/messaging"
 import { userId, workspaceId } from "../../src/lib/id"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 describe("Agent block metadata", () => {
   let pool: Pool

@@ -1,4 +1,4 @@
-import { StreamTypes, type BoardLens, type BoardScopeStreamType, type StreamType } from "@threa/types"
+import { StreamTypes, type BoardLens, type BoardScopeStreamType, type StreamType } from "@threahq/types"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 
 /**

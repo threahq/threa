@@ -1,5 +1,5 @@
-import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@threa/backend-common"
-import type { FeatureFlagScope } from "@threa/types"
+import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@threahq/backend-common"
+import type { FeatureFlagScope } from "@threahq/types"
 import type { RegionConfig } from "../config"
 
 const REGIONAL_REQUEST_TIMEOUT_MS = 15_000

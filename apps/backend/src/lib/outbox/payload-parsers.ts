@@ -1,5 +1,5 @@
-import type { AuthorType, JSONContent } from "@threa/types"
-import { AuthorTypes } from "@threa/types"
+import type { AuthorType, JSONContent } from "@threahq/types"
+import { AuthorTypes } from "@threahq/types"
 
 export interface NormalizedMessagePayload {
   workspaceId: string

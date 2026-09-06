@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX } from "@threa/types"
+import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX } from "@threahq/types"
 import { resolveSteeringTerms } from "./config"
 
 describe("resolveSteeringTerms", () => {

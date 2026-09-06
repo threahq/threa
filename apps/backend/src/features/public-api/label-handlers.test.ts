@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
-import { LabelActorTypes, LabelableResourceTypes } from "@threa/types"
-import type { Label, LabelAssignment } from "@threa/types"
+import { LabelActorTypes, LabelableResourceTypes } from "@threahq/types"
+import type { Label, LabelAssignment } from "@threahq/types"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { BotRepository } from "./bot-repository"
 

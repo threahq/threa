@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import type { Editor } from "@tiptap/react"
-import type { CommandArgumentInfo, CommandArgumentSuggestion } from "@threa/types"
+import type { CommandArgumentInfo, CommandArgumentSuggestion } from "@threahq/types"
 import { rankMatches } from "@/lib/match-score"
 import { CommandArgPicker } from "./command-arg-picker"
 import type { CommandItem } from "./types"

@@ -18,7 +18,7 @@ import {
   MAX_SEARCH_STEER_CHARS,
   SEARCH_CLICK_KINDS,
   STREAM_TYPES,
-} from "@threa/types"
+} from "@threahq/types"
 
 const ARCHIVE_STATUSES = ["active", "archived"] as const
 

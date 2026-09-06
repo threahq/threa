@@ -4,7 +4,7 @@ import {
   DEFAULT_MAX_PENDING_FOLLOW_UPS,
   MAX_PENDING_FOLLOW_UPS_MIN,
   MAX_PENDING_FOLLOW_UPS_MAX,
-} from "@threa/types"
+} from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
 import { hasPermission } from "@/lib/permissions"

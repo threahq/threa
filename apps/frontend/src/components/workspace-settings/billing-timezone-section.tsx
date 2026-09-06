@@ -1,4 +1,4 @@
-import { WORKSPACE_PERMISSION_SCOPES, DEFAULT_WORKSPACE_SETTINGS } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES, DEFAULT_WORKSPACE_SETTINGS } from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
 import { hasPermission } from "@/lib/permissions"

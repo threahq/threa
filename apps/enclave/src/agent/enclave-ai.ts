@@ -1,5 +1,5 @@
-import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
-import { providerRequiresCacheBreakpoints } from "@threa/agent-runtime"
+import type { AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
+import { providerRequiresCacheBreakpoints } from "@threahq/agent-runtime"
 import type { RawChatFn } from "../llm"
 import { buildAssistantMessage, toOpenAiMessages, toOpenAiTools } from "./openai-format"
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { WorkspaceBootstrap, WorkspaceSettings } from "@threa/types"
+import type { WorkspaceBootstrap, WorkspaceSettings } from "@threahq/types"
 import { workspaceSettingsApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "./use-workspace-setting-mutation"

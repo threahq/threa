@@ -37,7 +37,7 @@ import {
   type LinkPreviewSummary,
   type MemoEmbedSummary,
   TitleSources,
-} from "@threa/types"
+} from "@threahq/types"
 
 export { ConversationWithStaleness }
 

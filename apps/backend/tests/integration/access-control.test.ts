@@ -20,7 +20,7 @@ import { AttachmentRepository } from "../../src/features/attachments"
 import { StreamNotFoundError } from "../../src/lib/errors"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, eventId, commandId, attachmentId } from "../../src/lib/id"
-import { StreamTypes, Visibilities, AttachmentSafetyStatuses } from "@threa/types"
+import { StreamTypes, Visibilities, AttachmentSafetyStatuses } from "@threahq/types"
 
 describe("Access Control", () => {
   let pool: Pool

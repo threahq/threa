@@ -1,4 +1,4 @@
-import { BOT_TRAITS, type BotTrait } from "@threa/types"
+import { BOT_TRAITS, type BotTrait } from "@threahq/types"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 

@@ -30,7 +30,7 @@ import {
   BotInvocationTriggers,
   ENCLAVE_CALLBACK_TOKEN_HEADER,
   THREA_CALLBACK_TOKEN_HEADER,
-} from "@threa/types"
+} from "@threahq/types"
 import { CommandRegistry, createCommandWorker, insertCommandDispatchedEvent } from "../../src/features/commands"
 import {
   AgentFollowUpRepository,

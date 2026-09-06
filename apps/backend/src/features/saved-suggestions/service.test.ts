@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { SavedSuggestionStatuses } from "@threa/types"
+import { SavedSuggestionStatuses } from "@threahq/types"
 import { SavedSuggestionsService, type SavedItemCreator } from "./service"
 import { SuggestionExtractor, type ExtractedItem } from "./extractor"
 import { SavedSuggestionsRepository, type SavedSuggestion } from "./repository"

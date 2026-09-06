@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { UpdateWorkspaceSettingsInput, WorkspaceBootstrap, WorkspaceSettings } from "@threa/types"
+import type { UpdateWorkspaceSettingsInput, WorkspaceBootstrap, WorkspaceSettings } from "@threahq/types"
 import { workspaceSettingsApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 

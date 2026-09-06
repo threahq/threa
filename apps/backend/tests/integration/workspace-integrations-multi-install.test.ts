@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { WorkspaceIntegrationProviders } from "@threa/types"
+import { WorkspaceIntegrationProviders } from "@threahq/types"
 import { setupTestDatabase, withTestTransaction } from "./setup"
 import {
   WorkspaceIntegrationRepository,

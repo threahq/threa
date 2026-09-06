@@ -1,4 +1,4 @@
-import { ContextIntents, ContextRefKinds } from "@threa/types"
+import { ContextIntents, ContextRefKinds } from "@threahq/types"
 import type { IntentConfig } from "../types"
 
 /**

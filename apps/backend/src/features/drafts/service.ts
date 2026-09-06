@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg"
-import type { Draft as DraftView, JSONContent, DraftCommand } from "@threa/types"
+import type { Draft as DraftView, JSONContent, DraftCommand } from "@threahq/types"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { draftId } from "../../lib/id"

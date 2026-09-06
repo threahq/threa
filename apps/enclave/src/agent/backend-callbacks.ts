@@ -12,7 +12,7 @@ import {
   type EnclaveSealedSubstep,
   type EnclaveSessionResult,
   type EnclaveSessionFailure,
-} from "@threa/types"
+} from "@threahq/types"
 import type { EnclaveConfig } from "../config"
 
 /**

@@ -22,7 +22,7 @@ import {
   type SubagentStatusChangedEventPayload,
   type SubagentSummary,
   type ThreadSummary,
-} from "@threa/types"
+} from "@threahq/types"
 import { subagentsApi } from "@/api"
 import { usePanel } from "@/contexts"
 import { useActors } from "@/hooks"

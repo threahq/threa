@@ -3,7 +3,7 @@ import { act, render, screen, fireEvent } from "@testing-library/react"
 import type { SuggestionProps } from "@tiptap/suggestion"
 import { useSuggestion } from "./use-suggestion"
 import { useEmojiSuggestion } from "./use-emoji-suggestion"
-import type { EmojiEntry } from "@threa/types"
+import type { EmojiEntry } from "@threahq/types"
 
 interface Item {
   id: string

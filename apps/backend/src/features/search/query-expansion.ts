@@ -1,5 +1,5 @@
-import type { AI, CostContext } from "@threa/agent-runtime"
-import { isAbortError } from "@threa/agent-runtime"
+import type { AI, CostContext } from "@threahq/agent-runtime"
+import { isAbortError } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 import {
   SEARCH_EXPANSION_MODEL_ID,

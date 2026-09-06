@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
+import { MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
 import {
   clearAxisSearch,
   clearDraftsSearch,

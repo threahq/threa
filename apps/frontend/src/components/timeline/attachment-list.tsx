@@ -21,7 +21,7 @@ import {
   isPdfAttachment,
   isTextPreviewableAttachment,
 } from "@/lib/attachment-kind"
-import type { AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threahq/types"
 import {
   subscribeUploads,
   getUploadsVersion,

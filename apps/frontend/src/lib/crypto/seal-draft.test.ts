@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { parseMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import { parseMarkdown } from "@threahq/prosemirror"
+import type { JSONContent } from "@threahq/types"
 import { sealDraftContent } from "./seal-draft"
 import { tryDecryptMessagePayload } from "./message-envelope"
 import { clearAttachmentRefCache, rememberAttachmentRef } from "./attachment-crypto"

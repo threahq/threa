@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { DEFAULT_WORK_SCHEDULE, DEFAULT_MAX_PENDING_FOLLOW_UPS, type WorkSchedule } from "@threa/types"
+import { DEFAULT_WORK_SCHEDULE, DEFAULT_MAX_PENDING_FOLLOW_UPS, type WorkSchedule } from "@threahq/types"
 import { WorkspaceSettingsService } from "./service"
 import { WorkspaceSettingsRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { PersonaRepository } from "../agents"
 import * as dbModule from "../../db"
-import type { ModelRegistry } from "@threa/agent-runtime"
+import type { ModelRegistry } from "@threahq/agent-runtime"
 
 const WORKSPACE_ID = "ws_1"
 

@@ -59,7 +59,7 @@ import {
   type UnreadOpenPosition,
   type LabelRemoveOnMove,
   type BoardLens,
-} from "@threa/types"
+} from "@threahq/types"
 
 const CODE_BLOCK_WRAP_LABELS: Record<CodeBlockWrap, string> = {
   scroll: "Scroll horizontally",

@@ -1,5 +1,5 @@
 import type { Socket, ExtendedError } from "socket.io"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import type { BotApiKeyService, ValidatedBotApiKey } from "../public-api"
 
 /**

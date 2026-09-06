@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes } from "@threahq/types"
 import { renderMentions, processChildrenForMentions } from "./mention-renderer"
 import { ChannelLinkProvider } from "./channel-link-context"
 

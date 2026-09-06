@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
 import { ScheduledMessagesRepository } from "./repository"
-import { ScheduledMessageStatuses } from "@threa/types"
+import { ScheduledMessageStatuses } from "@threahq/types"
 
 const NOW = new Date("2026-05-03T12:00:00.000Z")
 const SCHEDULED_FOR = new Date("2026-05-03T13:00:00.000Z")

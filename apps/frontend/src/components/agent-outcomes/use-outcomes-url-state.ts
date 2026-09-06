@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
-import { AGENT_OUTCOME_KINDS, AGENT_OUTCOME_STATES, type AgentOutcomeKind, type AgentOutcomeState } from "@threa/types"
+import { AGENT_OUTCOME_KINDS, AGENT_OUTCOME_STATES, type AgentOutcomeKind, type AgentOutcomeState } from "@threahq/types"
 
 // Namespaced because the attachment explorer is mounted on every workspace
 // route, including this one, and claims the bare `streams` / `q` / `selected`.

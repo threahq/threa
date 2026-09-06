@@ -1,4 +1,4 @@
-import { readHarnessLinks, type HarnessLink } from "@threa/harness-client"
+import { readHarnessLinks, type HarnessLink } from "@threahq/harness-client"
 import { threaTarget } from "./commands"
 import { now } from "./cli"
 import { die } from "./errors"

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 import { setupIsolatedTestDatabase } from "./setup"
 import { SearchQueryLogRepository, SearchQueryLogService } from "../../src/features/search"
 import { userId, workspaceId } from "../../src/lib/id"

@@ -1,4 +1,4 @@
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import { useActors } from "@/hooks"
 
 interface MembershipEventProps {

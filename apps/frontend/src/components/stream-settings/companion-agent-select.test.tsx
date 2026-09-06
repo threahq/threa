@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { PersonaListItem } from "@threa/types"
+import type { PersonaListItem } from "@threahq/types"
 import { companionRowBadges, resolveCompanionSelection } from "./companion-agent-select"
 
 function persona(overrides: Partial<PersonaListItem> & Pick<PersonaListItem, "id" | "slug" | "name">): PersonaListItem {

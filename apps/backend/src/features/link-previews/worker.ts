@@ -1,4 +1,4 @@
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import type { Job, JobHandler } from "../../lib/queue"
 import type { LinkPreviewExtractJobData } from "../../lib/queue/job-queue"
 import type { LinkPreviewService } from "./service"
@@ -15,7 +15,7 @@ import {
   MAX_TITLE_LENGTH,
   OEMBED_PROVIDERS,
 } from "./config"
-import { isInAppLinkContentType, isRedditUrl, resolveFetchUserAgent } from "@threa/types"
+import { isInAppLinkContentType, isRedditUrl, resolveFetchUserAgent } from "@threahq/types"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 const log = logger.child({ module: "link-preview-worker" })

@@ -1,5 +1,5 @@
 import { Hash, X } from "lucide-react"
-import { AGENT_OUTCOME_KINDS, type AgentOutcomeKind, type AgentOutcomeState } from "@threa/types"
+import { AGENT_OUTCOME_KINDS, type AgentOutcomeKind, type AgentOutcomeState } from "@threahq/types"
 import { Badge } from "@/components/ui/badge"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { OUTCOME_KIND_PLURAL } from "@/lib/agent-outcomes/items"

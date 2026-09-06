@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Request, Response } from "express"
-import { BotAccessRequestStatuses } from "@threa/types"
+import { BotAccessRequestStatuses } from "@threahq/types"
 import { createBotAccessRequestHandlers, type StreamMemberChecker } from "./handlers"
 import type { BotAccessRequest } from "./repository"
 import type { BotAccessRequestService } from "./service"

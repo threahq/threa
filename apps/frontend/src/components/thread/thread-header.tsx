@@ -5,7 +5,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { usePanel } from "@/contexts"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { streamLabel } from "@/lib/streams"
-import type { StreamType } from "@threa/types"
+import type { StreamType } from "@threahq/types"
 
 interface ThreadHeaderStream {
   id: string

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds } from "@threa/types"
+import { BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds } from "@threahq/types"
 import { resolveRuntimeInvocationRouting } from "./handlers"
 
 describe("resolveRuntimeInvocationRouting", () => {

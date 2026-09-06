@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { parseMarkdown, repairMessageReferences } from "@threa/prosemirror"
+import { parseMarkdown, repairMessageReferences } from "@threahq/prosemirror"
 import { EventService, MessageRepository } from "../../src/features/messaging"
 import { listAccessibleStreamIds, StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"

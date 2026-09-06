@@ -1,5 +1,5 @@
-import { logger } from "@threa/backend-common"
-import { GITHUB_PREVIEW_TYPES } from "@threa/types"
+import { logger } from "@threahq/backend-common"
+import { GITHUB_PREVIEW_TYPES } from "@threahq/types"
 import type { Job, JobHandler, QueueManager } from "../../lib/queue"
 import { JobQueues } from "../../lib/queue"
 import type { LinkPreviewVisibleRefreshJobData } from "../../lib/queue/job-queue"

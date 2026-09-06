@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedConversationMessage } from "@/db"
-import type { BoardPostMessage } from "@threa/types"
+import type { BoardPostMessage } from "@threahq/types"
 
 const EMPTY: CachedConversationMessage[] = []
 

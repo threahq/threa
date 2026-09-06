@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "crypto"
 import type { NextFunction, Request, Response } from "express"
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER } from "@threahq/types"
 import { HttpError } from "../errors"
 
 export { INTERNAL_API_KEY_HEADER }

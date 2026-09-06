@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from "crypto"
-import type { WorkspaceIntegrationProvider } from "@threa/types"
-export { extractWorkspaceIdFromGithubInstallState } from "@threa/backend-common"
+import type { WorkspaceIntegrationProvider } from "@threahq/types"
+export { extractWorkspaceIdFromGithubInstallState } from "@threahq/backend-common"
 
 const ENCRYPTION_VERSION = 2
 const GCM_ALGORITHM = "aes-256-gcm"

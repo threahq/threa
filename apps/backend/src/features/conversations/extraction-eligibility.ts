@@ -1,5 +1,5 @@
 import type { Querier } from "../../db"
-import { AuthorTypes, StreamTypes, type AuthorType, type StreamType } from "@threa/types"
+import { AuthorTypes, StreamTypes, type AuthorType, type StreamType } from "@threahq/types"
 import { E2eStreamsRepository } from "../e2e-streams"
 
 /**

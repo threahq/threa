@@ -9,7 +9,7 @@ import {
   MEMO_TAGS_MAX,
   MEMO_TITLE_MAX_CHARS,
   TOOL_CATEGORIES_BY_NAME,
-} from "@threa/types"
+} from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { SaveMemoToolDeps } from "./tool-deps"

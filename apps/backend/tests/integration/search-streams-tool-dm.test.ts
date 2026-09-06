@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { StreamTypes, Visibilities } from "@threahq/types"
 import { computeAgentAccessSpec } from "../../src/features/agents"
 import { createSearchStreamsTool } from "../../src/features/agents/tools"
 import { SearchRepository } from "../../src/features/search"

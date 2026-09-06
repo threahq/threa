@@ -1,5 +1,5 @@
-import type { VideoPreview, VideoPreviewProvider } from "@threa/types"
-import { VideoPreviewProviders, VideoPreviewTypes } from "@threa/types"
+import type { VideoPreview, VideoPreviewProvider } from "@threahq/types"
+import { VideoPreviewProviders, VideoPreviewTypes } from "@threahq/types"
 import { MAX_TITLE_LENGTH } from "./config"
 import type { UpdateLinkPreviewParams } from "./repository"
 

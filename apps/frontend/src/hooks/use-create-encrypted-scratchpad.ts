@@ -6,7 +6,7 @@ import {
   type StreamMember,
   type WorkspaceBootstrap,
   type StreamWithPreview,
-} from "@threa/types"
+} from "@threahq/types"
 import { toast } from "sonner"
 import { db } from "@/db"
 import { useStreamService } from "@/contexts"

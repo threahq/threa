@@ -5,7 +5,7 @@ import {
   sealMessage,
   serializeSealedPayload,
   type SealedSourceItem,
-} from "@threa/crypto"
+} from "@threahq/crypto"
 import {
   AgentStepTypes,
   type AgentStepType,
@@ -13,7 +13,7 @@ import {
   type SealedStepStart,
   type EnclaveSealedSubstep,
   type TraceSource,
-} from "@threa/types"
+} from "@threahq/types"
 import {
   TraceProjector,
   type AgentEvent,
@@ -22,7 +22,7 @@ import {
   type TraceStepRecord,
   type TraceStepSink,
   type TraceSubstepEntry,
-} from "@threa/agent-runtime/runtime"
+} from "@threahq/agent-runtime/runtime"
 
 /**
  * Observes the agent loop and ships each user-facing trace step back to the

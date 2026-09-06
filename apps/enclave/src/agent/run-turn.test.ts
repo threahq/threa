@@ -15,7 +15,7 @@ import {
   utf8Encode,
   wrapStreamKey,
   type AttachmentRef,
-} from "@threa/crypto"
+} from "@threahq/crypto"
 import type {
   EnclaveMidTurnMessage,
   SealedReply,
@@ -24,7 +24,7 @@ import type {
   EnclaveSealedSubstep,
   EnclaveSessionAssignment,
   EnclaveNamingDecision,
-} from "@threa/types"
+} from "@threahq/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "../keystore"
 import type { RawChatFn, RawChatRequest, RawChatResult } from "../llm"
 import { InvokeError, runEnclaveTurn } from "./run-turn"

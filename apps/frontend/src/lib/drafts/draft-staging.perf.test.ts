@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { stageDraftContent } from "./draft-staging"
 

@@ -11,7 +11,7 @@ import {
   presetPausesNotifications,
   type StatusPreset,
   type WorkspaceBootstrap,
-} from "@threa/types"
+} from "@threahq/types"
 import { workspaceSettingsApi } from "@/api"
 import { workspaceKeys, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"

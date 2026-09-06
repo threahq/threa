@@ -1,4 +1,4 @@
-import type { InvocationInputUpdateWire, SealedTurnContext, EnclaveStreamEnvelope } from "@threa/types"
+import type { InvocationInputUpdateWire, SealedTurnContext, EnclaveStreamEnvelope } from "@threahq/types"
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
 import type { Message } from "../messaging"
 

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import type { Pool } from "pg"
-import type { AnalyticsReporter } from "@threa/backend-common"
-import { AuthorTypes } from "@threa/types"
+import type { AnalyticsReporter } from "@threahq/backend-common"
+import { AuthorTypes } from "@threahq/types"
 import {
   DebouncedOutboxHandler,
   type DebouncedOutboxHandlerConfig,

@@ -4,7 +4,7 @@ import {
   type StatusPreset,
   SYSTEM_DEFAULT_STATUSES,
   type WorkSchedule,
-} from "@threa/types"
+} from "@threahq/types"
 import { computeRemindAt } from "@/lib/reminder-presets"
 import { formatFutureTime } from "@/lib/dates"
 

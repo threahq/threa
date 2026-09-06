@@ -1,8 +1,8 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
-import type { SyncCatchUpResponse } from "@threa/types"
+import type { SyncCatchUpResponse } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
-import { bigIntReplacer } from "@threa/backend-common"
+import { bigIntReplacer } from "@threahq/backend-common"
 import { permissionGroupsForRole } from "../../lib/outbox"
 import { setAuditSubjects } from "../access-log"
 import {

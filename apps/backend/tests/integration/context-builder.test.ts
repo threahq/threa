@@ -17,7 +17,7 @@ import { MessageRepository } from "../../src/features/messaging"
 import { buildStreamContext } from "../../src/features/agents"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId } from "../../src/lib/id"
-import { StreamTypes, Visibilities, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threa/types"
+import { StreamTypes, Visibilities, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threahq/types"
 
 describe("Context Builder", () => {
   let pool: Pool

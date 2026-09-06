@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express"
 import type { Pool } from "pg"
-import { displayNameFromWorkos, logger } from "@threa/backend-common"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { displayNameFromWorkos, logger } from "@threahq/backend-common"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { UserRepository, type User, type WorkspaceService } from "../features/workspaces"
 import type { ControlPlaneClient } from "../lib/control-plane-client"
 

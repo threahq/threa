@@ -1,4 +1,4 @@
-import { AGENT_SETTABLE_PREFERENCE_KEYS, type UserPreferences } from "@threa/types"
+import { AGENT_SETTABLE_PREFERENCE_KEYS, type UserPreferences } from "@threahq/types"
 
 /**
  * The user's current values for every setting the agent can change.

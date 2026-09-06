@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { StreamTypes, type Stream, type StreamBootstrap } from "@threa/types"
+import { StreamTypes, type Stream, type StreamBootstrap } from "@threahq/types"
 import { streamKeys } from "@/hooks"
 import { StreamSettingsDialog } from "./stream-settings-dialog"
 import * as useStreamSettingsModule from "./use-stream-settings"

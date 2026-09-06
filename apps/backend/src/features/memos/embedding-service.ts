@@ -1,4 +1,4 @@
-import type { AI, CostContext } from "@threa/agent-runtime"
+import type { AI, CostContext } from "@threahq/agent-runtime"
 import { EMBEDDING_MODEL_ID } from "./embedding-config"
 
 export interface EmbeddingServiceConfig {

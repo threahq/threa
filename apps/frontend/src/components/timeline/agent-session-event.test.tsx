@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import type { StreamEvent } from "@threa/types"
+import type { StreamEvent } from "@threahq/types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as agentTraceModule from "@/hooks/use-agent-trace"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { AgentSessionStep } from "@threa/types"
+import type { AgentSessionStep } from "@threahq/types"
 import { AgentSessionEvent } from "./agent-session-event"
 
 beforeEach(() => {

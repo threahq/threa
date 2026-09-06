@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import type { Pool } from "pg"
-import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { WorkspaceUserPermissionsRepository } from "../../src/features/workspace-authz"
 import { setupTestDatabase } from "./setup"
 

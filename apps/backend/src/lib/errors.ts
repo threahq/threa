@@ -1,6 +1,6 @@
-import { HttpError } from "@threa/backend-common"
+import { HttpError } from "@threahq/backend-common"
 
-export { HttpError, isUniqueViolation } from "@threa/backend-common"
+export { HttpError, isUniqueViolation } from "@threahq/backend-common"
 
 export class DuplicateSlugError extends HttpError {
   constructor(slug: string) {

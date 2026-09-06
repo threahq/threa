@@ -4,7 +4,7 @@ import {
   isDeclaredUnsupported,
   type SynchronousTurnDriver,
   type TurnDispatchBinding,
-} from "@threa/agent-runtime"
+} from "@threahq/agent-runtime"
 import { ExternalTurnDriver } from "./external-turn-driver"
 import type { BotRuntimeService } from "./service"
 

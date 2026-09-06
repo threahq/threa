@@ -1,5 +1,5 @@
 import type { Request, Response } from "express"
-import { extractWorkspaceIdFromGithubInstallState } from "@threa/backend-common"
+import { extractWorkspaceIdFromGithubInstallState } from "@threahq/backend-common"
 import type { RegionConfig } from "../../config"
 import type { ControlPlaneWorkspaceService } from "../workspaces"
 

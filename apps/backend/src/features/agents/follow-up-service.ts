@@ -10,7 +10,7 @@ import {
   type AuthorType,
   type AgentFollowUpScheduledEventPayload,
   type AgentFollowUpCancelledEventPayload,
-} from "@threa/types"
+} from "@threahq/types"
 import { assertStreamWritable, StreamEventRepository, StreamRepository } from "../streams"
 import { MessageRepository } from "../messaging"
 import { AgentSessionRepository } from "./session-repository"

@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import { parseMessagePayload } from "../../lib/outbox"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
-import { logger } from "@threa/backend-common"
+import { logger } from "@threahq/backend-common"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
 

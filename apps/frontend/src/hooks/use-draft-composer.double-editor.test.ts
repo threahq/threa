@@ -10,7 +10,7 @@ import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { resetApplyWindow } from "@/stores/apply-window"
 import { readStagedDraft } from "@/lib/drafts/draft-staging"
 import { db } from "@/db"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent } from "@threahq/types"
 
 const makeDoc = (text: string): JSONContent => ({
   type: "doc",

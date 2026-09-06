@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import type { Request, Response } from "express"
-import { SubagentStatuses } from "@threa/types"
+import { SubagentStatuses } from "@threahq/types"
 import * as streamsModule from "../streams"
 import { createSubagentHandlers } from "./handlers"
 import { SubagentAlreadyActiveError } from "./repository"

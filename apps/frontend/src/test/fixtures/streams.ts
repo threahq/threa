@@ -1,5 +1,5 @@
-import type { Stream, StreamType } from "@threa/types"
-import { StreamTypes } from "@threa/types"
+import type { Stream, StreamType } from "@threahq/types"
+import { StreamTypes } from "@threahq/types"
 
 /** Only id and type are required; everything else has defaults. */
 export function createMockStream(overrides: Partial<Stream> & { id: string; type: StreamType }): Stream {
