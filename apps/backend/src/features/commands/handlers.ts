@@ -2,7 +2,8 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { serializeBigInt } from "@threa/backend-common"
-import { BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds, CommandKinds } from "@threa/types"
+import { parseMarkdown } from "@threa/prosemirror"
+import { AuthorTypes, BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds, CommandKinds } from "@threa/types"
 import type { BotRuntimeKind, CommandDispatchedPayload } from "@threa/types"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { commandId as generateCommandId, eventId as generateEventId } from "../../lib/id"
@@ -18,6 +19,7 @@ import {
   StreamEventRepository,
   type StreamEvent,
 } from "../streams"
+import { MESSAGE_METADATA_COMMAND_KEY, type EventService } from "../messaging"
 
 const dispatchCommandSchema = z.object({
   command: z.string().min(1, "command is required"),
@@ -30,7 +32,16 @@ interface Dependencies {
   pool: Pool
   commandAvailabilityService: CommandAvailabilityService
   botRuntimeService: BotRuntimeService
+  eventService: EventService
 }
+
+/**
+ * Commands whose typed text is persisted as a real message, which then becomes
+ * the invocation's source. `/spawn` opens a thread on that source and only a
+ * message can anchor one — `createThreadOn` rejects the `cmd_` id every other
+ * command's invocation carries.
+ */
+const COMMANDS_AUTHORED_AS_MESSAGES = new Set(["spawn"])
 
 export function resolveRuntimeInvocationRouting(
   commandName: string,
@@ -122,7 +133,12 @@ async function claimOrReplayCommandDispatch(
   return replay
 }
 
-export function createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService }: Dependencies) {
+export function createCommandHandlers({
+  pool,
+  commandAvailabilityService,
+  botRuntimeService,
+  eventService,
+}: Dependencies) {
   return {
     /**
      * Dispatch a slash command.
@@ -292,6 +308,26 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           throw new HttpError("Command is no longer available", { status: 404, code: "COMMAND_NOT_AVAILABLE" })
         }
 
+        // Written before the command event so the timeline reads in the order it
+        // happened: the user's line, then the dispatch that ran it.
+        const commandMessage = COMMANDS_AUTHORED_AS_MESSAGES.has(parsed.name)
+          ? (
+              await eventService.createMessageInTransaction(
+                client,
+                {
+                  workspaceId,
+                  streamId,
+                  authorId: userId,
+                  authorType: AuthorTypes.USER,
+                  contentJson: parseMarkdown(commandString),
+                  contentMarkdown: commandString,
+                  metadata: { [MESSAGE_METADATA_COMMAND_KEY]: parsed.name },
+                },
+                userId
+              )
+            ).message
+          : null
+
         const event = await insertCommandDispatchedEvent(client, {
           workspaceId,
           streamId,
@@ -315,7 +351,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           workspaceId,
           rootStreamId: current.runtime.rootStreamId,
           activeStreamId: current.runtime.activeStreamId,
-          sourceMessageId: cmdId,
+          sourceMessageId: commandMessage?.id ?? cmdId,
           responseStreamId: current.runtime.responseStreamId,
           actorId: current.runtime.botId,
           trigger: routing.trigger,

@@ -81,6 +81,7 @@ export interface InvocationSourceState {
   envelope: unknown | null
   authorId: string
   authorType: AuthorType
+  metadata: Record<string, string>
 }
 
 export interface InsertMessageParams {
@@ -225,6 +226,7 @@ export const MessageRepository = {
       envelope: row.envelope,
       authorId: row.author_id,
       authorType: row.author_type as AuthorType,
+      metadata: row.metadata ?? {},
     }
   },
 

@@ -50,6 +50,7 @@ function source(overrides: Partial<InvocationSourceState> = {}): InvocationSourc
     envelope: null,
     authorId: "usr_1",
     authorType: AuthorTypes.USER,
+    metadata: {},
     ...overrides,
   }
 }
@@ -108,6 +109,22 @@ describe("resolveCanonicalInvocationRoutes", () => {
         promptMarkdown: "@аріадна hi",
       }),
     ])
+  })
+
+  it("routes nothing for the message a slash command was persisted as", async () => {
+    const findStream = spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
+    } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
+
+    const routes = await resolveCanonicalInvocationRoutes(
+      pool,
+      source({ contentMarkdown: "/spawn claude sidebar", metadata: { "threa.command": "spawn" } })
+    )
+
+    expect({ routes, streamLookups: findStream.mock.calls.length }).toEqual({ routes: [], streamLookups: 0 })
   })
 
   it("drops a mentioned bot that can no longer write to the stream", async () => {

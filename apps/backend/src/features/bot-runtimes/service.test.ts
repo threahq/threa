@@ -74,6 +74,7 @@ function sourceState(overrides: Partial<InvocationSourceState> = {}): Invocation
     envelope: null,
     authorId: "usr_owner",
     authorType: "user",
+    metadata: {},
     ...overrides,
   }
 }
@@ -265,6 +266,7 @@ describe("BotRuntimeService outbox emission", () => {
         envelope: null,
         authorId: "usr_owner",
         authorType: "user",
+        metadata: {},
       })
       const pin = spyOn(BotInvocationRepository, "pinClaimSource").mockResolvedValue(
         makeInvocation({ status: "claimed", claimedSourceMessageRevision: 1 })
