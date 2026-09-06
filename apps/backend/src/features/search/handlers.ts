@@ -12,7 +12,13 @@ import { searchRankingForFlag } from "./config"
 import { logger } from "../../lib/logger"
 import { validateRequest } from "../../lib/validation"
 import { setAuditSubjects } from "../access-log"
-import { MAX_SEARCH_PHRASES, SEARCH_CLICK_KINDS, STREAM_TYPES } from "@threa/types"
+import {
+  MAX_SEARCH_PHRASES,
+  MAX_SEARCH_STEERS,
+  MAX_SEARCH_STEER_CHARS,
+  SEARCH_CLICK_KINDS,
+  STREAM_TYPES,
+} from "@threa/types"
 
 const ARCHIVE_STATUSES = ["active", "archived"] as const
 
@@ -29,6 +35,7 @@ export const searchQuerySchema = z.object({
   exact: z.boolean().optional(), // Use ILIKE substring matching instead of full-text
   limit: z.coerce.number().int().min(1).max(100).optional(),
   deep: z.boolean().optional(), // Rewrite into alternative phrasings, fuse, and rerank
+  steer: z.array(z.string().trim().min(1).max(MAX_SEARCH_STEER_CHARS)).max(MAX_SEARCH_STEERS).optional(),
 })
 
 export const searchClickSchema = z.object({
@@ -111,6 +118,7 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
         exact,
         limit,
         deep,
+        steer,
       } = data
 
       // `in` mixes stream ids and user ids (in:@user = the DM with that user).
@@ -126,6 +134,7 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
             clusters: [],
             memos: [],
             excludedE2eStreamCount: 0,
+            steer: null,
             queryLogId: null,
           })
           return
@@ -149,7 +158,14 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
       ])
       const searchFlag = flags.search
 
-      const { results, conversations, memos, clusters, excludedE2eStreamCount } = await searchService.searchClusters({
+      const {
+        results,
+        conversations,
+        memos,
+        clusters,
+        excludedE2eStreamCount,
+        steer: steerOutcome,
+      } = await searchService.searchClusters({
         workspaceId,
         permissions: { accessibleStreamIds, userId },
         query,
@@ -158,6 +174,7 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
         exact,
         limit,
         deep,
+        steer,
         searchFlag,
       })
 
@@ -187,6 +204,7 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
                 after,
                 exact,
                 limit,
+                steer,
               },
               mode: deep ? "deep" : "normal",
               ranking: searchRankingForFlag(searchFlag),
@@ -208,6 +226,7 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
         clusters: clusters.map(serializeSearchCluster),
         memos: memos.map(serializeMemoResult),
         excludedE2eStreamCount,
+        steer: steerOutcome,
         queryLogId,
       })
     },

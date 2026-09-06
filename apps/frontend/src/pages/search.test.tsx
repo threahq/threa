@@ -21,8 +21,12 @@ import * as mobileModule from "@/hooks/use-mobile"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
-import type { MemoExplorerResult, SearchCluster, SearchResultItem } from "@/api"
+import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchSteerOutcome } from "@/api"
 import * as apiModule from "@/api"
+import type { WorkspaceBootstrap } from "@/api"
+import type { FeatureFlagLayers } from "@threa/types"
+import { MAX_SEARCH_STEER_CHARS } from "@threa/types"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 
 const search = vi.fn()
 const clear = vi.fn()
@@ -32,6 +36,7 @@ const mockSearchState = {
   clusters: null as SearchCluster[] | null,
   memos: [] as MemoExplorerResult[],
   queryLogId: null as string | null,
+  steer: null as SearchSteerOutcome | null,
 }
 
 function LocationProbe() {
@@ -39,9 +44,14 @@ function LocationProbe() {
   return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
 }
 
-function renderPage(initialEntry = "/w/workspace_1/search?q=hello") {
+/** `featureFlags` seeds the bootstrap cache the `search` flag is read from; absent, every flag is at its default. */
+function renderPage(initialEntry = "/w/workspace_1/search?q=hello", featureFlags?: FeatureFlagLayers) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  if (featureFlags) {
+    queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), { featureFlags } as WorkspaceBootstrap)
+  }
   return render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <MemoryRouter initialEntries={[initialEntry]}>
           <SidebarProvider>
@@ -78,6 +88,7 @@ describe("SearchPage", () => {
     mockSearchState.clusters = null
     mockSearchState.memos = []
     mockSearchState.queryLogId = null
+    mockSearchState.steer = null
     vi.spyOn(hooksModule, "useSearch").mockImplementation(
       () =>
         ({
@@ -85,6 +96,7 @@ describe("SearchPage", () => {
           clusters: mockSearchState.clusters ?? strayClusters(mockSearchState.results),
           memos: mockSearchState.memos,
           queryLogId: mockSearchState.queryLogId,
+          steer: mockSearchState.steer,
           isLoading: false,
           error: null,
           search,
@@ -309,5 +321,80 @@ describe("SearchPage", () => {
 
     expect(await screen.findByText("No results")).toBeInTheDocument()
     expect(screen.queryByRole("radio", { name: "Ranked results" })).toBeInTheDocument()
+  })
+
+  describe("steer", () => {
+    const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
+
+    it("commits /steer prose to the URL on Enter and drops it when the chip is removed", async () => {
+      const user = userEvent.setup()
+      renderPage(undefined, searchOn)
+
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
+      })
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, " /steer only decisions")
+      await user.keyboard("{Enter}")
+
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&steer=only+decisions")
+      expect(document.querySelector('[data-search-steer="only decisions"]')).toBeInTheDocument()
+      // The committed steer is the only steered search; the pending prose never reached the backend
+      await waitFor(() => {
+        expect(search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
+          ["hello", expect.any(Object), [], ["only decisions"]],
+        ])
+      })
+
+      await user.click(screen.getByRole("button", { name: "Remove steer only decisions" }))
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello")
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
+      })
+    })
+
+    it("restores the steer trail from the URL and shows the outcome", async () => {
+      mockSearchState.steer = { applied: true, note: "Dropped the billing thread." }
+      renderPage("/w/workspace_1/search?q=hello&steer=only+decisions&steer=not+billing")
+
+      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual([
+        "only decisions",
+        "not billing",
+      ])
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions", "not billing"])
+      })
+      expect(await screen.findByText("Dropped the billing thread.")).toBeInTheDocument()
+    })
+
+    it("says so when the steer could not be applied", async () => {
+      mockSearchState.steer = { applied: false, note: null }
+      renderPage("/w/workspace_1/search?q=hello&steer=only+decisions")
+
+      expect(await screen.findByText(/Couldn't apply the steer/)).toBeInTheDocument()
+    })
+
+    it("drops an over-long steer from a shared URL and searches with the rest", async () => {
+      const tooLong = "x".repeat(MAX_SEARCH_STEER_CHARS + 1)
+      renderPage(`/w/workspace_1/search?q=hello&steer=${tooLong}&steer=ok`)
+
+      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual(["ok"])
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["ok"])
+      })
+    })
+
+    it("offers neither the /steer trigger nor its hint under the pre-rework search flag", async () => {
+      const user = userEvent.setup()
+      renderPage("/w/workspace_1/search")
+
+      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello /")
+      expect(screen.queryByText("/steer")).not.toBeInTheDocument()
+    })
   })
 })

@@ -51,7 +51,7 @@ import {
   SessionAbortRegistry,
   ConversationSummaryService,
 } from "../../../src/features/agents"
-import { SearchService, SearchQueryExpander } from "../../../src/features/search"
+import { SearchService, SearchQueryExpander, SearchSteerer } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
 import { EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
@@ -292,6 +292,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
       reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
       memoSearch: memoExplorerService,
+      steerer: new SearchSteerer({ ai: ctx.ai }),
     })
 
     // Mock storage provider that returns our test images

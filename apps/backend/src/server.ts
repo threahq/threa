@@ -94,7 +94,14 @@ import {
   registerAttachmentExtractionSearchConfigBackfill,
 } from "./features/attachments"
 import { MessageFormatter } from "./lib/ai/message-formatter"
-import { SearchService, SearchQueryLogService, SearchQueryExpander, StubQueryExpander } from "./features/search"
+import {
+  SearchService,
+  SearchQueryLogService,
+  SearchQueryExpander,
+  StubQueryExpander,
+  SearchSteerer,
+  StubSearchSteerer,
+} from "./features/search"
 import {
   MemoService,
   MemoExplorerService,
@@ -378,6 +385,7 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubReranker()
     : new Reranker({ ai, subject: "knowledge memos", functionId: "memo-rerank" })
   const queryExpander = config.useStubAI ? new StubQueryExpander() : new SearchQueryExpander({ ai })
+  const searchSteerer = config.useStubAI ? new StubSearchSteerer() : new SearchSteerer({ ai })
   const messageReranker = config.useStubAI
     ? new StubReranker()
     : new Reranker({ ai, subject: "chat messages", functionId: "search-rerank" })
@@ -388,6 +396,7 @@ export async function startServer(): Promise<ServerInstance> {
     queryExpander,
     reranker: messageReranker,
     memoSearch: memoExplorerService,
+    steerer: searchSteerer,
   })
   const searchQueryLogService = new SearchQueryLogService(pool)
 

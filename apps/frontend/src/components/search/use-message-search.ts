@@ -15,9 +15,10 @@ import {
   type SearchCluster,
   type SearchFilters,
   type SearchResultItem,
+  type SearchSteerOutcome,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threa/types"
+import { MAX_SEARCH_PHRASES, MAX_SEARCH_STEER_CHARS, STREAM_TYPES, type StreamType } from "@threa/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
@@ -36,8 +37,12 @@ export interface MessageSearchState {
   parsedFilters: ParsedFilter[]
   /** Free-text part of the query with filters removed. */
   searchText: string
-  /** True when the query contains anything searchable. */
+  /** True when the query contains anything searchable; a `/steer` alone is not. */
   hasQuery: boolean
+  /** `/steer` prose still in the input, waiting for Enter to commit it; null without a marker. */
+  pendingSteer: string | null
+  /** The line shown under the summary: the model's note, or why the list is unsteered; null when there is nothing to say. */
+  steerNote: string | null
   /** `/w/<ws>/memory?q=<text>`: the memory explorer opened on the same words; memo chips append `&memo=<id>`. */
   exploreHref: string
   /** Attributes an opened result to the logged search; a no-op unless the user opted into query logging. */
@@ -46,16 +51,16 @@ export interface MessageSearchState {
 
 /**
  * Debounced workspace message search over a raw query string with inline
- * filter syntax (`from:@user in:#channel after:2026-01-01 …`). Shared by the
- * desktop sidebar search panel and the mobile search page so both surfaces
- * parse, resolve, and rank identically.
+ * filter syntax (`from:@user in:#channel after:2026-01-01 …`) plus the
+ * committed `steers`. Shared by the desktop sidebar search panel and the
+ * mobile search page so both surfaces parse, resolve, and rank identically.
  */
-export function useMessageSearch(workspaceId: string, query: string): MessageSearchState {
+export function useMessageSearch(workspaceId: string, query: string, steers: string[] = []): MessageSearchState {
   const users = useWorkspaceUsers(workspaceId)
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
-  const { results, clusters, memos, queryLogId, isLoading, error, search, clear } = useSearch({
+  const { results, clusters, memos, queryLogId, steer, isLoading, error, search, clear } = useSearch({
     workspaceId,
     limit: SEARCH_RESULT_LIMIT,
   })
@@ -65,8 +70,9 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     text: searchText,
     semanticText,
     phrases,
+    steer: pendingSteer,
   } = useMemo(() => parseSearchQuery(query), [query])
-  const hasTooManyPhrases = phrases.length > MAX_SEARCH_PHRASES
+  const validationError = validationErrorFor(phrases.length, pendingSteer)
 
   // Resolve filter slugs (user/stream handles) to ids the API understands.
   const apiFilters = useMemo((): SearchFilters => {
@@ -151,15 +157,20 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
   const phrasesKey = JSON.stringify(phrases)
   const phrasesRef = useRef(phrases)
   phrasesRef.current = phrases
+  const steersKey = JSON.stringify(steers)
+  const steersRef = useRef(steers)
+  steersRef.current = steers
 
   useEffect(() => {
-    if (!hasQuery || hasTooManyPhrases) {
+    if (!hasQuery || validationError) {
       clear()
       return
     }
 
     const timer = setTimeout(() => {
-      if (phrasesRef.current.length > 0) {
+      if (steersRef.current.length > 0) {
+        void search(semanticText, filtersRef.current, phrasesRef.current, steersRef.current)
+      } else if (phrasesRef.current.length > 0) {
         void search(semanticText, filtersRef.current, phrasesRef.current)
       } else {
         void search(semanticText, filtersRef.current)
@@ -167,7 +178,7 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     }, SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [hasQuery, hasTooManyPhrases, semanticText, filtersKey, phrasesKey, search, clear])
+  }, [hasQuery, validationError, semanticText, filtersKey, phrasesKey, steersKey, search, clear])
 
   const recordResultClick = useCallback(
     (target: SearchClickTarget) => {
@@ -185,11 +196,26 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
     memos,
     isLoading,
     error,
-    validationError: hasTooManyPhrases ? `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.` : null,
+    validationError,
     parsedFilters,
     searchText,
     hasQuery,
+    pendingSteer,
+    steerNote: steerNoteFor(steer),
     exploreHref: `/w/${workspaceId}/memory?q=${encodeURIComponent(searchText)}`,
     recordResultClick,
   }
+}
+
+function validationErrorFor(phraseCount: number, pendingSteer: string | null): string | null {
+  if (phraseCount > MAX_SEARCH_PHRASES) return `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.`
+  if (pendingSteer !== null && pendingSteer.length > MAX_SEARCH_STEER_CHARS) {
+    return `A steer is at most ${MAX_SEARCH_STEER_CHARS} characters.`
+  }
+  return null
+}
+
+function steerNoteFor(steer: SearchSteerOutcome | null): string | null {
+  if (!steer) return null
+  return steer.applied ? steer.note : "Couldn't apply the steer; showing the unsteered list."
 }

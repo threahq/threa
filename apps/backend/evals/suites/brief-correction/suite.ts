@@ -48,7 +48,7 @@ import {
   ConversationSummaryService,
 } from "../../../src/features/agents"
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
-import { SearchService, SearchQueryExpander } from "../../../src/features/search"
+import { SearchService, SearchQueryExpander, SearchSteerer } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
 import { EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
 import {
@@ -193,6 +193,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
       reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
       memoSearch: memoExplorerService,
+      steerer: new SearchSteerer({ ai: ctx.ai }),
     })
     const conversationSummaryService = new ConversationSummaryService({
       ai: ctx.ai,

@@ -11,6 +11,7 @@ import { useWithFilterSuggestion } from "@/components/editor/triggers/use-with-f
 import { useInUserFilterSuggestion } from "@/components/editor/triggers/use-in-user-filter-suggestion"
 import { useInChannelFilterSuggestion } from "@/components/editor/triggers/use-in-channel-filter-suggestion"
 import { useStatusFilterSuggestion } from "@/components/editor/triggers/use-status-filter-suggestion"
+import { useSteerSuggestion } from "@/components/editor/triggers/use-steer-suggestion"
 import { FilterTypeExtension } from "@/components/editor/triggers/filter-type-extension"
 import { DateFilterExtension } from "@/components/editor/triggers/date-filter-extension"
 import { FromFilterExtension } from "@/components/editor/triggers/from-filter-extension"
@@ -18,6 +19,7 @@ import { WithFilterExtension } from "@/components/editor/triggers/with-filter-ex
 import { InUserFilterExtension } from "@/components/editor/triggers/in-user-filter-extension"
 import { InChannelFilterExtension } from "@/components/editor/triggers/in-channel-filter-extension"
 import { StatusFilterExtension } from "@/components/editor/triggers/status-filter-extension"
+import { SteerExtension } from "@/components/editor/triggers/steer-extension"
 import { SearchMentionExtension } from "@/components/editor/triggers/search-mention-extension"
 import { SearchChannelExtension } from "@/components/editor/triggers/search-channel-extension"
 import { cn, escapeHtml } from "@/lib/utils"
@@ -35,11 +37,12 @@ export type TriggerType =
   | "inUserFilter" // in:@ - inserts "in:@slug " (DM filter)
   | "inChannelFilter" // in:# - inserts "in:#slug " (channel filter)
   | "statusFilter" // status: - inserts "status:value "
+  | "steer" // / - inserts "/steer " (prose refinement of the result list)
 
 /**
  * Preset trigger configurations for common use cases.
  */
-export const SEARCH_TRIGGERS: TriggerType[] = [
+export const SEARCH_FILTER_TRIGGERS: TriggerType[] = [
   "mention",
   "channel",
   "filterType",
@@ -50,6 +53,9 @@ export const SEARCH_TRIGGERS: TriggerType[] = [
   "inChannelFilter",
   "statusFilter",
 ]
+
+/** The filter triggers plus `/steer`, for viewers on the reworked search (`search` flag on). */
+export const SEARCH_TRIGGERS: TriggerType[] = [...SEARCH_FILTER_TRIGGERS, "steer"]
 
 export const COMMAND_TRIGGERS: TriggerType[] = []
 
@@ -178,6 +184,12 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     isActive: statusFilterActive,
     close: closeStatusFilter,
   } = useStatusFilterSuggestion()
+  const {
+    suggestionConfig: steerConfig,
+    renderSteerList,
+    isActive: steerActive,
+    close: closeSteer,
+  } = useSteerSuggestion()
 
   // Track combined popover active state (only for enabled triggers)
   const isPopoverActive =
@@ -189,7 +201,8 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     (hasTrigger("withFilter") && withFilterActive) ||
     (hasTrigger("inUserFilter") && inUserFilterActive) ||
     (hasTrigger("inChannelFilter") && inChannelFilterActive) ||
-    (hasTrigger("statusFilter") && statusFilterActive)
+    (hasTrigger("statusFilter") && statusFilterActive) ||
+    (hasTrigger("steer") && steerActive)
   isPopoverActiveRef.current = isPopoverActive
 
   // Notify parent when popover state changes
@@ -240,6 +253,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
       InUserFilterExtension.configure({ suggestion: inUserFilterConfig }),
       InChannelFilterExtension.configure({ suggestion: inChannelFilterConfig }),
       StatusFilterExtension.configure({ suggestion: statusFilterConfig }),
+      SteerExtension.configure({ suggestion: steerConfig }),
     ],
     // Note: We intentionally exclude suggestion configs from deps - they're stable refs
     // and including them causes unnecessary editor recreation
@@ -332,6 +346,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     if (hasTrigger("inUserFilter")) closeInUserFilter()
     if (hasTrigger("inChannelFilter")) closeInChannelFilter()
     if (hasTrigger("statusFilter")) closeStatusFilter()
+    if (hasTrigger("steer")) closeSteer()
   }, [
     hasTrigger,
     closeMention,
@@ -343,6 +358,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     closeInUserFilter,
     closeInChannelFilter,
     closeStatusFilter,
+    closeSteer,
   ])
 
   useImperativeHandle(ref, () => ({ focus, blur, closePopovers }), [focus, blur, closePopovers])
@@ -359,6 +375,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
       {hasTrigger("inUserFilter") && renderInUserFilterList()}
       {hasTrigger("inChannelFilter") && renderInChannelFilterList()}
       {hasTrigger("statusFilter") && renderStatusFilterList()}
+      {hasTrigger("steer") && renderSteerList()}
     </div>
   )
 })
