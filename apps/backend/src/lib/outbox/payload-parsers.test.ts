@@ -39,6 +39,7 @@ describe("parseMessagePayload", () => {
             messageId: "msg_def",
             contentMarkdown: "Hello world",
             contentJson,
+            metadata: {},
           },
         },
       })
@@ -71,9 +72,24 @@ describe("parseMessagePayload", () => {
           sequence: "43",
           actorType: "user",
           actorId: "usr_abc",
-          payload: { messageId: "msg_def", contentMarkdown: "Edited", contentJson },
+          payload: { messageId: "msg_def", contentMarkdown: "Edited", contentJson, metadata: {} },
         },
       })
+    })
+
+    test("keeps message metadata and defaults a non-object to empty", () => {
+      const parse = (metadata: unknown) =>
+        parseMessagePayload({
+          workspaceId: "ws_123",
+          streamId: "stream_456",
+          event: { payload: { messageId: "msg_def", metadata } },
+        })?.event.payload.metadata
+
+      expect({
+        object: parse({ "threa.command": "spawn" }),
+        array: parse(["spawn"]),
+        missing: parse(undefined),
+      }).toEqual({ object: { "threa.command": "spawn" }, array: {}, missing: {} })
     })
 
     test("should parse persona message", () => {
@@ -123,6 +139,7 @@ describe("parseMessagePayload", () => {
             messageId: "msg_def",
             contentMarkdown: "",
             contentJson: null,
+            metadata: {},
           },
         },
       })

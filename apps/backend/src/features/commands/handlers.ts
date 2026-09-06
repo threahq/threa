@@ -3,7 +3,13 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { serializeBigInt } from "@threa/backend-common"
 import { parseMarkdown } from "@threa/prosemirror"
-import { AuthorTypes, BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds, CommandKinds } from "@threa/types"
+import {
+  AuthorTypes,
+  BotInvocationCapabilities,
+  BotInvocationTriggers,
+  BotRuntimeKinds,
+  CommandKinds,
+} from "@threa/types"
 import type { BotRuntimeKind, CommandDispatchedPayload } from "@threa/types"
 import { withClient, withTransaction, type Querier } from "../../db"
 import { commandId as generateCommandId, eventId as generateEventId } from "../../lib/id"
@@ -34,14 +40,6 @@ interface Dependencies {
   botRuntimeService: BotRuntimeService
   eventService: EventService
 }
-
-/**
- * Commands whose typed text is persisted as a real message, which then becomes
- * the invocation's source. `/spawn` opens a thread on that source and only a
- * message can anchor one — `createThreadOn` rejects the `cmd_` id every other
- * command's invocation carries.
- */
-const COMMANDS_AUTHORED_AS_MESSAGES = new Set(["spawn"])
 
 export function resolveRuntimeInvocationRouting(
   commandName: string,
@@ -308,25 +306,27 @@ export function createCommandHandlers({
           throw new HttpError("Command is no longer available", { status: 404, code: "COMMAND_NOT_AVAILABLE" })
         }
 
-        // Written before the command event so the timeline reads in the order it
-        // happened: the user's line, then the dispatch that ran it.
-        const commandMessage = COMMANDS_AUTHORED_AS_MESSAGES.has(parsed.name)
-          ? (
-              await eventService.createMessageInTransaction(
-                client,
-                {
-                  workspaceId,
-                  streamId,
-                  authorId: userId,
-                  authorType: AuthorTypes.USER,
-                  contentJson: parseMarkdown(commandString),
-                  contentMarkdown: commandString,
-                  metadata: { [MESSAGE_METADATA_COMMAND_KEY]: parsed.name },
-                },
-                userId
-              )
-            ).message
-          : null
+        // `/spawn` opens a thread on its invocation's source and only a message can
+        // anchor one, so its typed text is persisted as the user's own message.
+        // Before the command event, so the timeline reads in the order it happened.
+        const commandMessage =
+          parsed.name === "spawn"
+            ? (
+                await eventService.createMessageInTransaction(
+                  client,
+                  {
+                    workspaceId,
+                    streamId,
+                    authorId: userId,
+                    authorType: AuthorTypes.USER,
+                    contentJson: parseMarkdown(commandString),
+                    contentMarkdown: commandString,
+                    metadata: { [MESSAGE_METADATA_COMMAND_KEY]: parsed.name },
+                  },
+                  userId
+                )
+              ).message
+            : null
 
         const event = await insertCommandDispatchedEvent(client, {
           workspaceId,

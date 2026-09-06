@@ -164,10 +164,9 @@ async function applyEditedSourceFraming(
 
 async function resolveRoutes(db: Querier, source: InvocationSourceState): Promise<CanonicalInvocationRoute[]> {
   if (source.deleted || source.authorType === AuthorTypes.SYSTEM) return []
-  // A message the command dispatcher wrote for the user's typed slash command.
-  // The dispatch already created the invocation that runs it, so routing the
-  // same text again would hand the runtime a second, ordinary turn saying
-  // "/spawn …".
+  // A message the command dispatcher wrote for a typed slash command: the dispatch
+  // already made the invocation that runs it, and a route here would hand the
+  // runtime the same text a second time as an ordinary turn.
   if (source.metadata[MESSAGE_METADATA_COMMAND_KEY]) return []
   const stream = await StreamRepository.findByIdForWorkspace(db, source.streamId, source.workspaceId)
   if (!stream || stream.workspaceId !== source.workspaceId || stream.archivedAt) return []

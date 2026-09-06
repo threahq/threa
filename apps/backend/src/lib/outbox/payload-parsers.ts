@@ -18,6 +18,8 @@ export interface NormalizedMessagePayload {
        * structural nodes (mentions, shares) treat null as "none present".
        */
       contentJson: JSONContent | null
+      /** Server-derived and caller metadata; empty when the message carries none. */
+      metadata: Record<string, string>
     }
   }
 }
@@ -57,6 +59,12 @@ export function parseMessagePayload(payload: unknown): NormalizedMessagePayload 
               !Array.isArray(eventPayload.contentJson)
                 ? (eventPayload.contentJson as JSONContent)
                 : null,
+            metadata:
+              eventPayload.metadata &&
+              typeof eventPayload.metadata === "object" &&
+              !Array.isArray(eventPayload.metadata)
+                ? (eventPayload.metadata as Record<string, string>)
+                : {},
           },
         },
       }

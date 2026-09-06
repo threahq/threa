@@ -103,10 +103,7 @@ export function withDerivedMessageMetadata(
 }
 
 /**
- * Server-derived key naming the slash command a message was typed as. The
- * dispatch handler writes it when it persists the user's command text as a real
- * message (so a thread can anchor on it); route resolution reads it to leave the
- * message alone — the dispatch already created the invocation that answers it,
- * and a second one would hand the runtime the same text as an ordinary turn.
+ * Server-derived key naming the slash command a message was typed as. Written by
+ * the command dispatcher, read by route resolution to leave the message alone.
  */
 export const MESSAGE_METADATA_COMMAND_KEY = "threa.command"
