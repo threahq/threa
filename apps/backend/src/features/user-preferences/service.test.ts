@@ -114,6 +114,76 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
     expect(bulkDelete).not.toHaveBeenCalled()
     expect(prefs.analyticsConsent).toBe("granted")
   })
+
+  it("should clear the session replay opt-in when consent is denied", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([{ key: "analyticsConsent", value: "denied" }])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { analyticsConsent: "denied" })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
+    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["sessionReplayOptIn"])
+    expect(prefs.sessionReplayOptIn).toBe(false)
+  })
+
+  it("should clear the session replay opt-in when consent is reset to unset", async () => {
+    setupTransaction()
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    await service.updatePreferences(WORKSPACE_ID, USER_ID, { analyticsConsent: "unset" })
+
+    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["analyticsConsent", "sessionReplayOptIn"])
+  })
+
+  it("should refuse a replay opt-in sent alongside a consent withdrawal", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([{ key: "analyticsConsent", value: "denied" }])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, {
+      analyticsConsent: "denied",
+      sessionReplayOptIn: true,
+    })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
+    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["sessionReplayOptIn"])
+    expect(prefs.sessionReplayOptIn).toBe(false)
+  })
+
+  it("should keep the replay opt-in when consent stays granted", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([
+      { key: "analyticsConsent", value: "granted" },
+      { key: "sessionReplayOptIn", value: true },
+    ])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, {
+      analyticsConsent: "granted",
+      sessionReplayOptIn: true,
+    })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [
+      { key: "analyticsConsent", value: "granted" },
+      { key: "sessionReplayOptIn", value: true },
+    ])
+    expect(bulkDelete).not.toHaveBeenCalled()
+    expect(prefs.sessionReplayOptIn).toBe(true)
+  })
 })
 
 describe("UserPreferencesService.updatePreferences board ledger settings", () => {

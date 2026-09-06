@@ -105,10 +105,18 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "sessionReplayOptIn",
   ] as const
 
+  // Replay rides on analytics consent: withdrawing consent withdraws replay
+  // with it, so re-granting consent later cannot silently resume recording.
+  const withdrawsConsent = updates.analyticsConsent !== undefined && updates.analyticsConsent !== "granted"
+
   for (const key of simpleKeys) {
-    if (updates[key] !== undefined) {
-      pairs.push({ key, value: updates[key] })
-    }
+    if (updates[key] === undefined) continue
+    if (key === "sessionReplayOptIn" && withdrawsConsent) continue
+    pairs.push({ key, value: updates[key] })
+  }
+
+  if (withdrawsConsent) {
+    pairs.push({ key: "sessionReplayOptIn", value: false })
   }
 
   // Accessibility fields (flatten to accessibility.X)
