@@ -174,6 +174,8 @@ export type ConversationForMessage = Omit<ConversationSearchResult, "distance">
 export interface ConversationsForMessagesParams {
   workspaceId: string
   messageIds: string[]
+  /** Conversations outside these streams are not returned (INV-62). */
+  streamIds: string[]
 }
 
 export interface MessagesByIdsParams {
@@ -579,8 +581,8 @@ export const SearchRepository = {
     db: Querier,
     params: ConversationsForMessagesParams
   ): Promise<Map<string, ConversationForMessage>> {
-    const { workspaceId, messageIds } = params
-    if (messageIds.length === 0) {
+    const { workspaceId, messageIds, streamIds } = params
+    if (messageIds.length === 0 || streamIds.length === 0) {
       return new Map()
     }
 
@@ -596,6 +598,7 @@ export const SearchRepository = {
           c.participant_ids
         FROM conversations c
         WHERE c.workspace_id = ${workspaceId}
+          AND c.stream_id = ANY(${streamIds}::text[])
           AND c.message_ids && ${messageIds}::text[]
       )
       SELECT

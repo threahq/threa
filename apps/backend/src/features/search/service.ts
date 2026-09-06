@@ -287,17 +287,12 @@ export class SearchService {
             ranking,
           })
 
-    // Memo search honours only stream and date filters; a from:/with:/type:/
-    // status: filter would be silently ignored, so those queries skip the leg.
+    // Memo search honours stream and date filters; with:/type:/status: already
+    // narrowed `streamIds` (the frontend sends status: on every request), but
+    // from: has no memo equivalent and would be silently ignored, so it skips the leg.
     const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
     const memoLeg =
-      legs.memos &&
-      ranking === "improved" &&
-      memoQuery.length > 0 &&
-      filters.authorId === undefined &&
-      filters.userIds === undefined &&
-      filters.streamTypes === undefined &&
-      filters.archiveStatus === undefined
+      legs.memos && ranking === "improved" && memoQuery.length > 0 && filters.authorId === undefined
         ? this.memoSearch.search({
             workspaceId,
             permissions: { accessibleStreamIds: streamIds, userId: permissions.userId },
@@ -314,8 +309,8 @@ export class SearchService {
   /**
    * Joins the message hits and memo sources to their conversations, fetches
    * the memo sources the message leg did not already return, and folds it
-   * all into rows. Two statements on the pool (INV-30), both scoped to the
-   * streams the requester may read.
+   * all into rows. Two statements on the pool (INV-30), both restricted to
+   * the streams the requester may read (INV-62).
    */
   private async clusterResults(args: {
     workspaceId: string
@@ -331,6 +326,7 @@ export class SearchService {
       SearchRepository.conversationsForMessages(this.pool, {
         workspaceId,
         messageIds: [...new Set([...resultIds, ...sourceIds])],
+        streamIds,
       }),
       SearchRepository.messagesByIds(this.pool, {
         ids: [...sourceIds].filter((id) => !resultIds.has(id)),

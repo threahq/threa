@@ -69,6 +69,9 @@ describe("Search result clusters", () => {
   let postmortemId: string
   let strayId: string
   let hiddenId: string
+  let threadId: string
+  let threadConvId: string
+  let threadNoteId: string
 
   beforeAll(async () => {
     ;({ pool, cleanup } = await setupIsolatedTestDatabase("search_clusters"))
@@ -139,6 +142,33 @@ describe("Search result clusters", () => {
       [failedId, rollbackId, deletedId, postmortemId],
       [memberId]
     )
+
+    // A thread under the pad with no stream_members row of its own: access is
+    // inherited from the pad (INV-62), so its content must still cluster.
+    threadId = streamId()
+    await StreamRepository.insert(pool, {
+      id: threadId,
+      workspaceId: wsId,
+      type: "thread",
+      visibility: "private",
+      companionMode: "off",
+      createdBy: memberId,
+      parentStreamId: padId,
+      parentAnchorId: failedId,
+      rootStreamId: padId,
+    })
+    threadNoteId = (await post(threadId, memberId, "the rollback notes live in this thread")).id
+    threadConvId = (
+      await ConversationRepository.insert(pool, {
+        id: conversationId(),
+        streamId: threadId,
+        workspaceId: wsId,
+        topicSummary: "Rollback notes",
+        topicSummarySource: TitleSources.GENERATED,
+        summary: null,
+      })
+    ).id
+    await ConversationRepository.addPrimaryMessages(pool, wsId, threadConvId, [threadNoteId], [memberId])
   }, 30_000)
 
   afterAll(async () => {
@@ -163,6 +193,7 @@ describe("Search result clusters", () => {
     const byMessage = await SearchRepository.conversationsForMessages(pool, {
       workspaceId: wsId,
       messageIds: [failedId, postmortemId, strayId, hiddenId],
+      streamIds: [padId, privatePadId],
     })
 
     const expected = {
@@ -180,13 +211,19 @@ describe("Search result clusters", () => {
     expect(Object.fromEntries(byMessage)).toEqual({ [failedId]: expected, [postmortemId]: expected })
   })
 
-  test("conversationsForMessages should return nothing for another workspace", async () => {
-    const byMessage = await SearchRepository.conversationsForMessages(pool, {
+  test("conversationsForMessages should return nothing for another workspace or outside the given streams", async () => {
+    const otherWorkspace = await SearchRepository.conversationsForMessages(pool, {
       workspaceId: workspaceId(),
       messageIds: [failedId],
+      streamIds: [padId],
+    })
+    const otherStreams = await SearchRepository.conversationsForMessages(pool, {
+      workspaceId: wsId,
+      messageIds: [failedId],
+      streamIds: [privatePadId],
     })
 
-    expect(byMessage.size).toBe(0)
+    expect([otherWorkspace.size, otherStreams.size]).toEqual([0, 0])
   })
 
   test("messagesByIds should return only readable, non-deleted messages in posting order with rank 0", async () => {
@@ -253,6 +290,45 @@ describe("Search result clusters", () => {
         streamId: padId,
         matchedVia: ["memory"],
         hits: [expect.objectContaining({ id: rollbackId }), expect.objectContaining({ id: postmortemId })],
+        memoIds: [memo.memo.id],
+        score: rrf(1),
+      },
+    ])
+  })
+
+  test("should run the memo leg with the frontend's default status filter", async () => {
+    const memo = memoHit(wsId, [rollbackId], padId)
+    const { clusters, memos } = await makeService([memo]).searchClusters({
+      searchFlag: "on",
+      workspaceId: wsId,
+      permissions: await permissionsFor(memberId),
+      query: "deploy",
+      filters: { archiveStatus: ["active", "archived"] },
+      skipEmbedding: true,
+    })
+
+    expect(memos).toEqual([memo])
+    expect(clusters[0]).toEqual(
+      expect.objectContaining({ streamId: padId, matchedVia: ["message", "memory"], memoIds: [memo.memo.id] })
+    )
+  })
+
+  test("should cluster a memo's sources inside a thread the requester reads through the parent pad (INV-62)", async () => {
+    const memo = memoHit(wsId, [threadNoteId], threadId)
+    const { clusters } = await makeService([memo]).searchClusters({
+      searchFlag: "on",
+      workspaceId: wsId,
+      permissions: await permissionsFor(memberId),
+      query: "hexagonal",
+      skipEmbedding: true,
+    })
+
+    expect(clusters).toEqual([
+      {
+        conversation: expect.objectContaining({ id: threadConvId, streamId: threadId }),
+        streamId: threadId,
+        matchedVia: ["memory"],
+        hits: [expect.objectContaining({ id: threadNoteId, streamId: threadId })],
         memoIds: [memo.memo.id],
         score: rrf(1),
       },
