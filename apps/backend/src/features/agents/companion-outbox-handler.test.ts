@@ -10,6 +10,7 @@ import { PersonaRepository } from "./persona-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository } from "./session-repository"
 import { SubagentRunRepository } from "../subagents"
+import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -51,7 +52,7 @@ const activePersona = {
   status: "active",
 } as any
 
-function mockUserMessageEvent(streamId: string) {
+function mockUserMessageEvent(streamId: string, metadata: Record<string, string> = {}) {
   spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
     {
       id: 1n,
@@ -65,6 +66,7 @@ function mockUserMessageEvent(streamId: string) {
           sequence: 5,
           payload: {
             messageId: "msg_1",
+            metadata,
           },
         },
       },
@@ -162,6 +164,29 @@ describe("CompanionHandler", () => {
       messageId: "msg_1",
       personaId: "persona_scratchpad",
       triggeredBy: "usr_author",
+    })
+  })
+
+  it("ignores the message a slash command was persisted as", async () => {
+    mockUserMessageEvent("stream_scratchpad_root", { [MESSAGE_METADATA_COMMAND_KEY]: "spawn" })
+
+    const rootScratchpad = makeStream({
+      id: "stream_scratchpad_root",
+      type: StreamTypes.SCRATCHPAD,
+      companionMode: CompanionModes.ON,
+      companionPersonaId: "persona_scratchpad",
+    })
+    const findById = spyOn(StreamRepository, "findById").mockResolvedValue(rootScratchpad)
+    spyOn(PersonaRepository, "findById").mockResolvedValue(activePersona)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect({ streamLookups: findById.mock.calls.length, dispatches: jobQueue.send.mock.calls.length }).toEqual({
+      streamLookups: 0,
+      dispatches: 0,
     })
   })
 

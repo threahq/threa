@@ -101,3 +101,9 @@ export function withDerivedMessageMetadata(
   }
   return Object.keys(merged).length > 0 ? merged : undefined
 }
+
+/**
+ * Server-derived key naming the slash command a message was typed as. Written by
+ * the command dispatcher, read by route resolution to leave the message alone.
+ */
+export const MESSAGE_METADATA_COMMAND_KEY = "threa.command"

@@ -10,7 +10,7 @@ import {
 import type { Querier } from "../../db"
 import { logger } from "../../lib/logger"
 import { resolveSealingContext } from "../e2e-streams"
-import { MessageVersionRepository, type InvocationSourceState } from "../messaging"
+import { MESSAGE_METADATA_COMMAND_KEY, MessageVersionRepository, type InvocationSourceState } from "../messaging"
 import { BotRepository } from "../public-api"
 import { projectStreamForBot, StreamRepository, type Stream } from "../streams"
 import {
@@ -164,6 +164,10 @@ async function applyEditedSourceFraming(
 
 async function resolveRoutes(db: Querier, source: InvocationSourceState): Promise<CanonicalInvocationRoute[]> {
   if (source.deleted || source.authorType === AuthorTypes.SYSTEM) return []
+  // A message the command dispatcher wrote for a typed slash command: the dispatch
+  // already made the invocation that runs it, and a route here would hand the
+  // runtime the same text a second time as an ordinary turn.
+  if (source.metadata[MESSAGE_METADATA_COMMAND_KEY]) return []
   const stream = await StreamRepository.findByIdForWorkspace(db, source.streamId, source.workspaceId)
   if (!stream || stream.workspaceId !== source.workspaceId || stream.archivedAt) return []
   const rootId = stream.rootStreamId ?? stream.id

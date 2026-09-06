@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import type { Request, Response } from "express"
 import type { Pool, PoolClient } from "pg"
 import { CommandKinds } from "@threa/types"
+import { parseMarkdown } from "@threa/prosemirror"
 import { createCommandHandlers } from "./handlers"
 import { CommandDispatchRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -75,6 +76,7 @@ describe("command dispatch idempotency", () => {
         listWorkspaceCommands: mock(() => []),
       } as never,
       botRuntimeService: {} as never,
+      eventService: {} as never,
     })
     const req = {
       user: { id: "usr_1" },
@@ -107,6 +109,7 @@ describe("command dispatch idempotency", () => {
       pool: makePool(),
       commandAvailabilityService: {} as never,
       botRuntimeService: {} as never,
+      eventService: {} as never,
     })
     const req = {
       user: { id: "usr_1" },
@@ -144,6 +147,7 @@ describe("command dispatch idempotency", () => {
           listWorkspaceCommands: mock(() => []),
         } as never,
         botRuntimeService: { createInvocationInTransaction: createInvocation } as never,
+        eventService: {} as never,
       })
       const req = {
         user: { id: "usr_1" },
@@ -186,6 +190,7 @@ describe("command dispatch idempotency", () => {
         listWorkspaceCommands: mock(() => []),
       } as never,
       botRuntimeService: {} as never,
+      eventService: {} as never,
     })
     const req = {
       user: { id: "usr_1" },
@@ -216,6 +221,7 @@ describe("command dispatch idempotency", () => {
         listWorkspaceCommands: mock(() => []),
       } as never,
       botRuntimeService: {} as never,
+      eventService: {} as never,
     })
     const req = {
       user: { id: "usr_1" },
@@ -232,5 +238,100 @@ describe("command dispatch idempotency", () => {
     await handlers.dispatch(req, res)
 
     expect((insert.mock.calls[0][1].payload as { conversationId?: string }).conversationId).toBe("conv_1")
+  })
+})
+
+describe("runtime command dispatch source", () => {
+  beforeEach(() => {
+    spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
+      { state: { readOnly: false, readOnlyReason: null } } as never,
+    ])
+    spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ id: "stream_root" } as never)
+    spyOn(CommandDispatchRepository, "findByClientId").mockResolvedValue(null)
+    spyOn(CommandDispatchRepository, "claim").mockResolvedValue(true)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({
+      id: "evt_1",
+      streamId: "stream_root",
+      sequence: 9n,
+      broadcastSequence: null,
+      eventType: "command_dispatched",
+      payload: {},
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date("2026-09-06T12:00:00.000Z"),
+    } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  const runtime = {
+    botId: "bot_1",
+    runtimeKind: "claude-code",
+    rootStreamId: "stream_root",
+    activeStreamId: "stream_root",
+    responseStreamId: "stream_root",
+    targetInstanceId: "inst_1",
+    targetRuntimeSessionId: "rts_1",
+  }
+
+  async function dispatchRuntimeCommand(command: string) {
+    const createMessage = mock(async (_client: unknown, _params: unknown) => ({
+      message: { id: "msg_spawn" },
+      created: true,
+    }))
+    const createInvocation = mock(async (_client: unknown, _params: unknown) => undefined)
+    const handlers = createCommandHandlers({
+      pool: makePool(),
+      commandAvailabilityService: {
+        resolveCommandForDispatch: mock(async () => ({ executionKind: CommandKinds.BOT_RUNTIME, info: {}, runtime })),
+        resolveCommandInTransaction: mock(async () => ({
+          executionKind: CommandKinds.BOT_RUNTIME,
+          info: {},
+          runtime,
+        })),
+        listStreamCommands: mock(async () => []),
+        listWorkspaceCommands: mock(() => []),
+      } as never,
+      botRuntimeService: { createInvocationInTransaction: createInvocation } as never,
+      eventService: { createMessageInTransaction: createMessage } as never,
+    })
+    const res = makeResponse()
+    await handlers.dispatch(
+      { user: { id: "usr_1" }, workspaceId: "ws_1", body: { streamId: "stream_root", command } } as Request,
+      res
+    )
+    return { createMessage, createInvocation }
+  }
+
+  it("persists the typed `/spawn` as a message and sources the invocation from it", async () => {
+    const { createMessage, createInvocation } = await dispatchRuntimeCommand("/spawn claude sidebar\nfix the sidebar")
+
+    expect({
+      message: createMessage.mock.calls[0][1],
+      sourceMessageId: (createInvocation.mock.calls[0][1] as { sourceMessageId: string }).sourceMessageId,
+    }).toEqual({
+      message: {
+        workspaceId: "ws_1",
+        streamId: "stream_root",
+        authorId: "usr_1",
+        authorType: "user",
+        contentJson: parseMarkdown("/spawn claude sidebar\nfix the sidebar"),
+        contentMarkdown: "/spawn claude sidebar\nfix the sidebar",
+        metadata: { "threa.command": "spawn" },
+      },
+      sourceMessageId: "msg_spawn",
+    })
+  })
+
+  it("leaves every other runtime command a command-sourced invocation with no message", async () => {
+    const { createMessage, createInvocation } = await dispatchRuntimeCommand("/steer continue")
+
+    expect({
+      messages: createMessage.mock.calls.length,
+      sourceMessageId: (createInvocation.mock.calls[0][1] as { sourceMessageId: string }).sourceMessageId,
+    }).toEqual({ messages: 0, sourceMessageId: expect.stringMatching(/^cmd_/) })
   })
 })

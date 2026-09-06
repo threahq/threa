@@ -8,6 +8,7 @@ import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
+import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
 
 export type MentionInvokeHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -42,6 +43,13 @@ export class MentionInvokeHandler extends DebouncedOutboxHandler {
     }
 
     const { streamId, workspaceId, event: messageEvent } = payload
+
+    // A slash command the dispatcher persisted as a message: the dispatch already
+    // made the invocation that runs it, so a turn here would answer "/spawn …" as
+    // if it were an ordinary message.
+    if (messageEvent.payload.metadata[MESSAGE_METADATA_COMMAND_KEY]) {
+      return
+    }
 
     // E2E streams: persona mentions in ciphertext are invisible to the
     // backend, and Phase 1 doesn't allow agent recipients anyway.

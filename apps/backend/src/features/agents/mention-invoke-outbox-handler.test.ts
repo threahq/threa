@@ -8,6 +8,7 @@ import { PersonaRepository } from "./persona-repository"
 import { MentionInvokeHandler } from "./mention-invoke-outbox-handler"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
+import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -57,6 +58,7 @@ function makeMessageCreatedEvent(
     actorType?: string
     contentMarkdown?: string
     contentJson?: unknown
+    metadata?: Record<string, string>
   }
 ) {
   return {
@@ -72,6 +74,7 @@ function makeMessageCreatedEvent(
         actorId: "usr_author",
         payload: {
           messageId: "msg_test",
+          metadata: overrides?.metadata ?? {},
           contentMarkdown: overrides?.contentMarkdown ?? "hey @ariadne",
           contentJson:
             "contentJson" in (overrides ?? {}) ? overrides!.contentJson : mentionDoc(["persona_ariadne", "ariadne"]),
@@ -111,6 +114,25 @@ describe("MentionInvokeHandler", () => {
       personaId: ACTIVE_PERSONA.id,
       triggeredBy: "usr_author",
       trigger: "mention",
+    })
+  })
+
+  it("ignores the message a slash command was persisted as", async () => {
+    const event = makeMessageCreatedEvent(1n, {
+      contentMarkdown: "/spawn claude sidebar @ariadne",
+      metadata: { [MESSAGE_METADATA_COMMAND_KEY]: "spawn" },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
+
+    const { handler, send, ran } = createHandler()
+    handler.handle()
+    await ran
+
+    expect({ personaLookups: findByIds.mock.calls.length, dispatches: send.mock.calls.length }).toEqual({
+      personaLookups: 0,
+      dispatches: 0,
     })
   })
 

@@ -12,6 +12,7 @@ import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { SubagentRunRepository } from "../subagents"
+import { MESSAGE_METADATA_COMMAND_KEY } from "../messaging"
 
 export type CompanionHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -48,6 +49,13 @@ export class CompanionHandler extends DebouncedOutboxHandler {
     }
 
     const { streamId, workspaceId, event: messageEvent } = payload
+
+    // A slash command the dispatcher persisted as a message: the dispatch already
+    // made the invocation that runs it, so a turn here would answer "/spawn …" as
+    // if it were an ordinary message.
+    if (messageEvent.payload.metadata[MESSAGE_METADATA_COMMAND_KEY]) {
+      return
+    }
 
     // The companion is an in-process plaintext driver: it only takes
     // turns the delivery verdict says may be minted plaintext. E2E

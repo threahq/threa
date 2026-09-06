@@ -353,7 +353,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     boardExclusionService,
     streamService,
   })
-  const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
+  const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService, eventService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })
   const sidebarConfig = createSidebarConfigHandlers({ sidebarConfigService })
