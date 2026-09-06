@@ -16,7 +16,7 @@ import { mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import type { AuthorType, FeatureFlagLayers } from "@threahq/types"
-import { MAX_SEARCH_STEER_CHARS } from "@threahq/types"
+import { MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import type { WorkspaceBootstrap } from "@/api"
 import {
@@ -26,7 +26,7 @@ import {
   strayClusters,
 } from "@/test/fixtures/search"
 import { ApiError } from "@/api"
-import type { MemoExplorerResult, SearchCluster, SearchSteerOutcome } from "@/api"
+import type { MemoExplorerResult, SearchCluster, SearchRefineOutcome } from "@/api"
 import * as apiModule from "@/api"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -44,7 +44,7 @@ const mockSearchState = {
   clusters: null as SearchCluster[] | null,
   memos: [] as MemoExplorerResult[],
   queryLogId: null as string | null,
-  steer: null as SearchSteerOutcome | null,
+  refine: null as SearchRefineOutcome | null,
   isLoading: false,
   search: vi.fn(),
   clear: vi.fn(),
@@ -178,7 +178,7 @@ function installSpies() {
         clusters: mockSearchState.clusters ?? strayClusters(mockSearchState.results),
         memos: mockSearchState.memos,
         queryLogId: mockSearchState.queryLogId,
-        steer: mockSearchState.steer,
+        refine: mockSearchState.refine,
         isLoading: mockSearchState.isLoading,
         error: null,
         search: mockSearchState.search,
@@ -239,7 +239,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
     mockSearchState.clusters = null
     mockSearchState.memos = []
     mockSearchState.queryLogId = null
-    mockSearchState.steer = null
+    mockSearchState.refine = null
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
@@ -252,7 +252,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       expect(screen.getByLabelText("Search messages")).toBeInTheDocument()
       expect(screen.getByText(/from:@user/)).toBeInTheDocument()
-      expect(screen.getByText("/steer")).toBeInTheDocument()
+      expect(screen.getByText("/refine")).toBeInTheDocument()
     })
 
     it("closes the panel from the back button", async () => {
@@ -1177,11 +1177,11 @@ describe("SidebarSearchPanel Integration Tests", () => {
     })
   })
 
-  describe("steer", () => {
+  describe("refine", () => {
     const baseFilters = { status: ["active", "archived"] }
     const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
 
-    it("offers /steer on '/', commits the prose as a chip on Enter, and searches with it", async () => {
+    it("offers /refine on '/', commits the prose as a chip on Enter, and searches with it", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -1190,10 +1190,10 @@ describe("SidebarSearchPanel Integration Tests", () => {
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
       await user.type(editor, "hello /")
-      await user.click(await screen.findByText("/steer"))
+      await user.click(await screen.findByText("/refine"))
       await user.type(editor, "only decisions")
       await waitFor(() => {
-        expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello /steer only decisions")
+        expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello /refine only decisions")
       })
       // Pending prose is not part of the search
       await waitFor(() => {
@@ -1203,24 +1203,24 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.keyboard("{Enter}")
 
       expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello")
-      expect(document.querySelector('[data-search-steer="only decisions"]')).toBeInTheDocument()
-      // The committed steer is the only steered search; the pending prose never reached the backend
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toBeInTheDocument()
+      // The committed refine is the only refined search; the pending prose never reached the backend
       await waitFor(() => {
         expect(mockSearchState.search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
           ["hello", baseFilters, [], ["only decisions"]],
         ])
       })
-      // Enter committed the steer instead of opening a result
+      // Enter committed the refine instead of opening a result
       expect(mockNavigate).not.toHaveBeenCalled()
 
-      await user.click(screen.getByRole("button", { name: "Remove steer only decisions" }))
-      expect(document.querySelector("[data-search-steer]")).not.toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Remove refinement only decisions" }))
+      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters)
       })
     })
 
-    it("keeps the newest steers when the limit is exceeded", async () => {
+    it("keeps the newest refines when the limit is exceeded", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -1228,12 +1228,12 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
-      for (const steer of ["one", "two", "three", "four", "five", "six"]) {
-        await user.type(editor, ` /steer ${steer}`)
+      for (const refine of ["one", "two", "three", "four", "five", "six"]) {
+        await user.type(editor, ` /refine ${refine}`)
         await user.keyboard("{Enter}")
       }
 
-      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual([
+      expect(Array.from(document.querySelectorAll("[data-search-refine]"), (chip) => chip.textContent)).toEqual([
         "two",
         "three",
         "four",
@@ -1242,26 +1242,26 @@ describe("SidebarSearchPanel Integration Tests", () => {
       ])
     })
 
-    it("shows the model's note when the steer applied and a fallback when it did not", async () => {
+    it("shows the model's note when the refine applied and a fallback when it did not", async () => {
       mockSearchState.results = mockSearchResultsList
-      mockSearchState.steer = { applied: true, note: "Kept the decisions." }
+      mockSearchState.refine = { applied: true, note: "Kept the decisions." }
 
       const user = userEvent.setup()
       renderPanel(searchOn)
 
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
-      await user.type(editor, "hello /steer only decisions")
+      await user.type(editor, "hello /refine only decisions")
       await user.keyboard("{Enter}")
 
       expect(await screen.findByText("Kept the decisions.")).toBeInTheDocument()
 
-      mockSearchState.steer = { applied: false, note: null }
+      mockSearchState.refine = { applied: false, note: null }
       await user.type(editor, "!")
-      expect(await screen.findByText(/Couldn't apply the steer/)).toBeInTheDocument()
+      expect(await screen.findByText(/Couldn't apply the refine/)).toBeInTheDocument()
     })
 
-    it("rejects a steer over the length cap and keeps it in the field", async () => {
+    it("rejects a refine over the length cap and keeps it in the field", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -1269,18 +1269,20 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
-      await user.type(editor, "hello /steer ")
-      await user.paste("x".repeat(MAX_SEARCH_STEER_CHARS + 1))
-      expect(await screen.findByText(`A steer is at most ${MAX_SEARCH_STEER_CHARS} characters.`)).toBeInTheDocument()
+      await user.type(editor, "hello /refine ")
+      await user.paste("x".repeat(MAX_SEARCH_REFINE_CHARS + 1))
+      expect(
+        await screen.findByText(`A refinement is at most ${MAX_SEARCH_REFINE_CHARS} characters.`)
+      ).toBeInTheDocument()
 
       await user.keyboard("{Enter}")
 
-      expect(document.querySelector("[data-search-steer]")).not.toBeInTheDocument()
-      expect(screen.getByTestId("search-panel-probe").getAttribute("data-query")).toContain("/steer x")
+      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
+      expect(screen.getByTestId("search-panel-probe").getAttribute("data-query")).toContain("/refine x")
       expect(mockNavigate).not.toHaveBeenCalled()
     })
 
-    it("leaves a slash that is not /steer as plain text, so Enter still opens the first result", async () => {
+    it("leaves a slash that is not /refine as plain text, so Enter still opens the first result", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -1289,7 +1291,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
       await user.type(editor, "/etc")
-      expect(screen.queryByText("/steer")).not.toBeInTheDocument()
+      expect(screen.queryByText("/refine")).not.toBeInTheDocument()
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenLastCalledWith("/etc", baseFilters)
       })
@@ -1299,7 +1301,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
     })
 
-    it("offers neither the /steer trigger nor its hint under the pre-rework search flag", async () => {
+    it("offers neither the /refine trigger nor its hint under the pre-rework search flag", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -1309,7 +1311,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
       await user.type(editor, "hello /")
-      expect(screen.queryByText("/steer")).not.toBeInTheDocument()
+      expect(screen.queryByText("/refine")).not.toBeInTheDocument()
     })
   })
 })

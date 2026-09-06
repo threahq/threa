@@ -66,21 +66,21 @@ Return up to ${SEARCH_EXPANSION_MAX_VARIANTS} alternative phrasings of the query
 
 Never answer the query. Never add facts, entities, or assumptions not implied by the query itself. Return only the variants array.`
 
-export const SEARCH_STEER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
-export const SEARCH_STEER_TEMPERATURE = 0
+export const SEARCH_REFINE_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const SEARCH_REFINE_TEMPERATURE = 0
 /** Longer than expansion: the prompt carries every row of the list, and the answer is a ranked subset of it. */
-export const SEARCH_STEER_TIMEOUT_MS = 8000
-/** Content chars per hit shown to the steering model. */
-export const SEARCH_STEER_SNIPPET_CHARS = 300
-/** Hits per row shown to the steering model; the rest of a busy conversation adds little beyond its title. */
-export const SEARCH_STEER_HITS_PER_ROW = 3
+export const SEARCH_REFINE_TIMEOUT_MS = 8000
+/** Content chars per hit shown to the refining model. */
+export const SEARCH_REFINE_SNIPPET_CHARS = 300
+/** Hits per row shown to the refining model; the rest of a busy conversation adds little beyond its title. */
+export const SEARCH_REFINE_HITS_PER_ROW = 3
 
-export const searchSteerSchema = z.object({
+export const searchRefineSchema = z.object({
   keep: z.array(z.number().int()),
   note: z.string(),
 })
 
-export const SEARCH_STEER_SYSTEM_PROMPT = `You are refining a list of search results from a chat workspace. The user searched for a query and then gave one or more steering instructions in plain language, such as "only decisions", "drop the ones about billing", "newest first" or "where Martin agreed". Every instruction applies.
+export const SEARCH_REFINE_SYSTEM_PROMPT = `You are refining a list of search results from a chat workspace. The user searched for a query and then gave one or more refining instructions in plain language, such as "only decisions", "drop the ones about billing", "newest first" or "where Martin agreed". Every instruction applies.
 
 The rows arrive numbered. A row is a conversation (its title, the messages that matched inside it, and any memos of extracted knowledge attached to it) or a single message.
 

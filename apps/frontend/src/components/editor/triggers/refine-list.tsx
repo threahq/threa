@@ -1,15 +1,15 @@
 import { forwardRef, useCallback } from "react"
 import { Sparkles } from "lucide-react"
 import { SuggestionList, type SuggestionListRef, type SuggestionListProps } from "./suggestion-list"
-import type { SteerItem } from "./steer-extension"
+import type { RefineItem } from "./refine-extension"
 
-interface SteerListProps extends Omit<SuggestionListProps<SteerItem>, "getKey" | "ariaLabel" | "renderItem"> {}
+interface RefineListProps extends Omit<SuggestionListProps<RefineItem>, "getKey" | "ariaLabel" | "renderItem"> {}
 
-export const SteerList = forwardRef<SuggestionListRef, SteerListProps>(function SteerList(
+export const RefineList = forwardRef<SuggestionListRef, RefineListProps>(function RefineList(
   { items, clientRect, command, placement },
   ref
 ) {
-  const renderItem = useCallback((item: SteerItem) => <SteerItemContent item={item} />, [])
+  const renderItem = useCallback((item: RefineItem) => <RefineItemContent item={item} />, [])
 
   return (
     <SuggestionList
@@ -26,7 +26,7 @@ export const SteerList = forwardRef<SuggestionListRef, SteerListProps>(function 
   )
 })
 
-function SteerItemContent({ item }: { item: SteerItem }) {
+function RefineItemContent({ item }: { item: RefineItem }) {
   return (
     <>
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-muted">

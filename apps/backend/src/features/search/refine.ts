@@ -4,25 +4,25 @@ import { logger } from "../../lib/logger"
 import type { MemoExplorerResult } from "../memos"
 import { latestAt, type SearchCluster } from "./clusters"
 import {
-  SEARCH_STEER_HITS_PER_ROW,
-  SEARCH_STEER_MODEL_ID,
-  SEARCH_STEER_SNIPPET_CHARS,
-  SEARCH_STEER_SYSTEM_PROMPT,
-  SEARCH_STEER_TEMPERATURE,
-  SEARCH_STEER_TIMEOUT_MS,
-  searchSteerSchema,
+  SEARCH_REFINE_HITS_PER_ROW,
+  SEARCH_REFINE_MODEL_ID,
+  SEARCH_REFINE_SNIPPET_CHARS,
+  SEARCH_REFINE_SYSTEM_PROMPT,
+  SEARCH_REFINE_TEMPERATURE,
+  SEARCH_REFINE_TIMEOUT_MS,
+  searchRefineSchema,
 } from "./config"
 
-export interface SearchSteerInput {
+export interface SearchRefineInput {
   query: string
   /** Plain-language refinements, oldest first; all of them apply. */
-  steers: string[]
+  refines: string[]
   clusters: SearchCluster[]
   memos: MemoExplorerResult[]
   context: { workspaceId: string; userId?: string }
 }
 
-export interface SearchSteerResult {
+export interface SearchRefineResult {
   /** Indexes into `clusters`, in the order to show them. */
   keep: number[]
   /** The model's one-line account of what it did; empty when it said nothing. */
@@ -30,40 +30,40 @@ export interface SearchSteerResult {
 }
 
 /**
- * The `/steer` step: one model call that turns the ranked rows plus the user's
+ * The `/refine` step: one model call that turns the ranked rows plus the user's
  * instructions into a ranked subset. Fail-open like the expander: a timeout,
  * abort, model error or malformed answer returns `null`, and the caller shows
- * the unsteered list and says so.
+ * the unrefined list and says so.
  */
-export interface SearchSteererLike {
-  steer(input: SearchSteerInput): Promise<SearchSteerResult | null>
+export interface SearchRefinerLike {
+  refine(input: SearchRefineInput): Promise<SearchRefineResult | null>
 }
 
-export interface SearchSteererConfig {
+export interface SearchRefinerConfig {
   ai: AI
   model?: string
   timeoutMs?: number
 }
 
-export class SearchSteerer implements SearchSteererLike {
+export class SearchRefiner implements SearchRefinerLike {
   private readonly ai: AI
   private readonly model: string
   private readonly timeoutMs: number
 
-  constructor(config: SearchSteererConfig) {
+  constructor(config: SearchRefinerConfig) {
     this.ai = config.ai
-    this.model = config.model ?? SEARCH_STEER_MODEL_ID
-    this.timeoutMs = config.timeoutMs ?? SEARCH_STEER_TIMEOUT_MS
+    this.model = config.model ?? SEARCH_REFINE_MODEL_ID
+    this.timeoutMs = config.timeoutMs ?? SEARCH_REFINE_TIMEOUT_MS
   }
 
-  async steer(input: SearchSteerInput): Promise<SearchSteerResult | null> {
+  async refine(input: SearchRefineInput): Promise<SearchRefineResult | null> {
     const { workspaceId, userId } = input.context
     const controller = new AbortController()
     const timer = setTimeout(() => {
       try {
-        controller.abort(new DOMException("search steer timeout", "TimeoutError"))
+        controller.abort(new DOMException("search refine timeout", "TimeoutError"))
       } catch {
-        controller.abort(new Error("search steer timeout"))
+        controller.abort(new Error("search refine timeout"))
       }
     }, this.timeoutMs)
 
@@ -71,26 +71,26 @@ export class SearchSteerer implements SearchSteererLike {
       const costContext: CostContext = { workspaceId, userId, origin: "system" }
       const { value } = await this.ai.generateObject({
         model: this.model,
-        schema: searchSteerSchema,
-        temperature: SEARCH_STEER_TEMPERATURE,
+        schema: searchRefineSchema,
+        temperature: SEARCH_REFINE_TEMPERATURE,
         abortSignal: controller.signal,
         telemetry: {
-          functionId: "search-steer",
-          metadata: { rows: input.clusters.length, steers: input.steers.length },
+          functionId: "search-refine",
+          metadata: { rows: input.clusters.length, refines: input.refines.length },
         },
         context: costContext,
         messages: [
-          { role: "system", content: SEARCH_STEER_SYSTEM_PROMPT },
-          { role: "user", content: renderSteerPrompt(input) },
+          { role: "system", content: SEARCH_REFINE_SYSTEM_PROMPT },
+          { role: "user", content: renderRefinePrompt(input) },
         ],
       })
 
       return { keep: sanitizeKeep(value.keep, input.clusters.length), note: value.note.trim() }
     } catch (error) {
       if (isAbortError(error)) {
-        logger.debug({ workspaceId }, "Search steer timed out; showing the unsteered list")
+        logger.debug({ workspaceId }, "Search refine timed out; showing the unrefined list")
       } else {
-        logger.warn({ error, workspaceId }, "Search steer failed; showing the unsteered list")
+        logger.warn({ error, workspaceId }, "Search refine failed; showing the unrefined list")
       }
       return null
     } finally {
@@ -112,7 +112,7 @@ function sanitizeKeep(keep: number[], rowCount: number): number[] {
   return indexes
 }
 
-export function renderSteerPrompt(input: SearchSteerInput): string {
+export function renderRefinePrompt(input: SearchRefineInput): string {
   const memoById = new Map(input.memos.map((result) => [result.memo.id, result.memo]))
   const rows = input.clusters.map((cluster, index) => {
     const lines: string[] = []
@@ -126,7 +126,7 @@ export function renderSteerPrompt(input: SearchSteerInput): string {
     } else {
       lines.push(`[${index + 1}] Message${latestDay ? ` (${latestDay})` : ""}`)
     }
-    for (const hit of cluster.hits.slice(0, SEARCH_STEER_HITS_PER_ROW)) {
+    for (const hit of cluster.hits.slice(0, SEARCH_REFINE_HITS_PER_ROW)) {
       lines.push(`  - ${isoDay(hit.createdAt)}: ${snippet(hit.content)}`)
     }
     for (const memoId of cluster.memoIds) {
@@ -136,8 +136,8 @@ export function renderSteerPrompt(input: SearchSteerInput): string {
     return lines.join("\n")
   })
 
-  const steers = input.steers.map((steer, index) => `${index + 1}. ${steer}`)
-  return [`Query: ${input.query || "(none)"}`, "", "Instructions:", ...steers, "", "Rows:", ...rows].join("\n")
+  const refines = input.refines.map((refine, index) => `${index + 1}. ${refine}`)
+  return [`Query: ${input.query || "(none)"}`, "", "Instructions:", ...refines, "", "Rows:", ...rows].join("\n")
 }
 
 function isoDay(date: Date): string {
@@ -146,7 +146,7 @@ function isoDay(date: Date): string {
 
 function snippet(content: string): string {
   const collapsed = content.replace(/\s+/g, " ").trim()
-  return collapsed.length > SEARCH_STEER_SNIPPET_CHARS
-    ? `${collapsed.slice(0, SEARCH_STEER_SNIPPET_CHARS)}…`
+  return collapsed.length > SEARCH_REFINE_SNIPPET_CHARS
+    ? `${collapsed.slice(0, SEARCH_REFINE_SNIPPET_CHARS)}…`
     : collapsed
 }

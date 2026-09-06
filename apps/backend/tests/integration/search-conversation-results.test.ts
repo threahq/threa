@@ -43,7 +43,7 @@ function makeService(pool: Pool, vector: number[] = unit(0)) {
     queryExpander: { expand: async () => [] },
     reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
     memoSearch: { search: async () => [] },
-    steerer: { steer: async () => null },
+    refiner: { refine: async () => null },
   })
 }
 

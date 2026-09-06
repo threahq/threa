@@ -3,10 +3,10 @@
  *
  * Supports filters: from:@user, with:@user, in:#channel, in:@user (DM), is:streamType, type:streamType (alias), status:archiveStatus, after:date, before:date
  *
- * `/steer <prose>` marks everything after it as a plain-language refinement of
+ * `/refine <prose>` marks everything after it as a plain-language refinement of
  * the result list; it is carried separately and never searched as text.
  */
-import { MAX_SEARCH_STEERS, MAX_SEARCH_STEER_CHARS } from "@threahq/types"
+import { MAX_SEARCH_REFINES, MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
 
 export type FilterType = "from" | "with" | "in" | "type" | "status" | "after" | "before"
 
@@ -22,11 +22,11 @@ export interface ParsedQuery {
   text: string
   phrases: string[]
   semanticText: string
-  /** Prose after `/steer`, `""` while only the marker is typed, null without one. */
-  steer: string | null
+  /** Prose after `/refine`, `""` while only the marker is typed, null without one. */
+  refine: string | null
 }
 
-const STEER_MARKER = /(?:^|\s)\/steer(?=\s|$)/
+const REFINE_MARKER = /(?:^|\s)\/refine(?=\s|$)/
 
 /**
  * Parse a search query string into filters and remaining text.
@@ -38,20 +38,20 @@ const STEER_MARKER = /(?:^|\s)\/steer(?=\s|$)/
  * - "is:scratchpad bug" → { filters: [{type: "type", value: "scratchpad"}], text: "bug" }
  */
 export function parseSearchQuery(query: string): ParsedQuery {
-  const { query: searchable, steer } = splitSteer(query)
-  return { ...parseSearchable(searchable), steer }
+  const { query: searchable, refine } = splitRefine(query)
+  return { ...parseSearchable(searchable), refine }
 }
 
-function splitSteer(query: string): { query: string; steer: string | null } {
-  const match = STEER_MARKER.exec(query)
-  if (!match) return { query, steer: null }
+function splitRefine(query: string): { query: string; refine: string | null } {
+  const match = REFINE_MARKER.exec(query)
+  if (!match) return { query, refine: null }
   return {
     query: query.slice(0, match.index),
-    steer: query.slice(match.index + match[0].length).trim(),
+    refine: query.slice(match.index + match[0].length).trim(),
   }
 }
 
-function parseSearchable(query: string): Omit<ParsedQuery, "steer"> {
+function parseSearchable(query: string): Omit<ParsedQuery, "refine"> {
   const filters: ParsedFilter[] = []
   const textParts: string[] = []
   const semanticParts: string[] = []
@@ -131,15 +131,15 @@ function extractFilterType(prefix: string): FilterType | null {
 /**
  * Build a search query string from filters and text.
  */
-export function serializeSearchQuery(filters: ParsedFilter[], text: string, steer: string | null = null): string {
+export function serializeSearchQuery(filters: ParsedFilter[], text: string, refine: string | null = null): string {
   const filterParts = filters.map((f) => f.raw)
   const parts = [...filterParts]
 
   if (text.trim()) {
     parts.push(text.trim())
   }
-  if (steer !== null) {
-    parts.push(steer ? `/steer ${steer}` : "/steer")
+  if (refine !== null) {
+    parts.push(refine ? `/refine ${refine}` : "/refine")
   }
 
   return parts.join(" ")
@@ -149,33 +149,33 @@ export function serializeSearchQuery(filters: ParsedFilter[], text: string, stee
  * Remove a filter from the query string.
  */
 export function removeFilterFromQuery(query: string, filterIndex: number): string {
-  const { filters, text, steer } = parseSearchQuery(query)
+  const { filters, text, refine } = parseSearchQuery(query)
   const newFilters = filters.filter((_, i) => i !== filterIndex)
-  return serializeSearchQuery(newFilters, text, steer)
+  return serializeSearchQuery(newFilters, text, refine)
 }
 
-/** The query without its `/steer …` tail, for after the steer has been committed as a chip. */
-export function removeSteerFromQuery(query: string): string {
-  return splitSteer(query).query.trim()
+/** The query without its `/refine …` tail, for after the refine has been committed as a chip. */
+export function removeRefineFromQuery(query: string): string {
+  return splitRefine(query).query.trim()
 }
 
 /**
- * The steer trail the backend accepts: trimmed, non-empty, within the length
- * cap, and only the newest `MAX_SEARCH_STEERS`. Applied when a steer is
+ * The refine trail the backend accepts: trimmed, non-empty, within the length
+ * cap, and only the newest `MAX_SEARCH_REFINES`. Applied when a refine is
  * committed and when a trail is restored from a URL.
  */
-export function boundSteers(steers: string[]): string[] {
-  return steers
-    .map((steer) => steer.trim())
-    .filter((steer) => steer.length > 0 && steer.length <= MAX_SEARCH_STEER_CHARS)
-    .slice(-MAX_SEARCH_STEERS)
+export function boundRefines(refines: string[]): string[] {
+  return refines
+    .map((refine) => refine.trim())
+    .filter((refine) => refine.length > 0 && refine.length <= MAX_SEARCH_REFINE_CHARS)
+    .slice(-MAX_SEARCH_REFINES)
 }
 
 /**
  * Add a filter to the query string.
  */
 export function addFilterToQuery(query: string, type: FilterType, value: string): string {
-  const { filters, text, steer } = parseSearchQuery(query)
+  const { filters, text, refine } = parseSearchQuery(query)
 
   let raw: string
   switch (type) {
@@ -203,7 +203,7 @@ export function addFilterToQuery(query: string, type: FilterType, value: string)
   }
 
   const newFilter: ParsedFilter = { type, value, raw }
-  return serializeSearchQuery([...filters, newFilter], text, steer)
+  return serializeSearchQuery([...filters, newFilter], text, refine)
 }
 
 /**

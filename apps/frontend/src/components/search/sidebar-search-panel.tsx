@@ -19,13 +19,13 @@ import { useSearchPanel } from "./search-panel-context"
 import { useMessageSearch } from "./use-message-search"
 import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
-import { SearchSteerChips } from "./search-steer-chips"
+import { SearchRefineChips } from "./search-refine-chips"
 import { SearchFilterMenu } from "./search-filter-menu"
 import { SearchResults } from "./search-results"
 import { SearchClusterList, countClusterResults } from "./search-cluster-list"
 import { SearchResultDisplayToggle } from "./search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
-import { boundSteers, removeSteerFromQuery } from "@/lib/search-query-parser"
+import { boundRefines, removeRefineFromQuery } from "@/lib/search-query-parser"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 
 /**
@@ -36,7 +36,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
  */
 export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate()
-  const { query, setQuery, steers, setSteers, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } =
+  const { query, setQuery, refines, setRefines, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } =
     useSearchPanel()
   const {
     results,
@@ -48,13 +48,13 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     parsedFilters,
     searchText,
     hasQuery,
-    pendingSteer,
-    steerNote,
+    pendingRefine,
+    refineNote,
     exploreHref,
     recordResultClick,
-  } = useMessageSearch(workspaceId, query, steers)
+  } = useMessageSearch(workspaceId, query, refines)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
-  const steerEnabled = useFeatureFlag(workspaceId, "search") === "on"
+  const refineEnabled = useFeatureFlag(workspaceId, "search") === "on"
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
   // Keyboard navigation walks the rows in the order they are on screen.
@@ -126,18 +126,18 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     }
   }
 
-  // Enter commits `/steer …` prose as a chip (an over-long one stays in the
-  // field with the validation error); the newest steer displaces the oldest
+  // Enter commits `/refine …` prose as a chip (an over-long one stays in the
+  // field with the validation error); the newest refine displaces the oldest
   // past the backend's limit. Without pending prose it opens a result.
   const handleSubmit = (withModifier: boolean) => {
-    const prose = pendingSteer?.trim()
+    const prose = pendingRefine?.trim()
     if (!prose) {
       openActiveResult(withModifier)
       return
     }
     if (validationError) return
-    setSteers(boundSteers([...steers, prose]))
-    setQuery(removeSteerFromQuery(query))
+    setRefines(boundRefines([...refines, prose]))
+    setQuery(removeRefineFromQuery(query))
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -198,7 +198,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 onPopoverActiveChange={(active) => {
                   isPopoverActiveRef.current = active
                 }}
-                triggers={steerEnabled ? SEARCH_TRIGGERS : SEARCH_FILTER_TRIGGERS}
+                triggers={refineEnabled ? SEARCH_TRIGGERS : SEARCH_FILTER_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
                 editorClassName="h-auto min-h-8 py-1.5 text-[13px]"
@@ -209,7 +209,10 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
           <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2">
             <SearchFilterChips query={query} parsedFilters={parsedFilters} onQueryChange={setQuery} />
-            <SearchSteerChips steers={steers} onRemove={(index) => setSteers(steers.filter((_, i) => i !== index))} />
+            <SearchRefineChips
+              refines={refines}
+              onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
+            />
             <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
           </div>
 
@@ -227,9 +230,9 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 )}
                 <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
               </div>
-              {steerNote && !isLoading && (
-                <p className="w-full text-[11px] leading-snug text-muted-foreground" data-search-steer-note>
-                  {steerNote}
+              {refineNote && !isLoading && (
+                <p className="w-full text-[11px] leading-snug text-muted-foreground" data-search-refine-note>
+                  {refineNote}
                 </p>
               )}
             </div>
@@ -246,9 +249,9 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 <code className="rounded bg-muted px-1">in:#channel</code>,{" "}
                 <code className="rounded bg-muted px-1">before:2026-01-01</code>
               </p>
-              {steerEnabled && (
+              {refineEnabled && (
                 <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/60">
-                  Refine the list in plain words with <code className="rounded bg-muted px-1">/steer</code>
+                  Refine the list in plain words with <code className="rounded bg-muted px-1">/refine</code>
                 </p>
               )}
             </div>

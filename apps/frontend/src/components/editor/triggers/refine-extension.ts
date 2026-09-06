@@ -1,6 +1,6 @@
 /**
- * TipTap extension for the `/steer` trigger in search mode. Typing `/` at a
- * word boundary offers "Steer"; picking it inserts `/steer ` and the prose
+ * TipTap extension for the `/refine` trigger in search mode. Typing `/` at a
+ * word boundary offers "Refine"; picking it inserts `/refine ` and the prose
  * that follows becomes a refinement of the result list once committed.
  */
 import { Extension } from "@tiptap/core"
@@ -9,21 +9,21 @@ import { PluginKey } from "@tiptap/pm/state"
 import { getParentTextBefore } from "../markdown-guards"
 import type { TriggerExtensionOptions } from "./create-trigger-extension"
 
-export const SteerPluginKey = new PluginKey("steer")
+export const RefinePluginKey = new PluginKey("refine")
 
-export interface SteerItem {
+export interface RefineItem {
   id: string
   label: string
   description: string
 }
 
-export const STEER_OPTIONS: SteerItem[] = [
-  { id: "steer", label: "Steer", description: "Describe what to keep, drop, or rank first" },
+export const REFINE_OPTIONS: RefineItem[] = [
+  { id: "refine", label: "Refine", description: "Describe what to keep, drop, or rank first" },
 ]
 
-export type SteerOptions = TriggerExtensionOptions<SteerItem>
+export type RefineOptions = TriggerExtensionOptions<RefineItem>
 
-function findSteerMatch(config: {
+function findRefineMatch(config: {
   char: string
   allowSpaces: boolean
   allowedPrefixes: string[] | null
@@ -39,8 +39,8 @@ function findSteerMatch(config: {
 
   const fullMatch = match[0]
   const query = match[2] || ""
-  // Only a prefix of "steer" opens the popup; `/tmp` or `/etc/hosts` stays plain text.
-  if (!"steer".startsWith(query.toLowerCase())) return null
+  // Only a prefix of "refine" opens the popup; `/tmp` or `/etc/hosts` stays plain text.
+  if (!"refine".startsWith(query.toLowerCase())) return null
   const matchStart = $position.pos - fullMatch.length + (fullMatch.startsWith(" ") ? 1 : 0)
 
   return {
@@ -50,8 +50,8 @@ function findSteerMatch(config: {
   }
 }
 
-export const SteerExtension = Extension.create<SteerOptions>({
-  name: "steer",
+export const RefineExtension = Extension.create<RefineOptions>({
+  name: "refine",
 
   addOptions() {
     return {
@@ -71,13 +71,13 @@ export const SteerExtension = Extension.create<SteerOptions>({
     return [
       Suggestion({
         editor: this.editor,
-        pluginKey: SteerPluginKey,
+        pluginKey: RefinePluginKey,
         char: "/",
         allowSpaces: false,
-        findSuggestionMatch: findSteerMatch,
+        findSuggestionMatch: findRefineMatch,
         ...this.options.suggestion,
         command: ({ editor, range }) => {
-          editor.chain().focus().deleteRange(range).insertContent("/steer ").run()
+          editor.chain().focus().deleteRange(range).insertContent("/refine ").run()
         },
       }),
     ]

@@ -15,10 +15,10 @@ import {
   type SearchCluster,
   type SearchFilters,
   type SearchResultItem,
-  type SearchSteerOutcome,
+  type SearchRefineOutcome,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import { MAX_SEARCH_PHRASES, MAX_SEARCH_STEER_CHARS, STREAM_TYPES, type StreamType } from "@threahq/types"
+import { MAX_SEARCH_PHRASES, MAX_SEARCH_REFINE_CHARS, STREAM_TYPES, type StreamType } from "@threahq/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
@@ -37,12 +37,12 @@ export interface MessageSearchState {
   parsedFilters: ParsedFilter[]
   /** Free-text part of the query with filters removed. */
   searchText: string
-  /** True when the query contains anything searchable; a `/steer` alone is not. */
+  /** True when the query contains anything searchable; a `/refine` alone is not. */
   hasQuery: boolean
-  /** `/steer` prose still in the input, waiting for Enter to commit it; null without a marker. */
-  pendingSteer: string | null
-  /** The line shown under the summary: the model's note, or why the list is unsteered; null when there is nothing to say. */
-  steerNote: string | null
+  /** `/refine` prose still in the input, waiting for Enter to commit it; null without a marker. */
+  pendingRefine: string | null
+  /** The line shown under the summary: the model's note, or why the list is unrefined; null when there is nothing to say. */
+  refineNote: string | null
   /** `/w/<ws>/memory?q=<text>`: the memory explorer opened on the same words; memo chips append `&memo=<id>`. */
   exploreHref: string
   /** Attributes an opened result to the logged search; a no-op unless the user opted into query logging. */
@@ -52,15 +52,15 @@ export interface MessageSearchState {
 /**
  * Debounced workspace message search over a raw query string with inline
  * filter syntax (`from:@user in:#channel after:2026-01-01 …`) plus the
- * committed `steers`. Shared by the desktop sidebar search panel and the
+ * committed `refines`. Shared by the desktop sidebar search panel and the
  * mobile search page so both surfaces parse, resolve, and rank identically.
  */
-export function useMessageSearch(workspaceId: string, query: string, steers: string[] = []): MessageSearchState {
+export function useMessageSearch(workspaceId: string, query: string, refines: string[] = []): MessageSearchState {
   const users = useWorkspaceUsers(workspaceId)
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
-  const { results, clusters, memos, queryLogId, steer, isLoading, error, search, clear } = useSearch({
+  const { results, clusters, memos, queryLogId, refine, isLoading, error, search, clear } = useSearch({
     workspaceId,
     limit: SEARCH_RESULT_LIMIT,
   })
@@ -70,9 +70,9 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     text: searchText,
     semanticText,
     phrases,
-    steer: pendingSteer,
+    refine: pendingRefine,
   } = useMemo(() => parseSearchQuery(query), [query])
-  const validationError = validationErrorFor(phrases.length, pendingSteer)
+  const validationError = validationErrorFor(phrases.length, pendingRefine)
 
   // Resolve filter slugs (user/stream handles) to ids the API understands.
   const apiFilters = useMemo((): SearchFilters => {
@@ -157,9 +157,9 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
   const phrasesKey = JSON.stringify(phrases)
   const phrasesRef = useRef(phrases)
   phrasesRef.current = phrases
-  const steersKey = JSON.stringify(steers)
-  const steersRef = useRef(steers)
-  steersRef.current = steers
+  const refinesKey = JSON.stringify(refines)
+  const refinesRef = useRef(refines)
+  refinesRef.current = refines
 
   useEffect(() => {
     if (!hasQuery || validationError) {
@@ -168,8 +168,8 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     }
 
     const timer = setTimeout(() => {
-      if (steersRef.current.length > 0) {
-        void search(semanticText, filtersRef.current, phrasesRef.current, steersRef.current)
+      if (refinesRef.current.length > 0) {
+        void search(semanticText, filtersRef.current, phrasesRef.current, refinesRef.current)
       } else if (phrasesRef.current.length > 0) {
         void search(semanticText, filtersRef.current, phrasesRef.current)
       } else {
@@ -178,7 +178,7 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     }, SEARCH_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [hasQuery, validationError, semanticText, filtersKey, phrasesKey, steersKey, search, clear])
+  }, [hasQuery, validationError, semanticText, filtersKey, phrasesKey, refinesKey, search, clear])
 
   const recordResultClick = useCallback(
     (target: SearchClickTarget) => {
@@ -200,22 +200,22 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     parsedFilters,
     searchText,
     hasQuery,
-    pendingSteer,
-    steerNote: steerNoteFor(steer),
+    pendingRefine,
+    refineNote: refineNoteFor(refine),
     exploreHref: `/w/${workspaceId}/memory?q=${encodeURIComponent(searchText)}`,
     recordResultClick,
   }
 }
 
-function validationErrorFor(phraseCount: number, pendingSteer: string | null): string | null {
+function validationErrorFor(phraseCount: number, pendingRefine: string | null): string | null {
   if (phraseCount > MAX_SEARCH_PHRASES) return `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.`
-  if (pendingSteer !== null && pendingSteer.length > MAX_SEARCH_STEER_CHARS) {
-    return `A steer is at most ${MAX_SEARCH_STEER_CHARS} characters.`
+  if (pendingRefine !== null && pendingRefine.length > MAX_SEARCH_REFINE_CHARS) {
+    return `A refinement is at most ${MAX_SEARCH_REFINE_CHARS} characters.`
   }
   return null
 }
 
-function steerNoteFor(steer: SearchSteerOutcome | null): string | null {
-  if (!steer) return null
-  return steer.applied ? steer.note : "Couldn't apply the steer; showing the unsteered list."
+function refineNoteFor(refine: SearchRefineOutcome | null): string | null {
+  if (!refine) return null
+  return refine.applied ? refine.note : "Couldn't apply the refine; showing the unrefined list."
 }

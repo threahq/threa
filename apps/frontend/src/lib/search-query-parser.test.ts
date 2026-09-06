@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest"
-import { MAX_SEARCH_STEER_CHARS } from "@threahq/types"
+import { MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
 import {
   parseSearchQuery,
   serializeSearchQuery,
   removeFilterFromQuery,
-  removeSteerFromQuery,
-  boundSteers,
+  removeRefineFromQuery,
+  boundRefines,
   addFilterToQuery,
   getFilterLabel,
 } from "./search-query-parser"
@@ -191,42 +191,42 @@ describe("parseSearchQuery", () => {
     })
   })
 
-  it("carries everything after /steer as prose, outside the searched text", () => {
-    expect(parseSearchQuery('in:#general launch "plan b" /steer only decisions, skip from:@bot')).toEqual({
+  it("carries everything after /refine as prose, outside the searched text", () => {
+    expect(parseSearchQuery('in:#general launch "plan b" /refine only decisions, skip from:@bot')).toEqual({
       filters: [{ type: "in", value: "general", raw: "in:#general" }],
       text: 'launch "plan b"',
       semanticText: "launch",
       phrases: ["plan b"],
-      steer: "only decisions, skip from:@bot",
+      refine: "only decisions, skip from:@bot",
     })
   })
 
-  it("reports an empty steer while only the marker is typed and none without it", () => {
-    expect(parseSearchQuery("launch /steer")).toMatchObject({ text: "launch", steer: "" })
-    expect(parseSearchQuery("launch /steer ")).toMatchObject({ text: "launch", steer: "" })
-    expect(parseSearchQuery("launch")).toMatchObject({ text: "launch", steer: null })
+  it("reports an empty refine while only the marker is typed and none without it", () => {
+    expect(parseSearchQuery("launch /refine")).toMatchObject({ text: "launch", refine: "" })
+    expect(parseSearchQuery("launch /refine ")).toMatchObject({ text: "launch", refine: "" })
+    expect(parseSearchQuery("launch")).toMatchObject({ text: "launch", refine: null })
   })
 
-  it("does not treat /steer inside a word or a longer command as the marker", () => {
-    expect(parseSearchQuery("docs/steer launch")).toMatchObject({ text: "docs/steer launch", steer: null })
-    expect(parseSearchQuery("launch /steering wheel")).toMatchObject({ text: "launch /steering wheel", steer: null })
-  })
-})
-
-describe("removeSteerFromQuery", () => {
-  it("drops the /steer tail and keeps the rest", () => {
-    expect(removeSteerFromQuery("in:#general launch /steer only decisions")).toBe("in:#general launch")
-    expect(removeSteerFromQuery("launch /steer")).toBe("launch")
-    expect(removeSteerFromQuery("/steer only decisions")).toBe("")
-    expect(removeSteerFromQuery("launch")).toBe("launch")
+  it("does not treat /refine inside a word or a longer command as the marker", () => {
+    expect(parseSearchQuery("docs/refine launch")).toMatchObject({ text: "docs/refine launch", refine: null })
+    expect(parseSearchQuery("launch /refining wheel")).toMatchObject({ text: "launch /refining wheel", refine: null })
   })
 })
 
-describe("boundSteers", () => {
-  it("keeps only the newest steers the backend accepts", () => {
-    expect(boundSteers([" one ", "", "   ", "x".repeat(MAX_SEARCH_STEER_CHARS + 1), "two"])).toEqual(["one", "two"])
-    expect(boundSteers(["a", "b", "c", "d", "e", "f", "g"])).toEqual(["c", "d", "e", "f", "g"])
-    expect(boundSteers(["x".repeat(MAX_SEARCH_STEER_CHARS)])).toEqual(["x".repeat(MAX_SEARCH_STEER_CHARS)])
+describe("removeRefineFromQuery", () => {
+  it("drops the /refine tail and keeps the rest", () => {
+    expect(removeRefineFromQuery("in:#general launch /refine only decisions")).toBe("in:#general launch")
+    expect(removeRefineFromQuery("launch /refine")).toBe("launch")
+    expect(removeRefineFromQuery("/refine only decisions")).toBe("")
+    expect(removeRefineFromQuery("launch")).toBe("launch")
+  })
+})
+
+describe("boundRefines", () => {
+  it("keeps only the newest refines the backend accepts", () => {
+    expect(boundRefines([" one ", "", "   ", "x".repeat(MAX_SEARCH_REFINE_CHARS + 1), "two"])).toEqual(["one", "two"])
+    expect(boundRefines(["a", "b", "c", "d", "e", "f", "g"])).toEqual(["c", "d", "e", "f", "g"])
+    expect(boundRefines(["x".repeat(MAX_SEARCH_REFINE_CHARS)])).toEqual(["x".repeat(MAX_SEARCH_REFINE_CHARS)])
   })
 })
 
@@ -273,11 +273,11 @@ describe("removeFilterFromQuery", () => {
 })
 
 describe("addFilterToQuery", () => {
-  it("keeps a pending /steer tail when a filter is added or removed", () => {
-    const withFilter = addFilterToQuery("launch /steer only decisions", "from", "martin")
-    expect(withFilter).toBe("from:@martin launch /steer only decisions")
-    expect(removeFilterFromQuery(withFilter, 0)).toBe("launch /steer only decisions")
-    expect(removeFilterFromQuery("launch /steer", 0)).toBe("launch /steer")
+  it("keeps a pending /refine tail when a filter is added or removed", () => {
+    const withFilter = addFilterToQuery("launch /refine only decisions", "from", "martin")
+    expect(withFilter).toBe("from:@martin launch /refine only decisions")
+    expect(removeFilterFromQuery(withFilter, 0)).toBe("launch /refine only decisions")
+    expect(removeFilterFromQuery("launch /refine", 0)).toBe("launch /refine")
   })
 
   it("should add from filter", () => {
