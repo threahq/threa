@@ -100,8 +100,12 @@ import {
   assertSessionRunningOrFailed,
   verifyCallbackToken,
   assertReplyKeyGeneration,
+  emitAgentActivityEnded,
+  emitAgentActivityStarted,
+  parentActivityTarget,
   type AgentSession,
   type AgentSessionStep,
+  type ParentActivityTarget,
 } from "../agents"
 import { buildSealedTurnContext } from "./sealed-turn-context"
 import { authorizeSealedCallback, emitBotSealedProgress } from "./sealed-callbacks"
@@ -896,7 +900,7 @@ export function createPublicApiHandlers({
 
   async function terminalizeBotDenial(params: {
     error: unknown
-    session: { id: string; streamId: string; personaId: string }
+    session: { id: string; streamId: string; personaId: string; triggerMessageId: string }
     stream: Stream
     botId: string
     callbackToken: string
@@ -936,6 +940,13 @@ export function createPublicApiHandlers({
     if (won) {
       io.to(`ws:${params.stream.workspaceId}:agent_session:${params.session.id}`).emit("agent_session:failed", {
         sessionId: params.session.id,
+      })
+      emitAgentActivityEnded(io, {
+        workspaceId: params.stream.workspaceId,
+        streamId: params.stream.id,
+        parentStreamId: params.stream.rootStreamId,
+        sessionId: params.session.id,
+        triggerMessageId: params.session.triggerMessageId,
       })
     }
   }
@@ -1476,29 +1487,17 @@ export function createPublicApiHandlers({
           code: "PERSONAL_BOT_REQUIRED",
         })
       }
-      const contentMarkdown = normalizeMessage(data.content)
-      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
-      // Same reason as sendMessage: a brief may carry `[x](attachment:att_x)`,
-      // and without the ids the create-time access gate never runs and the
-      // attachment_references projection is never written.
-      const attachmentIds = collectAttachmentReferenceIds(contentJson)
       const briefed = await botRuntimeService.briefRuntimeSession({
         workspaceId,
         botId,
         ownerUserId: bot.ownerUserId,
         instanceId: data.instanceId,
         runtimeSessionId: data.runtimeSessionId,
-        contentJson,
-        contentMarkdown,
-        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        contentMarkdown: normalizeMessage(data.content),
       })
       if (!briefed) throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
       res.status(201).json({
-        data: {
-          invocationId: briefed.invocation.id,
-          messageId: briefed.message.id,
-          streamId: briefed.invocation.activeStreamId,
-        },
+        data: { invocationId: briefed.invocation.id, streamId: briefed.invocation.responseStreamId },
       })
     },
 
@@ -1577,6 +1576,9 @@ export function createPublicApiHandlers({
       }
 
       let claimValidForSession = true
+      // Set only when this claim actually inserted the session row, so a replayed
+      // claim doesn't re-light the parent timeline's indicator.
+      let startedInThread: ParentActivityTarget | null = null
       if (!isSessionControl && bot && !bot.archivedAt) {
         await withTransaction(pool, async (client) => {
           const currentClaim = await botRuntimeService.findActiveClaimForUpdate(client, {
@@ -1600,6 +1602,7 @@ export function createPublicApiHandlers({
             ...callbackBinding,
           })
           if (!session) return
+          startedInThread = parentActivityTarget(await StreamRepository.findById(client, invocation.responseStreamId))
           const streamEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
             streamId: invocation.responseStreamId,
@@ -1626,6 +1629,16 @@ export function createPublicApiHandlers({
       if (!claimValidForSession) {
         res.locals.auditSkip = true
         return res.json({ data: null })
+      }
+      if (startedInThread && bot) {
+        emitAgentActivityStarted(io, {
+          workspaceId: invocation.workspaceId,
+          sessionId: invocation.id,
+          triggerMessageId: invocation.sourceMessageId,
+          personaName: bot.name,
+          threadStreamId: invocation.responseStreamId,
+          target: startedInThread,
+        })
       }
       const context = await buildClaimContext(pool, invocation, verdict)
       res.json({
@@ -2210,6 +2223,13 @@ export function createPublicApiHandlers({
         io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:completed", {
           sessionId: session.id,
         })
+        emitAgentActivityEnded(io, {
+          workspaceId: stream.workspaceId,
+          streamId: stream.id,
+          parentStreamId: stream.rootStreamId,
+          sessionId: session.id,
+          triggerMessageId: session.triggerMessageId,
+        })
       }
 
       res.json({ data: { invocationId: session.id, sessionId: session.id, messageId: message?.id ?? null } })
@@ -2497,6 +2517,13 @@ export function createPublicApiHandlers({
           io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
             sessionId: completed.id,
           })
+          emitAgentActivityEnded(io, {
+            workspaceId: req.workspaceId!,
+            streamId: completed.responseStreamId,
+            parentStreamId: completed.rootStreamId,
+            sessionId: completed.id,
+            triggerMessageId: completed.sourceMessageId,
+          })
         } catch (err) {
           logger.warn({ err, invocationId: completed.id }, "Failed to emit bot invocation completion frames")
         }
@@ -2536,6 +2563,16 @@ export function createPublicApiHandlers({
         }
 
         return failed
+      })
+      // The session row stays RUNNING here (the orphan sweeper owns that), but the
+      // parent timeline's indicator is driven by these frames alone — without this
+      // a failed /spawn leaves the anchor spinning until the sweep.
+      emitAgentActivityEnded(io, {
+        workspaceId: req.workspaceId!,
+        streamId: failed.responseStreamId,
+        parentStreamId: failed.rootStreamId,
+        sessionId: failed.id,
+        triggerMessageId: failed.sourceMessageId,
       })
       res.json({ data: { invocationId: failed.id, status: failed.status } })
     },

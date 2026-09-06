@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "./setup"
-import { BotRuntimeService } from "../../src/features/bot-runtimes"
+import { BotRuntimeSessionLinkRepository, BotRuntimeService } from "../../src/features/bot-runtimes"
 import { StreamService } from "../../src/features/streams"
-import { EventService, MessageRepository } from "../../src/features/messaging"
+import { MessageRepository } from "../../src/features/messaging"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
-import { messageId } from "../../src/lib/id"
+import { botRuntimeSessionLinkId, messageId } from "../../src/lib/id"
 
 describe("briefRuntimeSession", () => {
   let fixture: BotRuntimeFixture
@@ -14,8 +14,7 @@ describe("briefRuntimeSession", () => {
   let root: string
   let author: string
   let bot: string
-  const service = () =>
-    new BotRuntimeService({ pool, streamService: new StreamService(pool), eventService: new EventService(pool) })
+  const service = () => new BotRuntimeService({ pool, streamService: new StreamService(pool) })
 
   beforeAll(async () => {
     fixture = await seedBotRuntimeFixture({
@@ -52,7 +51,7 @@ describe("briefRuntimeSession", () => {
 
   async function attachThread(instanceId: string, runtimeSessionId: string) {
     const anchor = await anchorMessage()
-    return service().attachRuntimeSessionToThread({
+    const attached = await service().attachRuntimeSessionToThread({
       workspaceId: workspace,
       botId: bot,
       ownerUserId: author,
@@ -64,10 +63,11 @@ describe("briefRuntimeSession", () => {
       displayName: "Sub work",
       traits: ["active-scratchpad"],
     })
+    return { ...attached, anchor }
   }
 
-  test("briefs the thread session with a bot-authored message and a targeted invocation", async () => {
-    const { link, stream: thread } = await attachThread("target-instance", "target-session")
+  test("briefs the thread session on its anchor message and writes no message of its own", async () => {
+    const { link, stream: thread, anchor } = await attachThread("target-instance", "target-session")
 
     const briefed = await service().briefRuntimeSession({
       workspaceId: workspace,
@@ -75,22 +75,15 @@ describe("briefRuntimeSession", () => {
       ownerUserId: author,
       instanceId: "target-instance",
       runtimeSessionId: "target-session",
-      contentJson: testContentJson("brief content"),
       contentMarkdown: "brief content",
     })
 
     expect(briefed).not.toBeNull()
-    expect(briefed!.message).toMatchObject({
-      streamId: thread.id,
-      authorId: bot,
-      authorType: "bot",
-      contentMarkdown: "brief content",
-    })
     expect(briefed!.invocation).toMatchObject({
       workspaceId: workspace,
       rootStreamId: root,
-      activeStreamId: thread.id,
-      sourceMessageId: briefed!.message.id,
+      activeStreamId: root,
+      sourceMessageId: anchor.id,
       responseStreamId: thread.id,
       actorType: "bot",
       actorId: bot,
@@ -102,6 +95,11 @@ describe("briefRuntimeSession", () => {
       targetInstanceId: link.instanceId,
       targetRuntimeSessionId: link.runtimeSessionId,
     })
+
+    const written = await pool.query<{ count: string }>("SELECT count(*)::text FROM messages WHERE stream_id = $1", [
+      thread.id,
+    ])
+    expect(written.rows[0]!.count).toBe("0")
   })
 
   test("the briefed invocation is claimable only by the targeted identity", async () => {
@@ -112,7 +110,6 @@ describe("briefRuntimeSession", () => {
       ownerUserId: author,
       instanceId: "target-instance",
       runtimeSessionId: "target-session",
-      contentJson: testContentJson("brief content"),
       contentMarkdown: "brief content",
     })
     expect(briefed).not.toBeNull()
@@ -158,7 +155,6 @@ describe("briefRuntimeSession", () => {
       ownerUserId: author,
       instanceId: "target-instance",
       runtimeSessionId: "target-session",
-      contentJson: testContentJson("brief content"),
       contentMarkdown: "brief content",
     })
     expect(briefed).not.toBeNull()
@@ -210,7 +206,6 @@ describe("briefRuntimeSession", () => {
           ownerUserId: author,
           instanceId: "target-instance",
           runtimeSessionId: "target-session",
-          contentJson: testContentJson("brief content"),
           contentMarkdown: "brief content",
         })
         .then((result) => {
@@ -227,19 +222,18 @@ describe("briefRuntimeSession", () => {
   })
 
   test("the outbox route reconcile leaves the brief invocation pending", async () => {
-    await attachThread("target-instance", "target-session")
+    const { anchor } = await attachThread("target-instance", "target-session")
     const briefed = await service().briefRuntimeSession({
       workspaceId: workspace,
       botId: bot,
       ownerUserId: author,
       instanceId: "target-instance",
       runtimeSessionId: "target-session",
-      contentJson: testContentJson("brief content"),
       contentMarkdown: "brief content",
     })
     expect(briefed).not.toBeNull()
 
-    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: briefed!.message.id })
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: anchor.id })
 
     const row = await pool.query<{ status: string; cancellation_reason: string | null }>(
       "SELECT status, cancellation_reason FROM bot_invocations WHERE workspace_id = $1 AND id = $2",
@@ -248,7 +242,107 @@ describe("briefRuntimeSession", () => {
     expect(row.rows[0]).toEqual({ status: "pending", cancellation_reason: null })
   })
 
-  test("returns null and writes no message for an ended or unknown identity", async () => {
+  test("refuses a link whose active stream is not a message thread", async () => {
+    // A scratchpad session (`createLinkedScratchpadSession`) links the root to
+    // itself, so there is no anchor message to source the turn from.
+    await BotRuntimeSessionLinkRepository.upsert(pool, {
+      id: botRuntimeSessionLinkId(),
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "openclaw",
+      instanceId: "target-instance",
+      runtimeSessionId: "rootlinked-session",
+      rootStreamId: root,
+      activeStreamId: root,
+      linkedBy: author,
+    })
+
+    await expect(
+      service().briefRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        ownerUserId: author,
+        instanceId: "target-instance",
+        runtimeSessionId: "rootlinked-session",
+        contentMarkdown: "brief content",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "SESSION_NOT_MESSAGE_ANCHORED" })
+  })
+
+  test("refuses a brief whose anchor message has been deleted", async () => {
+    const { anchor } = await attachThread("target-instance", "target-session")
+    await pool.query("UPDATE messages SET deleted_at = NOW() WHERE id = $1", [anchor.id])
+
+    await expect(
+      service().briefRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        ownerUserId: author,
+        instanceId: "target-instance",
+        runtimeSessionId: "target-session",
+        contentMarkdown: "brief content",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "SESSION_NOT_MESSAGE_ANCHORED" })
+
+    const invocations = await pool.query<{ count: string }>(
+      "SELECT count(*)::text FROM bot_invocations WHERE workspace_id = $1",
+      [workspace]
+    )
+    expect(invocations.rows[0]!.count).toBe("0")
+  })
+
+  test("a repeated brief with the same prompt resolves to the invocation already in flight", async () => {
+    await attachThread("target-instance", "target-session")
+    const brief = {
+      workspaceId: workspace,
+      botId: bot,
+      ownerUserId: author,
+      instanceId: "target-instance",
+      runtimeSessionId: "target-session",
+      contentMarkdown: "brief content",
+    }
+    const first = await service().briefRuntimeSession(brief)
+    const retry = await service().briefRuntimeSession(brief)
+
+    expect(retry!.invocation.id).toBe(first!.invocation.id)
+    const invocations = await pool.query<{ count: string }>(
+      "SELECT count(*)::text FROM bot_invocations WHERE workspace_id = $1",
+      [workspace]
+    )
+    expect(invocations.rows[0]!.count).toBe("1")
+  })
+
+  test("refuses a second brief carrying a different prompt for the same anchor", async () => {
+    await attachThread("target-instance", "target-session")
+    const first = await service().briefRuntimeSession({
+      workspaceId: workspace,
+      botId: bot,
+      ownerUserId: author,
+      instanceId: "target-instance",
+      runtimeSessionId: "target-session",
+      contentMarkdown: "brief content",
+    })
+
+    await expect(
+      service().briefRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        ownerUserId: author,
+        instanceId: "target-instance",
+        runtimeSessionId: "target-session",
+        contentMarkdown: "a different brief",
+      })
+    ).rejects.toMatchObject({ status: 409, code: "BRIEF_SOURCE_ALREADY_INVOKED" })
+
+    const stored = await pool.query<{ prompt_markdown: string }>(
+      "SELECT prompt_markdown FROM bot_invocations WHERE workspace_id = $1",
+      [workspace]
+    )
+    expect(stored.rows.map((row) => row.prompt_markdown)).toEqual(["brief content"])
+    expect(first!.invocation.promptMarkdown).toBe("brief content")
+  })
+
+  test("returns null and creates no invocation for an ended or unknown identity", async () => {
     await attachThread("target-instance", "target-session")
     await service().endRuntimeSession({
       workspaceId: workspace,
@@ -257,18 +351,12 @@ describe("briefRuntimeSession", () => {
       runtimeSessionId: "target-session",
     })
 
-    const beforeCount = await pool.query<{ count: string }>(
-      "SELECT count(*)::text FROM messages WHERE stream_id != $1",
-      [root]
-    )
-
     const endedResult = await service().briefRuntimeSession({
       workspaceId: workspace,
       botId: bot,
       ownerUserId: author,
       instanceId: "target-instance",
       runtimeSessionId: "target-session",
-      contentJson: testContentJson("brief content"),
       contentMarkdown: "brief content",
     })
     expect(endedResult).toBeNull()
@@ -279,16 +367,15 @@ describe("briefRuntimeSession", () => {
       ownerUserId: author,
       instanceId: "never-existed",
       runtimeSessionId: "never-existed",
-      contentJson: testContentJson("brief content"),
       contentMarkdown: "brief content",
     })
     expect(unknownResult).toBeNull()
 
-    const afterCount = await pool.query<{ count: string }>(
-      "SELECT count(*)::text FROM messages WHERE stream_id != $1",
-      [root]
+    const invocations = await pool.query<{ count: string }>(
+      "SELECT count(*)::text FROM bot_invocations WHERE workspace_id = $1",
+      [workspace]
     )
-    expect(afterCount.rows[0]!.count).toBe(beforeCount.rows[0]!.count)
+    expect(invocations.rows[0]!.count).toBe("0")
   })
 
   describe("against an end-to-end encrypted root", () => {
@@ -318,10 +405,9 @@ describe("briefRuntimeSession", () => {
         contentJson: testContentJson("anchor"),
         contentMarkdown: "anchor",
       })
-      const { stream: thread } = await new BotRuntimeService({
+      await new BotRuntimeService({
         pool: e2ePool,
         streamService: new StreamService(e2ePool),
-        eventService: new EventService(e2ePool),
       }).attachRuntimeSessionToThread({
         workspaceId: e2eWorkspace,
         botId: e2eBot,
@@ -344,32 +430,22 @@ describe("briefRuntimeSession", () => {
         ownerUserKeyId: "e2ek_test",
       })
 
-      const beforeCount = await e2ePool.query<{ count: string }>(
-        "SELECT count(*)::text FROM messages WHERE stream_id = $1",
-        [thread.id]
-      )
-
       await expect(
-        new BotRuntimeService({
-          pool: e2ePool,
-          streamService: new StreamService(e2ePool),
-          eventService: new EventService(e2ePool),
-        }).briefRuntimeSession({
+        new BotRuntimeService({ pool: e2ePool, streamService: new StreamService(e2ePool) }).briefRuntimeSession({
           workspaceId: e2eWorkspace,
           botId: e2eBot,
           ownerUserId: e2eAuthor,
           instanceId: "e2e-instance",
           runtimeSessionId: "e2e-session",
-          contentJson: testContentJson("brief content"),
           contentMarkdown: "brief content",
         })
       ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" })
 
-      const afterCount = await e2ePool.query<{ count: string }>(
-        "SELECT count(*)::text FROM messages WHERE stream_id = $1",
-        [thread.id]
+      const invocations = await e2ePool.query<{ count: string }>(
+        "SELECT count(*)::text FROM bot_invocations WHERE workspace_id = $1",
+        [e2eWorkspace]
       )
-      expect(afterCount.rows[0]!.count).toBe(beforeCount.rows[0]!.count)
+      expect(invocations.rows[0]!.count).toBe("0")
     })
   })
 })

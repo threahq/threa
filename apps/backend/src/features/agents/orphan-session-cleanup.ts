@@ -2,6 +2,7 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import type { Querier } from "../../db"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
+import { emitAgentActivityEnded } from "./activity-indicator"
 import { collectSessionEffects } from "./session-effects"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
@@ -72,7 +73,7 @@ export async function failSessionWithLifecycleInTransaction(
 export async function failSessionWithLifecycle(
   pool: Pool,
   io: Server,
-  session: { id: string; streamId: string; personaId: string },
+  session: { id: string; streamId: string; personaId: string; triggerMessageId: string },
   error: string,
   onFailed?: (tx: Querier) => Promise<void>
 ): Promise<boolean> {
@@ -92,6 +93,13 @@ export async function failSessionWithLifecycle(
   // `trace.notifyFailed()` does — the outbox does not reach the session room.
   if (won && stream) {
     io.to(`ws:${stream.workspaceId}:agent_session:${sessionId}`).emit("agent_session:failed", { sessionId })
+    emitAgentActivityEnded(io, {
+      workspaceId: stream.workspaceId,
+      streamId: stream.id,
+      parentStreamId: stream.rootStreamId,
+      sessionId,
+      triggerMessageId: session.triggerMessageId,
+    })
   }
   return won
 }

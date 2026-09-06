@@ -18,7 +18,6 @@ import type {
   BotRuntimeManifest,
   BotRuntimeStatus,
   BotTrait,
-  JSONContent,
 } from "@threa/types"
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -55,7 +54,7 @@ import {
 } from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
-import { MessageRepository, type EventService, type InvocationSourceState, type Message } from "../messaging"
+import { MessageRepository, type InvocationSourceState } from "../messaging"
 import {
   buildCanonicalInvocationPrompt,
   resolveCanonicalInvocationRoutes,
@@ -69,7 +68,6 @@ interface BotRuntimeServiceDeps {
     "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
   >
   labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
-  eventService?: Pick<EventService, "createMessageForPrincipalInTransaction">
 }
 
 class ClaimCandidateFenceLost extends Error {}
@@ -103,13 +101,11 @@ export class BotRuntimeService {
     "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
   >
   private readonly labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
-  private readonly eventService?: Pick<EventService, "createMessageForPrincipalInTransaction">
 
   constructor(deps: BotRuntimeServiceDeps) {
     this.pool = deps.pool
     this.streamService = deps.streamService
     this.labelAssignmentService = deps.labelAssignmentService
-    this.eventService = deps.eventService
   }
 
   async findLatestPresence(params: { workspaceId: string; botId: string }): Promise<BotRuntimeInstance | null> {
@@ -774,11 +770,11 @@ export class BotRuntimeService {
   }
 
   /**
-   * Briefs a linked runtime session with a bot-authored prompt: no human
-   * authored this turn, so `resolveRoutes` (which skips the active bot as its
-   * own author) produces no route for it — the brief inserts the message and
-   * creates the invocation itself in one transaction, and the `brief` trigger
-   * tells consumers no human sent it.
+   * Briefs a linked runtime session with the caller's prompt, as a turn on the
+   * thread's own anchor message: the invocation reads from the anchor in the
+   * root and answers into the thread, so a brief writes no message of its own.
+   * `brief` is unrouted, so the caller's prompt survives instead of being
+   * rewritten from the anchor the way a routed trigger's would be.
    */
   async briefRuntimeSession(params: {
     workspaceId: string
@@ -786,12 +782,8 @@ export class BotRuntimeService {
     ownerUserId: string
     instanceId: string
     runtimeSessionId: string
-    contentJson: JSONContent
     contentMarkdown: string
-    attachmentIds?: string[]
-  }): Promise<{ message: Message; invocation: BotInvocation } | null> {
-    if (!this.eventService) throw new Error("briefRuntimeSession requires eventService")
-    const eventService = this.eventService
+  }): Promise<{ invocation: BotInvocation } | null> {
     return withTransaction(this.pool, async (db) => {
       const link = await BotRuntimeSessionLinkRepository.findActiveByRuntimeSessionForShare(db, {
         workspaceId: params.workspaceId,
@@ -806,24 +798,25 @@ export class BotRuntimeService {
           code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
         })
       }
-      const { message } = await eventService.createMessageForPrincipalInTransaction(
-        db,
-        { kind: "bot", botId: params.botId },
-        {
-          workspaceId: params.workspaceId,
-          streamId: link.activeStreamId,
-          authorId: params.botId,
-          authorType: AuthorTypes.BOT,
-          contentJson: params.contentJson,
-          contentMarkdown: params.contentMarkdown,
-          attachmentIds: params.attachmentIds,
-        }
-      )
-      const { invocation } = await this.createInvocationInTransaction(db, {
+      const thread = await StreamRepository.findByIdForWorkspace(db, link.activeStreamId, params.workspaceId)
+      const anchorId = thread?.type === StreamTypes.THREAD ? thread.parentAnchorId : null
+      const anchor = anchorId?.startsWith("msg_")
+        ? await MessageRepository.findInvocationSourceStateForShare(db, {
+            workspaceId: params.workspaceId,
+            messageId: anchorId,
+          })
+        : null
+      if (!anchorId || !anchor || anchor.deleted) {
+        throw new HttpError("Runtime session is not attached to a live message thread", {
+          status: 400,
+          code: "SESSION_NOT_MESSAGE_ANCHORED",
+        })
+      }
+      const { invocation, wasNewlyInserted } = await this.createInvocationInTransaction(db, {
         workspaceId: params.workspaceId,
         rootStreamId: link.rootStreamId,
-        activeStreamId: link.activeStreamId,
-        sourceMessageId: message.id,
+        activeStreamId: link.rootStreamId,
+        sourceMessageId: anchorId,
         responseStreamId: link.activeStreamId,
         actorId: params.botId,
         trigger: BotInvocationTriggers.BRIEF,
@@ -833,7 +826,17 @@ export class BotRuntimeService {
         targetInstanceId: link.instanceId,
         targetRuntimeSessionId: link.runtimeSessionId,
       })
-      return { message, invocation }
+      // A brief's identity is the anchor, so a second brief on the same anchor
+      // resolves to the invocation that is already there. Same prompt is the
+      // retry this makes safe; a different one was never delivered, and saying
+      // so beats a 201 the runtime will never act on.
+      if (!wasNewlyInserted && invocation.promptMarkdown !== params.contentMarkdown) {
+        throw new HttpError("An invocation for this thread's anchor is already in flight", {
+          status: 409,
+          code: "BRIEF_SOURCE_ALREADY_INVOKED",
+        })
+      }
+      return { invocation }
     })
   }
 

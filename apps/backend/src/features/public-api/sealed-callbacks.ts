@@ -10,6 +10,7 @@ import {
   assertSessionRunningOrCompleted,
   assertSessionRunningOrFailed,
   assertSessionRunningOrCompletedOrFailed,
+  parentActivityTarget,
   verifyCallbackToken,
   type AgentSession,
   type AgentSessionStep,
@@ -74,7 +75,10 @@ export function emitBotSealedProgress(
   ctx: Pick<SealedCallbackContext, "stream" | "session" | "bot">,
   step: AgentSessionStep
 ): void {
-  io.to(`ws:${ctx.stream.workspaceId}:stream:${ctx.session.streamId}`).emit("agent_session:progress", {
+  const parent = parentActivityTarget(ctx.stream)
+  let target = io.to(`ws:${ctx.stream.workspaceId}:stream:${ctx.session.streamId}`)
+  if (parent) target = target.to(`ws:${ctx.stream.workspaceId}:stream:${parent.parentStreamId}`)
+  target.emit("agent_session:progress", {
     workspaceId: ctx.stream.workspaceId,
     streamId: ctx.session.streamId,
     sessionId: ctx.session.id,
@@ -83,6 +87,8 @@ export function emitBotSealedProgress(
     stepCount: step.stepNumber,
     messageCount: 0,
     currentStepType: step.stepType,
+    threadStreamId: parent ? ctx.session.streamId : undefined,
+    parentMessageId: parent?.parentMessageId,
   })
 }
 
