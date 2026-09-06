@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
+  beforeSend,
   capture,
   captureException,
+  dropBenignExceptions,
   sanitizeUrlProperties,
   setSessionReplay,
   startAnalytics,
@@ -70,7 +72,7 @@ describe("analytics client lifecycle", () => {
         enable_recording_console_log: false,
         capture_exceptions: true,
         persistence: "localStorage+cookie",
-        before_send: sanitizeUrlProperties,
+        before_send: beforeSend,
       },
       "threa_tok_1"
     )
@@ -329,5 +331,57 @@ describe("sanitizeUrlProperties", () => {
 
     expect(result?.properties).toEqual({ workspaceId: "ws_01ABC", $current_url: 42 })
     expect(sanitizeUrlProperties(null)).toBeNull()
+  })
+})
+
+describe("beforeSend", () => {
+  function captureResult(event: Record<string, unknown>) {
+    return event as unknown as Parameters<typeof beforeSend>[0]
+  }
+
+  const resizeObserverLoop = {
+    event: "$exception",
+    properties: {
+      $current_url: "https://app.threa.io/w/ws_01ABC/s/stream_01XYZ",
+      $exception_list: [{ type: "Error", value: "ResizeObserver loop completed with undelivered notifications." }],
+    },
+  }
+
+  it("should drop the ResizeObserver loop warning in every browser's wording", () => {
+    const firefox = {
+      ...resizeObserverLoop,
+      properties: { $exception_list: [{ value: "ResizeObserver loop limit exceeded" }] },
+    }
+
+    expect({
+      chrome: beforeSend(captureResult(resizeObserverLoop)),
+      firefox: beforeSend(captureResult(firefox)),
+    }).toEqual({ chrome: null, firefox: null })
+  })
+
+  it("should keep other exceptions and still sanitize their url", () => {
+    const crash = {
+      ...resizeObserverLoop,
+      properties: {
+        ...resizeObserverLoop.properties,
+        $exception_list: [{ type: "TypeError", value: "x is not a function" }],
+      },
+    }
+
+    expect(beforeSend(captureResult(crash))?.properties).toEqual({
+      $current_url: "https://app.threa.io/w/:id/s/:id",
+      $exception_list: [{ type: "TypeError", value: "x is not a function" }],
+    })
+  })
+
+  it("should only inspect $exception events and tolerate a missing exception list", () => {
+    const pageview = { event: "$pageview", properties: { value: "ResizeObserver loop limit exceeded" } }
+    const bare = { event: "$exception", properties: {} }
+
+    expect({
+      pageview: dropBenignExceptions(captureResult(pageview)),
+      bare: dropBenignExceptions(captureResult(bare)),
+      none: dropBenignExceptions(null),
+    }).toEqual({ pageview, bare, none: null })
   })
 })

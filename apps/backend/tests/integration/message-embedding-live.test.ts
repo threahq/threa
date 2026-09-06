@@ -1,7 +1,7 @@
 /**
  * The live embedding path's hash guard, against the real schema (INV-68):
  * unchanged text costs no model call, and a write that lost the race to a
- * newer embed throws so the queue retries against the newer text.
+ * concurrent embed re-reads the text and lands without a second model call.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
@@ -94,9 +94,11 @@ describe("embedMessageWithContext hash guard", () => {
     })
   })
 
-  test("should throw for retry when a newer embed landed while the model call was in flight", async () => {
+  test("should re-read and land when another embed wrote while the model call was in flight", async () => {
+    const calls: string[] = []
     const embeddingService: EmbeddingServiceLike = {
-      async embed() {
+      async embed(text) {
+        calls.push(text)
         await MessageRepository.updateEmbeddings(pool, [
           { id: message.id, embedding: unitVector(1), sourceHash: "newer-text", expectedSourceHash: null },
         ])
@@ -108,12 +110,12 @@ describe("embedMessageWithContext hash guard", () => {
     }
     await pool.query("UPDATE messages SET embedding = NULL, embedding_source_hash = NULL WHERE id = $1", [message.id])
 
-    await expect(embedMessageWithContext({ pool, embeddingService }, wsId, message)).rejects.toThrow(
-      /lost to a concurrent write/
-    )
-    expect(await readRow()).toEqual({
-      embedding: `[${unitVector(1).join(",")}]`,
-      embedding_source_hash: "newer-text",
+    await embedMessageWithContext({ pool, embeddingService }, wsId, message)
+
+    const text = await loadMessageEmbeddingText(pool, wsId, message)
+    expect({ calls, row: await readRow() }).toEqual({
+      calls: [text],
+      row: { embedding: `[${unitVector(2).join(",")}]`, embedding_source_hash: hashEmbeddingText(text!) },
     })
   })
 })
