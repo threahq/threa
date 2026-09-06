@@ -3,7 +3,7 @@ import { User as UserIcon } from "lucide-react"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { User, WorkspaceBootstrap } from "@threa/types"
 import { render, screen, userEvent, spyOnExport } from "@/test"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { SidebarFooter } from "./sidebar-footer"
@@ -14,6 +14,7 @@ import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as drawerModule from "@/components/ui/drawer"
 
 const logout = vi.fn()
+const updatePreference = vi.fn()
 const openSettings = vi.fn()
 const collapseOnMobile = vi.fn()
 const isTouch = { value: true }
@@ -27,12 +28,38 @@ function renderWithRouter(ui: React.ReactElement, queryClient?: QueryClient) {
   )
 }
 
+const currentUserFixture = {
+  id: "user_1",
+  workspaceId: "workspace_1",
+  workosUserId: "workos_user_1",
+  email: "kris@example.com",
+  role: "member",
+  slug: "kris",
+  name: "Kris",
+  description: null,
+  avatarUrl: null,
+  timezone: "Europe/Stockholm",
+  locale: "en-SE",
+  pronouns: null,
+  phone: null,
+  githubUsername: null,
+  statusEmoji: null,
+  statusText: null,
+  statusExpiresAt: null,
+  statusPausesNotifications: false,
+  notificationsPausedUntil: null,
+  notificationsPausedIndefinitely: false,
+  setupCompleted: true,
+  joinedAt: "2026-03-03T10:00:00Z",
+} satisfies User
+
 describe("SidebarFooter", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     logout.mockReset()
     openSettings.mockReset()
     collapseOnMobile.mockReset()
+    updatePreference.mockReset()
     isTouch.value = true
 
     vi.spyOn(authModule, "useAuth").mockReturnValue({
@@ -47,6 +74,11 @@ describe("SidebarFooter", () => {
       collapseOnMobile,
       setMenuOpen: vi.fn(),
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: { theme: "system" },
+      updatePreference,
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
 
     vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (isTouch.value ? "touch" : "mouse"))
 
@@ -98,30 +130,7 @@ describe("SidebarFooter", () => {
         workspaceId="workspace_1"
         onCreateScratchpad={vi.fn()}
         onCreateChannel={vi.fn()}
-        currentUser={{
-          id: "user_1",
-          workspaceId: "workspace_1",
-          workosUserId: "workos_user_1",
-          email: "kris@example.com",
-          role: "member",
-          slug: "kris",
-          name: "Kris",
-          description: null,
-          avatarUrl: null,
-          timezone: "Europe/Stockholm",
-          locale: "en-SE",
-          pronouns: null,
-          phone: null,
-          githubUsername: null,
-          statusEmoji: null,
-          statusText: null,
-          statusExpiresAt: null,
-          statusPausesNotifications: false,
-          notificationsPausedUntil: null,
-          notificationsPausedIndefinitely: false,
-          setupCompleted: true,
-          joinedAt: "2026-03-03T10:00:00Z",
-        }}
+        currentUser={currentUserFixture}
       />
     )
 
@@ -155,30 +164,7 @@ describe("SidebarFooter", () => {
         onCreateScratchpad={vi.fn()}
         onCreateChannel={vi.fn()}
         onShowGettingStarted={onShowGettingStarted}
-        currentUser={{
-          id: "user_1",
-          workspaceId: "workspace_1",
-          workosUserId: "workos_user_1",
-          email: "kris@example.com",
-          role: "member",
-          slug: "kris",
-          name: "Kris",
-          description: null,
-          avatarUrl: null,
-          timezone: "Europe/Stockholm",
-          locale: "en-SE",
-          pronouns: null,
-          phone: null,
-          githubUsername: null,
-          statusEmoji: null,
-          statusText: null,
-          statusExpiresAt: null,
-          statusPausesNotifications: false,
-          notificationsPausedUntil: null,
-          notificationsPausedIndefinitely: false,
-          setupCompleted: true,
-          joinedAt: "2026-03-03T10:00:00Z",
-        }}
+        currentUser={currentUserFixture}
       />
     )
 
@@ -202,30 +188,7 @@ describe("SidebarFooter", () => {
           { id: "new-scratchpad", label: "New Scratchpad", icon: UserIcon, onSelect: onCreateScratchpad },
           { id: "new-quick-note", label: "New Quick Note", icon: UserIcon, onSelect: vi.fn() },
         ]}
-        currentUser={{
-          id: "user_1",
-          workspaceId: "workspace_1",
-          workosUserId: "workos_user_1",
-          email: "kris@example.com",
-          role: "member",
-          slug: "kris",
-          name: "Kris",
-          description: null,
-          avatarUrl: null,
-          timezone: "Europe/Stockholm",
-          locale: "en-SE",
-          pronouns: null,
-          phone: null,
-          githubUsername: null,
-          statusEmoji: null,
-          statusText: null,
-          statusExpiresAt: null,
-          statusPausesNotifications: false,
-          notificationsPausedUntil: null,
-          notificationsPausedIndefinitely: false,
-          setupCompleted: true,
-          joinedAt: "2026-03-03T10:00:00Z",
-        }}
+        currentUser={currentUserFixture}
       />
     )
 
@@ -247,30 +210,7 @@ describe("SidebarFooter", () => {
         workspaceId="workspace_1"
         onCreateScratchpad={vi.fn()}
         onCreateChannel={vi.fn()}
-        currentUser={{
-          id: "user_1",
-          workspaceId: "workspace_1",
-          workosUserId: "workos_user_1",
-          email: "kris@example.com",
-          role: "member",
-          slug: "kris",
-          name: "Kris",
-          description: null,
-          avatarUrl: null,
-          timezone: "Europe/Stockholm",
-          locale: "en-SE",
-          pronouns: null,
-          phone: null,
-          githubUsername: null,
-          statusEmoji: null,
-          statusText: null,
-          statusExpiresAt: null,
-          statusPausesNotifications: false,
-          notificationsPausedUntil: null,
-          notificationsPausedIndefinitely: false,
-          setupCompleted: true,
-          joinedAt: "2026-03-03T10:00:00Z",
-        }}
+        currentUser={currentUserFixture}
       />
     )
 
@@ -336,30 +276,7 @@ describe("SidebarFooter", () => {
         workspaceId="workspace_1"
         onCreateScratchpad={vi.fn()}
         onCreateChannel={vi.fn()}
-        currentUser={{
-          id: "user_1",
-          workspaceId: "workspace_1",
-          workosUserId: "workos_user_1",
-          email: "kris@example.com",
-          role: "member",
-          slug: "kris",
-          name: "Kris",
-          description: null,
-          avatarUrl: null,
-          timezone: "Europe/Stockholm",
-          locale: "en-SE",
-          pronouns: null,
-          phone: null,
-          githubUsername: null,
-          statusEmoji: null,
-          statusText: null,
-          statusExpiresAt: null,
-          statusPausesNotifications: false,
-          notificationsPausedUntil: null,
-          notificationsPausedIndefinitely: false,
-          setupCompleted: true,
-          joinedAt: "2026-03-03T10:00:00Z",
-        }}
+        currentUser={currentUserFixture}
       />,
       queryClient
     )
@@ -421,30 +338,7 @@ describe("SidebarFooter", () => {
         workspaceId="workspace_1"
         onCreateScratchpad={vi.fn()}
         onCreateChannel={vi.fn()}
-        currentUser={{
-          id: "user_1",
-          workspaceId: "workspace_1",
-          workosUserId: "workos_user_1",
-          email: "kris@example.com",
-          role: "member",
-          slug: "kris",
-          name: "Kris",
-          description: null,
-          avatarUrl: null,
-          timezone: "Europe/Stockholm",
-          locale: "en-SE",
-          pronouns: null,
-          phone: null,
-          githubUsername: null,
-          statusEmoji: null,
-          statusText: null,
-          statusExpiresAt: null,
-          statusPausesNotifications: false,
-          notificationsPausedUntil: null,
-          notificationsPausedIndefinitely: false,
-          setupCompleted: true,
-          joinedAt: "2026-03-03T10:00:00Z",
-        }}
+        currentUser={currentUserFixture}
       />
     )
 
@@ -452,5 +346,66 @@ describe("SidebarFooter", () => {
 
     expect(screen.getByText("Pause notifications")).toBeInTheDocument()
     expect(screen.queryByText("Resume notifications")).not.toBeInTheDocument()
+  })
+  it("keeps appearance and sidebar customization in the account menu, picking a theme through the split row", async () => {
+    const user = userEvent.setup()
+    const onEditLayout = vi.fn()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        onEditLayout={onEditLayout}
+        currentUser={currentUserFixture}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+
+    expect(screen.getByText("Customize sidebar")).toBeInTheDocument()
+    expect(screen.getByText("Appearance")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Appearance options" }))
+    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }))
+
+    expect(updatePreference).toHaveBeenCalledWith("theme", "dark")
+  })
+
+  it("cycles to the next theme when the appearance row itself is picked on mouse input", async () => {
+    isTouch.value = false
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        onEditLayout={vi.fn()}
+        currentUser={currentUserFixture}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+    await user.click(screen.getByRole("menuitem", { name: "AppearanceSystem" }))
+
+    expect(updatePreference).toHaveBeenCalledWith("theme", "light")
+  })
+
+  it("hides the customize-sidebar row when there is no layout to edit", async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        currentUser={currentUserFixture}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+
+    expect(screen.queryByText("Customize sidebar")).not.toBeInTheDocument()
   })
 })

@@ -212,11 +212,12 @@ test.describe("Drafts Page", () => {
     // Navigate away by creating a new scratchpad
     await createScratchpadFromSidebar(page)
 
-    // Open the quick switcher via its toolbar button rather than the Cmd+K
-    // accelerator: headless Chromium intermittently swallows browser-reserved
+    // Open the quick switcher via the sidebar header's command menu rather than the
+    // Cmd+K accelerator: headless Chromium intermittently swallows browser-reserved
     // Cmd/Ctrl shortcuts before the app sees them. This test covers the
     // "> drafts" command path, not the keybinding itself.
-    await page.getByRole("button", { name: /Jump to stream/i }).click()
+    await page.getByRole("button", { name: "Jump to stream or command" }).click()
+    await page.getByRole("menuitem", { name: /Jump to stream/i }).click()
     await expect(page.getByRole("tab", { name: "Stream search" })).toBeVisible({ timeout: 5000 })
 
     // Type command prefix and search for drafts

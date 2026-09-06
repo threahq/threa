@@ -1,5 +1,5 @@
 import type { ComponentProps, MouseEvent, ReactNode, RefObject } from "react"
-import { type LucideIcon, MoreHorizontal } from "lucide-react"
+import { Check, ChevronDown, type LucideIcon, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -21,6 +24,7 @@ import {
 import { RelativeTime } from "@/components/relative-time"
 import { Separator } from "@/components/ui/separator"
 import { useSidebar } from "@/contexts"
+import { groupVisibleActions } from "@/components/actions/action-model"
 import { cn } from "@/lib/utils"
 
 export interface SidebarActionItem {
@@ -37,6 +41,14 @@ export interface SidebarActionItem {
   onSelect?: () => void | Promise<void>
   variant?: "default" | "destructive"
   separatorBefore?: boolean
+  /** Trailing checkmark — for entries that pick one of a set (theme, sort order). */
+  checked?: boolean
+  /**
+   * Collapses adjacent same-`groupId` entries into one split row: the first is
+   * the row itself, the rest sit behind its chevron (a sub-menu on desktop, a
+   * dropdown on touch). Same grouping helper the message action menus use.
+   */
+  groupId?: string
 }
 
 export interface SidebarActionPreview {
@@ -93,61 +105,95 @@ function SidebarActionContent({ action, iconClassName }: { action: SidebarAction
       ) : (
         <span>{action.label}</span>
       )}
+      {action.checked && <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
     </>
   )
 }
 
 function SidebarActionMenuEntry({ action }: { action: SidebarActionItem }) {
+  return (
+    <div>
+      {action.separatorBefore && <DropdownMenuSeparator />}
+      <SidebarActionMenuRow action={action} />
+    </div>
+  )
+}
+
+function SidebarActionMenuRow({
+  action,
+  className,
+  onSelected,
+}: {
+  action: SidebarActionItem
+  className?: string
+  onSelected?: () => void
+}) {
   const isDestructive = action.variant === "destructive"
   const content = <SidebarActionContent action={action} iconClassName="mr-2 h-4 w-4" />
-  const itemClassName = cn(isDestructive && "text-destructive focus:text-destructive")
+  const itemClassName = cn(isDestructive && "text-destructive focus:text-destructive", className)
+  // A `checked` entry picks one of a set, so the trailing glyph needs a state a
+  // screen reader can read, not just a rendered checkmark.
+  const checkedProps =
+    action.checked === undefined ? {} : { role: "menuitemradio" as const, "aria-checked": action.checked }
+  const run = () => {
+    onSelected?.()
+    void runSidebarAction(action)
+  }
 
   let item: ReactNode
   if (action.href && action.external) {
     item = (
-      <DropdownMenuItem asChild className={itemClassName}>
-        <a
-          href={action.href}
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => {
-            void runSidebarAction(action)
-          }}
-        >
+      <DropdownMenuItem asChild className={itemClassName} {...checkedProps}>
+        <a href={action.href} target="_blank" rel="noreferrer" onClick={run}>
           {content}
         </a>
       </DropdownMenuItem>
     )
   } else if (action.href) {
     item = (
-      <DropdownMenuItem asChild className={itemClassName}>
-        <Link
-          to={action.href}
-          onClick={() => {
-            void runSidebarAction(action)
-          }}
-        >
+      <DropdownMenuItem asChild className={itemClassName} {...checkedProps}>
+        <Link to={action.href} onClick={run}>
           {content}
         </Link>
       </DropdownMenuItem>
     )
   } else {
     item = (
-      <DropdownMenuItem
-        className={itemClassName}
-        onSelect={() => {
-          void runSidebarAction(action)
-        }}
-      >
+      <DropdownMenuItem className={itemClassName} onSelect={run} {...checkedProps}>
         {content}
       </DropdownMenuItem>
     )
   }
 
+  return item
+}
+
+/**
+ * A split row: the group's first entry is the row itself, the rest sit behind a
+ * chevron sub-menu. Mirrors the message action menu's split-button rows, over
+ * this menu's own item type.
+ */
+function SidebarActionMenuGroup({ members }: { members: SidebarActionItem[] }) {
+  const [primary, ...rest] = members
   return (
     <div>
-      {action.separatorBefore && <DropdownMenuSeparator />}
-      {item}
+      {primary.separatorBefore && <DropdownMenuSeparator />}
+      <div className="flex items-stretch">
+        <div className="min-w-0 flex-1">
+          <SidebarActionMenuRow action={primary} className="rounded-r-none" />
+        </div>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger
+            className="cursor-pointer rounded-l-none border-l border-border/50 px-2 text-muted-foreground [&>svg]:rotate-90"
+            aria-label={`${primary.label} options`}
+          />
+          <DropdownMenuSubContent sideOffset={4} alignOffset={-4}>
+            {rest.map((member) => (
+              <SidebarActionMenuRow key={member.id} action={member} />
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      </div>
     </div>
   )
 }
@@ -196,9 +242,13 @@ export function SidebarActionMenu({
       <DropdownMenuTrigger asChild>{trigger ?? defaultTrigger}</DropdownMenuTrigger>
       <DropdownMenuContent side={side} align={align} className={cn("w-40", contentClassName)}>
         {header}
-        {actions.map((action) => (
-          <SidebarActionMenuEntry key={action.id} action={action} />
-        ))}
+        {groupVisibleActions(actions).map((item) =>
+          item.kind === "single" ? (
+            <SidebarActionMenuEntry key={item.action.id} action={item.action} />
+          ) : (
+            <SidebarActionMenuGroup key={item.members[0].id} members={item.members} />
+          )
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -370,15 +420,25 @@ export function SidebarActionDrawer({
 
           {actions.length > 0 && (
             <div className="px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
-              {actions.map((action) => (
-                <SidebarActionDrawerEntry
-                  key={action.id}
-                  action={action}
-                  onClose={() => {
-                    onOpenChange(false)
-                  }}
-                />
-              ))}
+              {groupVisibleActions(actions).map((item) =>
+                item.kind === "single" ? (
+                  <SidebarActionDrawerEntry
+                    key={item.action.id}
+                    action={item.action}
+                    onClose={() => {
+                      onOpenChange(false)
+                    }}
+                  />
+                ) : (
+                  <SidebarActionDrawerGroup
+                    key={item.members[0].id}
+                    members={item.members}
+                    onClose={() => {
+                      onOpenChange(false)
+                    }}
+                  />
+                )
+              )}
             </div>
           )}
         </div>
@@ -388,10 +448,59 @@ export function SidebarActionDrawer({
 }
 
 function SidebarActionDrawerEntry({ action, onClose }: { action: SidebarActionItem; onClose: () => void }) {
+  return (
+    <div>
+      {action.separatorBefore && <Divider />}
+      <SidebarActionDrawerRow action={action} onClose={onClose} />
+    </div>
+  )
+}
+
+/** Split row on touch: the chevron opens the group's remaining entries. */
+function SidebarActionDrawerGroup({ members, onClose }: { members: SidebarActionItem[]; onClose: () => void }) {
+  const [primary, ...rest] = members
+  return (
+    <div>
+      {primary.separatorBefore && <Divider />}
+      <div className="flex items-stretch overflow-hidden rounded-lg">
+        <div className="min-w-0 flex-1">
+          <SidebarActionDrawerRow action={primary} onClose={onClose} className="rounded-none rounded-l-lg" />
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex w-10 shrink-0 items-center justify-center rounded-r-lg border-l border-border/50 text-muted-foreground transition-colors active:bg-muted/80"
+              aria-label={`${primary.label} options`}
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={4} className="min-w-[220px]">
+            {rest.map((member) => (
+              <SidebarActionMenuRow key={member.id} action={member} onSelected={onClose} />
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  )
+}
+
+function SidebarActionDrawerRow({
+  action,
+  onClose,
+  className: rowClassName,
+}: {
+  action: SidebarActionItem
+  onClose: () => void
+  className?: string
+}) {
   const isDestructive = action.variant === "destructive"
   const className = cn(
     "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
-    isDestructive ? "text-destructive active:bg-destructive/10" : "active:bg-muted/80"
+    isDestructive ? "text-destructive active:bg-destructive/10" : "active:bg-muted/80",
+    rowClassName
   )
   const content = (
     <SidebarActionContent
@@ -426,12 +535,7 @@ function SidebarActionDrawerEntry({ action, onClose }: { action: SidebarActionIt
     )
   }
 
-  return (
-    <div>
-      {action.separatorBefore && <Divider />}
-      {item}
-    </div>
-  )
+  return item
 }
 
 function Divider() {

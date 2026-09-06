@@ -1,134 +1,107 @@
-import { Search as SearchIcon, Terminal, FileText, SlidersHorizontal } from "lucide-react"
+import { Command, FileText, Search as SearchIcon, Terminal } from "lucide-react"
 import { Link } from "react-router-dom"
-import { useQuickSwitcher, usePreferences } from "@/contexts"
-import { useSidebar } from "@/contexts"
+import { useQuickSwitcher, usePreferences, useSidebar } from "@/contexts"
 import { useSearchPanel } from "@/components/search/search-panel-context"
-import { cn } from "@/lib/utils"
-import { ThemeDropdown } from "@/components/theme-dropdown"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { ThreaLogo } from "@/components/threa-logo"
+import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { getEffectiveKeyBinding, formatKeyBinding, formatKeyBindingText } from "@/lib/keyboard-shortcuts"
+import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
 interface SidebarHeaderProps {
   workspaceName: string
-  onEditLayout: () => void
-  hideViewToggle?: boolean
 }
 
-export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: SidebarHeaderProps) {
+export function SidebarHeader({ workspaceName }: SidebarHeaderProps) {
   const { openSwitcher } = useQuickSwitcher()
   const { openSearch } = useSearchPanel()
-  const { collapseOnMobile, setMenuOpen } = useSidebar()
+  const { collapseOnMobile } = useSidebar()
   const { preferences } = usePreferences()
+  const isTouch = useInputMode() === "touch"
   const customBindings = preferences?.keyboardShortcuts ?? {}
   const streamBinding = getEffectiveKeyBinding("openQuickSwitcher", customBindings)
   const commandBinding = getEffectiveKeyBinding("openCommands", customBindings)
   const searchBinding = getEffectiveKeyBinding("openSearch", customBindings)
 
-  const handleOpenSwitcher = (mode: "stream" | "command") => () => {
+  const openSwitcherIn = (mode: "stream" | "command") => () => {
     collapseOnMobile()
     openSwitcher(mode)
   }
 
+  const searchLabel = searchBinding ? `Search messages (${formatKeyBindingText(searchBinding)})` : "Search messages"
+
+  // A keyboard hint is noise on a touch device, so the shortcut rides the
+  // description line only where a keyboard is the active input.
+  const switcherActions: SidebarActionItem[] = [
+    {
+      id: "jump-to-stream",
+      label: "Jump to stream",
+      icon: FileText,
+      description: !isTouch && streamBinding ? formatKeyBinding(streamBinding) : null,
+      onSelect: openSwitcherIn("stream"),
+    },
+    {
+      id: "commands",
+      label: "Commands",
+      icon: Terminal,
+      description: !isTouch && commandBinding ? formatKeyBinding(commandBinding) : null,
+      onSelect: openSwitcherIn("command"),
+    },
+  ]
+
   return (
-    <div className="flex-shrink-0 border-b">
-      {/* Mirrors the h-12 page-header row so the sidebar toggle sits in the
-           identical viewport position whether the sidebar is open or not. */}
-      <div className="flex h-12 items-center gap-1 px-4">
-        <SidebarToggle location="sidebar" />
-        <Link
-          to="/workspaces"
-          className="flex min-w-0 items-center gap-2 truncate transition-opacity hover:opacity-80"
-          onClick={collapseOnMobile}
-        >
-          <ThreaLogo size="sm" />
-          <span className="truncate text-sm font-semibold">{workspaceName}</span>
-        </Link>
-        <div className="ml-auto flex items-center">
-          <ThemeDropdown onOpenChange={setMenuOpen} />
-        </div>
+    // Mirrors the h-12 page-header row so the sidebar toggle sits in the
+    // identical viewport position whether the sidebar is open or not.
+    <div className="flex h-12 flex-shrink-0 items-center gap-1 border-b px-4">
+      <SidebarToggle location="sidebar" />
+      <Link
+        to="/workspaces"
+        className="flex min-w-0 items-center gap-2 truncate transition-opacity hover:opacity-80"
+        onClick={collapseOnMobile}
+      >
+        <ThreaLogo size="sm" />
+        <span className="truncate text-sm font-semibold">{workspaceName}</span>
+      </Link>
+      <div className="ml-auto flex items-center">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              aria-label={searchLabel}
+              onClick={() => openSearch()}
+            >
+              <SearchIcon className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="flex items-center gap-2">
+            <span>Search messages</span>
+            {searchBinding && <ShortcutHint binding={searchBinding} />}
+          </TooltipContent>
+        </Tooltip>
+        <SidebarActionMenu
+          actions={switcherActions}
+          side="bottom"
+          align="end"
+          contentClassName="w-56"
+          trigger={
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Jump to stream or command">
+              <Command className="h-4 w-4" />
+            </Button>
+          }
+        />
       </div>
-
-      <div className="flex items-center gap-1 px-3 pt-2">
-        <QuickActionPill
-          onClick={handleOpenSwitcher("stream")}
-          icon={FileText}
-          label="Jump to stream"
-          binding={streamBinding}
-        />
-        <QuickActionPill
-          onClick={handleOpenSwitcher("command")}
-          icon={Terminal}
-          label="Commands"
-          binding={commandBinding}
-        />
-        <QuickActionPill
-          onClick={() => openSearch()}
-          icon={SearchIcon}
-          label="Search messages"
-          binding={searchBinding}
-        />
-      </div>
-
-      {!hideViewToggle && (
-        <div className="flex items-center px-3 pb-3 pt-2">
-          <button
-            type="button"
-            onClick={onEditLayout}
-            className={cn(
-              "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            )}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            Customize sidebar
-          </button>
-        </div>
-      )}
-
-      {/* Trailing breathing room under the pill row when the customize control
-           is hidden, so the list below doesn't butt against the border. */}
-      {hideViewToggle && <div className="h-3" aria-hidden="true" />}
     </div>
   )
 }
 
-interface QuickActionPillProps {
-  onClick: () => void
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  /** Effective user-configured binding, e.g. "mod+k"; undefined if disabled. */
-  binding: string | undefined
-}
-
-function QuickActionPill({ onClick, icon: Icon, label, binding }: QuickActionPillProps) {
-  const shortcutLabel = binding ? formatKeyBinding(binding) : null
-  const ariaLabel = binding ? `${label} (${formatKeyBindingText(binding)})` : label
+function ShortcutHint({ binding }: { binding: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          aria-label={ariaLabel}
-          className={cn(
-            "flex h-8 flex-1 items-center justify-center rounded-md border border-border bg-background",
-            "text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          )}
-        >
-          <Icon className="h-3.5 w-3.5" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="flex items-center gap-2">
-        <span>{label}</span>
-        {shortcutLabel && (
-          <kbd className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {shortcutLabel}
-          </kbd>
-        )}
-      </TooltipContent>
-    </Tooltip>
+    <kbd className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+      {formatKeyBinding(binding)}
+    </kbd>
   )
 }

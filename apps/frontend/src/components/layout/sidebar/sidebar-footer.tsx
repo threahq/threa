@@ -10,10 +10,14 @@ import {
   Info,
   ListChecks,
   LogOut,
+  Monitor,
   Moon,
   Plus,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
+  Sun,
+  type LucideIcon,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -21,7 +25,7 @@ import { toast } from "sonner"
 import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
 import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
-import { useSettings, useSidebar } from "@/contexts"
+import { usePreferences, useSettings, useSidebar } from "@/contexts"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { getAdminPortalUrl } from "@/lib/admin-url"
@@ -29,7 +33,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
-import { getAvatarUrl, resolveActiveStatus, resolveNotificationPause, type User } from "@threa/types"
+import { getAvatarUrl, resolveActiveStatus, resolveNotificationPause, type Theme, type User } from "@threa/types"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
 import { useNotificationPauseAutoExpiry } from "@/hooks/use-notification-pause-auto-expiry"
@@ -39,6 +43,12 @@ import { StatusPicker } from "@/components/status/status-picker"
 import { PauseNotificationsDialog } from "@/components/notifications/pause-notifications-dialog"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
+
+const THEME_MODES = [
+  { value: "system", label: "System", icon: Monitor },
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+] as const satisfies ReadonlyArray<{ value: Theme; label: string; icon: LucideIcon }>
 
 /** Resolved, expiry-masked status glyph + text for the footer's own user. */
 interface FooterStatus {
@@ -53,6 +63,11 @@ interface SidebarFooterProps {
   onCreateScratchpad: () => void | Promise<void>
   onCreateChannel: () => void | Promise<void>
   scratchpadAddMenuActions?: SidebarActionItem[]
+  /**
+   * Opens the sidebar layout editor. Undefined on the surfaces that have nothing
+   * to customize yet (no streams, board page), which hides the menu row.
+   */
+  onEditLayout?: () => void
   /**
    * Restores the dismissed getting-started checklist. Only provided while the
    * checklist is dismissed with tasks remaining — undefined hides the menu row.
@@ -209,6 +224,7 @@ export function SidebarFooter({
   onCreateScratchpad,
   onCreateChannel,
   scratchpadAddMenuActions,
+  onEditLayout,
   onShowGettingStarted,
 }: SidebarFooterProps) {
   const [, setSearchParams] = useSearchParams()
@@ -234,6 +250,8 @@ export function SidebarFooter({
   const queryClient = useQueryClient()
   const resumeNotifications = useResumeNotifications(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const { preferences, updatePreference } = usePreferences()
+  const theme = preferences?.theme ?? "system"
 
   // Synced from the control plane's platform_roles via the regional mirror;
   // only platform admins get a link into the backoffice. The URL is
@@ -358,6 +376,39 @@ export function SidebarFooter({
     logout()
   }, [queryClient, setSearchParams, logout])
 
+  // One split row: the row cycles through the three modes, its chevron picks one
+  // directly. Grouped entries must stay adjacent for `groupVisibleActions`.
+  const appearanceActions = useMemo<SidebarActionItem[]>(() => {
+    const setTheme = (next: Theme) => () => {
+      void updatePreference("theme", next)
+    }
+    const currentIndex = Math.max(
+      THEME_MODES.findIndex((mode) => mode.value === theme),
+      0
+    )
+    const current = THEME_MODES[currentIndex]
+    const nextMode = THEME_MODES[(currentIndex + 1) % THEME_MODES.length]
+    return [
+      {
+        id: "appearance",
+        label: "Appearance",
+        description: current.label,
+        icon: current.icon,
+        groupId: "appearance",
+        onSelect: setTheme(nextMode.value),
+        separatorBefore: true,
+      },
+      ...THEME_MODES.map((mode) => ({
+        id: `theme-${mode.value}`,
+        label: mode.label,
+        icon: mode.icon,
+        groupId: "appearance",
+        checked: mode.value === theme,
+        onSelect: setTheme(mode.value),
+      })),
+    ]
+  }, [theme, updatePreference])
+
   const avatarSrc = currentUser ? getAvatarUrl(workspaceId, currentUser.avatarUrl, 64) : null
   const menuActions = useMemo<SidebarActionItem[]>(
     () => [
@@ -391,11 +442,26 @@ export function SidebarFooter({
             } satisfies SidebarActionItem,
           ]
         : []),
+      ...(onEditLayout
+        ? [
+            {
+              id: "customize-sidebar",
+              label: "Customize sidebar",
+              icon: SlidersHorizontal,
+              onSelect: () => {
+                collapseOnMobile()
+                onEditLayout()
+              },
+            } satisfies SidebarActionItem,
+          ]
+        : []),
+      ...appearanceActions,
       {
         id: "settings",
         label: "Settings",
         icon: Settings,
         onSelect: handleOpenSettings,
+        separatorBefore: true,
       },
       {
         id: "workspace-settings",
@@ -452,6 +518,8 @@ export function SidebarFooter({
       openPause,
       resumeNotificationsFromMenu,
       onShowGettingStarted,
+      onEditLayout,
+      appearanceActions,
       handleOpenSettings,
       openWorkspaceSettings,
       openAccountSwitcher,
@@ -467,14 +535,15 @@ export function SidebarFooter({
 
   if (isTouch) {
     return (
-      <div className="flex flex-col gap-1.5">
-        <SidebarCreateButton actions={createActions} isTouch />
+      <div className="flex items-center gap-1">
         <SidebarFooterTrigger
+          className="min-w-0 flex-1"
           avatarSrc={avatarSrc}
           currentUser={currentUser}
           status={status}
           onClick={() => setDrawerOpen(true)}
         />
+        <SidebarCreateButton actions={createActions} isTouch />
         <SidebarActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
@@ -498,8 +567,7 @@ export function SidebarFooter({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <SidebarCreateButton actions={createActions} isTouch={false} />
+    <div className="flex items-center gap-1">
       <SidebarActionMenu
         actions={menuActions}
         ariaLabel="Account menu"
@@ -517,40 +585,43 @@ export function SidebarFooter({
             onClick={openStatus}
           />
         }
-        trigger={<SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} status={status} />}
+        trigger={
+          <SidebarFooterTrigger
+            className="min-w-0 flex-1"
+            avatarSrc={avatarSrc}
+            currentUser={currentUser}
+            status={status}
+          />
+        }
       />
+      <SidebarCreateButton actions={createActions} isTouch={false} />
       {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
     </div>
   )
 }
 
-// The chevron flips while the menu is open — the face reacts to the trigger's
-// `data-state`, which both the Radix desktop trigger and the manual mobile
-// button expose.
+// The tinted square reacts to the trigger's `data-state`, which both the Radix
+// desktop trigger and the manual mobile button expose.
 function SidebarCreateButtonFace() {
   return (
-    <>
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/20 text-primary transition-colors group-hover/new:bg-primary/30 group-data-[state=open]/new:bg-primary/30">
-        <Plus className="h-4 w-4" />
-      </span>
-      <span className="flex-1 text-left font-medium">New</span>
-      <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/new:rotate-180" />
-    </>
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/20 text-primary transition-colors group-hover/new:bg-primary/30 group-data-[state=open]/new:bg-primary/30">
+      <Plus className="h-4 w-4" />
+    </span>
   )
 }
 
 // Constant sizing, nothing shifts (INV-21).
 const CREATE_BUTTON_CLASS = cn(
-  "group/new w-full justify-start gap-2.5 px-3",
+  "group/new h-9 w-9 shrink-0",
   "hover:bg-muted/50 hover:text-foreground",
   "data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
 )
 
 /**
- * The always-visible "New" control at the bottom of the sidebar. Opens a menu of
- * every stream flavor (scratchpad variants + channel). Uses a bottom drawer on
- * touch devices and a dropdown for mouse input, mirroring the account menu beneath it.
- * Top-level per INV-18.
+ * The always-visible "New" control, sharing the footer's single row with the
+ * account button. Opens a menu of every stream flavor (scratchpad variants +
+ * channel): a bottom drawer on touch, a dropdown for mouse input, mirroring the
+ * account menu beside it. Top-level per INV-18.
  */
 function SidebarCreateButton({ actions, isTouch }: { actions: SidebarActionItem[]; isTouch: boolean }) {
   const [open, setOpen] = useState(false)
@@ -560,11 +631,12 @@ function SidebarCreateButton({ actions, isTouch }: { actions: SidebarActionItem[
       <>
         <Button
           variant="ghost"
-          size="sm"
+          size="icon"
           className={CREATE_BUTTON_CLASS}
           data-state={open ? "open" : "closed"}
           aria-haspopup="dialog"
           aria-expanded={open}
+          aria-label="New"
           onClick={() => setOpen(true)}
         >
           <SidebarCreateButtonFace />
@@ -583,12 +655,11 @@ function SidebarCreateButton({ actions, isTouch }: { actions: SidebarActionItem[
   return (
     <SidebarActionMenu
       actions={actions}
-      ariaLabel="Create stream"
       side="top"
-      align="start"
+      align="end"
       contentClassName="w-56"
       trigger={
-        <Button variant="ghost" size="sm" className={CREATE_BUTTON_CLASS}>
+        <Button variant="ghost" size="icon" className={CREATE_BUTTON_CLASS} aria-label="New">
           <SidebarCreateButtonFace />
         </Button>
       }
