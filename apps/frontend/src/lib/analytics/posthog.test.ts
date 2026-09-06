@@ -3,6 +3,7 @@ import {
   capture,
   captureException,
   sanitizeUrlProperties,
+  setSessionReplay,
   startAnalytics,
   stopAnalytics,
   type AnalyticsClient,
@@ -18,6 +19,8 @@ function createFakeClient(): AnalyticsClient {
     reset: vi.fn(),
     captureException: vi.fn(),
     capture: vi.fn(),
+    startSessionRecording: vi.fn(),
+    stopSessionRecording: vi.fn(),
   } as unknown as AnalyticsClient
 }
 
@@ -59,6 +62,12 @@ describe("analytics client lifecycle", () => {
         capture_pageview: false,
         capture_pageleave: false,
         disable_session_recording: true,
+        session_recording: {
+          maskAllInputs: true,
+          maskTextSelector: "*",
+          blockSelector: "img, video, canvas",
+        },
+        enable_recording_console_log: false,
         capture_exceptions: true,
         persistence: "localStorage+cookie",
         before_send: sanitizeUrlProperties,
@@ -69,6 +78,32 @@ describe("analytics client lifecycle", () => {
     expect(client.opt_in_capturing).toHaveBeenCalledWith()
     expect(client.identify).toHaveBeenCalledWith("usr_1")
     expect(client.group).toHaveBeenCalledWith("workspace", "ws_1")
+  })
+
+  it("should start and stop the recorder as replay consent changes", () => {
+    const root = createFakeRoot()
+    startAnalytics(params, root)
+    const client = root.instances.get("threa_tok_1")!
+
+    setSessionReplay(true)
+    expect(client.startSessionRecording).toHaveBeenCalledWith()
+    expect(client.stopSessionRecording).not.toHaveBeenCalled()
+
+    setSessionReplay(false)
+    expect(client.stopSessionRecording).toHaveBeenCalledWith()
+  })
+
+  it("should not record before start or after stop", () => {
+    const root = createFakeRoot()
+
+    setSessionReplay(true)
+    expect(root.init).not.toHaveBeenCalled()
+
+    startAnalytics(params, root)
+    stopAnalytics()
+    setSessionReplay(true)
+
+    expect(root.instances.get("threa_tok_1")!.startSessionRecording).not.toHaveBeenCalled()
   })
 
   it("should not capture exceptions before start", () => {

@@ -2,12 +2,14 @@ import { useEffect } from "react"
 import { usePreferencesOptional } from "@/contexts"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { useWorkspaceBootstrap } from "@/hooks/use-workspaces"
-import { startAnalytics, stopAnalytics } from "./posthog"
+import { setSessionReplay, startAnalytics, stopAnalytics } from "./posthog"
 
 export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
   const { data } = useWorkspaceBootstrap(workspaceId)
   const analytics = data?.analytics
-  const consent = usePreferencesOptional()?.preferences?.analyticsConsent
+  const preferences = usePreferencesOptional()?.preferences
+  const consent = preferences?.analyticsConsent
+  const replayOptIn = preferences?.sessionReplayOptIn === true
   // The workspace-scoped `usr_` id (INV-50), not the global WorkOS id: consent
   // is granted per workspace, and the backend reports this workspace's product
   // events under the same id, so both sides describe one person.
@@ -24,10 +26,11 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
         distinctId,
         workspaceId,
       })
+      setSessionReplay(replayOptIn)
       return
     }
     stopAnalytics()
-  }, [analytics?.posthogToken, analytics?.posthogHost, consent, distinctId, workspaceId])
+  }, [analytics?.posthogToken, analytics?.posthogHost, consent, replayOptIn, distinctId, workspaceId])
 
   return null
 }

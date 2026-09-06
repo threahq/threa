@@ -4,7 +4,15 @@ export type AnalyticsRoot = Pick<typeof posthog, "init">
 
 export type AnalyticsClient = Pick<
   typeof posthog,
-  "opt_in_capturing" | "opt_out_capturing" | "identify" | "group" | "reset" | "captureException" | "capture"
+  | "opt_in_capturing"
+  | "opt_out_capturing"
+  | "identify"
+  | "group"
+  | "reset"
+  | "captureException"
+  | "capture"
+  | "startSessionRecording"
+  | "stopSessionRecording"
 >
 
 /**
@@ -110,7 +118,20 @@ export function startAnalytics(params: StartAnalyticsParams, root: AnalyticsRoot
         autocapture: false,
         capture_pageview: false,
         capture_pageleave: false,
+        // Replay is a second, narrower consent, so no recording starts at init.
+        // `startSessionRecording` flips this flag at runtime; a second `init`
+        // would not, because posthog-js ignores it on a loaded instance.
         disable_session_recording: true,
+        session_recording: {
+          maskAllInputs: true,
+          // Every text node, not just inputs: a replay of Threa is a replay of
+          // other people's messages, and they never consented to anything here.
+          maskTextSelector: "*",
+          // Attachments, avatars and rendered canvases are recorded by `src`,
+          // which masking does not touch.
+          blockSelector: "img, video, canvas",
+        },
+        enable_recording_console_log: false,
         capture_exceptions: true,
         persistence: "localStorage+cookie",
         before_send: sanitizeUrlProperties,
@@ -134,6 +155,20 @@ export function stopAnalytics(): void {
   guard("stop", () => {
     client.reset()
     client.opt_out_capturing()
+  })
+}
+
+/**
+ * Applied on every gate run rather than at init: replay consent can be revoked
+ * while the same instance stays up, and `startSessionRecording` is the only
+ * thing that clears `disable_session_recording` on a loaded instance.
+ */
+export function setSessionReplay(enabled: boolean): void {
+  const current = active
+  if (!current) return
+  guard("sessionReplay", () => {
+    if (enabled) current.client.startSessionRecording()
+    else current.client.stopSessionRecording()
   })
 }
 
