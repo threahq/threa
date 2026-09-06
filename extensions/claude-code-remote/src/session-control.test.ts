@@ -411,14 +411,9 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   })
 
   /** The side effects of the last {@link runSpawn}, readable even when it rejected. */
-  const spawnEffects: { posts: unknown[][]; specs: HarnessSpawnSpec[]; started: number } = {
-    posts: [],
-    specs: [],
-    started: 0,
-  }
+  const spawnEffects: { specs: HarnessSpawnSpec[]; started: number } = { specs: [], started: 0 }
 
   const runSpawn = async (args: string, activeStreamId = "root") => {
-    const posts: unknown[][] = (spawnEffects.posts = [])
     const specs: HarnessSpawnSpec[] = (spawnEffects.specs = [])
     spawnEffects.started = 0
     const outcome = await runClaudeCommand(
@@ -434,12 +429,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       undefined,
-      { rootStreamId: "root" },
+      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" },
       () => activeStreamId,
-      async (streamId: string, content: string) => {
-        posts.push([streamId, content])
-        return { id: "evt_anchor" }
-      },
       (spec: HarnessSpawnSpec) => {
         specs.push(spec)
         return () => {
@@ -450,15 +441,14 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const brief = specs[0]?.briefFile
     const briefContent = brief ? readFileSync(brief, "utf8") : undefined
     if (brief) unlinkSync(brief)
-    return { outcome, posts, specs, started: spawnEffects.started, briefContent }
+    return { outcome, specs, started: spawnEffects.started, briefContent }
   }
 
-  it("posts the anchor, writes the brief, and launches harnessd for /spawn", async () => {
-    const { outcome, posts, specs, started, briefContent } = await runSpawn("pi sidebar fix\nCollapse the sidebar.")
+  it("anchors the thread on the /spawn message, writes the brief, and launches harnessd", async () => {
+    const { outcome, specs, started, briefContent } = await runSpawn("pi sidebar fix\nCollapse the sidebar.")
 
     expect({
       outcome,
-      posts,
       spec: { ...specs[0]!, briefFile: typeof specs[0]!.briefFile },
       started,
       briefContent,
@@ -467,12 +457,11 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         ok: true,
         message: "Spawning **sidebar fix** as a pi thread; harnessd will brief it with your prompt.",
       },
-      posts: [["root", "Starting **sidebar fix** (pi)"]],
       spec: {
         runtime: "pi",
         name: "sidebar fix",
         rootStreamId: "root",
-        anchorId: "evt_anchor",
+        anchorId: "msg_slash_spawn",
         briefFile: "string",
       },
       started: 1,
@@ -481,9 +470,9 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   })
 
   it("defaults /spawn to claude and passes no brief file for an empty prompt", async () => {
-    const { outcome, posts, specs, started, briefContent } = await runSpawn("tidy up")
+    const { outcome, specs, started, briefContent } = await runSpawn("tidy up")
 
-    expect({ outcome, spec: specs[0], posts, started, briefContent }).toEqual({
+    expect({ outcome, spec: specs[0], started, briefContent }).toEqual({
       outcome: {
         ok: true,
         message: "Spawning **tidy up** as a claude thread.",
@@ -492,23 +481,21 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         runtime: "claude",
         name: "tidy up",
         rootStreamId: "root",
-        anchorId: "evt_anchor",
+        anchorId: "msg_slash_spawn",
         briefFile: undefined,
       },
-      posts: [["root", "Starting **tidy up** (claude)"]],
       started: 1,
       briefContent: undefined,
     })
   })
 
-  it("returns /spawn usage without posting an anchor when the first line does not name an agent", async () => {
+  it("returns /spawn usage without launching when the first line does not name an agent", async () => {
     for (const args of ["", "\nprompt only", "--force do it"]) {
       expect(await runSpawn(args)).toEqual({
         outcome: {
           ok: false,
           message: "Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines.",
         },
-        posts: [],
         specs: [],
         started: 0,
         briefContent: undefined,
@@ -516,16 +503,16 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     }
   })
 
-  it("refuses a /spawn dispatched from inside a thread session, posting no anchor", async () => {
+  it("refuses a /spawn dispatched from inside a thread session", async () => {
     // The command list hides it there, but dispatch reaches every command by
-    // name — a thread must not spawn siblings under an anchor it never posted.
+    // name — a thread must not spawn siblings of itself under its own anchor.
     await expect(runSpawn("claude sidebar\nfix it", "thread")).rejects.toThrow(
       "Spawn is only available at the scratchpad itself, not inside a thread session."
     )
-    expect(spawnEffects).toEqual({ posts: [], specs: [], started: 0 })
+    expect(spawnEffects).toEqual({ specs: [], started: 0 })
   })
 
-  it("removes the brief and names the anchor when the harnessd launch fails", async () => {
+  it("removes the brief when the harnessd launch fails", async () => {
     let briefFile: string | undefined
     await expect(
       runClaudeCommand(
@@ -541,9 +528,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         undefined,
         undefined,
         undefined,
-        { rootStreamId: "root" },
+        { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" },
         () => "root",
-        async () => ({ id: "evt_anchor" }),
         (spec: HarnessSpawnSpec) => {
           briefFile = spec.briefFile
           return () => {
@@ -551,7 +537,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
           }
         }
       )
-    ).rejects.toThrow("Posted the anchor evt_anchor but could not start broken: harnessd missing")
+    ).rejects.toThrow("harnessd missing")
     expect({ briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({
       briefWritten: true,
       briefLeft: false,
@@ -577,7 +563,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       undefined,
-      { rootStreamId: invocationRootStreamId },
+      { rootStreamId: invocationRootStreamId, sourceMessageId: "msg_slash" },
       () => activeStreamId
     )
 
@@ -627,7 +613,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       ((...args: unknown[]) => sends.push(args)) as any,
-      { rootStreamId: "root" }
+      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
     )
     expect({ outcome, sends }).toEqual({
       outcome: { ok: true, message: "Sent `ctrl-d` to the linked Claude session." },
@@ -651,7 +637,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         undefined,
         undefined,
         ((...args: unknown[]) => sends.push(args)) as any,
-        { rootStreamId: "root-a" }
+        { rootStreamId: "root-a", sourceMessageId: "msg_slash" }
       )
     ).rejects.toThrow("Key control request no longer matches the linked scratchpad")
     expect(sends).toEqual([])
@@ -674,7 +660,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         (() => {
           throw new Error("pane inspection failed")
         }) as any,
-        { rootStreamId: "root" }
+        { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
       )
     ).rejects.toThrow("pane inspection failed")
     await expect(runClaudeCommand("key", "enter", undefined, undefined, undefined, () => "root")).rejects.toThrow(
@@ -697,7 +683,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       ((...args: unknown[]) => sends.push(args)) as any,
-      { rootStreamId: "root" }
+      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
     )
     expect({ outcome, sends }).toEqual({
       outcome: { ok: true, message: "Sent `enter` to the linked Claude session." },
@@ -724,7 +710,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
           (() => {
             sent = true
           }) as any,
-          { rootStreamId: "root" }
+          { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
         )
       ).toEqual({ ok: false, message: "Usage: `/key <name>`." })
       expect(sent).toBe(false)

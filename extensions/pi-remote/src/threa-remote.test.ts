@@ -1248,6 +1248,7 @@ describe("Pi reconnect session control", () => {
     claimToken: "claim",
     claimedInstanceId: "pi-instance",
     rootStreamId: "stream-root-exact",
+    sourceMessageId: "msg_slash_spawn",
   } as never
   const context = (idle: boolean) =>
     ({
@@ -1674,6 +1675,7 @@ describe("Pi clear session control", () => {
     claimToken: "claim",
     claimedInstanceId: "pi-instance",
     rootStreamId: "stream-root-exact",
+    sourceMessageId: "msg_slash_spawn",
   } as never
   const context = (idle: boolean) =>
     ({
@@ -1902,6 +1904,7 @@ describe("Pi spawn and done session control", () => {
     claimToken: "claim",
     claimedInstanceId: "pi-instance",
     rootStreamId: "stream-root-exact",
+    sourceMessageId: "msg_slash_spawn",
   } as never
   const context = (idle: boolean) =>
     ({
@@ -1936,17 +1939,12 @@ describe("Pi spawn and done session control", () => {
     __testing.setConfigForTesting(undefined)
   })
 
-  test("anchors the spawn in the root, briefs harnessd with the prompt, and acks", async () => {
-    const posted: unknown[][] = []
+  test("anchors the spawn on the /spawn message, briefs harnessd with the prompt, and acks", async () => {
     const prepared: Array<Record<string, unknown>> = []
     const messages: string[] = []
     let started = false
     await __testing.runSpawnCommand(invocation, "claude fix the parser\nLook at parser.ts\nand fix it", context(true), {
       available: () => true,
-      postMessage: async (...args: unknown[]) => {
-        posted.push(args)
-        return "msg_anchor"
-      },
       prepare: (spec: Record<string, unknown>) => {
         prepared.push(spec)
         return () => {
@@ -1962,13 +1960,12 @@ describe("Pi spawn and done session control", () => {
     const briefFile = prepared[0]?.briefFile as string | undefined
     const brief = briefFile ? readFileSync(briefFile, "utf8") : undefined
     if (briefFile) unlinkSync(briefFile)
-    expect({ posted, spec: { ...prepared[0], briefFile: undefined }, brief, started, messages }).toEqual({
-      posted: [["stream-root-exact", "Starting **fix the parser** (claude)"]],
+    expect({ spec: { ...prepared[0], briefFile: undefined }, brief, started, messages }).toEqual({
       spec: {
         runtime: "claude",
         name: "fix the parser",
         rootStreamId: "stream-root-exact",
-        anchorId: "msg_anchor",
+        anchorId: "msg_slash_spawn",
         briefFile: undefined,
       },
       brief: "Look at parser.ts\nand fix it",
@@ -1977,17 +1974,12 @@ describe("Pi spawn and done session control", () => {
     })
   })
 
-  test("an unparseable first line posts nothing and returns the usage", async () => {
+  test("an unparseable first line launches nothing and returns the usage", async () => {
     const messages: string[] = []
-    let posts = 0
     let prepared = 0
     for (const args of ["", "--force\nprompt", "claude"]) {
       await __testing.runSpawnCommand(invocation, args, context(true), {
         available: () => true,
-        postMessage: async () => {
-          posts++
-          return "msg_anchor"
-        },
         prepare: () => {
           prepared++
           return () => undefined
@@ -1998,9 +1990,8 @@ describe("Pi spawn and done session control", () => {
         },
       } as never)
     }
-    expect({ messages, posts, prepared }).toEqual({
+    expect({ messages, prepared }).toEqual({
       messages: Array(3).fill("Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines."),
-      posts: 0,
       prepared: 0,
     })
   })
@@ -2010,7 +2001,6 @@ describe("Pi spawn and done session control", () => {
     const messages: string[] = []
     await __testing.runSpawnCommand(invocation, "tidy up", context(true), {
       available: () => true,
-      postMessage: async () => "msg_anchor",
       prepare: (spec: Record<string, unknown>) => {
         prepared.push(spec)
         return () => undefined
@@ -2026,7 +2016,7 @@ describe("Pi spawn and done session control", () => {
           runtime: "pi",
           name: "tidy up",
           rootStreamId: "stream-root-exact",
-          anchorId: "msg_anchor",
+          anchorId: "msg_slash_spawn",
           briefFile: undefined,
         },
       ],
@@ -2034,37 +2024,35 @@ describe("Pi spawn and done session control", () => {
     })
   })
 
-  test("refuses inside a thread without posting an anchor", async () => {
+  test("refuses inside a thread without launching", async () => {
     __testing.setConfigForTesting(linkedConfig(threadLink) as never)
     const messages: string[] = []
-    let posts = 0
+    let prepared = 0
     await __testing.runSpawnCommand(invocation, "pi tidy up", context(true), {
       available: () => true,
-      postMessage: async () => {
-        posts++
-        return "msg_anchor"
+      prepare: () => {
+        prepared++
+        return () => undefined
       },
-      prepare: () => () => undefined,
       complete: async (_invocation: unknown, message: string) => {
         messages.push(message)
         return true
       },
     } as never)
-    expect({ messages, posts }).toEqual({
+    expect({ messages, prepared }).toEqual({
       messages: ["Spawn is only available on the scratchpad root."],
-      posts: 0,
+      prepared: 0,
     })
   })
 
   test("a claim from another scratchpad or instance cannot spawn", async () => {
-    let posts = 0
+    let prepared = 0
     const deps = {
       available: () => true,
-      postMessage: async () => {
-        posts++
-        return "msg_anchor"
+      prepare: () => {
+        prepared++
+        return () => undefined
       },
-      prepare: () => () => undefined,
       complete: async () => true,
     } as never
     const stale = [
@@ -2076,21 +2064,16 @@ describe("Pi spawn and done session control", () => {
         "Spawn request no longer matches the linked scratchpad."
       )
     }
-    expect(posts).toBe(0)
+    expect(prepared).toBe(0)
   })
 
-  test("a replaced claim posts no anchor, and one replaced mid-post leaves no brief behind", async () => {
+  test("a replaced claim launches nothing, and one replaced mid-flight leaves no brief behind", async () => {
     const messages: string[] = []
-    let posts = 0
     let prepared = 0
     const briefs = () => readdirSync(tmpdir()).filter((entry) => entry.startsWith("threa-spawn-"))
     const before = briefs()
     const deps = {
       available: () => true,
-      postMessage: async () => {
-        posts++
-        return "msg_anchor"
-      },
       prepare: () => {
         prepared++
         return () => undefined
@@ -2109,21 +2092,19 @@ describe("Pi spawn and done session control", () => {
       return wasCurrent
     })
 
-    expect({ messages, posts, prepared, leaked: briefs().filter((brief) => !before.includes(brief)) }).toEqual({
+    expect({ messages, prepared, leaked: briefs().filter((brief) => !before.includes(brief)) }).toEqual({
       messages: [],
-      posts: 1,
       prepared: 0,
       leaked: [],
     })
   })
 
-  test("a launch failure names the anchor, acks nothing, and removes the brief it wrote", async () => {
+  test("a launch failure acks nothing and removes the brief it wrote", async () => {
     const messages: string[] = []
     let briefFile: string | undefined
     await expect(
       __testing.runSpawnCommand(invocation, "pi broken\nfix the thing", context(true), {
         available: () => true,
-        postMessage: async () => "msg_anchor",
         prepare: (spec: Record<string, unknown>) => {
           briefFile = spec.briefFile as string
           return () => {
@@ -2135,7 +2116,7 @@ describe("Pi spawn and done session control", () => {
           return true
         },
       } as never)
-    ).rejects.toThrow("Spawn launch failed after posting anchor msg_anchor: harnessd missing")
+    ).rejects.toThrow("Spawn launch failed: harnessd missing")
     expect({ messages, briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({
       messages: [],
       briefWritten: true,

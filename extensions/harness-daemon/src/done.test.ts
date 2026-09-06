@@ -99,7 +99,7 @@ function makeDoneDeps(
       recorded.calls.push("endSession")
       return endSessionResult
     },
-    postToRoot: async (rootStreamId, content) => void recorded.calls.push(`postToRoot:${rootStreamId}:${content}`),
+    postNotice: async (rootStreamId, content) => void recorded.calls.push(`postNotice:${rootStreamId}:${content}`),
   }
   return { deps, recorded }
 }
@@ -120,7 +120,7 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
-      "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
+      "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
       "release",
     ])
     expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])
@@ -139,7 +139,7 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
-      "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
+      "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree removed, link ended.",
       "release",
     ])
   })
@@ -156,7 +156,7 @@ describe("doneAgent", () => {
     expect(recorded.calls).toEqual([
       "lock",
       "release",
-      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)",
+      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)",
     ])
     expect(recorded.persisted).toEqual([])
   })
@@ -174,7 +174,7 @@ describe("doneAgent", () => {
       "forgetIdentities:/repo/fix-sidebar",
       "endSession",
       "persist:stopped",
-      "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree already gone, link ended.",
+      "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree already gone, link ended.",
       "release",
     ])
   })
@@ -190,7 +190,7 @@ describe("doneAgent", () => {
       "lock",
       "teardown:/repo/fix-sidebar",
       "release",
-      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: teardown failed, nothing removed: lint failed",
+      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: teardown failed, nothing removed: lint failed",
     ])
     expect(recorded.persisted).toEqual([])
   })
@@ -213,7 +213,7 @@ describe("doneAgent", () => {
         "forgetLink:ccs-sidebar",
         "endSession",
         "persist:stopped",
-        "postToRoot:stream_root:harnessd: `fix-sidebar` is done — worktree left: branch protected, link ended.",
+        "postNotice:stream_root:harnessd: `fix-sidebar` is done — worktree left: branch protected, link ended.",
         "release",
       ])
       expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])
@@ -248,7 +248,7 @@ describe("doneAgent", () => {
     expect(recorded.calls).toEqual([
       "lock",
       "release",
-      "postToRoot:stream_other:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: linked to stream_root, not stream_other",
+      "postNotice:stream_other:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: linked to stream_root, not stream_other",
     ])
     expect(recorded.persisted).toEqual([])
   })
@@ -264,7 +264,7 @@ describe("doneAgent", () => {
     )
 
     expect(recorded.calls).toEqual([
-      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: done needs a linked managed session",
+      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: done needs a linked managed session",
     ])
   })
 })

@@ -31,7 +31,7 @@ function makeDeps(
   options: {
     spawnResult?: SpawnResult | Error
     briefResult?: undefined | Error
-    postToRootResult?: undefined | Error
+    postNoticeResult?: undefined | Error
     readBriefResult?: string | Error
   } = {}
 ): { deps: AttachedSpawnDeps; recorded: Recorded } {
@@ -54,9 +54,9 @@ function makeDeps(
     unlinkBrief: (path) => {
       recorded.calls.push(`unlinkBrief:${path}`)
     },
-    postToRoot: async (rootStreamId, content) => {
-      recorded.calls.push(`postToRoot:${rootStreamId}:${content}`)
-      if (options.postToRootResult instanceof Error) throw options.postToRootResult
+    postNotice: async (streamId, content) => {
+      recorded.calls.push(`postNotice:${streamId}:${content}`)
+      if (options.postNoticeResult instanceof Error) throw options.postNoticeResult
     },
     log: (message) => {
       recorded.calls.push(`log:${message}`)
@@ -91,7 +91,7 @@ describe("runAttachedSpawn", () => {
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/brief.md",
       "spawn:fix-sidebar",
-      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
+      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
       "unlinkBrief:/tmp/brief.md",
     ])
   })
@@ -108,7 +108,7 @@ describe("runAttachedSpawn", () => {
       "readBrief:/tmp/brief.md",
       "spawn:fix-sidebar",
       "brief:cc-sidebar:ccs-sidebar:please fix the sidebar",
-      "postToRoot:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: brief endpoint 500",
+      "postNotice:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: brief endpoint 500",
       "unlinkBrief:/tmp/brief.md",
     ])
   })
@@ -118,8 +118,20 @@ describe("runAttachedSpawn", () => {
 
     const result = await runAttachedSpawn(BASE_OPTIONS, deps)
 
-    expect(recorded.calls).toEqual(["spawn:fix-sidebar"])
+    expect(recorded.calls).toEqual([
+      "spawn:fix-sidebar",
+      "postNotice:stream_thread:**fix-sidebar** is running in `/repo/fix-sidebar` (tmux `fix-sidebar`). No prompt came with `/spawn` — reply here to give it one.",
+    ])
     expect(result).toBe(RESULT)
+  })
+
+  test("a prompt-less spawn whose thread never materialised posts nothing", async () => {
+    const { activeStreamId: _activeStreamId, ...withoutThread } = RESULT
+    const { deps, recorded } = makeDeps({ spawnResult: withoutThread })
+
+    await runAttachedSpawn(BASE_OPTIONS, deps)
+
+    expect(recorded.calls).toEqual(["spawn:fix-sidebar"])
   })
 
   test("an unreadable brief file reports, removes the file, and dies before spawn runs", async () => {
@@ -132,7 +144,7 @@ describe("runAttachedSpawn", () => {
 
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/missing.md",
-      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: ENOENT: no such file",
+      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: ENOENT: no such file",
       "unlinkBrief:/tmp/missing.md",
     ])
   })
@@ -148,7 +160,7 @@ describe("runAttachedSpawn", () => {
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/brief.md",
       "spawn:fix-sidebar",
-      "postToRoot:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: spawned agent has no instanceId to brief",
+      "postNotice:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: spawned agent has no instanceId to brief",
       "unlinkBrief:/tmp/brief.md",
     ])
   })
@@ -162,7 +174,7 @@ describe("runAttachedSpawn", () => {
 
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/empty.md",
-      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/empty.md is empty",
+      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/empty.md is empty",
       "unlinkBrief:/tmp/empty.md",
     ])
   })
@@ -176,7 +188,7 @@ describe("runAttachedSpawn", () => {
 
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/blank.md",
-      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/blank.md is empty",
+      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/blank.md is empty",
       "unlinkBrief:/tmp/blank.md",
     ])
   })
@@ -184,7 +196,7 @@ describe("runAttachedSpawn", () => {
   test("a failure to post to the root is only logged, and the original error still rethrows", async () => {
     const spawnFailure = new Error("worktree provisioning failed")
     const postFailure = new Error("network down")
-    const { deps, recorded } = makeDeps({ spawnResult: spawnFailure, postToRootResult: postFailure })
+    const { deps, recorded } = makeDeps({ spawnResult: spawnFailure, postNoticeResult: postFailure })
 
     await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
       "worktree provisioning failed"
@@ -193,8 +205,8 @@ describe("runAttachedSpawn", () => {
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/brief.md",
       "spawn:fix-sidebar",
-      "postToRoot:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
-      "log:harnessd: could not post to root stream stream_root: network down",
+      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
+      "log:harnessd: could not post to stream stream_root: network down",
       "unlinkBrief:/tmp/brief.md",
     ])
   })
