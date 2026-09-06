@@ -55,6 +55,16 @@ export const MAX_SEARCH_PHRASES = 5
 export const MAX_SEARCH_REFINES = 5
 export const MAX_SEARCH_REFINE_CHARS = 200
 
+/** What a structured refinement does to the conversation row it names. */
+export const SEARCH_REFINEMENT_KINDS = ["more", "drop"] as const
+export type SearchRefinementKind = (typeof SEARCH_REFINEMENT_KINDS)[number]
+
+/**
+ * One refinement of a result list: prose the user wrote, or an action on a row,
+ * which names its conversation so the model sees that row's own hits.
+ */
+export type SearchRefinement = string | { kind: SearchRefinementKind; conversationId: string }
+
 /**
  * What a user opened from a search result list, attributed to a `search_query_log` row.
  * Memo hits ride in the same response, so an opened memo is attributable too.

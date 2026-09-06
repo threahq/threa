@@ -17,10 +17,17 @@ import {
   MAX_SEARCH_REFINES,
   MAX_SEARCH_REFINE_CHARS,
   SEARCH_CLICK_KINDS,
+  SEARCH_REFINEMENT_KINDS,
   STREAM_TYPES,
+  type SearchRefinement,
 } from "@threahq/types"
 
 const ARCHIVE_STATUSES = ["active", "archived"] as const
+
+const searchRefinementSchema = z.union([
+  z.string().trim().min(1).max(MAX_SEARCH_REFINE_CHARS),
+  z.object({ kind: z.enum(SEARCH_REFINEMENT_KINDS), conversationId: z.string().min(1) }),
+]) satisfies z.ZodType<SearchRefinement>
 
 export const searchQuerySchema = z.object({
   query: z.string().optional().default(""),
@@ -35,7 +42,7 @@ export const searchQuerySchema = z.object({
   exact: z.boolean().optional(), // Use ILIKE substring matching instead of full-text
   limit: z.coerce.number().int().min(1).max(100).optional(),
   deep: z.boolean().optional(), // Rewrite into alternative phrasings, fuse, and rerank
-  refine: z.array(z.string().trim().min(1).max(MAX_SEARCH_REFINE_CHARS)).max(MAX_SEARCH_REFINES).optional(),
+  refine: z.array(searchRefinementSchema).max(MAX_SEARCH_REFINES).optional(),
 })
 
 export const searchClickSchema = z.object({

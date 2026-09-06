@@ -3,7 +3,7 @@ import { SearchRepository, type ConversationSearchResult, type SearchResult, typ
 import type { EmbeddingServiceLike, MemoExplorerResult, MemoExplorerSearchParams, RerankerLike } from "../memos"
 import { buildSearchClusters, type SearchCluster } from "./clusters"
 import { logger } from "../../lib/logger"
-import type { FeatureFlagValue, StreamType } from "@threahq/types"
+import type { FeatureFlagValue, SearchRefinement, StreamType } from "@threahq/types"
 import {
   CONVERSATION_SEARCH_LIMIT,
   CONVERSATION_SEARCH_MAX_DISTANCE,
@@ -60,8 +60,8 @@ export interface SearchParams {
   skipEmbedding?: boolean
   /** Rewrite the query into variants, fuse, and rerank; costs two model calls. */
   deep?: boolean
-  /** Plain-language refinements of the result list, oldest first; one model call over the clustered rows. */
-  refine?: string[]
+  /** Refinements of the result list, oldest first; one model call over the clustered rows. */
+  refine?: SearchRefinement[]
   /**
    * The requester's resolved `search` flag. "off" runs the pre-rework ranking,
    * ignores `deep` and returns no conversations. Required so a caller cannot
@@ -202,7 +202,7 @@ export class SearchService {
     // The refine belongs to the reworked ranking; under the pre-rework flag value it is ignored.
     const refines =
       searchRankingForFlag(params.searchFlag) === "improved"
-        ? (params.refine?.filter((refine) => refine.trim().length > 0) ?? [])
+        ? (params.refine?.filter((refine) => typeof refine !== "string" || refine.trim().length > 0) ?? [])
         : []
     if (refines.length === 0) return { ...legs, clusters, refine: null }
     if (clusters.length === 0) return { ...legs, clusters, refine: { applied: true, note: null } }
