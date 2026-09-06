@@ -5,12 +5,12 @@ import { postScratchpadNotice } from "./oom"
 import { failureExcerpt, postThrea } from "./threa-http"
 import type { SpawnOptions, SpawnResult } from "./types"
 
-export interface RootReporterDeps {
-  postToRoot: (rootStreamId: string, content: string) => Promise<void>
+export interface StreamNoticeDeps {
+  postNotice: (streamId: string, content: string) => Promise<void>
   log: (message: string) => void
 }
 
-export interface AttachedSpawnDeps extends RootReporterDeps {
+export interface AttachedSpawnDeps extends StreamNoticeDeps {
   spawn: (options: SpawnOptions) => Promise<SpawnResult>
   readBrief: (path: string) => string
   unlinkBrief: (path: string) => void
@@ -20,11 +20,11 @@ export interface AttachedSpawnDeps extends RootReporterDeps {
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** Best-effort: a failure to report a failure must not mask the original error. */
-export async function reportToRoot(rootStreamId: string, content: string, deps: RootReporterDeps) {
+export async function notifyStream(streamId: string, content: string, deps: StreamNoticeDeps) {
   try {
-    await deps.postToRoot(rootStreamId, content)
+    await deps.postNotice(streamId, content)
   } catch (error) {
-    deps.log(`harnessd: could not post to root stream ${rootStreamId}: ${reason(error)}`)
+    deps.log(`harnessd: could not post to stream ${streamId}: ${reason(error)}`)
   }
 }
 
@@ -53,7 +53,7 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
       }
       result = await deps.spawn(options)
     } catch (error) {
-      await reportToRoot(rootStreamId, `harnessd: spawn of \`${options.name}\` failed: ${reason(error)}`, deps)
+      await notifyStream(rootStreamId, `harnessd: spawn of \`${options.name}\` failed: ${reason(error)}`, deps)
       throw error
     }
 
@@ -63,13 +63,22 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
         const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
         await deps.brief({ instanceId, runtimeSessionId, content })
       } catch (error) {
-        await reportToRoot(
+        await notifyStream(
           rootStreamId,
           `harnessd: \`${options.name}\` started in thread ${result.activeStreamId} but the brief was not delivered: ${reason(error)}`,
           deps
         )
         throw error
       }
+    } else if (result.activeStreamId) {
+      // The brief is what normally writes the thread's first message, and a thread with
+      // no messages renders no card in the timeline. Without this a prompt-less spawn is
+      // invisible and there is nowhere to type at it.
+      await notifyStream(
+        result.activeStreamId,
+        `**${options.name}** is running in \`${result.worktree}\` (tmux \`${result.tmuxWindow}\`). No prompt came with \`/spawn\` — reply here to give it one.`,
+        deps
+      )
     }
 
     return result
@@ -94,8 +103,8 @@ export function defaultAttachedSpawnDeps(): AttachedSpawnDeps {
       const response = await postThrea(threaTarget("deliver a brief"), "/bot-runtime/sessions/brief", body)
       if (!response.ok) throw new Error(`harnessd: could not deliver the brief: ${await failureExcerpt(response)}`)
     },
-    postToRoot: (rootStreamId, content) =>
-      postScratchpadNotice({ ...threaTarget("report a spawn failure"), streamId: rootStreamId, content }),
+    postNotice: (streamId, content) =>
+      postScratchpadNotice({ ...threaTarget("post a spawn notice"), streamId, content }),
     log: (message) => console.error(message),
   }
 }

@@ -15,12 +15,12 @@ import {
   type WindowDecisionDeps,
 } from "./reap"
 import { parseScratchpadUrl } from "./resume"
-import { reportToRoot, type RootReporterDeps } from "./spawn-attached"
+import { notifyStream, type StreamNoticeDeps } from "./spawn-attached"
 import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
 import type { ManagedAgent } from "./types"
 
 export interface DoneDeps
-  extends WindDownDeps, WindowDecisionDeps, RootReporterDeps, Pick<ReapDeps, "panes" | "pathExists"> {
+  extends WindDownDeps, WindowDecisionDeps, StreamNoticeDeps, Pick<ReapDeps, "panes" | "pathExists"> {
   findAgent: (ref: string) => ManagedAgent
   /** Same lock as `clear`, so the watcher cannot revive mid-wind-down. */
   lock: () => Promise<() => void>
@@ -60,8 +60,8 @@ export function defaultDoneDeps(): DoneDeps {
     lock: () => acquireProcessLock(resumeActiveLockPath()),
     persist: upsertAgent,
     endSession: (identity) => endRuntimeSession(target, identity),
-    postToRoot: (rootStreamId, content) =>
-      postScratchpadNotice({ ...threaTarget("report a done outcome"), streamId: rootStreamId, content }),
+    postNotice: (streamId, content) =>
+      postScratchpadNotice({ ...threaTarget("report a done outcome"), streamId, content }),
   }
 }
 
@@ -159,7 +159,7 @@ export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<v
       if (ended === "not-found") deps.log(`${agent.name}: link already ended`)
       const linkOutcome = `link ${ended === "ended" ? "ended" : "already ended"}`
 
-      await reportToRoot(
+      await notifyStream(
         request.rootStreamId,
         `harnessd: \`${agent.name}\` is done — ${worktreeOutcome}, ${linkOutcome}.`,
         deps
@@ -170,7 +170,7 @@ export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<v
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
-    await reportToRoot(request.rootStreamId, `harnessd: \`/done\` for \`${label}\` failed: ${reason}`, deps)
+    await notifyStream(request.rootStreamId, `harnessd: \`/done\` for \`${label}\` failed: ${reason}`, deps)
     throw error
   }
 }
