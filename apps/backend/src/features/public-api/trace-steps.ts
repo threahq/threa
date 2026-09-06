@@ -12,7 +12,7 @@ import {
 } from "@threa/agent-runtime"
 import { withTransaction, type Querier } from "../../db"
 import { stepId as generateStepId } from "../../lib/id"
-import { AgentSessionRepository, type AgentSessionStep } from "../agents"
+import { AgentSessionRepository, type AgentSessionStep, type ParentActivityTarget } from "../agents"
 
 /**
  * Serialize a trace step for `agent_session:step:completed` socket emission.
@@ -104,6 +104,12 @@ interface BotInvocationTraceSinkDeps {
   streamId: string
   triggerMessageId: string
   personaName: string
+  /**
+   * Set when the session runs in a thread: the inline indicator events also go
+   * to the parent timeline's room, keyed on the thread's anchor — the same
+   * fan-out `SessionTrace` gives an in-process session (see `parentActivityTarget`).
+   */
+  parent?: ParentActivityTarget | null
 }
 
 /**
@@ -129,7 +135,7 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
   constructor(private readonly deps: BotInvocationTraceSinkDeps) {}
 
   async record(step: TraceStepRecord): Promise<void> {
-    const { pool, io, workspaceId, sessionId, streamId, triggerMessageId, personaName } = this.deps
+    const { pool, io, workspaceId, sessionId, streamId, triggerMessageId, personaName, parent } = this.deps
     const completedAt = new Date()
     const startedAt = new Date(completedAt.getTime() - (step.durationMs ?? 0))
     // Consume the idempotency key as a one-shot: clear it before the insert so a
@@ -173,7 +179,9 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         sessionId,
         step: serializeTraceStep(persisted),
       })
-      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("agent_session:progress", {
+      let progress = io.to(`ws:${workspaceId}:stream:${streamId}`)
+      if (parent) progress = progress.to(`ws:${workspaceId}:stream:${parent.parentStreamId}`)
+      progress.emit("agent_session:progress", {
         workspaceId,
         streamId,
         sessionId,
@@ -182,6 +190,8 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         stepCount: persisted.stepNumber,
         messageCount: 0,
         currentStepType: persisted.stepType,
+        threadStreamId: parent ? streamId : undefined,
+        parentMessageId: parent?.parentMessageId,
       })
     }
   }
@@ -230,7 +240,7 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
     // stream room (inline indicator) and the session room (trace dialog).
     // Unreachable from today's wire (the normalizer emits no tool:progress);
     // here so richer Phase 2 frames land on a complete sink.
-    const { io, workspaceId, sessionId, streamId, triggerMessageId } = this.deps
+    const { io, workspaceId, sessionId, streamId, triggerMessageId, parent } = this.deps
     const payload = {
       workspaceId,
       streamId,
@@ -240,7 +250,9 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
       substep: params.text,
       updatedAt: new Date().toISOString(),
     }
-    io.to(`ws:${workspaceId}:stream:${streamId}`).emit("agent_session:substep", payload)
+    let stream = io.to(`ws:${workspaceId}:stream:${streamId}`)
+    if (parent) stream = stream.to(`ws:${workspaceId}:stream:${parent.parentStreamId}`)
+    stream.emit("agent_session:substep", payload)
     io.to(`ws:${workspaceId}:agent_session:${sessionId}`).emit("agent_session:substep", payload)
   }
 }

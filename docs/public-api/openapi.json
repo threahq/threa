@@ -1889,9 +1889,9 @@
     "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/brief": {
       "post": {
         "operationId": "briefBotRuntimeSession",
-        "summary": "Brief the runtime session with a bot-authored prompt",
+        "summary": "Brief the linked runtime session with a prompt",
         "tags": ["Bot runtimes"],
-        "description": "Posts a bot-authored message into the linked runtime session's stream and creates the invocation that delivers it as a turn — for producers other than a human message, such as a scheduled or externally triggered brief.",
+        "description": "Creates the invocation that delivers a prompt as a turn to the linked runtime session. The turn is sourced from the thread's anchor message and answered into the thread, so the brief writes no message of its own.",
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -1932,12 +1932,8 @@
                   "properties": {
                     "data": {
                       "type": "object",
-                      "properties": {
-                        "invocationId": { "type": "string" },
-                        "messageId": { "type": "string" },
-                        "streamId": { "type": "string" }
-                      },
-                      "required": ["invocationId", "messageId", "streamId"],
+                      "properties": { "invocationId": { "type": "string" }, "streamId": { "type": "string" } },
+                      "required": ["invocationId", "streamId"],
                       "additionalProperties": false
                     }
                   },

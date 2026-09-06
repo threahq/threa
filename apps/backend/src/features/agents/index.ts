@@ -33,6 +33,9 @@ export type { ContextDeps, ContextParams, AgentContext, ToolSetConfig, DroppedRe
 
 export { TraceEmitter, SessionTrace, ActiveStep } from "./trace-emitter"
 
+export { parentActivityTarget, emitAgentActivityStarted, emitAgentActivityEnded } from "./activity-indicator"
+export type { ParentActivityTarget } from "./activity-indicator"
+
 export { SessionAbortRegistry } from "./session-abort-registry"
 export type { SessionAbortContext } from "./session-abort-registry"
 

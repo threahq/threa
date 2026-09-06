@@ -2,6 +2,7 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import type { AgentStepType, AgentToolEffect, ToolVerificationStatus, TraceSource } from "@threa/types"
 import { AgentSessionRepository } from "./session-repository"
+import { emitAgentActivityEnded, emitAgentActivityStarted } from "./activity-indicator"
 import { stepId as generateStepId } from "../../lib/id"
 
 interface TraceEmitterDeps {
@@ -188,22 +189,23 @@ export class SessionTrace {
 
   /** Notify the parent stream's room that agent activity started. For immediate inline indicator. */
   notifyActivityStarted(): void {
-    if (!this.parentRoom) return
-    // Include threadStreamId (which is this.params.streamId) so frontend can link
-    // directly to the thread before the slower stream:created event arrives
-    this.deps.io.to(this.parentRoom).emit("agent_session:activity_started", {
+    if (!this.params.parentStreamId || !this.params.parentMessageId) return
+    emitAgentActivityStarted(this.deps.io, {
+      workspaceId: this.params.workspaceId,
       sessionId: this.params.sessionId,
       triggerMessageId: this.params.triggerMessageId,
       personaName: this.params.personaName,
       threadStreamId: this.params.streamId,
-      parentMessageId: this.params.parentMessageId,
+      target: { parentStreamId: this.params.parentStreamId, parentMessageId: this.params.parentMessageId },
     })
   }
 
   /** Notify the parent stream's room that agent activity ended. For inline indicator cleanup. */
   notifyActivityEnded(): void {
-    if (!this.parentRoom) return
-    this.deps.io.to(this.parentRoom).emit("agent_session:activity_ended", {
+    emitAgentActivityEnded(this.deps.io, {
+      workspaceId: this.params.workspaceId,
+      streamId: this.params.streamId,
+      parentStreamId: this.params.parentStreamId,
       sessionId: this.params.sessionId,
       triggerMessageId: this.params.triggerMessageId,
     })

@@ -142,6 +142,59 @@ describe("BotInvocationTraceSink via the shared projector", () => {
     })
   })
 
+  it("fans progress to the parent room too when the session runs in a thread", async () => {
+    const frames: Array<{ rooms: string[]; event: string; payload: unknown }> = []
+    const target = (rooms: string[]) => ({
+      to: (room: string) => target([...rooms, room]),
+      emit: (event: string, payload: unknown) => frames.push({ rooms, event, payload }),
+    })
+    const io = { to: (room: string) => target([room]) } as unknown as Server
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn({} as never)) as never)
+    spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (_db: unknown, params: { id: string }) => ({
+      id: params.id,
+      sessionId: "binv_1",
+      stepNumber: 1,
+      stepType: AgentStepTypes.THINKING,
+      startedAt: new Date("2026-09-06T09:00:00.000Z"),
+      completedAt: new Date("2026-09-06T09:00:00.000Z"),
+    })) as never)
+    spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined as never)
+    const { projector } = createBotInvocationTraceProjector({
+      pool: {} as Pool,
+      io,
+      workspaceId: "ws_1",
+      sessionId: "binv_1",
+      streamId: "stream_thread",
+      triggerMessageId: "msg_spawn",
+      personaName: "Claude Channel",
+      parent: { parentStreamId: "stream_root", parentMessageId: "msg_spawn" },
+    })
+
+    for (const event of botInvocationStepEvents({ stepType: AgentStepTypes.THINKING, content: "working" })) {
+      await projector.handle(event)
+    }
+
+    expect(frames.find((f) => f.event === "agent_session:progress")).toEqual({
+      rooms: ["ws:ws_1:stream:stream_thread", "ws:ws_1:stream:stream_root"],
+      event: "agent_session:progress",
+      payload: {
+        workspaceId: "ws_1",
+        streamId: "stream_thread",
+        sessionId: "binv_1",
+        triggerMessageId: "msg_spawn",
+        personaName: "Claude Channel",
+        stepCount: 1,
+        messageCount: 0,
+        currentStepType: AgentStepTypes.THINKING,
+        // Parent-timeline viewers can't see the trigger message, so the row is
+        // keyed on the thread's anchor instead.
+        threadStreamId: "stream_thread",
+        parentMessageId: "msg_spawn",
+      },
+    })
+  })
+
   it("on an idempotency-key dedup it skips the current_step_type advance and the broadcast", async () => {
     const emit = mock((_event: string, _payload: unknown) => {})
     const io = { to: () => ({ emit }) } as unknown as Server

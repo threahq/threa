@@ -34,7 +34,13 @@ import { MessageRepository } from "../messaging"
 import { BotRuntimeInstanceRepository } from "../bot-runtimes"
 import { buildSealedInputUpdate } from "./sealed-turn-context"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
-import { AgentSessionRepository, failSessionWithLifecycleInTransaction, SessionStatuses } from "../agents"
+import {
+  AgentSessionRepository,
+  emitAgentActivityEnded,
+  failSessionWithLifecycleInTransaction,
+  parentActivityTarget,
+  SessionStatuses,
+} from "../agents"
 import { assertStreamWritable, StreamRepository } from "../streams"
 import { BotRepository } from "./bot-repository"
 import { botInvocationStepEvents, createBotInvocationTraceProjector } from "./trace-steps"
@@ -317,12 +323,21 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
       if (!session || session.status !== SessionStatuses.RUNNING) return null
       const stream = await StreamRepository.findById(tx, session.streamId)
       const won = await failSessionWithLifecycleInTransaction(tx, session, stream, terminalError)
-      return won && stream ? { workspaceId: stream.workspaceId, sessionId: session.id } : null
+      return won && stream
+        ? {
+            workspaceId: stream.workspaceId,
+            sessionId: session.id,
+            streamId: stream.id,
+            parentStreamId: stream.rootStreamId,
+            triggerMessageId: claim.sourceMessageId,
+          }
+        : null
     })
     if (terminalized) {
       io.to(`ws:${terminalized.workspaceId}:agent_session:${terminalized.sessionId}`).emit("agent_session:failed", {
         sessionId: terminalized.sessionId,
       })
+      emitAgentActivityEnded(io, terminalized)
     }
   }
 
@@ -351,7 +366,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
             code: "SESSION_CONTROL_TRACE_UNSUPPORTED",
           })
         }
-        await assertStreamWritable(tx, {
+        const authority = await assertStreamWritable(tx, {
           workspaceId: params.workspaceId,
           streamId: snapshot.responseStreamId,
           principal: { kind: "bot", botId: params.botId },
@@ -394,6 +409,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
           streamId: claim.responseStreamId,
           triggerMessageId: claim.sourceMessageId,
           personaName: bot?.name ?? "",
+          parent: parentActivityTarget(authority.target),
         })
         const recorded: RecordStepResult[] = []
         for (const frame of params.steps) {

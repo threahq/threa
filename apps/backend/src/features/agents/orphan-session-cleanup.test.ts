@@ -9,7 +9,12 @@ import { failSessionWithLifecycle } from "./orphan-session-cleanup"
 
 const pool = {} as Pool
 
-const ORPHAN = { id: "session_1", streamId: "stream_1", personaId: "persona_ariadne" }
+const ORPHAN = {
+  id: "session_1",
+  streamId: "stream_1",
+  personaId: "persona_ariadne",
+  triggerMessageId: "msg_1",
+}
 const ERROR = "Session orphaned (stale heartbeat)"
 
 afterEach(() => mock.restore())
@@ -47,6 +52,37 @@ describe("failSessionWithLifecycle", () => {
     // And a live-open trace dialog (session room) is updated directly.
     expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
     expect(emit.mock.calls.some((c) => c[0] === "agent_session:failed")).toBe(true)
+  })
+
+  it("clears the parent timeline's indicator when the failed session ran in a thread", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      rootStreamId: "stream_root",
+    } as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({ id: "session_1" } as never)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const frames: Array<{ room: string; event: string; payload: unknown }> = []
+    const io = {
+      to: (room: string) => ({ emit: (event: string, payload: unknown) => frames.push({ room, event, payload }) }),
+    } as unknown as Server
+
+    await failSessionWithLifecycle(pool, io, ORPHAN, ERROR)
+
+    // The thread's own lifecycle event never reaches the parent view, so this is
+    // the only thing that stops the anchor row spinning.
+    expect(frames.filter((f) => f.event === "agent_session:activity_ended")).toEqual([
+      {
+        room: "ws:ws_1:stream:stream_root",
+        event: "agent_session:activity_ended",
+        payload: { sessionId: "session_1", triggerMessageId: "msg_1" },
+      },
+    ])
   })
 
   it("does not emit when the session already left RUNNING (lost the race)", async () => {

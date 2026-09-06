@@ -615,7 +615,6 @@ const endedRuntimeSessionLinkSchema = z.object({
 
 const briefedRuntimeSessionSchema = z.object({
   invocationId: z.string(),
-  messageId: z.string(),
   streamId: z.string(),
 })
 
@@ -1089,9 +1088,9 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/brief",
     operationId: "briefBotRuntimeSession",
-    summary: "Brief the runtime session with a bot-authored prompt",
+    summary: "Brief the linked runtime session with a prompt",
     description:
-      "Posts a bot-authored message into the linked runtime session's stream and creates the invocation that delivers it as a turn — for producers other than a human message, such as a scheduled or externally triggered brief.",
+      "Creates the invocation that delivers a prompt as a turn to the linked runtime session. The turn is sourced from the thread's anchor message and answered into the thread, so the brief writes no message of its own.",
     tags: ["Bot runtimes"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
     parameters: [workspaceIdParam],
