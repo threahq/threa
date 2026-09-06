@@ -41,6 +41,7 @@ const mockMemoSearchState = {
 }
 
 const mockUseMemoSearch = vi.fn()
+const mockUseMemoDetail = vi.fn()
 
 function buildConversationResult(): ConversationSearchResult {
   return {
@@ -86,7 +87,7 @@ function buildMemoResult(): MemoExplorerResult {
       archivedAt: null,
     },
     distance: 0,
-    sourceStream: null,
+    sourceStream: { id: "stream_channel1", type: "channel", name: "general" },
     rootStream: null,
   }
 }
@@ -214,6 +215,9 @@ function installSpies() {
   vi.spyOn(hooksModule, "useMemoSearch").mockImplementation(
     (...args) => mockUseMemoSearch(...args) as ReturnType<typeof hooksModule.useMemoSearch>
   )
+  vi.spyOn(hooksModule, "useMemoDetail").mockImplementation(
+    (...args) => mockUseMemoDetail(...args) as ReturnType<typeof hooksModule.useMemoDetail>
+  )
 
   vi.spyOn(mentionablesModule, "useMentionables").mockReturnValue({
     mentionables: [
@@ -276,6 +280,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
       isLoading: false,
       error: null,
     }))
+    mockUseMemoDetail.mockReset()
+    mockUseMemoDetail.mockImplementation(() => ({ data: undefined, isLoading: false, error: null }))
     installSpies()
   })
 
@@ -771,6 +777,57 @@ describe("SidebarSearchPanel Integration Tests", () => {
       const html = document.body.innerHTML
       expect(html.indexOf("Memories")).toBeGreaterThanOrEqual(0)
       expect(html.indexOf("Memories")).toBeLessThan(html.indexOf("#general"))
+    })
+
+    it("links a memo to its first source message and expands the source messages inline", async () => {
+      mockMemoSearchState.results = [buildMemoResult()]
+      mockUseMemoDetail.mockImplementation((_workspaceId: string, memoId: string | null) => ({
+        data: memoId
+          ? {
+              memo: {
+                ...buildMemoResult(),
+                sourceMessages: [
+                  {
+                    id: "msg_1",
+                    streamId: "stream_channel1",
+                    streamName: "#general",
+                    authorId: "user_1",
+                    authorType: "user",
+                    authorName: "Martin",
+                    content: "We **ship** in May",
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                  },
+                ],
+                successorMemoId: null,
+                capturedByPersonaName: null,
+              },
+            }
+          : undefined,
+        isLoading: false,
+        error: null,
+      }))
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      const sourceLink = await screen.findByRole("link", { name: "1 message in #general" })
+      expect(sourceLink).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_1")
+      // Collapsed: the detail request is not issued
+      expect(mockUseMemoDetail).not.toHaveBeenCalledWith("workspace_1", "memo_1")
+
+      await user.click(screen.getByRole("button", { name: "Show source messages" }))
+
+      expect(mockUseMemoDetail).toHaveBeenCalledWith("workspace_1", "memo_1")
+      const row = screen.getByText("We ship in May").closest("a")
+      expect(row).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_1")
+      expect(screen.getByText("Martin")).toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Hide source messages" }))
+      expect(screen.queryByText("We ship in May")).not.toBeInTheDocument()
     })
 
     it("counts a memo-only match as a result instead of showing the empty state", async () => {

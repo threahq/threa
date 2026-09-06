@@ -74,7 +74,7 @@ function buildMemoResult(overrides: Partial<MemoExplorerResult["memo"]> = {}): M
       ...overrides,
     },
     distance: 0,
-    sourceStream: null,
+    sourceStream: { id: "stream_channel1", type: "channel", name: "general" },
     rootStream: null,
   }
 }
@@ -265,6 +265,9 @@ describe("SearchPage", () => {
 
       const seeAll = screen.getByRole("link", { name: "See all" })
       expect(seeAll).toHaveAttribute("href", "/w/workspace_1/memory?q=hello")
+
+      const sourceLink = screen.getByRole("link", { name: "1 message in #general" })
+      expect(sourceLink).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_1")
     })
 
     it("counts a memo-only match as a result instead of showing the empty state", async () => {
