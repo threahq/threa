@@ -9,7 +9,6 @@ import {
   shouldRunEdgePagination,
   shouldShowOlderSkeletons,
   resolveDateJumpAnchor,
-  remapSuppressedWatermark,
   resolveStreamLanding,
   isChromeStripCollapsed,
   isTypingChromeHidden,
@@ -473,44 +472,6 @@ describe("resolveDateJumpAnchor", () => {
       { eventType: "message_created" as const, createdAt: REF.toISOString(), payload: {} },
     ]
     expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBeNull()
-  })
-})
-
-describe("remapSuppressedWatermark", () => {
-  const evt = (id: string, eventType: string) => ({ id, eventType }) as unknown as StreamEvent
-  // A fresh two-event thread: the member_added seeding event is suppressed
-  // from the rendered window; only the reply renders.
-  const events = [evt("e_member", "member_added"), evt("e_reply", "message_created")]
-  const displayEvents = [evt("e_reply", "message_created")]
-
-  it("remaps a suppressed watermark with no rendered predecessor to null (nothing read)", () => {
-    // The ghost-unread-thread bug: the watermark on member_added was
-    // unresolvable in the rendered window, so no divider rendered and
-    // auto-read never fired — the thread stayed unread forever.
-    expect(remapSuppressedWatermark("e_member", events, displayEvents)).toBeNull()
-  })
-
-  it("remaps a suppressed watermark to the nearest preceding rendered event", () => {
-    const longer = [
-      evt("e_msg1", "message_created"),
-      evt("e_member2", "member_added"),
-      evt("e_msg2", "message_created"),
-    ]
-    const rendered = [evt("e_msg1", "message_created"), evt("e_msg2", "message_created")]
-    expect(remapSuppressedWatermark("e_member2", longer, rendered)).toBe("e_msg1")
-  })
-
-  it("passes a rendered watermark through unchanged", () => {
-    expect(remapSuppressedWatermark("e_reply", events, displayEvents)).toBe("e_reply")
-  })
-
-  it("passes a watermark outside the loaded window through unchanged (suppression semantics apply)", () => {
-    expect(remapSuppressedWatermark("e_below_window", events, displayEvents)).toBe("e_below_window")
-  })
-
-  it("passes null/undefined (nothing read / still hydrating) through unchanged", () => {
-    expect(remapSuppressedWatermark(null, events, displayEvents)).toBeNull()
-    expect(remapSuppressedWatermark(undefined, events, displayEvents)).toBeUndefined()
   })
 })
 
