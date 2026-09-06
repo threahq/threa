@@ -11,16 +11,19 @@ describe("regional invitation dark compatibility API", () => {
     const workspace = await createWorkspace(admin, `Invite dark guards ${runId}`)
     const path = `/api/workspaces/${workspace.id}/invitations`
 
-    expect((await admin.post(`${path}/links`, { role: "member", maxUses: 2 })).status).toBe(400)
-    expect((await admin.post(`${path}/links`, { role: "member", expiresAt: null })).status).toBe(400)
+    expect((await admin.post(`${path}/links`, { role: "member", maxUses: 2 })).status).toBe(503)
+    expect((await admin.post(`${path}/links`, { role: "member", expiresAt: null })).status).toBe(503)
+    const guarded = await admin.post(`${path}/links`, { role: "member", maxUses: 2 })
+    expect(guarded.data).toMatchObject({ code: "INVITATION_ROLLOUT_UNAVAILABLE" })
 
     const created = await admin.post<CreateInvitationLinkResponse>(`${path}/links`, { role: "member" })
     expect(created.status).toBe(201)
     expect(created.data.invitation).toMatchObject({ maxUses: 1, useCount: 0 })
     expect(created.data.invitation.expiresAt).toEqual(expect.any(String))
 
-    const update = await admin.patch(`${path}/${created.data.invitation.id}`, { maxUses: 2 })
-    expect(update.status).toBe(404)
+    const update = await admin.patch<{ code: string }>(`${path}/${created.data.invitation.id}`, { maxUses: 2 })
+    expect(update.status).toBe(503)
+    expect(update.data).toMatchObject({ code: "INVITATION_ROLLOUT_UNAVAILABLE" })
   })
 
   test("should preserve the legacy create, claim, accept, list, and revoke API", async () => {

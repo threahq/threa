@@ -42,6 +42,18 @@ const createLinkSchema = z
   })
   .strict()
 
+// Dark replicas run the pre-activation schema. The activation frontend sends
+// maxUses/expiresAt as soon as it deploys, so reject those bodies with the
+// retryable rollout error instead of a validation 400 during the rolling window.
+function assertNoFutureLinkFields(body: unknown): void {
+  if (body !== null && typeof body === "object" && ["maxUses", "expiresAt"].some((field) => field in body)) {
+    throw new HttpError("Invitation link settings are not available yet", {
+      status: 503,
+      code: "INVITATION_ROLLOUT_UNAVAILABLE",
+    })
+  }
+}
+
 const claimLinkSchema = z.object({
   token: z.string().min(1).max(200),
   email: z.string().email(),
@@ -116,6 +128,7 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
 
+      assertNoFutureLinkFields(req.body)
       const data = validateRequest(createLinkSchema, req.body)
 
       const { invitation, token } = await invitationService.createLink({
@@ -130,6 +143,14 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
       // through to the regional backend (and it just-works across staging,
       // PR previews, and prod without per-env config).
       res.status(201).json({ invitation: toWire(invitation), token })
+    },
+
+    /** Link editing activates with the multi-use rollout; dark replicas 503. */
+    async updateLink() {
+      throw new HttpError("Invitation link settings are not available yet", {
+        status: 503,
+        code: "INVITATION_ROLLOUT_UNAVAILABLE",
+      })
     },
 
     /**

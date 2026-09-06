@@ -546,7 +546,6 @@ describe("multi-use invitation shadows", () => {
       code: "INVITATION_ROLLOUT_UNAVAILABLE",
     })
   })
-  })
 
   test("reconciles a regional join after CP rollback and a reordered parent revoke", async () => {
     await createParent()
