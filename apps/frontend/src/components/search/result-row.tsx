@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom"
 import { Archive, Loader2 } from "lucide-react"
+import type { SearchRefinement } from "@threahq/types"
 import { RelativeTime } from "@/components/relative-time"
 import { cn } from "@/lib/utils"
 import type { SearchResultItem } from "@/api"
 import { buildSnippet, HighlightedText } from "./highlight"
+import { SearchRowMenu, useSearchRowMenu } from "./search-row-menu"
 
 interface ResultRowProps {
   workspaceId: string
@@ -12,10 +14,15 @@ interface ResultRowProps {
   isActive: boolean
   onResultSelect: (result: SearchResultItem) => void
   actorName: string
-  /** Omitted when the surrounding row already names the stream. */
-  streamLabel?: string
+  /** Resolved for the menu's "Show in …" even when the surrounding row names the stream. */
+  streamName: string
+  /** False when the surrounding row already names the stream. */
+  showStreamLabel: boolean
   isResolving: boolean
   isArchived: boolean
+  /** The conversation this hit belongs to; null on a stray message. */
+  conversationId: string | null
+  onRefine?: (refine: SearchRefinement) => void
 }
 
 export function ResultRow({
@@ -25,30 +32,36 @@ export function ResultRow({
   isActive,
   onResultSelect,
   actorName,
-  streamLabel,
+  streamName,
+  showStreamLabel,
   isResolving,
   isArchived,
+  conversationId,
+  onRefine,
 }: ResultRowProps) {
   const snippet = buildSnippet(result.content, terms)
+  const menu = useSearchRowMenu()
+  const openHref = `/w/${workspaceId}/s/${result.streamId}?m=${result.id}`
+
   return (
-    <li>
+    <li className="reveal-host relative" {...menu.rowHandlers}>
       <Link
-        to={`/w/${workspaceId}/s/${result.streamId}?m=${result.id}`}
+        to={openHref}
         onClick={() => onResultSelect(result)}
         data-search-result-id={result.id}
         aria-current={isActive ? "true" : undefined}
         className={cn(
-          "block rounded-md border-l-2 py-1.5 pl-3 pr-2 transition-colors",
+          "block rounded-md border-l-2 py-1.5 pl-3 pr-8 transition-colors",
           isActive ? "border-primary bg-accent" : "border-transparent hover:bg-muted/60"
         )}
       >
-        {streamLabel !== undefined && (
+        {showStreamLabel && (
           <p className="mb-0.5 flex h-3 items-center gap-1 text-[10px] leading-3 text-muted-foreground">
             {isResolving ? (
               <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-label="Loading stream" />
             ) : (
               <span className="min-w-0 truncate" data-search-stream-label={result.streamId}>
-                {streamLabel}
+                {streamName}
               </span>
             )}
             <span className="h-3 w-3 shrink-0">
@@ -66,6 +79,21 @@ export function ResultRow({
           <RelativeTime date={result.createdAt} className="shrink-0 tabular-nums" />
         </p>
       </Link>
+      <SearchRowMenu
+        className="right-1 top-1"
+        state={menu}
+        target={{
+          workspaceId,
+          title: snippet.text,
+          openHref,
+          openLabel: "Open message",
+          streamId: result.streamId,
+          streamLabel: streamName,
+          messageId: result.id,
+          conversationId,
+          onRefine,
+        }}
+      />
     </li>
   )
 }

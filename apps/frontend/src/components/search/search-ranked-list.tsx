@@ -1,4 +1,5 @@
 import { useMemo } from "react"
+import type { SearchRefinement } from "@threahq/types"
 import { useActors } from "@/hooks/use-actors"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem } from "@/api"
 import { ClusterRow } from "./cluster-row"
@@ -16,6 +17,8 @@ interface SearchRankedListProps {
   onResultSelect: (result: SearchResultItem) => void
   onConversationSelect: (conversationId: string) => void
   onMemoSelect: (memoId: string) => void
+  /** Absent while refining is unavailable; the row menus then omit More like this / Drop. */
+  onRefine?: (refine: SearchRefinement) => void
   /** Phone widths fold every row's hits behind a count so the list fits on screen. */
   foldHits?: boolean
 }
@@ -31,6 +34,7 @@ export function SearchRankedList({
   onResultSelect,
   onConversationSelect,
   onMemoSelect,
+  onRefine,
   foldHits = false,
 }: SearchRankedListProps) {
   const { getActorName } = useActors(workspaceId)
@@ -59,6 +63,7 @@ export function SearchRankedList({
           onResultSelect={onResultSelect}
           onConversationSelect={onConversationSelect}
           onMemoSelect={onMemoSelect}
+          onRefine={onRefine}
         />
       ))}
     </ul>

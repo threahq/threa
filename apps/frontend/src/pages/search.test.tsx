@@ -1,6 +1,6 @@
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { describe, expect, it, vi, beforeEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { SidebarProvider } from "@/contexts/sidebar-context"
@@ -18,6 +18,7 @@ import {
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as mobileModule from "@/hooks/use-mobile"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
@@ -125,6 +126,7 @@ describe("SearchPage", () => {
       preferences: null,
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
     vi.spyOn(contextsModule, "useStreamService").mockReturnValue({ get: vi.fn() } as never)
+    vi.spyOn(contextsModule, "useSavedService").mockReturnValue({ create: vi.fn() } as never)
   })
 
   it("shares ranked mode, API order, Link navigation, and touch-sized controls with the sidebar", async () => {
@@ -558,6 +560,61 @@ describe("SearchPage", () => {
       await waitFor(() => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["ok"])
       })
+    })
+
+    it("renders a row refinement shared in the URL by its title and sends it structured", async () => {
+      mockSearchState.clusters = [launchCluster()]
+      renderPage("/w/workspace_1/search?q=hello&refine=drop:conv_1", searchOn)
+
+      expect(await screen.findByText("Drop Choosing the launch date")).toBeInTheDocument()
+      expect(document.querySelector('[data-search-refine="drop:conv_1"]')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith(
+          "hello",
+          expect.any(Object),
+          [],
+          [{ kind: "drop", conversationId: "conv_1" }]
+        )
+      })
+    })
+
+    it("writes a row refinement chosen from the menu back into the URL", async () => {
+      mockSearchState.clusters = [launchCluster()]
+      const user = userEvent.setup()
+      renderPage("/w/workspace_1/search?q=hello", searchOn)
+
+      await screen.findByText("Choosing the launch date")
+      const header = document.querySelector('[data-search-conversation-id="conv_1"]')!.parentElement as HTMLElement
+      await user.click(within(header).getByRole("button", { name: "Row actions" }))
+      await user.click(await screen.findByRole("menuitem", { name: "More like this" }))
+
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&refine=more%3Aconv_1")
+      expect(screen.getByText("More like Choosing the launch date")).toBeInTheDocument()
+    })
+
+    it("opens the same actions in a drawer on a long press", async () => {
+      vi.spyOn(touchCapableModule, "useTouchCapable").mockReturnValue(true)
+      mockSearchState.clusters = [launchCluster()]
+      renderPage("/w/workspace_1/search?q=hello", searchOn)
+
+      await screen.findByText("Choosing the launch date")
+      const row = document.querySelector('[data-search-result-id="msg_1"]')!.closest("li") as HTMLElement
+
+      vi.useFakeTimers()
+      try {
+        fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
+        act(() => vi.advanceTimersByTime(500))
+
+        const drawer = screen.getByRole("dialog")
+        expect(within(drawer).getByRole("link", { name: "Open message" })).toBeInTheDocument()
+        expect(within(drawer).getByRole("link", { name: "Show in #general" })).toBeInTheDocument()
+        expect(within(drawer).getByRole("button", { name: "Copy link" })).toBeInTheDocument()
+        expect(within(drawer).getByRole("button", { name: "Save for later" })).toBeInTheDocument()
+        expect(within(drawer).getByRole("button", { name: "More like this" })).toBeInTheDocument()
+        expect(within(drawer).getByRole("button", { name: "Drop" })).toBeInTheDocument()
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 })

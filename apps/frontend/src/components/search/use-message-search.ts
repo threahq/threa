@@ -16,7 +16,7 @@ import {
   type SearchFilters,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threahq/types"
+import { MAX_SEARCH_PHRASES, STREAM_TYPES, type SearchRefinement, type StreamType } from "@threahq/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
@@ -53,7 +53,11 @@ export interface MessageSearchState {
  * committed `refines`. Shared by the desktop sidebar search panel and the
  * mobile search page so both surfaces parse, resolve, and rank identically.
  */
-export function useMessageSearch(workspaceId: string, query: string, refines: string[] = []): MessageSearchState {
+export function useMessageSearch(
+  workspaceId: string,
+  query: string,
+  refines: SearchRefinement[] = []
+): MessageSearchState {
   const users = useWorkspaceUsers(workspaceId)
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)

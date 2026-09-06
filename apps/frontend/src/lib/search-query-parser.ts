@@ -3,7 +3,13 @@
  *
  * Supports filters: from:@user, with:@user, in:#channel, in:@user (DM), is:streamType, type:streamType (alias), status:archiveStatus, after:date, before:date
  */
-import { MAX_SEARCH_REFINES, MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
+import {
+  MAX_SEARCH_REFINES,
+  MAX_SEARCH_REFINE_CHARS,
+  SEARCH_REFINEMENT_KINDS,
+  type SearchRefinement,
+  type SearchRefinementKind,
+} from "@threahq/types"
 
 export type FilterType = "from" | "with" | "in" | "type" | "status" | "after" | "before"
 
@@ -131,15 +137,42 @@ export function removeFilterFromQuery(query: string, filterIndex: number): strin
 }
 
 /**
- * The refine trail the backend accepts: trimmed, non-empty, within the length
- * cap, and only the newest `MAX_SEARCH_REFINES`. Applied when a refine is
- * committed and when a trail is restored from a URL.
+ * The refine trail the backend accepts: prose trimmed, non-empty and within the
+ * length cap, row refinements carrying a conversation, and only the newest
+ * `MAX_SEARCH_REFINES`. Applied when a refine is committed and when a trail is
+ * restored from a URL, so both shapes are validated in one place.
  */
-export function boundRefines(refines: string[]): string[] {
-  return refines
-    .map((refine) => refine.trim())
-    .filter((refine) => refine.length > 0 && refine.length <= MAX_SEARCH_REFINE_CHARS)
-    .slice(-MAX_SEARCH_REFINES)
+export function boundRefines(refines: SearchRefinement[]): SearchRefinement[] {
+  return refines.flatMap((refine) => parseRefine(refine) ?? []).slice(-MAX_SEARCH_REFINES)
+}
+
+/**
+ * One refinement as it travels in a URL (`?refine=`): `more:conv_x` /
+ * `drop:conv_x` name a row, anything else is prose. Returns null for a value
+ * the backend would reject.
+ */
+export function parseRefine(refine: SearchRefinement): SearchRefinement | null {
+  if (typeof refine !== "string") {
+    return refine.conversationId.length > 0 ? refine : null
+  }
+  const row = ROW_REFINE_PATTERN.exec(refine)
+  if (row) {
+    const kind = row[1] as SearchRefinementKind
+    return { kind, conversationId: row[2]! }
+  }
+  const prose = refine.trim()
+  return prose.length > 0 && prose.length <= MAX_SEARCH_REFINE_CHARS ? prose : null
+}
+
+/**
+ * Only a conversation id after the kind, so prose the user typed as "drop:
+ * anything from Bob" stays prose (INV-2 prefixed ids, no spaces).
+ */
+const ROW_REFINE_PATTERN = new RegExp(`^(${SEARCH_REFINEMENT_KINDS.join("|")}):(conv_[A-Za-z0-9]+)$`)
+
+/** The inverse of {@link parseRefine}: what a `?refine=` param carries. */
+export function serializeRefine(refine: SearchRefinement): string {
+  return typeof refine === "string" ? refine : `${refine.kind}:${refine.conversationId}`
 }
 
 /**

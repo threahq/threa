@@ -1,5 +1,6 @@
 import { useMemo } from "react"
 import { Archive, ChevronDown, ChevronRight, Loader2 } from "lucide-react"
+import type { SearchRefinement } from "@threahq/types"
 import { useActors } from "@/hooks/use-actors"
 import { cn } from "@/lib/utils"
 import type { SearchResultItem } from "@/api"
@@ -20,6 +21,8 @@ interface SearchGroupedListProps {
   onResultSelect: (result: SearchResultItem) => void
   onConversationSelect: (conversationId: string) => void
   onMemoSelect: (memoId: string) => void
+  /** Absent while refining is unavailable; the row menus then omit More like this / Drop. */
+  onRefine?: (refine: SearchRefinement) => void
   /** Phone widths fold every row's hits behind a count so the list fits on screen. */
   foldHits?: boolean
 }
@@ -36,6 +39,7 @@ export function SearchGroupedList({
   onResultSelect,
   onConversationSelect,
   onMemoSelect,
+  onRefine,
   foldHits = false,
 }: SearchGroupedListProps) {
   const { getActorName } = useActors(workspaceId)
@@ -100,6 +104,7 @@ export function SearchGroupedList({
                     onResultSelect={onResultSelect}
                     onConversationSelect={onConversationSelect}
                     onMemoSelect={onMemoSelect}
+                    onRefine={onRefine}
                   />
                 ))}
                 {group.memos.length > 0 && (

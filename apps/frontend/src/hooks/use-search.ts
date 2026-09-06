@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react"
+import type { SearchRefinement } from "@threahq/types"
 import {
   searchMessages,
   type MemoExplorerResult,
@@ -24,7 +25,7 @@ interface UseSearchReturn {
   refine: SearchRefineOutcome | null
   isLoading: boolean
   error: Error | null
-  search: (query: string, filters?: SearchFilters, phrases?: string[], refine?: string[]) => Promise<void>
+  search: (query: string, filters?: SearchFilters, phrases?: string[], refine?: SearchRefinement[]) => Promise<void>
   clear: () => void
 }
 
@@ -41,7 +42,7 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
   const requestIdRef = useRef(0)
 
   const search = useCallback(
-    async (query: string, filters?: SearchFilters, phrases?: string[], refine?: string[]) => {
+    async (query: string, filters?: SearchFilters, phrases?: string[], refine?: SearchRefinement[]) => {
       const requestId = ++requestIdRef.current
       setIsLoading(true)
       setError(null)

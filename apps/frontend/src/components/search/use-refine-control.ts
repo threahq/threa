@@ -1,9 +1,10 @@
 import { useCallback, useRef, useState } from "react"
+import type { SearchRefinement } from "@threahq/types"
 import { boundRefines } from "@/lib/search-query-parser"
 
 interface UseRefineControlOptions {
-  refines: string[]
-  onChange: (refines: string[]) => void
+  refines: SearchRefinement[]
+  onChange: (refines: SearchRefinement[]) => void
 }
 
 export interface RefineControl {
@@ -17,6 +18,8 @@ export interface RefineControl {
   toggle: () => void
   edit: (index: number) => void
   commit: (text: string) => void
+  /** Adds a refinement the user did not type — a row menu's More like this / Drop. */
+  append: (refine: SearchRefinement) => void
   close: () => void
 }
 
@@ -55,14 +58,29 @@ export function useRefineControl({ refines, onChange }: UseRefineControlOptions)
     [editingIndex, refines, onChange, close]
   )
 
+  const append = useCallback(
+    (refine: SearchRefinement) => {
+      onChange(boundRefines([...refines, refine]))
+    },
+    [refines, onChange]
+  )
+
   return {
     isOpen,
     editingIndex,
-    initialValue: editingIndex !== null ? (refines[editingIndex] ?? "") : "",
+    initialValue: proseAt(refines, editingIndex),
     triggerRef,
     toggle,
     edit,
     commit,
+    append,
     close,
   }
+}
+
+/** Only prose is editable; a row refinement has no text the row could reopen on. */
+function proseAt(refines: SearchRefinement[], index: number | null): string {
+  if (index === null) return ""
+  const refine = refines[index]
+  return typeof refine === "string" ? refine : ""
 }

@@ -1,3 +1,4 @@
+import type { SearchRefinement } from "@threahq/types"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem } from "@/api"
 import type { SearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { SearchGroupedList } from "./search-grouped-list"
@@ -21,6 +22,8 @@ interface SearchResultListProps {
   onResultSelect: (result: SearchResultItem) => void
   onConversationSelect: (conversationId: string) => void
   onMemoSelect: (memoId: string) => void
+  /** Absent while refining is unavailable; the row menus then omit More like this / Drop. */
+  onRefine?: (refine: SearchRefinement) => void
   /** Phone widths fold every row's hits behind a count so the list fits on screen. */
   foldHits?: boolean
 }
@@ -40,6 +43,7 @@ export function SearchResultList({
   onResultSelect,
   onConversationSelect,
   onMemoSelect,
+  onRefine,
   foldHits = false,
 }: SearchResultListProps) {
   if (displayMode === "ranked") {
@@ -55,6 +59,7 @@ export function SearchResultList({
         onResultSelect={onResultSelect}
         onConversationSelect={onConversationSelect}
         onMemoSelect={onMemoSelect}
+        onRefine={onRefine}
       />
     )
   }
@@ -72,6 +77,7 @@ export function SearchResultList({
       onResultSelect={onResultSelect}
       onConversationSelect={onConversationSelect}
       onMemoSelect={onMemoSelect}
+      onRefine={onRefine}
     />
   )
 }
