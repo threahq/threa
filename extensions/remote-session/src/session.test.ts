@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test"
+import { describe, expect, jest, spyOn, test } from "bun:test"
 import type {
   BotRuntimeHello,
   BotRuntimeTransport,
@@ -61,6 +61,7 @@ function makeFakeClient() {
     fail: [] as Array<{ id: string; body: Record<string, unknown> }>,
   }
   const client = {
+    claim: async (): Promise<ClaimedInvocation | null> => null,
     sendMessage: async (streamId: string, body: Record<string, unknown>) => {
       calls.sendMessage.push({ streamId, body })
     },
@@ -3053,6 +3054,272 @@ describe("claimDrain intercept routing", () => {
     const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
     expect(verdictClose?.body.noResponse).toBe(true)
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_normal")
+  })
+})
+
+describe("claim wakeups and retries", () => {
+  async function flush() {
+    for (let i = 0; i < 100; i++) await Promise.resolve()
+  }
+
+  test("should claim a queued message when the running turn finishes", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    Object.assign(transport, { socketConnected: true })
+    const pending = [makeInvocation({ id: "binv_pending" })]
+    const delivered: string[] = []
+    spyOn(client, "claim").mockImplementation(async (body) =>
+      (body.supportedCapabilities as string[]).includes("active-scratchpad") ? (pending.shift() ?? null) : null
+    )
+    const session = makeSession(client, transport, {
+      deliverTurn: async (turn) => {
+        delivered.push(turn.invocationId)
+      },
+      sessionControl: {
+        commands: ["status"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "status" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    try {
+      await (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+      expect(delivered).toEqual([])
+      expect(await session.reply("binv_running", "done")).toMatchObject({ ok: true })
+      jest.advanceTimersByTime(0)
+      await flush()
+      expect(delivered).toEqual(["binv_pending"])
+    } finally {
+      await session.shutdown()
+      jest.useRealTimers()
+    }
+  })
+
+  test("should cancel a scheduled drain after stop even if a wakeup races its acknowledgement", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const completing = gate()
+    const completed = gate()
+    spyOn(client, "complete")
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => {
+        completing.open()
+        await completed.promise
+      })
+    const delivered: string[] = []
+    spyOn(client, "claim")
+      .mockResolvedValueOnce(
+        makeInvocation({
+          id: "binv_stop",
+          trigger: "session-control",
+          requiredCapability: "session-control",
+          metadata: { command: { executionKind: "bot-runtime", name: "stop", args: "" } },
+        })
+      )
+      .mockResolvedValueOnce(makeInvocation({ id: "binv_pending" }))
+      .mockResolvedValue(null)
+    const session = makeSession(client, transport, {
+      deliverTurn: async (turn) => {
+        delivered.push(turn.invocationId)
+      },
+      sessionControl: {
+        commands: ["stop"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    const drain = () => (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+    try {
+      await session.reply("binv_running", "done")
+      const first = drain()
+      await completing.promise
+      await drain()
+      completed.open()
+      await first
+      jest.advanceTimersByTime(0)
+      await flush()
+      expect(delivered).toEqual([])
+    } finally {
+      completed.open()
+      await session.shutdown()
+      jest.useRealTimers()
+    }
+  })
+
+  test("should retain a wakeup arriving during an empty claim request", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const waiting = gate()
+    const delivered: string[] = []
+    spyOn(client, "claim")
+      .mockImplementationOnce(async () => {
+        await waiting.promise
+        return null
+      })
+      .mockResolvedValueOnce(makeInvocation({ id: "binv_pending" }))
+      .mockResolvedValue(null)
+    const session = makeSession(client, transport, {
+      deliverTurn: async (turn) => {
+        delivered.push(turn.invocationId)
+      },
+    })
+    const drain = () => (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+    try {
+      const first = drain()
+      await drain()
+      waiting.open()
+      await first
+      jest.advanceTimersByTime(0)
+      await flush()
+      expect(delivered).toEqual(["binv_pending"])
+    } finally {
+      waiting.open()
+      await session.shutdown()
+      jest.useRealTimers()
+    }
+  })
+
+  test("should deliver a waiting message and status after rate limiting without another wakeup", async () => {
+    jest.useFakeTimers()
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    Object.assign(transport, { socketConnected: true })
+    const delivered: string[] = []
+    const commands: string[] = []
+    const queue = [
+      makeInvocation({ id: "binv_waiting" }),
+      makeInvocation({
+        id: "binv_status",
+        trigger: "session-control",
+        requiredCapability: "session-control",
+        metadata: { command: { executionKind: "bot-runtime", name: "status", args: "" } },
+      }),
+    ]
+    let limited = true
+    const claim = spyOn(client, "claim")
+    claim.mockImplementation(async () => {
+      if (limited) throw new ThreaApiError("rate limited", 429, undefined, 10_000)
+      return queue.shift() ?? null
+    })
+    const session = makeSession(client, transport, {
+      deliverTurn: async (turn) => {
+        delivered.push(turn.invocationId)
+      },
+      sessionControl: {
+        commands: ["status"],
+        interrupt: () => true,
+        runCommand: async (name) => {
+          commands.push(name)
+          return { ok: true, message: "Session status" }
+        },
+      },
+    })
+    const drain = () => (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+    try {
+      await drain()
+      await drain()
+      expect(claim).toHaveBeenCalledTimes(1)
+      jest.advanceTimersByTime(9_999)
+      await flush()
+      expect(delivered).toEqual([])
+      limited = false
+      jest.advanceTimersByTime(1)
+      jest.advanceTimersByTime(0)
+      await flush()
+      expect({ delivered, commands, completed: calls.complete.map((call) => call.id) }).toEqual({
+        delivered: ["binv_waiting"],
+        commands: ["status"],
+        completed: ["binv_status"],
+      })
+    } finally {
+      await session.shutdown()
+      jest.useRealTimers()
+    }
+  })
+
+  test("should reset retry backoff after a successful empty claim", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const claim = spyOn(client, "claim")
+    claim
+      .mockRejectedValueOnce(new Error("connection reset"))
+      .mockRejectedValueOnce(new ThreaApiError("unavailable", 503))
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new ThreaApiError("rate limited", 429))
+      .mockResolvedValue(null)
+    const session = makeSession(client, transport)
+    const drain = () => (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+    try {
+      await drain()
+      for (const delay of [3_000, 6_000]) {
+        jest.advanceTimersByTime(delay)
+        jest.advanceTimersByTime(0)
+        await flush()
+      }
+      await drain()
+      jest.advanceTimersByTime(3_000)
+      jest.advanceTimersByTime(0)
+      await flush()
+      expect(claim).toHaveBeenCalledTimes(5)
+    } finally {
+      await session.shutdown()
+      jest.useRealTimers()
+    }
+  })
+
+  test("should not schedule transient retries for an invalid API key", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const claim = spyOn(client, "claim")
+    claim.mockRejectedValue(new ThreaApiError("unauthorized", 401))
+    const session = makeSession(client, transport)
+    try {
+      await (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+      jest.advanceTimersByTime(120_000)
+      await flush()
+      expect(claim).toHaveBeenCalledTimes(1)
+    } finally {
+      await session.shutdown()
+      jest.useRealTimers()
+    }
+  })
+
+  test("should back off repeated claim failures and cancel retries on shutdown", async () => {
+    jest.useFakeTimers()
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    Object.assign(transport, { socketConnected: true })
+    const claim = spyOn(client, "claim")
+    claim.mockRejectedValue(new ThreaApiError("unavailable", 503))
+    const session = makeSession(client, transport)
+    const drain = () => (session as unknown as { claimDrain(): Promise<boolean> }).claimDrain()
+    try {
+      await drain()
+      for (const delay of [3_000, 6_000, 12_000, 24_000, 48_000, 96_000, 120_000, 120_000]) {
+        const before = claim.mock.calls.length
+        jest.advanceTimersByTime(delay - 1)
+        await flush()
+        expect(claim).toHaveBeenCalledTimes(before)
+        jest.advanceTimersByTime(1)
+        jest.advanceTimersByTime(0)
+        await flush()
+        expect(claim).toHaveBeenCalledTimes(before + 1)
+      }
+      await session.shutdown()
+      const before = claim.mock.calls.length
+      jest.advanceTimersByTime(120_000)
+      await flush()
+      expect(claim).toHaveBeenCalledTimes(before)
+    } finally {
+      await session.shutdown()
+      jest.useRealTimers()
+    }
   })
 })
 
