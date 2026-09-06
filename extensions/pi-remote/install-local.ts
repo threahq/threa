@@ -20,15 +20,17 @@ const here = dirname(fileURLToPath(import.meta.url)) // extensions/pi-remote
 const extensionsDir = join(homedir(), ".pi", "agent", "extensions")
 const dest = process.argv[2] ?? join(extensionsDir, "threa-remote")
 
-// Vendored sibling packages: dep specifier → source dir. Every non-test file is
+// Vendored sibling packages: dep specifier → source dir. Every runtime file is
 // vendored, so a module added to one of these packages can never be missing from
-// the install.
+// the install. "test" in a filename means test-only (`*.test.ts`, shared helpers
+// importing `bun:test`); dropping a runtime file that way fails the import check
+// below rather than shipping a broken install.
 const VENDORED = [
   { dep: "@threahq/bot-runtime-client", src: resolve(here, "../bot-runtime-client"), dir: "bot-runtime-client" },
   { dep: "@threa/harness-client", src: resolve(here, "../harness-client"), dir: "harness-client" },
 ].map((pkg) => ({
   ...pkg,
-  files: readdirSync(join(pkg.src, "src")).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")),
+  files: readdirSync(join(pkg.src, "src")).filter((f) => f.endsWith(".ts") && !f.includes("test")),
 }))
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
