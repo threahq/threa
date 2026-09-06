@@ -25,17 +25,25 @@ export interface DoneDeps
   /** Same lock as `clear`, so the watcher cannot revive mid-wind-down. */
   lock: () => Promise<() => void>
   persist: (agent: ManagedAgent) => void
-  endSession: (identity: { instanceId: string; runtimeSessionId: string }) => Promise<"ended" | "not-found">
+  endSession: (identity: { instanceId: string; runtimeSessionId: string }) => Promise<SessionEnd>
 }
+
+/** The thread the ended session was living in, so the outcome can be reported where the work happened. */
+export type SessionEnd = { status: "ended"; activeStreamId: string } | { status: "not-found" }
 
 async function endRuntimeSession(
   target: ThreaTarget,
   identity: { instanceId: string; runtimeSessionId: string }
-): Promise<"ended" | "not-found"> {
+): Promise<SessionEnd> {
   const response = await postThrea(target, "/bot-runtime/sessions/end", identity)
-  if (response.status === 404) return "not-found"
+  if (response.status === 404) return { status: "not-found" }
   if (!response.ok) throw new Error(`harnessd: could not end runtime session: ${await failureExcerpt(response)}`)
-  return "ended"
+  const body = (await response.json()) as { data?: { activeStreamId?: unknown } }
+  const activeStreamId = body.data?.activeStreamId
+  if (typeof activeStreamId !== "string") {
+    throw new Error("harnessd: sessions/end returned no activeStreamId")
+  }
+  return { status: "ended", activeStreamId }
 }
 
 export function defaultDoneDeps(): DoneDeps {
@@ -147,7 +155,7 @@ export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<v
       }
       const worktreeOutcome = await windDownForDone(agent, link, deps)
 
-      let ended: "ended" | "not-found"
+      let ended: SessionEnd
       try {
         ended = await deps.endSession({ instanceId, runtimeSessionId })
       } finally {
@@ -156,14 +164,15 @@ export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<v
         // row reflecting the session that just ended, not the one before it.
         deps.persist({ ...agent, status: "stopped", updatedAt: now() })
       }
-      if (ended === "not-found") deps.log(`${agent.name}: link already ended`)
-      const linkOutcome = `link ${ended === "ended" ? "ended" : "already ended"}`
+      if (ended.status === "not-found") deps.log(`${agent.name}: link already ended`)
+      const linkOutcome = `link ${ended.status === "ended" ? "ended" : "already ended"}`
 
-      await notifyStream(
-        request.rootStreamId,
-        `harnessd: \`${agent.name}\` is done — ${worktreeOutcome}, ${linkOutcome}.`,
-        deps
-      )
+      // The outcome belongs in the thread the session lived in, not in the
+      // scratchpad everything else hangs under. A link that was already ended
+      // names no thread, so that one case falls back to the root rather than
+      // going unreported.
+      const noticeStream = ended.status === "ended" ? ended.activeStreamId : request.rootStreamId
+      await notifyStream(noticeStream, `harnessd: done — ${worktreeOutcome}, ${linkOutcome}.`, deps)
       console.log(`done\t${agent.name}\t${worktreeOutcome}\t${linkOutcome}`)
     } finally {
       release()

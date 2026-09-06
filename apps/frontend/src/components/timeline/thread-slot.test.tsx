@@ -72,6 +72,30 @@ describe("ThreadSlot", () => {
     expect(screen.getByText(/is step-workspace_search…$/)).toBeInTheDocument()
   })
 
+  it("renders the ThreadCard for a thread that exists with no replies (idle spawned session)", () => {
+    // `/spawn` creates the thread and attaches a session to it; between turns
+    // there is no activity and no reply, and the anchor still has to show it.
+    renderSlot(
+      <ThreadSlot activity={undefined} replyCount={0} threadHref="/thread/1" summary={undefined} workspaceId="ws_1" />
+    )
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/thread/1")
+    expect(screen.getByText("No replies yet")).toBeInTheDocument()
+  })
+
+  it("keeps the thinking row over an empty thread while the session is working", () => {
+    renderSlot(
+      <ThreadSlot
+        activity={makeActivity()}
+        replyCount={0}
+        threadHref="/thread/1"
+        summary={undefined}
+        workspaceId="ws_1"
+      />
+    )
+    expect(screen.getByText("Ariadne")).toBeInTheDocument()
+    expect(screen.queryByText("No replies yet")).toBeNull()
+  })
+
   it("renders the ThreadCard when replies exist", () => {
     renderSlot(
       <ThreadSlot activity={undefined} replyCount={2} threadHref="/thread/1" summary={summary} workspaceId="ws_1" />

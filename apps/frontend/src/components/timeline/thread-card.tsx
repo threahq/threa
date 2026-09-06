@@ -19,6 +19,13 @@ export interface ThreadCardDraft {
   attachmentCount: number
 }
 
+/** The card's header label. Zero replies is a real state: the thread stream
+ *  exists — a `/spawn` session is attached to it — and nothing is posted yet. */
+function replyCountLabel(replyCount: number): string {
+  if (replyCount === 0) return "No replies yet"
+  return replyCount === 1 ? "1 reply" : `${replyCount} replies`
+}
+
 /** What the draft-only card shows under its header: the body text, else the file
  *  count, else nothing (a sealed body this device can't read). */
 function draftSnippet(draft: ThreadCardDraft): string {
@@ -34,8 +41,8 @@ interface ThreadCardProps {
   /**
    * The viewer's unsent reply draft in this thread. With replies it appends a
    * muted "Draft" token after the timestamp; at `replyCount === 0` it is the
-   * whole card (the thread stream does not exist yet, so there is nothing else
-   * to show) and `href` points at the draft reply panel.
+   * whole card (there is nothing else to show) and `href` points at the draft
+   * reply panel.
    */
   draft?: ThreadCardDraft | null
   /**
@@ -78,11 +85,9 @@ export function ThreadCard({
   const { getActorName } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
 
-  if (replyCount === 0 && !draft) return null
-
-  const isDraftOnly = replyCount === 0
+  const isDraftOnly = replyCount === 0 && !!draft
   const draftSnippetText = draft ? draftSnippet(draft) : ""
-  const replyLabel = replyCount === 1 ? "1 reply" : `${replyCount} replies`
+  const replyLabel = replyCountLabel(replyCount)
   const participants = summary?.participants ?? []
 
   return (

@@ -40,11 +40,12 @@ function renderCard(ui: React.ReactElement) {
 }
 
 describe("ThreadCard", () => {
-  it("returns null when replyCount is 0", () => {
-    const { container } = renderCard(
-      <ThreadCard replyCount={0} href="/threads/1" workspaceId="ws_1" summary={undefined} />
-    )
-    expect(container.firstChild).toBeNull()
+  it("names the empty state when a thread exists with no replies", () => {
+    // `/spawn` attaches a session to a thread that holds nothing yet; the card
+    // is the anchor's only trace of it between turns.
+    renderCard(<ThreadCard replyCount={0} href="/threads/1" workspaceId="ws_1" summary={undefined} />)
+    expect(screen.getByText("No replies yet")).toBeInTheDocument()
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/threads/1")
   })
 
   it("renders the singular noun when replyCount is 1", () => {

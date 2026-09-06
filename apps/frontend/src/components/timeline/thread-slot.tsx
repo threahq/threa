@@ -33,7 +33,7 @@ interface ThreadSlotProps {
  *      `grid-template-rows` transition — the line is absolute-positioned to
  *      the slot container, so it follows the container's growing height
  *
- * When nothing is thread-related (no activity, no replies, no draft), the slot
+ * When nothing is thread-related (no activity, no thread, no draft), the slot
  * returns null. Otherwise the line is always present; the body swaps between a
  * "thinking" line (italic text + persona) and the full ThreadCard body.
  *
@@ -54,9 +54,15 @@ export function ThreadSlot({
 }: ThreadSlotProps) {
   const hasActivity = !!activity
   const hasThread = replyCount > 0 && !!threadHref
+  // A thread that exists but holds nothing yet — a `/spawn` session attached to
+  // its anchor before it has posted. Suppressed while a session is running: the
+  // thinking row says more than an empty card, and a `threadHref` that is NOT
+  // backed by a stream comes from `activity.threadStreamId`, which can only be
+  // set while that activity is live.
+  const hasEmptyThread = replyCount === 0 && !!threadHref && !hasActivity
   const cardHref = threadHref ?? draftHref ?? null
   const hasDraft = !!draft && !!cardHref
-  const showCard = hasThread || hasDraft
+  const showCard = hasThread || hasDraft || hasEmptyThread
   const visible = hasActivity || showCard
 
   // Only play the grow-in animation for genuine post-mount transitions —
