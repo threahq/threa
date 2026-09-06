@@ -734,6 +734,25 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(screen.queryByText("No results")).not.toBeInTheDocument()
     })
 
+    it("shows the empty state in ranked mode when only topic rows matched", async () => {
+      mockSearchState.results = []
+      mockSearchState.clusters = [
+        createMockSearchCluster({ conversation: createMockClusterConversation(), matchedVia: ["topic"], hits: [] }),
+      ]
+      localStorage.setItem("threa-search-result-display:workspace_1", "ranked")
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      expect(await screen.findByText("Try different words or remove a filter")).toBeInTheDocument()
+      expect(screen.getByText("No results")).toBeInTheDocument()
+      expect(screen.queryByText("Choosing the launch date")).not.toBeInTheDocument()
+    })
+
     it("folds a memo hit into its row as a chip and links the memory explorer on the same words", async () => {
       mockSearchState.results = mockSearchResultsList
       mockSearchState.memos = [createMockMemoResult()]

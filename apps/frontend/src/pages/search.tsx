@@ -84,7 +84,7 @@ export function SearchPage() {
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
   const resultCount = displayMode === "ranked" ? results.length : countClusterResults(clusters)
-  const hasResults = clusters.length > 0
+  const hasResults = displayMode === "ranked" ? results.length > 0 : clusters.length > 0
 
   const handleResultSelect = useCallback(
     (result: SearchResultItem) => {
@@ -195,7 +195,7 @@ export function SearchPage() {
             />
           )}
 
-          {hasQuery && !displayError && results.length > 0 && displayMode === "ranked" && (
+          {hasQuery && !displayError && hasResults && displayMode === "ranked" && (
             <SearchResults
               workspaceId={workspaceId}
               results={results}

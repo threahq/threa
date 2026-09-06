@@ -51,7 +51,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     [displayMode, results, clusters]
   )
   const resultCount = displayMode === "ranked" ? results.length : countClusterResults(clusters)
-  const hasResults = clusters.length > 0
+  const hasResults = displayMode === "ranked" ? results.length > 0 : clusters.length > 0
 
   const inputRef = useRef<RichInputRef>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -243,7 +243,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
             </div>
           )}
 
-          {hasQuery && !displayError && results.length > 0 && displayMode === "ranked" && (
+          {hasQuery && !displayError && hasResults && displayMode === "ranked" && (
             <SearchResults
               workspaceId={workspaceId}
               results={results}
