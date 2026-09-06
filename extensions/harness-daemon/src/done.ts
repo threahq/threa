@@ -110,6 +110,12 @@ async function windDownForDone(agent: LinkedAgent, link: HarnessLink, deps: Done
   return outcome.removed ? "worktree removed" : `worktree left: ${outcome.reason ?? "unknown reason"}`
 }
 
+export interface DoneRequest {
+  ref: string
+  /** The scratchpad `/done` was typed in; the wind-down refuses any other root. */
+  rootStreamId: string
+}
+
 /**
  * Wind a thread session down on purpose: commit, push, remove the worktree,
  * and end the Threa link — without waiting for the scratchpad to be archived.
@@ -118,18 +124,27 @@ async function windDownForDone(agent: LinkedAgent, link: HarnessLink, deps: Done
  *
  * `/done` is typed in Threa and the pane it kills is the one that would have
  * reported back, so both the outcome and any failure are posted to the
- * scratchpad root — otherwise the user's session simply stops answering.
+ * scratchpad root — otherwise the user's session simply stops answering. The
+ * root comes from the caller rather than the link, so a failure before the link
+ * is resolved still has somewhere to report.
  */
-export async function doneAgent(ref: string, deps: DoneDeps): Promise<void> {
-  const found = deps.findAgent(ref)
-  const { worktree, instanceId, runtimeSessionId } = found
-  if (!worktree || !instanceId || !runtimeSessionId) die("done needs a linked managed session")
-  const agent: LinkedAgent = { ...found, worktree, instanceId, runtimeSessionId }
-
-  const release = await deps.lock()
+export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<void> {
+  let label = request.ref
   try {
-    const link = linkFor(agent, deps.links())
+    const found = deps.findAgent(request.ref)
+    const { worktree, instanceId, runtimeSessionId } = found
+    if (!worktree || !instanceId || !runtimeSessionId) die("done needs a linked managed session")
+    const agent: LinkedAgent = { ...found, worktree, instanceId, runtimeSessionId }
+    label = agent.name
+
+    const release = await deps.lock()
     try {
+      const link = linkFor(agent, deps.links())
+      // Waiting for the lock can take minutes, and a session relinked to another
+      // scratchpad in that window belongs to whoever is sitting in it now.
+      if (link.rootStreamId !== request.rootStreamId) {
+        die(`${agent.name}: linked to ${link.rootStreamId}, not ${request.rootStreamId}`)
+      }
       const worktreeOutcome = await windDownForDone(agent, link, deps)
 
       let ended: "ended" | "not-found"
@@ -145,17 +160,17 @@ export async function doneAgent(ref: string, deps: DoneDeps): Promise<void> {
       const linkOutcome = `link ${ended === "ended" ? "ended" : "already ended"}`
 
       await reportToRoot(
-        link.rootStreamId,
+        request.rootStreamId,
         `harnessd: \`${agent.name}\` is done — ${worktreeOutcome}, ${linkOutcome}.`,
         deps
       )
       console.log(`done\t${agent.name}\t${worktreeOutcome}\t${linkOutcome}`)
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      await reportToRoot(link.rootStreamId, `harnessd: \`/done\` for \`${agent.name}\` failed: ${reason}`, deps)
-      throw error
+    } finally {
+      release()
     }
-  } finally {
-    release()
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    await reportToRoot(request.rootStreamId, `harnessd: \`/done\` for \`${label}\` failed: ${reason}`, deps)
+    throw error
   }
 }

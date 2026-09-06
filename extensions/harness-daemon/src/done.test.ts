@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test"
 import type { HarnessLink } from "@threa/harness-client"
+import { parseDone } from "./cli"
 import { doneAgent, type DoneDeps } from "./done"
 import type { LocalTmuxPane } from "./discovery"
 import { DEFAULT_PROFILE } from "./profiles"
@@ -107,7 +108,7 @@ describe("doneAgent", () => {
   test("kills the pane, waits for exit, winds down, forgets the link, retires identities, ends the session, persists stopped, and reports to the root", async () => {
     const { deps, recorded } = makeDoneDeps()
 
-    await doneAgent("fix-sidebar", deps)
+    await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
 
     expect(recorded.calls).toEqual([
       "lock",
@@ -128,7 +129,7 @@ describe("doneAgent", () => {
   test("no live pane skips the kill but still winds down and ends the link", async () => {
     const { deps, recorded } = makeDoneDeps({ panes: [] })
 
-    await doneAgent("fix-sidebar", deps)
+    await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
 
     expect(recorded.calls).toEqual([
       "lock",
@@ -148,14 +149,14 @@ describe("doneAgent", () => {
     // Claude in it is fatal whichever record asked for the wind-down.
     const { deps, recorded } = makeDoneDeps({ panes: [], claudePids: [9911] })
 
-    await expect(doneAgent("fix-sidebar", deps)).rejects.toThrow(
+    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
       "fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)"
     )
 
     expect(recorded.calls).toEqual([
       "lock",
-      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)",
       "release",
+      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)",
     ])
     expect(recorded.persisted).toEqual([])
   })
@@ -163,7 +164,7 @@ describe("doneAgent", () => {
   test("a worktree removed by hand still kills the window, clears the records, and ends the session", async () => {
     const { deps, recorded } = makeDoneDeps({ worktreeExists: false })
 
-    await doneAgent("fix-sidebar", deps)
+    await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
 
     expect(recorded.calls).toEqual([
       "lock",
@@ -181,15 +182,15 @@ describe("doneAgent", () => {
   test("a teardown failure dies with nothing killed, nothing ended, and the row unchanged", async () => {
     const { deps, recorded } = makeDoneDeps({ teardown: { ok: false, reason: "lint failed" } })
 
-    await expect(doneAgent("fix-sidebar", deps)).rejects.toThrow(
+    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
       "fix-sidebar: teardown failed, nothing removed: lint failed"
     )
 
     expect(recorded.calls).toEqual([
       "lock",
       "teardown:/repo/fix-sidebar",
-      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: teardown failed, nothing removed: lint failed",
       "release",
+      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: teardown failed, nothing removed: lint failed",
     ])
     expect(recorded.persisted).toEqual([])
   })
@@ -201,7 +202,7 @@ describe("doneAgent", () => {
         windDownResult: { pushed: false, removed: false, reason: "branch protected" },
       })
 
-      await doneAgent("fix-sidebar", deps)
+      await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
 
       expect(recorded.calls).toEqual([
         "lock",
@@ -227,12 +228,55 @@ describe("doneAgent", () => {
     try {
       const { deps, recorded } = makeDoneDeps({ endSessionResult: "not-found" })
 
-      await doneAgent("fix-sidebar", deps)
+      await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
 
       expect(recorded.logged).toContain("fix-sidebar: link already ended")
       expect(log.mock.calls.at(-1)?.[0]).toBe("done\tfix-sidebar\tworktree removed\tlink already ended")
     } finally {
       log.mockRestore()
     }
+  })
+  test("refuses a session linked to another scratchpad, and reports it where /done was typed", async () => {
+    // Nothing stops the link from moving while `done` waits on the lock; the
+    // wind-down belongs to whoever is sitting in the scratchpad now.
+    const { deps, recorded } = makeDoneDeps()
+
+    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_other" }, deps)).rejects.toThrow(
+      "fix-sidebar: linked to stream_root, not stream_other"
+    )
+
+    expect(recorded.calls).toEqual([
+      "lock",
+      "release",
+      "postToRoot:stream_other:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: linked to stream_root, not stream_other",
+    ])
+    expect(recorded.persisted).toEqual([])
+  })
+
+  test("an unlinked agent is reported to the root, not only to the daemon log", async () => {
+    // harnessd runs detached with its output in a log file nobody is reading, so
+    // a failure this early has to reach the scratchpad or it reaches no one.
+    const { deps, recorded } = makeDoneDeps()
+    deps.findAgent = () => ({ ...AGENT, worktree: undefined })
+
+    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
+      "done needs a linked managed session"
+    )
+
+    expect(recorded.calls).toEqual([
+      "postToRoot:stream_root:harnessd: `/done` for `fix-sidebar` failed: done needs a linked managed session",
+    ])
+  })
+})
+
+describe("parseDone", () => {
+  test("requires a ref and the root the command was typed in", () => {
+    expect(parseDone(["fix-sidebar", "--root-stream-id", "stream_one"])).toEqual({
+      ref: "fix-sidebar",
+      rootStreamId: "stream_one",
+    })
+    expect(() => parseDone(["fix-sidebar"])).toThrow("requires --root-stream-id")
+    expect(() => parseDone(["--root-stream-id", "stream_one"])).toThrow("requires an agent id")
+    expect(() => parseDone(["fix-sidebar", "--root-stream-id", "stream_one", "--force"])).toThrow("unexpected")
   })
 })

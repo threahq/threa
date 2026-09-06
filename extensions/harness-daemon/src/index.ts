@@ -4,6 +4,7 @@ import { adoptClaudeSession, adoptRefused } from "./adopt"
 import {
   parseAdopt,
   parseBackfill,
+  parseDone,
   parseReconnect,
   parseResolve,
   parseResume,
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
   if (command === "kick") return kickAgent(args[0] ?? die("kick requires an agent id, name, or runtime session id"))
   if (command === "clear") return clearAgent(args[0] ?? die("clear requires an agent id, name, or runtime session id"))
   if (command === "done")
-    return doneAgent(args[0] ?? die("done requires an agent id, name, or runtime session id"), defaultDoneDeps())
+    return doneAgent(parseDone(args), defaultDoneDeps())
   if (command === "interrupt") return interruptAgent(args[0] ?? die("interrupt requires an agent id or name"))
   if (command === "steer")
     return steerAgent(args[0] ?? die("steer requires an agent id or name"), args.slice(1).join(" "))

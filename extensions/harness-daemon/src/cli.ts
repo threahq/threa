@@ -1,5 +1,6 @@
 import { resolve } from "node:path"
 import type { AdoptOptions } from "./adopt"
+import type { DoneRequest } from "./done"
 import { die } from "./errors"
 import type { ReconnectOptions } from "./reconnect"
 import type { ResumeOptions, RuntimeKind, SpawnOptions } from "./types"
@@ -28,7 +29,7 @@ Usage:
   threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
   threa-harnessd clear <agent-id-or-name-or-runtime-session-id>
       (kill the pane and start a FRESH conversation on the same scratchpad; opt-in only, never automatic)
-  threa-harnessd done <agent-id-or-name-or-runtime-session-id>
+  threa-harnessd done <agent-id-or-name-or-runtime-session-id> --root-stream-id <stream-id>
       (commit, push, remove the worktree and end the Threa link; opt-in only)
   threa-harnessd interrupt <agent-id-or-name>
   threa-harnessd steer <agent-id-or-name> [follow-up text]
@@ -146,6 +147,19 @@ export function parseReconnect(args: string[]): ReconnectOptions {
   }
   if (!rootStreamId) die("reconnect requires --root-stream-id <stream-id>")
   return { runtimeSessionId, rootStreamId, force }
+}
+
+export function parseDone(args: string[]): DoneRequest {
+  const ref = args.shift()
+  if (!ref || ref.startsWith("--")) die("done requires an agent id, name, or runtime session id")
+  const flags = parseFlags(args)
+  for (const key of Object.keys(flags)) {
+    if (key !== "root-stream-id") die(`unexpected done argument: --${key}`)
+  }
+  return {
+    ref,
+    rootStreamId: stringFlag(flags, "root-stream-id") ?? die("done requires --root-stream-id <stream-id>"),
+  }
 }
 
 export function parseAdopt(args: string[]): AdoptOptions {
