@@ -428,7 +428,11 @@ describe("multi-use invitation shadows", () => {
       caught = error
     }
     expect(caught).toBeInstanceOf(HttpError)
-    expect(caught).toMatchObject({ status: 409, code: "INVITATION_EXHAUSTED" })
+    expect(caught).toMatchObject({
+      status: 409,
+      code: "INVITATION_EXHAUSTED",
+      message: "This invite link has reached its join limit",
+    })
     expect(await InvitationShadowRepository.findById(pool, "inv_child_exhausted")).toMatchObject({ status: "pending" })
     expect(
       (
@@ -493,6 +497,30 @@ describe("multi-use invitation shadows", () => {
       status: 409,
       code: "INVITATION_ALREADY_CLAIMED",
     })
+  })
+
+  test("strips the regional child id from the public claim response", async () => {
+    const token = "claim-strip-token"
+    await service.createShadow({
+      id: "inv_claim_strip",
+      workspaceId,
+      region: "local",
+      kind: "link",
+      email: null,
+      tokenHash: createHash("sha256").update(token).digest("hex"),
+      roleSlug: WORKSPACE_ROLE_SLUGS.MEMBER,
+      expiresAt: future,
+    })
+    const regionalService = new InvitationShadowService({
+      pool,
+      regionalClient: new TestRegionalClient({
+        claimInvitationLink: async () => ({ ok: true, invitationId: "inv_claim_strip_child" }) as never,
+      }),
+      workosOrgService: workos,
+      platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
+    })
+
+    await expect(regionalService.claimByToken(token, "strip@example.com")).resolves.toEqual({ ok: true })
   })
 
   test("reconciles a regional join after CP rollback and a reordered parent revoke", async () => {

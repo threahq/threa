@@ -19,6 +19,24 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex")
 }
 
+const INVITATION_ERROR_MESSAGES = {
+  INVITATION_NOT_FOUND: "Invitation not found",
+  INVITATION_REVOKED: "This invitation has been revoked",
+  INVITATION_EXPIRED: "This invitation has expired",
+  INVITATION_EXHAUSTED: "This invite link has reached its join limit",
+  INVITATION_ALREADY_CLAIMED: "This invite link has already been used",
+  INVITATION_ACCEPTANCE_CONFLICT: "Invitation changed while accepting; try again",
+  INVITATION_PARENT_CONFLICT: "Invitation link changed while accepting; try again",
+  INVITATION_SHADOW_NOT_READY: "Invitations are temporarily unavailable; try again shortly",
+} as const
+
+function invitationErrorMessage(code: string | null | undefined, fallback: string): string {
+  if (code && code in INVITATION_ERROR_MESSAGES) {
+    return INVITATION_ERROR_MESSAGES[code as keyof typeof INVITATION_ERROR_MESSAGES]
+  }
+  return fallback
+}
+
 const WORKOS_ERROR_CODES = {
   USER_ALREADY_MEMBER: "user_already_organization_member",
   EMAIL_ALREADY_INVITED: "email_already_invited_to_organization",
@@ -86,7 +104,10 @@ export class InvitationShadowService {
       } catch (error) {
         if (error instanceof RegionalInvitationError) {
           const code = error.upstreamCode()
-          throw new HttpError(code ?? "Invitation acceptance failed", { status: error.status, code: code ?? undefined })
+          throw new HttpError(invitationErrorMessage(code, "Invitation acceptance failed"), {
+            status: error.status,
+            code: code ?? undefined,
+          })
         }
         throw error
       }
@@ -338,7 +359,8 @@ export class InvitationShadowService {
     }
 
     try {
-      return await this.regionalClient.claimInvitationLink(fullShadow.region, { token, email })
+      const claim = await this.regionalClient.claimInvitationLink(fullShadow.region, { token, email })
+      return claim.alreadyMember ? { ok: true, alreadyMember: claim.alreadyMember } : { ok: true }
     } catch (err) {
       if (err instanceof RegionalInvitationError) {
         const code = err.upstreamCode()
@@ -348,10 +370,10 @@ export class InvitationShadowService {
           code === "INVITATION_EXHAUSTED" ||
           code === "INVITATION_ALREADY_CLAIMED"
         ) {
-          throw new HttpError(code, { status: 409, code })
+          throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 409, code })
         }
         if (code === "INVITATION_NOT_FOUND") {
-          throw new HttpError(code, { status: 404, code })
+          throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 404, code })
         }
       }
       throw err
