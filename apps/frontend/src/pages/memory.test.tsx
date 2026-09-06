@@ -232,7 +232,7 @@ describe("MemoryPage", () => {
       renderPage("/w/ws_1/memory")
 
       const title = screen.getByText(LONG_UNBREAKABLE_TITLE)
-      const card = title.closest("a")
+      const card = title.closest("a")?.parentElement
       expect(card).not.toBeNull()
       expect(card?.className).toContain("[overflow-wrap:anywhere]")
       expect(card?.className).toContain("overflow-hidden")
