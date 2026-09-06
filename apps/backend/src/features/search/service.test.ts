@@ -378,12 +378,36 @@ describe("SearchService memo leg", () => {
       query: "launch date mid June",
       filters: { before, after: undefined },
       limit: 3,
+      mode: "fast",
     })
     expect(messagesByIds).toHaveBeenCalledWith(pool, { ids: ["msg_2"], streamIds: ["stream_1"] })
     expect(memos).toEqual([memo])
     expect(clusters).toEqual([
       expect.objectContaining({ hits: [fakeResult("msg_1")], memoIds: ["memo_1"], matchedVia: ["message", "memory"] }),
     ])
+  })
+
+  test("should hand the memo leg the query embedding when no phrase widens the memo query", async () => {
+    spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+    spyOn(SearchRepository, "conversationsForMessages").mockResolvedValue(new Map())
+    spyOn(SearchRepository, "messagesByIds").mockResolvedValue([])
+    const search = mock(async () => [])
+    const service = makeService({
+      embeddingService: { ...embedding, embed: async () => [0.5, 0.5] },
+      memoSearch: { search },
+    })
+
+    await service.searchClusters({
+      searchFlag: "on",
+      workspaceId: "ws_1",
+      permissions: { accessibleStreamIds: ["stream_1"] },
+      query: " launch date ",
+    })
+
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "launch date", mode: "fast", embedding: [0.5, 0.5] })
+    )
   })
 
   test("should skip the memo leg for a from: filter, for the legacy ranking, and for plain search", async () => {

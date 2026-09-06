@@ -9,7 +9,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type Message } from "../messaging"
 import { MemoRepository, memoSearchText, type Memo, type MemoSearchFilters } from "./repository"
 import { classifyMemoQueryIntent } from "./query-intent"
-import { resolveMemoSearchMode, DEFAULT_MEMO_SEARCH_MODE, MEMO_RERANKER_CANDIDATE_LIMIT } from "./config"
+import { resolveMemoSearchMode, MEMO_RERANKER_CANDIDATE_LIMIT, type MemoSearchMode } from "./config"
 import type { RerankerLike } from "./reranker"
 import type { EmbeddingServiceLike } from "./embedding-service"
 import { StreamRepository, type Stream } from "../streams"
@@ -55,6 +55,10 @@ export interface MemoExplorerSearchParams {
   exact?: boolean
   filters?: MemoExplorerFilters
   limit?: number
+  /** Which knob bundle runs; `fast` skips the reranker's model call. Defaults to `balanced`. */
+  mode?: MemoSearchMode
+  /** An embedding of `query` the caller already holds; skips the embedding call. */
+  embedding?: number[]
 }
 
 export interface MemoStreamRef {
@@ -154,13 +158,15 @@ export class MemoExplorerService {
     }
 
     try {
-      const embedding = await this.embeddingService.embed(query, {
-        workspaceId,
-        functionId: "memo-explorer-query",
-      })
+      const embedding =
+        params.embedding ??
+        (await this.embeddingService.embed(query, {
+          workspaceId,
+          functionId: "memo-explorer-query",
+        }))
 
       const intent = classifyMemoQueryIntent(query)
-      const mode = resolveMemoSearchMode(DEFAULT_MEMO_SEARCH_MODE)
+      const mode = resolveMemoSearchMode(params.mode)
 
       const hybridResults = await MemoRepository.hybridSearch(this.pool, {
         workspaceId,
