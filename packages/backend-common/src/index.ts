@@ -137,6 +137,7 @@ export {
   callParticipantId,
   callEndpointId,
   perfCaptureId,
+  searchQueryLogId,
 } from "./id"
 export {
   parseCookies,

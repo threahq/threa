@@ -51,6 +51,10 @@ import type { WorkspacePermissionSlug } from "./workspace-permissions"
 /** Maximum quoted phrase filters accepted by message search. */
 export const MAX_SEARCH_PHRASES = 5
 
+/** What a user opened from a search result list, attributed to a `search_query_log` row. */
+export const SEARCH_CLICK_KINDS = ["message", "conversation", "memo"] as const
+export type SearchClickKind = (typeof SEARCH_CLICK_KINDS)[number]
+
 interface CreateStreamInputBase {
   type: StreamType
   displayName?: string

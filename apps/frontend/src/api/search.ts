@@ -1,5 +1,5 @@
 import api from "./client"
-import type { AuthorType, ConversationStatus, StreamType } from "@threa/types"
+import type { AuthorType, ConversationStatus, SearchClickKind, StreamType } from "@threa/types"
 
 export type ArchiveStatus = "active" | "archived"
 
@@ -57,6 +57,13 @@ export interface SearchResponse {
   results: SearchResultItem[]
   /** Empty on exact and keyword-only searches — the conversation leg is semantic. */
   conversations: ConversationSearchResult[]
+  /** Set only when the user opted into search query logging (`searchQueryLog` flag); pass it to `recordSearchClick`. */
+  queryLogId: string | null
+}
+
+export interface SearchClickTarget {
+  kind: SearchClickKind
+  id: string
 }
 
 export async function searchMessages(workspaceId: string, request: SearchRequest): Promise<SearchResponse> {
@@ -76,4 +83,13 @@ export async function searchMessages(workspaceId: string, request: SearchRequest
   }
 
   return api.post<SearchResponse>(`/api/workspaces/${workspaceId}/search`, body)
+}
+
+/** Attributes the result the user opened to a logged search. Last click wins. */
+export async function recordSearchClick(
+  workspaceId: string,
+  queryLogId: string,
+  target: SearchClickTarget
+): Promise<void> {
+  await api.post<void>(`/api/workspaces/${workspaceId}/search/log/${queryLogId}/click`, target)
 }

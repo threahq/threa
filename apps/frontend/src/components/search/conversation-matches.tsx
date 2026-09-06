@@ -9,11 +9,13 @@ export function ConversationMatches({
   workspaceId,
   conversations,
   compact = false,
+  onSelect,
 }: {
   workspaceId: string
   conversations: ConversationSearchResult[]
   /** Clamps the summary to one line, for the sidebar panel's narrower column. */
   compact?: boolean
+  onSelect?: (conversation: ConversationSearchResult) => void
 }) {
   if (conversations.length === 0) return null
 
@@ -23,7 +25,12 @@ export function ConversationMatches({
       <ul className="flex flex-col gap-1.5">
         {conversations.map((conversation) => (
           <li key={conversation.id}>
-            <ConversationMatchItem workspaceId={workspaceId} conversation={conversation} compact={compact} />
+            <ConversationMatchItem
+              workspaceId={workspaceId}
+              conversation={conversation}
+              compact={compact}
+              onSelect={onSelect}
+            />
           </li>
         ))}
       </ul>
@@ -35,10 +42,12 @@ function ConversationMatchItem({
   workspaceId,
   conversation,
   compact,
+  onSelect,
 }: {
   workspaceId: string
   conversation: ConversationSearchResult
   compact: boolean
+  onSelect?: (conversation: ConversationSearchResult) => void
 }) {
   const streamName = useStreamName(workspaceId, conversation.streamId) ?? "Unknown"
   const anchor = conversation.firstMessageId ? `?m=${conversation.firstMessageId}` : ""
@@ -48,6 +57,7 @@ function ConversationMatchItem({
   return (
     <Link
       to={`/w/${workspaceId}/s/${conversation.streamId}${anchor}`}
+      onClick={onSelect ? () => onSelect(conversation) : undefined}
       className="group block overflow-hidden rounded-lg border-l-[3px] border border-l-transparent border-border/50 bg-card transition-all hover:border-border hover:shadow-sm [overflow-wrap:anywhere]"
     >
       <div className="min-w-0 px-3.5 py-3">

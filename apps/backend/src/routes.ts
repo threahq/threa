@@ -93,7 +93,7 @@ import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
 import type { EventService } from "./features/messaging"
 import type { AttachmentService } from "./features/attachments"
-import type { SearchService } from "./features/search"
+import type { SearchService, SearchQueryLogService } from "./features/search"
 import type { MemoExplorerService } from "./features/memos"
 import type { ConversationService } from "./features/conversations"
 import type { InvitationService } from "./features/invitations"
@@ -147,6 +147,7 @@ interface Dependencies {
   eventService: EventService
   attachmentService: AttachmentService
   searchService: SearchService
+  searchQueryLogService: SearchQueryLogService
   memoExplorerService: MemoExplorerService
   conversationService: ConversationService
   boundaryExtractionService: BoundaryExtractionService
@@ -218,6 +219,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     eventService,
     attachmentService,
     searchService,
+    searchQueryLogService,
     memoExplorerService,
     conversationService,
     boundaryExtractionService,
@@ -341,7 +343,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     steeredMessageService,
   })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
-  const search = createSearchHandlers({ pool, searchService, featureFlagService })
+  const search = createSearchHandlers({ pool, searchService, searchQueryLogService, featureFlagService })
   const memo = createMemoHandlers({ pool, memoExplorerService })
   const emoji = createEmojiHandlers()
   const boardExclusionService = new BoardExclusionService(pool)
@@ -868,6 +870,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("search.messages", "read"),
     rateLimits.search,
     search.search
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/search/log/:id/click",
+    ...authed,
+    audit("search.log_click", "write"),
+    search.recordClick
   )
   app.post(
     "/api/workspaces/:workspaceId/memos/search",

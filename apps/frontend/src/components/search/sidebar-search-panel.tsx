@@ -43,6 +43,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
     canSearchDeeper,
     isSearchingDeeper,
     searchDeeper,
+    recordResultClick,
   } = useMessageSearch(workspaceId, query)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const { preferences } = usePreferences()
@@ -80,8 +81,9 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const handleResultSelect = useCallback(
     (result: SearchResultItem) => {
       setActiveResultId(result.id)
+      recordResultClick({ kind: "message", id: result.id })
     },
-    [setActiveResultId]
+    [setActiveResultId, recordResultClick]
   )
 
   const scrollResultIntoView = (resultId: string) => {
@@ -113,7 +115,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
       searchDeeper()
       return
     }
-    setActiveResultId(active.id)
+    handleResultSelect(active)
     const href = `/w/${workspaceId}/s/${active.streamId}?m=${active.id}`
     if (withModifier) {
       window.open(href, "_blank")
@@ -236,8 +238,18 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
           {hasQuery && !displayError && (
             <div className="px-1 pt-1">
-              <MemoMatches memos={memos} exploreHref={exploreHref} compact />
-              <ConversationMatches workspaceId={workspaceId} conversations={conversations} compact />
+              <MemoMatches
+                memos={memos}
+                exploreHref={exploreHref}
+                compact
+                onSelect={(result) => recordResultClick({ kind: "memo", id: result.memo.id })}
+              />
+              <ConversationMatches
+                workspaceId={workspaceId}
+                conversations={conversations}
+                compact
+                onSelect={(conversation) => recordResultClick({ kind: "conversation", id: conversation.id })}
+              />
             </div>
           )}
 

@@ -18,6 +18,7 @@ import { mockSearchResultsList } from "@/test/fixtures/messages"
 import type { AuthorType } from "@threa/types"
 import { ApiError } from "@/api"
 import type { ConversationSearchResult, MemoExplorerResult } from "@/api"
+import * as apiModule from "@/api"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -31,6 +32,7 @@ type MockSearchResult = Omit<(typeof mockSearchResultsList)[number], "authorType
 const mockSearchState = {
   results: [] as MockSearchResult[],
   conversations: [] as ConversationSearchResult[],
+  queryLogId: null as string | null,
   isLoading: false,
   search: vi.fn(),
   clear: vi.fn(),
@@ -205,6 +207,7 @@ function installSpies() {
       ({
         results: mockSearchState.results,
         conversations: mockSearchState.conversations,
+        queryLogId: mockSearchState.queryLogId,
         isLoading: mockSearchState.isLoading,
         error: null,
         search: mockSearchState.search,
@@ -270,6 +273,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
     workspaceStreams = mockStreamsList
     mockSearchState.results = []
     mockSearchState.conversations = []
+    mockSearchState.queryLogId = null
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
@@ -625,6 +629,48 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       await user.keyboard("{Enter}")
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel2?m=msg_2")
+    })
+
+    it("attributes the opened result to the logged search, by click and by keyboard", async () => {
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.conversations = [buildConversationResult()]
+      mockSearchState.queryLogId = "sqlog_1"
+      const recordSearchClick = vi.spyOn(apiModule, "recordSearchClick").mockResolvedValue(undefined)
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await user.click(await screen.findByText(/from the search results/))
+      expect(recordSearchClick).toHaveBeenLastCalledWith("workspace_1", "sqlog_1", { kind: "message", id: "msg_1" })
+
+      await user.click(screen.getByText("Choosing the launch date"))
+      expect(recordSearchClick).toHaveBeenLastCalledWith("workspace_1", "sqlog_1", {
+        kind: "conversation",
+        id: "conv_1",
+      })
+
+      await user.click(editor)
+      await user.keyboard("{ArrowDown}{ArrowDown}{Enter}")
+      expect(recordSearchClick).toHaveBeenLastCalledWith("workspace_1", "sqlog_1", { kind: "message", id: "msg_2" })
+    })
+
+    it("records nothing when the search was not logged", async () => {
+      mockSearchState.results = mockSearchResultsList
+      const recordSearchClick = vi.spyOn(apiModule, "recordSearchClick").mockResolvedValue(undefined)
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await user.click(await screen.findByText(/from the search results/))
+      expect(recordSearchClick).not.toHaveBeenCalled()
     })
 
     it("calls the search API (debounced) as the query changes", async () => {

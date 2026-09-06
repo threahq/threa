@@ -15,11 +15,13 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
 import type { ConversationSearchResult, MemoExplorerResult } from "@/api"
+import * as apiModule from "@/api"
 
 const search = vi.fn()
 const clear = vi.fn()
 const mockUseMemoSearch = vi.fn()
 let mockConversations: ConversationSearchResult[] = []
+let mockQueryLogId: string | null = null
 
 function LocationProbe() {
   const location = useLocation()
@@ -103,6 +105,7 @@ describe("SearchPage", () => {
     search.mockReset()
     clear.mockReset()
     mockConversations = []
+    mockQueryLogId = null
     mockUseMemoSearch.mockReset()
     mockUseMemoSearch.mockReturnValue({ data: { results: [] }, isLoading: false, error: null })
     vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("on")
@@ -114,6 +117,7 @@ describe("SearchPage", () => {
         ({
           results: [mockSearchResultsList[1]!, mockSearchResultsList[0]!],
           conversations: mockConversations,
+          queryLogId: mockQueryLogId,
           isLoading: false,
           error: null,
           search,
@@ -301,6 +305,39 @@ describe("SearchPage", () => {
       expect(screen.queryByText("Memories")).not.toBeInTheDocument()
       const lastCall = mockUseMemoSearch.mock.calls.at(-1)
       expect(lastCall?.[2]).toEqual({ enabled: false })
+    })
+  })
+
+  describe("search query log", () => {
+    it("attributes the opened message, memo, or conversation to the logged search", async () => {
+      mockQueryLogId = "sqlog_1"
+      mockConversations = [buildConversationResult()]
+      mockUseMemoSearch.mockReturnValue({ data: { results: [buildMemoResult()] }, isLoading: false, error: null })
+      const recordSearchClick = vi.spyOn(apiModule, "recordSearchClick").mockResolvedValue(undefined)
+      const user = userEvent.setup()
+
+      // Each open navigates off the page, so every kind gets its own mount.
+      const opens: [() => Promise<HTMLElement>, apiModule.SearchClickTarget][] = [
+        [() => screen.findByText(/from the search results/), { kind: "message", id: "msg_1" }],
+        [() => screen.findByRole("link", { name: "1 message in #general" }), { kind: "memo", id: "memo_1" }],
+        [() => screen.findByText("Choosing the launch date"), { kind: "conversation", id: "conv_1" }],
+      ]
+      for (const [target, expected] of opens) {
+        const { unmount } = renderPage()
+        await user.click(await target())
+        expect(recordSearchClick).toHaveBeenLastCalledWith("workspace_1", "sqlog_1", expected)
+        unmount()
+      }
+      expect(recordSearchClick).toHaveBeenCalledTimes(opens.length)
+    })
+
+    it("records nothing when the search was not logged", async () => {
+      const recordSearchClick = vi.spyOn(apiModule, "recordSearchClick").mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      renderPage()
+
+      await user.click(await screen.findByText(/from the search results/))
+      expect(recordSearchClick).not.toHaveBeenCalled()
     })
   })
 
