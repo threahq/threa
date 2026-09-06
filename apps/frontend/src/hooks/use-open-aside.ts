@@ -6,6 +6,7 @@ import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { useCreateStream } from "./use-streams"
 import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"
 import { openAside } from "@/stores/aside-store"
+import { capture } from "@/lib/analytics/posthog"
 
 /**
  * Where an aside is opened from. A timeline surface (channel, DM, scratchpad,
@@ -68,6 +69,7 @@ export function useOpenAside(workspaceId: string) {
 
   return useCallback(
     async (origin: AsideOrigin) => {
+      capture("aside_opened", { kind: origin.kind })
       const refs = buildOriginRefs(origin)
       let aside
       try {

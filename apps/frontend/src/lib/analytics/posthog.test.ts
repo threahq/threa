@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
+  capture,
   captureException,
   sanitizeUrlProperties,
   startAnalytics,
@@ -16,6 +17,7 @@ function createFakeClient(): AnalyticsClient {
     group: vi.fn(),
     reset: vi.fn(),
     captureException: vi.fn(),
+    capture: vi.fn(),
   } as unknown as AnalyticsClient
 }
 
@@ -161,6 +163,29 @@ describe("analytics client lifecycle", () => {
 
     expect(root.init).toHaveBeenCalledTimes(1)
     expect(root.instances.get("threa_tok_1")!.identify).toHaveBeenCalledTimes(1)
+  })
+
+  it("should not throw when capturing before analytics starts", () => {
+    expect(() => capture("event_1", { foo: "bar" })).not.toThrow()
+  })
+
+  it("should forward the event name and properties to the client after startAnalytics", () => {
+    const root = createFakeRoot()
+
+    startAnalytics(params, root)
+    capture("event_1", { foo: "bar" })
+
+    expect(root.instances.get("threa_tok_1")!.capture).toHaveBeenCalledWith("event_1", { foo: "bar" })
+  })
+
+  it("should capture nothing after stopAnalytics", () => {
+    const root = createFakeRoot()
+
+    startAnalytics(params, root)
+    stopAnalytics()
+    capture("event_1", { foo: "bar" })
+
+    expect(root.instances.get("threa_tok_1")!.capture).not.toHaveBeenCalled()
   })
 })
 

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 import { useSidebar } from "@/contexts/sidebar-context"
+import { capture } from "@/lib/analytics/posthog"
 
 interface OpenSearchOptions {
   /** Seed the search input (e.g. text carried over from the quick switcher). */
@@ -51,6 +52,7 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
 
   const openSearch = useCallback(
     (options?: OpenSearchOptions) => {
+      capture("search_opened")
       if (isMobile) {
         // Mobile gets the full-page experience (mirrors memory/file explorer).
         // The sidebar overlay would otherwise sit on top of the page.

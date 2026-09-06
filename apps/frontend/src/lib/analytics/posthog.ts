@@ -4,7 +4,7 @@ export type AnalyticsRoot = Pick<typeof posthog, "init">
 
 export type AnalyticsClient = Pick<
   typeof posthog,
-  "opt_in_capturing" | "opt_out_capturing" | "identify" | "group" | "reset" | "captureException"
+  "opt_in_capturing" | "opt_out_capturing" | "identify" | "group" | "reset" | "captureException" | "capture"
 >
 
 /**
@@ -141,4 +141,10 @@ export function captureException(error: unknown, properties?: Record<string, unk
   const current = active
   if (!current) return
   guard("captureException", () => current.client.captureException(error, properties))
+}
+
+export function capture(event: string, properties?: Record<string, string>): void {
+  const current = active
+  if (!current) return
+  guard("capture", () => current.client.capture(event, properties))
 }

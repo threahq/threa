@@ -43,6 +43,7 @@ import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
 import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+import { capture } from "@/lib/analytics/posthog"
 import {
   clearMobileComposerDragHeight,
   loadMobileComposerDragHeight,
@@ -325,6 +326,15 @@ export function MessageComposer({
   const stashedDraftsTriggerFab = stashedDrafts ? <StashedDraftsPicker {...stashedDrafts} size="fab" /> : undefined
 
   const richEditorRef = useRef<RichEditorHandle>(null)
+
+  const hasCapturedComposerOpenRef = useRef(false)
+  const handleComposerFocus = useCallback(() => {
+    if (!hasCapturedComposerOpenRef.current) {
+      hasCapturedComposerOpenRef.current = true
+      capture("composer_opened")
+    }
+    onComposerFocus?.()
+  }, [onComposerFocus])
 
   useEffect(() => {
     if (!streamId) return
@@ -1146,7 +1156,7 @@ export function MessageComposer({
       disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
       onEscapeBlur={onEscapeBlur}
-      onFocus={onComposerFocus}
+      onFocus={handleComposerFocus}
       ariaLabel="Message input"
       ariaDescribedBy={instructionsId}
       blurOnEscape
@@ -1330,7 +1340,7 @@ export function MessageComposer({
                 staticToolbarOpen={!isMobile}
                 disableSelectionToolbar
                 onEditLastMessage={onEditLastMessage}
-                onFocus={onComposerFocus}
+                onFocus={handleComposerFocus}
                 ariaLabel="Fullscreen message editor"
                 ariaDescribedBy={instructionsId}
                 blurOnEscape

@@ -7,6 +7,7 @@ import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as relativeTimeModule from "@/components/relative-time"
+import * as analyticsModule from "@/lib/analytics/posthog"
 
 const mockUseMemoSearch = vi.fn()
 const mockUseMemoDetail = vi.fn()
@@ -193,6 +194,57 @@ describe("MemoryPage", () => {
 
     expect(refetchSearch).toHaveBeenCalledTimes(1)
     expect(refetchDetail).toHaveBeenCalledTimes(1)
+  })
+
+  describe("memo_opened analytics", () => {
+    function memoResult(id: string, title: string) {
+      return { memo: buildMemo({ id, title }), distance: 0, sourceStream: null, rootStream: null }
+    }
+
+    it("should capture memo_opened when a memo card is clicked", async () => {
+      const capture = vi.spyOn(analyticsModule, "capture").mockImplementation(() => {})
+      mockUseMemoSearch.mockReturnValue({
+        data: { results: [memoResult("memo_1", "Launch decision")] },
+        isLoading: false,
+        isFetching: false,
+        refetch: vi.fn(),
+      })
+      mockUseMemoDetail.mockReturnValue({ data: null, isLoading: false, isFetching: false, refetch: vi.fn() })
+
+      renderPage("/w/ws_1/memory")
+
+      await userEvent.click(screen.getByText("Launch decision"))
+
+      expect(capture).toHaveBeenCalledWith("memo_opened")
+    })
+
+    it("should not capture memo_opened when a deep link loads a memo on mount", () => {
+      const capture = vi.spyOn(analyticsModule, "capture").mockImplementation(() => {})
+      mockUseMemoSearch.mockReturnValue({
+        data: { results: [memoResult("memo_1", "Launch decision")] },
+        isLoading: false,
+        isFetching: false,
+        refetch: vi.fn(),
+      })
+      mockUseMemoDetail.mockReturnValue({
+        data: {
+          memo: {
+            memo: buildMemo({ id: "memo_1", title: "Launch decision" }),
+            distance: 0,
+            sourceStream: null,
+            rootStream: null,
+            sourceMessages: [],
+          },
+        },
+        isLoading: false,
+        isFetching: false,
+        refetch: vi.fn(),
+      })
+
+      renderPage("/w/ws_1/memory?memo=memo_1")
+
+      expect(capture).not.toHaveBeenCalled()
+    })
   })
 
   // Regression guard for memory view overflow: long unbreakable strings (URLs,
