@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test"
 import { fetchAttachmentBytes } from "./attachments"
-import { ThreaClient } from "./client"
+import { ThreaApiError, ThreaClient } from "./client"
 import { DelegationClient } from "./delegation-client"
 
 const fetchSpy = spyOn(globalThis, "fetch")
@@ -61,6 +61,42 @@ function jsonFetch(body: unknown): typeof fetch {
       headers: { "content-type": "application/json" },
     })) as unknown as typeof fetch
 }
+
+describe("claim retry hints", () => {
+  const client = new ThreaClient({ baseUrl: "https://example.test", workspaceId: "ws_1", apiKey: "key" })
+
+  for (const [headers, expected] of [
+    [{ "Retry-After": "12" }, 12_000],
+    [{ "RateLimit-Reset": "27" }, 27_000],
+    [{ "Retry-After": "12", "RateLimit-Reset": "27" }, 12_000],
+    [{ "Retry-After": "invalid", "RateLimit-Reset": "27" }, 27_000],
+    [{ "RateLimit-Reset": "invalid" }, undefined],
+  ] as const) {
+    it(`should preserve the retry delay from ${JSON.stringify(headers)}`, async () => {
+      fetchSpy.mockImplementation((async () => new Response("", { status: 429, headers })) as unknown as typeof fetch)
+      const error = await client.claim({}).catch((error: unknown) => error)
+      expect(error).toBeInstanceOf(ThreaApiError)
+      expect(error).toMatchObject({ status: 429, retryAfterMs: expected })
+    })
+  }
+
+  it("should interpret an HTTP-date Retry-After relative to the response time", async () => {
+    const now = spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-06T16:48:58Z"))
+    try {
+      fetchSpy.mockImplementation(
+        (async () =>
+          new Response("", {
+            status: 503,
+            headers: { "Retry-After": "Sun, 06 Sep 2026 16:49:38 GMT" },
+          })) as unknown as typeof fetch
+      )
+      const error = await client.claim({}).catch((error: unknown) => error)
+      expect(error).toMatchObject({ status: 503, retryAfterMs: 40_000 })
+    } finally {
+      now.mockRestore()
+    }
+  })
+})
 
 describe("ThreaClient.sendMessage", () => {
   const client = new ThreaClient({ baseUrl: "https://example.test", workspaceId: "ws_1", apiKey: "key" })

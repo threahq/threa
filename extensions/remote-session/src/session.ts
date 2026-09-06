@@ -54,6 +54,7 @@ const CLAIM_TTL_SECONDS = 120
 // socket reconnect resets to the fast cadence. Worst-case degraded latency for
 // a socketless session is one cap interval.
 const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
+const CLAIM_RETRY_CAP_MS = 2 * 60 * 1000
 // Harness preflight can take 10s and replacement verification up to 15s.
 export const RECONNECT_HANDOFF_FALLBACK_MS = 30_000
 const MAX_CLAIMS_PER_DRAIN = 20
@@ -365,6 +366,8 @@ export class RemoteSession {
   private claiming = false
   /** Claim HTTP mutates server presence outside presenceTail, so teardown waits for its drain. */
   private claimDrainTask: Promise<boolean> | undefined
+  private claimRetryTimer: ReturnType<typeof setTimeout> | undefined
+  private claimFailures = 0
   private reconnectHandoff = false
   private onHandoffReset: (() => unknown | Promise<unknown>) | undefined
   private reconnectResetTimer: ReturnType<typeof setTimeout> | undefined
@@ -568,6 +571,8 @@ export class RemoteSession {
     if (this.stopped) return
     this.stopped = true
     if (this.pollTimer) clearTimeout(this.pollTimer)
+    if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer)
+    this.claimRetryTimer = undefined
     this.archive.stop()
     this.resetReconnectHandoff()
     await this.reconnectFallbackTask
@@ -596,8 +601,7 @@ export class RemoteSession {
     const inflight = [...this.inflight.values()]
     for (const route of inflight) route.revoke()
     for (const route of this.completed.values()) route.revoke()
-    for (const context of this.observedClaims.values()) context.handle.dispose()
-    this.observedClaims.clear()
+    for (const context of this.observedClaims.values()) this.fenceObservedClaim(context.invocation)
     this.inflight.clear()
     this.completed.clear()
     this.terminalReplies.clear()
@@ -741,7 +745,11 @@ export class RemoteSession {
     // No claims while detached-pending-restore: the scratchpad is archived, so
     // any claimable work predates the archive and would reply into a closed
     // stream. Restore re-runs the drain.
-    if (this.stopped || this.claiming || this.claimDrainTask || this.archive.detached || this.reconnectHandoff) {
+    if (this.stopped || this.claimRetryTimer || this.archive.detached || this.reconnectHandoff) {
+      return Promise.resolve(false)
+    }
+    if (this.claiming || this.claimDrainTask) {
+      this.claimDrainRequested = true
       return Promise.resolve(false)
     }
     this.claiming = true
@@ -749,6 +757,7 @@ export class RemoteSession {
     this.claimDrainTask = task
     const clear = () => {
       if (this.claimDrainTask === task) this.claimDrainTask = undefined
+      this.scheduleRequestedClaimDrain()
     }
     void task.then(clear, clear)
     return task
@@ -782,7 +791,10 @@ export class RemoteSession {
           await this.handleSessionControl(invocation)
           // After a stop, don't immediately pull the next queued turn — the user
           // asked for quiet (mirrors Pi's runStopCommand).
-          if (isStop) break
+          if (isStop) {
+            this.claimDrainRequested = false
+            break
+          }
           continue
         }
         const deferred = await this.startFoldedTurn(invocation)
@@ -792,6 +804,7 @@ export class RemoteSession {
         for (const control of deferred) {
           if (parseSessionControlCommand(control)?.name === "stop") {
             await this.handleSessionControl(control)
+            this.claimDrainRequested = false
             return claimedAny
           }
           await this.handleSessionControl(control)
@@ -801,7 +814,6 @@ export class RemoteSession {
       this.log(`claim failed: ${this.summarize(error)}`)
     } finally {
       this.claiming = false
-      this.scheduleRequestedClaimDrain()
     }
     return claimedAny
   }
@@ -827,10 +839,18 @@ export class RemoteSession {
    * the drain into a TTL-recycle loop.
    */
   private async claimAndHydrate(busy: boolean, responseStreamId?: string): Promise<ClaimedInvocation | null> {
-    const invocation = await this.client.claim({
-      ...this.claimBody(busy),
-      ...(responseStreamId ? { responseStreamId } : {}),
-    })
+    if (this.claimRetryTimer) return null
+    let invocation: ClaimedInvocation | null
+    try {
+      invocation = await this.client.claim({
+        ...this.claimBody(busy),
+        ...(responseStreamId ? { responseStreamId } : {}),
+      })
+      this.claimFailures = 0
+    } catch (error) {
+      this.scheduleClaimRetry(error)
+      throw error
+    }
     if (!invocation || invocation.sealedContext === undefined) return invocation
     const fail = async (reason: string): Promise<null> => {
       this.log(`sealed claim ${invocation.id} unusable: ${reason}`)
@@ -874,9 +894,27 @@ export class RemoteSession {
     }
   }
 
+  private scheduleClaimRetry(error: unknown): void {
+    if (this.stopped || this.archive.detached || this.claimRetryTimer) return
+    if (error instanceof ThreaApiError && error.status < 500 && !RETRYABLE_POST_STATUSES.has(error.status)) return
+    const backoff = Math.min(CLAIM_RETRY_CAP_MS, this.config.pollMs * 2 ** this.claimFailures)
+    this.claimFailures++
+    const retryAfter = error instanceof ThreaApiError ? (error.retryAfterMs ?? 0) : 0
+    const delay = Math.min(2_147_483_647, Math.max(backoff, retryAfter))
+    this.log(`claim failed; retrying in ${delay}ms: ${this.summarize(error)}`)
+    // A connected socket's next poll can be 15 minutes away. Retry the failed
+    // claim independently, and don't let new pushes bypass the cooldown.
+    this.claimRetryTimer = setTimeout(() => {
+      this.claimRetryTimer = undefined
+      this.claimDrainRequested = true
+      this.scheduleRequestedClaimDrain()
+    }, delay)
+  }
+
   private async claimNext(busy: boolean, responseStreamId?: string): Promise<ClaimedInvocation | null> {
+    const lifecycle = this.lifecycle
     const invocation = await this.claimAndHydrate(busy, responseStreamId)
-    if (!invocation) return null
+    if (!invocation || this.stopped || this.archive.detached || lifecycle !== this.lifecycle) return null
     const identity = invocation.sealing ? this.bik.current : undefined
     const handle = this.transport.observeClaim({
       invocationId: invocation.id,
@@ -1043,14 +1081,14 @@ export class RemoteSession {
   private scheduleRequestedClaimDrain(): void {
     if (!this.claimDrainRequested || this.claimDrainScheduled || this.claiming || this.stopped || this.archive.detached)
       return
-    this.claimDrainRequested = false
     this.claimDrainScheduled = true
     // A task (not an awaited/microtask re-entry) lets the currently executing
     // cancellation callback leave its global adapter queue before a replacement
     // observation calls handle.sync().
     setTimeout(() => {
       this.claimDrainScheduled = false
-      if (this.stopped || this.archive.detached) return
+      if (!this.claimDrainRequested || this.stopped || this.archive.detached) return
+      this.claimDrainRequested = false
       void this.claimDrain().finally(() => this.scheduleRequestedClaimDrain())
     }, 0)
   }
@@ -2035,6 +2073,8 @@ export class RemoteSession {
     }
     if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
+    this.claimDrainRequested = true
+    this.scheduleRequestedClaimDrain()
   }
 
   private async reopenAfterFailedCompletion(route: TurnRoute, prepared: PreparedClose | undefined): Promise<void> {

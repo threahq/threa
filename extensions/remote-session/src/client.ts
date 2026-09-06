@@ -82,11 +82,26 @@ export class ThreaApiError extends Error {
     message: string,
     readonly status: number,
     /** The server's structured error `code` (e.g. `E2E_STREAM_PLAINTEXT_UNSUPPORTED`), when the body was JSON. */
-    readonly code?: string
+    readonly code?: string,
+    readonly retryAfterMs?: number
   ) {
     super(message)
     this.name = "ThreaApiError"
   }
+}
+
+function retryDelayMs(headers: Headers): number | undefined {
+  const retryAfter = headers.get("Retry-After")?.trim()
+  if (retryAfter) {
+    const delay = /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now()
+    if (Number.isFinite(delay)) return Math.max(0, delay)
+  }
+  const reset = headers.get("RateLimit-Reset")?.trim()
+  if (reset && /^\d+$/.test(reset)) {
+    const delay = Number(reset) * 1000
+    if (Number.isFinite(delay)) return delay
+  }
+  return undefined
 }
 
 export interface ThreaClientOptions {
@@ -161,7 +176,8 @@ export class ThreaClient {
       throw new ThreaApiError(
         `Threa API ${response.status}${detail ? ` (${detail})` : `: ${response.statusText}`}`,
         response.status,
-        code
+        code,
+        retryDelayMs(response.headers)
       )
     }
     if (response.status === 204) return undefined as T
