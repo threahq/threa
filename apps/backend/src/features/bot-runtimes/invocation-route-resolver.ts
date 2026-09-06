@@ -205,14 +205,14 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
   if (mentionable.some((candidate) => candidate.id === bot.id)) return routes
   if ((mentionable.length > 0 || hasPersona) && !mentionedBotIds.includes(bot.id)) return routes
   if (!(await allows(db, source, stream, bot.id))) return routes
-  let link = await BotRuntimeSessionLinkRepository.findActiveByStream(db, {
+  let link = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, {
     workspaceId: source.workspaceId,
     botId: bot.id,
     rootStreamId: root.id,
     activeStreamId: stream.id,
   })
   if (!link && stream.id !== root.id) {
-    link = await BotRuntimeSessionLinkRepository.findActiveByStream(db, {
+    link = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, {
       workspaceId: source.workspaceId,
       botId: bot.id,
       rootStreamId: root.id,

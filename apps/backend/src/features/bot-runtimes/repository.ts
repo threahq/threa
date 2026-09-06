@@ -898,6 +898,24 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  /**
+   * Route resolution's read of the link it is about to target (INV-20). The share
+   * lock serializes against `endActiveByRuntimeSession`: without it a reconcile
+   * that read the link a moment before `/done` ended it goes on to insert an
+   * invocation targeted at a session that no longer exists, and since claiming
+   * requires `target_runtime_session_id IS NULL OR = <claimer>`, no other session
+   * can ever pick it up — the message silently gets no reply.
+   */
+  async findActiveByStreamForShare(
+    db: Querier,
+    params: { workspaceId: string; botId: string; rootStreamId: string; activeStreamId: string }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND root_stream_id = ${params.rootStreamId} AND active_stream_id = ${params.activeStreamId} AND status = 'active' FOR SHARE`
+    )
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
   // A runtime client is identified by (instanceId, runtimeSessionId). Session-create
   // callers pass `runtimeKind` so reuse matches the link of the kind being created —
   // the unique key includes runtime_kind, so two kinds can hold the same instance/
@@ -1205,8 +1223,14 @@ export const BotInvocationRepository = {
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
-  /** Only 'pending' rows — a claimed invocation is mid-turn and goes through `cancelClaim`/the claim loop's own fencing instead. */
-  async cancelPendingByTargetRuntimeSession(
+  /**
+   * Claimed rows are cancelled here too, unlike a routing change: the session
+   * this invocation names is ending, so its turn will never complete and the
+   * target filter on the claim query means no other session may take it over.
+   * Rows merely claimed BY that session with no target are left alone — those
+   * fall back to any claimer once the claim expires.
+   */
+  async cancelActiveByTargetRuntimeSession(
     db: Querier,
     params: { workspaceId: string; botId: string; runtimeSessionId: string }
   ): Promise<BotInvocation[]> {
@@ -1215,7 +1239,7 @@ export const BotInvocationRepository = {
       SET status = 'cancelled', cancellation_reason = 'routing_changed', updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId}
         AND actor_type = 'bot' AND actor_id = ${params.botId}
-        AND status = 'pending'
+        AND status IN ('pending', 'claimed')
         AND target_runtime_session_id = ${params.runtimeSessionId}
       RETURNING *
     `)

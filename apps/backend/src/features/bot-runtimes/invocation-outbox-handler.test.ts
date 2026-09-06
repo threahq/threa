@@ -138,7 +138,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
     } as never)
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
     spyOn(streamsModule, "projectStreamForBot").mockResolvedValue(null as never)
-    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
+    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare")
 
     const routes = await resolveCanonicalInvocationRoutes(pool, source())
 
@@ -174,7 +174,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
     spyOn(E2eStreamActorsRepository, "listForStream").mockResolvedValue([])
-    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
+    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare")
 
     const routes = await resolveCanonicalInvocationRoutes(
       pool,
@@ -194,7 +194,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
       actorId: "bot_1",
     } as never)
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
-    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare").mockResolvedValue(null)
     const instances = spyOn(BotRuntimeInstanceRepository, "findLatestForBots")
 
     instances.mockResolvedValue(new Map([["bot_1", { runtimeKind: "pi-local" }]]) as never)
@@ -227,7 +227,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
       actorId: "bot_1",
     } as never)
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
-    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
+    const findLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare")
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ instanceId: "inst_1", runtimeSessionId: "runtime_1" } as never)
 
@@ -255,7 +255,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
       actorId: "bot_1",
     } as never)
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
-    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare").mockResolvedValue(null)
     spyOn(BotRuntimeInstanceRepository, "findLatestForBots").mockResolvedValue(
       new Map([["bot_1", { runtimeKind: "openclaw" }]]) as never
     )
@@ -286,7 +286,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
       actorId: "bot_1",
     } as never)
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
-    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare").mockResolvedValue(null)
     spyOn(BotRuntimeInstanceRepository, "findLatestForBots").mockResolvedValue(
       new Map([["bot_1", { runtimeKind: "openclaw" }]]) as never
     )
@@ -319,7 +319,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
       actorId: "bot_1",
     } as never)
     spyOn(BotRepository, "findById").mockResolvedValue(activeBot as never)
-    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare").mockResolvedValue(null)
     spyOn(BotRuntimeInstanceRepository, "findLatestForBots").mockResolvedValue(
       new Map([["bot_1", { runtimeKind: "openclaw" }]]) as never
     )

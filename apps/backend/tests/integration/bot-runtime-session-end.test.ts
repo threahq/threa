@@ -16,7 +16,7 @@ describe("endRuntimeSession", () => {
   const service = () => new BotRuntimeService({ pool, streamService: new StreamService(pool) })
 
   beforeAll(async () => {
-    fixture = await seedBotRuntimeFixture({ label: "session_end", instanceIds: [] })
+    fixture = await seedBotRuntimeFixture({ label: "session_end", instanceIds: ["claimed-instance"] })
     ;({ pool, workspace, stream: root, author, bot } = fixture)
   }, 30_000)
 
@@ -227,6 +227,89 @@ describe("endRuntimeSession", () => {
         target_runtime_session_id: "other-session",
       },
     })
+  })
+
+  test("cancels an invocation already claimed by the ended session", async () => {
+    await BotRuntimeSessionLinkRepository.upsert(pool, {
+      id: botRuntimeSessionLinkId(),
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "openclaw",
+      instanceId: "claimed-instance",
+      runtimeSessionId: "claimed-session",
+      rootStreamId: root,
+      activeStreamId: root,
+      linkedBy: author,
+    })
+    const source = await anchorMessage("mid-turn message")
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: source.id })
+
+    const claimed = await service().claimNextInvocation({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: "claimed-instance",
+      runtimeSessionId: "claimed-session",
+      runtimeKind: "openclaw",
+      claimToken: "claim-token",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+    })
+    expect(claimed).toMatchObject({ status: "claimed", targetRuntimeSessionId: "claimed-session" })
+
+    await service().endRuntimeSession({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: "claimed-instance",
+      runtimeSessionId: "claimed-session",
+    })
+
+    // The pane is gone, so this turn can never complete, and the claim query's
+    // target filter means no other session may take it over. Left claimed it
+    // would answer the user's message with nothing, forever.
+    const row = await pool.query<{ status: string; cancellation_reason: string | null }>(
+      "SELECT status, cancellation_reason FROM bot_invocations WHERE id = $1",
+      [claimed?.id]
+    )
+    expect(row.rows[0]).toEqual({ status: "cancelled", cancellation_reason: "routing_changed" })
+  })
+
+  test("route resolution's link read blocks a concurrent end of that link", async () => {
+    const link = await BotRuntimeSessionLinkRepository.upsert(pool, {
+      id: botRuntimeSessionLinkId(),
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "openclaw",
+      instanceId: "locked-instance",
+      runtimeSessionId: "locked-session",
+      rootStreamId: root,
+      activeStreamId: root,
+      linkedBy: author,
+    })
+
+    const reader = await pool.connect()
+    try {
+      await reader.query("BEGIN")
+      const read = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(reader, {
+        workspaceId: workspace,
+        botId: bot,
+        rootStreamId: root,
+        activeStreamId: root,
+      })
+      expect(read).toMatchObject({ id: link.id })
+
+      // `sessions/end` updates this row. NOWAIT turns the wait into an error, so
+      // this asserts the share lock is really held rather than timing a sleep.
+      await expect(
+        pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
+      ).rejects.toMatchObject({ code: "55P03" })
+    } finally {
+      await reader.query("ROLLBACK")
+      reader.release()
+    }
+
+    await expect(
+      pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
+    ).resolves.toMatchObject({ rowCount: 1 })
   })
 
   test("returns null for an already-ended or unknown identity", async () => {
