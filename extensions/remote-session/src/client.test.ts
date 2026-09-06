@@ -70,8 +70,12 @@ describe("ThreaClient.sendMessage", () => {
     expect(await client.sendMessage("stream_1", { content: "hi" })).toEqual({ id: "msg_1" })
   })
 
-  it("throws when the response carries no message id", async () => {
-    fetchSpy.mockImplementation(jsonFetch({ data: {}, slots: {} }))
-    await expect(client.sendMessage("stream_1", { content: "hi" })).rejects.toThrow(/no message id/)
+  it("throws when the response carries no usable message id", async () => {
+    // The response is parsed, never validated, so a truthy non-string would be
+    // returned as an id and reach harnessd as a `--anchor` argument.
+    for (const id of [undefined, "", 123, { id: "msg_1" }]) {
+      fetchSpy.mockImplementation(jsonFetch({ data: { id }, slots: {} }))
+      await expect(client.sendMessage("stream_1", { content: "hi" })).rejects.toThrow(/no message id/)
+    }
   })
 })

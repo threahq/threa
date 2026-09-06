@@ -3987,7 +3987,7 @@ async function postStreamMessage(streamId: string, content: string): Promise<str
     { method: "POST", body: JSON.stringify({ content }) }
   )
   const id = body.data?.id
-  if (!id) throw new Error(`Threa API returned no message id for stream ${streamId}`)
+  if (typeof id !== "string" || !id) throw new Error(`Threa API returned no message id for stream ${streamId}`)
   return id
 }
 
@@ -4000,7 +4000,8 @@ async function runSpawnCommand(
     postMessage: postStreamMessage,
     prepare: prepareHarnessSpawn,
     complete: completeInvocationWithMarkdown,
-  }
+  },
+  isCurrent: InvocationGuard = () => true
 ): Promise<void> {
   const parsed = parseSpawnCommandArgs(args)
   if ("error" in parsed) {
@@ -4020,9 +4021,16 @@ async function runSpawnCommand(
     throw new Error("Spawn request no longer matches the linked scratchpad.")
   }
   const runtime = parsed.runtime ?? "pi"
+  // A replacement claim reruns this command, so anything past here would post a
+  // second anchor and start a second session for the one `/spawn` the user typed.
+  if (!isCurrent()) return
   const anchorId = await deps.postMessage(link.rootStreamId, `Starting **${parsed.name}** (${runtime})`)
   // harnessd dies on a blank brief, so an empty prompt gets no file at all.
   const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
+  if (!isCurrent()) {
+    discardSpawnBrief(briefFile)
+    return
+  }
   try {
     deps.prepare({ runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
   } catch (error) {
@@ -4217,7 +4225,7 @@ async function handleSessionControlInvocation(
         await runClearCommand(invocation, command.args, ctx, undefined, isCurrent)
         return
       case "spawn":
-        await runSpawnCommand(invocation, command.args, ctx)
+        await runSpawnCommand(invocation, command.args, ctx, undefined, isCurrent)
         return
       case "done":
         await runDoneCommand(invocation, command.args, ctx, undefined, isCurrent)

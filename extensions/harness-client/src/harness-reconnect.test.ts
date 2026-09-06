@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
-import { homedir } from "node:os"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   harnessReconnectAvailable,
@@ -8,6 +9,7 @@ import {
   prepareHarnessReconnect,
   prepareHarnessSpawn,
 } from "./harness-reconnect"
+import { writeSpawnBrief } from "./spawn-command"
 
 const filesystem = (events: unknown[]) => ({
   mkdir: (path: string, options: unknown) => events.push(["mkdir", path, options]),
@@ -295,6 +297,34 @@ describe("prepareHarnessSpawn", () => {
       ],
       { detached: true, stdio: ["ignore", 41, 41] },
     ])
+  })
+
+  it("deletes the brief when the launch fails after the child was handed off", () => {
+    const dir = mkdtempSync(join(tmpdir(), "threa-brief-"))
+    const briefFile = writeSpawnBrief("the prompt", { dir })
+    let onError: ((error: Error & { code?: unknown }) => void) | undefined
+    const spawn = mock(() => ({
+      on: (_event: "error", listener: (error: Error & { code?: unknown }) => void) => {
+        onError = listener
+      },
+      unref: () => undefined,
+    }))
+    prepareHarnessSpawn(
+      { ...spec, briefFile },
+      {
+        entrypoint: "/repo/harnessd.ts",
+        bunExecutable: "/bun",
+        logPath: join(dir, "spawn.log"),
+        exists: () => true,
+        fs: filesystem([]),
+        spawn: spawn as never,
+      }
+    )()
+
+    expect(existsSync(briefFile)).toBe(true)
+    onError?.(Object.assign(new Error("spawn /bun ENOENT"), { code: "ENOENT" }))
+    expect(existsSync(briefFile)).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
   })
 
   it("preparation validates only identity and entrypoint", () => {

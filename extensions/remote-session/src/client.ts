@@ -215,7 +215,7 @@ export class ThreaClient {
       body: JSON.stringify(body),
     })
     const id = result?.data?.id
-    if (!id) throw new Error(`Threa API returned no message id for stream ${streamId}`)
+    if (typeof id !== "string" || !id) throw new Error(`Threa API returned no message id for stream ${streamId}`)
     return { id }
   }
 

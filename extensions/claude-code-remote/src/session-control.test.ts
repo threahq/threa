@@ -410,10 +410,17 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     )
   })
 
+  /** The side effects of the last {@link runSpawn}, readable even when it rejected. */
+  const spawnEffects: { posts: unknown[][]; specs: HarnessSpawnSpec[]; started: number } = {
+    posts: [],
+    specs: [],
+    started: 0,
+  }
+
   const runSpawn = async (args: string, activeStreamId = "root") => {
-    const posts: unknown[][] = []
-    const specs: HarnessSpawnSpec[] = []
-    let started = 0
+    const posts: unknown[][] = (spawnEffects.posts = [])
+    const specs: HarnessSpawnSpec[] = (spawnEffects.specs = [])
+    spawnEffects.started = 0
     const outcome = await runClaudeCommand(
       "spawn",
       args,
@@ -436,14 +443,14 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       (spec: HarnessSpawnSpec) => {
         specs.push(spec)
         return () => {
-          started += 1
+          spawnEffects.started += 1
         }
       }
     )
     const brief = specs[0]?.briefFile
     const briefContent = brief ? readFileSync(brief, "utf8") : undefined
     if (brief) unlinkSync(brief)
-    return { outcome, posts, specs, started, briefContent }
+    return { outcome, posts, specs, started: spawnEffects.started, briefContent }
   }
 
   it("posts the anchor, writes the brief, and launches harnessd for /spawn", async () => {
@@ -515,6 +522,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     await expect(runSpawn("claude sidebar\nfix it", "thread")).rejects.toThrow(
       "Spawn is only available at the scratchpad itself, not inside a thread session."
     )
+    expect(spawnEffects).toEqual({ posts: [], specs: [], started: 0 })
   })
 
   it("removes the brief and names the anchor when the harnessd launch fails", async () => {

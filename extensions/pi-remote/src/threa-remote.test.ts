@@ -2079,6 +2079,44 @@ describe("Pi spawn and done session control", () => {
     expect(posts).toBe(0)
   })
 
+  test("a replaced claim posts no anchor, and one replaced mid-post leaves no brief behind", async () => {
+    const messages: string[] = []
+    let posts = 0
+    let prepared = 0
+    const briefs = () => readdirSync(tmpdir()).filter((entry) => entry.startsWith("threa-spawn-"))
+    const before = briefs()
+    const deps = {
+      available: () => true,
+      postMessage: async () => {
+        posts++
+        return "msg_anchor"
+      },
+      prepare: () => {
+        prepared++
+        return () => undefined
+      },
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
+      },
+    } as never
+
+    await __testing.runSpawnCommand(invocation, "pi tidy up\nfix it", context(true), deps, () => false)
+    let posted = false
+    await __testing.runSpawnCommand(invocation, "pi tidy up\nfix it", context(true), deps, () => {
+      const wasCurrent = !posted
+      posted = true
+      return wasCurrent
+    })
+
+    expect({ messages, posts, prepared, leaked: briefs().filter((brief) => !before.includes(brief)) }).toEqual({
+      messages: [],
+      posts: 1,
+      prepared: 0,
+      leaked: [],
+    })
+  })
+
   test("a launch failure names the anchor, acks nothing, and removes the brief it wrote", async () => {
     const messages: string[] = []
     let briefFile: string | undefined

@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync }
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { harnessDaemonEntrypoint } from "./harness-kick"
+import { discardSpawnBrief } from "./spawn-command"
 
 type DetachedChild = { on(event: "error", listener: (error: Error & { code?: unknown }) => void): void; unref(): void }
 
@@ -53,7 +54,8 @@ function requireId(value: string, label: string): string {
 function prepareDetachedHarnessCommand(
   command: "reconnect" | "clear" | "spawn" | "done",
   args: string[],
-  options: PrepareHarnessClearOptions
+  options: PrepareHarnessClearOptions,
+  onLaunchError?: () => void
 ): () => void {
   let started = false
   return () => {
@@ -84,6 +86,7 @@ function prepareDetachedHarnessCommand(
         try {
           fs.appendFile(logPath, `Harness ${command} launch failed${code}\n`, { mode: 0o600 })
         } catch {}
+        onLaunchError?.()
       })
       child.unref()
     } finally {
@@ -126,7 +129,10 @@ export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarn
   const entrypoint = requireHarnessEntrypoint(options)
   const args = [entrypoint, "spawn", spec.runtime, "--name", name, "--attach", rootStream, "--anchor", anchor]
   if (spec.briefFile) args.push("--brief-file", spec.briefFile)
-  return prepareDetachedHarnessCommand("spawn", args, options)
+  // A launch that fails after `spawn` returns reports through the child's async
+  // "error" event, out of reach of the caller's own catch — and harnessd, which
+  // unlinks the brief, never ran. Nobody else can clean the prompt up.
+  return prepareDetachedHarnessCommand("spawn", args, options, () => discardSpawnBrief(spec.briefFile))
 }
 
 export function prepareHarnessDone(
