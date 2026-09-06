@@ -247,18 +247,7 @@ export class MemoExplorerService {
       return null
     }
 
-    // A title-only edit is too short to detect a language from, so the stemmer
-    // is re-detected from the whole memo as it will read after the edit.
     const editsText = fields.title !== undefined || fields.abstract !== undefined || fields.keyPoints !== undefined
-    const editedSearchConfig = editsText
-      ? detectSearchConfig(
-          memoSearchText({
-            title: fields.title ?? resolved.memo.title,
-            abstract: fields.abstract ?? resolved.memo.abstract,
-            keyPoints: fields.keyPoints ?? resolved.memo.keyPoints,
-          })
-        )
-      : undefined
 
     const embedding =
       fields.abstract !== undefined
@@ -266,6 +255,24 @@ export class MemoExplorerService {
         : null
 
     const updated = await withTransaction(this.pool, async (client) => {
+      // A title-only edit is too short to detect a language from, so the
+      // stemmer is re-detected from the whole memo as it will read after the
+      // edit. The fields this edit leaves out have to come from the row under
+      // lock (INV-20): read outside the transaction, a concurrent edit landing
+      // in between would store this edit's text under the other one's language.
+      let editedSearchConfig: string | undefined
+      if (editsText) {
+        const locked = await MemoRepository.findByIdForUpdate(client, workspaceId, memoId)
+        if (!locked) return null
+        editedSearchConfig = detectSearchConfig(
+          memoSearchText({
+            title: fields.title ?? locked.title,
+            abstract: fields.abstract ?? locked.abstract,
+            keyPoints: fields.keyPoints ?? locked.keyPoints,
+          })
+        )
+      }
+
       const row = await MemoRepository.update(client, workspaceId, memoId, {
         title: fields.title,
         abstract: fields.abstract,

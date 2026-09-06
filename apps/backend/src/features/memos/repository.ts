@@ -326,6 +326,22 @@ export const MemoRepository = {
   },
 
   /**
+   * Read a memo under a row lock, for a caller that derives what it writes from
+   * fields it is not itself supplying (INV-20). Blocks until a concurrent edit
+   * of the same memo commits, then returns that committed row — so pass a
+   * transaction client, never the pool.
+   */
+  async findByIdForUpdate(db: Querier, workspaceId: string, id: string): Promise<Memo | null> {
+    const result = await db.query<MemoRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+      FOR UPDATE
+    `)
+    if (!result.rows[0]) return null
+    return mapRowToMemo(result.rows[0])
+  },
+
+  /**
    * Batch-fetch memos by id, scoped to a workspace (INV-8). Used by callers
    * whose ids come from untrusted content (e.g. a `memoEmbed` pointer pulled
    * from contentJson) where the implicit workspace boundary can't be trusted.

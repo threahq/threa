@@ -118,6 +118,18 @@ describe("Per-row text-search config for memos and attachments", () => {
       return result.rows[0]!.search_config
     }
 
+    /** Resolves once the edit above is parked on the memo's row lock. */
+    async function waitForRowLockWaiter(): Promise<void> {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const waiting = await pool.query(
+          "SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' LIMIT 1"
+        )
+        if (waiting.rowCount) return
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      throw new Error("the memo edit never blocked on the row lock")
+    }
+
     async function searchIds(testWorkspaceId: string, query: string): Promise<string[]> {
       const results = await MemoRepository.fullTextSearch(pool, { workspaceId: testWorkspaceId, query, limit: 20 })
       return results.map((r) => r.memo.id)
@@ -150,6 +162,37 @@ describe("Per-row text-search config for memos and attachments", () => {
         { accessibleStreamIds: [ws.streamId], userId: ws.userId },
         { abstract: SWEDISH_ABSTRACT }
       )
+
+      expect(await storedConfig(memo)).toBe("swedish")
+      expect(await searchIds(ws.workspaceId, "faktura")).toEqual([memo])
+    })
+
+    test("should detect the stemmer from a concurrent edit's text rather than a stale read", async () => {
+      const ws = await seedWorkspaceWithStream()
+      const memo = await insertMemo(ws, ENGLISH_ABSTRACT)
+      expect(await storedConfig(memo)).toBe("english")
+
+      const blocker = await pool.connect()
+      try {
+        await blocker.query("BEGIN")
+        await blocker.query("SELECT id FROM memos WHERE id = $1 FOR UPDATE", [memo])
+
+        // A key-points-only edit carries no abstract, so its stemmer comes from
+        // the rest of the memo — which the blocked write below replaces.
+        const edit = makeExplorer().update(
+          ws.workspaceId,
+          memo,
+          { accessibleStreamIds: [ws.streamId], userId: ws.userId },
+          { keyPoints: ["Noted"] }
+        )
+        await waitForRowLockWaiter()
+
+        await blocker.query("UPDATE memos SET abstract = $2 WHERE id = $1", [memo, SWEDISH_ABSTRACT])
+        await blocker.query("COMMIT")
+        await edit
+      } finally {
+        blocker.release()
+      }
 
       expect(await storedConfig(memo)).toBe("swedish")
       expect(await searchIds(ws.workspaceId, "faktura")).toEqual([memo])
