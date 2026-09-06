@@ -69,6 +69,25 @@ export function sanitizeUrlProperties(event: CaptureResult | null): CaptureResul
   }
 }
 
+// Chrome and Firefox word it differently ("completed with undelivered
+// notifications" / "limit exceeded"); both mean a ResizeObserver callback
+// resized something it observes, and the browser deferred that observation to
+// the next frame. Nothing is lost, and it drowned out every real crash.
+const BENIGN_EXCEPTION = /^ResizeObserver loop/
+
+export function dropBenignExceptions(event: CaptureResult | null): CaptureResult | null {
+  if (!event || event.event !== "$exception") return event
+  const exceptions = event.properties?.$exception_list as Array<{ value?: unknown }> | undefined
+  const benign = exceptions?.some(
+    (exception) => typeof exception.value === "string" && BENIGN_EXCEPTION.test(exception.value)
+  )
+  return benign ? null : event
+}
+
+export function beforeSend(event: CaptureResult | null): CaptureResult | null {
+  return sanitizeUrlProperties(dropBenignExceptions(event))
+}
+
 export interface StartAnalyticsParams {
   token: string
   host: string
@@ -159,7 +178,7 @@ export async function startAnalytics(
         enable_recording_console_log: false,
         capture_exceptions: true,
         persistence: "localStorage+cookie",
-        before_send: sanitizeUrlProperties,
+        before_send: beforeSend,
       },
       `threa_${params.token}`
     )
