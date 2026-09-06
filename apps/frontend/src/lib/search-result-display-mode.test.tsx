@@ -17,10 +17,10 @@ describe("search result display mode", () => {
     writeStoredSearchResultDisplayMode("workspace_1", "ranked")
 
     expect(readStoredSearchResultDisplayMode("workspace_1")).toBe("ranked")
-    expect(readStoredSearchResultDisplayMode("workspace_2")).toBe("grouped")
+    expect(readStoredSearchResultDisplayMode("workspace_2")).toBe("clusters")
   })
 
-  it("falls back to grouped when localStorage cannot be read or written", () => {
+  it("falls back to clusters when localStorage cannot be read or written", () => {
     const getItem = vi.fn(() => {
       throw new Error("Storage unavailable")
     })
@@ -29,7 +29,7 @@ describe("search result display mode", () => {
     })
     vi.stubGlobal("localStorage", { getItem, setItem })
 
-    expect(readStoredSearchResultDisplayMode("workspace_1")).toBe("grouped")
+    expect(readStoredSearchResultDisplayMode("workspace_1")).toBe("clusters")
     expect(() => writeStoredSearchResultDisplayMode("workspace_1", "ranked")).not.toThrow()
     expect(setItem).toHaveBeenCalledWith("threa-search-result-display:workspace_1", "ranked")
   })
@@ -40,12 +40,12 @@ describe("search result display mode", () => {
       initialProps: { workspaceId: "workspace_1" },
     })
 
-    expect(result.current[0]).toBe("grouped")
+    expect(result.current[0]).toBe("clusters")
     rerender({ workspaceId: "workspace_2" })
     expect(result.current[0]).toBe("ranked")
 
-    act(() => result.current[1]("grouped"))
-    expect(readStoredSearchResultDisplayMode("workspace_2")).toBe("grouped")
-    expect(readStoredSearchResultDisplayMode("workspace_1")).toBe("grouped")
+    act(() => result.current[1]("clusters"))
+    expect(readStoredSearchResultDisplayMode("workspace_2")).toBe("clusters")
+    expect(readStoredSearchResultDisplayMode("workspace_1")).toBe("clusters")
   })
 })

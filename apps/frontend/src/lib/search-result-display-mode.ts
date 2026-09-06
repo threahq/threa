@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 
-export type SearchResultDisplayMode = "grouped" | "ranked"
+export type SearchResultDisplayMode = "clusters" | "ranked"
 
 function storageKey(workspaceId: string): string {
   return `threa-search-result-display:${workspaceId}`
@@ -8,9 +8,9 @@ function storageKey(workspaceId: string): string {
 
 export function readStoredSearchResultDisplayMode(workspaceId: string): SearchResultDisplayMode {
   try {
-    return localStorage.getItem(storageKey(workspaceId)) === "ranked" ? "ranked" : "grouped"
+    return localStorage.getItem(storageKey(workspaceId)) === "ranked" ? "ranked" : "clusters"
   } catch {
-    return "grouped"
+    return "clusters"
   }
 }
 

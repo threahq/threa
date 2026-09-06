@@ -70,7 +70,6 @@ describe("search handlers", () => {
 
     expect(res.body).toEqual({
       results: [],
-      conversations: [],
       clusters: [],
       memos: [],
       excludedE2eStreamCount: 0,

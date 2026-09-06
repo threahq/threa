@@ -1,5 +1,6 @@
 import api from "./client"
-import type { AuthorType, ConversationStatus, SearchClickKind, StreamType } from "@threa/types"
+import type { MemoExplorerResult } from "./memos"
+import type { AuthorType, ConversationStatus, SearchClickKind, SearchClusterMatch, StreamType } from "@threa/types"
 
 export type ArchiveStatus = "active" | "archived"
 
@@ -20,8 +21,6 @@ export interface SearchRequest {
   filters?: SearchFilters
   /** Use exact substring matching (ILIKE) instead of full-text/semantic search */
   exact?: boolean
-  /** Rewrite the query into variants and rerank; slower, costs two model calls. */
-  deep?: boolean
 }
 
 export interface SearchResultItem {
@@ -34,12 +33,8 @@ export interface SearchResultItem {
   rank: number
 }
 
-/**
- * A whole discussion whose topic matched the query semantically. `firstMessageId`
- * deep-links into the stream at the start of the discussion; the span and count
- * come from its non-deleted messages.
- */
-export interface ConversationSearchResult {
+/** The conversation a cluster row stands for; `firstMessageId` deep-links into the stream at its start. */
+export interface SearchClusterConversation {
   id: string
   streamId: string
   topicSummary: string | null
@@ -50,13 +45,30 @@ export interface ConversationSearchResult {
   firstMessageId: string | null
   firstMessageAt: string | null
   lastMessageAt: string | null
-  distance: number
+}
+
+/**
+ * One row of the search list: a conversation with the messages that matched
+ * inside it, or a lone message with no conversation. A memo lands on the row
+ * its source messages belong to, and a memo-only row carries those source
+ * messages as its hits.
+ */
+export interface SearchCluster {
+  conversation: SearchClusterConversation | null
+  streamId: string
+  matchedVia: SearchClusterMatch[]
+  hits: SearchResultItem[]
+  memoIds: string[]
+  score: number
 }
 
 export interface SearchResponse {
+  /** Message hits in ranked order, for the flat Ranked view. */
   results: SearchResultItem[]
-  /** Empty on exact and keyword-only searches — the conversation leg is semantic. */
-  conversations: ConversationSearchResult[]
+  /** Conversation rows in ranked order; every hit in `results` sits in exactly one. */
+  clusters: SearchCluster[]
+  /** Memo hits referenced by `SearchCluster.memoIds`. Empty on exact and keyword-only searches. */
+  memos: MemoExplorerResult[]
   /** Set only when the user opted into search query logging (`searchQueryLog` flag); pass it to `recordSearchClick`. */
   queryLogId: string | null
 }
@@ -79,7 +91,6 @@ export async function searchMessages(workspaceId: string, request: SearchRequest
     after: request.filters?.after,
     exact: request.exact,
     limit: request.limit,
-    deep: request.deep,
   }
 
   return api.post<SearchResponse>(`/api/workspaces/${workspaceId}/search`, body)

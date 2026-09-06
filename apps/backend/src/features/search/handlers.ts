@@ -4,7 +4,7 @@ import type { Pool } from "pg"
 import type { SearchService } from "./service"
 import type { SearchQueryLogService } from "./query-log-service"
 import type { FeatureFlagService } from "../feature-flags"
-import type { ConversationForMessage, ConversationSearchResult, SearchResult } from "./repository"
+import type { ConversationForMessage, SearchResult } from "./repository"
 import type { SearchCluster } from "./clusters"
 import { serializeMemoResult } from "../memos"
 import { resolveInFilterStreamIds, resolveUserAccessibleStreamIds } from "./access"
@@ -83,22 +83,6 @@ export function serializeSearchCluster(cluster: SearchCluster) {
   }
 }
 
-export function serializeConversationSearchResult(result: ConversationSearchResult) {
-  return {
-    id: result.id,
-    streamId: result.streamId,
-    topicSummary: result.topicSummary,
-    summary: result.summary,
-    status: result.status,
-    messageCount: result.messageCount,
-    participantIds: result.participantIds,
-    firstMessageId: result.firstMessageId,
-    firstMessageAt: result.firstMessageAt?.toISOString() ?? null,
-    lastMessageAt: result.lastMessageAt?.toISOString() ?? null,
-    distance: result.distance,
-  }
-}
-
 interface Dependencies {
   pool: Pool
   searchService: SearchService
@@ -139,7 +123,6 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
         if (resolvedInStreamIds.length === 0) {
           res.json({
             results: [],
-            conversations: [],
             clusters: [],
             memos: [],
             excludedE2eStreamCount: 0,
@@ -222,7 +205,6 @@ export function createSearchHandlers({ pool, searchService, searchQueryLogServic
 
       res.json({
         results: results.map(serializeSearchResult),
-        conversations: conversations.map(serializeConversationSearchResult),
         clusters: clusters.map(serializeSearchCluster),
         memos: memos.map(serializeMemoResult),
         excludedE2eStreamCount,

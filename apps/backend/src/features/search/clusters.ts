@@ -1,8 +1,6 @@
+import type { SearchClusterMatch } from "@threa/types"
 import type { MemoExplorerResult } from "../memos"
 import type { ConversationForMessage, ConversationSearchResult, SearchResult } from "./repository"
-
-export const SEARCH_CLUSTER_MATCHES = ["message", "topic", "memory"] as const
-export type SearchClusterMatch = (typeof SEARCH_CLUSTER_MATCHES)[number]
 
 /**
  * One row of the search list: a conversation with the messages that matched

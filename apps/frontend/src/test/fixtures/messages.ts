@@ -6,6 +6,7 @@ export interface MockSearchResult {
   authorId: string
   authorType: "user" | "persona"
   createdAt: string
+  rank: number
 }
 
 export function createMockSearchResult(overrides: Partial<MockSearchResult> & { id: string }): MockSearchResult {
@@ -15,6 +16,7 @@ export function createMockSearchResult(overrides: Partial<MockSearchResult> & { 
     authorId: "member_1",
     authorType: "user",
     createdAt: "2025-01-15T10:00:00Z",
+    rank: 0,
     ...overrides,
   }
 }

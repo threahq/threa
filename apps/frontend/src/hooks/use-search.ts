@@ -1,5 +1,11 @@
 import { useState, useCallback, useRef } from "react"
-import { searchMessages, type ConversationSearchResult, type SearchFilters, type SearchResultItem } from "@/api"
+import {
+  searchMessages,
+  type MemoExplorerResult,
+  type SearchCluster,
+  type SearchFilters,
+  type SearchResultItem,
+} from "@/api"
 
 interface UseSearchOptions {
   workspaceId: string
@@ -7,24 +13,22 @@ interface UseSearchOptions {
   limit?: number
 }
 
-interface SearchOptions {
-  deep?: boolean
-}
-
 interface UseSearchReturn {
   results: SearchResultItem[]
-  conversations: ConversationSearchResult[]
+  clusters: SearchCluster[]
+  memos: MemoExplorerResult[]
   /** Non-null only when the backend logged this search (opt-in `searchQueryLog` flag). */
   queryLogId: string | null
   isLoading: boolean
   error: Error | null
-  search: (query: string, filters?: SearchFilters, phrases?: string[], options?: SearchOptions) => Promise<void>
+  search: (query: string, filters?: SearchFilters, phrases?: string[]) => Promise<void>
   clear: () => void
 }
 
 export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchReturn {
   const [results, setResults] = useState<SearchResultItem[]>([])
-  const [conversations, setConversations] = useState<ConversationSearchResult[]>([])
+  const [clusters, setClusters] = useState<SearchCluster[]>([])
+  const [memos, setMemos] = useState<MemoExplorerResult[]>([])
   const [queryLogId, setQueryLogId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -33,22 +37,24 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
   const requestIdRef = useRef(0)
 
   const search = useCallback(
-    async (query: string, filters?: SearchFilters, phrases?: string[], options?: SearchOptions) => {
+    async (query: string, filters?: SearchFilters, phrases?: string[]) => {
       const requestId = ++requestIdRef.current
       setIsLoading(true)
       setError(null)
 
       try {
-        const response = await searchMessages(workspaceId, { query, filters, phrases, limit, deep: options?.deep })
+        const response = await searchMessages(workspaceId, { query, filters, phrases, limit })
         if (requestId !== requestIdRef.current) return
         setResults(response.results)
-        setConversations(response.conversations)
+        setClusters(response.clusters)
+        setMemos(response.memos)
         setQueryLogId(response.queryLogId)
       } catch (e) {
         if (requestId !== requestIdRef.current) return
         setError(e instanceof Error ? e : new Error("Search failed"))
         setResults([])
-        setConversations([])
+        setClusters([])
+        setMemos([])
         setQueryLogId(null)
       } finally {
         if (requestId === requestIdRef.current) {
@@ -63,11 +69,12 @@ export function useSearch({ workspaceId, limit }: UseSearchOptions): UseSearchRe
     // Invalidate any in-flight request so it can't repopulate after the clear
     requestIdRef.current++
     setResults([])
-    setConversations([])
+    setClusters([])
+    setMemos([])
     setQueryLogId(null)
     setError(null)
     setIsLoading(false)
   }, [])
 
-  return { results, conversations, queryLogId, isLoading, error, search, clear }
+  return { results, clusters, memos, queryLogId, isLoading, error, search, clear }
 }
