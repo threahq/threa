@@ -3,25 +3,28 @@ import { MessagesSquare } from "lucide-react"
 import { RelativeTime } from "@/components/relative-time"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { cn } from "@/lib/utils"
+import { ResultGroup } from "./result-group"
 import type { ConversationSearchResult } from "@/api"
 
 export function ConversationMatches({
   workspaceId,
   conversations,
   compact = false,
+  defaultOpen = true,
   onSelect,
 }: {
   workspaceId: string
   conversations: ConversationSearchResult[]
   /** Clamps the summary to one line, for the sidebar panel's narrower column. */
   compact?: boolean
+  /** False starts the group collapsed (phone widths, where an open group pushes the messages off screen). */
+  defaultOpen?: boolean
   onSelect?: (conversation: ConversationSearchResult) => void
 }) {
   if (conversations.length === 0) return null
 
   return (
-    <div className="mb-3 border-b border-border/50 pb-3">
-      <p className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">Conversations</p>
+    <ResultGroup label="Conversations" count={conversations.length} defaultOpen={defaultOpen}>
       <ul className="flex flex-col gap-1.5">
         {conversations.map((conversation) => (
           <li key={conversation.id}>
@@ -34,7 +37,7 @@ export function ConversationMatches({
           </li>
         ))}
       </ul>
-    </div>
+    </ResultGroup>
   )
 }
 
