@@ -1,4 +1,4 @@
-import { List, Rows3 } from "lucide-react"
+import { List, MessagesSquare } from "lucide-react"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import type { SearchResultDisplayMode } from "@/lib/search-result-display-mode"
@@ -25,19 +25,19 @@ export function SearchResultDisplayToggle({ value, onChange, size = "sm", classN
       size="sm"
       value={value}
       onValueChange={(next) => {
-        if (next === "grouped" || next === "ranked") onChange(next)
+        if (next === "clusters" || next === "ranked") onChange(next)
       }}
       aria-label="Search result display"
       className={cn("shrink-0 gap-0.5 rounded-md bg-muted p-0.5", className)}
     >
       <ToggleGroupItem
-        value="grouped"
-        aria-label="Grouped results"
-        title="Grouped results"
+        value="clusters"
+        aria-label="Conversation results"
+        title="Conversation results"
         className={cn(ITEM_CLASS, ITEM_SIZE[size])}
       >
-        <Rows3 aria-hidden="true" />
-        <span>Grouped</span>
+        <MessagesSquare aria-hidden="true" />
+        <span>Conversations</span>
       </ToggleGroupItem>
       <ToggleGroupItem
         value="ranked"

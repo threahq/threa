@@ -16,8 +16,14 @@ import { mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import type { AuthorType } from "@threa/types"
+import {
+  createMockClusterConversation,
+  createMockMemoResult,
+  createMockSearchCluster,
+  strayClusters,
+} from "@/test/fixtures/search"
 import { ApiError } from "@/api"
-import type { ConversationSearchResult, MemoExplorerResult } from "@/api"
+import type { MemoExplorerResult, SearchCluster } from "@/api"
 import * as apiModule from "@/api"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -31,67 +37,23 @@ type MockSearchResult = Omit<(typeof mockSearchResultsList)[number], "authorType
 
 const mockSearchState = {
   results: [] as MockSearchResult[],
-  conversations: [] as ConversationSearchResult[],
+  /** Defaults to one single-message row per result. */
+  clusters: null as SearchCluster[] | null,
+  memos: [] as MemoExplorerResult[],
   queryLogId: null as string | null,
   isLoading: false,
   search: vi.fn(),
   clear: vi.fn(),
 }
 
-const mockMemoSearchState = {
-  results: [] as MemoExplorerResult[],
+function launchCluster(hits: MockSearchResult[] = [mockSearchResultsList[0]!]): SearchCluster {
+  return createMockSearchCluster({ conversation: createMockClusterConversation(), hits })
 }
 
-const mockUseMemoSearch = vi.fn()
-const mockUseMemoDetail = vi.fn()
-
-function buildConversationResult(): ConversationSearchResult {
-  return {
-    id: "conv_1",
-    streamId: "stream_channel1",
-    topicSummary: "Choosing the launch date",
-    summary: "The team weighed a May launch against waiting for the mobile build.",
-    status: "resolved",
-    messageCount: 7,
-    participantIds: ["user_1"],
-    firstMessageId: "msg_first",
-    firstMessageAt: "2026-01-01T00:00:00.000Z",
-    lastMessageAt: "2026-01-02T00:00:00.000Z",
-    distance: 0.3,
-  }
-}
-
-function buildMemoResult(): MemoExplorerResult {
-  return {
-    memo: {
-      id: "memo_1",
-      workspaceId: "workspace_1",
-      memoType: "message",
-      sourceMessageId: "msg_1",
-      sourceConversationId: null,
-      title: "Launch decision",
-      abstract: "Approved launch plan",
-      keyPoints: [],
-      sourceMessageIds: ["msg_1"],
-      participantIds: ["user_1"],
-      knowledgeType: "decision",
-      tags: [],
-      parentMemoId: null,
-      status: "active",
-      version: 1,
-      revisionReason: null,
-      authoredByKind: "pipeline",
-      sourceSessionId: null,
-      scope: "workspace",
-      scopeUserId: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      archivedAt: null,
-    },
-    distance: 0,
-    sourceStream: { id: "stream_channel1", type: "channel", name: "general" },
-    rootStream: null,
-  }
+function resultIds(): (string | null)[] {
+  return Array.from(document.querySelectorAll("[data-search-result-id]"), (row) =>
+    row.getAttribute("data-search-result-id")
+  )
 }
 
 function createTestQueryClient() {
@@ -201,25 +163,18 @@ const mentionablesFilterFn = (items: unknown[], query: string) => {
 }
 
 function installSpies() {
-  vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("on")
   vi.spyOn(hooksModule, "useSearch").mockImplementation(
     () =>
       ({
         results: mockSearchState.results,
-        conversations: mockSearchState.conversations,
+        clusters: mockSearchState.clusters ?? strayClusters(mockSearchState.results),
+        memos: mockSearchState.memos,
         queryLogId: mockSearchState.queryLogId,
         isLoading: mockSearchState.isLoading,
         error: null,
         search: mockSearchState.search,
         clear: mockSearchState.clear,
       }) as unknown as ReturnType<typeof hooksModule.useSearch>
-  )
-
-  vi.spyOn(hooksModule, "useMemoSearch").mockImplementation(
-    (...args) => mockUseMemoSearch(...args) as ReturnType<typeof hooksModule.useMemoSearch>
-  )
-  vi.spyOn(hooksModule, "useMemoDetail").mockImplementation(
-    (...args) => mockUseMemoDetail(...args) as ReturnType<typeof hooksModule.useMemoDetail>
   )
 
   vi.spyOn(mentionablesModule, "useMentionables").mockReturnValue({
@@ -272,20 +227,12 @@ describe("SidebarSearchPanel Integration Tests", () => {
     localStorage.clear()
     workspaceStreams = mockStreamsList
     mockSearchState.results = []
-    mockSearchState.conversations = []
+    mockSearchState.clusters = null
+    mockSearchState.memos = []
     mockSearchState.queryLogId = null
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
-    mockMemoSearchState.results = []
-    mockUseMemoSearch.mockReset()
-    mockUseMemoSearch.mockImplementation(() => ({
-      data: { results: mockMemoSearchState.results },
-      isLoading: false,
-      error: null,
-    }))
-    mockUseMemoDetail.mockReset()
-    mockUseMemoDetail.mockImplementation(() => ({ data: undefined, isLoading: false, error: null }))
     installSpies()
   })
 
@@ -342,7 +289,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
   })
 
   describe("results", () => {
-    it("renders results grouped by stream with highlighted match terms", async () => {
+    it("renders one row per hit with its stream and highlighted match terms", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -352,7 +299,6 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      // Group headers carry the stream names; both fixture streams are hit
       await waitFor(() => {
         expect(screen.getByText("#general")).toBeInTheDocument()
         expect(screen.getByText("#random")).toBeInTheDocument()
@@ -364,7 +310,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(markTexts).toContain("hello")
     })
 
-    it("defaults to grouped results and persists ranked mode per workspace in API order", async () => {
+    it("defaults to conversation rows and persists ranked mode per workspace in API order", async () => {
       mockSearchState.results = [mockSearchResultsList[1]!, mockSearchResultsList[0]!]
       const user = userEvent.setup()
       const view = renderPanel()
@@ -373,14 +319,10 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.type(editor, "hello")
 
       expect(await screen.findByText("#general")).toBeInTheDocument()
+      expect(screen.getByRole("radio", { name: "Conversation results" })).toHaveAttribute("data-state", "on")
       await user.click(screen.getByRole("radio", { name: "Ranked results" }))
 
-      await waitFor(() => expect(document.querySelector("section")).toBeNull())
-      expect(
-        Array.from(document.querySelectorAll("[data-search-result-id]"), (row) =>
-          row.getAttribute("data-search-result-id")
-        )
-      ).toEqual(["msg_2", "msg_1"])
+      expect(resultIds()).toEqual(["msg_2", "msg_1"])
       expect(document.querySelectorAll("[data-search-stream-label]")).toHaveLength(2)
       expect(localStorage.getItem("threa-search-result-display:workspace_1")).toBe("ranked")
 
@@ -389,7 +331,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
       const persistedEditor = screen.getByLabelText("Search messages")
       await user.click(persistedEditor)
       await user.type(persistedEditor, "hello")
-      await waitFor(() => expect(document.querySelector("section")).toBeNull())
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      expect(screen.getByRole("radio", { name: "Ranked results" })).toHaveAttribute("data-state", "on")
     })
 
     it("shows archived stream metadata on ranked rows", async () => {
@@ -561,8 +504,14 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(get).toHaveBeenCalledTimes(1)
     })
 
-    it("collapses and expands a stream group", async () => {
-      mockSearchState.results = mockSearchResultsList
+    it("shows three hits per conversation and expands the rest on demand", async () => {
+      const hits = Array.from({ length: 5 }, (_, i) => ({
+        ...mockSearchResultsList[0]!,
+        id: `msg_${i + 1}`,
+        content: `Hit number ${i + 1}`,
+      }))
+      mockSearchState.results = hits
+      mockSearchState.clusters = [launchCluster(hits)]
 
       const user = userEvent.setup()
       renderPanel()
@@ -571,15 +520,35 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      await waitFor(() => {
-        expect(screen.getByText(/from the search results/)).toBeInTheDocument()
-      })
+      await screen.findByText("Choosing the launch date")
+      expect(resultIds()).toEqual(["msg_1", "msg_2", "msg_3"])
+      expect(screen.getByText("5 results in 1 stream")).toBeInTheDocument()
 
-      await user.click(screen.getByRole("button", { name: /#general/ }))
-      expect(screen.queryByText(/from the search results/)).not.toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "2 more in this conversation" }))
+      expect(resultIds()).toEqual(["msg_1", "msg_2", "msg_3", "msg_4", "msg_5"])
+    })
 
-      await user.click(screen.getByRole("button", { name: /#general/ }))
-      expect(screen.getByText(/from the search results/)).toBeInTheDocument()
+    it("reveals a folded hit when keyboard navigation lands on it", async () => {
+      const hits = Array.from({ length: 5 }, (_, i) => ({
+        ...mockSearchResultsList[0]!,
+        id: `msg_${i + 1}`,
+        content: `Hit number ${i + 1}`,
+      }))
+      mockSearchState.results = hits
+      mockSearchState.clusters = [launchCluster(hits)]
+
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+      await screen.findByText("Choosing the launch date")
+
+      await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}")
+
+      expect(resultIds()).toEqual(["msg_1", "msg_2", "msg_3", "msg_4", "msg_5"])
+      expect(document.querySelector('[aria-current="true"]')).toHaveAttribute("data-search-result-id", "msg_4")
     })
 
     it("uses ranked result Links to navigate to the focused message", async () => {
@@ -633,7 +602,16 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
     it("attributes the opened result to the logged search, by click and by keyboard", async () => {
       mockSearchState.results = mockSearchResultsList
-      mockSearchState.conversations = [buildConversationResult()]
+      mockSearchState.memos = [createMockMemoResult()]
+      mockSearchState.clusters = [
+        createMockSearchCluster({
+          conversation: createMockClusterConversation(),
+          matchedVia: ["message", "memory"],
+          hits: [mockSearchResultsList[0]!],
+          memoIds: ["memo_1"],
+        }),
+        createMockSearchCluster({ hits: [mockSearchResultsList[1]!] }),
+      ]
       mockSearchState.queryLogId = "sqlog_1"
       const recordSearchClick = vi.spyOn(apiModule, "recordSearchClick").mockResolvedValue(undefined)
 
@@ -652,6 +630,9 @@ describe("SidebarSearchPanel Integration Tests", () => {
         kind: "conversation",
         id: "conv_1",
       })
+
+      await user.click(screen.getByText("Launch decision"))
+      expect(recordSearchClick).toHaveBeenLastCalledWith("workspace_1", "sqlog_1", { kind: "memo", id: "memo_1" })
 
       await user.click(editor)
       await user.keyboard("{ArrowDown}{ArrowDown}{Enter}")
@@ -687,54 +668,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(mockSearchState.search).toHaveBeenCalledWith("hello", { status: ["active", "archived"] })
     })
 
-    it("runs a deep search from the Search deeper button when results are present", async () => {
-      mockSearchState.results = mockSearchResultsList
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      await waitFor(() => {
-        expect(screen.getByText("#general")).toBeInTheDocument()
-      })
-
-      await user.click(screen.getByRole("button", { name: /search deeper/i }))
-
-      expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", { status: ["active", "archived"] }, undefined, {
-        deep: true,
-      })
-    })
-
-    it("keeps the result row and disables Search deeper while the deep search runs", async () => {
-      mockSearchState.results = mockSearchResultsList
-      mockSearchState.search.mockImplementation(async () => {
-        mockSearchState.isLoading = true
-      })
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      await waitFor(() => {
-        expect(screen.getByText("#general")).toBeInTheDocument()
-      })
-      mockSearchState.isLoading = false
-
-      await user.click(screen.getByRole("button", { name: /search deeper/i }))
-
-      await waitFor(() => {
-        expect(screen.getByRole("button", { name: /search deeper/i })).toBeDisabled()
-      })
-      expect(screen.getByText(/results? in/)).toBeInTheDocument()
-    })
-
-    it("runs a deep search on Enter when there are no results", async () => {
+    it("does nothing on Enter when there are no results", async () => {
       mockSearchState.results = []
 
       const user = userEvent.setup()
@@ -747,61 +681,19 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await waitFor(() => {
         expect(screen.getByText("No results")).toBeInTheDocument()
       })
+      const callsBeforeEnter = mockSearchState.search.mock.calls.length
 
       await user.keyboard("{Enter}")
 
-      expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", { status: ["active", "archived"] }, undefined, {
-        deep: true,
-      })
+      expect(mockSearchState.search).toHaveBeenCalledTimes(callsBeforeEnter)
       expect(mockNavigate).not.toHaveBeenCalled()
-    })
-
-    it("offers no deep search when the search flag is off: no button, and Enter stays on the fast path", async () => {
-      vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("off")
-      mockSearchState.results = mockSearchResultsList
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      await waitFor(() => {
-        expect(screen.getByText("#general")).toBeInTheDocument()
-      })
-      expect(screen.queryByRole("button", { name: /search deeper/i })).toBeNull()
-
-      await user.keyboard("{Enter}")
-
-      expect(mockSearchState.search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
-    })
-
-    it("offers no deep search for a filter-only query: no button, and Enter stays on the fast path", async () => {
-      mockSearchState.results = []
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "before:2026-06-19")
-
-      await waitFor(() => {
-        expect(screen.getByText("No results")).toBeInTheDocument()
-      })
-      expect(screen.queryByRole("button", { name: /search deeper/i })).toBeNull()
-
-      await user.keyboard("{Enter}")
-
-      expect(mockSearchState.search.mock.calls.filter((call) => call[3]?.deep)).toEqual([])
     })
   })
 
-  describe("memo matches", () => {
-    it("shows the compact Memories section above message results with matching links", async () => {
-      mockMemoSearchState.results = [buildMemoResult()]
+  describe("conversation rows", () => {
+    it("nests hits under a header that deep-links to the conversation start", async () => {
       mockSearchState.results = mockSearchResultsList
+      mockSearchState.clusters = [launchCluster(), createMockSearchCluster({ hits: [mockSearchResultsList[1]!] })]
 
       const user = userEvent.setup()
       renderPanel()
@@ -810,118 +702,24 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      expect(await screen.findByText("Memories")).toBeInTheDocument()
+      const header = (await screen.findByText("Choosing the launch date")).closest("a")
+      expect(header).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_first")
+      expect(header).toHaveTextContent("7 messages")
+      expect(header).toHaveTextContent("Martin")
+      const row = document.querySelector('[data-search-cluster="conv_1"]')
+      expect(row?.querySelector('[data-search-result-id="msg_1"]')).toBeInTheDocument()
+      expect(screen.getByText("2 results in 2 streams")).toBeInTheDocument()
 
-      const card = screen.getByText("Launch decision").closest("a")
-      expect(card).toHaveAttribute("href", "/w/workspace_1/memory?q=hello&memo=memo_1")
-
-      const seeAll = screen.getByRole("link", { name: "See all" })
-      expect(seeAll).toHaveAttribute("href", "/w/workspace_1/memory?q=hello")
-
-      // Memories renders above the message results in document order
-      await waitFor(() => expect(screen.getByText("#general")).toBeInTheDocument())
-      const html = document.body.innerHTML
-      expect(html.indexOf("Memories")).toBeGreaterThanOrEqual(0)
-      expect(html.indexOf("Memories")).toBeLessThan(html.indexOf("#general"))
-    })
-
-    it("links a memo to its first source message and expands the source messages inline", async () => {
-      mockMemoSearchState.results = [buildMemoResult()]
-      mockUseMemoDetail.mockImplementation((_workspaceId: string, memoId: string | null) => ({
-        data: memoId
-          ? {
-              memo: {
-                ...buildMemoResult(),
-                sourceMessages: [
-                  {
-                    id: "msg_1",
-                    streamId: "stream_channel1",
-                    streamName: "#general",
-                    authorId: "user_1",
-                    authorType: "user",
-                    authorName: "Martin",
-                    content: "We **ship** in May",
-                    createdAt: "2026-01-01T00:00:00.000Z",
-                  },
-                ],
-                successorMemoId: null,
-                capturedByPersonaName: null,
-              },
-            }
-          : undefined,
-        isLoading: false,
-        error: null,
-      }))
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      const sourceLink = await screen.findByRole("link", { name: "1 message in #general" })
-      expect(sourceLink).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_1")
-      // Collapsed: the detail request is not issued
-      expect(mockUseMemoDetail).not.toHaveBeenCalledWith("workspace_1", "memo_1")
-
-      await user.click(screen.getByRole("button", { name: "Show source messages" }))
-
-      expect(mockUseMemoDetail).toHaveBeenCalledWith("workspace_1", "memo_1")
-      const row = screen.getByText("We ship in May").closest("a")
-      expect(row).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_1")
-      expect(screen.getByText("Martin")).toBeInTheDocument()
-
-      await user.click(screen.getByRole("button", { name: "Hide source messages" }))
-      expect(screen.queryByText("We ship in May")).not.toBeInTheDocument()
-    })
-
-    it("counts a memo-only match as a result instead of showing the empty state", async () => {
-      mockMemoSearchState.results = [buildMemoResult()]
-      mockSearchState.results = []
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      expect(await screen.findByText("Memories")).toBeInTheDocument()
-      expect(screen.getByText("1 result in 0 streams")).toBeInTheDocument()
-      expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
-    })
-
-    it("shows the compact Conversations section between memories and messages", async () => {
-      mockMemoSearchState.results = [buildMemoResult()]
-      mockSearchState.results = mockSearchResultsList
-      mockSearchState.conversations = [buildConversationResult()]
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      expect(await screen.findByText("Conversations")).toBeInTheDocument()
-      const card = screen.getByText("Choosing the launch date").closest("a")
-      expect(card).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_first")
-      expect(card).toHaveTextContent("7 messages")
-
-      await waitFor(() => expect(screen.getByText(/from the search results/)).toBeInTheDocument())
-      const html = document.body.innerHTML
-      expect(html.indexOf("Memories")).toBeLessThan(html.indexOf("Conversations"))
-      expect(html.indexOf("Conversations")).toBeLessThan(html.indexOf("from the search results"))
-
-      // Enter still opens the active MESSAGE result, never a conversation card
+      // Enter opens the active MESSAGE hit, never the conversation header
       await user.keyboard("{Enter}")
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
     })
 
-    it("counts a conversation-only match as a result instead of showing the empty state", async () => {
+    it("counts a topic-only conversation as a result instead of showing the empty state", async () => {
       mockSearchState.results = []
-      mockSearchState.conversations = [buildConversationResult()]
+      mockSearchState.clusters = [
+        createMockSearchCluster({ conversation: createMockClusterConversation(), matchedVia: ["topic"], hits: [] }),
+      ]
 
       const user = userEvent.setup()
       renderPanel()
@@ -930,15 +728,23 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      expect(await screen.findByText("Conversations")).toBeInTheDocument()
+      expect(await screen.findByText("Choosing the launch date")).toBeInTheDocument()
+      expect(screen.getByText("topic")).toBeInTheDocument()
       expect(screen.getByText("1 result in 1 stream")).toBeInTheDocument()
       expect(screen.queryByText("No results")).not.toBeInTheDocument()
-      expect(screen.queryByText("No messages found")).not.toBeInTheDocument()
     })
 
-    it("opens the active MESSAGE result on Enter, never a memo", async () => {
-      mockMemoSearchState.results = [buildMemoResult()]
+    it("folds a memo hit into its row as a chip and links the memory explorer on the same words", async () => {
       mockSearchState.results = mockSearchResultsList
+      mockSearchState.memos = [createMockMemoResult()]
+      mockSearchState.clusters = [
+        createMockSearchCluster({
+          conversation: createMockClusterConversation(),
+          matchedVia: ["memory"],
+          hits: [mockSearchResultsList[0]!],
+          memoIds: ["memo_1"],
+        }),
+      ]
 
       const user = userEvent.setup()
       renderPanel()
@@ -947,18 +753,21 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(editor)
       await user.type(editor, "hello")
 
-      await screen.findByText("Memories")
-      await waitFor(() => expect(screen.getByText(/from the search results/)).toBeInTheDocument())
+      const chip = (await screen.findByText("Launch decision")).closest("a")
+      expect(chip).toHaveAttribute("href", "/w/workspace_1/memory?q=hello&memo=memo_1")
+      expect(document.querySelector('[data-search-cluster="conv_1"]')).toContainElement(chip)
+      expect(screen.getByRole("link", { name: "Search memory" })).toHaveAttribute(
+        "href",
+        "/w/workspace_1/memory?q=hello"
+      )
 
+      // Enter opens the active MESSAGE hit, never a memo
       await user.keyboard("{Enter}")
-
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
       expect(mockNavigate).not.toHaveBeenCalledWith(expect.stringContaining("/memory"))
     })
 
-    it("is absent, and skips the memo request, when the search flag is off", async () => {
-      vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("off")
-      mockMemoSearchState.results = [buildMemoResult()]
+    it("hides the memory link for a filter-only query", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
@@ -966,37 +775,10 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
-      await user.type(editor, "hello")
+      await user.type(editor, "from:@martin")
 
-      await waitFor(() => {
-        expect(screen.getByText("#general")).toBeInTheDocument()
-      })
-      await waitFor(() => expect(mockUseMemoSearch).toHaveBeenCalled())
-
-      expect(screen.queryByText("Memories")).not.toBeInTheDocument()
-      const lastCall = mockUseMemoSearch.mock.calls.at(-1)
-      expect(lastCall?.[2]).toEqual({ enabled: false })
-    })
-
-    it("is absent, and skips the memo request, when the query carries from:@martin", async () => {
-      mockMemoSearchState.results = [buildMemoResult()]
-      mockSearchState.results = mockSearchResultsList
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "from:@martin hello")
-
-      await waitFor(() => {
-        expect(screen.getByText("@martin")).toBeInTheDocument()
-      })
-      await waitFor(() => expect(mockUseMemoSearch).toHaveBeenCalled())
-
-      expect(screen.queryByText("Memories")).not.toBeInTheDocument()
-      const lastCall = mockUseMemoSearch.mock.calls.at(-1)
-      expect(lastCall?.[2]).toEqual({ enabled: false })
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      expect(screen.queryByRole("link", { name: "Search memory" })).not.toBeInTheDocument()
     })
   })
 

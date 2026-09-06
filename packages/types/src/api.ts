@@ -58,6 +58,10 @@ export const MAX_SEARCH_PHRASES = 5
 export const SEARCH_CLICK_KINDS = ["message", "conversation", "memo"] as const
 export type SearchClickKind = (typeof SEARCH_CLICK_KINDS)[number]
 
+/** How a search row got into the list: a message hit, the conversation topic, or a memo whose source messages sit in it. */
+export const SEARCH_CLUSTER_MATCHES = ["message", "topic", "memory"] as const
+export type SearchClusterMatch = (typeof SEARCH_CLUSTER_MATCHES)[number]
+
 interface CreateStreamInputBase {
   type: StreamType
   displayName?: string

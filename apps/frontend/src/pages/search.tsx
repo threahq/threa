@@ -1,5 +1,6 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowLeft, Loader2, Search as SearchIcon, Sparkles } from "lucide-react"
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { SearchResultItem } from "@/api"
+import { ArrowLeft, Brain, Search as SearchIcon } from "lucide-react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -8,13 +9,11 @@ import { SidebarToggle } from "@/components/layout"
 import { RichInput, SEARCH_TRIGGERS } from "@/components/quick-switcher/rich-input"
 import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
-import { useMemoMatches } from "@/components/search/use-memo-matches"
-import { MemoMatches } from "@/components/search/memo-matches"
-import { ConversationMatches } from "@/components/search/conversation-matches"
 import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResults } from "@/components/search/search-results"
+import { SearchClusterList, countClusterResults } from "@/components/search/search-cluster-list"
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -34,8 +33,7 @@ export function SearchPage() {
   // keyboard doesn't spring up on open; a mouse (even on a touchscreen laptop)
   // still autofocuses the search input.
   const autoFocusSearch = useInputMode() !== "touch"
-  // Phone widths start the memo/conversation groups collapsed so the message
-  // results are on screen without scrolling past them.
+  // Phone widths fold each conversation's hits behind a count so the list fits on screen.
   const isMobile = useIsMobile()
 
   // Local state for typing; URL is written behind a debounce for bookmarkability.
@@ -71,30 +69,30 @@ export function SearchPage() {
 
   const {
     results,
-    conversations,
+    clusters,
+    memos,
     isLoading,
     error,
     validationError,
     parsedFilters,
-    apiFilters,
     searchText,
     hasQuery,
-    canSearchDeeper,
-    isSearchingDeeper,
-    searchDeeper,
+    exploreHref,
     recordResultClick,
   } = useMessageSearch(workspaceId ?? "", localQuery)
   const displayError = validationError ?? (error ? "Search failed. Try again." : null)
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
-  const { memos, exploreHref } = useMemoMatches(workspaceId ?? "", {
-    searchText,
-    parsedFilters,
-    apiFilters,
-    hasQuery,
-  })
-  const resultCount = results.length + memos.length + conversations.length
-  const hasResults = resultCount > 0
+  const resultCount = displayMode === "ranked" ? results.length : countClusterResults(clusters)
+  const hasResults = clusters.length > 0
+
+  const handleResultSelect = useCallback(
+    (result: SearchResultItem) => {
+      setActiveResultId(result.id)
+      recordResultClick({ kind: "message", id: result.id })
+    },
+    [setActiveResultId, recordResultClick]
+  )
 
   if (!workspaceId) {
     return null
@@ -117,7 +115,6 @@ export function SearchPage() {
               <RichInput
                 value={localQuery}
                 onChange={handleQueryChange}
-                onSubmit={searchDeeper}
                 triggers={SEARCH_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
@@ -142,21 +139,12 @@ export function SearchPage() {
           />
           {hasQuery && !displayError && (
             <div className="ml-auto flex items-center gap-1">
-              {canSearchDeeper && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-9"
-                  type="button"
-                  disabled={isLoading}
-                  onClick={searchDeeper}
-                >
-                  {isSearchingDeeper ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  Search deeper
+              {searchText.trim().length > 0 && (
+                <Button variant="ghost" size="sm" className="h-9" asChild>
+                  <Link to={exploreHref}>
+                    <Brain className="h-3.5 w-3.5" />
+                    Search memory
+                  </Link>
                 </Button>
               )}
               <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} size="touch" />
@@ -181,16 +169,6 @@ export function SearchPage() {
             </div>
           )}
 
-          {hasQuery && !displayError && <MemoMatches memos={memos} exploreHref={exploreHref} defaultOpen={!isMobile} />}
-          {hasQuery && !displayError && (
-            <ConversationMatches
-              workspaceId={workspaceId}
-              conversations={conversations}
-              defaultOpen={!isMobile}
-              onSelect={(conversation) => recordResultClick({ kind: "conversation", id: conversation.id })}
-            />
-          )}
-
           {hasQuery && isLoading && !hasResults && (
             <div className="flex flex-col gap-2 py-1">
               <Skeleton className="h-14 rounded-md" />
@@ -202,23 +180,34 @@ export function SearchPage() {
 
           {displayError && <p className="py-8 text-center text-sm text-destructive">{displayError}</p>}
 
-          {hasQuery && !displayError && results.length > 0 && (
+          {hasQuery && !displayError && hasResults && displayMode === "clusters" && (
+            <SearchClusterList
+              workspaceId={workspaceId}
+              clusters={clusters}
+              memos={memos}
+              terms={terms}
+              activeResultId={activeResultId}
+              exploreHref={exploreHref}
+              foldHits={isMobile}
+              onResultSelect={handleResultSelect}
+              onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
+              onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
+            />
+          )}
+
+          {hasQuery && !displayError && results.length > 0 && displayMode === "ranked" && (
             <SearchResults
               workspaceId={workspaceId}
               results={results}
               terms={terms}
               activeResultId={activeResultId}
-              onResultSelect={(result) => {
-                setActiveResultId(result.id)
-                recordResultClick({ kind: "message", id: result.id })
-              }}
-              mode={displayMode}
+              onResultSelect={handleResultSelect}
             />
           )}
 
           {hasQuery && !isLoading && !displayError && !hasResults && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <p className="text-sm font-medium text-muted-foreground/70">No messages found</p>
+              <p className="text-sm font-medium text-muted-foreground/70">No results</p>
               <p className="mt-1 text-xs text-muted-foreground/50">Try different words or remove a filter</p>
             </div>
           )}

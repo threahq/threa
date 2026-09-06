@@ -797,6 +797,8 @@ export {
   MAX_SEARCH_PHRASES,
   SEARCH_CLICK_KINDS,
   type SearchClickKind,
+  SEARCH_CLUSTER_MATCHES,
+  type SearchClusterMatch,
 } from "./api"
 
 // Open-an-aside client-action id (single source of truth)
