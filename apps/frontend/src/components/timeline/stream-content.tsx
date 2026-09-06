@@ -246,6 +246,19 @@ export const DEEP_LINK_HOLD_MAX_MS = 600
  */
 const UNREAD_MARKER_TOP_GAP_PX = 56
 
+// Top-spacer heights, in px. These are handed to virtua as `startMargin` and
+// also size the spacer element itself, so they are numbers this component knows
+// on its FIRST render rather than a measurement: virtua records a later
+// startMargin without re-deriving the offsets it already computed from the old
+// one, and the anchor restore lost its target row that way. The element renders
+// from the same number, so the two can't drift.
+const STREAM_HEADER_SPACER_PX = 12
+const STREAM_HEADER_SPACER_SM_PX = 24
+// Matches the `h-11` StreamSearchBar / BatchSelectionBar. Both render
+// `absolute top-0` outside the scroller; this reserves matching room inside it
+// so the topmost item never sits permanently underneath either bar.
+const BAR_TOP_SPACER_PX = 44
+
 /**
  * Consecutive 60ms refine ticks the scrollToMessage target must hold its
  * aligned position before `onFirstSettle` fires — long enough that virtua's
@@ -3772,14 +3785,12 @@ function TimelineMessageList({
 
   // Reserve room at the top for the floating BatchSelectionBar / StreamSearchBar
   // when open (taller), otherwise a small spacer so the head row's hover toolbar
-  // isn't clipped. Rendered as a real element above the virtualizer; its height
-  // is fed to virtua via startMargin so index math stays aligned.
+  // isn't clipped. It is a real element above the virtualizer, and the same
+  // number goes to virtua as startMargin so index math stays aligned.
   const reservedTopSpacer = isSearchOpen || batch?.enabled
-  const topSpacerRef = useRef<HTMLDivElement>(null)
-  const [startMargin, setStartMargin] = useState(0)
-  useLayoutEffect(() => {
-    setStartMargin(topSpacerRef.current?.offsetHeight ?? 0)
-  }, [reservedTopSpacer])
+  const isNarrowViewport = useIsMobile()
+  const headerSpacerPx = isNarrowViewport ? STREAM_HEADER_SPACER_PX : STREAM_HEADER_SPACER_SM_PX
+  const startMargin = reservedTopSpacer ? BAR_TOP_SPACER_PX : headerSpacerPx
 
   // Single skeleton shape shared by the active-load branch and the cold-boot
   // empty fallback so the seam between MainContentGate's skeleton and
@@ -3867,7 +3878,7 @@ function TimelineMessageList({
         {...batchPointerHandlers}
       >
         <div ref={contentRef}>
-          <div ref={topSpacerRef}>{reservedTopSpacer ? <BarTopSpacer /> : <StreamHeaderSpacer />}</div>
+          <div aria-hidden style={{ height: startMargin }} />
           <Virtualizer
             ref={listRef}
             scrollRef={scrollerRef}
@@ -3931,16 +3942,7 @@ function TimelineMessageList({
 // Spacer reserving room for the floating composer pill, so the most recent
 // message sits visually offset above the pill at rest and the at-bottom edge
 // accounts for the composer's height.
-const StreamHeaderSpacer = () => <div className="h-3 sm:h-6" aria-hidden />
-
 const ComposerFooterSpacer = () => <div aria-hidden style={{ height: "var(--composer-height, 0px)" }} />
-
-// 44px scrollable spacer reserved at the top while the search or batch-selection
-// bar is open. Both bars render `absolute top-0` outside the scroller; this
-// reserves matching room *inside* it so the topmost item never sits permanently
-// underneath either bar. h-11 keeps the numbers aligned with `StreamSearchBar` /
-// `BatchSelectionBar`.
-const BarTopSpacer = () => <div aria-hidden className="h-11" />
 
 /**
  * Three-phase state for the batch-move confirmation dialog. Drives the

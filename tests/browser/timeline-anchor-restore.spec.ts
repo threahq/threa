@@ -75,6 +75,23 @@ async function distanceFromBottom(page: Page): Promise<number | null> {
   })
 }
 
+/** Resolves once the scroller's scrollTop has held still for 100ms. */
+async function waitForScrollRest(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const el = document.querySelector("[data-suppress-pull-refresh]") as HTMLElement
+        let last = el.scrollTop
+        const tick = () => {
+          if (el.scrollTop === last) return resolve()
+          last = el.scrollTop
+          setTimeout(tick, 100)
+        }
+        setTimeout(tick, 100)
+      })
+  )
+}
+
 /** The msg-NNN number of the topmost message row intersecting the viewport. */
 async function topVisibleMessageNum(page: Page): Promise<number | null> {
   return page.evaluate(() => {
@@ -124,7 +141,10 @@ test.describe("Timeline anchor restore", () => {
     // atomic resolver — the unread marker if one is latched, else the tail;
     // unread-marker-open.spec.ts covers the marker fallthrough).
     // Wheel from near the top edge: the floating jump-to-latest button covers
-    // the scroller's center once detached.
+    // the scroller's center once detached. Chromium animates wheel scrolls,
+    // so each step waits for the scroller to come to rest before the distance
+    // is read — reading mid-animation queues extra steps and the overshoot
+    // carries the anchor past the bootstrap window, which is a stale anchor.
     const scroller = page.locator("[data-suppress-pull-refresh]")
     const box = await scroller.boundingBox()
     expect(box).not.toBeNull()
@@ -133,7 +153,7 @@ test.describe("Timeline anchor restore", () => {
       .poll(
         async () => {
           await page.mouse.wheel(0, -400)
-          await page.waitForTimeout(80)
+          await waitForScrollRest(page)
           return await distanceFromBottom(page)
         },
         { timeout: 15000, message: "should detach well clear of the tail" }
