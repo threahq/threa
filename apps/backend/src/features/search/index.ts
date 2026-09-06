@@ -12,7 +12,7 @@ export { SearchRepository } from "./repository"
 export { hybridWeightsForQuery, searchRankingForFlag, SEARCH_RRF_K, type SearchRanking } from "./config"
 export { SearchQueryExpander } from "./query-expansion"
 export { StubQueryExpander } from "./query-expansion.stub"
-export { SearchSteerer, type SearchSteererLike } from "./steer"
+export { SearchSteerer } from "./steer"
 export { StubSearchSteerer } from "./steer.stub"
 
 export type { SearchResult, ResolvedFilters, GetAccessibleStreamsParams } from "./repository"

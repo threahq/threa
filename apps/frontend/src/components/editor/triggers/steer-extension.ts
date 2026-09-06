@@ -6,8 +6,8 @@
 import { Extension } from "@tiptap/core"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
-import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import { getParentTextBefore } from "../markdown-guards"
+import type { TriggerExtensionOptions } from "./create-trigger-extension"
 
 export const SteerPluginKey = new PluginKey("steer")
 
@@ -21,17 +21,7 @@ export const STEER_OPTIONS: SteerItem[] = [
   { id: "steer", label: "Steer", description: "Describe what to keep, drop, or rank first" },
 ]
 
-export interface SteerOptions {
-  suggestion: {
-    items: (props: { query: string }) => SteerItem[] | Promise<SteerItem[]>
-    render: () => {
-      onStart: (props: SuggestionProps<SteerItem>) => void
-      onUpdate: (props: SuggestionProps<SteerItem>) => void
-      onExit: (props: SuggestionProps<SteerItem>) => void
-      onKeyDown: (props: SuggestionKeyDownProps) => boolean
-    }
-  }
-}
+export type SteerOptions = TriggerExtensionOptions<SteerItem>
 
 function findSteerMatch(config: {
   char: string

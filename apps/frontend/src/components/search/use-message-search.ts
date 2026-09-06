@@ -41,8 +41,6 @@ export interface MessageSearchState {
   hasQuery: boolean
   /** `/steer` prose still in the input, waiting for Enter to commit it; null without a marker. */
   pendingSteer: string | null
-  /** What the backend did with the committed steers on the last search; null when there were none. */
-  steer: SearchSteerOutcome | null
   /** The line shown under the summary: the model's note, or why the list is unsteered; null when there is nothing to say. */
   steerNote: string | null
   /** `/w/<ws>/memory?q=<text>`: the memory explorer opened on the same words; memo chips append `&memo=<id>`. */
@@ -203,7 +201,6 @@ export function useMessageSearch(workspaceId: string, query: string, steers: str
     searchText,
     hasQuery,
     pendingSteer,
-    steer,
     steerNote: steerNoteFor(steer),
     exploreHref: `/w/${workspaceId}/memory?q=${encodeURIComponent(searchText)}`,
     recordResultClick,
