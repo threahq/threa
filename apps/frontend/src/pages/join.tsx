@@ -1,20 +1,19 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Ban, Hourglass, Mail, SearchX, Unlink2, type LucideIcon } from "lucide-react"
+import { Ban, Hourglass, Mail, RefreshCw, SearchX, UsersRound, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ThreaLogo } from "@/components/threa-logo"
 import { ApiError } from "@/api/client"
-import { invitationsApi } from "@/api/invitations"
+import {
+  invitationsApi,
+  INVITATION_ERROR_CODES,
+  isInvitationErrorCode,
+  type InvitationErrorCode,
+} from "@/api/invitations"
 import { formatDisplayDate } from "@/lib/dates"
-
-type LookupErrorCode =
-  | "INVITATION_NOT_FOUND"
-  | "INVITATION_REVOKED"
-  | "INVITATION_EXPIRED"
-  | "INVITATION_ALREADY_CLAIMED"
 
 interface LookupErrorCopy {
   title: string
@@ -22,31 +21,48 @@ interface LookupErrorCopy {
   icon: LucideIcon
 }
 
-const LOOKUP_ERROR_COPY: Record<LookupErrorCode, LookupErrorCopy> = {
-  INVITATION_NOT_FOUND: {
+const LOOKUP_ERROR_COPY = {
+  [INVITATION_ERROR_CODES.NOT_FOUND]: {
     title: "Invitation not found",
     body: "This link is invalid or no longer exists. Ask the workspace admin for a fresh one.",
     icon: SearchX,
   },
-  INVITATION_REVOKED: {
+  [INVITATION_ERROR_CODES.REVOKED]: {
     title: "Invitation revoked",
     body: "This invitation has been revoked. Ask the workspace admin for a new link.",
     icon: Ban,
   },
-  INVITATION_EXPIRED: {
+  [INVITATION_ERROR_CODES.EXPIRED]: {
     title: "Invitation expired",
     body: "This invite link has expired. Ask the workspace admin for a fresh one.",
     icon: Hourglass,
   },
-  INVITATION_ALREADY_CLAIMED: {
-    title: "Link already used",
-    body: "This invitation link has already been claimed. Ask for a fresh one if you still need access.",
-    icon: Unlink2,
+  [INVITATION_ERROR_CODES.ALREADY_CLAIMED]: {
+    title: "Invite link already used",
+    body: "Ask the workspace admin for a new link.",
+    icon: UsersRound,
   },
-}
+  [INVITATION_ERROR_CODES.EXHAUSTED]: {
+    title: "Invitation link is full",
+    body: "This link has reached its join limit. Ask the workspace admin to update it or send a new one.",
+    icon: UsersRound,
+  },
+  [INVITATION_ERROR_CODES.CLAIM_LIMIT]: {
+    title: "Link is busy",
+    body: "This link has too many pending join requests right now. Try again in a little while, or ask the admin to send you a direct invite.",
+    icon: UsersRound,
+  },
+  [INVITATION_ERROR_CODES.ROLLOUT_UNAVAILABLE]: {
+    title: "Invitations unavailable",
+    body: "Invitations are temporarily unavailable. Try again in a minute.",
+    icon: RefreshCw,
+  },
+} satisfies Partial<Record<InvitationErrorCode, LookupErrorCopy>>
+
+type LookupErrorCode = keyof typeof LOOKUP_ERROR_COPY
 
 function getErrorCode(err: unknown): LookupErrorCode | null {
-  if (ApiError.isApiError(err) && err.code in LOOKUP_ERROR_COPY) {
+  if (ApiError.isApiError(err) && isInvitationErrorCode(err.code) && err.code in LOOKUP_ERROR_COPY) {
     return err.code as LookupErrorCode
   }
   return null
@@ -54,6 +70,7 @@ function getErrorCode(err: unknown): LookupErrorCode | null {
 
 function resolveClaimErrorMessage(code: LookupErrorCode | null, err: unknown): string | null {
   if (code) return LOOKUP_ERROR_COPY[code].body
+  if (err instanceof ApiError) return LOOKUP_ERROR_COPY[INVITATION_ERROR_CODES.ROLLOUT_UNAVAILABLE].body
   if (err instanceof Error) return err.message
   return null
 }
@@ -124,7 +141,7 @@ export function JoinPage() {
   if (!token) {
     return (
       <JoinShell>
-        <ErrorState code="INVITATION_NOT_FOUND" />
+        <ErrorState code={INVITATION_ERROR_CODES.NOT_FOUND} />
       </JoinShell>
     )
   }
@@ -141,7 +158,7 @@ export function JoinPage() {
   }
 
   if (lookupQuery.isError) {
-    const code = getErrorCode(lookupQuery.error) ?? "INVITATION_NOT_FOUND"
+    const code = getErrorCode(lookupQuery.error) ?? INVITATION_ERROR_CODES.NOT_FOUND
     return (
       <JoinShell>
         <ErrorState code={code} />
@@ -179,7 +196,7 @@ export function JoinPage() {
             You're invited to <span className="text-primary">{data.workspaceName}</span>
           </h1>
           <p className="text-sm text-muted-foreground">
-            {data.expiresAt ? `Invite link · expires ${formatDisplayDate(new Date(data.expiresAt))}` : "Invite link"}
+            {data.expiresAt ? `Expires ${formatDisplayDate(new Date(data.expiresAt))}` : "This link does not expire"}
           </p>
         </div>
 

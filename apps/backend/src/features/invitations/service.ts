@@ -32,6 +32,15 @@ interface CreateLinkParams {
   invitedBy: string
   role: WorkspaceInvitableRole
   note: string | null
+  maxUses?: number | null
+  expiresAt?: Date | null
+}
+
+interface UpdateLinkParams {
+  workspaceId: string
+  invitationId: string
+  maxUses?: number | null
+  expiresAt?: Date | null
 }
 
 export interface CreateLinkResult {
@@ -40,6 +49,7 @@ export interface CreateLinkResult {
 }
 
 export interface ClaimLinkResult {
+  invitationId?: string
   alreadyMember?: { workspaceId: string }
 }
 
@@ -62,6 +72,9 @@ export interface WorkosIdentity {
 function isExpired(invitation: Invitation, now = new Date()): boolean {
   return invitation.expiresAt !== null && invitation.expiresAt <= now
 }
+
+/** Even unlimited links stop fanning out invite emails once this many claims sit unaccepted. */
+const MIN_PENDING_LINK_CLAIMS = 10
 
 function assertLinkAvailable(invitation: Invitation): void {
   if (invitation.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
@@ -293,9 +306,11 @@ export class InvitationService {
   }
 
   async createLink(params: CreateLinkParams): Promise<CreateLinkResult> {
+    if (params.role !== "member") throw new InvitationLinkError("INVITATION_ROLE_NOT_ALLOWED")
     const { token, tokenHash } = generateLinkToken()
     const id = invitationId()
-    const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS)
+    const expiresAt = params.expiresAt === undefined ? new Date(Date.now() + INVITATION_EXPIRY_MS) : params.expiresAt
+    const maxUses = params.maxUses === undefined ? 1 : params.maxUses
     const invitation = await withTransaction(this.pool, async (client) => {
       const created = await InvitationRepository.insertLink(client, {
         id,
@@ -305,7 +320,7 @@ export class InvitationService {
         tokenHash,
         note: params.note,
         expiresAt,
-        maxUses: 1,
+        maxUses,
       })
       await OutboxRepository.insert(client, "invitation:link-created", {
         workspaceId: params.workspaceId,
@@ -319,37 +334,92 @@ export class InvitationService {
     return { invitation, token }
   }
 
+  async updateLink(params: UpdateLinkParams): Promise<Invitation | null> {
+    return withTransaction(this.pool, async (client) => {
+      const invitation = await InvitationRepository.updateLink(client, params.invitationId, params.workspaceId, {
+        maxUses: params.maxUses,
+        expiresAt: params.expiresAt,
+      })
+      if (!invitation) return null
+      await OutboxRepository.insert(client, "invitation:link-created", {
+        workspaceId: invitation.workspaceId,
+        invitationId: invitation.id,
+        tokenHash: invitation.tokenHash!,
+        role: invitation.role,
+        ...linkState(invitation),
+      })
+      return invitation
+    })
+  }
+
   async claimLinkByToken(token: string, rawEmail: string): Promise<ClaimLinkResult> {
     const email = rawEmail.toLowerCase().trim()
     const tokenHash = hashInvitationToken(token)
     return withTransaction(this.pool, async (client) => {
-      const root = await InvitationRepository.findRootByTokenHashForUpdate(client, tokenHash)
-      if (!root) throw new InvitationLinkError("INVITATION_NOT_FOUND")
+      const parent = await InvitationRepository.findRootByTokenHashForUpdate(client, tokenHash)
+      if (!parent) throw new InvitationLinkError("INVITATION_NOT_FOUND")
+      if (parent.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
 
-      const hasChildren = await InvitationRepository.hasLinkChildren(client, root.workspaceId, root.id)
-      if (root.maxUses !== 1 || root.expiresAt === null || hasChildren) {
-        throw new InvitationLinkError("INVITATION_ROLLOUT_UNAVAILABLE")
+      let child: Invitation
+      if (parent.role === "admin") {
+        assertLinkAvailable(parent)
+        if (parent.email && parent.email.toLowerCase() !== email) {
+          throw new InvitationLinkError("INVITATION_EXHAUSTED")
+        }
+        if (parent.email) {
+          child = parent
+        } else {
+          const claimed = await InvitationRepository.claimLegacyAdminLink(client, parent.workspaceId, parent.id, email)
+          if (!claimed) throw new InvitationLinkError("INVITATION_EXHAUSTED")
+          child = claimed
+        }
+      } else {
+        if (isExpired(parent)) throw new InvitationLinkError("INVITATION_EXPIRED")
+        const legacyClaim = parent.email?.toLowerCase() === email ? parent : null
+        if (parent.email && !legacyClaim && parent.maxUses === 1 && parent.acceptanceConsumesCapacity !== false) {
+          throw new InvitationLinkError("INVITATION_EXHAUSTED")
+        }
+        const existingChild =
+          legacyClaim ?? (await InvitationRepository.findLinkChild(client, parent.workspaceId, parent.id, email))
+        if (!existingChild) {
+          assertLinkAvailable(parent)
+          // Each pending child becomes a WorkOS email to a distinct address;
+          // bound the fan-out per link. Successful joins free slots.
+          const pendingClaims = await InvitationRepository.countPendingLinkChildren(
+            client,
+            parent.workspaceId,
+            parent.id
+          )
+          if (pendingClaims >= Math.max(parent.maxUses ?? 0, MIN_PENDING_LINK_CLAIMS)) {
+            throw new InvitationLinkError("INVITATION_CLAIM_LIMIT")
+          }
+        }
+        child =
+          existingChild ??
+          (await InvitationRepository.insertOrFindLinkChild(client, {
+            id: invitationId(),
+            parent,
+            email,
+          }))
       }
-      if (root.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
-      if (isExpired(root)) throw new InvitationLinkError("INVITATION_EXPIRED")
-      if (root.status === "accepted" || root.email !== null) {
-        throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
-      }
-
-      const claimed = await InvitationRepository.claimLegacyLinkById(client, root.workspaceId, root.id, email)
-      if (!claimed) throw new InvitationLinkError("INVITATION_ALREADY_CLAIMED")
       const inviterWorkosUserId =
-        (await this.getInviterWorkosUserId(claimed.workspaceId, claimed.invitedBy, client)) ?? undefined
+        (await this.getInviterWorkosUserId(parent.workspaceId, parent.invitedBy, client)) ?? undefined
+      const { parentInvitationId, expiresAt, maxUses, useCount, revision } = linkState(parent)
       await OutboxRepository.insert(client, "invitation:link-claimed", {
-        workspaceId: claimed.workspaceId,
-        invitationId: claimed.id,
+        workspaceId: parent.workspaceId,
+        invitationId: child.id,
         email,
-        role: claimed.role,
+        role: parent.role,
         inviterWorkosUserId,
+        parentInvitationId,
+        expiresAt,
+        maxUses,
+        useCount,
+        revision,
       })
-      const memberMatches = await UserRepository.findEmails(client, claimed.workspaceId, [email])
-      if (memberMatches.has(email)) return { alreadyMember: { workspaceId: claimed.workspaceId } }
-      return {}
+      const memberMatches = await UserRepository.findEmails(client, parent.workspaceId, [email])
+      if (memberMatches.has(email)) return { alreadyMember: { workspaceId: parent.workspaceId } }
+      return { invitationId: child.id }
     })
   }
 
@@ -367,8 +437,8 @@ export type InvitationLinkErrorCode =
   | "INVITATION_REVOKED"
   | "INVITATION_EXPIRED"
   | "INVITATION_EXHAUSTED"
-  | "INVITATION_ALREADY_CLAIMED"
-  | "INVITATION_ROLLOUT_UNAVAILABLE"
+  | "INVITATION_CLAIM_LIMIT"
+  | "INVITATION_ROLE_NOT_ALLOWED"
 
 export class InvitationLinkError extends Error {
   constructor(public readonly code: InvitationLinkErrorCode) {

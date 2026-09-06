@@ -5,10 +5,29 @@ import type {
   SendInvitationsResponse,
   CreateInvitationLinkInput,
   CreateInvitationLinkResponse,
+  UpdateInvitationLinkInput,
+  UpdateInvitationLinkResponse,
   InvitationLinkLookupResponse,
   ClaimInvitationLinkInput,
   ClaimInvitationLinkResponse,
 } from "@threa/types"
+
+export const INVITATION_ERROR_CODES = {
+  NOT_FOUND: "INVITATION_NOT_FOUND",
+  REVOKED: "INVITATION_REVOKED",
+  EXPIRED: "INVITATION_EXPIRED",
+  EXHAUSTED: "INVITATION_EXHAUSTED",
+  ALREADY_CLAIMED: "INVITATION_ALREADY_CLAIMED",
+  EMAIL_MISMATCH: "INVITATION_EMAIL_MISMATCH",
+  CLAIM_LIMIT: "INVITATION_CLAIM_LIMIT",
+  ROLLOUT_UNAVAILABLE: "INVITATION_ROLLOUT_UNAVAILABLE",
+} as const
+
+export type InvitationErrorCode = (typeof INVITATION_ERROR_CODES)[keyof typeof INVITATION_ERROR_CODES]
+
+export function isInvitationErrorCode(code: string): code is InvitationErrorCode {
+  return Object.values(INVITATION_ERROR_CODES).some((value) => value === code)
+}
 
 export const invitationKeys = {
   all: ["invitations"] as const,
@@ -29,6 +48,14 @@ export const invitationsApi = {
 
   async createLink(workspaceId: string, data: CreateInvitationLinkInput): Promise<CreateInvitationLinkResponse> {
     return api.post<CreateInvitationLinkResponse>(`/api/workspaces/${workspaceId}/invitations/links`, data)
+  },
+
+  async updateLink(
+    workspaceId: string,
+    invitationId: string,
+    data: UpdateInvitationLinkInput
+  ): Promise<UpdateInvitationLinkResponse> {
+    return api.patch<UpdateInvitationLinkResponse>(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, data)
   },
 
   async revoke(workspaceId: string, invitationId: string): Promise<void> {

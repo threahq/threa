@@ -1932,9 +1932,13 @@ export interface SendInvitationsResponse {
 // Link-based invitations
 
 export interface CreateInvitationLinkInput {
-  role: WorkspaceInvitableRole
+  role: "member"
   /** Admin-only memo, e.g. "for Simon — sent via Signal". Optional. */
   note?: string
+  /** Omitted defaults to one successful join; null means unlimited. */
+  maxUses?: number | null
+  /** Omitted defaults to seven days; null means no expiry. */
+  expiresAt?: string | null
 }
 
 export interface UpdateInvitationLinkInput {
@@ -1964,8 +1968,6 @@ export interface ClaimInvitationLinkInput {
 
 export interface ClaimInvitationLinkResponse {
   ok: true
-  /** The email-bound child invitation accepted after authentication. */
-  invitationId?: string
   /** Set when the email already belongs to a workspace member; frontend can deep-link to login. */
   alreadyMember?: { workspaceId: string }
 }

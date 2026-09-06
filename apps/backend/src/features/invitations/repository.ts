@@ -93,19 +93,25 @@ function mapRow(row: InvitationRow): Invitation {
   }
 }
 
+const USE_COUNT_EXPR = (alias: string) => `
+  CASE WHEN ${alias}.kind = 'link' AND ${alias}.parent_link_id IS NULL THEN
+    (CASE WHEN ${alias}.accepted_at IS NOT NULL AND ${alias}.acceptance_consumes_capacity IS DISTINCT FROM FALSE THEN 1 ELSE 0 END) +
+    (SELECT COUNT(*)::int FROM workspace_invitations child
+     WHERE child.workspace_id = ${alias}.workspace_id
+       AND child.parent_link_id = ${alias}.id
+       AND child.accepted_at IS NOT NULL
+       AND child.acceptance_consumes_capacity IS DISTINCT FROM FALSE)
+  ELSE 0 END`
+
 const SELECT_FIELDS = `
   wi.id, wi.workspace_id, wi.kind, wi.email, wi.role, wi.invited_by,
   wi.workos_invitation_id, wi.token_hash, wi.note, wi.status, wi.created_at,
   wi.expires_at, wi.accepted_at, wi.revoked_at, wi.parent_link_id, wi.max_uses,
   wi.accepted_workos_user_id, wi.acceptance_consumes_capacity, wi.revision,
-  CASE WHEN wi.kind = 'link' AND wi.parent_link_id IS NULL THEN
-    (CASE WHEN wi.accepted_at IS NOT NULL AND wi.acceptance_consumes_capacity IS DISTINCT FROM FALSE THEN 1 ELSE 0 END) +
-    (SELECT COUNT(*)::int FROM workspace_invitations child
-     WHERE child.workspace_id = wi.workspace_id
-       AND child.parent_link_id = wi.id
-       AND child.accepted_at IS NOT NULL
-       AND child.acceptance_consumes_capacity IS DISTINCT FROM FALSE)
-  ELSE 0 END AS use_count`
+  ${USE_COUNT_EXPR("wi")} AS use_count`
+
+/** Parents without remaining capacity are not pending, matching the CP shadow filter. */
+const PARENT_HAS_CAPACITY = `(parent.id IS NULL OR parent.max_uses IS NULL OR ${USE_COUNT_EXPR("parent")} < parent.max_uses)`
 
 async function findById(db: Querier, id: string, forUpdate = false): Promise<Invitation | null> {
   if (forUpdate) {
@@ -146,6 +152,43 @@ export const InvitationRepository = {
     return mapRow(result.rows[0])
   },
 
+  async claimLegacyAdminLink(db: Querier, workspaceId: string, id: string, email: string): Promise<Invitation | null> {
+    const result = await db.query<{ id: string }>(sql`
+      UPDATE workspace_invitations
+      SET email = ${email}
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+        AND kind = 'link'
+        AND parent_link_id IS NULL
+        AND role = 'admin'
+        AND status = 'pending'
+        AND email IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+      RETURNING id
+    `)
+    return result.rows[0] ? findById(db, result.rows[0].id) : null
+  },
+
+  async findLinkChild(
+    db: Querier,
+    workspaceId: string,
+    parentLinkId: string,
+    email: string
+  ): Promise<Invitation | null> {
+    const result = await db.query<{ id: string }>(sql`
+      SELECT id FROM workspace_invitations
+      WHERE workspace_id = ${workspaceId} AND parent_link_id = ${parentLinkId} AND lower(email) = lower(${email})
+    `)
+    return result.rows[0] ? findById(db, result.rows[0].id) : null
+  },
+
+  async countPendingLinkChildren(db: Querier, workspaceId: string, parentLinkId: string): Promise<number> {
+    const result = await db.query<{ count: number }>(sql`
+      SELECT count(*)::int AS count FROM workspace_invitations
+      WHERE workspace_id = ${workspaceId} AND parent_link_id = ${parentLinkId} AND status = 'pending'
+    `)
+    return Number(result.rows[0]?.count ?? 0)
+  },
+
   async insertOrFindLinkChild(
     db: Querier,
     params: { id: string; parent: Invitation; email: string }
@@ -168,37 +211,6 @@ export const InvitationRepository = {
       SELECT id FROM workspace_invitations
       WHERE token_hash = ${tokenHash} AND kind = 'link' AND parent_link_id IS NULL
       FOR UPDATE
-    `)
-    return result.rows[0] ? findById(db, result.rows[0].id) : null
-  },
-
-  async hasLinkChildren(db: Querier, workspaceId: string, parentLinkId: string): Promise<boolean> {
-    const result = await db.query(sql`
-      SELECT 1 FROM workspace_invitations
-      WHERE workspace_id = ${workspaceId} AND parent_link_id = ${parentLinkId}
-      LIMIT 1
-    `)
-    return result.rows.length > 0
-  },
-
-  async claimLegacyLinkById(db: Querier, workspaceId: string, id: string, email: string): Promise<Invitation | null> {
-    const result = await db.query<{ id: string }>(sql`
-      UPDATE workspace_invitations
-      SET email = ${email}
-      WHERE id = ${id}
-        AND workspace_id = ${workspaceId}
-        AND kind = 'link'
-        AND parent_link_id IS NULL
-        AND status = 'pending'
-        AND email IS NULL
-        AND max_uses = 1
-        AND expires_at > NOW()
-        AND NOT EXISTS (
-          SELECT 1 FROM workspace_invitations child
-          WHERE child.workspace_id = workspace_invitations.workspace_id
-            AND child.parent_link_id = workspace_invitations.id
-        )
-      RETURNING id
     `)
     return result.rows[0] ? findById(db, result.rows[0].id) : null
   },
@@ -243,6 +255,7 @@ export const InvitationRepository = {
         AND (CASE WHEN parent.id IS NULL THEN wi.status ELSE parent.status END) <> 'revoked'
         AND (CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END IS NULL
           OR CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END > NOW())
+        AND ${sql.raw(PARENT_HAS_CAPACITY)}
       ORDER BY wi.created_at DESC
     `)
     return result.rows.map(mapRow)
@@ -258,6 +271,7 @@ export const InvitationRepository = {
         AND (CASE WHEN parent.id IS NULL THEN wi.status ELSE parent.status END) <> 'revoked'
         AND (CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END IS NULL
           OR CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END > NOW())
+        AND ${sql.raw(PARENT_HAS_CAPACITY)}
     `)
     return result.rows.map(mapRow)
   },
@@ -282,6 +296,35 @@ export const InvitationRepository = {
     await db.query(sql`
       UPDATE workspace_invitations SET revision = revision + 1 WHERE id = ${id}
     `)
+  },
+
+  async updateLink(
+    db: Querier,
+    id: string,
+    workspaceId: string,
+    params: { maxUses?: number | null; expiresAt?: Date | null }
+  ): Promise<Invitation | null> {
+    const current = await findById(db, id, true)
+    if (
+      !current ||
+      current.workspaceId !== workspaceId ||
+      current.kind !== "link" ||
+      current.parentLinkId ||
+      current.status === "revoked"
+    ) {
+      return null
+    }
+    if (current.role === "admin" && params.maxUses !== undefined && params.maxUses !== 1) return null
+    const maxUses = params.maxUses === undefined ? current.maxUses : params.maxUses
+    if (maxUses !== null && maxUses < current.useCount) return null
+    const expiresAt = params.expiresAt === undefined ? current.expiresAt : params.expiresAt
+    await db.query(sql`
+      UPDATE workspace_invitations
+      SET max_uses = ${maxUses}, expires_at = ${expiresAt}, revision = revision + 1,
+          status = CASE WHEN status = 'expired' THEN 'pending' ELSE status END
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+    `)
+    return findById(db, id)
   },
 
   async revoke(db: Querier, id: string, workspaceId: string, revokedAt: Date): Promise<Invitation | null> {

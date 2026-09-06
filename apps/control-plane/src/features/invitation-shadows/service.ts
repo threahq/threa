@@ -28,6 +28,7 @@ const INVITATION_ERROR_MESSAGES = {
   INVITATION_ACCEPTANCE_CONFLICT: "Invitation changed while accepting; try again",
   INVITATION_PARENT_CONFLICT: "Invitation link changed while accepting; try again",
   INVITATION_SHADOW_NOT_READY: "Invitations are temporarily unavailable; try again shortly",
+  INVITATION_ROLLOUT_UNAVAILABLE: "Invitations are temporarily unavailable; try again shortly",
 } as const
 
 function invitationErrorMessage(code: string | null | undefined, fallback: string): string {
@@ -368,6 +369,7 @@ export class InvitationShadowService {
           code === "INVITATION_REVOKED" ||
           code === "INVITATION_EXPIRED" ||
           code === "INVITATION_EXHAUSTED" ||
+          code === "INVITATION_CLAIM_LIMIT" ||
           code === "INVITATION_ALREADY_CLAIMED"
         ) {
           throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 409, code })
@@ -376,7 +378,7 @@ export class InvitationShadowService {
           throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 404, code })
         }
         if (code === "INVITATION_ROLLOUT_UNAVAILABLE") {
-          throw new HttpError(code, { status: 503, code })
+          throw new HttpError(invitationErrorMessage(code, "Invitation claim failed"), { status: 503, code })
         }
       }
       throw err
