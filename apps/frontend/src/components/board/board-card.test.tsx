@@ -34,7 +34,6 @@ import * as inputModeModule from "@/hooks/use-input-mode"
 import * as boardStoreModule from "@/stores/board-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as revealAnchorModule from "@/hooks/use-board-card-reveal-anchor"
-import * as agentTraceModule from "@/hooks/use-agent-trace"
 import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { spyOnExport } from "@/test/spy"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
@@ -183,7 +182,9 @@ function threadStream(
 }
 
 /** A socket that records its listeners so a test can fire an ephemeral event
- *  (`agent_session:progress`) the way the backend's trace-emitter does. */
+ *  (`agent_session:progress`) the way the backend's trace-emitter does. Room
+ *  joins/leaves are accepted and dropped: a running session's row subscribes to
+ *  its trace room, and the card's own behaviour is what these cases assert. */
 function fakeSocket() {
   const handlers = new Map<string, (payload: unknown) => void>()
   const socket = {
@@ -195,6 +196,7 @@ function fakeSocket() {
       handlers.delete(event)
       return socket
     },
+    emit: () => socket,
   } as unknown as Socket
   return { socket, handlers }
 }
@@ -203,19 +205,6 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 
 beforeEach(async () => {
   __resetAgentActivityStore()
-  // A running session row mounts the live effect grid, which joins the session's
-  // socket room; the board card's own behaviour is what these cases assert.
-  vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue({
-    steps: [],
-    streamingContent: {},
-    streamingSubsteps: {},
-    session: null,
-    relatedSessions: [],
-    persona: null,
-    status: "running",
-    isLoading: false,
-    error: null,
-  })
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
   __resetCollapseCacheForTests()

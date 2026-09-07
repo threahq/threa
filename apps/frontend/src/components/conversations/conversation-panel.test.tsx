@@ -1277,7 +1277,7 @@ describe("ConversationPanel event rows", () => {
 
   it("offers Redirect on a running agent trace, which bumps the panel composer's open signal", async () => {
     const user = userEvent.setup()
-    const socket = { on: () => socket, off: () => socket } as unknown as Socket
+    const socket = { on: () => socket, off: () => socket, emit: () => socket } as unknown as Socket
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
     let openReplySignal: number | undefined
     vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {

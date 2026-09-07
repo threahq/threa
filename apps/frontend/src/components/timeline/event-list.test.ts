@@ -1125,11 +1125,18 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
 
   // A session card subscribes to the agent-activity store itself, so a progress
   // tick must not travel through ctx and re-render the row (or its neighbours).
-  it("session group: a rebuilt ctx never invalidates the row", () => {
+  // The version bump and the hide flip are the churn that must still reach it.
+  it("session group: per-message ctx churn is ignored, its own version and the hide flip are not", () => {
     const started = createSessionStartedEvent("evt_s", "300", "sess_1", "msg_a")
-    const item: TimelineItem = { type: "session_group", sessionId: "sess_1", sessionVersion: 1, events: [started] }
-    const row = (ctx: TimelineItemRenderContext) => ({ item, ctx, deferSecondaryHydration: false })
-    expect(timelineRowPropsEqual(row(makeCtx()), row(makeCtx()))).toBe(true)
+    const row = (sessionVersion: number, ctx: TimelineItemRenderContext) => ({
+      item: { type: "session_group", sessionId: "sess_1", sessionVersion, events: [started] } as TimelineItem,
+      ctx,
+      deferSecondaryHydration: false,
+    })
+    const churned = makeCtx({ newMessageIds: new Set(["evt_x"]), highlightMessageId: "msg_a" })
+    expect(timelineRowPropsEqual(row(1, makeCtx()), row(1, churned))).toBe(true)
+    expect(timelineRowPropsEqual(row(1, makeCtx()), row(2, makeCtx()))).toBe(false)
+    expect(timelineRowPropsEqual(row(1, makeCtx()), row(1, makeCtx({ hideSessionCards: true })))).toBe(false)
   })
 
   it("timelineItemEqual: rebuilt wrapper with same event identities is equal; changed groupContinuation is not", () => {
