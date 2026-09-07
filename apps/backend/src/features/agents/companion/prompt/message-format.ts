@@ -153,16 +153,10 @@ function formatAttachmentDescription(att: AttachmentContext, imageIndexById: Map
     : `[Attachment: ${att.filename} (${att.mimeType}, ${idTag})]`
 
   if (att.extraction) {
-    if (isImage) {
-      if (att.extraction.summary) {
-        desc += ` - ${att.extraction.summary}`
-      }
-    } else {
-      desc += `\n  Content type: ${att.extraction.contentType}`
-      desc += `\n  Summary: ${att.extraction.summary}`
-      if (att.extraction.fullText) {
-        desc += `\n  Full content: ${att.extraction.fullText}`
-      }
+    desc += `\n  Content type: ${att.extraction.contentType}`
+    desc += `\n  Summary: ${att.extraction.summary}`
+    if (att.extraction.fullText) {
+      desc += `\n  ${isImage ? "Text in image" : "Full content"}: ${att.extraction.fullText}`
     }
     const structuredStr = formatStructuredData(att.extraction.structuredData)
     if (structuredStr) {

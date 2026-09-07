@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AuthorTypes, StreamTypes } from "@threahq/types"
+import { AuthorTypes, ExtractionContentTypes, ExtractionSourceTypes, StreamTypes } from "@threahq/types"
 import type { MessageWithAttachments, StreamContext } from "../../context-builder"
 import { formatMessagesWithTemporal } from "./message-format"
 
@@ -113,6 +113,34 @@ describe("formatMessagesWithTemporal — ID tagging for pointer URLs", () => {
     expect(content).toContain("[Image: diagram.png (attach:att_image_a #1)]")
     expect(content).toContain("[Attachment: report.pdf (application/pdf, attach:att_pdf_a)]")
     expect(content).toContain("[Image: chart.png (attach:att_image_b #2)]")
+  })
+
+  test("image extraction renders content type, summary and the transcribed text", () => {
+    const msg = userMsg({
+      attachments: [
+        {
+          id: "att_image_a",
+          filename: "error.png",
+          mimeType: "image/png",
+          extraction: {
+            contentType: ExtractionContentTypes.SCREENSHOT,
+            summary: "Deploy view for threa-backend showing a failed release.",
+            fullText: "Deployments\nBuild failed: exit code 137",
+            structuredData: null,
+            sourceType: ExtractionSourceTypes.IMAGE,
+          },
+        },
+      ],
+    })
+
+    const formatted = formatMessagesWithTemporal([msg], baseContext)
+    const content = formatted[0].content as string
+
+    // Images used to render the summary alone, so the OCR'd text an agent
+    // needs was dropped and the only way back to it was a read_attachment call.
+    expect(content).toContain("Content type: screenshot")
+    expect(content).toContain("Summary: Deploy view for threa-backend showing a failed release.")
+    expect(content).toContain("Text in image: Deployments\nBuild failed: exit code 137")
   })
 
   test("falls back to no temporal prefix when context.temporal is absent but still tags ids", () => {
