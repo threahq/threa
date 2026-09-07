@@ -12,6 +12,7 @@ import {
   getAgentSession,
   updateAgentSessionProgress,
   reconcileAgentActivityFromStreamEvents,
+  agentActivityStreamContext,
   useAgentSessionActivities,
   useAgentSessionActivity,
   __resetAgentActivityStore,
@@ -325,6 +326,43 @@ describe("agent-activity-store", () => {
         cleared: [],
         retried: [running],
       })
+    })
+  })
+
+  describe("agentActivityStreamContext (which streams report an anchor)", () => {
+    it("a thread reports its anchor", () => {
+      expect(
+        agentActivityStreamContext({
+          id: "stream_thread",
+          type: "thread",
+          rootStreamId: "stream_parent",
+          parentAnchorId: "msg_anchor",
+        })
+      ).toEqual({ streamId: "stream_thread", rootStreamId: "stream_parent", parentAnchorId: "msg_anchor" })
+    })
+
+    it("an aside reports none, so its companion never lights the host message", () => {
+      // Asides carry `parent_anchor_id` too. Reporting it would paint the host
+      // row as working and point its "Reply in thread" at the aside.
+      expect(
+        agentActivityStreamContext({
+          id: "stream_aside",
+          type: "aside",
+          rootStreamId: null,
+          parentAnchorId: "msg_host",
+        })
+      ).toEqual({ streamId: "stream_aside", rootStreamId: "stream_aside", parentAnchorId: null })
+    })
+
+    it("falls back to the legacy `parentMessageId` on a thread row cached by an older bundle", () => {
+      expect(
+        agentActivityStreamContext({
+          id: "stream_thread",
+          type: "thread",
+          rootStreamId: "stream_parent",
+          parentMessageId: "msg_anchor",
+        })
+      ).toEqual({ streamId: "stream_thread", rootStreamId: "stream_parent", parentAnchorId: "msg_anchor" })
     })
   })
 

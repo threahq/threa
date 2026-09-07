@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
-import type { ActiveAgentSession, AgentStepType, StreamEvent } from "@threahq/types"
+import { StreamTypes } from "@threahq/types"
+import type { ActiveAgentSession, AgentStepType, StreamEvent, StreamType } from "@threahq/types"
 import { deriveAgentSessionLifecycle, type AgentSessionLifecycle } from "@/lib/agent-session-lifecycle"
 
 /**
@@ -311,19 +312,26 @@ export type AgentActivityStreamContext = {
 }
 
 /**
+ * Only a THREAD reports an anchor. An aside carries `parent_anchor_id` too, and
+ * its companion is not the anchor row's reply — reporting it would light the host
+ * message as working and point "Reply in thread" at the aside. Same rule the
+ * backend applies in `parentActivityTarget` before it emits to the parent room.
+ *
  * `parentMessageId` is the pre-`parentAnchorId` field name, still the only anchor
  * on IDB rows cached by an earlier bundle.
  */
 export function agentActivityStreamContext(stream: {
   id: string
+  type: StreamType
   rootStreamId: string | null
   parentAnchorId?: string | null
   parentMessageId?: string | null
 }): AgentActivityStreamContext {
+  const anchored = stream.type === StreamTypes.THREAD
   return {
     streamId: stream.id,
     rootStreamId: stream.rootStreamId ?? stream.id,
-    parentAnchorId: stream.parentAnchorId ?? stream.parentMessageId ?? null,
+    parentAnchorId: anchored ? (stream.parentAnchorId ?? stream.parentMessageId ?? null) : null,
   }
 }
 
