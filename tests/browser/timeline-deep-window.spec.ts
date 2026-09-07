@@ -50,7 +50,7 @@ async function scrollUp(page: Page): Promise<void> {
 }
 
 async function waitForStableViewport(page: Page, anchor: ReturnType<typeof messageLocator>): Promise<void> {
-  let previous: { y: number; scrollTop: number } | null = null
+  let baseline: { y: number; scrollTop: number } | null = null
   let stableSamples = 0
 
   await expect
@@ -58,11 +58,15 @@ async function waitForStableViewport(page: Page, anchor: ReturnType<typeof messa
       async () => {
         const box = await anchor.boundingBox()
         const scrollTop = await page.locator(SCROLLER).evaluate((el) => el.scrollTop)
-        if (!box) return false
+        if (!box) {
+          baseline = null
+          stableSamples = 0
+          return false
+        }
 
         const stable =
-          previous !== null && Math.abs(box.y - previous.y) <= 1 && Math.abs(scrollTop - previous.scrollTop) <= 1
-        previous = { y: box.y, scrollTop }
+          baseline !== null && Math.abs(box.y - baseline.y) <= 1 && Math.abs(scrollTop - baseline.scrollTop) <= 1
+        if (!stable) baseline = { y: box.y, scrollTop }
         stableSamples = stable ? stableSamples + 1 : 0
         // Outlast the 1s older-page skeleton grace period before taking the baseline.
         return stableSamples >= 12

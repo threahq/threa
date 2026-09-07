@@ -98,7 +98,10 @@ async function setup(ids: { local: string; peer: string } = { local: "ep_a", pee
 }
 
 describe("P2pMeshTransport", () => {
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
 
   it("should buffer candidates by negotiation identity and discard delayed generations", async () => {
     const { socket, pc, transport } = await setup()

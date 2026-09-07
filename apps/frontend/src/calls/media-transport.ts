@@ -452,13 +452,17 @@ export class CloudflareSfuTransport implements MediaTransport {
     await this.enqueue(async () => {
       const pc = this.requirePc()
       let cfOfferSdp: string | undefined
+      const allocatedMids: string[] = []
       try {
         const locator = this.providerLocators.get(peerTrackRefKey(ref))
         if (!locator) throw new Error("Peer publication has no SFU locator")
         const result = await this.proxy!.pullTracks([locator])
         cfOfferSdp = result.sessionDescription?.sdp
         for (const t of result.tracks) {
-          if (t.mid) this.pullByMid.set(t.mid, ref)
+          if (t.mid) {
+            allocatedMids.push(t.mid)
+            this.pullByMid.set(t.mid, ref)
+          }
         }
         this.pulledRefs.set(peerTrackRefKey(ref), ref)
         // A pull answers with an OFFER (CF adds the remote m-line); we answer it.
@@ -480,6 +484,13 @@ export class CloudflareSfuTransport implements MediaTransport {
           if (peerTrackRefKey(r) === key) this.pullByMid.delete(mid)
         }
         await this.rollbackToStable(pc)
+        if (allocatedMids.length > 0) {
+          try {
+            await this.proxy!.closeTracks({ mids: allocatedMids })
+          } catch {
+            // The original negotiation failure is the actionable error.
+          }
+        }
         throw describeNegotiationFailure(`pull ${ref.kind}`, err, cfOfferSdp, undefined)
       }
     })

@@ -1338,6 +1338,11 @@ export class CallManager implements CallController {
   private wireTransport(session: CallSession): void {
     session.transport.onRemoteTrack = (event: RemoteTrackEvent) => {
       if (this.session !== session) return
+      const key = peerTrackRefKey(event.ref)
+      const isCurrent = this.peerDescriptors(session, getCallState().roster).some((peer) =>
+        peer.publications.some((publication) => peerTrackRefKey(publication.ref) === key)
+      )
+      if (!isCurrent) return
       // Remote audio renders through a dedicated <audio> element so Chromium's
       // echo canceller stays referenced to the output and setSinkId works. It is
       // NEVER routed through the AudioContext to the speakers (Web Audio taps are

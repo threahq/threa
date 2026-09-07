@@ -362,7 +362,7 @@ describe("CloudflareSfuTransport", () => {
         throw new DOMException("bad offer", "OperationError")
       }
     }) as typeof pc.setRemoteDescription
-    const { transport } = makeTransport({ pc })
+    const { transport, calls } = makeTransport({ pc })
     const seen: PeerTrackRef[] = []
     transport.onRemoteTrack = (e) => seen.push(e.ref)
     await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
@@ -380,7 +380,15 @@ describe("CloudflareSfuTransport", () => {
       1
     )
     await expect(transport.pull(ref)).rejects.toThrow(/OperationError: bad offer/)
-    expect(pc.setRemoteDescription).toHaveBeenCalledWith({ type: "rollback" })
+    expect({
+      rollback: pc.setRemoteDescription.mock.calls.some(
+        (call) => (call as unknown as [{ type?: string }])[0]?.type === "rollback"
+      ),
+      closeBody: calls.find((call) => call.path.endsWith("/tracks/close"))?.body,
+    }).toEqual({
+      rollback: true,
+      closeBody: expect.objectContaining({ mids: ["remote-0"] }),
+    })
     // The dead pull's mid attribution is gone: a track landing on it is ignored.
     pc.ontrack?.({ transceiver: { mid: "remote-0" }, track: makeTrack("video") })
     expect(seen).toEqual([])

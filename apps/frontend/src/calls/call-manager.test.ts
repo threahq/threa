@@ -592,6 +592,19 @@ describe("CallManager", () => {
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
     const ref = { endpointId: "ep_peer", kind: "mic" as const, publicationId: "pub_1" }
     const track = makeTrack("audio")
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 1,
+      roster: [
+        participant({
+          epoch: 1,
+          mediaIncarnation: "inc_peer",
+          publishedTracks: [
+            { kind: "mic", trackName: "peer:mic", publicationId: ref.publicationId, transportGeneration: 1 },
+          ],
+        }),
+      ],
+    })
 
     transport.onRemoteTrack?.({ ref, track })
     const first = container.querySelector("audio")
@@ -606,6 +619,43 @@ describe("CallManager", () => {
       sameElement: true,
       playCalls: 1,
     })
+  })
+
+  it("should attach current P2P media delivered during peer sync", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const container = document.createElement("div")
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue()
+    vi.stubGlobal(
+      "MediaStream",
+      class {
+        constructor(private readonly tracks: MediaStreamTrack[]) {}
+        getAudioTracks() {
+          return this.tracks.filter((track) => track.kind === "audio")
+        }
+      }
+    )
+    const track = makeTrack("audio")
+    transport.syncPeers = vi.fn(async (peers) => {
+      const ref = peers[0]?.publications[0]?.ref
+      if (ref) transport.onRemoteTrack?.({ ref, track })
+    })
+    const manager = newManager(makeDeps(socket, transport), container)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 1,
+      roster: [
+        participant({
+          epoch: 1,
+          mediaIncarnation: "inc_peer",
+          publishedTracks: [{ kind: "mic", trackName: "peer:mic", publicationId: "pub_audio", transportGeneration: 1 }],
+        }),
+      ],
+    })
+
+    expect((container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks()[0]).toBe(track)
   })
 
   it("should keep replacement media when an old publication ends late", async () => {
@@ -633,11 +683,40 @@ describe("CallManager", () => {
     const newVideo = { ...oldVideo, publicationId: "pub_video_new" }
     const replacementAudio = makeTrack("audio")
     const replacementVideo = makeTrack("video")
+    const announce = (version: number, audioRef: typeof oldAudio, videoRef: typeof oldVideo) =>
+      socket.fire("call:roster", {
+        callId: "call_1",
+        rosterVersion: version,
+        roster: [
+          participant({
+            epoch: 1,
+            mediaIncarnation: "inc_peer",
+            publishedTracks: [
+              {
+                kind: "mic",
+                trackName: "peer:mic",
+                publicationId: audioRef.publicationId,
+                transportGeneration: 1,
+              },
+              {
+                kind: "camera",
+                trackName: "peer:camera",
+                publicationId: videoRef.publicationId,
+                transportGeneration: 1,
+              },
+            ],
+          }),
+        ],
+      })
 
+    announce(1, oldAudio, oldVideo)
     transport.onRemoteTrack?.({ ref: oldAudio, track: makeTrack("audio") })
-    transport.onRemoteTrack?.({ ref: newAudio, track: replacementAudio })
     transport.onRemoteTrack?.({ ref: oldVideo, track: makeTrack("video") })
+    announce(2, newAudio, newVideo)
+    transport.onRemoteTrack?.({ ref: newAudio, track: replacementAudio })
     transport.onRemoteTrack?.({ ref: newVideo, track: replacementVideo })
+    transport.onRemoteTrack?.({ ref: oldAudio, track: makeTrack("audio") })
+    transport.onRemoteTrack?.({ ref: oldVideo, track: makeTrack("video") })
     transport.onRemoteTrackEnded?.(oldAudio)
     transport.onRemoteTrackEnded?.(oldVideo)
 
