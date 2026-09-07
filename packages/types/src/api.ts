@@ -1917,7 +1917,7 @@ export interface SendInvitationsResponse {
 // Link-based invitations
 
 export interface CreateInvitationLinkInput {
-  role: WorkspaceInvitableRole
+  role: "member"
   /** Admin-only memo, e.g. "for Simon — sent via Signal". Optional. */
   note?: string
   /** Omitted defaults to one successful join; null means unlimited. */

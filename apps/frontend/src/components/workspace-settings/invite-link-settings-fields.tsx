@@ -49,32 +49,40 @@ export function InviteLinkSettingsFields({
   onChange: (value: InviteLinkSettingsValue) => void
   role?: WorkspaceRoleSlug
 }) {
+  const fixedSingleUse = role === WORKSPACE_ROLE_SLUGS.ADMIN
+
   return (
     <div className="space-y-5">
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-4">
           <Label htmlFor="invite-max-uses">Maximum joins</Label>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="invite-unlimited" className="text-xs font-normal text-muted-foreground">
-              Unlimited
-            </Label>
-            <Switch
-              id="invite-unlimited"
-              checked={value.unlimited}
-              onCheckedChange={(unlimited) => onChange({ ...value, unlimited })}
-            />
-          </div>
+          {!fixedSingleUse && (
+            <div className="flex items-center gap-2">
+              <Label htmlFor="invite-unlimited" className="text-xs font-normal text-muted-foreground">
+                Unlimited
+              </Label>
+              <Switch
+                id="invite-unlimited"
+                checked={value.unlimited}
+                onCheckedChange={(unlimited) => onChange({ ...value, unlimited })}
+              />
+            </div>
+          )}
         </div>
-        {!value.unlimited && (
-          <Input
-            id="invite-max-uses"
-            type="number"
-            inputMode="numeric"
-            min={1}
-            step={1}
-            value={value.maxUses}
-            onChange={(event) => onChange({ ...value, maxUses: event.target.value })}
-          />
+        {fixedSingleUse ? (
+          <Input id="invite-max-uses" type="number" value={1} disabled />
+        ) : (
+          !value.unlimited && (
+            <Input
+              id="invite-max-uses"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1}
+              value={value.maxUses}
+              onChange={(event) => onChange({ ...value, maxUses: event.target.value })}
+            />
+          )
         )}
       </div>
 

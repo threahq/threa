@@ -38,7 +38,7 @@ const sendInvitationsSchema = z.object({
 const maxUsesSchema = z.number().int().positive().max(2_147_483_647).nullable().optional()
 
 const createLinkSchema = z.object({
-  role: invitableRoleSchema,
+  role: z.literal(WORKSPACE_ROLE_SLUGS.MEMBER),
   note: z.string().trim().max(200).optional(),
   maxUses: maxUsesSchema,
   expiresAt: z.string().datetime().nullable().optional(),

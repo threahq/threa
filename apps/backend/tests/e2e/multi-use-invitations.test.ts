@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test"
+import { Pool } from "pg"
 import type {
   ClaimInvitationLinkResponse,
   CreateInvitationLinkResponse,
   UpdateInvitationLinkResponse,
   WorkspaceInvitation,
 } from "@threa/types"
+import { hashInvitationToken } from "../../src/features/invitations/service"
+import { invitationId } from "../../src/lib/id"
 import { createWorkspace, loginAs, TestClient } from "../client"
+import { getTestDatabaseTarget } from "../test-database"
 
 const runId = crypto.randomUUID().slice(0, 8)
 
@@ -17,10 +21,70 @@ describe("multi-use invitation API", () => {
     const path = `/api/workspaces/${workspace.id}/invitations`
     const invalidCreate = await admin.post(`${path}/links`, { role: "member", maxUses: 2_147_483_648 })
     expect(invalidCreate.status).toBe(400)
+    const privilegedCreate = await admin.post(`${path}/links`, { role: "admin", maxUses: 1 })
+    expect(privilegedCreate).toMatchObject({ status: 400, data: { code: "VALIDATION_ERROR" } })
     const created = await admin.post<CreateInvitationLinkResponse>(`${path}/links`, { role: "member" })
     const invalidEdit = await admin.patch(`${path}/${created.data.invitation.id}`, { maxUses: 2_147_483_648 })
     expect(invalidEdit.status).toBe(400)
     expect(created.data.invitation).not.toHaveProperty("acceptanceConsumesCapacity")
+  })
+
+  test("should preserve one legacy admin claimant while allowing expiry edits", async () => {
+    const admin = new TestClient()
+    const adminEmail = `legacy-admin-${runId}@test.com`
+    await loginAs(admin, adminEmail, "Legacy Invite Admin")
+    const workspace = await createWorkspace(admin, `Legacy admin invite ${runId}`)
+    const pool = new Pool({ connectionString: getTestDatabaseTarget().connectionUrl })
+    const id = invitationId()
+    const token = `legacy-admin-${runId}`
+    try {
+      const inviter = await pool.query<{ id: string }>(
+        "SELECT id FROM users WHERE workspace_id = $1 AND lower(email) = lower($2)",
+        [workspace.id, adminEmail]
+      )
+      await pool.query(
+        `INSERT INTO workspace_invitations
+           (id, workspace_id, kind, email, role, invited_by, token_hash, status, expires_at, max_uses)
+         VALUES ($1, $2, 'link', NULL, 'admin', $3, $4, 'expired', NOW() - INTERVAL '1 day', 1)`,
+        [id, workspace.id, inviter.rows[0].id, hashInvitationToken(token)]
+      )
+
+      const path = `/api/workspaces/${workspace.id}/invitations/${id}`
+      expect(await admin.patch(path, { maxUses: null })).toMatchObject({
+        status: 409,
+        data: { code: "INVITATION_NOT_EDITABLE" },
+      })
+      expect(await admin.patch(path, { maxUses: 2 })).toMatchObject({
+        status: 409,
+        data: { code: "INVITATION_NOT_EDITABLE" },
+      })
+      const restored = await admin.patch<UpdateInvitationLinkResponse>(path, { expiresAt: null })
+      expect(restored).toMatchObject({
+        status: 200,
+        data: { invitation: { id, role: "admin", maxUses: 1, expiresAt: null } },
+      })
+
+      await expect(
+        admin.internalRequest("POST", "/internal/invitations/claim-link", {
+          token,
+          email: "first-admin-claim@example.com",
+        })
+      ).resolves.toMatchObject({ status: 200, data: { invitationId: id } })
+      await expect(
+        admin.internalRequest("POST", "/internal/invitations/claim-link", {
+          token,
+          email: "second-admin-claim@example.com",
+        })
+      ).resolves.toMatchObject({ status: 409, data: { code: "INVITATION_EXHAUSTED" } })
+
+      const persisted = await pool.query(
+        "SELECT email, max_uses, expires_at, revision FROM workspace_invitations WHERE id = $1",
+        [id]
+      )
+      expect(persisted.rows[0]).toMatchObject({ email: "first-admin-claim@example.com", max_uses: 1, expires_at: null })
+    } finally {
+      await pool.end()
+    }
   })
 
   test("should create, claim, accept, inspect, edit, and revoke one link", async () => {

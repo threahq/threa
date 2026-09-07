@@ -11,9 +11,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { invitationsApi } from "@/api/invitations"
-import { WORKSPACE_ROLE_SLUGS, type WorkspaceInvitableRole } from "@threa/types"
+import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
 import {
   defaultInviteExpiry,
   InviteLinkSettingsFields,
@@ -52,7 +51,6 @@ export function CreateInviteLinkDialog({
   onSuccess,
   onTokenCreated,
 }: CreateInviteLinkDialogProps) {
-  const [role, setRole] = useState<WorkspaceInvitableRole>(WORKSPACE_ROLE_SLUGS.MEMBER)
   const [note, setNote] = useState("")
   const [settings, setSettings] = useState<InviteLinkSettingsValue>(initialSettings)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -64,7 +62,7 @@ export function CreateInviteLinkDialog({
   const createMutation = useMutation({
     mutationFn: () =>
       invitationsApi.createLink(workspaceId, {
-        role,
+        role: WORKSPACE_ROLE_SLUGS.MEMBER,
         note: note.trim() || undefined,
         maxUses: settings.unlimited ? null : Number(settings.maxUses),
         expiresAt: settings.neverExpires ? null : localDateTimeToIso(settings.expiresAt),
@@ -74,7 +72,6 @@ export function CreateInviteLinkDialog({
   useEffect(() => {
     if (open) return
     generationRef.current += 1
-    setRole(WORKSPACE_ROLE_SLUGS.MEMBER)
     setNote("")
     setSettings(initialSettings())
     setValidationError(null)
@@ -154,24 +151,7 @@ export function CreateInviteLinkDialog({
           </div>
         ) : (
           <div className="space-y-5 px-4 sm:px-6">
-            <div className="space-y-2">
-              <Label>Role</Label>
-              <ToggleGroup
-                type="single"
-                value={role}
-                onValueChange={(value) => value && setRole(value as WorkspaceInvitableRole)}
-                variant="outline"
-                className="w-full"
-              >
-                <ToggleGroupItem value={WORKSPACE_ROLE_SLUGS.MEMBER} className="flex-1">
-                  Member
-                </ToggleGroupItem>
-                <ToggleGroupItem value={WORKSPACE_ROLE_SLUGS.ADMIN} className="flex-1">
-                  Admin
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-            <InviteLinkSettingsFields value={settings} onChange={setSettings} role={role} />
+            <InviteLinkSettingsFields value={settings} onChange={setSettings} />
             <div className="space-y-2">
               <Label htmlFor="link-note">
                 Note <span className="font-normal text-muted-foreground">(optional)</span>

@@ -135,6 +135,11 @@ describe("multi-use invitation lifecycle", () => {
     const candidates = [identity(10), identity(11), identity(12)]
     const children = await Promise.all(candidates.map((candidate) => claim(fixture, created.token, candidate.email)))
     await Promise.all(children.map((childId, index) => fixture.service.acceptInvitation(childId, candidates[index])))
+    const joinedRoles = await fixture.pool.query<{ role: string }>(
+      "SELECT role FROM users WHERE workspace_id = $1 AND workos_user_id = ANY($2) ORDER BY role",
+      [fixture.workspaceId, candidates.map((candidate) => candidate.workosUserId)]
+    )
+    expect(joinedRoles.rows).toEqual([{ role: "member" }, { role: "member" }, { role: "member" }])
     await fixture.service.revokeInvitation(created.invitation.id, fixture.workspaceId)
 
     await expect(fixture.service.acceptInvitation(children[0], candidates[0])).resolves.toBe(fixture.workspaceId)
@@ -604,6 +609,51 @@ describe("multi-use invitation lifecycle", () => {
       workosUserId: candidate.workosUserId,
       status: "revoked",
       useCount: 1,
+    })
+  })
+
+  test("should keep a revived legacy admin link bound to one email and fixed at one use", async () => {
+    const token = "legacy-admin-token"
+    const id = invitationId()
+    await fixture.pool.query(
+      `INSERT INTO workspace_invitations
+         (id, workspace_id, kind, email, role, invited_by, token_hash, status, expires_at, max_uses)
+       VALUES ($1, $2, 'link', NULL, 'admin', $3, $4, 'expired', NOW() - INTERVAL '1 day', 1)`,
+      [id, fixture.workspaceId, fixture.inviterId, hashInvitationToken(token)]
+    )
+
+    await expect(fixture.service.claimLinkByToken(token, "first-admin@example.com")).rejects.toMatchObject({
+      code: "INVITATION_EXPIRED",
+    })
+    const revived = await fixture.service.updateLink({
+      workspaceId: fixture.workspaceId,
+      invitationId: id,
+      expiresAt: null,
+    })
+    expect(revived).toMatchObject({ id, role: "admin", maxUses: 1, expiresAt: null, status: "pending" })
+
+    await expect(fixture.service.claimLinkByToken(token, "first-admin@example.com")).resolves.toEqual({
+      invitationId: id,
+    })
+    await expect(fixture.service.claimLinkByToken(token, "first-admin@example.com")).resolves.toEqual({
+      invitationId: id,
+    })
+    await expect(fixture.service.claimLinkByToken(token, "second-admin@example.com")).rejects.toMatchObject({
+      code: "INVITATION_EXHAUSTED",
+    })
+    expect(await InvitationRepository.findLinkChild(fixture.pool, id, "first-admin@example.com")).toBeNull()
+
+    await expect(
+      fixture.service.updateLink({ workspaceId: fixture.workspaceId, invitationId: id, maxUses: null })
+    ).resolves.toBeNull()
+    await expect(
+      fixture.service.updateLink({ workspaceId: fixture.workspaceId, invitationId: id, maxUses: 2 })
+    ).resolves.toBeNull()
+    expect(await InvitationRepository.findById(fixture.pool, id)).toMatchObject({
+      email: "first-admin@example.com",
+      maxUses: 1,
+      expiresAt: null,
+      revision: revived!.revision,
     })
   })
 

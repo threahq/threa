@@ -303,6 +303,7 @@ export class InvitationService {
   }
 
   async createLink(params: CreateLinkParams): Promise<CreateLinkResult> {
+    if (params.role !== "member") throw new InvitationLinkError("INVITATION_ROLE_NOT_ALLOWED")
     const { token, tokenHash } = generateLinkToken()
     const id = invitationId()
     const expiresAt = params.expiresAt === undefined ? new Date(Date.now() + INVITATION_EXPIRY_MS) : params.expiresAt
@@ -356,20 +357,34 @@ export class InvitationService {
       if (!parent) throw new InvitationLinkError("INVITATION_NOT_FOUND")
       if (parent.status === "revoked") throw new InvitationLinkError("INVITATION_REVOKED")
 
-      const legacyClaim = parent.email?.toLowerCase() === email ? parent : null
-      if (parent.email && !legacyClaim && parent.maxUses === 1 && parent.acceptanceConsumesCapacity !== false) {
-        throw new InvitationLinkError("INVITATION_EXHAUSTED")
+      let child: Invitation
+      if (parent.role === "admin") {
+        if (parent.email && parent.email.toLowerCase() !== email) {
+          throw new InvitationLinkError("INVITATION_EXHAUSTED")
+        }
+        if (parent.email) {
+          child = parent
+        } else {
+          assertLinkAvailable(parent)
+          const claimed = await InvitationRepository.claimLegacyAdminLink(client, parent.id, email)
+          if (!claimed) throw new InvitationLinkError("INVITATION_EXHAUSTED")
+          child = claimed
+        }
+      } else {
+        const legacyClaim = parent.email?.toLowerCase() === email ? parent : null
+        if (parent.email && !legacyClaim && parent.maxUses === 1 && parent.acceptanceConsumesCapacity !== false) {
+          throw new InvitationLinkError("INVITATION_EXHAUSTED")
+        }
+        const existingChild = legacyClaim ?? (await InvitationRepository.findLinkChild(client, parent.id, email))
+        if (!existingChild) assertLinkAvailable(parent)
+        child =
+          existingChild ??
+          (await InvitationRepository.insertOrFindLinkChild(client, {
+            id: invitationId(),
+            parent,
+            email,
+          }))
       }
-      const existingChild = legacyClaim ?? (await InvitationRepository.findLinkChild(client, parent.id, email))
-      if (!existingChild) assertLinkAvailable(parent)
-
-      const child =
-        existingChild ??
-        (await InvitationRepository.insertOrFindLinkChild(client, {
-          id: invitationId(),
-          parent,
-          email,
-        }))
       const inviterWorkosUserId =
         (await this.getInviterWorkosUserId(parent.workspaceId, parent.invitedBy, client)) ?? undefined
       await OutboxRepository.insert(client, "invitation:link-claimed", {
@@ -400,6 +415,7 @@ export type InvitationLinkErrorCode =
   | "INVITATION_REVOKED"
   | "INVITATION_EXPIRED"
   | "INVITATION_EXHAUSTED"
+  | "INVITATION_ROLE_NOT_ALLOWED"
 
 export class InvitationLinkError extends Error {
   constructor(public readonly code: InvitationLinkErrorCode) {

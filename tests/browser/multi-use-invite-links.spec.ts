@@ -107,7 +107,14 @@ test.describe("Multi-use invite links", () => {
 
     const link = await createLinkFromSettings(page, workspace.id, 2, true)
 
-    await claimSignInAndAccept(browser, link, `first-${testId}@example.com`, `First ${testId}`, workspace.id)
+    const firstName = `First ${testId}`
+    await claimSignInAndAccept(browser, link, `first-${testId}@example.com`, firstName, workspace.id)
+    await page.goto(`/w/${workspace.id}?ws-settings=users`)
+    const firstMemberRow = page.getByText(firstName, { exact: true }).locator("xpath=../../..").first()
+    await firstMemberRow.getByRole("combobox").click()
+    await page.getByRole("option", { name: "Admin" }).click()
+    await expect(firstMemberRow.getByRole("combobox")).toContainText("Admin")
+
     await claimSignInAndAccept(browser, link, `second-${testId}@example.com`, `Second ${testId}`, workspace.id)
     await waitForUsage(page, workspace.id, "2 of 2 joined · Never expires")
     await expect(page.getByText("Exhausted")).toBeVisible()

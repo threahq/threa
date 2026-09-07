@@ -146,6 +146,22 @@ export const InvitationRepository = {
     return mapRow(result.rows[0])
   },
 
+  async claimLegacyAdminLink(db: Querier, id: string, email: string): Promise<Invitation | null> {
+    const result = await db.query<{ id: string }>(sql`
+      UPDATE workspace_invitations
+      SET email = ${email}
+      WHERE id = ${id}
+        AND kind = 'link'
+        AND parent_link_id IS NULL
+        AND role = 'admin'
+        AND status = 'pending'
+        AND email IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+      RETURNING id
+    `)
+    return result.rows[0] ? findById(db, result.rows[0].id) : null
+  },
+
   async findLinkChild(db: Querier, parentLinkId: string, email: string): Promise<Invitation | null> {
     const result = await db.query<{ id: string }>(sql`
       SELECT id FROM workspace_invitations
@@ -277,6 +293,7 @@ export const InvitationRepository = {
     ) {
       return null
     }
+    if (current.role === "admin" && params.maxUses !== undefined && params.maxUses !== 1) return null
     const maxUses = params.maxUses === undefined ? current.maxUses : params.maxUses
     if (maxUses !== null && maxUses < current.useCount) return null
     const expiresAt = params.expiresAt === undefined ? current.expiresAt : params.expiresAt

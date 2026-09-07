@@ -84,27 +84,21 @@ describe("InvitationService.createLink", () => {
     expect(insertLink.mock.calls[0]?.[1].expiresAt?.getTime()).toBeGreaterThanOrEqual(before + 7 * 24 * 60 * 60 * 1000)
   })
 
-  test("should preserve unlimited and no-expiry configuration in the sync event", async () => {
+  test("should reject privileged link creation before writing", async () => {
     const service = new InvitationService({} as never, {} as never)
-    await service.createLink({
-      workspaceId: "ws_1",
-      invitedBy: "usr_admin",
-      role: "admin",
-      note: "partners",
-      maxUses: null,
-      expiresAt: null,
-    })
 
-    const event = insertOutbox.mock.calls.find((call) => call[1] === "invitation:link-created")
-    expect(event?.[2]).toMatchObject({
-      workspaceId: "ws_1",
-      role: "admin",
-      expiresAt: null,
-      maxUses: null,
-      useCount: 0,
-      revision: 1,
-      status: "pending",
-    })
+    await expect(
+      service.createLink({
+        workspaceId: "ws_1",
+        invitedBy: "usr_admin",
+        role: "admin",
+        note: "partners",
+        maxUses: 1,
+        expiresAt: null,
+      })
+    ).rejects.toMatchObject({ code: "INVITATION_ROLE_NOT_ALLOWED" })
+    expect(insertLink).not.toHaveBeenCalled()
+    expect(insertOutbox).not.toHaveBeenCalled()
   })
 })
 
@@ -112,11 +106,13 @@ describe("InvitationService.claimLinkByToken", () => {
   const findRootForUpdate = spyOn(InvitationRepository, "findRootByTokenHashForUpdate")
   const findChild = spyOn(InvitationRepository, "findLinkChild")
   const insertChild = spyOn(InvitationRepository, "insertOrFindLinkChild")
+  const claimLegacyAdmin = spyOn(InvitationRepository, "claimLegacyAdminLink")
 
   beforeEach(() => {
     findRootForUpdate.mockReset().mockResolvedValue(root)
     findChild.mockReset().mockResolvedValue(null)
     insertChild.mockReset().mockResolvedValue(child)
+    claimLegacyAdmin.mockReset().mockResolvedValue({ ...root, role: "admin", email: "new@example.com", maxUses: 1 })
   })
 
   test("should create an email-bound child and publish its id with parent state", async () => {
@@ -161,6 +157,34 @@ describe("InvitationService.claimLinkByToken", () => {
     expect(insertChild).not.toHaveBeenCalled()
   })
 
+  test("should bind a legacy admin root and never mint a child", async () => {
+    findRootForUpdate.mockResolvedValue({ ...root, role: "admin", maxUses: 1 })
+    const service = new InvitationService({} as never, {} as never)
+
+    await expect(service.claimLinkByToken("token", "new@example.com")).resolves.toEqual({
+      invitationId: "inv_root",
+    })
+    expect(claimLegacyAdmin).toHaveBeenCalledWith(client, "inv_root", "new@example.com")
+    expect(insertChild).not.toHaveBeenCalled()
+  })
+
+  test("should reject another email after a legacy admin root is bound", async () => {
+    findRootForUpdate.mockResolvedValue({
+      ...root,
+      role: "admin",
+      email: "first@example.com",
+      maxUses: 1,
+    })
+    const service = new InvitationService({} as never, {} as never)
+
+    await expect(service.claimLinkByToken("token", "other@example.com")).rejects.toMatchObject({
+      code: "INVITATION_EXHAUSTED",
+    })
+    expect(claimLegacyAdmin).not.toHaveBeenCalled()
+    expect(insertChild).not.toHaveBeenCalled()
+    expect(insertOutbox).not.toHaveBeenCalled()
+  })
+
   test("should reject a new claim when successful joins exhausted the link", async () => {
     findRootForUpdate.mockResolvedValue({ ...root, useCount: 2 })
     const service = new InvitationService({} as never, {} as never)
@@ -174,6 +198,8 @@ describe("InvitationService.claimLinkByToken", () => {
 
 describe("InvitationService.updateLink", () => {
   const updateLink = spyOn(InvitationRepository, "updateLink")
+
+  beforeEach(() => updateLink.mockReset())
 
   test("should publish the current revision without changing the token", async () => {
     const updated = { ...root, expiresAt: null, maxUses: null, revision: 2 }

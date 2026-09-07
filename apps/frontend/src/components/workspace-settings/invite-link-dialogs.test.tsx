@@ -12,7 +12,7 @@ const invitation: WorkspaceInvitation = {
   workspaceId: "ws_1",
   kind: "link",
   email: null,
-  role: "admin",
+  role: "member",
   invitedBy: "usr_1",
   status: "pending",
   note: null,
@@ -87,17 +87,20 @@ describe("invite link dialogs", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it("should name the immutable admin role while editing", async () => {
+  it("should name the immutable admin role and fix its limit at one while editing", async () => {
     renderWithQuery(
       <EditInviteLinkDialog
         workspaceId="ws_1"
-        invitation={invitation}
+        invitation={{ ...invitation, role: "admin", maxUses: 1 }}
         open
         onOpenChange={vi.fn()}
         onSuccess={vi.fn()}
       />
     )
     expect(await screen.findByText("Anyone with this link can join the workspace as admin.")).toBeInTheDocument()
+    expect(screen.getByLabelText("Maximum joins")).toHaveValue(1)
+    expect(screen.getByLabelText("Maximum joins")).toBeDisabled()
+    expect(screen.queryByRole("switch", { name: "Unlimited" })).not.toBeInTheDocument()
   })
 
   it("should preserve in-progress edit values across an invitation refetch", async () => {
@@ -205,9 +208,13 @@ describe("invite link dialogs", () => {
         <CreateInviteLinkDialog {...props} open />
       </QueryClientProvider>
     )
-    await userEvent.click(screen.getByText("Admin"))
-    expect(screen.getByText("Anyone with this link can join the workspace as admin.")).toBeInTheDocument()
+    expect(screen.getByText("Anyone with this link can join the workspace as member.")).toBeInTheDocument()
+    expect(screen.queryByText("Admin")).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Create link" }))
+    expect(invitationsModule.invitationsApi.createLink).toHaveBeenCalledWith(
+      "ws_1",
+      expect.objectContaining({ role: "member" })
+    )
     view.rerender(
       <QueryClientProvider client={client}>
         <CreateInviteLinkDialog {...props} open={false} />
@@ -220,7 +227,9 @@ describe("invite link dialogs", () => {
     )
     request.resolve({ invitation, token: "old-token" })
 
-    await waitFor(() => expect(screen.getByText("Member")).toHaveAttribute("data-state", "on"))
+    await waitFor(() =>
+      expect(screen.getByText("Anyone with this link can join the workspace as member.")).toBeInTheDocument()
+    )
     expect(screen.queryByLabelText("Share link")).not.toBeInTheDocument()
     expect(props.onSuccess).not.toHaveBeenCalled()
   })

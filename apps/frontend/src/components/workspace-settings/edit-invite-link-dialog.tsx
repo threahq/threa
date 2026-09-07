@@ -19,9 +19,10 @@ import {
 } from "./invite-link-settings-fields"
 
 function valuesFor(invitation: WorkspaceInvitation): InviteLinkSettingsValue {
+  const isLegacyAdminLink = invitation.role === "admin"
   return {
-    unlimited: invitation.maxUses === null,
-    maxUses: String(invitation.maxUses ?? Math.max(invitation.useCount, 1)),
+    unlimited: isLegacyAdminLink ? false : invitation.maxUses === null,
+    maxUses: isLegacyAdminLink ? "1" : String(invitation.maxUses ?? Math.max(invitation.useCount, 1)),
     neverExpires: invitation.expiresAt === null,
     expiresAt: isoToLocalDateTime(invitation.expiresAt),
   }
@@ -32,8 +33,10 @@ export function buildInviteLinkPatch(
   value: InviteLinkSettingsValue
 ): UpdateInvitationLinkInput {
   const patch: UpdateInvitationLinkInput = {}
-  const maxUses = value.unlimited ? null : Number(value.maxUses)
-  if (maxUses !== invitation.maxUses) patch.maxUses = maxUses
+  if (invitation.role !== "admin") {
+    const maxUses = value.unlimited ? null : Number(value.maxUses)
+    if (maxUses !== invitation.maxUses) patch.maxUses = maxUses
+  }
 
   const expiryControlsUnchanged =
     value.neverExpires === (invitation.expiresAt === null) &&
