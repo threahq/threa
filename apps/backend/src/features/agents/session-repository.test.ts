@@ -100,28 +100,32 @@ describe("AgentSessionRepository.listRunningByWorkspace", () => {
     mock.restore()
   })
 
-  it("scopes to the workspace + running status via the streams join and resolves the sidebar root", async () => {
-    const captured = { text: null as string | null, values: null as unknown[] | null }
+  it("binds the workspace and running status and maps rows to the bootstrap shape", async () => {
+    let capturedValues: unknown[] = []
     const db: Querier = {
       query: mock(async (queryTextOrConfig) => {
-        const config = queryTextOrConfig as QueryConfig
-        captured.text = config.text
-        captured.values = config.values ?? []
+        capturedValues = (queryTextOrConfig as QueryConfig).values ?? []
         return {
           rows: [
             {
               session_id: "session_root",
               stream_id: "stream_channel",
               root_stream_id: "stream_channel",
+              parent_anchor_id: null,
+              trigger_message_id: "msg_root",
               persona_id: "persona_1",
               started_at: new Date("2026-06-10T10:00:00.000Z"),
+              current_step_type: null,
             },
             {
               session_id: "session_thread",
               stream_id: "stream_thread",
               root_stream_id: "stream_channel",
+              parent_anchor_id: "msg_anchor",
+              trigger_message_id: "msg_thread",
               persona_id: "bot_1",
               started_at: new Date("2026-06-10T10:05:00.000Z"),
+              current_step_type: "thinking",
             },
           ],
           rowCount: 2,
@@ -131,27 +135,28 @@ describe("AgentSessionRepository.listRunningByWorkspace", () => {
 
     const rows = await AgentSessionRepository.listRunningByWorkspace(db, "ws_1")
 
-    expect(captured.text).toContain("JOIN streams st ON st.id = se.stream_id")
-    expect(captured.text).toContain("st.workspace_id =")
-    expect(captured.text).toContain("se.status =")
-    expect(captured.text).toContain("COALESCE(st.root_stream_id, se.stream_id)")
-    expect(captured.values).toContain("ws_1")
-    expect(captured.values).toContain(SessionStatuses.RUNNING)
+    expect(capturedValues).toEqual(["ws_1", SessionStatuses.RUNNING])
 
     expect(rows).toEqual([
       {
         sessionId: "session_root",
         streamId: "stream_channel",
         rootStreamId: "stream_channel",
+        parentAnchorId: null,
+        triggerMessageId: "msg_root",
         personaId: "persona_1",
         startedAt: new Date("2026-06-10T10:00:00.000Z"),
+        currentStepType: null,
       },
       {
         sessionId: "session_thread",
         streamId: "stream_thread",
         rootStreamId: "stream_channel",
+        parentAnchorId: "msg_anchor",
+        triggerMessageId: "msg_thread",
         personaId: "bot_1",
         startedAt: new Date("2026-06-10T10:05:00.000Z"),
+        currentStepType: "thinking",
       },
     ])
   })

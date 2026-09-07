@@ -548,7 +548,7 @@ export const sqlTextAssertionAllowlist = {
   "apps/backend/src/features/agents/persona-config-draft-repository.test.ts": 9,
   "apps/backend/src/features/agents/persona-config-revision-repository.test.ts": 8,
   "apps/backend/src/features/agents/persona-repository.test.ts": 22,
-  "apps/backend/src/features/agents/session-repository.test.ts": 28,
+  "apps/backend/src/features/agents/session-repository.test.ts": 24,
   "apps/backend/src/features/ai-usage/usage-repository.test.ts": 4,
   "apps/backend/src/features/bot-access-requests/repository.test.ts": 5,
   "apps/backend/src/features/bot-runtimes/repository.test.ts": 64,

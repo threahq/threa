@@ -657,30 +657,48 @@ export const AgentSessionRepository = {
   /**
    * All RUNNING sessions in a workspace, each resolved to its sidebar root
    * (`COALESCE(streams.root_stream_id, streams.id)`) — the row that lights up in
-   * the sidebar. Set-based single query (INV-56), workspace-scoped through the
-   * streams join (INV-8; `agent_sessions` has no `workspace_id` column). Seeds
-   * the bootstrap `activeAgentSessions`; the caller access-filters by the
-   * viewer's accessible root set (INV-62). `personaId` is a persona or bot id —
-   * the caller resolves the display name.
+   * the sidebar — and to its thread anchor (`streams.parent_anchor_id`), the
+   * timeline row a thread session hangs off. Set-based single query (INV-56),
+   * workspace-scoped through the streams join (INV-8; `agent_sessions` has no
+   * `workspace_id` column). Seeds the bootstrap `activeAgentSessions`; the caller
+   * access-filters by the viewer's accessible root set (INV-62). `personaId` is a
+   * persona or bot id — the caller resolves the display name.
    */
   async listRunningByWorkspace(
     db: Querier,
     workspaceId: string
-  ): Promise<Array<{ sessionId: string; streamId: string; rootStreamId: string; personaId: string; startedAt: Date }>> {
+  ): Promise<
+    Array<{
+      sessionId: string
+      streamId: string
+      rootStreamId: string
+      parentAnchorId: string | null
+      triggerMessageId: string
+      personaId: string
+      startedAt: Date
+      currentStepType: StepType | null
+    }>
+  > {
     const result = await db.query<{
       session_id: string
       stream_id: string
       root_stream_id: string
+      parent_anchor_id: string | null
+      trigger_message_id: string
       persona_id: string
       started_at: Date
+      current_step_type: string | null
     }>(
       sql`
         SELECT
           se.id AS session_id,
           se.stream_id,
           COALESCE(st.root_stream_id, se.stream_id) AS root_stream_id,
+          st.parent_anchor_id,
+          se.trigger_message_id,
           se.persona_id,
-          se.created_at AS started_at
+          se.created_at AS started_at,
+          se.current_step_type
         FROM agent_sessions se
         JOIN streams st ON st.id = se.stream_id
         WHERE st.workspace_id = ${workspaceId}
@@ -691,8 +709,11 @@ export const AgentSessionRepository = {
       sessionId: row.session_id,
       streamId: row.stream_id,
       rootStreamId: row.root_stream_id,
+      parentAnchorId: row.parent_anchor_id,
+      triggerMessageId: row.trigger_message_id,
       personaId: row.persona_id,
       startedAt: row.started_at,
+      currentStepType: row.current_step_type as StepType | null,
     }))
   },
 
