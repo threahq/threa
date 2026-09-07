@@ -4,9 +4,15 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { StreamEvent, SubagentCreatedEventPayload, SubagentStatus, SubagentSummary } from "@threahq/types"
+import type {
+  ActiveAgentSession,
+  StreamEvent,
+  SubagentCreatedEventPayload,
+  SubagentStatus,
+  SubagentSummary,
+} from "@threahq/types"
 import * as hooksModule from "@/hooks"
-import type { MessageAgentActivity } from "@/hooks"
+import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { subagentsApi } from "@/api"
@@ -54,9 +60,13 @@ function statusPatch(status: SubagentStatus, payload: Record<string, unknown> = 
   }
 }
 
-const LIVE_SESSION: MessageAgentActivity = {
+const LIVE_SESSION: ActiveAgentSession = {
   sessionId: "sess_1",
+  streamId: THREAD,
+  rootStreamId: "stream_1",
+  parentAnchorId: "event_card",
   personaName: "Ariadne",
+  startedAt: CREATED_AT,
   currentStepType: "workspace_search",
   stepCount: 2,
   messageCount: 0,
@@ -67,9 +77,10 @@ function renderCard(props: {
   event?: StreamEvent
   patch?: StreamEvent
   runFallback?: SubagentSummary
-  activity?: MessageAgentActivity
+  activity?: ActiveAgentSession
   isThreadParent?: boolean
 }) {
+  seedAgentActivity(WS, props.activity ? [props.activity] : [])
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
@@ -81,7 +92,6 @@ function renderCard(props: {
               workspaceId={WS}
               statusPatch={props.patch}
               runFallback={props.runFallback}
-              activity={props.activity}
               isThreadParent={props.isThreadParent}
             />
           </PanelProvider>
@@ -124,6 +134,7 @@ function geometrySignature(container: HTMLElement): string {
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  __resetAgentActivityStore()
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     // Per-id resolution: the card matches a live session's personaName against
     // the run persona's resolved name before claiming the spinner.
@@ -134,7 +145,7 @@ beforeEach(() => {
 })
 
 describe("SubagentEvent states", () => {
-  it("shows the live substep and a spinner while a session runs", () => {
+  it("shows the live substep and a spinner from a store-seeded session, with no socket event", () => {
     const { container } = renderCard({ activity: LIVE_SESSION })
 
     expect(screen.getByText(CREATED_PAYLOAD.title)).toBeInTheDocument()
@@ -145,6 +156,13 @@ describe("SubagentEvent states", () => {
 
   it("does not spin for another persona's session in the thread", () => {
     const { container } = renderCard({ activity: { ...LIVE_SESSION, personaName: "Sage" } })
+
+    expect(container.querySelector(".animate-spin")).toBeNull()
+    expect(screen.getByText(/starting…/)).toBeInTheDocument()
+  })
+
+  it("does not spin for a session anchored here but running in the card's own stream", () => {
+    const { container } = renderCard({ activity: { ...LIVE_SESSION, streamId: createdEvent().streamId } })
 
     expect(container.querySelector(".animate-spin")).toBeNull()
     expect(screen.getByText(/starting…/)).toBeInTheDocument()
@@ -228,17 +246,17 @@ describe("SubagentEvent states", () => {
   })
 
   it("keeps one geometry across every state", () => {
-    const renders = [
-      renderCard({ activity: LIVE_SESSION }),
-      renderCard({}),
-      renderCard({ patch: statusPatch("active", { lastAgentMessageAt: PATCH_AT }) }),
-      renderCard({ patch: statusPatch("completed", { resultMessageId: "msg_result" }) }),
-      renderCard({ patch: statusPatch("failed", { statusNote: "turn_failed" }) }),
-      renderCard({ patch: statusPatch("cancelled") }),
+    const cases: Parameters<typeof renderCard>[0][] = [
+      { activity: LIVE_SESSION },
+      {},
+      { patch: statusPatch("active", { lastAgentMessageAt: PATCH_AT }) },
+      { patch: statusPatch("completed", { resultMessageId: "msg_result" }) },
+      { patch: statusPatch("failed", { statusNote: "turn_failed" }) },
+      { patch: statusPatch("cancelled") },
       // Cancelled with no patch in reach (the deep-link fallback, and the
       // optimistic flip before the server patch lands): the one state whose
       // meta line could go empty and drop a row.
-      renderCard({
+      {
         isThreadParent: true,
         runFallback: {
           id: CREATED_PAYLOAD.subagentId,
@@ -254,15 +272,20 @@ describe("SubagentEvent states", () => {
           createdAt: CREATED_AT,
           statusChangedAt: PATCH_AT,
         },
-      }),
-      renderCard({ patch: statusPatch("expired") }),
+      },
+      { patch: statusPatch("expired") },
     ]
-    // jsdom has no layout engine: an empty <p> carries the same classes as a
-    // full one but paints no line box, so the text check is part of the shape.
-    for (const { container } of renders) {
-      for (const line of container.querySelectorAll("p")) expect(line.textContent).not.toBe("")
-    }
-    const signatures = renders.map(({ container }) => geometrySignature(container))
+    // Each state is rendered alone: the live session lives in a module store, so
+    // a card left mounted would keep reading the next case's seed.
+    const signatures = cases.map((props) => {
+      const view = renderCard(props)
+      // jsdom has no layout engine: an empty <p> carries the same classes as a
+      // full one but paints no line box, so the text check is part of the shape.
+      for (const line of view.container.querySelectorAll("p")) expect(line.textContent).not.toBe("")
+      const signature = geometrySignature(view.container)
+      view.unmount()
+      return signature
+    })
 
     expect(new Set(signatures).size).toBe(1)
     // A signature that collapsed to nothing would make the set trivially equal.

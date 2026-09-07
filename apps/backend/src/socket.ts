@@ -399,8 +399,8 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         // the card shows "0 steps" until the next live progress event fires.
         //
         // We emit `agent_session:progress` directly to the joining socket
-        // (not broadcast) with the current DB-derived state so the
-        // useAgentActivity hook populates its entry immediately.
+        // (not broadcast) with the current DB-derived state so the frontend's
+        // agent-activity store populates its entry immediately.
         //
         // Fire-and-forget: a failure here only affects the bootstrap UX, so
         // we log and move on rather than blocking the join ack.
@@ -732,7 +732,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
  * Called after a socket joins a stream room. Looks up any currently-running
  * agent session whose streamId matches the joined room (scratchpad/thread/DM)
  * and emits a synthetic `agent_session:progress` event directly to this
- * single socket with DB-derived counts. The frontend's useAgentActivity hook
+ * single socket with DB-derived counts. The frontend's agent-activity store
  * treats this just like a live progress event and populates its entry.
  *
  * Exactly one running session per stream is enforced by the partial unique

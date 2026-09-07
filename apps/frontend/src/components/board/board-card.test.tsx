@@ -182,7 +182,9 @@ function threadStream(
 }
 
 /** A socket that records its listeners so a test can fire an ephemeral event
- *  (`agent_session:progress`) the way the backend's trace-emitter does. */
+ *  (`agent_session:progress`) the way the backend's trace-emitter does. Room
+ *  joins/leaves are accepted and dropped: a running session's row subscribes to
+ *  its trace room, and the card's own behaviour is what these cases assert. */
 function fakeSocket() {
   const handlers = new Map<string, (payload: unknown) => void>()
   const socket = {
@@ -194,6 +196,7 @@ function fakeSocket() {
       handlers.delete(event)
       return socket
     },
+    emit: () => socket,
   } as unknown as Socket
   return { socket, handlers }
 }

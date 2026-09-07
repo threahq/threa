@@ -196,8 +196,8 @@ function assertCallbackBound(session: AgentSession, req: Request): void {
 }
 
 /**
- * Drive the inline stream-view indicator (`useAgentActivity`, which subscribes to
- * the *stream* room, not the session room) with the same `agent_session:progress`
+ * Drive the inline stream-view indicator (the frontend's agent-activity store, fed
+ * from the *stream* room, not the session room) with the same `agent_session:progress`
  * payload the in-process `startStep` emits. Plaintext-free: step *type* only,
  * never content. Emitted at step *start* so "Ariadne is …" reflects the current
  * step the moment it begins.
@@ -680,7 +680,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         step: serializeTraceStep(persisted),
       })
 
-      // Drive the inline stream-view indicator (`useAgentActivity`, stream room)
+      // Drive the inline stream-view indicator (agent-activity store, stream room)
       // at step *start* — the same point startStep emits progress in-process —
       // so "Ariadne is …" reflects the new step the moment it begins.
       emitInlineProgress(io, session, stream.workspaceId, persisted.stepNumber, persisted.stepType)

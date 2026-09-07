@@ -41,8 +41,6 @@ function anchorEvent(overrides: Partial<StreamEvent> = {}): StreamEvent {
 const ctx: TimelineItemRenderContext = {
   workspaceId: "ws_1",
   streamId: "stream_host",
-  sessionLiveCounts: new Map(),
-  sessionLiveSubsteps: new Map(),
   cancelledFollowUpIds: new Set(),
   delegationStatusPatches: new Map(),
   subagentStatusPatches: new Map(),

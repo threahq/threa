@@ -704,8 +704,6 @@ describe("delegated-model badge in a subagent thread", () => {
     const ctx: TimelineItemRenderContext = {
       workspaceId,
       streamId,
-      sessionLiveCounts: new Map(),
-      sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
       subagentStatusPatches: new Map(),
@@ -782,8 +780,6 @@ describe("row-tree read fan-out", () => {
     return {
       workspaceId,
       streamId,
-      sessionLiveCounts: new Map(),
-      sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
       subagentStatusPatches: new Map(),

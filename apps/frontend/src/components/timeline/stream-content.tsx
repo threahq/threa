@@ -23,8 +23,6 @@ import {
   isDividerReadPast,
   useIsMobile,
   useNewMessageIndicator,
-  useAgentActivity,
-  type MessageAgentActivity,
   useSteerAgentSession,
   useStopAgentSession,
   useEditLastMessageTrigger,
@@ -572,7 +570,6 @@ export function StreamContent({
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const navigationType = useNavigationType()
-  const socket = useSocket()
   const messageService = useMessageService()
   // Tracks the location key we've already handled for a highlight jump. Using
   // the key (not the message id) lets re-clicking the same message link
@@ -915,21 +912,7 @@ export function StreamContent({
 
   const editLastMessageCtx = useEditLastMessageTrigger(events, currentWorkspaceUserId)
 
-  // Track live agent session progress for all stream types (step/message counts on session cards).
-  // In channels, session cards are hidden (responses go to threads) and inline activity shows on trigger messages instead.
   const isChannel = stream?.type === StreamTypes.CHANNEL
-  const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId, streamId)
-
-  // The pinned card reads its activity under its OWN event id — the alias the
-  // parent stream's map carries. In a subagent's thread any live session IS that
-  // run's turn (an active run is the only thing dispatched there), so aliasing it
-  // is what makes the pinned card show the spinner exactly while one is running.
-  const subagentThreadParentActivity = useMemo(() => {
-    const aliased = new Map<string, MessageAgentActivity>()
-    const live = agentActivity.values().next().value
-    if (subagentThreadRun && anchorEvent && live) aliased.set(anchorEvent.id, live)
-    return aliased
-  }, [subagentThreadRun, anchorEvent, agentActivity])
 
   // E2E streams search decrypted bodies client-side (the server only holds
   // ciphertext); pass the flag + viewer id so the hook can resolve the session.
@@ -3042,7 +3025,6 @@ export function StreamContent({
                           highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
                           firstUnreadEventId={dividerEventId}
                           isDividerDimmed={isDividerDimmed}
-                          agentActivity={agentActivity}
                           hideSessionCards={isChannel}
                           newMessageIds={newMessageIds}
                           isSearchOpen={isSearchOpen}
@@ -3108,7 +3090,6 @@ export function StreamContent({
                               replyCount={threadReplyCount}
                               subagentStatusPatches={subagentThreadParentPatches}
                               subagentRunFallback={subagentRunFallback}
-                              agentActivity={subagentThreadParentActivity}
                             />
                           )}
                           {isFetchingOlder && (
@@ -3124,7 +3105,6 @@ export function StreamContent({
                             highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
                             firstUnreadEventId={dividerEventId}
                             isDividerDimmed={isDividerDimmed}
-                            agentActivity={agentActivity}
                             hideSessionCards={isChannel}
                             subagentThreadRun={subagentThreadRun}
                             newMessageIds={newMessageIds}
@@ -3323,7 +3303,6 @@ function TimelineMessageList({
   highlightMessageId,
   firstUnreadEventId,
   isDividerDimmed,
-  agentActivity,
   hideSessionCards,
   newMessageIds,
   isSearchOpen,
@@ -3389,7 +3368,6 @@ function TimelineMessageList({
   highlightMessageId?: string | null
   firstUnreadEventId?: string
   isDividerDimmed?: boolean
-  agentActivity?: Map<string, import("@/hooks").MessageAgentActivity>
   hideSessionCards?: boolean
   newMessageIds?: Set<string>
   isSearchOpen: boolean
@@ -3434,21 +3412,6 @@ function TimelineMessageList({
   const visibleItemsRef = useRef(visibleItems)
   visibleItemsRef.current = visibleItems
 
-  const { sessionLiveCounts, sessionLiveSubsteps } = useMemo(() => {
-    const counts = new Map<string, { stepCount: number; messageCount: number }>()
-    const substeps = new Map<string, string | null>()
-    if (agentActivity) {
-      for (const activity of agentActivity.values()) {
-        counts.set(activity.sessionId, {
-          stepCount: activity.stepCount,
-          messageCount: activity.messageCount,
-        })
-        substeps.set(activity.sessionId, activity.substep)
-      }
-    }
-    return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps }
-  }, [agentActivity])
-
   const handleStopSession = useCallback((sessionId: string) => stopAgentSession(sessionId), [stopAgentSession])
 
   // First-message lookup for the context-bag attachment badge anchor.
@@ -3465,12 +3428,9 @@ function TimelineMessageList({
       highlightMessageId,
       firstUnreadEventId,
       isDividerDimmed,
-      agentActivity,
       hideSessionCards,
       newMessageIds,
       firstMessageId,
-      sessionLiveCounts,
-      sessionLiveSubsteps,
       onStopSession: handleStopSession,
       onSteerSession: steerAgentSession,
       cancelledFollowUpIds,
@@ -3489,12 +3449,9 @@ function TimelineMessageList({
       highlightMessageId,
       firstUnreadEventId,
       isDividerDimmed,
-      agentActivity,
       hideSessionCards,
       newMessageIds,
       firstMessageId,
-      sessionLiveCounts,
-      sessionLiveSubsteps,
       handleStopSession,
       steerAgentSession,
       cancelledFollowUpIds,

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link } from "react-router-dom"
 import { Check, X, Loader2 } from "lucide-react"
 import type {
+  ActiveAgentSession,
   AgentToolEffect,
   StreamEvent,
   AgentSessionRerunContext,
@@ -19,20 +20,15 @@ import { StopSessionButton, RedirectSessionButton } from "@/components/trace/ses
 import { SessionEffectGrid } from "./session-effect-grid"
 import { LiveSessionEffectGrid } from "./live-session-effect-grid"
 import { isDescribedEffect, unionSessionEffects } from "@/lib/effect-links"
+import { useAgentSessionActivity } from "@/stores/agent-activity-store"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000
 
 interface AgentSessionEventProps {
   events: StreamEvent[]
+  workspaceId: string
   sessionVersion?: number
-  /** Live progress counts from parent (via useAgentActivity hook) */
-  liveCounts?: { stepCount: number; messageCount: number }
-  /**
-   * Latest live substep text (e.g. "Planning queries…") emitted by a long-running
-   * tool. Shown in place of the generic step label when present.
-   */
-  liveSubstep?: string | null
   /** Click handler for the Stop button, rendered while the session is running. */
   onStopSession?: (sessionId: string) => void
   /**
@@ -145,7 +141,7 @@ function buildStatusConfig(
   failedPayload: AgentSessionFailedPayload | null,
   interruptedPayload: AgentSessionInterruptedPayload | null,
   deletedPayload: AgentSessionDeletedPayload | null,
-  liveCounts: { stepCount: number; messageCount: number } | undefined,
+  live: ActiveAgentSession | undefined,
   /**
    * Layer-0 markers: a mutating tool declared nothing, so the effect is a bare
    * `{ kind }` with nothing to name, diff or link. They ride the meta line as a
@@ -247,7 +243,7 @@ function buildStatusConfig(
       // During backoff the live rail reports 0 (the synthetic started-event entry),
       // so we fall back to the interrupted payload's snapshot (steps reached before
       // the failure) rather than showing 0.
-      const liveSteps = liveCounts?.stepCount ?? 0
+      const liveSteps = live?.stepCount ?? 0
       const steps = liveSteps > 0 ? liveSteps : (interruptedPayload?.stepCount ?? 0)
       const parts: string[] = []
       if (rerunReasonLabel) {
@@ -278,8 +274,8 @@ function buildStatusConfig(
     }
     case "running": {
       const personaName = startedPayload?.personaName ?? "Agent"
-      const stepCount = liveCounts?.stepCount ?? 0
-      const messageCount = liveCounts?.messageCount ?? 0
+      const stepCount = live?.stepCount ?? 0
+      const messageCount = live?.messageCount ?? 0
       // Note: liveSubstep is intentionally NOT joined into the meta string — the
       // render function promotes it into its own row with a live-pulse dot and
       // italic foreground weight, so it stands out as "what is happening right now"
@@ -337,15 +333,13 @@ function formatRerunReasonDetail(rerunContext?: AgentSessionRerunContext | null)
 
 export function AgentSessionEvent({
   events,
+  workspaceId,
   sessionVersion,
-  liveCounts,
-  liveSubstep,
   onStopSession,
   onRedirect,
   onSteerSession,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
-  const { workspaceId } = useParams<{ workspaceId: string }>()
   const {
     status,
     sessionId,
@@ -356,6 +350,12 @@ export function AgentSessionEvent({
     interruptedPayloads,
     deletedPayload,
   } = deriveStatus(events)
+
+  // Live counts and phase text arrive as ephemeral `agent_session:*` socket ticks
+  // that never reach `events`. Subscribed here, not passed in: a tick then repaints
+  // this card alone, instead of every parent that would have to carry it.
+  const live = useAgentSessionActivity(workspaceId, sessionId)
+  const liveSubstep = live?.substep ?? null
 
   // A running turn streams its writes onto the card as each tool returns
   // (`LiveSessionEffectGrid` below) — rows only ever append, so nothing already
@@ -386,7 +386,7 @@ export function AgentSessionEvent({
     failedPayload,
     interruptedPayload,
     deletedPayload,
-    liveCounts,
+    live,
     sessionEffects.length - describedEffects.length
   )
 
@@ -427,9 +427,6 @@ export function AgentSessionEvent({
   // active — the backend aborts the whole session gracefully regardless
   // (roadmap 2.1), so the buttons stay stable for the entire run (INV-21).
   const showSessionActions = status === "running"
-  // Live rows need a session room to subscribe to, which needs the workspace the
-  // route is on. Outside a workspace route there is nothing to subscribe with.
-  //
   // `retrying` counts: it means started + interrupted with no terminal event, so
   // an attempt is running right now. Its earlier attempts' writes ride the
   // `interrupted` payloads (a retry's `upsertStep` resets the step's effects),
@@ -549,7 +546,7 @@ export function AgentSessionEvent({
         )}
       </Link>
       {/* Sibling of the card link, never a child: the card is an <a>. */}
-      {inFlight && workspaceId ? (
+      {inFlight ? (
         <LiveSessionEffectGrid
           key={sessionId}
           workspaceId={workspaceId}

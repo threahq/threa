@@ -998,8 +998,6 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     return {
       workspaceId: "ws_1",
       streamId: "stream_123",
-      sessionLiveCounts: new Map(),
-      sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
       subagentStatusPatches: new Map(),
@@ -1125,31 +1123,20 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
   })
 
-  it("agent activity for the row's message invalidates it; other rows stay equal", () => {
-    const activity = {
-      sessionId: "sess_1",
-      personaName: "Ariadne",
-      stepCount: 1,
-      messageCount: 0,
-      substep: null,
-      currentStepType: null,
-    }
-    const before = makeCtx({ agentActivity: new Map() })
-    const after = makeCtx({ agentActivity: new Map([["msg_a", activity]]) })
-    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
-    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
-    expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
-    expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
-  })
-
-  it("session group: live count value change invalidates; rebuilt-but-equal maps do not", () => {
+  // A session card subscribes to the agent-activity store itself, so a progress
+  // tick must not travel through ctx and re-render the row (or its neighbours).
+  // The version bump and the hide flip are the churn that must still reach it.
+  it("session group: per-message ctx churn is ignored, its own version and the hide flip are not", () => {
     const started = createSessionStartedEvent("evt_s", "300", "sess_1", "msg_a")
-    const item: TimelineItem = { type: "session_group", sessionId: "sess_1", sessionVersion: 1, events: [started] }
-    const counts = (stepCount: number) =>
-      makeCtx({ sessionLiveCounts: new Map([["sess_1", { stepCount, messageCount: 0 }]]) })
-    const row = (ctx: TimelineItemRenderContext) => ({ item, ctx, deferSecondaryHydration: false })
-    expect(timelineRowPropsEqual(row(counts(1)), row(counts(1)))).toBe(true)
-    expect(timelineRowPropsEqual(row(counts(1)), row(counts(2)))).toBe(false)
+    const row = (sessionVersion: number, ctx: TimelineItemRenderContext) => ({
+      item: { type: "session_group", sessionId: "sess_1", sessionVersion, events: [started] } as TimelineItem,
+      ctx,
+      deferSecondaryHydration: false,
+    })
+    const churned = makeCtx({ newMessageIds: new Set(["evt_x"]), highlightMessageId: "msg_a" })
+    expect(timelineRowPropsEqual(row(1, makeCtx()), row(1, churned))).toBe(true)
+    expect(timelineRowPropsEqual(row(1, makeCtx()), row(2, makeCtx()))).toBe(false)
+    expect(timelineRowPropsEqual(row(1, makeCtx()), row(1, makeCtx({ hideSessionCards: true })))).toBe(false)
   })
 
   it("timelineItemEqual: rebuilt wrapper with same event identities is equal; changed groupContinuation is not", () => {

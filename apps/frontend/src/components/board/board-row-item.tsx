@@ -12,9 +12,7 @@ import { DelegationEvent } from "@/components/timeline/delegation-event"
 import { SubagentEvent } from "@/components/timeline/subagent-event"
 import { CommandEvent } from "@/components/timeline/command-event"
 import { AsideAnchorEvent } from "@/components/timeline/aside-anchor-event"
-import { getSessionId } from "@/components/timeline/session-grouping"
 import { useSocket, useTrace } from "@/contexts"
-import { useAgentSessionActivity } from "@/stores/agent-activity-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { streamLabel } from "@/lib/streams"
 import { LedgerEventGroup, LedgerEventRow, type LedgerEventDescriptor } from "@/components/board/ledger-row"
@@ -530,8 +528,6 @@ export function BoardEventRowItem({
         />
       )
     case "subagent":
-      // No `activity`: the board has no live-session map, so a running subagent
-      // reads as working without its substep rather than claiming it is idle.
       return (
         <SubagentEvent
           event={row.event as StreamEvent}
@@ -661,14 +657,9 @@ function LedgerMemoPreview({
 }
 
 /**
- * An agent-session row on a board card / conversation panel. A terminal session
- * carries its final step + message counts in its own payload, so it renders the
- * shared card straight. A still-running session has no counts in its events — they
- * arrive as ephemeral `agent_session:progress` socket ticks — so it delegates to
- * {@link BoardRunningSessionRow}, which reads them from the module-level agent
- * activity store. The store is fed by workspace-sync's single subscription, so a
- * row mounted long after the join-time bootstrap tick (virtua recycle, card
- * remount, reorder) still paints the live count instead of sitting at "0 steps".
+ * An agent-session row on a board card / conversation panel. Only a still-running
+ * session gets the Stop/Redirect wiring, so the socket-bound handlers live in
+ * {@link BoardRunningSessionRow} rather than on every terminal row.
  */
 function BoardAgentSessionRow({
   events,
@@ -680,7 +671,7 @@ function BoardAgentSessionRow({
   onRedirectSession?: () => void
 }) {
   const running = !events.some((event) => SESSION_TERMINAL_EVENT_TYPES.has(event.eventType))
-  if (!running) return <AgentSessionEvent events={events} />
+  if (!running) return <AgentSessionEvent events={events} workspaceId={workspaceId} />
   return <BoardRunningSessionRow events={events} workspaceId={workspaceId} onRedirectSession={onRedirectSession} />
 }
 
@@ -697,16 +688,10 @@ function BoardRunningSessionRow({
   const streamId = events[0]!.streamId
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
   const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
-  const sessionId = events.reduce<string | null>((found, event) => found ?? getSessionId(event), null)
-  const live = useAgentSessionActivity(workspaceId, sessionId)
-  const hasCounts = live?.stepCount !== undefined || live?.messageCount !== undefined
   return (
     <AgentSessionEvent
       events={events}
-      liveCounts={
-        live && hasCounts ? { stepCount: live.stepCount ?? 0, messageCount: live.messageCount ?? 0 } : undefined
-      }
-      liveSubstep={live?.substep ?? null}
+      workspaceId={workspaceId}
       onStopSession={stopAgentSession}
       onRedirect={onRedirectSession}
       onSteerSession={steerAgentSession}
