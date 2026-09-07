@@ -77,9 +77,3 @@ export {
   setDictationExternalHold,
   isDictationExternalHeld,
 } from "./dictation-coordinator-context"
-export {
-  StreamAgentActivityProvider,
-  useAgentActivitySummary,
-  usePublishAgentActivitySummary,
-  type AgentActivitySummaryEntry,
-} from "./stream-agent-activity-context"

@@ -364,16 +364,7 @@ export function BoardCard({
       }),
     [eventRows]
   )
-  const runningSessions = useAgentSessionActivities(workspaceId, cardSessionIds)
-  const runningChipEntries = useMemo(
-    () =>
-      runningSessions.map((session) => ({
-        sessionId: session.sessionId,
-        personaName: session.personaName,
-        stepCount: session.stepCount ?? 0,
-      })),
-    [runningSessions]
-  )
+  const runningChipEntries = useAgentSessionActivities(workspaceId, cardSessionIds)
 
   // Per-thread-boundary grouping: soft-thread seams, nested branch conversations,
   // and "branched from" provenance derive from the stream graph + the shared

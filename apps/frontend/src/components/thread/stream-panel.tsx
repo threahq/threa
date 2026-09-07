@@ -54,6 +54,7 @@ import {
   groupTimelineItems,
   materializePendingAttachmentReferences,
   extractUploadedAttachments,
+  AgentActivityHeaderChip,
 } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
@@ -545,6 +546,11 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           </Button>
         )}
         {headerContent}
+        <AgentActivityHeaderChip
+          workspaceId={workspaceId}
+          streamId={isDraft ? undefined : panelId}
+          compact={isMobile}
+        />
         {!isDraft && stream && panelId && (
           <LabelStack
             workspaceId={workspaceId}

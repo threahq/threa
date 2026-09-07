@@ -1,34 +1,51 @@
 import { Link } from "react-router-dom"
 import { Loader2 } from "lucide-react"
+import type { ActiveAgentSession } from "@threahq/types"
 import { cn } from "@/lib/utils"
-import { useTrace, useAgentActivitySummary, type AgentActivitySummaryEntry } from "@/contexts"
+import { useTrace } from "@/contexts"
+import { useAgentActivityForStream, useAgentSessionActivities } from "@/stores/agent-activity-store"
 
 /**
- * Top-bar chip shown while ≥1 agent session runs in the open stream (root or its
- * threads). Single session: spinner + persona name + live step count. Two or
- * more: "N agents working". Clicking opens the most recently started session's
- * trace (navigation → getTraceUrl, INV-40). Renders nothing when idle.
+ * Top-bar chip for the sessions running in exactly `streamId` — the stream this
+ * header is the top bar of, so a thread's session lights the thread panel's
+ * header rather than its parent's. Renders nothing when idle.
  *
  * `compact` (mobile) drops to a spinner-only pill so the name button keeps its
  * width; it still links to the trace.
+ *
+ * Two subscriptions rather than one: the stream index compares identity only, so
+ * it does not re-render on a step tick, and `useAgentSessionActivities` carries
+ * the live counts.
  */
-export function AgentActivityHeaderChip({ compact = false }: { compact?: boolean }) {
-  const summary = useAgentActivitySummary()
-  return <AgentRunningChip entries={summary} compact={compact} />
+export function AgentActivityHeaderChip({
+  workspaceId,
+  streamId,
+  compact = false,
+}: {
+  workspaceId: string | undefined
+  streamId: string | undefined
+  compact?: boolean
+}) {
+  const sessions = useAgentActivityForStream(workspaceId, streamId)
+  const entries = useAgentSessionActivities(
+    workspaceId,
+    sessions.map((session) => session.sessionId)
+  )
+  return <AgentRunningChip entries={entries} compact={compact} />
 }
 
 /**
  * Presentational core of the chip, over a caller-supplied set of running
  * sessions. The board card scopes its own set by session id (its conversation's
  * rows) rather than by stream, so a sibling conversation's agent can't light it;
- * the stream header passes the provider summary. Same copy either way — do not
+ * a stream header scopes by its own stream id. Same copy either way — do not
  * fork it.
  */
 export function AgentRunningChip({
   entries,
   compact = false,
 }: {
-  entries: readonly AgentActivitySummaryEntry[]
+  entries: readonly ActiveAgentSession[]
   compact?: boolean
 }) {
   const summary = entries
@@ -38,6 +55,7 @@ export function AgentRunningChip({
 
   // "Most recent" click target — the summary is ordered most recently started first.
   const target = summary[0]
+  const stepCount = target.stepCount ?? 0
   const single = summary.length === 1
   const label = single ? target.personaName : `${summary.length} agents working`
   const ariaLabel = single
@@ -67,9 +85,9 @@ export function AgentRunningChip({
     >
       <Loader2 className="h-3 w-3 animate-spin text-primary" aria-hidden="true" />
       <span className="truncate">{label}</span>
-      {single && target.stepCount > 0 && (
+      {single && stepCount > 0 && (
         <span className="text-muted-foreground tabular-nums">
-          · {target.stepCount} step{target.stepCount === 1 ? "" : "s"}
+          · {stepCount} step{stepCount === 1 ? "" : "s"}
         </span>
       )}
     </Link>

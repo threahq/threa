@@ -41,7 +41,7 @@ import {
   useActiveBotPresence,
 } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
-import { usePanel, useSidebar, StreamAgentActivityProvider } from "@/contexts"
+import { usePanel, useSidebar } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
@@ -691,200 +691,195 @@ export function StreamPage() {
   }
 
   const mainStreamContent = (
-    <StreamAgentActivityProvider>
-      <div className="flex h-full flex-col">
-        <header className="relative flex h-12 items-center justify-between border-b px-4">
-          <div className={cn("flex items-center gap-2 flex-1 min-w-0", isTouchInput && !isEditing && "select-none")}>
-            <SidebarToggle location="page" />
-            {headerTitle}
-            {companionModeIndicator}
-            <AgentActivityHeaderChip compact={isMobile} />
-            {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
+    <div className="flex h-full flex-col">
+      <header className="relative flex h-12 items-center justify-between border-b px-4">
+        <div className={cn("flex items-center gap-2 flex-1 min-w-0", isTouchInput && !isEditing && "select-none")}>
+          <SidebarToggle location="page" />
+          {headerTitle}
+          {companionModeIndicator}
+          <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile} />
+          {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
               phone-width header they would otherwise overflow the flex box and
               paint under the search/panel actions — the strip scrolls instead,
               same recipe as PageHeaderTabs' tab strip. On mobile the chips live
               in the stream sheet; the strip only renders when there is no sheet
               to hold them (drafts, archived non-scratchpads). */}
-            {(!isMobile || !canOpenSheet) && (
-              <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
-                {stream && !isDraft && (
-                  <LabelStack
-                    workspaceId={workspaceId}
-                    resourceType={LabelableResourceTypes.STREAM}
-                    resourceId={streamId}
-                    className="shrink-0"
-                  />
-                )}
-                {isEncryptedScratchpad && !isDraft && (
-                  <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
-                )}
-                {stream && isScratchpad && !isDraft && (
-                  <>
-                    <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
-                    <InviteBotButton workspaceId={workspaceId!} stream={stream} />
-                  </>
-                )}
-                {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
-                  <Badge variant="secondary" className="shrink-0">
-                    {getStreamTypeLabel(stream.type)}
-                  </Badge>
-                )}
-                {isArchived && (
-                  <Badge variant="secondary" className="gap-1 shrink-0">
-                    <ArchiveX className="h-3 w-3" />
-                    Archived
-                  </Badge>
-                )}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-1 ml-1">
-            {stream && !isDraft && (isChannel || isDm) && callsEnabled && (
-              // A workspace that has switched calls off shows no calls surface at all.
-              <CallStartMenu workspaceId={workspaceId!} streamId={streamId!} startLabel="Start a call" />
-            )}
-            {stream && !isDraft && <AsideHeaderChip workspaceId={workspaceId!} stream={stream} compact={isMobile} />}
-            {!isThread && !isDraft && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                title="Search in conversation"
-                onClick={() => document.dispatchEvent(new CustomEvent("threa:open-stream-search"))}
-              >
-                <Search className="h-4 w-4" />
-              </Button>
-            )}
-            {stream && !isThread && !isDraft && !isMobile && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn("h-8 w-8", isContextOpen && "bg-accent text-accent-foreground")}
-                title="In this stream — links, files & memories"
-                aria-label="In this stream"
-                aria-pressed={isContextOpen}
-                onClick={() => setContextOpen(!isContextOpen)}
-              >
-                <PanelRight className="h-4 w-4" />
-              </Button>
-            )}
-            {(isChannel || isDm) && !isMobile && (
-              // Split button (the `GroupedItem` pattern from message-context-menu):
-              // primary tap toggles the conversation overlay; the chevron lists
-              // every conversation view — overlay first (default, font-medium),
-              // then the slide-out conversations list.
-              <div className="flex items-stretch">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "h-8 w-8 rounded-r-none",
-                    isConversationOverlayOn && "bg-accent text-accent-foreground"
-                  )}
-                  title="Conversation overlay"
-                  // Stable accessible name; on/off state is announced via
-                  // aria-pressed (ARIA toggle-button pattern), so the label
-                  // must not flip with the state.
-                  aria-label="Conversation overlay"
-                  aria-pressed={isConversationOverlayOn}
-                  onClick={() => setConversationOverlayOn(!isConversationOverlayOn)}
-                >
-                  <Layers className="h-4 w-4" />
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      // Wider on touch viewports — a 20px chevron is fiddly with
-                      // a finger; desktop keeps the compact split-button look.
-                      className="h-8 w-7 rounded-l-none border-l border-border/50 px-0 sm:w-5"
-                      aria-label="Other conversation views"
-                    >
-                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-[200px]">
-                    <DropdownMenuItem
-                      className="gap-2 cursor-pointer font-medium"
-                      onSelect={() => setConversationOverlayOn(!isConversationOverlayOn)}
-                    >
-                      <Layers className="h-4 w-4 text-muted-foreground" />
-                      Conversation overlay
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="gap-2 cursor-pointer"
-                      onSelect={() => setConversationViewOpen(!isConversationViewOpen)}
-                    >
-                      <MessageCircle className="h-4 w-4 text-muted-foreground" />
-                      Conversations list
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
-            {stream &&
-              !isDraft &&
-              !(isArchived && !isScratchpad) &&
-              (isMobile ? (
+          {(!isMobile || !canOpenSheet) && (
+            <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
+              {stream && !isDraft && (
+                <LabelStack
+                  workspaceId={workspaceId}
+                  resourceType={LabelableResourceTypes.STREAM}
+                  resourceId={streamId}
+                  className="shrink-0"
+                />
+              )}
+              {isEncryptedScratchpad && !isDraft && (
+                <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
+              )}
+              {stream && isScratchpad && !isDraft && (
                 <>
+                  <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
+                  <InviteBotButton workspaceId={workspaceId!} stream={stream} />
+                </>
+              )}
+              {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
+                <Badge variant="secondary" className="shrink-0">
+                  {getStreamTypeLabel(stream.type)}
+                </Badge>
+              )}
+              {isArchived && (
+                <Badge variant="secondary" className="gap-1 shrink-0">
+                  <ArchiveX className="h-3 w-3" />
+                  Archived
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1 ml-1">
+          {stream && !isDraft && (isChannel || isDm) && callsEnabled && (
+            // A workspace that has switched calls off shows no calls surface at all.
+            <CallStartMenu workspaceId={workspaceId!} streamId={streamId!} startLabel="Start a call" />
+          )}
+          {stream && !isDraft && <AsideHeaderChip workspaceId={workspaceId!} stream={stream} compact={isMobile} />}
+          {!isThread && !isDraft && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              title="Search in conversation"
+              onClick={() => document.dispatchEvent(new CustomEvent("threa:open-stream-search"))}
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+          )}
+          {stream && !isThread && !isDraft && !isMobile && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("h-8 w-8", isContextOpen && "bg-accent text-accent-foreground")}
+              title="In this stream — links, files & memories"
+              aria-label="In this stream"
+              aria-pressed={isContextOpen}
+              onClick={() => setContextOpen(!isContextOpen)}
+            >
+              <PanelRight className="h-4 w-4" />
+            </Button>
+          )}
+          {(isChannel || isDm) && !isMobile && (
+            // Split button (the `GroupedItem` pattern from message-context-menu):
+            // primary tap toggles the conversation overlay; the chevron lists
+            // every conversation view — overlay first (default, font-medium),
+            // then the slide-out conversations list.
+            <div className="flex items-stretch">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8 rounded-r-none", isConversationOverlayOn && "bg-accent text-accent-foreground")}
+                title="Conversation overlay"
+                // Stable accessible name; on/off state is announced via
+                // aria-pressed (ARIA toggle-button pattern), so the label
+                // must not flip with the state.
+                aria-label="Conversation overlay"
+                aria-pressed={isConversationOverlayOn}
+                onClick={() => setConversationOverlayOn(!isConversationOverlayOn)}
+              >
+                <Layers className="h-4 w-4" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
-                    aria-label="Stream actions"
-                    onClick={() => setIsMenuDrawerOpen(true)}
+                    // Wider on touch viewports — a 20px chevron is fiddly with
+                    // a finger; desktop keeps the compact split-button look.
+                    className="h-8 w-7 rounded-l-none border-l border-border/50 px-0 sm:w-5"
+                    aria-label="Other conversation views"
                   >
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[200px]">
+                  <DropdownMenuItem
+                    className="gap-2 cursor-pointer font-medium"
+                    onSelect={() => setConversationOverlayOn(!isConversationOverlayOn)}
+                  >
+                    <Layers className="h-4 w-4 text-muted-foreground" />
+                    Conversation overlay
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2 cursor-pointer"
+                    onSelect={() => setConversationViewOpen(!isConversationViewOpen)}
+                  >
+                    <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                    Conversations list
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+          {stream &&
+            !isDraft &&
+            !(isArchived && !isScratchpad) &&
+            (isMobile ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="Stream actions"
+                  onClick={() => setIsMenuDrawerOpen(true)}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+                <StreamSheet
+                  open={isMenuDrawerOpen}
+                  onOpenChange={setIsMenuDrawerOpen}
+                  workspaceId={workspaceId}
+                  streamId={streamId}
+                  stream={stream}
+                  streamName={streamName}
+                  actions={[
+                    ...sheetViewActions,
+                    ...streamMenuActions.map((action, i) =>
+                      i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
+                    ),
+                  ]}
+                />
+              </>
+            ) : (
+              <SidebarActionMenu
+                actions={streamMenuActions}
+                ariaLabel="Stream actions"
+                trigger={
+                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
-                  <StreamSheet
-                    open={isMenuDrawerOpen}
-                    onOpenChange={setIsMenuDrawerOpen}
-                    workspaceId={workspaceId}
-                    streamId={streamId}
-                    stream={stream}
-                    streamName={streamName}
-                    actions={[
-                      ...sheetViewActions,
-                      ...streamMenuActions.map((action, i) =>
-                        i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
-                      ),
-                    ]}
-                  />
-                </>
-              ) : (
-                <SidebarActionMenu
-                  actions={streamMenuActions}
-                  ariaLabel="Stream actions"
-                  trigger={
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  }
-                />
-              ))}
-          </div>
-        </header>
-        {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId!} streamId={streamId!} />}
-        <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
-          <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
-            {/* The fullscreen aside brings its own copy of this timeline, as
+                }
+              />
+            ))}
+        </div>
+      </header>
+      {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId!} streamId={streamId!} />}
+      <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
+        <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
+          {/* The fullscreen aside brings its own copy of this timeline, as
                 the reference pane beside the draft. This one stands down so
                 there is never a second host timeline mounted behind it. */}
-            {!asideStage && <TimelineView isDraft={isDraft} autoFocus={!isMobile} />}
-          </StreamEncryptionGate>
-        </main>
-        {stream && !isDraft && (
-          <LabelPicker
-            workspaceId={workspaceId}
-            resourceType={LabelableResourceTypes.STREAM}
-            resourceId={streamId}
-            open={labelPickerOpen}
-            onOpenChange={setLabelPickerOpen}
-          />
-        )}
-      </div>
-    </StreamAgentActivityProvider>
+          {!asideStage && <TimelineView isDraft={isDraft} autoFocus={!isMobile} />}
+        </StreamEncryptionGate>
+      </main>
+      {stream && !isDraft && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.STREAM}
+          resourceId={streamId}
+          open={labelPickerOpen}
+          onOpenChange={setLabelPickerOpen}
+        />
+      )}
+    </div>
   )
 
   // Conversation side panel - shown for channels and DMs
