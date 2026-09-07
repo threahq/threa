@@ -176,6 +176,8 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 - Default Ariadne companion persona model (since 2026-08-27)
 - Default LLM-as-judge model for the eval suites (`EVAL_JUDGE_MODEL`)
 - Classification, extraction, ranking, naming, transcript polish, and summarization
+- Image captioning and OCR (`image-caption`), and PDF layout extraction (`pdf`), since 2026-09-07
+- Attachment summarization (`pdf`, `word`, `excel`, `text`), since 2026-09-07
 - Memo memorization and tool-call guarding
 - Over-budget model degradation
 - Fallback model for the general researcher (since 2026-08-31; was pinned `claude-sonnet-4.6`). Callers with a turn of their own pass their own model instead, so this fires only where no calling turn exists — chosen as the cheapest current-generation model that still holds up on agentic tool use, on the same reasoning as the degradation map below, not on a research-specific eval.
@@ -243,7 +245,7 @@ to at the soft limit.
 
 **Typical cost:** ~$0.10 / ~$0.40 per 1M (cache read $0.01, cache write $0.083)
 
-**When to use:** the obvious swap target for `image-caption`, but **there is no eval suite for that component** (`evals/suites/multimodal-vision` drives `PersonaAgent.run()`, not the captioner), and captions feed boundary extraction, memo extraction and agent context — a regression there is silent. Build the suite first.
+**When to use:** a candidate for `image-caption`, which runs `gpt-5.6-luna` in production. Measure it with `evals/suites/image-caption` — the captioner's own suite, which calls `analyzeImage` — not `evals/suites/multimodal-vision`, which drives `PersonaAgent.run()` and never touches the captioner. Captions feed boundary extraction, memo extraction and agent context, so an unmeasured regression there is silent.
 
 ---
 
@@ -255,10 +257,7 @@ to at the soft limit.
 
 **Typical cost:** ~$0.30 / ~$2.50 per 1M (cache read $0.03, cache write $0.083)
 
-**When to use:**
-
-- Image captioning and OCR (`image-caption`) — production choice
-- Large-attachment summarization where the 1M window matters (`text-summary`)
+**When to use:** nothing new. It drove `image-caption` and every attachment summarizer until 2026-09-07; those moved to `gpt-5.6-luna`, which is cheaper on both axes and scored 5/5 against its 3/5 on `evals/suites/image-caption` at less than half the cost. Its two failures were translating a Swedish invoice into English and dropping the invoice total from the summary.
 
 **Note:** on image work, output is usually the larger half of the bill — the structured extraction schema (headings, labels, body, chart/table/diagram data) is verbose. Shape the schema before reaching for a cheaper model.
 
@@ -272,7 +271,7 @@ to at the soft limit.
 
 **Typical cost:** ~$0.25 / ~$1.50 per 1M (cache read $0.025, cache write $0.083)
 
-**When to use:** not evaluated here yet. A candidate for `image-caption` alongside 2.5 Flash Lite once that suite exists.
+**When to use:** not evaluated here yet. A candidate for `image-caption` alongside 2.5 Flash Lite — run `evals/suites/image-caption` against it before switching.
 
 ---
 
