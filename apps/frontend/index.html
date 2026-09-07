@@ -126,15 +126,20 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Recovery: detect when styles fail to load (stale SW cache, blocked CSS
-      // @import, network hiccup, etc.). If no same-origin stylesheets have
-      // loaded after the page is interactive, unregister SW, clear caches, and
-      // hard-reload to get a clean state. The same counter key is read by
-      // src/lib/sw-recovery.ts so the router-level recovery (for failed
-      // dynamic imports) and this CSS watchdog can't loop past the shared cap.
+      // CSS watchdog: capped plain reload when no same-origin stylesheet has
+      // loaded after a CSS request completed. Shares the sw-recovery-attempts
+      // counter with src/lib/sw-recovery.ts so both paths can't loop past the
+      // shared cap. Automatic recovery deliberately does not unregister SWs or
+      // delete caches.
       ;(function () {
-        var attempts = parseInt(sessionStorage.getItem("sw-recovery-attempts") || "0", 10)
-        if (attempts >= 2) return
+        var attempts
+        try {
+          attempts = parseInt(sessionStorage.getItem("sw-recovery-attempts") || "0", 10)
+          if (attempts >= 2) return
+        } catch (e) {
+          // Storage denied: can't cap reloads, so don't auto-reload.
+          return
+        }
         var check = function () {
           var hasStyles = false
           var sheets = document.styleSheets
@@ -149,27 +154,22 @@
             }
           }
           if (hasStyles) {
-            // Styles loaded — but a broken JS chunk loads CSS fine too, so
-            // "hasStyles" is NOT proof the last recovery worked. Only clear the
-            // counter when the last attempt is old enough that the app has
-            // clearly been healthy since; otherwise a chunk-error reload loop
-            // would keep zeroing this and never reach the cap that surfaces the
-            // escape UI. Cooldown mirrors the note in src/lib/sw-recovery.ts.
-            var last = parseInt(sessionStorage.getItem("sw-recovery-last") || "0", 10)
-            if (!last || Date.now() - last > 60000) {
-              sessionStorage.removeItem("sw-recovery-attempts")
-              sessionStorage.removeItem("sw-recovery-last")
+            // A broken JS chunk still loads CSS, so only clear the counter when
+            // the last attempt is old enough that the app has been healthy since.
+            // Cooldown mirrors src/lib/sw-recovery.ts.
+            try {
+              var last = parseInt(sessionStorage.getItem("sw-recovery-last") || "0", 10)
+              if (!last || Date.now() - last > 60000) {
+                sessionStorage.removeItem("sw-recovery-attempts")
+                sessionStorage.removeItem("sw-recovery-last")
+              }
+            } catch (e) {
+              // Storage denied; leave counters alone.
             }
             return
           }
-          // No styles yet — but "missing" has two very different causes. A
-          // stylesheet request that COMPLETED and still produced no rules is the
-          // poisoned-cache state this watchdog exists for (an immutable-cached
-          // HTML-as-CSS response). One still IN FLIGHT is just a slow network —
-          // wiping then destroys the only cached copy exactly when the network
-          // can't replace it, and each reload starts colder than the last (the
-          // reload-to-white loop). Wait and re-check instead; if the CSS never
-          // completes the network is down and a wipe wouldn't help either.
+          // An in-flight stylesheet may still succeed. Reloading would restart
+          // its download, so wait for completion before considering recovery.
           var cssFinished = false
           try {
             var entries = performance.getEntriesByType("resource")
@@ -191,62 +191,17 @@
             setTimeout(check, 3000)
             return
           }
-          sessionStorage.setItem("sw-recovery-attempts", String(attempts + 1))
-          sessionStorage.setItem("sw-recovery-last", String(Date.now()))
-          var tasks = []
-          if (navigator.serviceWorker) {
-            tasks.push(
-              navigator.serviceWorker.getRegistrations().then(function (regs) {
-                return Promise.all(
-                  regs.map(function (r) {
-                    return r.unregister()
-                  })
-                )
-              })
-            )
+          // Completed stylesheet produced no rules: capped plain reload only.
+          try {
+            var currentAttempts = parseInt(sessionStorage.getItem("sw-recovery-attempts") || "0", 10)
+            if (currentAttempts >= 2) return
+            sessionStorage.setItem("sw-recovery-attempts", String(currentAttempts + 1))
+            sessionStorage.setItem("sw-recovery-last", String(Date.now()))
+          } catch (e) {
+            // Storage denied: can't cap reloads, so don't auto-reload.
+            return
           }
-          tasks.push(
-            caches.keys().then(function (names) {
-              return Promise.all(
-                names.map(function (n) {
-                  return caches.delete(n)
-                })
-              )
-            })
-          )
-          // Missing styles can also mean an immutable-cached bad /assets/*.css
-          // from an older deploy where HTML was served at an asset URL and
-          // pinned for a year. That lives in the browser HTTP cache,
-          // which the unregister + caches.delete above can't evict and
-          // location.reload() won't revalidate. Re-fetch the shell and its
-          // asset URLs with `cache: "reload"` to bypass and overwrite them.
-          // Bounded fetches: a hung bust request on a dead connection must not
-          // stall the reload this recovery exists to deliver.
-          var bustFetch = function (url) {
-            var opts = { cache: "reload" }
-            if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) opts.signal = AbortSignal.timeout(10000)
-            return fetch(url, opts)
-          }
-          tasks.push(
-            bustFetch("/index.html")
-              .then(function (res) {
-                return res.text()
-              })
-              .then(function (html) {
-                var urls = (html.match(/\/assets\/[^"')\s]+/g) || []).filter(function (u, i, a) {
-                  return a.indexOf(u) === i
-                })
-                return Promise.all(
-                  urls.map(function (u) {
-                    return bustFetch(u).catch(function () {})
-                  })
-                )
-              })
-              .catch(function () {})
-          )
-          Promise.all(tasks).then(function () {
-            location.reload()
-          })
+          location.reload()
         }
         setTimeout(check, 3000)
       })()

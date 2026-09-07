@@ -1,58 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { ReactNode } from "react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { act, render, screen, userEvent } from "@/test"
+import { act, render, screen, userEvent, waitFor } from "@/test"
 import * as contextsModule from "@/contexts"
+import { AppUpdateProvider } from "@/hooks/use-app-update"
+import type { AppUpdateState } from "@/lib/app-update"
+import { SonnerRoot, toast } from "@/lib/sonner-module"
+import { AppUpdateNotifier } from "@/components/app-update-toast"
 import { AppStatusPage } from "./app-status"
+import { TestAppUpdateController, asAppUpdateController } from "@/test/app-update-controller"
 
-const serviceWorkerDescriptor = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
-
-function renderPage() {
+function renderPage(controller: TestAppUpdateController, extras?: ReactNode) {
   return render(
-    <MemoryRouter initialEntries={["/w/workspace_1/app-status"]}>
-      <Routes>
-        <Route path="/w/:workspaceId/app-status" element={<AppStatusPage />} />
-      </Routes>
-    </MemoryRouter>
+    <AppUpdateProvider controller={asAppUpdateController(controller)}>
+      {extras}
+      <MemoryRouter initialEntries={["/w/workspace_1/app-status"]}>
+        <Routes>
+          <Route path="/w/:workspaceId/app-status" element={<AppStatusPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AppUpdateProvider>
   )
 }
 
-interface FakeRegistration {
-  waiting: ServiceWorker | null
-  installing: ServiceWorker | null
-  update: () => Promise<unknown>
+function renderPageWith(snapshot: Partial<AppUpdateState>) {
+  const controller = new TestAppUpdateController(snapshot)
+  return { controller, ...renderPage(controller) }
 }
 
-function installServiceWorker(registration: FakeRegistration, controlled = true) {
-  const listeners = new Set<() => void>()
-  const registrationListeners = new Set<() => void>()
-  const liveRegistration = Object.assign(registration, {
-    addEventListener: vi.fn((type: string, listener: () => void) => {
-      if (type === "updatefound") registrationListeners.add(listener)
-    }),
-    removeEventListener: vi.fn((type: string, listener: () => void) => {
-      if (type === "updatefound") registrationListeners.delete(listener)
-    }),
-  })
-  const serviceWorker = {
-    controller: controlled ? {} : null,
-    getRegistration: vi.fn().mockResolvedValue(liveRegistration),
-    addEventListener: vi.fn((type: string, listener: () => void) => {
-      if (type === "controllerchange") listeners.add(listener)
-    }),
-    removeEventListener: vi.fn((type: string, listener: () => void) => {
-      if (type === "controllerchange") listeners.delete(listener)
-    }),
-    takeControl() {
-      serviceWorker.controller = {}
-      for (const listener of listeners) listener()
-    },
-    parkUpdate(worker: ServiceWorker) {
-      liveRegistration.waiting = worker
-      for (const listener of registrationListeners) listener()
-    },
-  }
-  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: serviceWorker })
-  return serviceWorker
+function setOnline(value: boolean) {
+  Object.defineProperty(navigator, "onLine", { configurable: true, value })
+}
+
+function restoreOnline() {
+  delete (navigator as { onLine?: boolean }).onLine
 }
 
 describe("AppStatusPage", () => {
@@ -70,22 +51,11 @@ describe("AppStatusPage", () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
-    if (serviceWorkerDescriptor) {
-      Object.defineProperty(navigator, "serviceWorker", serviceWorkerDescriptor)
-    } else {
-      delete (navigator as { serviceWorker?: unknown }).serviceWorker
-    }
+    restoreOnline()
   })
 
-  it("shows build details and confirms a manual update check", async () => {
-    const update = vi.fn().mockResolvedValue(undefined)
-    installServiceWorker({ waiting: null, installing: null, update })
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "abc1234", builtAt: "2026-07-14T12:30:00.000Z" }),
-    } as Response)
-
-    renderPage()
+  it("should show build details and report the result when the user checks for updates", async () => {
+    const { controller } = renderPageWith({})
 
     expect(screen.getByText("abc1234")).toBeInTheDocument()
     expect(screen.getByText("Updated on this device")).toBeInTheDocument()
@@ -93,119 +63,156 @@ describe("AppStatusPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
 
-    expect(update).toHaveBeenCalledOnce()
-    expect(await screen.findByText("Up to date")).toBeInTheDocument()
+    expect(controller.checkCalls).toBe(1)
+    act(() => controller.emit({ phase: "current", lastCheckedAt: new Date("2026-07-14T15:00:00.000Z") }))
+
+    expect(screen.getByText("Up to date")).toBeInTheDocument()
     expect(screen.getByText(/Last checked/)).toBeInTheDocument()
   })
 
-  it("offers to reload once a new worker is ready", async () => {
-    installServiceWorker({
-      waiting: { postMessage: vi.fn() } as unknown as ServiceWorker,
-      installing: null,
-      update: vi.fn().mockResolvedValue(undefined),
-    })
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "def5678", builtAt: "2026-07-14T13:00:00.000Z" }),
-    } as Response)
+  it("should keep the check button busy while the shared check is running", async () => {
+    const { controller } = renderPageWith({ phase: "checking" })
 
-    renderPage()
-    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
+    expect(screen.getByRole("button", { name: /Check for updates/ })).toBeDisabled()
 
-    expect(await screen.findByText("Update ready")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Reload and update" })).toBeInTheDocument()
-  })
-
-  it("downloads again instead of reloading before an update is parked", async () => {
-    installServiceWorker({
-      waiting: null,
-      installing: null,
-      update: vi.fn().mockResolvedValue(undefined),
-    })
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "def5678" }),
-    } as Response)
-
-    renderPage()
-    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
-
-    expect(await screen.findByText("Update available")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Download update" })).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Reload and update" })).not.toBeInTheDocument()
-  })
-
-  it("does not call a first service-worker activation an app update", async () => {
-    installServiceWorker({
-      waiting: null,
-      installing: { state: "activated" } as ServiceWorker,
-      update: vi.fn().mockResolvedValue(undefined),
-    })
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "abc1234" }),
-    } as Response)
-
-    renderPage()
-    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
-
-    expect(await screen.findByText("Up to date")).toBeInTheDocument()
-    expect(screen.queryByText("Update ready")).not.toBeInTheDocument()
-  })
-
-  it("switches from download to reload when the worker finishes in the background", async () => {
-    const serviceWorker = installServiceWorker({
-      waiting: null,
-      installing: null,
-      update: vi.fn().mockResolvedValue(undefined),
-    })
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "def5678" }),
-    } as Response)
-
-    renderPage()
-    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
-    expect(await screen.findByRole("button", { name: "Download update" })).toBeInTheDocument()
-
-    act(() => serviceWorker.parkUpdate({ postMessage: vi.fn() } as unknown as ServiceWorker))
-
-    expect(screen.getByRole("button", { name: "Reload and update" })).toBeInTheDocument()
-    expect(screen.getByText("A new build is downloaded and ready.")).toBeInTheDocument()
-    expect(screen.queryByText("def5678")).not.toBeInTheDocument()
-  })
-
-  it("finishes a manual check when registration.update stalls", async () => {
-    vi.useFakeTimers()
-    installServiceWorker({
-      waiting: null,
-      installing: null,
-      update: vi.fn(() => new Promise(() => {})),
-    })
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "abc1234" }),
-    } as Response)
-
-    renderPage()
-    act(() => screen.getByRole("button", { name: "Check for updates" }).click())
-    await act(async () => vi.advanceTimersByTimeAsync(5_000))
-
-    expect(screen.getByText("Up to date")).toBeInTheDocument()
+    act(() => controller.emit({ phase: "idle" }))
     expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled()
   })
 
-  it("updates offline readiness when the service worker takes control", () => {
-    const serviceWorker = installServiceWorker(
-      { waiting: null, installing: null, update: vi.fn().mockResolvedValue(undefined) },
-      false
+  it("should report a real background install instead of offering a reload", () => {
+    renderPageWith({ phase: "downloading" })
+
+    expect(screen.getByText("Downloading update…")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Downloading…/ })).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Reload and update" })).not.toBeInTheDocument()
+  })
+
+  it("should name the version of the worker that is actually ready", () => {
+    renderPageWith({ phase: "ready", readyVersion: "def5678", readyBuildId: "def5678-1" })
+
+    expect(screen.getByText("Update ready")).toBeInTheDocument()
+    expect(screen.getByText("def5678")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Reload and update" })).toBeEnabled()
+  })
+
+  it("should not invent a version when the ready worker doesn't report one", () => {
+    renderPageWith({ phase: "ready", readyVersion: null, readyBuildId: "build-1" })
+
+    expect(screen.getByText("A new build is downloaded and ready.")).toBeInTheDocument()
+    expect(screen.queryByText("build-1")).not.toBeInTheDocument()
+  })
+
+  it("should go busy on click and stay busy while the apply is in flight", async () => {
+    const { controller } = renderPageWith({ phase: "ready", readyVersion: "def5678", readyBuildId: "def5678-1" })
+
+    await userEvent.click(screen.getByRole("button", { name: "Reload and update" }))
+
+    expect(controller.applyCalls).toBe(1)
+    const busy = screen.getByRole("button", { name: /Updating…/ })
+    expect(busy).toBeDisabled()
+    expect(busy).toHaveAttribute("aria-busy", "true")
+    expect(screen.getByText("Updating…", { selector: "h2" })).toBeInTheDocument()
+  })
+
+  it("should still be applying after the page remounts, because the phase is shared", async () => {
+    const controller = new TestAppUpdateController({ phase: "ready", readyBuildId: "def5678-1" })
+    const view = renderPage(controller)
+
+    await userEvent.click(screen.getByRole("button", { name: "Reload and update" }))
+    expect(screen.getByRole("button", { name: /Updating…/ })).toBeDisabled()
+
+    view.unmount()
+    renderPage(controller)
+
+    expect(screen.getByRole("button", { name: /Updating…/ })).toBeDisabled()
+  })
+
+  it("should keep the update available while offline, because the build is already local", () => {
+    setOnline(false)
+    renderPageWith({ phase: "ready", readyVersion: "def5678", readyBuildId: "def5678-1" })
+
+    expect(screen.getByText("Offline")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Reload and update" })).toBeEnabled()
+  })
+
+  it("should keep the downloaded build on offer while a background check runs", async () => {
+    const { controller } = renderPageWith({ phase: "ready", readyVersion: "def5678", readyBuildId: "def5678-1" })
+
+    act(() => controller.emit({ phase: "checking" }))
+
+    expect(screen.getByRole("button", { name: "Reload and update" })).toBeEnabled()
+    expect(screen.getByText("Update ready")).toBeInTheDocument()
+  })
+
+  it("should keep the downloaded build on offer when the phase stops saying ready", () => {
+    // The coordinator reports the phase of the last observation; a check that
+    // finds no waiting worker (it activated in another tab) can land on
+    // `unavailable` while that build is still the one a reload lands on.
+    renderPageWith({ phase: "unavailable", readyVersion: "def5678", readyBuildId: "def5678-1" })
+
+    expect(screen.getByText("Update ready")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Reload and update" })).toBeEnabled()
+  })
+
+  it("should ask for one apply when both the page and the notice are mounted", async () => {
+    const controller = new TestAppUpdateController({ phase: "ready", readyBuildId: "def5678-1" })
+    renderPage(
+      controller,
+      <>
+        <SonnerRoot />
+        <AppUpdateNotifier />
+      </>
     )
 
-    renderPage()
-    expect(screen.getByText("Starting")).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole("button", { name: "Reload" }))
 
-    act(() => serviceWorker.takeControl())
+    expect(controller.applyCalls).toBe(1)
+    // Neither surface can ask again: the page button is busy and the notice has
+    // become the progress surface for the same operation.
+    expect(screen.getByRole("button", { name: /Updating…/ })).toBeDisabled()
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Reload" })).not.toBeInTheDocument())
+    expect(await screen.findByText("Updating Threa…")).toBeInTheDocument()
+    expect(controller.applyCalls).toBe(1)
+    act(() => toast.dismiss())
+  })
 
-    expect(screen.getByText("Ready")).toBeInTheDocument()
+  it("should offer another check when the update check itself failed", async () => {
+    const { controller } = renderPageWith({ phase: "failed", failure: "check-failed" })
+
+    expect(screen.getByText("Couldn't check for updates")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }))
+    expect(controller.checkCalls).toBe(1)
+  })
+
+  it("should retry the same apply when activation failed", async () => {
+    const { controller } = renderPageWith({ phase: "failed", failure: "activation-timeout", readyBuildId: "def5678-1" })
+
+    expect(screen.getByText("Update didn't start")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }))
+    expect(controller.applyCalls).toBe(1)
+    expect(controller.checkCalls).toBe(0)
+  })
+
+  it("should not offer a reload when a newer build exists on the server but isn't downloaded", () => {
+    renderPageWith({ phase: "unavailable", latestVersion: "ghi9012" })
+
+    expect(screen.getByText("No update ready yet")).toBeInTheDocument()
+    expect(screen.queryByText("ghi9012")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled()
+  })
+
+  it("should offer a check, not a doomed retry, when activation failed with no target left", () => {
+    renderPageWith({ phase: "failed", failure: "activation-failed", readyBuildId: null })
+
+    expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument()
+  })
+
+  it("should report offline support as unsupported when the browser has no service worker", () => {
+    renderPageWith({})
+
+    expect(screen.getByText("Not supported")).toBeInTheDocument()
   })
 })

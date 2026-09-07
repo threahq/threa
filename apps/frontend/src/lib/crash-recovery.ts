@@ -1,27 +1,13 @@
-import { chunkUrlFromError, isChunkLoadError, runSwRecovery } from "@/lib/sw-recovery"
+import { isChunkLoadError, runSwRecovery } from "@/lib/sw-recovery"
 
 /**
- * Last-resort recovery for uncaught errors that leave the app wedged after the
- * PWA returns from the background.
+ * Last-resort recovery for uncaught errors that wedge the PWA after it resumes
+ * from the background. React error boundaries miss async/event-handler throws,
+ * so this converts "needs manual restart" into "reloads itself".
  *
- * The reported failure: the user opens a link, escapes to the system browser
- * ("Open in Firefox"), and comes back to a dead PWA that needs a manual
- * restart. When the OS hard-kills the renderer there is no JS left to recover
- * (the browser reloads a discarded tab on its own), but the softer variant —
- * the page survives frozen and then throws during the resume burst (socket
- * reprobe → reconnect → bootstrap + catch-up + IDB, all at once) — leaves a
- * broken in-memory app that React error boundaries can't catch, because the
- * throw is async / in an event handler, not in render. That is the case this
- * converts from "needs restart" into "reloads itself".
- *
- * Scope is deliberately tight so this can never nuke a user mid-action:
- *   - chunk-load failures (stale deploy) route into the shared sw-recovery,
- *     covering the async/import path the router error boundary misses;
- *   - any other uncaught error only triggers a reload inside a short window
- *     after a page resume — never during steady foreground use, so in-progress
- *     composer text is never thrown away;
- *   - reloads are loop-guarded, so a crash that reproduces on every load falls
- *     through to the broken app rather than reload-looping forever.
+ * Scope is tight: chunk-load failures route into shared sw-recovery; other
+ * errors only reload within a short post-resume window and are capped so a
+ * reproducible crash does not loop forever.
  */
 
 const RESUME_RECOVERY_WINDOW_MS = 12_000
@@ -52,47 +38,43 @@ function isIgnorableError(message: string): boolean {
 }
 
 function canReload(): boolean {
-  const last = Number.parseInt(sessionStorage.getItem(RELOAD_LAST_KEY) ?? "0", 10)
-  // A crash long after the last recovery is unrelated — reset the budget so an
-  // old attempt can't block a fresh, genuinely-stuck reload.
-  const count =
-    Date.now() - last > RELOAD_COUNT_RESET_MS ? 0 : Number.parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) ?? "0", 10)
-  if (count >= MAX_RELOADS) return false
-  sessionStorage.setItem(RELOAD_COUNT_KEY, String(count + 1))
-  sessionStorage.setItem(RELOAD_LAST_KEY, String(Date.now()))
-  return true
-}
-
-function recoverFromResumeCrash(): void {
-  if (Date.now() - lastResumeAt > RESUME_RECOVERY_WINDOW_MS) return
-  if (!canReload()) return
-  window.location.reload()
-}
-
-/**
- * Best-effort message for an arbitrary thrown value. Covers `Error`,
- * `DOMException` (a real `AbortError` is one, and is NOT `instanceof Error`),
- * and any `{ name, message }` shape — so the ignore filter sees enough text to
- * classify benign rejections instead of treating them as fatal.
- */
-function messageOf(value: unknown): string {
-  if (typeof value === "string") return value
-  if (value && typeof value === "object") {
-    const obj = value as { name?: unknown; message?: unknown }
-    return [obj.name, obj.message].filter((part): part is string => typeof part === "string").join(": ")
+  try {
+    const last = Number.parseInt(sessionStorage.getItem(RELOAD_LAST_KEY) ?? "0", 10)
+    // A crash long after the last recovery is unrelated — reset the budget so an
+    // old attempt can't block a fresh, genuinely-stuck reload.
+    const count =
+      Date.now() - last > RELOAD_COUNT_RESET_MS
+        ? 0
+        : Number.parseInt(sessionStorage.getItem(RELOAD_COUNT_KEY) ?? "0", 10)
+    if (count >= MAX_RELOADS) return false
+    sessionStorage.setItem(RELOAD_COUNT_KEY, String(count + 1))
+    sessionStorage.setItem(RELOAD_LAST_KEY, String(Date.now()))
+    return true
+  } catch {
+    // Storage denied; without a counter we can't cap reloads, so decline.
+    return false
   }
-  return ""
 }
 
 function handleError(value: unknown, fallbackMessage: string): void {
-  const message = messageOf(value) || fallbackMessage
+  let message = ""
+  if (typeof value === "string") message = value
+  else if (value && typeof value === "object") {
+    const obj = value as { name?: unknown; message?: unknown }
+    message = [obj.name, obj.message].filter((part): part is string => typeof part === "string").join(": ")
+  }
+  message ||= fallbackMessage
   if (isChunkLoadError(value) || isChunkLoadError(message)) {
-    const bustUrl = chunkUrlFromError(value) ?? chunkUrlFromError(message)
-    void runSwRecovery({ bustUrls: bustUrl ? [bustUrl] : undefined })
+    // Route stale-deploy chunk failures into the shared recovery. The automatic
+    // path is a capped plain reload that preserves the offline cache; the
+    // force-refetch escape hatch is reserved for explicit user action.
+    void runSwRecovery()
     return
   }
   if (isIgnorableError(message)) return
-  recoverFromResumeCrash()
+  if (Date.now() - lastResumeAt > RESUME_RECOVERY_WINDOW_MS) return
+  if (!canReload()) return
+  window.location.reload()
 }
 
 /**

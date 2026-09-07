@@ -312,6 +312,8 @@
       },
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.0.11",
+        "@posthog/cli": "0.16.2",
+        "@posthog/rollup-plugin": "1.6.0",
         "@testing-library/dom": "^10.4.1",
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.1",
@@ -333,6 +335,7 @@
         "vite-plugin-pwa": "^1.2.0",
         "vitest": "^4.0.16",
         "workbox-precaching": "^7.4.0",
+        "workbox-routing": "^7.4.0",
       },
     },
     "apps/public-site": {
@@ -1182,7 +1185,13 @@
 
     "@posthog/browser-common": ["@posthog/browser-common@0.7.2", "", { "dependencies": { "@posthog/core": "^1.50.4", "@posthog/types": "^1.408.1" } }, "sha512-ukDmETXy6fTBE4ZpaO8ccscrNz5SvTaUnhQ0Ze2JX/oYILa89rrNwqUH7lDAuhFKa+NY6EoJ9kZMuOvuu4WwLQ=="],
 
+    "@posthog/cli": ["@posthog/cli@0.16.2", "", { "dependencies": { "detect-libc": "^2.1.2" }, "bin": { "posthog-cli": "run-posthog-cli.js" } }, "sha512-h8bpf9ffBUH/Z9IoyGV+wiI+vS8rIPorKT3eKQXuzuwawO0G7Qvy+hDd7HQ9YJjHByYZ77yPPQvrSs4WsqTUCg=="],
+
     "@posthog/core": ["@posthog/core@1.50.5", "", { "dependencies": { "@posthog/types": "^1.409.0" } }, "sha512-afEchuShDaVIoxAIj76kDZQ1DhfesDmgfVp+mtTzsA3wlc8DF5uoz8YjuTjnxOicWkpP5HCDqYidK/1kT125Cg=="],
+
+    "@posthog/plugin-utils": ["@posthog/plugin-utils@2.0.0", "", { "dependencies": { "cross-spawn": "^7.0.6" } }, "sha512-PC94+3zeEQ2IkhiU+pskOIOEkAFKZvwVixvrwpRfy+cl4b6gkTuHN44vp5OeG5ndfQOLJQF5onx8/K7yZC3i1g=="],
+
+    "@posthog/rollup-plugin": ["@posthog/rollup-plugin@1.6.0", "", { "dependencies": { "@posthog/cli": "~0.16.2", "@posthog/plugin-utils": "^2.0.0", "magic-string": "^0.30.17" }, "peerDependencies": { "rollup": ">= 4.0.0" } }, "sha512-QdSjBt+wt+j2VwLADpsr1Ii2j8F5rWe+V/m9O9PuZXWT8nUne8ML5ciMxAmsGTIIfVwmLhdXPtDlJEc2LuJ9rg=="],
 
     "@posthog/types": ["@posthog/types@1.409.0", "", {}, "sha512-239umoaZVb2GBaXeEyJpwFvjhrrChJH8NHCwiao23EBSu3NA6EN0MTMoaHSmMEf4yjiXEFFoYJA6FjJAXF5HGA=="],
 

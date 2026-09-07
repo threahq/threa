@@ -26,12 +26,31 @@ import {
   currentAppBuiltAt,
   currentAppInstalledAt,
   currentAppVersion,
+  useAppUpdate,
   useIsServiceWorkerControlled,
-  useManualAppUpdate,
-  type ManualUpdateState,
 } from "@/hooks/use-app-update"
 import { formatFullDateTime, formatTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
+
+type AppUpdate = ReturnType<typeof useAppUpdate>
+type UpdateStatus = Pick<AppUpdate, "phase" | "failure" | "readyVersion" | "readyBuildId">
+
+/**
+ * `readyBuildId` — set only from a worker that reported a complete local build —
+ * not `phase`, is what says a reload has somewhere to land: a background check
+ * moves the phase off `ready` while that build is still parked.
+ */
+function hasReadyBuild(status: UpdateStatus): boolean {
+  return status.readyBuildId !== null
+}
+
+function isActivationFailure(status: UpdateStatus): boolean {
+  return (
+    status.phase === "failed" && (status.failure === "activation-failed" || status.failure === "activation-timeout")
+  )
+}
+
+const ACTION_CLASS = "sm:min-w-[11.5rem]"
 
 interface StatusCopy {
   title: string
@@ -40,29 +59,52 @@ interface StatusCopy {
   iconClassName: string
 }
 
-function statusCopy(state: ManualUpdateState, latestVersion: string | null): StatusCopy {
-  if (state === "checking") {
+function failureCopy(failure: AppUpdate["failure"]): StatusCopy {
+  const icon = AlertTriangle
+  const iconClassName = "text-destructive"
+  if (failure === "download-failed") {
     return {
-      title: "Checking for updates…",
-      description: "Looking for a newer Threa build.",
+      title: "Download didn't finish",
+      description: "The new build didn't download completely. Threa keeps running the build you have.",
+      icon,
+      iconClassName,
+    }
+  }
+  if (failure === "activation-failed" || failure === "activation-timeout") {
+    return {
+      title: "Update didn't start",
+      description: "Threa couldn't switch to the downloaded build. The build you have keeps running.",
+      icon,
+      iconClassName,
+    }
+  }
+  return {
+    title: "Couldn't check for updates",
+    description: "The update service didn't answer. Threa keeps running the build you have.",
+    icon,
+    iconClassName,
+  }
+}
+
+function statusCopy(status: UpdateStatus): StatusCopy {
+  const { phase, failure, readyVersion } = status
+  if (phase === "applying") {
+    return {
+      title: "Updating…",
+      description: "Switching to the downloaded build. Threa reloads when it takes over.",
       icon: Loader2,
       iconClassName: "animate-spin text-primary",
     }
   }
-  if (state === "current") {
-    return {
-      title: "Up to date",
-      description: "You're running the latest available build.",
-      icon: CheckCircle2,
-      iconClassName: "text-primary",
-    }
+  if (isActivationFailure(status)) {
+    return failureCopy(failure)
   }
-  if (state === "ready") {
+  if (hasReadyBuild(status)) {
     return {
       title: "Update ready",
-      description: latestVersion ? (
+      description: readyVersion ? (
         <>
-          Version <span className="font-mono text-foreground">{latestVersion}</span> is downloaded and ready.
+          Version <span className="font-mono text-foreground">{readyVersion}</span> is downloaded and ready.
         </>
       ) : (
         "A new build is downloaded and ready."
@@ -71,21 +113,31 @@ function statusCopy(state: ManualUpdateState, latestVersion: string | null): Sta
       iconClassName: "text-primary",
     }
   }
-  if (state === "available") {
+  if (phase === "checking") {
     return {
-      title: "Update available",
-      description: latestVersion ? (
-        <>
-          Version <span className="font-mono text-foreground">{latestVersion}</span> is available to download.
-        </>
-      ) : (
-        "A newer build is available to download."
-      ),
-      icon: Download,
+      title: "Checking for updates…",
+      description: "Looking for a newer Threa build.",
+      icon: Loader2,
+      iconClassName: "animate-spin text-primary",
+    }
+  }
+  if (phase === "downloading") {
+    return {
+      title: "Downloading update…",
+      description: "A newer build is downloading in the background. Keep working; Threa asks before switching.",
+      icon: CloudDownload,
       iconClassName: "text-primary",
     }
   }
-  if (state === "offline") {
+  if (phase === "current") {
+    return {
+      title: "Up to date",
+      description: "You're running the latest available build.",
+      icon: CheckCircle2,
+      iconClassName: "text-primary",
+    }
+  }
+  if (phase === "offline") {
     return {
       title: "Can't check while offline",
       description: "Reconnect, then try the check again.",
@@ -93,13 +145,16 @@ function statusCopy(state: ManualUpdateState, latestVersion: string | null): Sta
       iconClassName: "text-muted-foreground",
     }
   }
-  if (state === "unavailable") {
+  if (phase === "unavailable") {
     return {
-      title: "Update check unavailable",
-      description: "The update service could not be reached. Your current app remains available.",
-      icon: AlertTriangle,
-      iconClassName: "text-destructive",
+      title: "No update ready yet",
+      description: "Threa has nothing downloaded to switch to. It keeps checking in the background.",
+      icon: CircleGauge,
+      iconClassName: "text-muted-foreground",
     }
+  }
+  if (phase === "failed") {
+    return failureCopy(failure)
   }
   return {
     title: "Current installation",
@@ -135,18 +190,58 @@ function offlineSupportLabel(isControlled: boolean): string {
   return isControlled ? "Ready" : "Starting"
 }
 
+/**
+ * `applying` keeps the button busy until the page navigates: the phase leaves
+ * `applying` only on a bounded failure, so no click ever looks unhandled.
+ * Without a downloaded build to land on, `apply()` could only fail, so the card
+ * offers a check instead.
+ */
+function UpdateAction({ update }: { update: AppUpdate }) {
+  const { phase, check, apply } = update
+  if (phase === "applying") {
+    return (
+      <Button disabled aria-busy="true" className={ACTION_CLASS}>
+        <Loader2 className="animate-spin" />
+        Updating…
+      </Button>
+    )
+  }
+
+  if (hasReadyBuild(update)) {
+    return (
+      <Button onClick={() => void apply()} className={ACTION_CLASS}>
+        <RefreshCw />
+        {isActivationFailure(update) ? "Try again" : "Reload and update"}
+      </Button>
+    )
+  }
+
+  const busy = phase === "checking" || phase === "downloading"
+  return (
+    <Button
+      variant="outline"
+      disabled={busy}
+      aria-busy={busy || undefined}
+      onClick={() => void check()}
+      className={ACTION_CLASS}
+    >
+      {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+      {phase === "downloading" ? "Downloading…" : "Check for updates"}
+    </Button>
+  )
+}
+
 export function AppStatusPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const isOnline = useIsOnline()
   const isServiceWorkerControlled = useIsServiceWorkerControlled()
-  const update = useManualAppUpdate()
+  const update = useAppUpdate()
   const [installedAt] = useState(() => currentAppInstalledAt())
-  const copy = statusCopy(update.state, update.latestVersion)
+  const copy = statusCopy(update)
   const StatusIcon = copy.icon
   const version = currentAppVersion() ?? "Development"
   const builtAtValue = currentAppBuiltAt()
-  const builtAt = builtAtValue ? new Date(builtAtValue) : null
-  const hasValidBuildDate = builtAt !== null && !Number.isNaN(builtAt.getTime())
+  const builtAt = builtAtValue && !Number.isNaN(Date.parse(builtAtValue)) ? new Date(builtAtValue) : null
 
   if (!workspaceId) return null
 
@@ -174,7 +269,7 @@ export function AppStatusPage() {
                 <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-primary/10">
                   <ThreaLogo size="lg" />
                 </div>
-                <div className="min-w-0 flex-1" aria-live="polite">
+                <div className="min-w-0 flex-1" role="status" aria-live="polite">
                   <div className="flex items-center gap-2">
                     <StatusIcon className={cn("h-5 w-5 shrink-0", copy.iconClassName)} />
                     <h2 className="font-semibold">{copy.title}</h2>
@@ -186,17 +281,7 @@ export function AppStatusPage() {
                     </p>
                   )}
                 </div>
-                {update.state === "ready" ? (
-                  <Button onClick={() => void update.reload()}>
-                    <RefreshCw />
-                    Reload and update
-                  </Button>
-                ) : (
-                  <Button variant="outline" disabled={update.state === "checking"} onClick={() => void update.check()}>
-                    {update.state === "checking" ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                    {update.state === "available" ? "Download update" : "Check for updates"}
-                  </Button>
-                )}
+                <UpdateAction update={update} />
               </div>
             </CardContent>
           </Card>
@@ -219,7 +304,7 @@ export function AppStatusPage() {
                   )}
                 </DetailRow>
                 <DetailRow icon={CloudDownload} label="Build created">
-                  {hasValidBuildDate && builtAt ? (
+                  {builtAt ? (
                     <time dateTime={builtAt.toISOString()}>{formatFullDateTime(builtAt)}</time>
                   ) : (
                     "Not available for this build"
@@ -252,7 +337,7 @@ export function AppStatusPage() {
 
           <p className="px-1 text-xs leading-relaxed text-muted-foreground">
             Updates are checked every {APP_UPDATE_POLL_INTERVAL_MS / 60_000} minutes, when Threa returns to the
-            foreground, and after reconnecting. Threa downloads updates before asking you to reload.
+            foreground, and after reconnecting. A downloaded update stays ready until you reload, online or off.
           </p>
         </div>
       </main>

@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
-import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching"
+import { PrecacheController, PrecacheRoute } from "workbox-precaching"
+import { NavigationRoute, registerRoute } from "workbox-routing"
 import { resolveTag } from "./lib/sw-notification-format"
 import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
-import { isDevicePresent, PRESENCE_CACHE } from "./lib/sw-presence"
+import { isDevicePresent } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
 import {
   BOOTSTRAP_SYNC_TAG,
@@ -21,130 +22,322 @@ import {
   SW_MSG_CLEAR_NOTIFICATIONS,
   SW_MSG_QUEUE_BOOTSTRAP_SYNC,
   SW_MSG_SKIP_WAITING,
+  SW_MSG_QUERY_STATUS,
+  SW_MSG_STATUS_REPLY,
+  SW_MSG_APPLY_UPDATE,
+  SW_MSG_QUERY_BUILD,
+  SW_MSG_BUILD_REPLY,
+  SW_MSG_RUN_GC,
   SHARE_TARGET_CACHE,
 } from "./lib/sw-messages"
 
 declare const self: ServiceWorkerGlobalScope
+declare const __APP_VERSION__: string
+declare const __APP_BUILD_ID__: string
 
-self.addEventListener("message", (event) => {
-  if (event.data?.type !== SW_MSG_SKIP_WAITING) return
-  void self.skipWaiting()
-})
+const BUILD_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "unknown"
+const BUILD_ID = typeof __APP_BUILD_ID__ === "string" ? __APP_BUILD_ID__ : BUILD_VERSION
+
+const PRECACHE_CACHE_NAME = `workbox-precache-${BUILD_ID}`
+const PRECACHE_LOCK = "threa-precache"
 
 /** Extend NotificationOptions with properties supported by browsers but missing from TS lib types. */
 interface ExtendedNotificationOptions extends NotificationOptions {
-  /** Re-alert the user (vibrate/sound) when replacing an existing notification with the same tag. */
   renotify?: boolean
-  /** Vibration pattern: alternating vibrate/pause durations in ms. Honored on Android Chromium PWAs. */
   vibrate?: number[]
 }
 
-// Distinct "d-dt" vibration (short tap, brief pause, longer tap) so Threa notifications
-// feel different from the OS default dzzt-dzzt. Honored on Android Chromium PWAs; iOS
-// and most desktop browsers ignore it and fall back to the OS default.
 const THREA_VIBRATION_PATTERN = [30, 10, 100]
 
-// Avatar images are versioned and immutable (URL is
-// `.../avatar/<timestamp>.<size>.webp`), but the API response carries
-// `Vary: Origin` from the credentialed CORS layer, which defeats the browser's
-// HTTP cache — so avatars re-fetch from the network on *every* load and visibly
-// pop in after the page paints (the "christmas tree" flash, made obvious once
-// first paint stopped waiting on hydration). Serve them CacheFirst from a
-// dedicated CacheStorage bucket: the first load fetches + stores, every
-// subsequent load is an instant local hit with zero network. Safe because the
-// URL changes whenever the avatar changes, so a cached entry is never stale.
 const AVATAR_CACHE = "threa-avatars-v1"
 const AVATAR_PATH_RE = /^\/api\/workspaces\/[^/]+\/(?:users|bots)\/[^/]+\/avatar\//
 const AVATAR_CACHE_MAX_ENTRIES = 300
 
-// New workers stay in `waiting` until the user accepts the update toast. That
-// keeps an open tab on the worker/precache that match its current JS bundle.
+/**
+ * Per-artifact precache controller. Each build gets its own cache bucket so an
+ * old tab keeps its complete precache untouched while a new build installs into
+ * a fresh bucket. Integrity from the manifest is honored on every precache
+ * request; a failed fetch or cache write aborts the install.
+ */
+const precacheController = new PrecacheController({
+  cacheName: PRECACHE_CACHE_NAME,
+  fallbackToNetwork: true,
+})
+
+precacheController.addToCacheList(self.__WB_MANIFEST)
+
+self.addEventListener("install", (event) => {
+  const install = () => precacheController.install(event)
+  event.waitUntil(self.navigator.locks ? self.navigator.locks.request(PRECACHE_LOCK, install) : install())
+})
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      // Clean stale caches from previous SW versions. Keep only the current
-      // workbox precache, push-bootstrap, and share-target caches. Without this,
-      // old precache buckets linger and can serve stale HTML/CSS after an update.
-      const currentCaches = new Set([
-        PUSH_BOOTSTRAP_CACHE,
-        SHARE_TARGET_CACHE,
-        PENDING_SYNC_CACHE,
-        AVATAR_CACHE,
-        PRESENCE_CACHE,
-      ])
-      const allCaches = await caches.keys()
-      await Promise.all(
-        allCaches
-          .filter((name) => !currentCaches.has(name) && !name.startsWith("workbox-precache-"))
-          .map((name) => caches.delete(name))
-      )
+      // Remove only entries no longer in this worker's manifest. The cache
+      // bucket itself is build-scoped, so there is no old build precache here
+      // to wipe. Keep the first-install/push clients.claim behavior.
+      await precacheController.activate(event)
       await self.clients.claim()
     })()
   )
 })
 
-// Remove old precache entries from previous SW versions that no longer
-// match the current manifest. Without this, stale revision-keyed entries
-// linger and consume storage quota.
-cleanupOutdatedCaches()
+// Serve precached assets (JS/CSS/fonts/etc.) and the app shell for navigations.
+registerRoute(new PrecacheRoute(precacheController))
+registerRoute(
+  new NavigationRoute(
+    async ({ request }) => {
+      const shell = await precacheController.matchPrecache("/index.html")
+      return shell ?? fetch(request)
+    },
+    {
+      denylist: [/^\/api\//, /^\/recover/, /^\/sw\.js$/, /^\/version\.json$/],
+    }
+  )
+)
 
-// Serve the build-atomic precached app shell for navigations. workbox's
-// precache manifest pins index.html and the content-hashed JS/CSS it
-// references to the same build, so a returning launch can never get build-A's
-// HTML against build-B's now-missing assets — the post-deploy "unstyled page"
-// failure where an asset URL is answered with HTML instead of JS/CSS, so React
-// never mounts. Zero network on the boot critical path; post-deploy freshness
-// comes from the parked-SW lifecycle (useAppUpdate drives registration.update()
-// in the background and surfaces the in-app update toast once a new worker is
-// downloaded and parked in `waiting`).
-self.addEventListener("fetch", (event) => {
-  // Only app-shell GET navigations belong here. Web Share Target launches use
-  // a POST navigation to /share, which must fall through to the handler below.
-  if (event.request.mode !== "navigate" || event.request.method !== "GET") return
+const ASSET_PATH_RE = /^\/assets\/[^/]+-[\w-]+\.(?:m?js|css|woff2?|png|svg|ico)$/
 
-  // Real server navigations must reach the network, not the SPA shell:
-  // /api/* (OAuth redirect), /recover (the SW-unregister recovery page,
-  // deliberately excluded from the precache), and the SW/version probes.
-  const { pathname } = new URL(event.request.url)
-  if (
-    pathname.startsWith("/api/") ||
-    pathname.startsWith("/recover") ||
-    pathname === "/sw.js" ||
-    pathname === "/version.json"
-  ) {
+/**
+ * Fallback for a same-origin, content-hashed /assets/ URL that is not in this
+ * build's manifest — e.g. an old tab lazy-importing its own chunk after a
+ * newer worker's clients.claim() reclaimed it. The PrecacheRoute above only
+ * matches this build's manifest, so it falls through to here. Only immutable
+ * hashed subresources may cross build boundaries; never the HTML shell.
+ */
+registerRoute(
+  ({ request, url }) =>
+    request.method === "GET" && url.origin === self.location.origin && ASSET_PATH_RE.test(url.pathname),
+  async ({ request }) => {
+    const precacheNames = (await caches.keys()).filter(
+      (name) => name.startsWith("workbox-precache-") && name !== PRECACHE_CACHE_NAME
+    )
+    for (const name of precacheNames) {
+      const cache = await caches.open(name)
+      const match = await cache.match(request)
+      if (match && !/^text\/html(?:;|$)/i.test(match.headers.get("Content-Type") ?? "")) return match
+    }
+    return fetch(request)
+  }
+)
+
+async function isPrecacheComplete(): Promise<boolean> {
+  const expected = [...precacheController.getURLsToCacheKeys().values()]
+  if (!precacheController.getCacheKeyForURL("/index.html") || expected.length === 0) return false
+  const cache = await caches.open(PRECACHE_CACHE_NAME)
+  const present = new Set((await cache.keys()).map((request) => request.url))
+  return expected.every((key) => present.has(key))
+}
+
+function replyToClient(client: Client | MessagePort | ServiceWorker | null, message: unknown): void {
+  if (!client) return
+  if ("postMessage" in client) {
+    client.postMessage(message)
+  }
+}
+
+self.addEventListener("message", (event) => {
+  const data = event.data as { type?: string; buildId?: string } | undefined
+  if (!data?.type) return
+
+  if (data.type === SW_MSG_SKIP_WAITING) {
+    event.waitUntil(isPrecacheComplete().then((ready) => (ready ? self.skipWaiting() : undefined)))
     return
   }
 
-  event.respondWith(
-    (async () => {
-      // matchPrecache resolves workbox's revisioned cache key, so this is the
-      // exact index.html that ships with the precached asset bundle.
-      const precached = await matchPrecache("/index.html")
-      if (precached) return precached
-      // First ever launch / precache unavailable — go to network.
-      return fetch(event.request)
-    })()
-  )
+  if (data.type === SW_MSG_QUERY_STATUS) {
+    event.waitUntil(
+      (async () => {
+        const ready = await isPrecacheComplete().catch(() => false)
+        replyToClient(event.ports?.[0] ?? event.source, {
+          type: SW_MSG_STATUS_REPLY,
+          version: BUILD_VERSION,
+          buildId: BUILD_ID,
+          ready,
+        })
+      })()
+    )
+    return
+  }
+
+  if (data.type === SW_MSG_APPLY_UPDATE) {
+    event.waitUntil(
+      (async () => {
+        if (data.buildId !== BUILD_ID) return
+        const ready = await isPrecacheComplete()
+        if (!ready) return
+        await self.skipWaiting()
+      })()
+    )
+    return
+  }
+
+  if (data.type === SW_MSG_QUEUE_BOOTSTRAP_SYNC) {
+    const payload = data as {
+      workspaceId?: string
+      streamId?: string | null
+      messageId?: string | null
+      workosUserId?: string | null
+    }
+    if (!payload.workspaceId) return
+    event.waitUntil(
+      queueBootstrapSync(
+        {
+          workspaceId: payload.workspaceId,
+          streamId: payload.streamId ?? null,
+          messageId: payload.messageId ?? null,
+          workosUserId: payload.workosUserId ?? null,
+        },
+        self.registration
+      )
+    )
+    return
+  }
+
+  if (data.type === SW_MSG_CLEAR_NOTIFICATIONS) {
+    const streamId = (data as { streamId?: string }).streamId
+    if (!streamId) return
+    event.waitUntil(
+      Promise.all([
+        self.registration.getNotifications({ tag: streamId }),
+        self.registration.getNotifications({ tag: `${streamId}:mention` }),
+        self.registration.getNotifications({ tag: `rewrap:${streamId}` }),
+      ]).then((groups) => {
+        for (const n of groups.flat()) n.close()
+      })
+    )
+    return
+  }
+
+  if (data.type === SW_MSG_QUERY_BUILD) {
+    event.waitUntil(
+      (async () => {
+        replyToClient(event.ports?.[0] ?? event.source, {
+          type: SW_MSG_BUILD_REPLY,
+          buildId: BUILD_ID,
+        })
+      })()
+    )
+    return
+  }
+
+  if (data.type === SW_MSG_RUN_GC) {
+    event.waitUntil(runConservativeGc())
+  }
 })
 
-// Precache app shell assets injected by vite-plugin-pwa.
-// This still handles JS/CSS/image assets with cache-first (which is fine —
-// Vite content-hashes these filenames so they're immutable). Navigation
-// requests are intercepted by the listener above before reaching this.
-precacheAndRoute(self.__WB_MANIFEST)
+/**
+ * Conservative GC: only delete prior-generation precaches after proving that
+ * every same-origin window client is on a known generation. A client that does
+ * not reply is treated as unknown/sleeping and aborts deletion. We re-query the
+ * client set immediately before deleting to close navigation/opening races.
+ */
+async function runConservativeGc(): Promise<void> {
+  // Serialize install/cleanup with a Web Lock when available. If locks are not
+  // supported we conservatively defer and log a diagnostic rather than risk
+  // racing a reinstall with cleanup.
+  if (!self.navigator.locks) {
+    console.warn("[SW] Web Locks unsupported; deferring precache GC")
+    return
+  }
+  try {
+    await self.navigator.locks.request(PRECACHE_LOCK, gcWithKnownClients)
+  } catch (error) {
+    console.warn("[SW] Precache cleanup deferred", error)
+  }
+}
 
-// Bound the avatar cache so it can't grow without limit. `cache.keys()`
-// preserves insertion order, so the oldest entries are evicted first (FIFO).
+async function gcWithKnownClients(): Promise<void> {
+  if (self.registration.installing) return
+  const active = self.registration.active
+  const waiting = self.registration.waiting
+  if (
+    !active ||
+    active.state !== "activated" ||
+    (await queryBuild(active, SW_MSG_QUERY_STATUS, SW_MSG_STATUS_REPLY)) !== BUILD_ID
+  )
+    return
+  const candidates = (await caches.keys()).filter(
+    (name) => name.startsWith("workbox-precache-") && name !== PRECACHE_CACHE_NAME
+  )
+
+  const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
+  const sameOriginClients = clients.filter((client) => new URL(client.url).origin === self.location.origin)
+
+  const knownBuildIds = new Set<string>([BUILD_ID])
+  if (waiting) {
+    const waitingBuildId = await queryBuild(waiting, SW_MSG_QUERY_STATUS, SW_MSG_STATUS_REPLY)
+    if (!waitingBuildId) return
+    knownBuildIds.add(waitingBuildId)
+  }
+  const replies = await Promise.all(
+    sameOriginClients.map((client) => queryBuild(client, SW_MSG_QUERY_BUILD, SW_MSG_BUILD_REPLY))
+  )
+  for (const reply of replies) {
+    if (!reply) return // Unknown/sleeping/nonreply client: abort.
+    knownBuildIds.add(reply)
+  }
+
+  // Re-scan before deleting to close races with a tab that opened or navigated
+  // mid-scan. Compare full client id sets, not just counts.
+  const clientsAgain = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
+  const sameOriginAgain = clientsAgain.filter((client) => new URL(client.url).origin === self.location.origin)
+  const ids = sameOriginClients.map((client) => client.id).sort()
+  const idsAgain = sameOriginAgain.map((client) => client.id).sort()
+  if (ids.length !== idsAgain.length || !ids.every((id, i) => id === idsAgain[i])) return
+
+  // Re-check for a new generation that started installing/waiting during the
+  // client survey above (which awaits up to 1500ms per client). Without this,
+  // an incoming install or a rollback reusing a previously-known buildId could
+  // have its cache deleted out from under it.
+  if (self.registration.active !== active || self.registration.installing || self.registration.waiting !== waiting)
+    return
+
+  const deletable = candidates.filter((name) => {
+    if (!name.startsWith("workbox-precache-")) return false
+    const candidateBuildId = name.slice("workbox-precache-".length)
+    return candidateBuildId !== BUILD_ID && !knownBuildIds.has(candidateBuildId)
+  })
+
+  // Preserve all non-precache user caches (push bootstrap, share target,
+  // pending sync, avatars, presence).
+  await Promise.all(deletable.map((name) => caches.delete(name)))
+}
+
+function queryBuild(target: Client | ServiceWorker, requestType: string, replyType: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel()
+    const finish = (buildId: string | null) => {
+      clearTimeout(timer)
+      channel.port1.close()
+      channel.port2.close()
+      resolve(buildId)
+    }
+    const timer = setTimeout(() => finish(null), 1500)
+    channel.port1.onmessage = (event: MessageEvent<unknown>) => {
+      const data = event.data as { type?: string; buildId?: string; ready?: boolean } | undefined
+      const usable =
+        data?.type === replyType &&
+        typeof data.buildId === "string" &&
+        data.buildId.length > 0 &&
+        (replyType !== SW_MSG_STATUS_REPLY || data.ready === true)
+      finish(usable ? data.buildId! : null)
+    }
+    try {
+      target.postMessage({ type: requestType }, [channel.port2])
+    } catch {
+      finish(null)
+    }
+  })
+}
+
 async function trimAvatarCache(cache: Cache): Promise<void> {
   const keys = await cache.keys()
   if (keys.length <= AVATAR_CACHE_MAX_ENTRIES) return
   await Promise.all(keys.slice(0, keys.length - AVATAR_CACHE_MAX_ENTRIES).map((key) => cache.delete(key)))
 }
 
-// CacheFirst for avatar images (see AVATAR_CACHE rationale above). Coexists with
-// the other fetch listeners: this one only calls respondWith for avatar GETs and
-// is inert for everything else, and the navigation/bootstrap listeners never
-// match avatar URLs (they bail on `/api/*` or a non-matching path).
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return
   const url = new URL(event.request.url)
@@ -157,8 +350,6 @@ self.addEventListener("fetch", (event) => {
       if (cached) return cached
 
       const response = await fetch(event.request)
-      // Only store a complete, same-origin 200 — never partials, errors, or
-      // opaque cross-origin responses (which can't be read back reliably).
       if (response.status === 200 && response.type === "basic") {
         const copy = response.clone()
         event.waitUntil(
@@ -173,35 +364,6 @@ self.addEventListener("fetch", (event) => {
   )
 })
 
-// Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
-// (stream: IndexedDB; workspace: the Cache API entry served by the interceptor).
-// The prefetch logic lives in lib/sw-bootstrap-prefetch (testable without a
-// ServiceWorkerGlobalScope); this file wires it to the SW events.
-
-self.addEventListener("message", (event) => {
-  if (event.data?.type !== SW_MSG_QUEUE_BOOTSTRAP_SYNC) return
-  const { workspaceId, streamId, messageId, workosUserId } = event.data as {
-    workspaceId?: string
-    streamId?: string | null
-    messageId?: string | null
-    workosUserId?: string | null
-  }
-  if (!workspaceId) return
-  event.waitUntil(
-    queueBootstrapSync(
-      {
-        workspaceId,
-        streamId: streamId ?? null,
-        messageId: messageId ?? null,
-        workosUserId: workosUserId ?? null,
-      },
-      self.registration
-    )
-  )
-})
-
-// Background Sync's `SyncEvent` extends ExtendableEvent but isn't in the default
-// service-worker lib types, so we cast through this shape.
 type SyncEvent = ExtendableEvent & { tag: string }
 
 self.addEventListener("sync", ((event: SyncEvent) => {
@@ -218,22 +380,12 @@ self.addEventListener("sync", ((event: SyncEvent) => {
         await cache.delete(PENDING_SYNC_KEY)
         return
       }
-      // Run before delete: if the run throws, the entry stays so the browser's
-      // `sync` retry has a target to replay. A new `queueBootstrapSync` call
-      // (e.g. another tab hide) overwrites the entry with a fresher target,
-      // which is the desired behavior.
       await runBootstrapSync(target)
       await cache.delete(PENDING_SYNC_KEY)
     })()
   )
 }) as EventListener)
 
-/**
- * When the OS shares content to Threa (Web Share Target API), the browser sends
- * a POST with multipart/form-data to /share. The SW intercepts this, stashes
- * the form data (text fields + files) into the Cache API, and responds with a
- * redirect to the GET /share page where the app picks it up.
- */
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url)
   if (url.pathname !== "/share" || event.request.method !== "POST") return
@@ -248,13 +400,9 @@ self.addEventListener("fetch", (event) => {
         const files = formData.getAll("files") as File[]
 
         const cache = await caches.open(SHARE_TARGET_CACHE)
-
         const keys = await cache.keys()
         for (const key of keys) await cache.delete(key)
 
-        // Store files first so fileCount in meta is always accurate —
-        // if a file write fails mid-loop, meta records only the files
-        // that were actually persisted.
         let storedFileCount = 0
         for (let i = 0; i < files.length; i++) {
           await cache.put(
@@ -270,14 +418,12 @@ self.addEventListener("fetch", (event) => {
           storedFileCount++
         }
 
-        // Store metadata last — fileCount reflects only successfully stored files
         await cache.put(
           new Request("/_share/meta"),
           new Response(JSON.stringify({ title, text, url: sharedUrl, fileCount: storedFileCount }))
         )
       } catch {
-        // Best-effort — if stashing fails, the redirect still lands on /share
-        // and the user sees the normal share picker (just without pre-populated content).
+        // Best-effort stash.
       }
 
       return Response.redirect("/share", 303)
@@ -285,29 +431,6 @@ self.addEventListener("fetch", (event) => {
   )
 })
 
-/**
- * Fetch interceptor: serve the pre-fetched WORKSPACE bootstrap response from the
- * push cache. Entries are one-shot — deleted after being served so subsequent
- * fetches hit the network.
- *
- * Stream bootstrap is deliberately NOT served from this cache. The prefetch
- * warms IndexedDB, so the timeline paints instantly from useLiveQuery either
- * way; the page's own bootstrap GET is left to pass through to the network and
- * apply the fresh result on top of that warm paint (stale-while-revalidate, in
- * the page's own sync pipeline). Replaying a cached stream snapshot instead
- * would (a) serve data captured before activity that landed while the tab was
- * away — a reaction, an edit — with no revalidation, and (b) make the request
- * service-worker-initiated, so the page's catch-up fetch never reaches the
- * network. The workspace bootstrap has no SW-side IDB apply path, so its
- * cache serve stays.
- *
- * Uses a regex guard (not an in-memory Set) because mobile browsers terminate
- * the SW between push receipt and notification tap — any in-memory state would
- * be lost, orphaning the cache entry. The Cache API is persistent and is the
- * sole source of truth. The per-request cost of a regex test + async cache miss
- * is sub-millisecond — negligible compared to the network round-trip it replaces
- * on a cache hit.
- */
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url)
   if (!WORKSPACE_BOOTSTRAP_PATH_RE.test(url.pathname)) return
@@ -323,52 +446,23 @@ self.addEventListener("fetch", (event) => {
 /** Structured push payload — display text is formatted here, not on the backend (INV-46). */
 interface PushData {
   workspaceId?: string
-  /**
-   * Recipient account's WorkOS user id. Lets the app flip the active account
-   * in place before opening the deep link when the click lands under a
-   * different signed-in account. Stamped by the backend (push/service.ts);
-   * duplicated here because there is no shared types package for this wire
-   * contract (mirrors the rest of PushData).
-   */
   workosUserId?: string
   streamId?: string
   messageId?: string
-  /**
-   * Conversation origin for a saved-reminder push — when present the click
-   * opens the conversation panel (`/board?panel=conv:<id>&m=<msgId>`) rather
-   * than the stream permalink. Duplicated wire field like the rest of PushData.
-   */
   conversationId?: string
   activityType?: string
   contentPreview?: string
   streamName?: string
   authorName?: string
-  /** Reaction emoji — present only for "reaction" activity; drives the "X reacted 👍 to …" line. */
   emoji?: string
-  /** Rolling message history accumulated by the SW for grouped notifications. */
   messages?: Array<{ authorName?: string; contentPreview?: string; emoji?: string }>
-  /** Backend-driven action: "clear" dismisses notifications for the stream; "session_expired" prompts re-login. */
   action?: "clear" | "session_expired"
-  /**
-   * Payload kind: "test" is sent by the in-app diagnostic to verify
-   * end-to-end delivery; "saved_reminder" marks reminder pushes so clicks on
-   * standalone (message-less) items can land on the Saved page;
-   * "rewrap_needed" pulls the owner back to re-key a stuck encrypted scratchpad;
-   * "call_ring" is an incoming DM call, "call_ring_cancel" retracts it;
-   * "missed_call" is a ring that lapsed while the app was closed.
-   */
   kind?: "test" | "saved_reminder" | "rewrap_needed" | "call_ring" | "call_ring_cancel" | "missed_call"
-  /** Ring attempt id (invitation id) — the `call-<attemptId>` notification tag key. */
   attemptId?: string
-  /** Call id a ring click accepts into. */
   callId?: string
-  /** Inviter display name for the ring notification title. */
   inviterName?: string
-  /** Why a ring settled ("accepted" | "declined" | …) — drives the cancel fallback copy. */
   outcome?: RingCancelData["outcome"]
-  /** Ring media mode ("video" | "audio_only"). */
   mode?: string
-  /** ISO deadline the ring lapses at. */
   expiresAt?: string
 }
 
@@ -380,16 +474,9 @@ self.addEventListener("push", (event) => {
     const payload = event.data.json() as { data?: PushData }
     data = payload.data ?? {}
   } catch {
-    // Fallback for malformed payloads
     data = {}
   }
 
-  // Legacy backend-driven clear. The backend no longer sends these — a push
-  // that shows no notification burns the browser's silent-push quota (Firefox
-  // revokes the subscription at 0) — but clears queued for offline devices
-  // before that change carried a 28-day TTL, so this guard must survive one
-  // TTL window to keep a straggler from falling through to the display path
-  // and rendering a junk notification. Safe to delete after 2026-08-05.
   if (data.action === "clear") {
     if (!data.streamId) return
     event.waitUntil(
@@ -403,9 +490,6 @@ self.addEventListener("push", (event) => {
     return
   }
 
-  // Test push from the in-app diagnostic. Always display, even with the app
-  // focused — the user explicitly asked to verify the delivery loop, so
-  // suppressing it would defeat the purpose.
   if (data.kind === "test") {
     event.waitUntil(
       self.registration.showNotification("Threa test notification", {
@@ -421,8 +505,6 @@ self.addEventListener("push", (event) => {
     return
   }
 
-  // Session expired: the user's auth has expired and their push subscriptions
-  // have been cleaned up. Show a one-shot notification so they know to log back in.
   if (data.action === "session_expired") {
     event.waitUntil(
       self.registration.showNotification("Session expired", {
@@ -437,11 +519,6 @@ self.addEventListener("push", (event) => {
     return
   }
 
-  // Re-wrap nudge: an enclave turn in the owner's encrypted scratchpad is stuck
-  // until they reopen the app so their unlocked device can re-key the stream.
-  // Always display — by the time this fires the owner is away (a focused tab
-  // would already have healed it over the socket), so suppressing would strand
-  // the turn. The click lands on the stream via the generic deep-link below.
   if (data.kind === "rewrap_needed") {
     event.waitUntil(
       self.registration.showNotification("Your assistant is waiting", {
@@ -449,7 +526,7 @@ self.addEventListener("push", (event) => {
         icon: "/threa-logo-192.png",
         badge: "/threa-logo-192.png",
         tag: data.streamId ? `rewrap:${data.streamId}` : "rewrap",
-        renotify: true, // Re-alert (vibrate/sound) when a later nudge replaces an earlier same-tag one
+        renotify: true,
         vibrate: THREA_VIBRATION_PATTERN,
         data: { ...data, kind: "rewrap_needed" },
       } as ExtendedNotificationOptions)
@@ -457,12 +534,6 @@ self.addEventListener("push", (event) => {
     return
   }
 
-  // Incoming call ring. Always display (a ring the user isn't looking at is the
-  // whole point) with a distinct tag so the in-app socket-fallback notification
-  // and this push collapse to one entry per attempt. `renotify` re-alerts.
-  // Clicking opens/focuses the app to the host stream with `?call=<callId>`,
-  // which the app reads as accept-intent (declining from the notification is
-  // v1-omitted — no notification action buttons yet).
   if (data.kind === "call_ring") {
     if (!data.attemptId) return
     event.waitUntil(
@@ -479,13 +550,6 @@ self.addEventListener("push", (event) => {
     return
   }
 
-  // Ring retracted (accepted elsewhere / declined / cancelled / expired). Close
-  // the tagged ring notification best-effort — platform retract support varies
-  // (some won't remove an already-shown notification), documented in the plan.
-  // When nothing was closed the cancel collapsed a ring this device never showed
-  // (offline topic-collapse); show a minimal, silent "Call ended" so the push is
-  // never notification-less (a silent-result push burns the browser's silent-push
-  // quota — Firefox revokes the subscription at 0).
   if (data.kind === "call_ring_cancel") {
     if (!data.attemptId) return
     event.waitUntil(
@@ -500,10 +564,6 @@ self.addEventListener("push", (event) => {
     return
   }
 
-  // Missed call (ring expired while the app was closed). Its own copy — the
-  // generic message-grouping path below has no missed_call branch and would
-  // title the banner "New message" with the caller's name as the body. Clicking
-  // opens the host stream via the generic deep-link handler.
   if (data.kind === "missed_call") {
     const inviter = data.authorName
     const where = data.streamName ? ` in ${data.streamName}` : ""
@@ -521,29 +581,9 @@ self.addEventListener("push", (event) => {
     return
   }
 
-  // Lazy-import pure formatting helpers (keeps SW entry point lean)
   const fmt = import("./lib/sw-notification-format")
-
-  // Tag by stream, with mentions on a separate tag so they stay visually distinct.
   const tag = data.streamId ? resolveTag(data.streamId, data.activityType) : "threa-notification"
 
-  // Suppress only when a focused window is already viewing THIS stream AND the
-  // device was interacted with recently — the user can actually see the message
-  // there. A push for any other stream still shows even with the app focused, so
-  // you're alerted to conversations you aren't looking at (e.g. viewing the DM
-  // with Pierre doesn't mute a new message in #general). Requiring recent
-  // interaction (not focus alone) means a tab left focused and walked away from
-  // ages out and stops eating notifications — matching the backend's attended
-  // rule. Backend always sends the push; the SW decides whether to display it.
-  // Skipping only the on-screen stream also keeps us off the userVisibleOnly
-  // silent-push budget that browsers penalize on mobile.
-  //
-  // "Viewing" is two signals, either suffices: the window URL matches the
-  // stream route (/w/:ws/s/:id), or the page registered the stream as
-  // on-screen in the visible-streams presence entry — threads and
-  // conversations render as `?panel=` params (on any route, including /board),
-  // so their stream ids never appear in the URL path and only the registry
-  // knows they're being read.
   event.waitUntil(
     Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true }), readVisibleStreams()]).then(
       async ([{ appendMessage, formatTitle, formatBody, isViewingStream }, clients, visibleStreams]) => {
@@ -553,7 +593,6 @@ self.addEventListener("push", (event) => {
           (focusedClients.length > 0 && !!data.streamId && visibleStreams.has(data.streamId))
         if (viewingThisStream && (await isDevicePresent())) return
 
-        // Accumulate a rolling list of recent messages from the existing notification
         const existing = await self.registration.getNotifications({ tag })
         const previousMessages = (existing[0]?.data as PushData | undefined)?.messages ?? []
         const messages = appendMessage(previousMessages, {
@@ -571,28 +610,14 @@ self.addEventListener("push", (event) => {
           badge: "/threa-logo-192.png",
           data: { ...data, messages },
           tag,
-          renotify: true, // Re-alert (vibrate/sound) even when replacing an existing notification
+          renotify: true,
           vibrate: THREA_VIBRATION_PATTERN,
         }
 
-        // Re-alerting a replaced same-tag notification depends on `renotify`,
-        // which Firefox, iOS/Safari, and some Chromium builds ignore — they
-        // swap the tray entry silently, so every message after the first in a
-        // stream arrives with no sound/vibration/banner. Closing the
-        // predecessor (its message history is already lifted into `messages`
-        // above, so the grouped body/count survives) means showNotification has
-        // no same-tag entry to silently replace and reliably re-alerts on every
-        // platform.
         for (const n of existing) n.close()
 
         await self.registration.showNotification(title, options)
 
-        // Queue a Background Sync to prefetch stream + workspace bootstrap so
-        // the data is fresh when the user taps the notification. Going through
-        // queueBootstrapSync (vs. inline fetch) means a flaky network or an
-        // SW termination won't leave the user staring at a stale stream — the
-        // browser retries `sync` until it succeeds. Best-effort: errors here
-        // never block notification display.
         if (data.workspaceId) {
           await queueBootstrapSync(
             {
@@ -616,16 +641,10 @@ self.addEventListener("notificationclick", (event) => {
   let targetUrl = "/"
 
   if (data?.workspaceId && data?.callId && data.kind === "call_ring") {
-    // Ring click = accept-intent: land on the host stream with `?call=<callId>`,
-    // which the app interprets as "join this call".
     targetUrl = data.streamId
       ? `/w/${data.workspaceId}/s/${data.streamId}?call=${data.callId}`
       : `/w/${data.workspaceId}?call=${data.callId}`
   } else if (data?.workspaceId && data?.conversationId) {
-    // Conversation origin wins over the stream permalink: reopen the message in
-    // the conversation panel. `conv:` is the panel-id wire prefix
-    // (createConversationPanelId); inlined here since the SW can't import the
-    // React panel-context module.
     const params = new URLSearchParams({ panel: `conv:${data.conversationId}` })
     if (data.messageId) params.set("m", data.messageId)
     targetUrl = `/w/${data.workspaceId}/board?${params.toString()}`
@@ -634,8 +653,6 @@ self.addEventListener("notificationclick", (event) => {
       ? `/w/${data.workspaceId}/s/${data.streamId}?m=${data.messageId}`
       : `/w/${data.workspaceId}/s/${data.streamId}`
   } else if (data?.workspaceId && data.kind === "saved_reminder") {
-    // Standalone saved-item reminder — no source message to open, so land on
-    // the Saved page where the item lives.
     targetUrl = `/w/${data.workspaceId}/saved`
   } else if (data?.workspaceId) {
     targetUrl = `/w/${data.workspaceId}`
@@ -656,34 +673,12 @@ self.addEventListener("notificationclick", (event) => {
           return
         }
       }
-      // Use absolute URL so browsers that associate the full URL with the manifest
-      // scope (e.g. for PWA standalone windows) can open in the correct context.
       await self.clients.openWindow(absoluteUrl)
     })
   )
 })
 
-// Clear notifications when the user reads a stream in the app.
-self.addEventListener("message", (event) => {
-  if (event.data?.type !== SW_MSG_CLEAR_NOTIFICATIONS) return
-  const streamId = event.data.streamId as string | undefined
-  if (!streamId) return
-
-  event.waitUntil(
-    Promise.all([
-      self.registration.getNotifications({ tag: streamId }),
-      self.registration.getNotifications({ tag: `${streamId}:mention` }),
-      self.registration.getNotifications({ tag: `rewrap:${streamId}` }),
-    ]).then((groups) => {
-      for (const n of groups.flat()) n.close()
-    })
-  )
-})
-
 self.addEventListener("pushsubscriptionchange", (event) => {
-  // The old subscription has been invalidated — re-subscribe with the same
-  // applicationServerKey and POST the new subscription to the backend.
-  // Note: this event is rare (key rotation, browser storage cleared).
   const evt = event as ExtendableEvent & {
     oldSubscription?: PushSubscription
     newSubscription?: PushSubscription
@@ -694,11 +689,7 @@ self.addEventListener("pushsubscriptionchange", (event) => {
       try {
         const oldSub = evt.oldSubscription
         const applicationServerKey = oldSub?.options.applicationServerKey
-        if (!applicationServerKey && !evt.newSubscription) {
-          // No VAPID key available and no new subscription provided — can't re-subscribe.
-          // The hook will re-subscribe with the correct key on next app load.
-          return
-        }
+        if (!applicationServerKey && !evt.newSubscription) return
 
         const newSub =
           evt.newSubscription ??
@@ -709,18 +700,8 @@ self.addEventListener("pushsubscriptionchange", (event) => {
 
         if (!newSub) return
 
-        // Notify the frontend so it can re-register the new subscription with the backend.
-        // The SW doesn't have workspace context, so the app handles the API call.
         const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
-
-        if (clients.length === 0) {
-          // No open windows — the SW can't register with the backend itself
-          // (no workspace context or auth). The re-subscribe above keeps the
-          // browser side warm; usePushNotifications re-registers it on next
-          // app open (mount) or within LIVENESS_CHECK_INTERVAL_MS on an
-          // already-open tab, as a plain idempotent upsert.
-          return
-        }
+        if (clients.length === 0) return
 
         for (const client of clients) {
           client.postMessage({
@@ -729,7 +710,7 @@ self.addEventListener("pushsubscriptionchange", (event) => {
           })
         }
       } catch {
-        // Swallow error — the usePushNotifications hook will re-subscribe on next app load
+        // Swallow — the hook will re-subscribe on next app load.
       }
     })()
   )

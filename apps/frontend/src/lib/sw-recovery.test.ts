@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest"
+import path from "node:path"
+import fs from "node:fs"
 import { chunkUrlFromError, isChunkLoadError, runSwRecovery } from "./sw-recovery"
 
 describe("isChunkLoadError", () => {
@@ -99,6 +101,52 @@ describe("runSwRecovery", () => {
     expect(sessionStorage.getItem("sw-recovery-last")).toBe(String(now))
   })
 
+  it("automatic recovery reloads without touching service workers, caches, or fetch", async () => {
+    const getRegistrations = vi.fn(() => Promise.resolve([]))
+    const cachesDelete = vi.fn(() => Promise.resolve(true))
+    const cachesKeys = vi.fn(() => Promise.resolve(["workbox-precache-v2"]))
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistrations } })
+    vi.stubGlobal("caches", { keys: cachesKeys, delete: cachesDelete })
+
+    const result = await runSwRecovery()
+
+    expect(result).toBe(true)
+    expect(window.location.reload).toHaveBeenCalledOnce()
+    expect(getRegistrations).not.toHaveBeenCalled()
+    expect(cachesKeys).not.toHaveBeenCalled()
+    expect(cachesDelete).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("automatic recovery ignores bustUrls and still only performs a plain reload", async () => {
+    const result = await runSwRecovery({ bustUrls: ["https://app.threa.io/assets/x-AbC123.js"] })
+    expect(result).toBe(true)
+    expect(window.location.reload).toHaveBeenCalledOnce()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("returns false without reloading when sessionStorage is denied", async () => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: vi.fn(() => {
+        throw new DOMException("Denied", "SecurityError")
+      }),
+      setItem: vi.fn(() => {
+        throw new DOMException("Denied", "SecurityError")
+      }),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      get length() {
+        return 0
+      },
+      key: vi.fn(() => null),
+    } as unknown as Storage)
+
+    const result = await runSwRecovery()
+
+    expect(result).toBe(false)
+    expect(window.location.reload).not.toHaveBeenCalled()
+  })
+
   it("force: true does not stamp the last-attempt time", async () => {
     const result = await runSwRecovery({ force: true })
     expect(result).toBe(true)
@@ -158,5 +206,152 @@ describe("runSwRecovery", () => {
     const result = await runSwRecovery({ force: true })
     expect(result).toBe(true)
     expect(window.location.reload).toHaveBeenCalledOnce()
+  })
+})
+
+describe("CSS watchdog inline script", () => {
+  let watchdogScript: string
+  let originalLocation: Location
+  let originalStyleSheets: StyleSheetList
+  let originalSessionStorage: Storage
+
+  beforeAll(() => {
+    const html = fs.readFileSync(path.resolve(__dirname, "../../index.html"), "utf-8")
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1].trim())
+    watchdogScript = scripts.find((s) => s.includes("sw-recovery-attempts") && s.includes("document.styleSheets")) ?? ""
+    if (!watchdogScript) throw new Error("CSS watchdog inline script not found in index.html")
+  })
+
+  beforeEach(() => {
+    originalLocation = window.location
+    originalStyleSheets = document.styleSheets
+    originalSessionStorage = window.sessionStorage
+    sessionStorage.clear()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
+    Object.defineProperty(document, "styleSheets", { configurable: true, value: originalStyleSheets })
+    Object.defineProperty(window, "sessionStorage", { configurable: true, value: originalSessionStorage })
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    sessionStorage.clear()
+  })
+
+  function execWatchdog({
+    styleSheets = [] as unknown as StyleSheetList,
+    resources = [{ initiatorType: "link", name: "/assets/index-AbC123.css", responseEnd: 1000 }],
+    sessionStorage: sessionStorageOverride,
+    serviceWorker = { getRegistrations: vi.fn(() => Promise.resolve([])) },
+    caches = { keys: vi.fn(() => Promise.resolve([])), delete: vi.fn(() => Promise.resolve(true)) },
+    fetch = vi.fn(() => Promise.resolve(new Response(""))),
+  }: {
+    styleSheets?: StyleSheetList
+    resources?: Array<{ initiatorType: string; name: string; responseEnd: number }>
+    sessionStorage?: Storage
+    serviceWorker?: { getRegistrations: ReturnType<typeof vi.fn> }
+    caches?: { keys: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> }
+    fetch?: ReturnType<typeof vi.fn>
+  } = {}) {
+    const reload = vi.fn()
+    Object.defineProperty(window, "location", { configurable: true, value: { ...originalLocation, reload } })
+    Object.defineProperty(document, "styleSheets", { configurable: true, value: styleSheets })
+    vi.spyOn(performance, "getEntriesByType").mockReturnValue(resources as unknown as PerformanceEntryList)
+    if (sessionStorageOverride) {
+      Object.defineProperty(window, "sessionStorage", { configurable: true, value: sessionStorageOverride })
+    }
+    vi.stubGlobal("navigator", { serviceWorker })
+    vi.stubGlobal("caches", caches)
+    vi.stubGlobal("fetch", fetch)
+
+    const run = new Function(watchdogScript)
+    run()
+
+    return {
+      reload,
+      advance: (ms: number) => vi.advanceTimersByTime(ms),
+      getRegistrations: serviceWorker.getRegistrations,
+      cachesKeys: caches.keys,
+      cachesDelete: caches.delete,
+      fetch,
+    }
+  }
+
+  it("reloads when styles are missing and a CSS request has completed", () => {
+    const { reload, advance } = execWatchdog()
+    advance(3000)
+    expect(reload).toHaveBeenCalledOnce()
+    expect(sessionStorage.getItem("sw-recovery-attempts")).toBe("1")
+    expect(sessionStorage.getItem("sw-recovery-last")).not.toBeNull()
+  })
+
+  it("waits for in-flight CSS before deciding to reload", () => {
+    const getEntriesSpy = vi.spyOn(performance, "getEntriesByType")
+    getEntriesSpy
+      .mockReturnValueOnce([] as unknown as PerformanceEntryList)
+      .mockReturnValueOnce([
+        { initiatorType: "link", name: "/assets/index-AbC123.css", responseEnd: 1000 },
+      ] as unknown as PerformanceEntryList)
+    const { reload, advance } = execWatchdog({ resources: [] })
+
+    advance(3000)
+    expect(reload).not.toHaveBeenCalled()
+    advance(3000)
+    expect(reload).toHaveBeenCalledOnce()
+  })
+
+  it("does not reload when styles loaded", () => {
+    const styleSheets = [{ cssRules: [{ length: 1 }] }] as unknown as StyleSheetList
+    const { reload, advance } = execWatchdog({ styleSheets, resources: [] })
+    advance(3000)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it("clears the counter on a healthy load once the cooldown has passed", () => {
+    sessionStorage.setItem("sw-recovery-attempts", "1")
+    sessionStorage.setItem("sw-recovery-last", String(Date.now() - 120_000))
+    const styleSheets = [{ cssRules: [{ length: 1 }] }] as unknown as StyleSheetList
+    const { reload, advance } = execWatchdog({ styleSheets, resources: [] })
+    advance(3000)
+    expect(reload).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem("sw-recovery-attempts")).toBeNull()
+    expect(sessionStorage.getItem("sw-recovery-last")).toBeNull()
+  })
+
+  it("stops at the shared attempt cap", () => {
+    sessionStorage.setItem("sw-recovery-attempts", "2")
+    const { reload, advance } = execWatchdog()
+    advance(3000)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it("does not unregister service workers, delete caches, or fetch on automatic recovery", () => {
+    const { reload, advance, getRegistrations, cachesKeys, cachesDelete, fetch: fetchMock } = execWatchdog()
+    advance(3000)
+    expect(reload).toHaveBeenCalledOnce()
+    expect(getRegistrations).not.toHaveBeenCalled()
+    expect(cachesKeys).not.toHaveBeenCalled()
+    expect(cachesDelete).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("does not reload when sessionStorage is denied", () => {
+    const deniedStorage = {
+      getItem: vi.fn(() => {
+        throw new DOMException("Denied", "SecurityError")
+      }),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      get length() {
+        return 0
+      },
+      key: vi.fn(() => null),
+    } as unknown as Storage
+    const { reload, advance } = execWatchdog({ sessionStorage: deniedStorage })
+    advance(3000)
+    expect(reload).not.toHaveBeenCalled()
   })
 })

@@ -116,4 +116,42 @@ describe("installCrashRecovery", () => {
     expect(sessionStorage.getItem("sw-recovery-attempts")).toBe("1")
     expect(sessionStorage.getItem("crash-reload-count")).toBeNull()
   })
+
+  it("automatic chunk-load recovery does not unregister service workers or delete caches", async () => {
+    await install()
+    const getRegistrations = vi.fn(() => Promise.resolve([]))
+    const cachesDelete = vi.fn(() => Promise.resolve(true))
+    const cachesKeys = vi.fn(() => Promise.resolve(["workbox-precache-v2"]))
+    vi.stubGlobal("navigator", { serviceWorker: { getRegistrations } })
+    vi.stubGlobal("caches", { keys: cachesKeys, delete: cachesDelete })
+
+    emitRejection(new TypeError("Failed to fetch dynamically imported module: https://app.threa.io/assets/x-AbC123.js"))
+
+    await vi.waitFor(() => expect(window.location.reload).toHaveBeenCalledOnce())
+    expect(getRegistrations).not.toHaveBeenCalled()
+    expect(cachesKeys).not.toHaveBeenCalled()
+    expect(cachesDelete).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("does not reload when sessionStorage is denied", async () => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: vi.fn(() => {
+        throw new DOMException("Denied", "SecurityError")
+      }),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+      get length() {
+        return 0
+      },
+      key: vi.fn(() => null),
+    } as unknown as Storage)
+
+    await install()
+    resume()
+    emitRejection(new TypeError("boom"))
+
+    expect(window.location.reload).not.toHaveBeenCalled()
+  })
 })
