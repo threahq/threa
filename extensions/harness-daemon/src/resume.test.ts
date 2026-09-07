@@ -30,7 +30,7 @@ import {
 } from "./spawners"
 import type { ManagedAgent, ResumeOptions, SpawnResult } from "./types"
 import {
-  inaccessibleBackoffMs,
+  probeVerdictBackoffMs,
   runWatchLoop,
   unavailableBackoffMs,
   uniqueSupervisorTargets,
@@ -606,27 +606,27 @@ async function runRevive(
 }
 
 test("up skips archived and inaccessible scratchpads without launching", async () => {
-  expect(await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "archived" }))).toEqual({
-    status: "skipped archived",
-  })
+  const archived = await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "archived" }))
+  expect(archived?.status).toBe("skipped archived")
   const inaccessible = await runRevive(linkedAgent(), {}, reviveDeps({ scratchpadStatus: async () => "inaccessible" }))
   expect(inaccessible?.status).toBe("skipped inaccessible")
 })
 
-test("an inaccessible scratchpad records an escalating probe backoff", async () => {
-  const persisted: ManagedAgent[] = []
-  const deps = reviveDeps({
-    scratchpadStatus: async () => "inaccessible",
-    persist: (managed) => persisted.push(managed),
-  })
-  await runRevive(linkedAgent(), {}, deps)
-  await runRevive(linkedAgent({ probeFailures: 4 }), {}, deps)
+test.each(["inaccessible", "archived"] as const)(
+  "a %s scratchpad records an escalating probe backoff under its own verdict",
+  async (status) => {
+    const persisted: ManagedAgent[] = []
+    const deps = reviveDeps({ scratchpadStatus: async () => status, persist: (managed) => persisted.push(managed) })
+    await runRevive(linkedAgent(), {}, deps)
+    await runRevive(linkedAgent({ probeFailures: 4 }), {}, deps)
 
-  expect(persisted.map((managed) => managed.probeFailures)).toEqual([1, 5])
-  const [first, fifth] = persisted.map((managed) => Date.parse(managed.probeBackoffUntil!) - Date.now())
-  expect(first).toBeGreaterThan(60_000)
-  expect(fifth).toBeGreaterThan(first)
-})
+    expect(persisted.map((managed) => managed.probeFailures)).toEqual([1, 5])
+    expect(persisted.map((managed) => managed.probeVerdict)).toEqual([status, status])
+    const [first, fifth] = persisted.map((managed) => Date.parse(managed.probeBackoffUntil!) - Date.now())
+    expect(first).toBeGreaterThan(60_000)
+    expect(fifth).toBeGreaterThan(first)
+  }
+)
 
 test("the watcher sweep does not re-probe a scratchpad inside its backoff window", async () => {
   const probes: string[] = []
@@ -682,46 +682,55 @@ test("unarchiving revives immediately even when the row carries a probe backoff"
   expect(probes).toEqual(["status"])
 })
 
-test("an archived scratchpad answers 200, so it never enters the backoff", async () => {
-  const persisted: ManagedAgent[] = []
-  const deps = reviveDeps({ scratchpadStatus: async () => "archived", persist: (managed) => persisted.push(managed) })
+test("the watcher sweep does not re-probe an archived scratchpad either", async () => {
   const probes: string[] = []
-  const counting = reviveDeps({
-    ...deps,
+  const persisted: ManagedAgent[] = []
+  const deps = reviveDeps({
     scratchpadStatus: async () => {
       probes.push("status")
       return "archived"
     },
+    persist: (managed) => persisted.push(managed),
   })
 
-  expect(await runRevive(linkedAgent(), { respectProbeBackoff: true }, counting)).toEqual({
+  const first = await runRevive(linkedAgent(), { respectProbeBackoff: true }, deps)
+  expect(first?.status).toBe("skipped archived")
+  expect(persisted[0]?.probeVerdict).toBe("archived")
+
+  // The second pass sees the row the first one wrote, so nothing goes out.
+  expect(await runRevive(persisted[0]!, { respectProbeBackoff: true }, deps)).toEqual({
     status: "skipped archived",
+    detail: `probe suppressed until ${persisted[0]!.probeBackoffUntil}`,
   })
-  expect(await runRevive(linkedAgent(), { respectProbeBackoff: true }, counting)).toEqual({
-    status: "skipped archived",
-  })
-  expect(probes).toEqual(["status", "status"])
-  expect(persisted).toEqual([])
+  expect(probes).toEqual(["status"])
 })
 
-test("a scratchpad that answers clears its recorded backoff", async () => {
-  for (const status of ["active", "archived"] as const) {
-    const persisted: ManagedAgent[] = []
-    // pathExists stops an "active" row right after the clear, before any launch.
-    const deps = reviveDeps({
-      scratchpadStatus: async () => status,
-      persist: (managed) => persisted.push(managed),
-      pathExists: () => false,
-    })
-    const backedOff = linkedAgent({ probeFailures: 3, probeBackoffUntil: "2026-07-20T00:00:00.000Z" })
-    await runRevive(backedOff, { dryRun: true }, deps)
-    await runRevive(backedOff, {}, deps)
+test("a live scratchpad clears its recorded backoff", async () => {
+  const persisted: ManagedAgent[] = []
+  // pathExists stops the row right after the clear, before any launch.
+  const deps = reviveDeps({
+    scratchpadStatus: async () => "active",
+    persist: (managed) => persisted.push(managed),
+    pathExists: () => false,
+  })
+  const backedOff = linkedAgent({
+    probeFailures: 3,
+    probeVerdict: "archived",
+    probeBackoffUntil: "2026-07-20T00:00:00.000Z",
+  })
+  await runRevive(backedOff, { dryRun: true }, deps)
+  await runRevive(backedOff, {}, deps)
 
-    expect(persisted).toEqual([
-      { ...backedOff, probeFailures: undefined, probeBackoffUntil: undefined, updatedAt: persisted[0]?.updatedAt },
-    ])
-    expect(Date.parse(persisted[0]!.updatedAt)).toBeGreaterThan(Date.parse(backedOff.updatedAt))
-  }
+  expect(persisted).toEqual([
+    {
+      ...backedOff,
+      probeFailures: undefined,
+      probeVerdict: undefined,
+      probeBackoffUntil: undefined,
+      updatedAt: persisted[0]?.updatedAt,
+    },
+  ])
+  expect(Date.parse(persisted[0]!.updatedAt)).toBeGreaterThan(Date.parse(backedOff.updatedAt))
 })
 
 test("an unavailable Threa neither records nor clears a probe backoff", async () => {
@@ -743,8 +752,8 @@ test("probe suppression reads a missing or unparseable instant as due", () => {
 })
 
 test("inaccessible probes back off for hours where unavailable ones cap at minutes", () => {
-  expect(inaccessibleBackoffMs(60_000, 1, () => 0)).toBe(120_000)
-  expect(inaccessibleBackoffMs(60_000, 99, () => 0)).toBe(6 * 60 * 60_000)
+  expect(probeVerdictBackoffMs(60_000, 1, () => 0)).toBe(120_000)
+  expect(probeVerdictBackoffMs(60_000, 99, () => 0)).toBe(6 * 60 * 60_000)
   expect(unavailableBackoffMs(60_000, 99, () => 0)).toBe(15 * 60_000)
 })
 

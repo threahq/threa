@@ -1,6 +1,6 @@
 import { canonicalOrRaw, defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
-import type { ManagedAgent } from "./types"
-import { inaccessibleBackoffMs } from "./watch"
+import type { ManagedAgent, ProbeVerdict, ScratchpadStatus } from "./types"
+import { probeVerdictBackoffMs } from "./watch"
 
 export interface ScratchpadRef {
   baseUrl: string
@@ -76,13 +76,14 @@ export function probeSuppressed(agent: ManagedAgent, nowMs: number): boolean {
 
 export function withProbeBackoff(
   agent: ManagedAgent,
-  params: { intervalMs: number; nowMs: number; random?: () => number }
+  params: { verdict: ProbeVerdict; intervalMs: number; nowMs: number; random?: () => number }
 ): ManagedAgent {
   const probeFailures = (agent.probeFailures ?? 0) + 1
-  const delayMs = inaccessibleBackoffMs(params.intervalMs, probeFailures, params.random)
+  const delayMs = probeVerdictBackoffMs(params.intervalMs, probeFailures, params.random)
   return {
     ...agent,
     probeFailures,
+    probeVerdict: params.verdict,
     probeBackoffUntil: new Date(params.nowMs + delayMs).toISOString(),
     updatedAt: new Date(params.nowMs).toISOString(),
   }
@@ -90,11 +91,19 @@ export function withProbeBackoff(
 
 /** Undefined when there is nothing recorded, so a healthy row is never rewritten every pass. */
 export function withoutProbeBackoff(agent: ManagedAgent, nowMs: number): ManagedAgent | undefined {
-  if (agent.probeFailures === undefined && agent.probeBackoffUntil === undefined) return undefined
-  return { ...agent, probeFailures: undefined, probeBackoffUntil: undefined, updatedAt: new Date(nowMs).toISOString() }
+  if (agent.probeFailures === undefined && agent.probeBackoffUntil === undefined && agent.probeVerdict === undefined) {
+    return undefined
+  }
+  return {
+    ...agent,
+    probeFailures: undefined,
+    probeVerdict: undefined,
+    probeBackoffUntil: undefined,
+    updatedAt: new Date(nowMs).toISOString(),
+  }
 }
 
-export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"
+export type { ProbeVerdict, ScratchpadStatus } from "./types"
 
 /** When the scratchpad was archived, for callers that must wait out a grace before acting. */
 export async function fetchScratchpadArchivedAt(params: {

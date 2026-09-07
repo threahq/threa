@@ -695,7 +695,10 @@ export async function reviveAgent(
   // A targeted restore event is the server saying this stream is live again, so it
   // always probes; only the untargeted sweep honours the backoff.
   if (options.respectProbeBackoff && !target && probeSuppressed(agent, Date.now())) {
-    return { status: "skipped inaccessible", detail: `probe suppressed until ${agent.probeBackoffUntil}` }
+    return {
+      status: `skipped ${agent.probeVerdict ?? "inaccessible"}`,
+      detail: `probe suppressed until ${agent.probeBackoffUntil}`,
+    }
   }
   const status = await deps.scratchpadStatus({
     baseUrl,
@@ -703,10 +706,16 @@ export async function reviveAgent(
     apiKey,
     streamId: scratchpad.streamId,
   })
-  if (status === "inaccessible") {
-    const backedOff = withProbeBackoff(agent, { intervalMs: watchIntervalMs(), nowMs: Date.now() })
+  // Archived backs off exactly as 403/404 does. Both are settled answers that
+  // outlive a pass, and re-probing an archived scratchpad every 60s is the same
+  // noise a 403 one made — this row has no way back except an unarchive, which
+  // arrives as a restore event and skips the backoff above. The verdict is
+  // stored because the tombstone pass runs after this one and would otherwise
+  // have to re-ask.
+  if (status === "inaccessible" || status === "archived") {
+    const backedOff = withProbeBackoff(agent, { verdict: status, intervalMs: watchIntervalMs(), nowMs: Date.now() })
     if (!options.dryRun) deps.persist(backedOff)
-    return { status: "skipped inaccessible", detail: `next probe after ${backedOff.probeBackoffUntil}` }
+    return { status: `skipped ${status}`, detail: `next probe after ${backedOff.probeBackoffUntil}` }
   }
   if (status !== "unavailable") {
     const cleared = withoutProbeBackoff(agent, Date.now())

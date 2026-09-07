@@ -54,15 +54,17 @@ async function decide(agent: ManagedAgent, deps: TombstoneDeps, dryRun: boolean)
   if (!agent.scratchpadUrl || !parseScratchpadUrl(agent.scratchpadUrl)) {
     return { subject: agent.id, disposition: "kept scratchpad unreadable", detail: "no scratchpad url" }
   }
-  // Last, because everything above is local. The revive path already decided
-  // this row is not worth asking about yet, and this pass probes the same
-  // endpoint — re-asking hammers exactly the scratchpads the backoff protects,
-  // and since a row is never deleted and an inaccessible one can never be
-  // tombstoned, that set only ever grows.
-  if (probeSuppressed(agent, deps.now().getTime())) {
+  // Last, because everything above is local. The revive pass runs before this
+  // one and already probed, so a suppressed row has its answer recorded:
+  // re-asking hammers exactly the scratchpads the backoff protects. An archived
+  // verdict is the one this pass acts on, so it is honoured rather than
+  // re-fetched; a row backed off before verdicts were recorded reads as
+  // inaccessible, which keeps the old behaviour of waiting.
+  const suppressed = probeSuppressed(agent, deps.now().getTime()) ? (agent.probeVerdict ?? "inaccessible") : undefined
+  if (suppressed && suppressed !== "archived") {
     return { subject: agent.id, disposition: "kept probe suppressed", detail: agent.probeBackoffUntil }
   }
-  const status = await deps.scratchpadStatus(agent)
+  const status = suppressed ?? (await deps.scratchpadStatus(agent))
   if (status === "active") return { subject: agent.id, disposition: "kept scratchpad active", detail: agent.name }
   // Kris's ruling: an inaccessible (403/404) scratchpad is never grounds — the
   // same rule the reaper follows. Losing sight of a scratchpad is not evidence

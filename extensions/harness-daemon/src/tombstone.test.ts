@@ -166,6 +166,25 @@ test("a row the revive path is already backing off is not probed again", async (
   expect(context.persisted).toEqual([])
 })
 
+test("a suppressed row whose recorded verdict is archived is tombstoned without another probe", async () => {
+  // The revive sweep runs first and stores what it found, so this pass has its
+  // answer already. Without the recorded verdict the backoff would keep the row
+  // out of reach of the only pass that can retire it.
+  upsertAgent(agent({ probeFailures: 27, probeVerdict: "archived", probeBackoffUntil: "2026-07-29T06:00:00.000Z" }))
+  let probes = 0
+  const context = deps({
+    scratchpadStatus: async (): Promise<ScratchpadStatus> => {
+      probes += 1
+      return "archived"
+    },
+  })
+
+  const outcomes = await tombstoneAbandonedRows(context.deps, false)
+
+  expect(outcomes).toEqual([{ subject: "claude-1", disposition: "tombstoned", detail: "feature" }])
+  expect(probes).toBe(0)
+})
+
 test("a row whose backoff has expired is probed and tombstoned", async () => {
   upsertAgent(agent({ probeFailures: 27, probeBackoffUntil: "2026-07-28T00:00:00.000Z" }))
   const context = deps()
