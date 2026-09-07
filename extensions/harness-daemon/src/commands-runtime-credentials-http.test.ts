@@ -163,7 +163,7 @@ describe("cross-runtime supervisor and revival credentials", () => {
   })
 
   test("should preserve an explicit ambient identity when reviving a standalone root session", async () => {
-    const { baseUrl, configs } = startRuntimeServer()
+    const { baseUrl, configs, requests } = startRuntimeServer()
     process.env.THREA_BASE_URL = baseUrl
     process.env.THREA_WORKSPACE_ID = WORKSPACE
     process.env.THREA_API_KEY = CLAUDE_KEY
@@ -174,6 +174,23 @@ describe("cross-runtime supervisor and revival credentials", () => {
       status: "started",
       detail: "bypass enabled",
     })
+    expect(requests).toEqual([
+      {
+        authorization: `Bearer ${CLAUDE_KEY}`,
+        method: "GET",
+        path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}`,
+      },
+      {
+        authorization: `Bearer ${CLAUDE_KEY}`,
+        method: "POST",
+        path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/sessions`,
+      },
+      {
+        authorization: `Bearer ${CLAUDE_KEY}`,
+        method: "GET",
+        path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}`,
+      },
+    ])
   })
 
   for (const direction of [

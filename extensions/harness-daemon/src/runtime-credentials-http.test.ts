@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { defaultDoneDeps, doneAgent } from "./done"
+import { defaultDoneDeps, doneAgent, type DoneDeps } from "./done"
+import { DEFAULT_PROFILE } from "./profiles"
 import { defaultAttachedSpawnDeps } from "./spawn-attached"
 import { linkAttachedThread, requireThreadSessionTarget, type RuntimeTargetResolver } from "./spawners"
 import type { ManagedAgent, RuntimeKind, ThreaChannelConfig } from "./types"
@@ -241,7 +242,14 @@ describe("runtime-scoped production HTTP wiring", () => {
       createdAt: "2026-09-07T00:00:00.000Z",
       updatedAt: "2026-09-07T00:00:00.000Z",
     }
-    Object.assign(wrongDeps, {
+    const deps: DoneDeps = {
+      endSession: wrongDeps.endSession,
+      profileFor: () => DEFAULT_PROFILE,
+      teardown: () => ({ ok: true }),
+      windDown: () => ({ pushed: false, removed: false }),
+      killWindow: () => {},
+      awaitExit: async () => {},
+      log: () => {},
       findAgent: () => agent,
       links: () => [
         {
@@ -264,9 +272,9 @@ describe("runtime-scoped production HTTP wiring", () => {
       lock: async () => () => {},
       persist: (next: ManagedAgent) => persisted.push(next),
       postNotice: async (streamId: string, content: string) => void notices.push(`${streamId}:${content}`),
-    })
+    }
 
-    await expect(doneAgent({ ref: agent.id, rootStreamId: ROOT }, wrongDeps)).rejects.toThrow(
+    await expect(doneAgent({ ref: agent.id, rootStreamId: ROOT }, deps)).rejects.toThrow(
       "404 session not found for bot"
     )
     expect(persisted).toEqual([
