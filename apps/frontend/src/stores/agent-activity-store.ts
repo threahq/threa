@@ -1,11 +1,15 @@
 import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
-import type { ActiveAgentSession, StreamEvent } from "@threahq/types"
+import { StreamTypes } from "@threahq/types"
+import type { ActiveAgentSession, AgentStepType, StreamEvent, StreamType } from "@threahq/types"
 import { deriveAgentSessionLifecycle, type AgentSessionLifecycle } from "@/lib/agent-session-lifecycle"
 
 /**
  * Ephemeral, non-persisted store of the agent sessions running RIGHT NOW,
  * keyed by their exact stream so a stream row can paint an "agent working"
- * state without inheriting activity from a parent or child. A full workspace
+ * state without inheriting activity from a parent or child. The same sessions
+ * are keyed a second way, by the timeline rows they hang under — `parentAnchorId`
+ * (the parent-timeline row a thread session hangs off) and `triggerMessageId` —
+ * so a row can paint a session that runs in another stream. A full workspace
  * bootstrap seeds `activeAgentSessions`. Stream bootstraps reconcile the same
  * cached lifecycle events that drive the open timeline, while live starts/ends
  * fold in from the `agent_session:*` room events (INV-53). Removal is by session
@@ -23,25 +27,69 @@ const workspaces = new Map<string, Map<string, ActiveAgentSession>>()
 const TERMINAL_FENCE_LIMIT = 1024
 const terminalSessions = new Map<string, Set<string>>()
 
-// `${workspaceId}:${streamId}` -> listeners subscribed to that row
-const keyListeners = new Map<string, Set<() => void>>()
-// Content-stable snapshot per key (referential stability for useSyncExternalStore)
-const keySnapshots = new Map<string, ActiveAgentSession[]>()
 // `${workspaceId}:${sessionId}` -> listeners subscribed to that one session
 const sessionListeners = new Map<string, Set<() => void>>()
 
 const EMPTY: readonly ActiveAgentSession[] = Object.freeze([])
 
-function subKey(workspaceId: string, streamId: string): string {
-  return `${workspaceId}:${streamId}`
+function subKey(workspaceId: string, id: string): string {
+  return `${workspaceId}:${id}`
 }
 
+/**
+ * One keyed view over the running set. `equal` decides whether a recompute is
+ * worth notifying; `snapshots` holds one content-stable array per key
+ * (referential stability for `useSyncExternalStore`).
+ */
+type SessionIndex = {
+  keysOf: (session: ActiveAgentSession) => readonly string[]
+  equal: (a: ActiveAgentSession, b: ActiveAgentSession) => boolean
+  listeners: Map<string, Set<() => void>>
+  snapshots: Map<string, ActiveAgentSession[]>
+}
+
+const byStream: SessionIndex = {
+  keysOf: (session) => [session.streamId],
+  equal: sameSessionIdentity,
+  listeners: new Map(),
+  snapshots: new Map(),
+}
+
+const byAnchor: SessionIndex = {
+  keysOf: anchorKeysOf,
+  // Full comparison, unlike the stream index: the thinking row under an anchor
+  // renders the step type and `substep`, so a progress tick has to reach it.
+  equal: sameSession,
+  listeners: new Map(),
+  snapshots: new Map(),
+}
+
+const INDEXES = [byStream, byAnchor] as const
+
+/** The timeline rows a session hangs under: its parent anchor and its trigger. */
+function anchorKeysOf(session: ActiveAgentSession): string[] {
+  const ids: string[] = []
+  if (session.parentAnchorId) ids.push(session.parentAnchorId)
+  if (session.triggerMessageId && session.triggerMessageId !== session.parentAnchorId) {
+    ids.push(session.triggerMessageId)
+  }
+  return ids
+}
+
+/**
+ * Every rendered field, plus the anchors — those are index keys, and
+ * `upsertAgentSession` early-returns on this, so leaving them out would let an
+ * upsert that moves a session between anchor rows be swallowed.
+ */
 function sameSession(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
   return (
     a.sessionId === b.sessionId &&
     a.streamId === b.streamId &&
     a.rootStreamId === b.rootStreamId &&
     a.personaName === b.personaName &&
+    a.parentAnchorId === b.parentAnchorId &&
+    a.triggerMessageId === b.triggerMessageId &&
+    a.currentStepType === b.currentStepType &&
     a.stepCount === b.stepCount &&
     a.messageCount === b.messageCount &&
     a.substep === b.substep
@@ -49,17 +97,19 @@ function sameSession(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
 }
 
 /**
- * Identity only — no progress fields. The stream-key snapshot compares with this
- * so a progress/substep tick (several per second in a research loop) cannot churn
- * the array every sidebar row subscribes to; by-id subscribers still get every
- * tick through `notifySession`.
+ * Identity and keys — no progress fields. The stream-key snapshot compares with
+ * this so a progress/substep tick (several per second in a research loop) cannot
+ * churn the array every sidebar row subscribes to; by-id subscribers still get
+ * every tick through `notifySession`.
  */
 function sameSessionIdentity(a: ActiveAgentSession, b: ActiveAgentSession): boolean {
   return (
     a.sessionId === b.sessionId &&
     a.streamId === b.streamId &&
     a.rootStreamId === b.rootStreamId &&
-    a.personaName === b.personaName
+    a.personaName === b.personaName &&
+    a.parentAnchorId === b.parentAnchorId &&
+    a.triggerMessageId === b.triggerMessageId
   )
 }
 
@@ -101,23 +151,35 @@ function markTerminalSession(workspaceId: string, sessionId: string): void {
   if (oldest !== undefined) sessions.delete(oldest)
 }
 
-/** Recompute the cached snapshot for one stream key and notify iff its content changed. */
-function recomputeKey(workspaceId: string, streamId: string): void {
-  const key = subKey(workspaceId, streamId)
+/** Recompute the cached snapshot for one key and notify iff its content changed. */
+function recompute(index: SessionIndex, workspaceId: string, id: string): void {
+  const key = subKey(workspaceId, id)
   const sessions = [...(workspaces.get(workspaceId)?.values() ?? [])]
-    .filter((entry) => entry.streamId === streamId)
+    .filter((entry) => index.keysOf(entry).includes(id))
     // Most-recently-started first: the row's primary label picks [0].
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
 
-  const prev = keySnapshots.get(key)
+  const prev = index.snapshots.get(key)
   if (sessions.length === 0) {
     if (prev === undefined) return
-    keySnapshots.delete(key)
+    index.snapshots.delete(key)
   } else {
-    if (prev && sameList(prev, sessions, sameSessionIdentity)) return
-    keySnapshots.set(key, sessions)
+    if (prev && sameList(prev, sessions, index.equal)) return
+    index.snapshots.set(key, sessions)
   }
-  for (const listener of keyListeners.get(key) ?? []) listener()
+  for (const listener of index.listeners.get(key) ?? []) listener()
+}
+
+/** Refresh every key the given entries appear under, in every index. */
+function recomputeFor(workspaceId: string, entries: readonly (ActiveAgentSession | undefined)[]): void {
+  for (const index of INDEXES) {
+    const ids = new Set<string>()
+    for (const entry of entries) {
+      if (!entry) continue
+      for (const id of index.keysOf(entry)) ids.add(id)
+    }
+    for (const id of ids) recompute(index, workspaceId, id)
+  }
 }
 
 /**
@@ -129,9 +191,6 @@ function recomputeKey(workspaceId: string, streamId: string): void {
  */
 export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSession[]): void {
   const previous = workspaces.get(workspaceId)
-  const affectedStreams = new Set<string>()
-  for (const entry of previous?.values() ?? []) affectedStreams.add(entry.streamId)
-
   const next = new Map<string, ActiveAgentSession>()
   const affectedSessions = new Set<string>(previous?.keys() ?? [])
   for (const session of sessions) {
@@ -139,16 +198,18 @@ export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSess
     const existing = previous?.get(session.sessionId)
     next.set(session.sessionId, {
       ...session,
+      parentAnchorId: session.parentAnchorId ?? existing?.parentAnchorId ?? null,
+      triggerMessageId: session.triggerMessageId ?? existing?.triggerMessageId,
+      currentStepType: session.currentStepType ?? existing?.currentStepType,
       stepCount: session.stepCount ?? existing?.stepCount,
       messageCount: session.messageCount ?? existing?.messageCount,
       substep: session.substep ?? existing?.substep,
     })
-    affectedStreams.add(session.streamId)
     affectedSessions.add(session.sessionId)
   }
   workspaces.set(workspaceId, next)
 
-  for (const streamId of affectedStreams) recomputeKey(workspaceId, streamId)
+  recomputeFor(workspaceId, [...(previous?.values() ?? []), ...next.values()])
   for (const sessionId of affectedSessions) notifySession(workspaceId, sessionId)
 }
 
@@ -157,7 +218,9 @@ export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSess
  * the incoming event doesn't carry (`stepCount`/`messageCount`/`substep` are
  * absent on `started`/`activity_started` and on the bootstrap projection) keep the
  * value already tracked, so a late `started` can't wipe counts a progress tick
- * already delivered.
+ * already delivered. The anchor fields are kept the same way: a stream row cached
+ * by an older bundle carries neither anchor field, so a reconcile off that row
+ * must not null out an anchor the workspace bootstrap already resolved.
  */
 export function upsertAgentSession(workspaceId: string, session: ActiveAgentSession): void {
   if (isTerminalSession(workspaceId, session.sessionId)) return
@@ -169,6 +232,9 @@ export function upsertAgentSession(workspaceId: string, session: ActiveAgentSess
   const existing = ws.get(session.sessionId)
   const next: ActiveAgentSession = {
     ...session,
+    parentAnchorId: session.parentAnchorId ?? existing?.parentAnchorId ?? null,
+    triggerMessageId: session.triggerMessageId ?? existing?.triggerMessageId,
+    currentStepType: session.currentStepType ?? existing?.currentStepType,
     stepCount:
       session.stepCount === undefined || existing?.stepCount === undefined
         ? (session.stepCount ?? existing?.stepCount)
@@ -181,10 +247,7 @@ export function upsertAgentSession(workspaceId: string, session: ActiveAgentSess
   }
   if (existing && sameSession(existing, next)) return
   ws.set(session.sessionId, next)
-  if (existing && existing.streamId !== next.streamId) {
-    recomputeKey(workspaceId, existing.streamId)
-  }
-  recomputeKey(workspaceId, next.streamId)
+  recomputeFor(workspaceId, [existing, next])
   notifySession(workspaceId, next.sessionId)
 }
 
@@ -197,7 +260,12 @@ export function upsertAgentSession(workspaceId: string, session: ActiveAgentSess
 export function updateAgentSessionProgress(
   workspaceId: string,
   sessionId: string,
-  progress: { stepCount?: number; messageCount?: number; substep?: string | null }
+  progress: {
+    stepCount?: number
+    messageCount?: number
+    substep?: string | null
+    currentStepType?: AgentStepType
+  }
 ): void {
   const ws = workspaces.get(workspaceId)
   const existing = ws?.get(sessionId)
@@ -209,13 +277,14 @@ export function updateAgentSessionProgress(
   else if (stepAdvanced) substep = null
   const next: ActiveAgentSession = {
     ...existing,
+    currentStepType: progress.currentStepType ?? existing.currentStepType,
     stepCount,
     messageCount: progress.messageCount ?? existing.messageCount,
     substep,
   }
   if (sameSession(existing, next)) return
   ws.set(sessionId, next)
-  recomputeKey(workspaceId, next.streamId)
+  recomputeFor(workspaceId, [existing, next])
   notifySession(workspaceId, sessionId)
 }
 
@@ -225,7 +294,7 @@ export function clearAgentSession(workspaceId: string, sessionId: string): void 
   const existing = ws?.get(sessionId)
   if (!ws || !existing) return
   ws.delete(sessionId)
-  recomputeKey(workspaceId, existing.streamId)
+  recomputeFor(workspaceId, [existing])
   notifySession(workspaceId, sessionId)
 }
 
@@ -235,13 +304,43 @@ export function removeAgentSession(workspaceId: string, sessionId: string): void
   clearAgentSession(workspaceId, sessionId)
 }
 
+/** Where a session found in a stream's events runs, and the row it hangs under. */
+export type AgentActivityStreamContext = {
+  streamId: string
+  rootStreamId: string
+  parentAnchorId: string | null
+}
+
+/**
+ * Only a THREAD reports an anchor. An aside carries `parent_anchor_id` too, and
+ * its companion is not the anchor row's reply — reporting it would light the host
+ * message as working and point "Reply in thread" at the aside. Same rule the
+ * backend applies in `parentActivityTarget` before it emits to the parent room.
+ *
+ * `parentMessageId` is the pre-`parentAnchorId` field name, still the only anchor
+ * on IDB rows cached by an earlier bundle.
+ */
+export function agentActivityStreamContext(stream: {
+  id: string
+  type: StreamType
+  rootStreamId: string | null
+  parentAnchorId?: string | null
+  parentMessageId?: string | null
+}): AgentActivityStreamContext {
+  const anchored = stream.type === StreamTypes.THREAD
+  return {
+    streamId: stream.id,
+    rootStreamId: stream.rootStreamId ?? stream.id,
+    parentAnchorId: anchored ? (stream.parentAnchorId ?? stream.parentMessageId ?? null) : null,
+  }
+}
+
 export function reconcileAgentActivityFromStreamEvents(
   workspaceId: string,
-  streamId: string,
-  rootStreamId: string,
+  context: AgentActivityStreamContext,
   events: readonly StreamEvent[]
 ): void {
-  reconcileAgentActivityFromStreamLifecycle(workspaceId, streamId, rootStreamId, deriveAgentSessionLifecycle(events))
+  reconcileAgentActivityFromStreamLifecycle(workspaceId, context, deriveAgentSessionLifecycle(events))
 }
 
 export function removeTerminatedAgentActivity(workspaceId: string, lifecycle: AgentSessionLifecycle): void {
@@ -250,18 +349,20 @@ export function removeTerminatedAgentActivity(workspaceId: string, lifecycle: Ag
 
 export function reconcileAgentActivityFromStreamLifecycle(
   workspaceId: string,
-  streamId: string,
-  rootStreamId: string,
+  context: AgentActivityStreamContext,
   lifecycle: AgentSessionLifecycle
 ): void {
   removeTerminatedAgentActivity(workspaceId, lifecycle)
   for (const session of lifecycle.running.values()) {
     upsertAgentSession(workspaceId, {
       sessionId: session.sessionId,
-      streamId,
-      rootStreamId,
+      streamId: context.streamId,
+      rootStreamId: context.rootStreamId,
+      parentAnchorId: context.parentAnchorId,
+      triggerMessageId: session.triggerMessageId,
       personaName: session.personaName,
       startedAt: session.startedAt,
+      currentStepType: session.currentStepType,
       stepCount: session.stepCount,
       messageCount: session.messageCount,
     })
@@ -273,9 +374,42 @@ export function hasAgentSession(workspaceId: string, sessionId: string): boolean
   return workspaces.get(workspaceId)?.has(sessionId) ?? false
 }
 
+function readIndex(index: SessionIndex, workspaceId: string, id: string): readonly ActiveAgentSession[] {
+  return index.snapshots.get(subKey(workspaceId, id)) ?? EMPTY
+}
+
+function useIndex(
+  index: SessionIndex,
+  workspaceId: string | undefined,
+  id: string | undefined
+): readonly ActiveAgentSession[] {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (!workspaceId || !id) return () => {}
+      const key = subKey(workspaceId, id)
+      let set = index.listeners.get(key)
+      if (!set) {
+        set = new Set()
+        index.listeners.set(key, set)
+      }
+      set.add(onChange)
+      return () => {
+        set.delete(onChange)
+        if (set.size === 0) index.listeners.delete(key)
+      }
+    },
+    [index, workspaceId, id]
+  )
+  const getSnapshot = useCallback(
+    () => (workspaceId && id ? readIndex(index, workspaceId, id) : EMPTY),
+    [index, workspaceId, id]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
 /** Non-reactive read of a stream's running sessions (most recent first). */
 export function getAgentActivityForStream(workspaceId: string, streamId: string): readonly ActiveAgentSession[] {
-  return keySnapshots.get(subKey(workspaceId, streamId)) ?? EMPTY
+  return readIndex(byStream, workspaceId, streamId)
 }
 
 /**
@@ -287,28 +421,24 @@ export function useAgentActivityForStream(
   workspaceId: string | undefined,
   streamId: string | undefined
 ): readonly ActiveAgentSession[] {
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      if (!workspaceId || !streamId) return () => {}
-      const key = subKey(workspaceId, streamId)
-      let set = keyListeners.get(key)
-      if (!set) {
-        set = new Set()
-        keyListeners.set(key, set)
-      }
-      set.add(onChange)
-      return () => {
-        set.delete(onChange)
-        if (set.size === 0) keyListeners.delete(key)
-      }
-    },
-    [workspaceId, streamId]
-  )
-  const getSnapshot = useCallback(
-    () => (workspaceId && streamId ? getAgentActivityForStream(workspaceId, streamId) : EMPTY),
-    [workspaceId, streamId]
-  )
-  return useSyncExternalStore(subscribe, getSnapshot)
+  return useIndex(byStream, workspaceId, streamId)
+}
+
+/** Non-reactive read of an anchor row's running sessions (most recent first). */
+export function getAgentActivityForAnchor(workspaceId: string, anchorId: string): readonly ActiveAgentSession[] {
+  return readIndex(byAnchor, workspaceId, anchorId)
+}
+
+/**
+ * The agent sessions running under the timeline row `anchorId` — a thread
+ * session hanging off that row, or a session triggered from it — most recently
+ * started first; empty when idle.
+ */
+export function useAgentActivityForAnchor(
+  workspaceId: string | undefined,
+  anchorId: string | undefined
+): readonly ActiveAgentSession[] {
+  return useIndex(byAnchor, workspaceId, anchorId)
 }
 
 /** Non-reactive read of one running session by id; undefined when not running. */
@@ -393,7 +523,9 @@ export function useAgentSessionActivities(
 export function __resetAgentActivityStore(): void {
   workspaces.clear()
   terminalSessions.clear()
-  keyListeners.clear()
-  keySnapshots.clear()
+  for (const index of INDEXES) {
+    index.listeners.clear()
+    index.snapshots.clear()
+  }
   sessionListeners.clear()
 }

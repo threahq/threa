@@ -25,6 +25,7 @@ import { applyStreamReadOrdinal } from "./unread-counters"
 import { sharedMessageSlotKey } from "@threahq/types"
 import {
   __resetAgentActivityStore,
+  getAgentActivityForAnchor,
   getAgentActivityForStream,
   getAgentSession,
   upsertAgentSession,
@@ -178,6 +179,55 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([started], streamId))
 
     expect(getAgentSession("ws_1", "session_running")).toMatchObject({ stepCount: 4, messageCount: 1 })
+  })
+
+  it("keys a thread bootstrap's running session under the anchor it hangs off in its parent", async () => {
+    const streamId = "stream_thread_agent"
+    const started = makeEvent({
+      id: "evt_started",
+      streamId,
+      sequence: "1",
+      eventType: "agent_session:started",
+      payload: {
+        sessionId: "session_anchored",
+        personaId: "persona_ariadne",
+        personaName: "Ariadne",
+        triggerMessageId: "msg_trigger",
+        currentStepType: "web_search",
+        stepCount: 2,
+        messageCount: 1,
+        startedAt: "2026-08-27T11:24:59.119Z",
+      },
+    })
+    const base = makeBootstrap([started], streamId)
+    const bootstrap: StreamBootstrap = {
+      ...base,
+      stream: {
+        ...base.stream,
+        type: "thread",
+        parentStreamId: "stream_parent",
+        rootStreamId: "stream_parent",
+        parentAnchorId: "event_card",
+      },
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect(getAgentActivityForAnchor("ws_1", "event_card")).toEqual([
+      {
+        sessionId: "session_anchored",
+        streamId,
+        rootStreamId: "stream_parent",
+        parentAnchorId: "event_card",
+        triggerMessageId: "msg_trigger",
+        personaName: "Ariadne",
+        startedAt: "2026-08-27T11:24:59.119Z",
+        currentStepType: "web_search",
+        stepCount: 2,
+        messageCount: 1,
+        substep: undefined,
+      },
+    ])
   })
 
   it("does not restore a cached start outside the trusted replace window", async () => {
