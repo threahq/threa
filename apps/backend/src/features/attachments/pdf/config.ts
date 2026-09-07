@@ -1,9 +1,9 @@
 import { z } from "zod"
 import { PDF_PAGE_CLASSIFICATIONS, PDF_SIZE_TIERS } from "@threahq/types"
 
-export const PDF_LAYOUT_MODEL_ID = "openrouter:google/gemini-2.5-flash"
+export const PDF_LAYOUT_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
-export const PDF_SUMMARY_MODEL_ID = "openrouter:google/gemini-2.5-flash"
+export const PDF_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 export const PDF_TEMPERATURES = {
   layout: 0.1, // Low for consistent extraction

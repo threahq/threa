@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { TEXT_FORMATS, TEXT_SIZE_TIERS, INJECTION_STRATEGIES } from "@threahq/types"
 
-export const TEXT_SUMMARY_MODEL_ID = "openrouter:google/gemini-2.5-flash"
+export const TEXT_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 export const TEXT_SUMMARY_TEMPERATURE = 0.3
 

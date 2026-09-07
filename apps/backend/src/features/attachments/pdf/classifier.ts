@@ -37,7 +37,7 @@ export interface ClassificationResult {
  * Classification determines processing strategy:
  * - text_rich: Use raw text extraction (fastest)
  * - scanned: Apply OCR via Tesseract
- * - complex_layout: Use Gemini for intelligent extraction
+ * - complex_layout: Use the vision model for intelligent extraction
  * - mixed: Combine text extraction + image captioning
  * - empty: Skip processing
  */

@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { EXTRACTION_CONTENT_TYPES } from "@threahq/types"
 
-export const IMAGE_CAPTION_MODEL_ID = "openrouter:google/gemini-2.5-flash"
+export const IMAGE_CAPTION_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 
 export const IMAGE_CAPTION_TEMPERATURE = 0.1
 

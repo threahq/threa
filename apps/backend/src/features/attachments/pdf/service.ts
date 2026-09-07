@@ -224,7 +224,7 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
   /**
    * Process a single page. Handling depends on classification: text_rich/empty
    * are already done in prepare(); scanned runs Tesseract OCR; complex_layout
-   * and mixed run Gemini extraction.
+   * and mixed run vision-model extraction.
    */
   async processPage(attachmentId: string, pageNumber: number, pdfJobId: string): Promise<void> {
     const log = logger.child({ attachmentId, pageNumber, pdfJobId, phase: "processPage" })
