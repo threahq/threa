@@ -18,7 +18,7 @@ import {
 } from "./config"
 import { E2eStreamsRepository } from "../e2e-streams"
 import type { QueryExpanderLike } from "./query-expansion"
-import type { SearchSteererLike } from "./steer"
+import type { SearchRefinerLike } from "./refine"
 
 export type ArchiveStatus = "active" | "archived"
 
@@ -61,7 +61,7 @@ export interface SearchParams {
   /** Rewrite the query into variants, fuse, and rerank; costs two model calls. */
   deep?: boolean
   /** Plain-language refinements of the result list, oldest first; one model call over the clustered rows. */
-  steer?: string[]
+  refine?: string[]
   /**
    * The requester's resolved `search` flag. "off" runs the pre-rework ranking,
    * ignores `deep` and returns no conversations. Required so a caller cannot
@@ -99,11 +99,11 @@ export interface SearchClustersResponse extends SearchResponse {
    */
   clusters: SearchCluster[]
   /**
-   * What became of `params.steer`: `null` when none was asked for; `applied`
-   * false when the model call failed and the lists are unsteered (INV-11);
+   * What became of `params.refine`: `null` when none was asked for; `applied`
+   * false when the model call failed and the lists are unrefined (INV-11);
    * `note` is the model's one-line account, null when it gave none.
    */
-  steer: { applied: boolean; note: string | null } | null
+  refine: { applied: boolean; note: string | null } | null
 }
 
 export interface MemoSearchLike {
@@ -116,7 +116,7 @@ export interface SearchServiceDependencies {
   queryExpander: QueryExpanderLike
   reranker: RerankerLike
   memoSearch: MemoSearchLike
-  steerer: SearchSteererLike
+  refiner: SearchRefinerLike
 }
 
 const DEFAULT_LIMIT = 20
@@ -161,7 +161,7 @@ export class SearchService {
   private queryExpander: QueryExpanderLike
   private reranker: RerankerLike
   private memoSearch: MemoSearchLike
-  private steerer: SearchSteererLike
+  private refiner: SearchRefinerLike
 
   constructor(deps: SearchServiceDependencies) {
     this.pool = deps.pool
@@ -169,7 +169,7 @@ export class SearchService {
     this.queryExpander = deps.queryExpander
     this.reranker = deps.reranker
     this.memoSearch = deps.memoSearch
-    this.steerer = deps.steerer
+    this.refiner = deps.refiner
   }
 
   /**
@@ -199,25 +199,25 @@ export class SearchService {
   async searchClusters(params: SearchParams): Promise<SearchClustersResponse> {
     const { streamIds, ...legs } = await this.runLegs(params, { memos: true })
     const clusters = await this.clusterResults({ workspaceId: params.workspaceId, streamIds, ...legs })
-    // The steer belongs to the reworked ranking; under the pre-rework flag value it is ignored.
-    const steers =
+    // The refine belongs to the reworked ranking; under the pre-rework flag value it is ignored.
+    const refines =
       searchRankingForFlag(params.searchFlag) === "improved"
-        ? (params.steer?.filter((steer) => steer.trim().length > 0) ?? [])
+        ? (params.refine?.filter((refine) => refine.trim().length > 0) ?? [])
         : []
-    if (steers.length === 0) return { ...legs, clusters, steer: null }
-    if (clusters.length === 0) return { ...legs, clusters, steer: { applied: true, note: null } }
+    if (refines.length === 0) return { ...legs, clusters, refine: null }
+    if (clusters.length === 0) return { ...legs, clusters, refine: { applied: true, note: null } }
 
-    const steered = await this.steerer.steer({
+    const refined = await this.refiner.refine({
       query: params.query,
-      steers,
+      refines,
       clusters,
       memos: legs.memos,
       context: { workspaceId: params.workspaceId, userId: params.permissions.userId },
     })
-    if (!steered) return { ...legs, clusters, steer: { applied: false, note: null } }
+    if (!refined) return { ...legs, clusters, refine: { applied: false, note: null } }
 
-    const kept = steered.keep.map((index) => clusters[index]!)
-    // The flat list follows the steered row order; within a row the hits keep their rank (stable sort).
+    const kept = refined.keep.map((index) => clusters[index]!)
+    // The flat list follows the refined row order; within a row the hits keep their rank (stable sort).
     const keptHitRow = new Map(kept.flatMap((cluster, row) => cluster.hits.map((hit) => [hit.id, row] as const)))
     const keptConversationIds = new Set(
       kept.flatMap((cluster) => (cluster.conversation ? [cluster.conversation.id] : []))
@@ -231,14 +231,14 @@ export class SearchService {
       memos: legs.memos.filter((result) => keptMemoIds.has(result.memo.id)),
       excludedE2eStreamCount: legs.excludedE2eStreamCount,
       clusters: kept,
-      steer: { applied: true, note: steered.note || null },
+      refine: { applied: true, note: refined.note || null },
     }
   }
 
   private async runLegs(
     params: SearchParams,
     legs: { memos: boolean }
-  ): Promise<Omit<SearchClustersResponse, "clusters" | "steer"> & { streamIds: string[] }> {
+  ): Promise<Omit<SearchClustersResponse, "clusters" | "refine"> & { streamIds: string[] }> {
     const {
       workspaceId,
       permissions,
@@ -335,7 +335,7 @@ export class SearchService {
     // narrowed `streamIds` (the frontend sends status: on every request), but
     // from: has no memo equivalent and would be silently ignored, so it skips the leg.
     // The leg runs `fast`: no model call on the default path, the query
-    // embedding reused when the memo query is the same text. /steer is the
+    // embedding reused when the memo query is the same text. /refine is the
     // one place a search waits on a model.
     const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
     const memoLeg =

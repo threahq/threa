@@ -1,6 +1,6 @@
 import { describe, expect, it, mock, spyOn } from "bun:test"
-import { SearchSteerer, renderSteerPrompt, type SearchSteerInput } from "./steer"
-import { StubSearchSteerer } from "./steer.stub"
+import { SearchRefiner, renderRefinePrompt, type SearchRefineInput } from "./refine"
+import { StubSearchRefiner } from "./refine.stub"
 import { logger } from "../../lib/logger"
 import type { SearchCluster } from "./clusters"
 
@@ -16,35 +16,35 @@ function cluster(overrides: Partial<SearchCluster> = {}): SearchCluster {
   }
 }
 
-const input: SearchSteerInput = {
+const input: SearchRefineInput = {
   query: "deploy",
-  steers: ["only decisions"],
+  refines: ["only decisions"],
   clusters: [cluster(), cluster(), cluster()],
   memos: [],
   context: { workspaceId: "ws_1", userId: "usr_1" },
 }
 
-describe("SearchSteerer", () => {
+describe("SearchRefiner", () => {
   it("should map 1-based row numbers to cluster indexes, dropping unknown and repeated ones", async () => {
     const generateObject = mock(async () => ({ value: { keep: [3, 1, 3, 0, 9], note: "  Kept the decisions. " } }))
-    const steerer = new SearchSteerer({ ai: { generateObject } as never })
+    const refiner = new SearchRefiner({ ai: { generateObject } as never })
 
-    const result = await steerer.steer(input)
+    const result = await refiner.refine(input)
 
     expect(result).toEqual({ keep: [2, 0], note: "Kept the decisions." })
     expect(generateObject).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "openrouter:openai/gpt-5.6-luna",
-        telemetry: expect.objectContaining({ functionId: "search-steer" }),
+        telemetry: expect.objectContaining({ functionId: "search-refine" }),
         context: { workspaceId: "ws_1", userId: "usr_1", origin: "system" },
       })
     )
   })
 
-  it("should give up after the timeout, log at debug, and leave the list unsteered", async () => {
+  it("should give up after the timeout, log at debug, and leave the list unrefined", async () => {
     const debug = spyOn(logger, "debug").mockImplementation(() => logger)
     try {
-      const steerer = new SearchSteerer({
+      const refiner = new SearchRefiner({
         timeoutMs: 5,
         ai: {
           generateObject: ({ abortSignal }: { abortSignal: AbortSignal }) =>
@@ -52,8 +52,8 @@ describe("SearchSteerer", () => {
         } as never,
       })
 
-      expect(await steerer.steer(input)).toBeNull()
-      expect(debug).toHaveBeenCalledWith({ workspaceId: "ws_1" }, "Search steer timed out; showing the unsteered list")
+      expect(await refiner.refine(input)).toBeNull()
+      expect(debug).toHaveBeenCalledWith({ workspaceId: "ws_1" }, "Search refine timed out; showing the unrefined list")
     } finally {
       debug.mockRestore()
     }
@@ -62,7 +62,7 @@ describe("SearchSteerer", () => {
   it("should return null and log a warning when the model call throws", async () => {
     const warn = spyOn(logger, "warn").mockImplementation(() => logger)
     try {
-      const steerer = new SearchSteerer({
+      const refiner = new SearchRefiner({
         ai: {
           generateObject: async () => {
             throw new Error("boom")
@@ -70,10 +70,10 @@ describe("SearchSteerer", () => {
         } as never,
       })
 
-      expect(await steerer.steer(input)).toBeNull()
+      expect(await refiner.refine(input)).toBeNull()
       expect(warn).toHaveBeenCalledWith(
         { error: expect.any(Error), workspaceId: "ws_1" },
-        "Search steer failed; showing the unsteered list"
+        "Search refine failed; showing the unrefined list"
       )
     } finally {
       warn.mockRestore()
@@ -81,11 +81,11 @@ describe("SearchSteerer", () => {
   })
 })
 
-describe("renderSteerPrompt", () => {
+describe("renderRefinePrompt", () => {
   it("should number rows, show each row's title, first hits and memo titles, and list every instruction", () => {
-    const prompt = renderSteerPrompt({
+    const prompt = renderRefinePrompt({
       query: "deploy",
-      steers: ["only decisions", "newest first"],
+      refines: ["only decisions", "newest first"],
       clusters: [
         cluster({
           conversation: { id: "conv_1", topicSummary: "Railway cutover", summary: null, messageCount: 12 } as never,
@@ -117,8 +117,8 @@ describe("renderSteerPrompt", () => {
   })
 })
 
-describe("StubSearchSteerer", () => {
-  it("should report the steer as not applied (production fail-open behaviour)", async () => {
-    expect(await new StubSearchSteerer().steer(input)).toBeNull()
+describe("StubSearchRefiner", () => {
+  it("should report the refine as not applied (production fail-open behaviour)", async () => {
+    expect(await new StubSearchRefiner().refine(input)).toBeNull()
   })
 })

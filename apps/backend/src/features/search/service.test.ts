@@ -4,7 +4,7 @@ import { SearchRepository, type SearchResult } from "./repository"
 import { SearchService, fuseRankedLists, type MemoSearchLike } from "./service"
 import { SEARCH_DEEP_CANDIDATE_POOL, SEARCH_RERANK_CANDIDATE_LIMIT } from "./config"
 import type { QueryExpanderLike } from "./query-expansion"
-import type { SearchSteererLike, SearchSteerInput } from "./steer"
+import type { SearchRefinerLike, SearchRefineInput } from "./refine"
 
 const pool = {
   query: mock(() => Promise.resolve({ rows: [], rowCount: 0 })),
@@ -19,7 +19,7 @@ function makeService(
     queryExpander?: QueryExpanderLike
     reranker?: RerankerLike
     memoSearch?: MemoSearchLike
-    steerer?: SearchSteererLike
+    refiner?: SearchRefinerLike
   } = {}
 ) {
   return new SearchService({
@@ -28,7 +28,7 @@ function makeService(
     queryExpander: overrides.queryExpander ?? inertExpander,
     reranker: overrides.reranker ?? identityReranker,
     memoSearch: overrides.memoSearch ?? { search: async () => [] },
-    steerer: overrides.steerer ?? { steer: async () => null },
+    refiner: overrides.refiner ?? { refine: async () => null },
   })
 }
 
@@ -425,7 +425,7 @@ describe("SearchService memo leg", () => {
   })
 })
 
-describe("SearchService steer", () => {
+describe("SearchService refine", () => {
   afterEach(() => {
     pool.query.mockClear()
     mock.restore()
@@ -450,7 +450,7 @@ describe("SearchService steer", () => {
     spyOn(SearchRepository, "messagesByIds").mockResolvedValue([])
   }
 
-  test("should keep only the rows the steerer returns, in its order, and narrow results and memos to them", async () => {
+  test("should keep only the rows the refiner returns, in its order, and narrow results and memos to them", async () => {
     stubLegs()
     const memo = {
       memo: { id: "memo_1", sourceMessageIds: ["msg_2"] },
@@ -458,71 +458,71 @@ describe("SearchService steer", () => {
       sourceStream: null,
       rootStream: null,
     } as never
-    const steer = mock(async (_input: SearchSteerInput) => ({ keep: [2, 0], note: "Dropped the billing thread" }))
+    const refine = mock(async (_input: SearchRefineInput) => ({ keep: [2, 0], note: "Dropped the billing thread" }))
     const service = makeService({
       embeddingService: embedding,
       memoSearch: { search: async () => [memo] },
-      steerer: { steer },
+      refiner: { refine },
     })
 
-    const response = await service.searchClusters({ ...base, steer: ["not billing", " "] })
+    const response = await service.searchClusters({ ...base, refine: ["not billing", " "] })
 
-    expect(steer).toHaveBeenCalledWith(
+    expect(refine).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "launch date",
-        steers: ["not billing"],
+        refines: ["not billing"],
         context: { workspaceId: "ws_1", userId: "usr_1" },
       })
     )
-    // The memo lifts stream_2's row to the top; the steerer sees rows in that order.
-    expect(steer.mock.calls[0]![0].clusters.map((cluster) => cluster.streamId)).toEqual([
+    // The memo lifts stream_2's row to the top; the refiner sees rows in that order.
+    expect(refine.mock.calls[0]![0].clusters.map((cluster) => cluster.streamId)).toEqual([
       "stream_2",
       "stream_1",
       "stream_3",
     ])
     expect(response).toEqual({
       ...response,
-      // Flat results follow the steered row order, not the hybrid rank.
+      // Flat results follow the refined row order, not the hybrid rank.
       results: [fakeResult("msg_3", { streamId: "stream_3" }), fakeResult("msg_2", { streamId: "stream_2" })],
       memos: [memo],
       clusters: [
         expect.objectContaining({ streamId: "stream_3" }),
         expect.objectContaining({ streamId: "stream_2", memoIds: ["memo_1"] }),
       ],
-      steer: { applied: true, note: "Dropped the billing thread" },
+      refine: { applied: true, note: "Dropped the billing thread" },
     })
   })
 
-  test("should keep the full list and report the steer as not applied when the steerer fails open", async () => {
+  test("should keep the full list and report the refine as not applied when the refiner fails open", async () => {
     stubLegs()
-    const service = makeService({ embeddingService: embedding, steerer: { steer: async () => null } })
+    const service = makeService({ embeddingService: embedding, refiner: { refine: async () => null } })
 
-    const response = await service.searchClusters({ ...base, steer: ["only decisions"] })
+    const response = await service.searchClusters({ ...base, refine: ["only decisions"] })
 
     expect(response.clusters.map((cluster) => cluster.streamId)).toEqual(["stream_1", "stream_2", "stream_3"])
-    expect(response.steer).toEqual({ applied: false, note: null })
+    expect(response.refine).toEqual({ applied: false, note: null })
   })
 
-  test("should ignore the steer and report null under the pre-rework search flag", async () => {
+  test("should ignore the refine and report null under the pre-rework search flag", async () => {
     stubLegs()
-    const steer = mock(async () => ({ keep: [], note: "" }))
-    const service = makeService({ embeddingService: embedding, steerer: { steer } })
+    const refine = mock(async () => ({ keep: [], note: "" }))
+    const service = makeService({ embeddingService: embedding, refiner: { refine } })
 
-    const response = await service.searchClusters({ ...base, searchFlag: "off", steer: ["only decisions"] })
+    const response = await service.searchClusters({ ...base, searchFlag: "off", refine: ["only decisions"] })
 
-    expect(steer).not.toHaveBeenCalled()
-    expect(response.steer).toBeNull()
+    expect(refine).not.toHaveBeenCalled()
+    expect(response.refine).toBeNull()
     expect(response.clusters.map((cluster) => cluster.streamId)).toEqual(["stream_1", "stream_2", "stream_3"])
   })
 
-  test("should not call the steerer without a steer, and report null", async () => {
+  test("should not call the refiner without a refine, and report null", async () => {
     stubLegs()
-    const steer = mock(async () => ({ keep: [], note: "" }))
-    const service = makeService({ embeddingService: embedding, steerer: { steer } })
+    const refine = mock(async () => ({ keep: [], note: "" }))
+    const service = makeService({ embeddingService: embedding, refiner: { refine } })
 
     const response = await service.searchClusters(base)
 
-    expect(steer).not.toHaveBeenCalled()
-    expect(response.steer).toBeNull()
+    expect(refine).not.toHaveBeenCalled()
+    expect(response.refine).toBeNull()
   })
 })

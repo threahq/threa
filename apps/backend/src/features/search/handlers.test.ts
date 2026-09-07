@@ -41,7 +41,7 @@ function createRequest(overrides: { params?: Record<string, string>; body?: unkn
 function createHandlers(overrides: {
   searchQueryLog?: "on" | "off"
   record?: SearchQueryLogService["record"]
-  steer?: { applied: boolean; note: string | null } | null
+  refine?: { applied: boolean; note: string | null } | null
 }) {
   const recordClick = mock((_params: Parameters<SearchQueryLogService["recordClick"]>[0]) => Promise.resolve())
   const record = overrides.record ?? mock(() => Promise.resolve({ id: "sqlog_1" }))
@@ -52,7 +52,7 @@ function createHandlers(overrides: {
       memos: [],
       clusters: [],
       excludedE2eStreamCount: 0,
-      steer: overrides.steer ?? null,
+      refine: overrides.refine ?? null,
     })
   )
   const handlers = createSearchHandlers({
@@ -83,37 +83,37 @@ describe("search handlers", () => {
       clusters: [],
       memos: [],
       excludedE2eStreamCount: 0,
-      steer: null,
+      refine: null,
       queryLogId: null,
     })
   })
 
-  it("passes the steer trail to the service, logs it with the params, and echoes the outcome", async () => {
+  it("passes the refine trail to the service, logs it with the params, and echoes the outcome", async () => {
     spyOn(accessModule, "resolveUserAccessibleStreamIds").mockResolvedValue([])
-    const steer = { applied: true, note: "Kept the decisions" }
-    const { handlers, record, searchClusters } = createHandlers({ steer })
+    const refine = { applied: true, note: "Kept the decisions" }
+    const { handlers, record, searchClusters } = createHandlers({ refine })
     const res = createResponse()
 
     await handlers.search(
-      createRequest({ body: { query: "deploy", steer: [" only decisions ", "newest first"] } }) as never,
+      createRequest({ body: { query: "deploy", refine: [" only decisions ", "newest first"] } }) as never,
       res as never
     )
 
     expect(searchClusters).toHaveBeenCalledWith(
-      expect.objectContaining({ query: "deploy", steer: ["only decisions", "newest first"] })
+      expect.objectContaining({ query: "deploy", refine: ["only decisions", "newest first"] })
     )
     expect(record).toHaveBeenCalledWith(
-      expect.objectContaining({ params: expect.objectContaining({ steer: ["only decisions", "newest first"] }) })
+      expect.objectContaining({ params: expect.objectContaining({ refine: ["only decisions", "newest first"] }) })
     )
-    expect(res.body).toEqual(expect.objectContaining({ steer, queryLogId: "sqlog_1" }))
+    expect(res.body).toEqual(expect.objectContaining({ refine, queryLogId: "sqlog_1" }))
   })
 
-  it("rejects a steer trail longer than the cap", async () => {
+  it("rejects a refine trail longer than the cap", async () => {
     const { handlers, searchClusters } = createHandlers({})
 
     await expect(
       handlers.search(
-        createRequest({ body: { query: "deploy", steer: ["a", "b", "c", "d", "e", "f"] } }) as never,
+        createRequest({ body: { query: "deploy", refine: ["a", "b", "c", "d", "e", "f"] } }) as never,
         createResponse() as never
       )
     ).rejects.toMatchObject({ status: 400 })

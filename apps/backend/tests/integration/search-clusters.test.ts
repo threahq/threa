@@ -182,7 +182,7 @@ describe("Search result clusters", () => {
       queryExpander: { expand: async () => [] },
       reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
       memoSearch: { search: async () => memos },
-      steerer: { steer: async () => null },
+      refiner: { refine: async () => null },
     })
   }
 

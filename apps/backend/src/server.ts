@@ -103,8 +103,8 @@ import {
   SearchQueryLogService,
   SearchQueryExpander,
   StubQueryExpander,
-  SearchSteerer,
-  StubSearchSteerer,
+  SearchRefiner,
+  StubSearchRefiner,
 } from "./features/search"
 import {
   MemoService,
@@ -396,7 +396,7 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubReranker()
     : new Reranker({ ai, subject: "knowledge memos", functionId: "memo-rerank" })
   const queryExpander = config.useStubAI ? new StubQueryExpander() : new SearchQueryExpander({ ai })
-  const searchSteerer = config.useStubAI ? new StubSearchSteerer() : new SearchSteerer({ ai })
+  const searchRefiner = config.useStubAI ? new StubSearchRefiner() : new SearchRefiner({ ai })
   const messageReranker = config.useStubAI
     ? new StubReranker()
     : new Reranker({ ai, subject: "chat messages", functionId: "search-rerank" })
@@ -407,7 +407,7 @@ export async function startServer(): Promise<ServerInstance> {
     queryExpander,
     reranker: messageReranker,
     memoSearch: memoExplorerService,
-    steerer: searchSteerer,
+    refiner: searchRefiner,
   })
   const searchQueryLogService = new SearchQueryLogService(pool)
 

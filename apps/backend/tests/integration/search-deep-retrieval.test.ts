@@ -140,7 +140,7 @@ describe("Message deep search retrieval", () => {
       queryExpander: fakeExpander("build pipeline exploded"),
       reranker,
       memoSearch: { search: async () => [] },
-      steerer: { steer: async () => null },
+      refiner: { refine: async () => null },
     })
 
     const { results } = await service.search({
@@ -182,7 +182,7 @@ describe("Message deep search retrieval", () => {
       queryExpander: { expand },
       reranker: { rerank },
       memoSearch: { search: async () => [] },
-      steerer: { steer: async () => null },
+      refiner: { refine: async () => null },
     })
 
     const { results } = await service.search({
@@ -210,7 +210,7 @@ describe("Message deep search retrieval", () => {
       queryExpander: { expand },
       reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
       memoSearch: { search: async () => [] },
-      steerer: { steer: async () => null },
+      refiner: { refine: async () => null },
     })
 
     // "deploy failed" is a literal substring of A's text — exactSearch (ILIKE)

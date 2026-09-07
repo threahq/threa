@@ -21,11 +21,11 @@ import * as mobileModule from "@/hooks/use-mobile"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 import { SearchPage } from "./search"
-import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchSteerOutcome } from "@/api"
+import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchRefineOutcome } from "@/api"
 import * as apiModule from "@/api"
 import type { WorkspaceBootstrap } from "@/api"
 import type { FeatureFlagLayers } from "@threahq/types"
-import { MAX_SEARCH_STEER_CHARS } from "@threahq/types"
+import { MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 
 const search = vi.fn()
@@ -36,7 +36,8 @@ const mockSearchState = {
   clusters: null as SearchCluster[] | null,
   memos: [] as MemoExplorerResult[],
   queryLogId: null as string | null,
-  steer: null as SearchSteerOutcome | null,
+  refine: null as SearchRefineOutcome | null,
+  isLoading: false,
 }
 
 function LocationProbe() {
@@ -88,7 +89,8 @@ describe("SearchPage", () => {
     mockSearchState.clusters = null
     mockSearchState.memos = []
     mockSearchState.queryLogId = null
-    mockSearchState.steer = null
+    mockSearchState.refine = null
+    mockSearchState.isLoading = false
     vi.spyOn(hooksModule, "useSearch").mockImplementation(
       () =>
         ({
@@ -96,8 +98,8 @@ describe("SearchPage", () => {
           clusters: mockSearchState.clusters ?? strayClusters(mockSearchState.results),
           memos: mockSearchState.memos,
           queryLogId: mockSearchState.queryLogId,
-          steer: mockSearchState.steer,
-          isLoading: false,
+          refine: mockSearchState.refine,
+          isLoading: mockSearchState.isLoading,
           error: null,
           search,
           clear,
@@ -323,10 +325,10 @@ describe("SearchPage", () => {
     expect(screen.queryByRole("radio", { name: "Ranked results" })).toBeInTheDocument()
   })
 
-  describe("steer", () => {
+  describe("refine", () => {
     const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
 
-    it("commits /steer prose to the URL on Enter and drops it when the chip is removed", async () => {
+    it("commits /refine prose to the URL on Enter and drops it when the chip is removed", async () => {
       const user = userEvent.setup()
       renderPage(undefined, searchOn)
 
@@ -336,30 +338,30 @@ describe("SearchPage", () => {
 
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
-      await user.type(editor, " /steer only decisions")
+      await user.type(editor, " /refine only decisions")
       await user.keyboard("{Enter}")
 
-      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&steer=only+decisions")
-      expect(document.querySelector('[data-search-steer="only decisions"]')).toBeInTheDocument()
-      // The committed steer is the only steered search; the pending prose never reached the backend
+      expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello&refine=only+decisions")
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toBeInTheDocument()
+      // The committed refine is the only refined search; the pending prose never reached the backend
       await waitFor(() => {
         expect(search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
           ["hello", expect.any(Object), [], ["only decisions"]],
         ])
       })
 
-      await user.click(screen.getByRole("button", { name: "Remove steer only decisions" }))
+      await user.click(screen.getByRole("button", { name: "Remove refinement only decisions" }))
       expect(screen.getByTestId("location")).toHaveTextContent("/w/workspace_1/search?q=hello")
       await waitFor(() => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object))
       })
     })
 
-    it("restores the steer trail from the URL and shows the outcome", async () => {
-      mockSearchState.steer = { applied: true, note: "Dropped the billing thread." }
-      renderPage("/w/workspace_1/search?q=hello&steer=only+decisions&steer=not+billing")
+    it("restores the refine trail from the URL and shows the outcome", async () => {
+      mockSearchState.refine = { applied: true, note: "Dropped the billing thread." }
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions&refine=not+billing")
 
-      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual([
+      expect(Array.from(document.querySelectorAll("[data-search-refine]"), (chip) => chip.textContent)).toEqual([
         "only decisions",
         "not billing",
       ])
@@ -369,24 +371,72 @@ describe("SearchPage", () => {
       expect(await screen.findByText("Dropped the billing thread.")).toBeInTheDocument()
     })
 
-    it("says so when the steer could not be applied", async () => {
-      mockSearchState.steer = { applied: false, note: null }
-      renderPage("/w/workspace_1/search?q=hello&steer=only+decisions")
+    it("offers a manual retry once the refine failed, and reruns the same search", async () => {
+      const user = userEvent.setup()
+      mockSearchState.refine = { applied: false, note: null }
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions", searchOn)
 
-      expect(await screen.findByText(/Couldn't apply the steer/)).toBeInTheDocument()
+      expect(
+        await screen.findByText(/Couldn't apply the refinement after two tries\. Showing all results\./)
+      ).toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine-failed]")).toBeInTheDocument()
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
+        "data-search-refine-state",
+        "failed"
+      )
+      // The unrefined list is still the list on screen
+      expect(screen.getByText("#general")).toBeInTheDocument()
+
+      await waitFor(() => {
+        expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions"])
+      })
+      const callsBeforeRetry = search.mock.calls.length
+
+      await user.click(screen.getByRole("button", { name: "Retry" }))
+
+      expect(search).toHaveBeenCalledTimes(callsBeforeRetry + 1)
+      expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["only decisions"])
     })
 
-    it("drops an over-long steer from a shared URL and searches with the rest", async () => {
-      const tooLong = "x".repeat(MAX_SEARCH_STEER_CHARS + 1)
-      renderPage(`/w/workspace_1/search?q=hello&steer=${tooLong}&steer=ok`)
+    it("spins the newest chip and keeps the count while a refined search is in flight", async () => {
+      mockSearchState.refine = { applied: true, note: "Kept the decisions." }
+      mockSearchState.isLoading = true
+      renderPage("/w/workspace_1/search?q=hello&refine=only+decisions", searchOn)
 
-      expect(Array.from(document.querySelectorAll("[data-search-steer]"), (chip) => chip.textContent)).toEqual(["ok"])
+      expect(await screen.findByText("#general")).toBeInTheDocument()
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
+        "data-search-refine-state",
+        "pending"
+      )
+      // Results stay on screen with their count, dimmed, behind the progress line
+      expect(screen.getByText("2 results")).toBeInTheDocument()
+      expect(screen.getByText("#general").closest(".opacity-60")).toBeInTheDocument()
+      expect(await screen.findByTestId("stream-loading-indicator")).toBeInTheDocument()
+      // A stale outcome line never sits under a search that is still running
+      expect(screen.queryByText("Kept the decisions.")).not.toBeInTheDocument()
+    })
+
+    it("hides the count while the first search of a query is still loading", async () => {
+      mockSearchState.results = []
+      mockSearchState.clusters = []
+      mockSearchState.isLoading = true
+      renderPage("/w/workspace_1/search?q=hello", searchOn)
+
+      await waitFor(() => expect(search).toHaveBeenCalled())
+      expect(screen.queryByText("0 results")).not.toBeInTheDocument()
+    })
+
+    it("drops an over-long refine from a shared URL and searches with the rest", async () => {
+      const tooLong = "x".repeat(MAX_SEARCH_REFINE_CHARS + 1)
+      renderPage(`/w/workspace_1/search?q=hello&refine=${tooLong}&refine=ok`)
+
+      expect(Array.from(document.querySelectorAll("[data-search-refine]"), (chip) => chip.textContent)).toEqual(["ok"])
       await waitFor(() => {
         expect(search).toHaveBeenLastCalledWith("hello", expect.any(Object), [], ["ok"])
       })
     })
 
-    it("offers neither the /steer trigger nor its hint under the pre-rework search flag", async () => {
+    it("offers neither the /refine trigger nor its hint under the pre-rework search flag", async () => {
       const user = userEvent.setup()
       renderPage("/w/workspace_1/search")
 
@@ -394,7 +444,7 @@ describe("SearchPage", () => {
       const editor = screen.getByLabelText("Search messages")
       await user.click(editor)
       await user.type(editor, "hello /")
-      expect(screen.queryByText("/steer")).not.toBeInTheDocument()
+      expect(screen.queryByText("/refine")).not.toBeInTheDocument()
     })
   })
 })
