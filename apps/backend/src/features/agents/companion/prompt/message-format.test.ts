@@ -136,8 +136,6 @@ describe("formatMessagesWithTemporal — ID tagging for pointer URLs", () => {
     const formatted = formatMessagesWithTemporal([msg], baseContext)
     const content = formatted[0].content as string
 
-    // Images used to render the summary alone, so the OCR'd text an agent
-    // needs was dropped and the only way back to it was a read_attachment call.
     expect(content).toContain("Content type: screenshot")
     expect(content).toContain("Summary: Deploy view for threa-backend showing a failed release.")
     expect(content).toContain("Text in image: Deployments\nBuild failed: exit code 137")
