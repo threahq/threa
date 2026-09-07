@@ -34,13 +34,7 @@ import {
   workspaceKeys,
 } from "@/hooks"
 import { useSubagentRun } from "@/hooks/use-subagent-run"
-import {
-  useSocket,
-  useCoordinatedLoading,
-  usePreferencesOptional,
-  usePublishAgentActivitySummary,
-  type AgentActivitySummaryEntry,
-} from "@/contexts"
+import { useSocket, useCoordinatedLoading, usePreferencesOptional } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
 import {
@@ -81,7 +75,6 @@ import {
   type BotAccessStatusChangedEventPayload,
   type CallEndedEventPayload,
   type UnreadOpenPosition,
-  type AgentSessionStartedPayload,
 } from "@threahq/types"
 import {
   EventList,
@@ -549,63 +542,6 @@ function timeDerive<T>(compute: () => T): T {
   }
 }
 
-const EMPTY_ACTIVITY_SUMMARY: AgentActivitySummaryEntry[] = []
-
-/** One running session collapsed from the per-message activity map. */
-export interface DedupedRunningSession {
-  sessionId: string
-  personaName: string
-  stepCount: number
-}
-
-/**
- * Collapse the per-message agent-activity map to one entry per session. The map
- * aliases a thread session under two keys (trigger + parent message), so first
- * occurrence wins for personaName/stepCount.
- */
-export function dedupeRunningSessions(
-  agentActivity: Map<string, MessageAgentActivity> | undefined
-): DedupedRunningSession[] {
-  if (!agentActivity || agentActivity.size === 0) return []
-  const bySession = new Map<string, DedupedRunningSession>()
-  for (const activity of agentActivity.values()) {
-    if (bySession.has(activity.sessionId)) continue
-    bySession.set(activity.sessionId, {
-      sessionId: activity.sessionId,
-      personaName: activity.personaName,
-      stepCount: activity.stepCount,
-    })
-  }
-  return Array.from(bySession.values())
-}
-
-/**
- * Order the running sessions into the header chip's summary: most recently
- * started first. Ordering keys off each session's `started` event when the
- * timeline holds it (its own stream); channel-view sessions known only from
- * socket carry no start time and sort last, so the chip's "most recent" click
- * target favours a session whose lifecycle this stream actually owns.
- */
-export function buildAgentActivitySummary(
-  agentActivity: Map<string, MessageAgentActivity> | undefined,
-  events: StreamEvent[]
-): AgentActivitySummaryEntry[] {
-  const sessions = dedupeRunningSessions(agentActivity)
-  if (sessions.length === 0) return EMPTY_ACTIVITY_SUMMARY
-  const startedAtBySession = new Map<string, string>()
-  for (const event of events) {
-    if (event.eventType === "agent_session:started") {
-      const payload = event.payload as AgentSessionStartedPayload
-      startedAtBySession.set(payload.sessionId, payload.startedAt)
-    }
-  }
-  const list = sessions.map(({ sessionId, personaName, stepCount }) => ({ sessionId, personaName, stepCount }))
-  list.sort((a, b) =>
-    (startedAtBySession.get(b.sessionId) ?? "").localeCompare(startedAtBySession.get(a.sessionId) ?? "")
-  )
-  return list
-}
-
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -984,11 +920,6 @@ export function StreamContent({
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId, streamId)
 
-  // Publish a running-session summary up to the header chip. No-ops for a
-  // thread-panel StreamContent (mounted outside the open stream's provider).
-  const publishAgentActivitySummary = usePublishAgentActivitySummary()
-  const agentActivitySummary = useMemo(() => buildAgentActivitySummary(agentActivity, events), [agentActivity, events])
-
   // The pinned card reads its activity under its OWN event id — the alias the
   // parent stream's map carries. In a subagent's thread any live session IS that
   // run's turn (an active run is the only thing dispatched there), so aliasing it
@@ -999,10 +930,6 @@ export function StreamContent({
     if (subagentThreadRun && anchorEvent && live) aliased.set(anchorEvent.id, live)
     return aliased
   }, [subagentThreadRun, anchorEvent, agentActivity])
-  useEffect(() => {
-    publishAgentActivitySummary(agentActivitySummary)
-  }, [agentActivitySummary, publishAgentActivitySummary])
-  useEffect(() => () => publishAgentActivitySummary(EMPTY_ACTIVITY_SUMMARY), [publishAgentActivitySummary])
 
   // E2E streams search decrypted bodies client-side (the server only holds
   // ciphertext); pass the flag + viewer id so the hook can resolve the session.
