@@ -17,7 +17,7 @@ import {
   type SearchResultItem,
 } from "@/api"
 import type { ArchiveStatus } from "@/api"
-import { MAX_SEARCH_PHRASES, MAX_SEARCH_REFINE_CHARS, STREAM_TYPES, type StreamType } from "@threahq/types"
+import { MAX_SEARCH_PHRASES, STREAM_TYPES, type StreamType } from "@threahq/types"
 
 export const SEARCH_DEBOUNCE_MS = 300
 const SEARCH_RESULT_LIMIT = 50
@@ -36,10 +36,8 @@ export interface MessageSearchState {
   parsedFilters: ParsedFilter[]
   /** Free-text part of the query with filters removed. */
   searchText: string
-  /** True when the query contains anything searchable; a `/refine` alone is not. */
+  /** True when the query contains anything searchable. */
   hasQuery: boolean
-  /** `/refine` prose still in the input, waiting for Enter to commit it; null without a marker. */
-  pendingRefine: string | null
   /** The model's one-line note about the refinement it applied; null when it had none to give. */
   refineNote: string | null
   /** The refinement could not be applied, retry included — the list on screen is unrefined. */
@@ -73,9 +71,8 @@ export function useMessageSearch(workspaceId: string, query: string, refines: st
     text: searchText,
     semanticText,
     phrases,
-    refine: pendingRefine,
   } = useMemo(() => parseSearchQuery(query), [query])
-  const validationError = validationErrorFor(phrases.length, pendingRefine)
+  const validationError = validationErrorFor(phrases.length)
 
   // Resolve filter slugs (user/stream handles) to ids the API understands.
   const apiFilters = useMemo((): SearchFilters => {
@@ -205,7 +202,6 @@ export function useMessageSearch(workspaceId: string, query: string, refines: st
     parsedFilters,
     searchText,
     hasQuery,
-    pendingRefine,
     refineNote: refine?.applied ? refine.note : null,
     refineFailed: refine?.applied === false,
     retryRefine: runSearch,
@@ -214,10 +210,7 @@ export function useMessageSearch(workspaceId: string, query: string, refines: st
   }
 }
 
-function validationErrorFor(phraseCount: number, pendingRefine: string | null): string | null {
+function validationErrorFor(phraseCount: number): string | null {
   if (phraseCount > MAX_SEARCH_PHRASES) return `Search supports at most ${MAX_SEARCH_PHRASES} quoted phrases.`
-  if (pendingRefine !== null && pendingRefine.length > MAX_SEARCH_REFINE_CHARS) {
-    return `A refinement is at most ${MAX_SEARCH_REFINE_CHARS} characters.`
-  }
   return null
 }

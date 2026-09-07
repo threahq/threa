@@ -7,6 +7,8 @@ type RefineChipState = "idle" | "pending" | "failed"
 interface SearchRefineChipsProps {
   refines: string[]
   onRemove: (index: number) => void
+  /** Reopens the refine row on that chip's prose; the text is inert without it. */
+  onEdit?: (index: number) => void
   /** A search carrying these refinements is in flight. */
   pending?: boolean
   /** The last request could not apply the refinement. */
@@ -14,12 +16,18 @@ interface SearchRefineChipsProps {
 }
 
 /**
- * Removable chips for the committed `/refine` refinements, in the order they
- * were given. Renders as `display: contents` so each chip wraps as its own
- * flex item in the caller's row next to the filter chips. The newest chip
- * carries the state of the request it belongs to.
+ * Removable chips for the committed refinements, in the order they were given.
+ * Renders as `display: contents` so each chip wraps as its own flex item in the
+ * caller's row next to the filter chips. The newest chip carries the state of
+ * the request it belongs to.
  */
-export function SearchRefineChips({ refines, onRemove, pending = false, failed = false }: SearchRefineChipsProps) {
+export function SearchRefineChips({
+  refines,
+  onRemove,
+  onEdit,
+  pending = false,
+  failed = false,
+}: SearchRefineChipsProps) {
   if (refines.length === 0) return null
 
   return (
@@ -38,9 +46,20 @@ export function SearchRefineChips({ refines, onRemove, pending = false, failed =
             data-search-refine-state={state === "idle" ? undefined : state}
           >
             <RefineChipIcon state={state} />
-            <span className="min-w-0 truncate" title={refine}>
-              {refine}
-            </span>
+            {onEdit ? (
+              <button
+                type="button"
+                className="min-w-0 truncate hover:underline"
+                title={refine}
+                onClick={() => onEdit(index)}
+              >
+                {refine}
+              </button>
+            ) : (
+              <span className="min-w-0 truncate" title={refine}>
+                {refine}
+              </span>
+            )}
             <button
               type="button"
               aria-label={`Remove refinement ${refine}`}

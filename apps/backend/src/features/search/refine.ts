@@ -30,7 +30,7 @@ export interface SearchRefineResult {
 }
 
 /**
- * The `/refine` step: one model call that turns the ranked rows plus the user's
+ * The refine step: one model call that turns the ranked rows plus the user's
  * instructions into a ranked subset. Fail-open like the expander: a timeout,
  * abort, model error or malformed answer returns `null`, and the caller shows
  * the unrefined list and says so.

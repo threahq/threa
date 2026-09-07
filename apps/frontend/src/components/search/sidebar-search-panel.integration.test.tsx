@@ -252,7 +252,6 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       expect(screen.getByLabelText("Search messages")).toBeInTheDocument()
       expect(screen.getByText(/from:@user/)).toBeInTheDocument()
-      expect(screen.getByText("/refine")).toBeInTheDocument()
     })
 
     it("closes the panel from the back button", async () => {
@@ -1091,7 +1090,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
     })
   })
 
-  // The mention suggestion popover behaviors ride with SEARCH_TRIGGERS.
+  // The mention suggestion popover behaviors ride with SEARCH_FILTER_TRIGGERS.
   describe("suggestion popover", () => {
     async function openMentionPopover(user: ReturnType<typeof userEvent.setup>) {
       const editor = screen.getByLabelText("Search messages")
@@ -1181,37 +1180,81 @@ describe("SidebarSearchPanel Integration Tests", () => {
     const baseFilters = { status: ["active", "archived"] }
     const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
 
-    it("offers /refine on '/', commits the prose as a chip on Enter, and searches with it", async () => {
+    async function typeQuery(user: ReturnType<typeof userEvent.setup>, query = "hello") {
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, query)
+      return editor
+    }
+
+    function refinePill() {
+      return screen.getByRole("button", { name: "Refine" })
+    }
+
+    async function commitRefine(user: ReturnType<typeof userEvent.setup>, text: string) {
+      await user.click(refinePill())
+      await user.type(await screen.findByLabelText("Refinement"), text)
+      await user.keyboard("{Enter}")
+    }
+
+    it("offers the pill only with a query, and only under the search flag", async () => {
+      const user = userEvent.setup()
+      const { unmount } = renderPanel(searchOn)
+
+      expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
+      await typeQuery(user)
+      expect(refinePill()).toBeInTheDocument()
+
+      unmount()
+      renderPanel()
+      await typeQuery(user)
+      expect(screen.queryByRole("button", { name: "Refine" })).not.toBeInTheDocument()
+      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
+    })
+
+    it("opens the row focused from the pill, with the commit segment disabled while empty", async () => {
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+
+      expect(refinePill()).toHaveAttribute("aria-expanded", "false")
+      await user.click(refinePill())
+
+      const field = await screen.findByLabelText("Refinement")
+      expect(field).toHaveFocus()
+      expect(refinePill()).toHaveAttribute("aria-expanded", "true")
+      expect(screen.getByRole("button", { name: "Apply refinement" })).toBeDisabled()
+
+      await user.type(field, "  ")
+      expect(screen.getByRole("button", { name: "Apply refinement" })).toBeDisabled()
+
+      await user.type(field, "only decisions")
+      expect(screen.getByRole("button", { name: "Apply refinement" })).toBeEnabled()
+    })
+
+    it("commits the prose as a chip from the commit segment, closes the row, and searches with it", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
       renderPanel(searchOn)
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello /")
-      await user.click(await screen.findByText("/refine"))
-      await user.type(editor, "only decisions")
-      await waitFor(() => {
-        expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello /refine only decisions")
-      })
-      // Pending prose is not part of the search
+      await typeQuery(user)
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters)
       })
 
-      await user.keyboard("{Enter}")
+      await user.click(refinePill())
+      await user.type(await screen.findByLabelText("Refinement"), "only decisions")
+      await user.click(screen.getByRole("button", { name: "Apply refinement" }))
 
-      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello")
+      expect(screen.queryByLabelText("Refinement")).not.toBeInTheDocument()
       expect(document.querySelector('[data-search-refine="only decisions"]')).toBeInTheDocument()
-      // The committed refine is the only refined search; the pending prose never reached the backend
+      // The query field never carried the prose
+      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-query", "hello")
       await waitFor(() => {
         expect(mockSearchState.search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
           ["hello", baseFilters, [], ["only decisions"]],
         ])
       })
-      // Enter committed the refine instead of opening a result
-      expect(mockNavigate).not.toHaveBeenCalled()
 
       await user.click(screen.getByRole("button", { name: "Remove refinement only decisions" }))
       expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
@@ -1220,26 +1263,153 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
     })
 
-    it("keeps the newest refines when the limit is exceeded", async () => {
+    it("commits on Enter without opening a result", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
       renderPanel(searchOn)
+      await typeQuery(user)
+      await commitRefine(user, "only decisions")
 
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toBeInTheDocument()
+      expect(screen.queryByLabelText("Refinement")).not.toBeInTheDocument()
+      expect(mockNavigate).not.toHaveBeenCalled()
+    })
+
+    it("discards the text on Escape and hands focus back to the pill", async () => {
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+
+      await user.click(refinePill())
+      await user.type(await screen.findByLabelText("Refinement"), "only decisions")
+      await user.keyboard("{Escape}")
+
+      expect(screen.queryByLabelText("Refinement")).not.toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
+      expect(refinePill()).toHaveFocus()
+      // Focus alone does not open the tooltip; it would cover the results
+      expect(screen.queryByText(/Refine these results in plain words\./)).not.toBeInTheDocument()
+      // The panel itself stayed open
+      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "true")
+    })
+
+    it("discards the text from the close segment", async () => {
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+
+      await user.click(refinePill())
+      await user.type(await screen.findByLabelText("Refinement"), "only decisions")
+      await user.click(screen.getByRole("button", { name: "Close refine" }))
+
+      expect(screen.queryByLabelText("Refinement")).not.toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
+    })
+
+    it("keeps the row open with the validation line when the prose is over the cap", async () => {
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+
+      await user.click(refinePill())
+      const field = await screen.findByLabelText("Refinement")
+      await user.paste("x".repeat(MAX_SEARCH_REFINE_CHARS + 1))
+      expect(
+        await screen.findByText(`A refinement is at most ${MAX_SEARCH_REFINE_CHARS} characters.`)
+      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Apply refinement" })).toBeDisabled()
+
+      await user.keyboard("{Enter}")
+
+      expect(field).toBeInTheDocument()
+      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
+      expect(mockNavigate).not.toHaveBeenCalled()
+    })
+
+    it("reopens the row prefilled from a chip's text and replaces that chip in place", async () => {
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+      await commitRefine(user, "only decisions")
+      await commitRefine(user, "newest first")
+
+      await user.click(screen.getByRole("button", { name: "only decisions" }))
+      const field = await screen.findByLabelText("Refinement")
+      expect(field).toHaveValue("only decisions")
+
+      await user.clear(field)
+      await user.type(field, "only launch decisions")
+      await user.keyboard("{Enter}")
+
+      expect(
+        Array.from(document.querySelectorAll("[data-search-refine]"), (chip) => chip.getAttribute("data-search-refine"))
+      ).toEqual(["only launch decisions", "newest first"])
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenLastCalledWith(
+          "hello",
+          baseFilters,
+          [],
+          ["only launch decisions", "newest first"]
+        )
+      })
+    })
+
+    it("leaves the chip untouched when an edit is abandoned", async () => {
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+      await commitRefine(user, "only decisions")
+
+      await user.click(screen.getByRole("button", { name: "only decisions" }))
+      const field = await screen.findByLabelText("Refinement")
+      await user.clear(field)
+      await user.type(field, "something else")
+      await user.keyboard("{Escape}")
+
+      expect(document.querySelector('[data-search-refine="only decisions"]')).toBeInTheDocument()
+      expect(document.querySelectorAll("[data-search-refine]")).toHaveLength(1)
+    })
+
+    it("keeps the newest refines when the limit is exceeded", async () => {
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+
       for (const refine of ["one", "two", "three", "four", "five", "six"]) {
-        await user.type(editor, ` /refine ${refine}`)
-        await user.keyboard("{Enter}")
+        await commitRefine(user, refine)
       }
 
-      expect(Array.from(document.querySelectorAll("[data-search-refine]"), (chip) => chip.textContent)).toEqual([
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-      ])
+      expect(
+        Array.from(document.querySelectorAll("[data-search-refine]"), (chip) => chip.getAttribute("data-search-refine"))
+      ).toEqual(["two", "three", "four", "five", "six"])
+    })
+
+    it("wraps the pill in a tooltip on a fine pointer", async () => {
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+
+      await user.hover(refinePill())
+
+      await waitFor(() => {
+        expect(screen.getAllByText(/Refine these results in plain words\./).length).toBeGreaterThan(0)
+      })
+    })
+
+    it("omits the tooltip entirely on a coarse pointer", async () => {
+      vi.spyOn(hooksModule, "useCoarsePointer").mockReturnValue(true)
+
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      await typeQuery(user)
+
+      await user.hover(refinePill())
+
+      expect(refinePill()).not.toHaveAttribute("data-state")
+      expect(screen.queryByText(/Refine these results in plain words\./)).not.toBeInTheDocument()
     })
 
     it("shows the model's note when the refine applied", async () => {
@@ -1248,11 +1418,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const user = userEvent.setup()
       renderPanel(searchOn)
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello /refine only decisions")
-      await user.keyboard("{Enter}")
+      await typeQuery(user)
+      await commitRefine(user, "only decisions")
 
       expect(await screen.findByText("Kept the decisions.")).toBeInTheDocument()
       expect(document.querySelector("[data-search-refine-failed]")).not.toBeInTheDocument()
@@ -1267,11 +1434,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const user = userEvent.setup()
       renderPanel(searchOn)
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello /refine only decisions")
-      await user.keyboard("{Enter}")
+      await typeQuery(user)
+      await commitRefine(user, "only decisions")
 
       await waitFor(() => {
         expect(document.querySelector('[data-search-refine="only decisions"]')).toHaveAttribute(
@@ -1292,9 +1456,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       const user = userEvent.setup()
       renderPanel(searchOn)
 
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello")
+      const editor = await typeQuery(user)
       expect(await screen.findByText("#general")).toBeInTheDocument()
 
       mockSearchState.isLoading = true
@@ -1313,11 +1475,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const user = userEvent.setup()
       renderPanel(searchOn)
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello /refine only decisions")
-      await user.keyboard("{Enter}")
+      await typeQuery(user)
+      await commitRefine(user, "only decisions")
 
       expect(
         await screen.findByText(/Couldn't apply the refinement after two tries\. Showing all results\./)
@@ -1341,37 +1500,12 @@ describe("SidebarSearchPanel Integration Tests", () => {
       expect(mockSearchState.search).toHaveBeenLastCalledWith("hello", baseFilters, [], ["only decisions"])
     })
 
-    it("rejects a refine over the length cap and keeps it in the field", async () => {
+    it("opens the first result on Enter in the query field", async () => {
       mockSearchState.results = mockSearchResultsList
 
       const user = userEvent.setup()
       renderPanel(searchOn)
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello /refine ")
-      await user.paste("x".repeat(MAX_SEARCH_REFINE_CHARS + 1))
-      expect(
-        await screen.findByText(`A refinement is at most ${MAX_SEARCH_REFINE_CHARS} characters.`)
-      ).toBeInTheDocument()
-
-      await user.keyboard("{Enter}")
-
-      expect(document.querySelector("[data-search-refine]")).not.toBeInTheDocument()
-      expect(screen.getByTestId("search-panel-probe").getAttribute("data-query")).toContain("/refine x")
-      expect(mockNavigate).not.toHaveBeenCalled()
-    })
-
-    it("leaves a slash that is not /refine as plain text, so Enter still opens the first result", async () => {
-      mockSearchState.results = mockSearchResultsList
-
-      const user = userEvent.setup()
-      renderPanel(searchOn)
-
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "/etc")
-      expect(screen.queryByText("/refine")).not.toBeInTheDocument()
+      await typeQuery(user, "/etc")
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenLastCalledWith("/etc", baseFilters)
       })
@@ -1379,19 +1513,6 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.keyboard("{Enter}")
 
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
-    })
-
-    it("offers neither the /refine trigger nor its hint under the pre-rework search flag", async () => {
-      mockSearchState.results = mockSearchResultsList
-
-      const user = userEvent.setup()
-      renderPanel()
-
-      expect(screen.queryByText(/Refine the list in plain words/)).not.toBeInTheDocument()
-      const editor = screen.getByLabelText("Search messages")
-      await user.click(editor)
-      await user.type(editor, "hello /")
-      expect(screen.queryByText("/refine")).not.toBeInTheDocument()
     })
   })
 })
