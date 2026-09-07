@@ -775,8 +775,20 @@ export function createPublicApiHandlers({
     )
   }
 
-  /** Check if a single stream is accessible for the current key */
-  async function assertStreamAccessible(req: Request, streamId: string): Promise<void> {
+  /**
+   * Check if a single stream is accessible for the current key.
+   *
+   * `allowArchived` is for the id read alone (`getStream`): a bot key's
+   * accessible set excludes archived streams, so without it the one call that
+   * exists to report `archivedAt` is the one call that cannot. User keys are
+   * already archive-blind here. Every other caller leaves it off — an archived
+   * stream stays unreadable and unwritable through them.
+   */
+  async function assertStreamAccessible(
+    req: Request,
+    streamId: string,
+    options: { allowArchived?: boolean } = {}
+  ): Promise<void> {
     if (req.userApiKey) {
       const stream = await streamService.tryAccess(streamId, req.workspaceId!, req.user!.id)
       if (!stream) {
@@ -785,11 +797,9 @@ export function createPublicApiHandlers({
       return
     }
     if (req.botApiKey) {
-      const accessible = await botChannelService.isStreamAccessibleForBot(
-        req.workspaceId!,
-        req.botApiKey.botId,
-        streamId
-      )
+      const accessible = options.allowArchived
+        ? await botChannelService.isStreamRetrievableForBot(req.workspaceId!, req.botApiKey.botId, streamId)
+        : await botChannelService.isStreamAccessibleForBot(req.workspaceId!, req.botApiKey.botId, streamId)
       if (!accessible) {
         throw new HttpError("Stream not accessible", { status: 403, code: "FORBIDDEN" })
       }
@@ -2809,10 +2819,10 @@ export function createPublicApiHandlers({
     async getStream(req: Request, res: Response) {
       const streamId = req.params.streamId
 
-      await assertStreamAccessible(req, streamId)
-
       // Archived streams stay retrievable by id (the app opens them read-only);
       // the payload's archivedAt tells the caller. Only list hides them.
+      await assertStreamAccessible(req, streamId, { allowArchived: true })
+
       const stream = await StreamRepository.findById(pool, streamId)
       if (!stream) {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })

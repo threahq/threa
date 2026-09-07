@@ -8,7 +8,8 @@
  *   next call — no snapshot
  * - E2E-rooted streams (and their threads) stay excluded: grant + key-wrap
  *   requirements are the only E2E path
- * - archived streams keep the bot-key denial of both existing arms
+ * - archived streams keep the bot-key denial of both existing arms, except
+ *   for the id read, which reports the archive rather than hiding it
  * - shared bots and flag-off personal bots behave exactly as before
  */
 
@@ -199,6 +200,32 @@ describe("read-as-owner access", () => {
     const ids = await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)
     expect(ids).not.toContain(archivedChannelId)
     expect(ids).not.toContain(archivedRootThreadId)
+  })
+
+  test("should retrieve an archived stream by id through either arm, and still deny one with no claim", async () => {
+    // Owner arm: archiving is a lifecycle change, not a revocation, so the id
+    // read still resolves and reports archivedAt.
+    expect(await service.isStreamRetrievableForBot(testWorkspaceId, readerBotId, archivedChannelId)).toBe(true)
+    expect(await service.isStreamRetrievableForBot(testWorkspaceId, readerBotId, archivedRootThreadId)).toBe(true)
+
+    // Grant arm: a flag-off bot with an explicit grant reaches the same row.
+    await BotChannelAccessRepository.grantAccess(pool, {
+      id: botChannelAccessId(),
+      workspaceId: testWorkspaceId,
+      botId: plainBotId,
+      streamId: archivedChannelId,
+      grantedBy: ownerId,
+    })
+    expect(await service.isStreamRetrievableForBot(testWorkspaceId, plainBotId, archivedChannelId)).toBe(true)
+
+    // A bot with neither arm gets nothing extra: the option drops the archive
+    // filter, never a permission one.
+    expect(await service.isStreamRetrievableForBot(testWorkspaceId, sharedBotId, archivedChannelId)).toBe(false)
+    expect(await service.isStreamRetrievableForBot(testWorkspaceId, sharedBotId, privateChannelId)).toBe(false)
+
+    // Everything else keeps denying archived.
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, plainBotId, archivedChannelId)).toBe(false)
+    expect(await service.isStreamActionableForBot(testWorkspaceId, plainBotId, archivedChannelId)).toBe(false)
   })
 
   test("should stop reading as owner when the flag is turned off", async () => {
