@@ -1884,16 +1884,25 @@ export interface WorkspaceBootstrap {
  * used for access filtering (`COALESCE(streams.root_stream_id, streams.id)`).
  * `personaName` is the persona or bot display name driving the session.
  *
- * `stepCount` / `messageCount` / `substep` are live progress, folded in from the
- * `agent_session:progress` and `agent_session:substep` room events; the bootstrap
- * projection omits them, so they read 0 / null until the first tick.
+ * `parentAnchorId` is the anchor a thread session hangs off in its parent
+ * timeline (`streams.parent_anchor_id`: a `msg_…` or a threadable card's
+ * `event_…`), null for a session in a root stream. `triggerMessageId` is the
+ * anchor the session was triggered from inside its own stream.
+ *
+ * `currentStepType` / `stepCount` / `messageCount` / `substep` are live progress.
+ * The bootstrap projection carries `currentStepType` from the session row and
+ * omits the counts; `agent_session:progress` and `agent_session:substep` fold in
+ * the rest, so counts read 0 / null until the first tick.
  */
 export interface ActiveAgentSession {
   sessionId: string
   streamId: string
   rootStreamId: string
+  parentAnchorId?: string | null
+  triggerMessageId?: string
   personaName: string
   startedAt: string
+  currentStepType?: AgentStepType | null
   stepCount?: number
   messageCount?: number
   substep?: string | null
