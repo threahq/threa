@@ -36,7 +36,12 @@ import {
   type Activity,
 } from "@threahq/types"
 import { assignmentId } from "@/hooks/use-labels"
-import { getAgentActivityForStream, getAgentSession, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import {
+  getAgentActivityForAnchor,
+  getAgentActivityForStream,
+  getAgentSession,
+  __resetAgentActivityStore,
+} from "@/stores/agent-activity-store"
 import * as agentSubstep from "@/lib/crypto/agent-substep"
 import { getCachedWorkspaceTables, subscribeWorkspaceCache } from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
@@ -4335,7 +4340,7 @@ describe("agent-activity sidebar socket handlers", () => {
     subscribeStream: vi.fn(),
   }
 
-  async function putStream(id: string, rootStreamId: string | null) {
+  async function putStream(id: string, rootStreamId: string | null, parentAnchorId: string | null = null) {
     await db.streams.put({
       id,
       workspaceId: "ws_1",
@@ -4345,6 +4350,7 @@ describe("agent-activity sidebar socket handlers", () => {
       description: null,
       visibility: "public",
       parentStreamId: rootStreamId,
+      parentAnchorId,
       rootStreamId,
       companionMode: "off",
       companionPersonaId: null,
@@ -4378,6 +4384,106 @@ describe("agent-activity sidebar socket handlers", () => {
     // Flat session-room shape (trace dialog open on the shared socket).
     await emitAsync("agent_session:completed", { sessionId: "sess_1" })
     expect(getAgentActivityForStream("ws_1", "stream_ch")).toEqual([])
+
+    cleanup()
+  })
+
+  it("keys a started thread session under its parent anchor and its trigger message", async () => {
+    await putStream("stream_ch", null)
+    await putStream("stream_thr", "stream_ch", "event_card")
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("agent_session:started", {
+      workspaceId: "ws_1",
+      streamId: "stream_thr",
+      event: {
+        payload: {
+          sessionId: "sess_anchored",
+          personaName: "Ariadne",
+          triggerMessageId: "msg_trigger",
+          startedAt: "2026-07-16T00:00:00.000Z",
+        },
+      },
+    })
+
+    expect(getAgentActivityForAnchor("ws_1", "event_card")).toEqual([
+      {
+        sessionId: "sess_anchored",
+        streamId: "stream_thr",
+        rootStreamId: "stream_ch",
+        parentAnchorId: "event_card",
+        triggerMessageId: "msg_trigger",
+        personaName: "Ariadne",
+        startedAt: "2026-07-16T00:00:00.000Z",
+        currentStepType: undefined,
+        stepCount: undefined,
+        messageCount: undefined,
+        substep: undefined,
+      },
+    ])
+    expect(getAgentActivityForAnchor("ws_1", "msg_trigger").map((s) => s.sessionId)).toEqual(["sess_anchored"])
+
+    cleanup()
+  })
+
+  it("anchors an activity_started session on the payload when the thread row has not landed in IDB yet", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("agent_session:activity_started", {
+      sessionId: "sess_racing",
+      triggerMessageId: "msg_trigger",
+      personaName: "Ariadne",
+      threadStreamId: "stream_unlanded",
+      parentMessageId: "msg_anchor",
+    })
+
+    expect(getAgentActivityForAnchor("ws_1", "msg_anchor")).toMatchObject([
+      {
+        sessionId: "sess_racing",
+        streamId: "stream_unlanded",
+        rootStreamId: "stream_unlanded",
+        parentAnchorId: "msg_anchor",
+        triggerMessageId: "msg_trigger",
+        personaName: "Ariadne",
+      },
+    ])
+
+    cleanup()
+  })
+
+  it("anchors an untracked progress tick on the payload when the thread row has not landed in IDB yet", async () => {
+    await putStream("stream_ch", null)
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("agent_session:progress", {
+      workspaceId: "ws_1",
+      streamId: "stream_unlanded",
+      sessionId: "sess_racing",
+      triggerMessageId: "msg_trigger",
+      personaName: "Ariadne",
+      stepCount: 3,
+      messageCount: 0,
+      currentStepType: "thinking",
+      parentMessageId: "msg_anchor",
+    })
+
+    expect(getAgentActivityForAnchor("ws_1", "msg_anchor")).toMatchObject([
+      {
+        sessionId: "sess_racing",
+        streamId: "stream_unlanded",
+        parentAnchorId: "msg_anchor",
+        triggerMessageId: "msg_trigger",
+        currentStepType: "thinking",
+        stepCount: 3,
+      },
+    ])
 
     cleanup()
   })
@@ -4507,8 +4613,13 @@ describe("agent-activity sidebar socket handlers", () => {
       personaName: "Ariadne",
       stepCount: 5,
       messageCount: 1,
+      currentStepType: "web_search",
     })
-    expect(getAgentSession("ws_1", "sess_c")).toMatchObject({ stepCount: 5, messageCount: 1 })
+    expect(getAgentSession("ws_1", "sess_c")).toMatchObject({
+      stepCount: 5,
+      messageCount: 1,
+      currentStepType: "web_search",
+    })
 
     await emitAsync("agent_session:substep", {
       sessionId: "sess_c",

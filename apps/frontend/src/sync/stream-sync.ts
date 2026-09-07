@@ -41,7 +41,7 @@ import {
   rehomeActivities,
 } from "./unread-counters"
 import { upsertActiveCall, updateCallParticipants } from "@/stores/active-calls-store"
-import { reconcileAgentActivityFromStreamEvents } from "@/stores/agent-activity-store"
+import { agentActivityStreamContext, reconcileAgentActivityFromStreamEvents } from "@/stores/agent-activity-store"
 import { isAgentSessionLifecycleEvent } from "@/lib/agent-session-lifecycle"
 import { contextItemsFromEvent, type ContextRowsContext } from "@/lib/stream-context/rows"
 import {
@@ -799,7 +799,7 @@ export async function applyStreamBootstrap(
 export function reconcileStreamBootstrapAgentActivity(workspaceId: string, bootstrap: StreamBootstrap): void {
   const { stream } = bootstrap
   if (stream.workspaceId !== workspaceId) return
-  reconcileAgentActivityFromStreamEvents(workspaceId, stream.id, stream.rootStreamId ?? stream.id, bootstrap.events)
+  reconcileAgentActivityFromStreamEvents(workspaceId, agentActivityStreamContext(stream), bootstrap.events)
 }
 
 async function reconcileAppendedAgentActivity(
@@ -809,7 +809,7 @@ async function reconcileAppendedAgentActivity(
 ): Promise<void> {
   const stream = await db.streams.get(streamId)
   if (!stream || stream.workspaceId !== workspaceId) return
-  reconcileAgentActivityFromStreamEvents(workspaceId, streamId, stream.rootStreamId ?? stream.id, [event])
+  reconcileAgentActivityFromStreamEvents(workspaceId, agentActivityStreamContext(stream), [event])
 }
 
 /**

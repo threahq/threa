@@ -7,6 +7,8 @@ import {
   clearAgentSession,
   removeAgentSession,
   getAgentActivityForStream,
+  getAgentActivityForAnchor,
+  useAgentActivityForAnchor,
   getAgentSession,
   updateAgentSessionProgress,
   reconcileAgentActivityFromStreamEvents,
@@ -22,6 +24,7 @@ function session(overrides: Partial<ActiveAgentSession>): ActiveAgentSession {
     sessionId: "sess_1",
     streamId: "stream_a",
     rootStreamId: "stream_a",
+    parentAnchorId: null,
     personaName: "Ada",
     startedAt: "2026-06-10T10:00:00.000Z",
     ...overrides,
@@ -97,24 +100,28 @@ describe("agent-activity-store", () => {
     upsertAgentSession(WS, session({ sessionId: "s1" }))
     removeAgentSession(WS, "s1")
 
-    reconcileAgentActivityFromStreamEvents(WS, "stream_a", "stream_a", [
-      {
-        id: "evt_started",
-        streamId: "stream_a",
-        sequence: "1",
-        eventType: "agent_session:started",
-        payload: {
-          sessionId: "s1",
-          personaId: "persona_1",
-          personaName: "Ada",
-          triggerMessageId: "msg_1",
-          startedAt: "2026-06-10T10:00:00.000Z",
+    reconcileAgentActivityFromStreamEvents(
+      WS,
+      { streamId: "stream_a", rootStreamId: "stream_a", parentAnchorId: null },
+      [
+        {
+          id: "evt_started",
+          streamId: "stream_a",
+          sequence: "1",
+          eventType: "agent_session:started",
+          payload: {
+            sessionId: "s1",
+            personaId: "persona_1",
+            personaName: "Ada",
+            triggerMessageId: "msg_1",
+            startedAt: "2026-06-10T10:00:00.000Z",
+          },
+          actorId: "persona_1",
+          actorType: "persona",
+          createdAt: "2026-06-10T10:00:00.000Z",
         },
-        actorId: "persona_1",
-        actorType: "persona",
-        createdAt: "2026-06-10T10:00:00.000Z",
-      },
-    ])
+      ]
+    )
     seedAgentActivity(WS, [session({ sessionId: "s1" })])
 
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
@@ -186,6 +193,138 @@ describe("agent-activity-store", () => {
       stepCount: 4,
       messageCount: 2,
       substep: "Evaluating results…",
+    })
+  })
+
+  describe("anchor keys (what a cold-loaded thinking row reads)", () => {
+    it("a bootstrap seed alone puts a thread session under its parent anchor and its trigger", () => {
+      const threadSession = session({
+        sessionId: "s1",
+        streamId: "stream_thread",
+        rootStreamId: "stream_parent",
+        parentAnchorId: "msg_anchor",
+        triggerMessageId: "msg_trigger",
+      })
+      seedAgentActivity(WS, [threadSession])
+
+      expect({
+        anchor: getAgentActivityForAnchor(WS, "msg_anchor"),
+        trigger: getAgentActivityForAnchor(WS, "msg_trigger"),
+      }).toEqual({ anchor: [threadSession], trigger: [threadSession] })
+    })
+
+    it("a root-stream session (no parent anchor) is reachable only by its trigger message", () => {
+      const rootSession = session({ sessionId: "s1", parentAnchorId: null, triggerMessageId: "msg_trigger" })
+      seedAgentActivity(WS, [rootSession])
+
+      expect({
+        trigger: getAgentActivityForAnchor(WS, "msg_trigger"),
+        other: getAgentActivityForAnchor(WS, "msg_other"),
+      }).toEqual({ trigger: [rootSession], other: [] })
+    })
+
+    it("a substep tick reaches an anchor subscriber (the thinking row renders it)", () => {
+      seedAgentActivity(WS, [session({ sessionId: "s1", parentAnchorId: "msg_anchor" })])
+      const { result } = renderHook(() => useAgentActivityForAnchor(WS, "msg_anchor"))
+
+      act(() => updateAgentSessionProgress(WS, "s1", { substep: "Reading docs" }))
+
+      expect(result.current).toEqual([
+        session({ sessionId: "s1", parentAnchorId: "msg_anchor", substep: "Reading docs" }),
+      ])
+    })
+
+    it("moving a session to another anchor empties the one it left", () => {
+      seedAgentActivity(WS, [session({ sessionId: "s1", parentAnchorId: "msg_old" })])
+      const moved = session({ sessionId: "s1", parentAnchorId: "msg_new" })
+
+      upsertAgentSession(WS, moved)
+
+      expect({
+        old: getAgentActivityForAnchor(WS, "msg_old"),
+        new: getAgentActivityForAnchor(WS, "msg_new"),
+      }).toEqual({ old: [], new: [moved] })
+    })
+
+    it("a step-type advance reaches an anchor subscriber (the thinking row's fallback label)", () => {
+      seedAgentActivity(WS, [session({ sessionId: "s1", parentAnchorId: "msg_anchor", currentStepType: "thinking" })])
+      const { result } = renderHook(() => useAgentActivityForAnchor(WS, "msg_anchor"))
+
+      act(() => updateAgentSessionProgress(WS, "s1", { stepCount: 2, currentStepType: "web_search" }))
+
+      expect(result.current).toEqual([
+        session({
+          sessionId: "s1",
+          parentAnchorId: "msg_anchor",
+          currentStepType: "web_search",
+          stepCount: 2,
+          substep: null,
+        }),
+      ])
+    })
+
+    it("an upsert that resolves the anchor late lights up the anchor row", () => {
+      // `started` fires before the thread's stream row exists locally, so the
+      // anchor is unresolved on the first upsert and resolved on a later one.
+      upsertAgentSession(WS, session({ sessionId: "s1", streamId: "stream_thread" }))
+      expect(getAgentActivityForAnchor(WS, "msg_anchor")).toEqual([])
+
+      upsertAgentSession(WS, session({ sessionId: "s1", streamId: "stream_thread", parentAnchorId: "msg_anchor" }))
+
+      expect(getAgentActivityForAnchor(WS, "msg_anchor")).toEqual([
+        session({ sessionId: "s1", streamId: "stream_thread", parentAnchorId: "msg_anchor" }),
+      ])
+    })
+
+    it("a live upsert that omits the anchor fields keeps the seeded session in its anchors", () => {
+      seedAgentActivity(WS, [
+        session({ sessionId: "s1", parentAnchorId: "msg_anchor", triggerMessageId: "msg_trigger" }),
+      ])
+      // Socket `progress`/`started` payloads carry no anchor fields.
+      upsertAgentSession(WS, session({ sessionId: "s1", stepCount: 2 }))
+
+      const expected = session({
+        sessionId: "s1",
+        parentAnchorId: "msg_anchor",
+        triggerMessageId: "msg_trigger",
+        stepCount: 2,
+      })
+      expect({
+        anchor: getAgentActivityForAnchor(WS, "msg_anchor"),
+        trigger: getAgentActivityForAnchor(WS, "msg_trigger"),
+      }).toEqual({ anchor: [expected], trigger: [expected] })
+    })
+
+    it("a terminal signal empties the stream key and both anchor keys", () => {
+      seedAgentActivity(WS, [
+        session({
+          sessionId: "s1",
+          streamId: "stream_thread",
+          parentAnchorId: "msg_anchor",
+          triggerMessageId: "msg_trigger",
+        }),
+      ])
+      removeAgentSession(WS, "s1")
+
+      expect({
+        stream: getAgentActivityForStream(WS, "stream_thread"),
+        anchor: getAgentActivityForAnchor(WS, "msg_anchor"),
+        trigger: getAgentActivityForAnchor(WS, "msg_trigger"),
+      }).toEqual({ stream: [], anchor: [], trigger: [] })
+    })
+
+    it("clearing empties the anchor but a retry reusing the id lights it again", () => {
+      const running = session({ sessionId: "s1", parentAnchorId: "msg_anchor" })
+      seedAgentActivity(WS, [running])
+      clearAgentSession(WS, "s1")
+      const cleared = getAgentActivityForAnchor(WS, "msg_anchor")
+
+      upsertAgentSession(WS, running)
+
+      expect({ cleared, retried: getAgentActivityForAnchor(WS, "msg_anchor") }).toEqual({
+        cleared: [],
+        retried: [running],
+      })
     })
   })
 

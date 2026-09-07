@@ -35,7 +35,9 @@ import {
   removeAgentSession,
   hasAgentSession,
   updateAgentSessionProgress,
+  agentActivityStreamContext,
   reconcileAgentActivityFromStreamEvents,
+  type AgentActivityStreamContext,
 } from "@/stores/agent-activity-store"
 import { seedActiveCalls, upsertActiveCall, removeActiveCall } from "@/stores/active-calls-store"
 import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
@@ -1344,14 +1346,13 @@ export function registerWorkspaceSocketHandlers(
     }
   }
 
-  // Sidebar agent-activity: keep the running-session store live for stream rows
-  // the viewer isn't currently looking at. Indicators key on the exact stream;
-  // the resolved root is retained for access metadata. An uncached stream is
-  // skipped until the next bootstrap/reconnect re-seed.
-  const resolveRootStreamId = async (streamId: string): Promise<string | null> => {
+  // Runs workspace-wide so streams the viewer isn't looking at stay live. Indicators
+  // key on the exact stream and on the timeline row the session hangs under, never
+  // on the root.
+  const resolveStreamAnchor = async (streamId: string): Promise<AgentActivityStreamContext | null> => {
     const stream = await db.streams.get(streamId)
     if (!stream) return null
-    return stream.rootStreamId ?? stream.id
+    return agentActivityStreamContext(stream)
   }
 
   let agentActivityQueue = Promise.resolve()
@@ -1367,12 +1368,14 @@ export function registerWorkspaceSocketHandlers(
     enqueueAgentActivity(async () => {
       if (payload.workspaceId !== workspaceId) return
       const inner = payload.event.payload as AgentSessionStartedPayload
-      const rootStreamId = await resolveRootStreamId(payload.streamId)
-      if (!rootStreamId) return
+      const anchor = await resolveStreamAnchor(payload.streamId)
+      if (!anchor) return
       upsertAgentSession(workspaceId, {
         sessionId: inner.sessionId,
         streamId: payload.streamId,
-        rootStreamId,
+        rootStreamId: anchor.rootStreamId,
+        parentAnchorId: anchor.parentAnchorId,
+        triggerMessageId: inner.triggerMessageId,
         personaName: inner.personaName,
         startedAt: inner.startedAt,
       })
@@ -1383,27 +1386,29 @@ export function registerWorkspaceSocketHandlers(
       if (payload.workspaceId !== workspaceId) return
       // Progress arrives per step, but only for the stream/parent rooms this viewer
       // has joined (trace-emitter emits to streamRoom + parentRoom, never workspace-
-      // wide). Once the session is tracked, nothing the sidebar renders changes —
-      // skip the IDB lookup and the no-op upsert entirely.
-      // Once tracked, only the live counts change — fold them in without the IDB
-      // lookup. The board's running-session rows read them from here, so a row
-      // mounted after the join-time bootstrap tick still paints a real step count.
+      // wide). Once the session is tracked only the live counts change, so fold them
+      // in without paying the IDB lookup per step.
       if (hasAgentSession(workspaceId, payload.sessionId)) {
         updateAgentSessionProgress(workspaceId, payload.sessionId, {
           stepCount: payload.stepCount,
           messageCount: payload.messageCount,
+          currentStepType: payload.currentStepType,
         })
         return
       }
-      const rootStreamId = await resolveRootStreamId(payload.streamId)
-      if (!rootStreamId) return
+      // Same race as `activity_started`: a thread's row can still be missing from
+      // IDB here, and the payload's own anchor is the only one we get.
+      const anchor = await resolveStreamAnchor(payload.streamId)
       upsertAgentSession(workspaceId, {
         sessionId: payload.sessionId,
         streamId: payload.streamId,
-        rootStreamId,
+        rootStreamId: anchor?.rootStreamId ?? payload.streamId,
+        parentAnchorId: anchor?.parentAnchorId ?? payload.parentMessageId ?? null,
+        triggerMessageId: payload.triggerMessageId,
         personaName: payload.personaName,
         // Progress carries no start time; anchor sort order to arrival.
         startedAt: new Date().toISOString(),
+        currentStepType: payload.currentStepType,
         stepCount: payload.stepCount,
         messageCount: payload.messageCount,
       })
@@ -1411,12 +1416,16 @@ export function registerWorkspaceSocketHandlers(
 
   const handleAgentActivityStarted = (payload: AgentActivityStartedPayload) =>
     enqueueAgentActivity(async () => {
-      const rootStreamId = await resolveRootStreamId(payload.threadStreamId)
-      if (!rootStreamId) return
+      // This event is emitted ahead of `stream:created` so the parent timeline can
+      // light up immediately — the thread's row is regularly not in IDB yet, so the
+      // payload's own ids stand in rather than dropping the only start signal.
+      const anchor = await resolveStreamAnchor(payload.threadStreamId)
       upsertAgentSession(workspaceId, {
         sessionId: payload.sessionId,
         streamId: payload.threadStreamId,
-        rootStreamId,
+        rootStreamId: anchor?.rootStreamId ?? payload.threadStreamId,
+        parentAnchorId: anchor?.parentAnchorId ?? payload.parentMessageId ?? null,
+        triggerMessageId: payload.triggerMessageId,
         personaName: payload.personaName,
         startedAt: new Date().toISOString(),
       })
@@ -3548,13 +3557,8 @@ export async function applyReconnectBootstrapBatch(
   // Re-seed the sidebar agent-activity store with the reconnect's running set —
   // the authority that drops any entry whose end signal was missed (INV-53).
   seedAgentActivity(workspaceId, finalBootstrap.activeAgentSessions ?? [])
-  for (const [streamId, bootstrap] of streamBootstraps) {
-    reconcileAgentActivityFromStreamEvents(
-      workspaceId,
-      streamId,
-      bootstrap.stream.rootStreamId ?? streamId,
-      bootstrap.events
-    )
+  for (const bootstrap of streamBootstraps.values()) {
+    reconcileAgentActivityFromStreamEvents(workspaceId, agentActivityStreamContext(bootstrap.stream), bootstrap.events)
   }
   // Same authoritative re-seed for the sidebar live-call dot (INV-53).
   seedActiveCalls(workspaceId, finalBootstrap.activeCalls ?? [])
