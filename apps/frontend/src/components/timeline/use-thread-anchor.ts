@@ -1,8 +1,10 @@
 import { createDraftPanelId, usePanel } from "@/contexts"
+import { useAgentActivityForAnchor } from "@/stores/agent-activity-store"
 
 export interface ThreadAnchorWiring {
-  /** The real thread stream id if one exists (persisted thread, or an in-flight
-   *  agent thread known via `activityThreadStreamId`), else undefined. */
+  /** The real thread stream id if one exists — the persisted thread, else the
+   *  thread an agent session under this anchor is already running in, which
+   *  links before the slower `stream:created` event lands. */
   effectiveThreadId: string | undefined
   /** Panel url of the real thread, or null when none exists yet. */
   threadHref: string | null
@@ -22,12 +24,19 @@ export interface ThreadAnchorWiring {
  * `threadHref`/`replyUrl` with `<ThreadSlot>` — the renderer is unchanged.
  */
 export function useThreadAnchor(
+  workspaceId: string,
   streamId: string,
   anchorId: string,
-  opts: { threadId?: string | null; activityThreadStreamId?: string }
+  opts: { threadId?: string | null }
 ): ThreadAnchorWiring {
   const { getPanelUrl } = usePanel()
-  const effectiveThreadId = opts.threadId ?? opts.activityThreadStreamId ?? undefined
+  const sessions = useAgentActivityForAnchor(workspaceId, anchorId)
+  // Only a session running in ANOTHER stream is this anchor's thread. One this
+  // message triggered that runs in this same stream is keyed under the same
+  // anchor, and taking its stream id would point `threadHref` at the stream the
+  // viewer is already reading.
+  const inFlightThreadId = sessions.find((s) => s.streamId !== streamId)?.streamId
+  const effectiveThreadId = opts.threadId ?? inFlightThreadId ?? undefined
   const draftPanelId = createDraftPanelId(streamId, anchorId)
   const draftPanelUrl = getPanelUrl(draftPanelId)
   const threadHref = effectiveThreadId ? getPanelUrl(effectiveThreadId) : null

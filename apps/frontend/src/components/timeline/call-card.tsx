@@ -120,7 +120,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
   const inCallStreamId = useCallStreamId()
   // Shared thread affordance keyed on the card's event id: `replyUrl` opens the
   // real thread when one exists, else the draft panel to start the call chat.
-  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(streamId, event.id, {
+  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(workspaceId, streamId, event.id, {
     threadId: payload?.threadId,
   })
   // The viewer's unsent reply on this card's thread — shown on the slot before
@@ -276,6 +276,8 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
           panel already open). */}
       {!isThreadParent && (
         <ThreadSlot
+          anchorId={event.id}
+          streamId={streamId}
           replyCount={replyCount}
           threadHref={threadHref}
           summary={payload.threadSummary}

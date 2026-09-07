@@ -140,7 +140,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
   // Shared thread affordance, keyed on the card's canonical id (its event id) —
   // the anchor delegation completion threads on. `replyUrl` points at the real
   // thread when one exists, else the draft panel for starting one.
-  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(streamId, event.id, {
+  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(workspaceId, streamId, event.id, {
     threadId: payload?.threadId,
   })
   // The viewer's unsent reply on this card's thread — shown on the slot before
@@ -443,6 +443,8 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
           panel already open). */}
       {!isThreadParent && (
         <ThreadSlot
+          anchorId={event.id}
+          streamId={streamId}
           replyCount={replyCount}
           threadHref={threadHref}
           summary={payload.threadSummary}
