@@ -1,4 +1,7 @@
 export type RuntimeKind = "pi" | "claude"
+export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"
+/** The two verdicts that outlive a pass, so a row carrying one is backed off rather than re-probed. */
+export type ProbeVerdict = Extract<ScratchpadStatus, "archived" | "inaccessible">
 export type AgentStatus = "starting" | "online" | "offline" | "stopped" | "error"
 
 export interface ManagedAgent {
@@ -23,10 +26,17 @@ export interface ManagedAgent {
   createdAt: string
   updatedAt: string
   lastOutput?: string
-  /** Consecutive 403/404 probes; resets the moment the scratchpad answers. */
+  /** Consecutive probes that came back with a verdict; resets the moment the scratchpad is live again. */
   probeFailures?: number
   /** ISO instant before which the revival probe is suppressed for this row. */
   probeBackoffUntil?: string
+  /**
+   * What the last probe found, present exactly while `probeBackoffUntil` is.
+   * The revive sweep probes first and the tombstone pass runs after it, so
+   * without the recorded verdict the later pass has to re-ask the very
+   * scratchpad the backoff exists to stop asking about.
+   */
+  probeVerdict?: ProbeVerdict
   /**
    * ISO instant at which this row stopped being a revival candidate: its worktree
    * is gone AND its scratchpad is archived. History, never deleted.

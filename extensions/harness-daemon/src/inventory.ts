@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { dirname } from "node:path"
 import { canonicalOrRaw, defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
 import { die } from "./errors"
-import type { AgentStatus, ManagedAgent, RuntimeKind } from "./types"
+import type { AgentStatus, ManagedAgent, ProbeVerdict, RuntimeKind } from "./types"
 
 const DEFAULT_INVENTORY_PATH = `${homedir()}/.threa/harnessd/inventory.sqlite`
 
@@ -28,6 +28,7 @@ interface ManagedAgentRow {
   last_output: string | null
   probe_failures: number | null
   probe_backoff_until: string | null
+  probe_verdict: ProbeVerdict | null
   tombstoned_at: string | null
   clear_pending_at: string | null
   active_stream_id: string | null
@@ -75,6 +76,7 @@ function openInventory(): Database {
     ["runtime_session_id", "TEXT"],
     ["probe_failures", "INTEGER"],
     ["probe_backoff_until", "TEXT"],
+    ["probe_verdict", "TEXT"],
     ["tombstoned_at", "TEXT"],
     ["clear_pending_at", "TEXT"],
     ["active_stream_id", "TEXT"],
@@ -108,6 +110,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     lastOutput: row.last_output ?? undefined,
     probeFailures: row.probe_failures ?? undefined,
     probeBackoffUntil: row.probe_backoff_until ?? undefined,
+    probeVerdict: row.probe_verdict ?? undefined,
     tombstonedAt: row.tombstoned_at ?? undefined,
     clearPendingAt: row.clear_pending_at ?? undefined,
     activeStreamId: row.active_stream_id ?? undefined,
@@ -148,6 +151,7 @@ export function readInventoryReadonly(): ManagedAgent[] {
       "last_output",
       "probe_failures",
       "probe_backoff_until",
+      "probe_verdict",
       "tombstoned_at",
       "clear_pending_at",
       "active_stream_id",
@@ -172,9 +176,9 @@ export function upsertAgent(agent: ManagedAgent): void {
       INSERT INTO managed_agents (
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
         tmux_window_id, tmux_pane_id, scratchpad_url, instance_id, runtime_session_id, command_json,
-        created_at, updated_at, last_output, probe_failures, probe_backoff_until, tombstoned_at,
-        clear_pending_at, active_stream_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, last_output, probe_failures, probe_backoff_until, probe_verdict,
+        tombstoned_at, clear_pending_at, active_stream_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -193,6 +197,7 @@ export function upsertAgent(agent: ManagedAgent): void {
         last_output = excluded.last_output,
         probe_failures = excluded.probe_failures,
         probe_backoff_until = excluded.probe_backoff_until,
+        probe_verdict = excluded.probe_verdict,
         tombstoned_at = excluded.tombstoned_at,
         clear_pending_at = excluded.clear_pending_at,
         active_stream_id = excluded.active_stream_id
@@ -217,6 +222,7 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.lastOutput ?? null,
       agent.probeFailures ?? null,
       agent.probeBackoffUntil ?? null,
+      agent.probeVerdict ?? null,
       agent.tombstonedAt ?? null,
       agent.clearPendingAt ?? null,
       agent.activeStreamId ?? null
