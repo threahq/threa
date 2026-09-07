@@ -241,7 +241,7 @@ test("C superseding waiting B retains A and C precaches and removes B", async ({
 test("asset fallback rejects poisoned HTML and returns valid retained JS offline", async ({ page, context }) => {
   const blank = await context.newPage()
   await blank.goto("/recover/blank.html")
-  await waitForControlled(blank)
+  await expect(blank).toHaveTitle("blank")
 
   const url = "/assets/legacy-poison-12345678.js"
   await seedPrecacheEntry(page, "workbox-precache-poison", url, "<!doctype html>poison", "text/html")
@@ -254,7 +254,7 @@ test("asset fallback rejects poisoned HTML and returns valid retained JS offline
 test("unknown client retains legacy precache until it closes", async ({ page, context }) => {
   const blank = await context.newPage()
   await blank.goto("/recover/blank.html")
-  await waitForControlled(blank)
+  await expect(blank).toHaveTitle("blank")
   await seedPrecacheEntry(page, "workbox-precache-legacy-v1", "/legacy-asset.js", "legacy")
   await createDomainCacheSentinel(page, "threa-test-domain", "/__domain-sentinel")
 
@@ -271,6 +271,19 @@ test("unknown client retains legacy precache until it closes", async ({ page, co
     )
     .not.toContain("workbox-precache-legacy-v1")
   expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
+})
+
+test("should reject non-object control request bodies", async ({ request }) => {
+  for (const body of [null, [], 1, "invalid"]) {
+    const response = await request.post("/__control/deployed", {
+      data: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+    })
+    expect({ status: response.status(), body: await response.json() }).toEqual({
+      status: 400,
+      body: { error: "invalid_control_body" },
+    })
+  }
 })
 
 test("server returns 404 for missing assets and shell only for extensionless navigation", async ({ request }) => {

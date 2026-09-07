@@ -1,5 +1,11 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 import { readServerPort } from "./port"
+import {
+  SW_MSG_QUERY_STATUS,
+  SW_MSG_STATUS_REPLY,
+  SW_MSG_RUN_GC,
+  SW_MSG_GC_REPLY,
+} from "../../../apps/frontend/src/lib/sw-messages"
 
 let cachedUrl: string | null = null
 
@@ -72,30 +78,33 @@ export async function clickAndReadPhase(locator: Locator): Promise<string | unde
 }
 
 export async function workerStatus(page: Page, target: "controller" | "waiting" | "active") {
-  return page.evaluate(async (kind) => {
-    const registration = await navigator.serviceWorker.getRegistration()
-    const worker = kind === "controller" ? navigator.serviceWorker.controller : registration?.[kind]
-    if (!worker) return null
-    return new Promise<{ buildId: string; ready: boolean } | null>((resolve) => {
-      const channel = new MessageChannel()
-      const finish = (value: { buildId: string; ready: boolean } | null) => {
-        clearTimeout(timer)
-        channel.port1.close()
-        channel.port2.close()
-        resolve(value)
-      }
-      const timer = setTimeout(() => finish(null), 1500)
-      channel.port1.onmessage = (event) => {
-        const data = event.data as { type?: string; buildId?: string; ready?: boolean }
-        finish(
-          data.type === "STATUS_REPLY" && typeof data.buildId === "string"
-            ? { buildId: data.buildId, ready: data.ready === true }
-            : null
-        )
-      }
-      worker.postMessage({ type: "QUERY_STATUS" }, [channel.port2])
-    })
-  }, target)
+  return page.evaluate(
+    async ({ kind, requestType, replyType }) => {
+      const registration = await navigator.serviceWorker.getRegistration()
+      const worker = kind === "controller" ? navigator.serviceWorker.controller : registration?.[kind]
+      if (!worker) return null
+      return new Promise<{ buildId: string; ready: boolean } | null>((resolve) => {
+        const channel = new MessageChannel()
+        const finish = (value: { buildId: string; ready: boolean } | null) => {
+          clearTimeout(timer)
+          channel.port1.close()
+          channel.port2.close()
+          resolve(value)
+        }
+        const timer = setTimeout(() => finish(null), 1500)
+        channel.port1.onmessage = (event) => {
+          const data = event.data as { type?: string; buildId?: string; ready?: boolean }
+          finish(
+            data.type === replyType && typeof data.buildId === "string"
+              ? { buildId: data.buildId, ready: data.ready === true }
+              : null
+          )
+        }
+        worker.postMessage({ type: requestType }, [channel.port2])
+      })
+    },
+    { kind: target, requestType: SW_MSG_QUERY_STATUS, replyType: SW_MSG_STATUS_REPLY }
+  )
 }
 
 export async function importLazyFixture(page: Page): Promise<string> {
@@ -149,5 +158,29 @@ export async function seedPrecacheEntry(
 }
 
 export async function runGc(page: Page): Promise<void> {
-  await page.evaluate(() => navigator.serviceWorker.controller?.postMessage({ type: "RUN_GC" }))
+  await page.evaluate(
+    ({ requestType, replyType }) =>
+      new Promise<void>((resolve, reject) => {
+        const channel = new MessageChannel()
+        const finish = (error?: Error) => {
+          clearTimeout(timer)
+          channel.port1.close()
+          channel.port2.close()
+          if (error) reject(error)
+          else resolve()
+        }
+        const timer = setTimeout(() => finish(new Error("Service worker cleanup did not finish")), 15000)
+        channel.port1.onmessage = (event) => {
+          if (event.data?.type === replyType) finish()
+        }
+        try {
+          const worker = navigator.serviceWorker.controller
+          if (!worker) throw new Error("No controlling service worker")
+          worker.postMessage({ type: requestType }, [channel.port2])
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)))
+        }
+      }),
+    { requestType: SW_MSG_RUN_GC, replyType: SW_MSG_GC_REPLY }
+  )
 }

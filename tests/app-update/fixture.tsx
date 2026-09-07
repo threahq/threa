@@ -7,7 +7,7 @@ import { PreferencesProvider } from "@/contexts/preferences-context"
 import { SidebarProvider } from "@/contexts/sidebar-context"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { AppStatusPage } from "@/pages/app-status"
-import { AppUpdateProvider, useAppUpdate, type AppUpdateState } from "@/hooks/use-app-update"
+import { AppUpdateProvider, useAppUpdate } from "@/hooks/use-app-update"
 import { AppToastHost } from "@/components/app-update-toast"
 import "@/index.css"
 
@@ -17,15 +17,7 @@ declare const __APP_BUILD_ID__: string
 const queryClient = makeQueryClient()
 const WORKSPACE_ID = "workspace_test"
 
-interface FixtureWindow extends Window {
-  __fixtureVersion?: string
-  __fixtureBuildId?: string
-  __fixtureLazyUrl?: string
-  __importLazyFixture?: () => Promise<string>
-  __appUpdateState?: Pick<AppUpdateState, "phase" | "readyBuildId" | "failure" | "lastCheckedAt">
-}
-
-const w = typeof window !== "undefined" ? (window as FixtureWindow) : undefined
+const w = typeof window !== "undefined" ? window : undefined
 
 function ServiceWorkerRegistration() {
   useEffect(() => {

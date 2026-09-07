@@ -2,6 +2,7 @@ import { readFileSync, existsSync, statSync, rmSync } from "node:fs"
 import { join, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Server } from "bun"
+import { z } from "../../apps/frontend/node_modules/zod/index.js"
 import { writeServerPort } from "./support/port"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
@@ -13,10 +14,7 @@ export interface BuildInfo {
 
 const info: BuildInfo = JSON.parse(readFileSync(join(__dirname, ".build-info.json"), "utf-8"))
 
-interface Hold {
-  paths: string[]
-  ms: number
-}
+const controlBodySchema = z.record(z.string(), z.unknown())
 
 const state = {
   deployed: "A" as string,
@@ -24,7 +22,6 @@ const state = {
   failWorker: false,
   failAssetPaths: new Set<string>(),
   corruptAssetPaths: new Set<string>(),
-  hold: null as Hold | null,
 }
 
 function generation() {
@@ -84,12 +81,16 @@ async function handleControl(req: Request): Promise<Response> {
 
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 })
 
-  let body: Record<string, unknown> = {}
+  let input: unknown = {}
   try {
-    body = (await req.json()) as Record<string, unknown>
+    const text = await req.text()
+    if (text) input = JSON.parse(text)
   } catch {
-    // empty body is fine
+    return Response.json({ error: "invalid_control_body" }, { status: 400 })
   }
+  const parsed = controlBodySchema.safeParse(input)
+  if (!parsed.success) return Response.json({ error: "invalid_control_body" }, { status: 400 })
+  const body = parsed.data
 
   if (path === "/__control/deployed") {
     if (typeof body.version === "string") state.deployed = body.version
@@ -105,28 +106,17 @@ async function handleControl(req: Request): Promise<Response> {
     if (typeof body.path === "string") state.corruptAssetPaths.add(body.path)
   } else if (path === "/__control/clear-corrupt-asset") {
     if (typeof body.path === "string") state.corruptAssetPaths.delete(body.path)
-  } else if (path === "/__control/hold") {
-    const paths = Array.isArray(body.paths) ? body.paths.filter((p): p is string => typeof p === "string") : []
-    const ms = typeof body.ms === "number" ? body.ms : 0
-    state.hold = { paths, ms }
-  } else if (path === "/__control/clear-hold") {
-    state.hold = null
   } else if (path === "/__control/reset") {
     state.deployed = "A"
     state.latest = "A"
     state.failWorker = false
     state.failAssetPaths.clear()
     state.corruptAssetPaths.clear()
-    state.hold = null
   } else {
     return new Response("unknown control command", { status: 404 })
   }
 
   return Response.json({ ok: true })
-}
-
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 const port = process.env.APP_UPDATE_SERVER_PORT ? Number(process.env.APP_UPDATE_SERVER_PORT) : 0
@@ -158,10 +148,6 @@ const server: Server = Bun.serve({
     const fp = filePath(pathname)
     if (!fp || !existsSync(fp)) {
       return new Response("not found", { status: 404, headers: { "cache-control": "no-store" } })
-    }
-
-    if (state.hold && state.hold.paths.some((p) => pathname === p || pathname.startsWith(p))) {
-      await sleep(state.hold.ms)
     }
 
     if (state.failAssetPaths.has(pathname)) {

@@ -61,6 +61,7 @@ export const SW_MSG_BUILD_REPLY = "BUILD_REPLY"
  * are on a known current generation.
  */
 export const SW_MSG_RUN_GC = "RUN_GC"
+export const SW_MSG_GC_REPLY = "GC_REPLY"
 
 /** Cache name used by the SW to stash share-target POST data (files + text) for the app to read. */
 export const SHARE_TARGET_CACHE = "share-target"

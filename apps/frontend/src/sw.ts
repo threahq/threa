@@ -28,6 +28,7 @@ import {
   SW_MSG_QUERY_BUILD,
   SW_MSG_BUILD_REPLY,
   SW_MSG_RUN_GC,
+  SW_MSG_GC_REPLY,
   SHARE_TARGET_CACHE,
 } from "./lib/sw-messages"
 
@@ -223,7 +224,11 @@ self.addEventListener("message", (event) => {
   }
 
   if (data.type === SW_MSG_RUN_GC) {
-    event.waitUntil(runConservativeGc())
+    event.waitUntil(
+      runConservativeGc().then(() => {
+        event.ports?.[0]?.postMessage({ type: SW_MSG_GC_REPLY })
+      })
+    )
   }
 })
 

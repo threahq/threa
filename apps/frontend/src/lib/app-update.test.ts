@@ -127,10 +127,14 @@ describe("AppUpdateController", () => {
     vi.useRealTimers()
   })
 
-  function makeController(opts?: { isDev?: boolean; buildInfo?: { version: string; buildId: string } }) {
+  function makeController(opts?: {
+    isDev?: boolean
+    buildInfo?: { version: string; buildId: string }
+    fetchLatestVersion?: () => Promise<string | null>
+  }) {
     controller = new AppUpdateController({
       serviceWorker: container as unknown as ServiceWorkerContainer,
-      fetchLatestVersion: async () => null,
+      fetchLatestVersion: opts?.fetchLatestVersion ?? (async () => null),
       buildInfo: opts?.buildInfo ?? { version: "A", buildId: "A" },
       isDev: opts?.isDev ?? false,
       pollIntervalMs: 300_000,
@@ -332,32 +336,42 @@ describe("AppUpdateController", () => {
     expect(registration.update).toHaveBeenCalledOnce()
   })
 
-  it("a stale failed check does not override a newer ready state", async () => {
-    const worker = new FakeWorker("installed", () => ({
-      version: "B",
-      buildId: "B",
-      ready: true,
-    }))
-    registration.waiting = worker
-    makeController({
-      buildInfo: { version: "A", buildId: "A" },
+  it("should discard an old check result after a newer worker becomes ready", async () => {
+    vi.useFakeTimers()
+    let finishVersion!: (version: string) => void
+    const version = new Promise<string>((resolve) => {
+      finishVersion = resolve
     })
+    let observedOldController!: () => void
+    const observed = new Promise<void>((resolve) => {
+      observedOldController = resolve
+    })
+    const active = new FakeWorker("activated", () => ({ version: "A", buildId: "A", ready: true }))
+    registration.active = container.controller = active
+    makeController({ fetchLatestVersion: () => version })
     await controller.start()
-    await controller.check()
-    expect(stateSnapshot().phase).toBe("ready")
-
-    const readyGeneration = controller["generation"]
-    ;(controller as unknown as { fetchLatestVersion: () => Promise<string | null> }).fetchLatestVersion = async () => {
-      // Simulate a slow, stale check that was already in flight.
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      return null
+    active.onStatus = () => {
+      observedOldController()
+      return { version: "A", buildId: "A", ready: true }
     }
-    // Force the internal doCheck to think it is older by restoring generation after the await.
-    const genBefore = (controller as unknown as { generation: number }).generation
-    ;(controller as unknown as { generation: number }).generation = readyGeneration - 1
-    await (controller as unknown as { doCheck: () => Promise<void> }).doCheck()
-    ;(controller as unknown as { generation: number }).generation = genBefore
-    expect(stateSnapshot().phase).toBe("ready")
+    const checking = controller.check()
+    await observed
+
+    const next = new FakeWorker("installing", () => ({ version: "B", buildId: "B", ready: true }))
+    registration.installing = next
+    registration.dispatchEvent(new Event("updatefound"))
+    registration.installing = null
+    registration.waiting = next
+    next.state = "installed"
+    next.dispatchEvent(new Event("statechange"))
+    await vi.waitFor(() => expect(stateSnapshot().readyBuildId).toBe("B"))
+    registration.waiting = null
+    next.state = "activated"
+    registration.active = container.controller = next
+
+    finishVersion("A")
+    await checking
+    expect(stateSnapshot()).toMatchObject({ phase: "ready", readyBuildId: "B", readyVersion: "B", failure: null })
   })
 
   it("apply messages the waiting worker, reloads on controllerchange, times out (not forever) if navigation never confirms, and can retry", async () => {

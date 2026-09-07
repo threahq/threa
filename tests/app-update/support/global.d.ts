@@ -1,4 +1,4 @@
-export {}
+import type { AppUpdateState } from "../../../apps/frontend/src/lib/app-update"
 
 declare global {
   interface Window {
@@ -6,10 +6,6 @@ declare global {
     __fixtureBuildId?: string
     __fixtureLazyUrl?: string
     __importLazyFixture?: () => Promise<string>
-    __appUpdateState?: {
-      phase: string
-      readyBuildId: string | null
-      failure: string | null
-    }
+    __appUpdateState?: Pick<AppUpdateState, "phase" | "readyBuildId" | "failure" | "lastCheckedAt">
   }
 }
