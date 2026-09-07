@@ -15,6 +15,32 @@ export const IMAGE_CAPTION_MAX_TOKENS = 8_000
 /** Used to recognise images when mime_type is application/octet-stream. */
 export const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"] as const
 
+/** ISO-BMFF brands in the `ftyp` box that mean the file is a HEIF/HEIC still. */
+const HEIF_BRANDS = new Set(["heic", "heix", "heim", "heis", "hevc", "hevx", "hevm", "hevs", "mif1", "msf1"])
+
+/**
+ * Media type read off the bytes themselves. Uploads that arrive as
+ * "application/octet-stream" carry no usable type, and labelling a JPEG as PNG
+ * in the request makes providers reject it, so the signature is the only
+ * trustworthy source. Null when the bytes match none of the supported formats.
+ */
+export function detectImageMediaType(buffer: Buffer): string | null {
+  if (buffer.length < 12) return null
+
+  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png"
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg"
+  if (buffer.subarray(0, 3).toString("latin1") === "GIF") return "image/gif"
+  if (buffer.subarray(0, 4).toString("latin1") === "RIFF" && buffer.subarray(8, 12).toString("latin1") === "WEBP") {
+    return "image/webp"
+  }
+  if (buffer.subarray(4, 8).toString("latin1") === "ftyp") {
+    const brand = buffer.subarray(8, 12).toString("latin1")
+    if (HEIF_BRANDS.has(brand)) return "image/heic"
+  }
+
+  return null
+}
+
 /**
  * Treats "application/octet-stream" as an image when the extension matches, since
  * some clients upload images with a generic MIME type.

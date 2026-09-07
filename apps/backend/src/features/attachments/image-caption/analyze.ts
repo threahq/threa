@@ -1,7 +1,7 @@
 import type { AI } from "@threahq/agent-runtime"
 import type { ConfigResolver, ImageCaptionConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
-import { imageAnalysisSchema, type ImageAnalysisOutput } from "./config"
+import { detectImageMediaType, imageAnalysisSchema, type ImageAnalysisOutput } from "./config"
 
 export interface AnalyzeImageDeps {
   ai: AI
@@ -29,9 +29,12 @@ export async function analyzeImage(
 ): Promise<ImageAnalysisOutput> {
   const config = await deps.configResolver.resolve<ImageCaptionConfig>(COMPONENT_PATHS.ATTACHMENT_IMAGE_CAPTION)
 
-  // Fallback for octet-stream uploads, which reach here only when the
-  // filename extension already identified them as images.
-  const mediaType = mimeType.startsWith("image/") ? mimeType : "image/png"
+  // Octet-stream uploads reach here on their extension alone, so the media type
+  // sent to the provider comes off the bytes: a mislabelled one is rejected.
+  const mediaType = mimeType.startsWith("image/") ? mimeType : detectImageMediaType(imageBuffer)
+  if (!mediaType) {
+    throw new Error(`Unrecognised image bytes for mime type ${mimeType}`)
+  }
 
   const { value } = await deps.ai.generateObject({
     model: config.modelId,

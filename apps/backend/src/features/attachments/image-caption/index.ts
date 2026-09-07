@@ -12,6 +12,7 @@ export {
   IMAGE_CAPTION_USER_PROMPT,
   imageAnalysisSchema,
   isImageAttachment,
+  detectImageMediaType,
   IMAGE_EXTENSIONS,
 } from "./config"
 export type { ImageAnalysisOutput } from "./config"
