@@ -44,6 +44,7 @@ import {
   readPiRemoteConfig,
   readPiRemoteSession,
   readThreaChannelConfig,
+  requireThreadSessionTarget,
   type PiRemoteConfig,
   type PiRemoteSession,
 } from "./spawners"
@@ -169,6 +170,32 @@ export function threaTarget(purpose: string): ThreaTarget {
   const [target] = uniqueSupervisorTargets([targetFor(readThreaChannelConfig()), targetFor(readPiRemoteConfig())])
   if (!target) throw new Error(`harnessd: no Threa credentials found for ${purpose}`)
   return target
+}
+
+function runtimeLifecycleTarget(config: ThreaChannelConfig): ThreaTarget | undefined {
+  const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
+  const apiKey = process.env.THREA_API_KEY || config.apiKey
+  if (!workspaceId || !apiKey) return undefined
+  return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
+}
+
+export function runtimeSupervisorTargets(
+  claudeConfig: ThreaChannelConfig = readThreaChannelConfig(),
+  piConfig: PiRemoteConfig = readPiRemoteConfig()
+): ThreaTarget[] {
+  const configs = [claudeConfig, piConfig]
+  const configured = uniqueSupervisorTargets(
+    configs.map((config) =>
+      config.apiKey ? requireThreadSessionTarget(config, "supervise the configured runtime") : undefined
+    )
+  )
+  if (!process.env.THREA_API_KEY) return configured
+
+  const ambient = uniqueSupervisorTargets(configs.map((config) => runtimeLifecycleTarget(config)))
+  if (ambient.length > 1) {
+    throw new Error("harnessd: ambient Threa credentials match multiple runtime targets")
+  }
+  return uniqueSupervisorTargets([...configured, ...ambient])
 }
 
 /** Long enough for an ordinary revive or reap to finish, short enough that a wedged holder cannot delay startup. */
@@ -300,13 +327,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const reconnectIntervalMs = watchIntervalMs()
   const claudeConfig = readThreaChannelConfig()
   const piConfig = readPiRemoteConfig()
-  const targetFor = (config: { baseUrl?: string; workspaceId?: string; apiKey?: string }) => {
-    const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
-    const apiKey = process.env.THREA_API_KEY || config.apiKey
-    if (!workspaceId || !apiKey) return undefined
-    return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
-  }
-  const targets = uniqueSupervisorTargets([targetFor(claudeConfig), targetFor(piConfig)])
+  const targets = runtimeSupervisorTargets(claudeConfig, piConfig)
   if (targets.length === 0) throw new Error("harnessd: no Threa credentials found for the supervisor socket")
 
   let reconcileChain = Promise.resolve()
@@ -337,7 +358,11 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
     log: console.log,
     notify: async (agent, content) => {
       const scratchpad = agent.scratchpadUrl ? parseScratchpadUrl(agent.scratchpadUrl) : undefined
-      const credentials = targetFor(agent.runtime === "pi" ? piConfig : claudeConfig)
+      const runtimeConfig = agent.runtime === "pi" ? piConfig : claudeConfig
+      const credentials =
+        agent.activeStreamId && agent.activeStreamId !== scratchpad?.streamId
+          ? requireThreadSessionTarget(runtimeConfig, "post an OOM notice for the attached runtime")
+          : runtimeLifecycleTarget(runtimeConfig)
       if (!scratchpad || !credentials) return
       await postScratchpadNotice({
         ...credentials,
@@ -677,9 +702,11 @@ export async function reviveAgent(
     }
   }
   const runtimeConfig = agent.runtime === "pi" ? deps.piConfig : deps.claudeConfig
-  const workspaceId = process.env.THREA_WORKSPACE_ID || runtimeConfig.workspaceId
-  const apiKey = process.env.THREA_API_KEY || runtimeConfig.apiKey
-  const baseUrl = configuredThreaBaseUrl(runtimeConfig)
+  const credentials =
+    agent.activeStreamId && agent.activeStreamId !== scratchpad.streamId
+      ? requireThreadSessionTarget(runtimeConfig, "revive the attached runtime")
+      : runtimeLifecycleTarget(runtimeConfig)
+  const { baseUrl, workspaceId, apiKey } = credentials ?? { baseUrl: configuredThreaBaseUrl(runtimeConfig) }
   if (scratchpad.baseUrl !== baseUrl) {
     return {
       status: "skipped identity mismatch",

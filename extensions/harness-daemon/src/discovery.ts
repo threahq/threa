@@ -43,6 +43,7 @@ export interface PiLaunch {
 }
 
 const CLAUDE_ENVIRONMENT = new Set([
+  "THREA_API_KEY",
   "THREA_INSTANCE_ID",
   "THREA_RUNTIME_SESSION_ID",
   "THREA_DISPLAY_NAME",
@@ -237,7 +238,7 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
       if (
         !CLAUDE_ENVIRONMENT.has(assignment.name) ||
         environmentNames.has(assignment.name) ||
-        !assignment.value ||
+        (assignment.name === "THREA_API_KEY" ? assignment.value !== "" : !assignment.value) ||
         /[$`*?[\]{};|&<>]/.test(assignment.value)
       )
         return undefined

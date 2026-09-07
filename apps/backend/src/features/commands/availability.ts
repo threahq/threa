@@ -18,10 +18,9 @@ import { checkStreamAccess, projectStreamForUser, StreamRepository, type Stream 
 import { BotRepository } from "../public-api"
 import {
   BotRuntimeInstanceRepository,
-  BotRuntimeSessionLinkRepository,
-  StreamActiveActorRepository,
   type BotRuntimeInstance,
   type BotRuntimeSessionLink,
+  resolveLinkedRuntimeRouteTarget,
   resolveRuntimeKindConfig,
 } from "../bot-runtimes"
 import type { CommandRegistry } from "./registry"
@@ -208,29 +207,18 @@ async function resolveRuntimeCommandTarget(
   if (!rootStream || rootStream.workspaceId !== workspaceId) return null
   if (rootStream.type !== StreamTypes.SCRATCHPAD) return null
 
-  const active = await StreamActiveActorRepository.findByRootStream(db, workspaceId, rootStream.id)
-  if (!active || active.actorType !== "bot") return null
-
-  const bot = await BotRepository.findById(db, workspaceId, active.actorId)
-  if (!bot || bot.archivedAt) return null
-  if (!botHasCapability(bot, BotInvocationCapabilities.ACTIVE_SCRATCHPAD)) return null
-
-  let link = await BotRuntimeSessionLinkRepository.findActiveByStream(db, {
+  const routeTarget = await resolveLinkedRuntimeRouteTarget(db, {
     workspaceId,
-    botId: bot.id,
     rootStreamId: rootStream.id,
     activeStreamId: stream.id,
   })
-  if (!link && stream.id !== rootStream.id) {
-    link = await BotRuntimeSessionLinkRepository.findActiveByStream(db, {
-      workspaceId,
-      botId: bot.id,
-      rootStreamId: rootStream.id,
-      activeStreamId: rootStream.id,
-    })
-  }
-  if (!link) return null
+  if (!routeTarget?.link) return null
 
+  const bot = await BotRepository.findById(db, workspaceId, routeTarget.botId)
+  if (!bot || bot.archivedAt) return null
+  if (!botHasCapability(bot, BotInvocationCapabilities.ACTIVE_SCRATCHPAD)) return null
+
+  const link = routeTarget.link
   const presence = await BotRuntimeInstanceRepository.findByInstance(db, {
     workspaceId,
     botId: bot.id,

@@ -2,8 +2,9 @@ import { readFileSync, unlinkSync } from "node:fs"
 import { spawnAgent, threaTarget } from "./commands"
 import { die } from "./errors"
 import { postScratchpadNotice } from "./oom"
+import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { failureExcerpt, postThrea } from "./threa-http"
-import type { SpawnOptions, SpawnResult } from "./types"
+import type { RuntimeKind, SpawnOptions, SpawnResult } from "./types"
 
 export interface StreamNoticeDeps {
   postNotice: (streamId: string, content: string) => Promise<void>
@@ -14,7 +15,12 @@ export interface AttachedSpawnDeps extends StreamNoticeDeps {
   spawn: (options: SpawnOptions) => Promise<SpawnResult>
   readBrief: (path: string) => string
   unlinkBrief: (path: string) => void
-  brief: (body: { instanceId: string; runtimeSessionId: string; content: string }) => Promise<void>
+  brief: (body: {
+    runtime: RuntimeKind
+    instanceId: string
+    runtimeSessionId: string
+    content: string
+  }) => Promise<void>
 }
 
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -61,7 +67,7 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
       try {
         const instanceId = result.instanceId ?? die("spawned agent has no instanceId to brief")
         const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
-        await deps.brief({ instanceId, runtimeSessionId, content })
+        await deps.brief({ runtime: options.runtime, instanceId, runtimeSessionId, content })
       } catch (error) {
         await notifyStream(
           rootStreamId,
@@ -94,13 +100,19 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
   }
 }
 
-export function defaultAttachedSpawnDeps(): AttachedSpawnDeps {
+export function defaultAttachedSpawnDeps(
+  targetForRuntime: RuntimeTargetResolver = runtimeThreaTarget
+): AttachedSpawnDeps {
   return {
     spawn: spawnAgent,
     readBrief: (path) => readFileSync(path, "utf8"),
     unlinkBrief: (path) => unlinkSync(path),
-    brief: async (body) => {
-      const response = await postThrea(threaTarget("deliver a brief"), "/bot-runtime/sessions/brief", body)
+    brief: async ({ runtime, ...body }) => {
+      const response = await postThrea(
+        targetForRuntime(runtime, "deliver a brief"),
+        "/bot-runtime/sessions/brief",
+        body
+      )
       if (!response.ok) throw new Error(`harnessd: could not deliver the brief: ${await failureExcerpt(response)}`)
     },
     postNotice: (streamId, content) =>

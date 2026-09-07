@@ -20,6 +20,7 @@ export { createBotSocketAuthMiddleware, type BotSocketData } from "./socket-auth
 export { assertManifestAllows } from "./assert-manifest-allows"
 export { resolveRuntimeKindConfig, type BotRuntimeKindConfig } from "./runtime-kind-config"
 export { buildEditedSourcePrompt, type EditedSourceContext } from "./invocation-route-resolver"
+export { resolveLinkedRuntimeRouteTarget } from "./runtime-route-selection"
 export { ExternalTurnDriver } from "./external-turn-driver"
 export type {
   BotRuntimeWriteOps,

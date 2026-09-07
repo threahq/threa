@@ -58,6 +58,7 @@ function makeDoneDeps(
     teardown?: { ok: boolean; reason?: string }
     windDownResult?: { pushed: boolean; removed: boolean; reason?: string }
     endSessionResult?: SessionEnd
+    endSessionError?: Error
   } = {}
 ): { deps: DoneDeps; recorded: Recorded } {
   const recorded: Recorded = { calls: [], logged: [], persisted: [] }
@@ -100,6 +101,7 @@ function makeDoneDeps(
     },
     endSession: async () => {
       recorded.calls.push("endSession")
+      if (options.endSessionError) throw options.endSessionError
       return endSessionResult
     },
     postNotice: async (streamId, content) => void recorded.calls.push(`postNotice:${streamId}:${content}`),
@@ -226,21 +228,61 @@ describe("doneAgent", () => {
     }
   })
 
-  test("a 404 from endSession completes as already ended", async () => {
-    const log = spyOn(console, "log").mockImplementation(() => {})
-    try {
-      const { deps, recorded } = makeDoneDeps({ endSessionResult: { status: "not-found" } })
+  test("an unresolved remote cleanup persists the stopped row with its exact retry identity and reports failure", async () => {
+    const { deps, recorded } = makeDoneDeps({
+      endSessionError: new Error("harnessd: remote cleanup unresolved: could not end runtime session: 404 not found"),
+    })
 
-      await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
+    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
+      "remote cleanup unresolved"
+    )
 
-      expect(recorded.logged).toContain("fix-sidebar: link already ended")
-      // An already-ended link names no thread, so the outcome falls back to the root.
-      expect(recorded.calls).toContain("postNotice:stream_root:harnessd: done — worktree removed, link already ended.")
-      expect(log.mock.calls.at(-1)?.[0]).toBe("done\tfix-sidebar\tworktree removed\tlink already ended")
-    } finally {
-      log.mockRestore()
-    }
+    expect(recorded.calls).toEqual([
+      "lock",
+      "teardown:/repo/fix-sidebar",
+      "kill:@7",
+      "awaitExit:4242",
+      "windDown:/repo/fix-sidebar",
+      "forgetLink:ccs-sidebar",
+      "forgetIdentities:/repo/fix-sidebar",
+      "endSession",
+      "persist:stopped",
+      "release",
+      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: harnessd: remote cleanup unresolved: could not end runtime session: 404 not found",
+    ])
+    expect(recorded.persisted).toEqual([
+      {
+        ...AGENT,
+        status: "stopped",
+        instanceId: "cc-sidebar",
+        runtimeSessionId: "ccs-sidebar",
+        updatedAt: recorded.persisted[0]?.updatedAt,
+      },
+    ])
   })
+  test("a competing same-runtime link vetoes every destructive cleanup step", async () => {
+    const { deps, recorded } = makeDoneDeps()
+    deps.links = () => [
+      LINK,
+      {
+        ...LINK,
+        instanceId: "cc-other",
+        runtimeSessionId: "ccs-other",
+      },
+    ]
+
+    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
+      "identity evidence for /repo/fix-sidebar disagrees"
+    )
+
+    expect(recorded.calls).toEqual([
+      "lock",
+      "release",
+      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: identity evidence for /repo/fix-sidebar disagrees: ccs-sidebar, ccs-other",
+    ])
+    expect(recorded.persisted).toEqual([])
+  })
+
   test("refuses a session linked to another scratchpad, and reports it where /done was typed", async () => {
     // Nothing stops the link from moving while `done` waits on the lock; the
     // wind-down belongs to whoever is sitting in the scratchpad now.

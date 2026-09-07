@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  claudeLaunchCommand,
   claudeResumeSessionId,
   linkPiRemoteSession,
   mcpConfigDir,
@@ -13,6 +14,7 @@ import {
   requireThreadSessionTarget,
   writeChannelMcpConfig,
 } from "./spawners"
+import { parseClaudeLaunch } from "./discovery"
 import { profileForWorktree, recordProfileSnapshot } from "./identity-store"
 import { windDownPolicyFor, type Profile } from "./profiles"
 
@@ -85,6 +87,23 @@ test("a managed Pi launch carries one stable instance identity into every remote
   expect(launch).toContain("'THREA_INSTANCE_ID=pi-launch-instance'")
   expect(launch).toContain("'THREA_RUNTIME_SESSION_ID=runtime-session'")
   expect(launch).toContain("'/opt/pi' '--session-id' 'runtime-session'")
+})
+
+test("an attached Claude launch ignores an ambient parent key without recording a secret", () => {
+  const identity = {
+    instanceId: "cc-child",
+    runtimeSessionId: "11111111-2222-4333-8444-555555555555",
+  }
+  const args = ["claude", "--dangerously-load-development-channels", "server:threa-channel"]
+  const attached = claudeLaunchCommand(args, identity, {}, "wait", "error", "stream_root", "stream_child")
+  const standalone = claudeLaunchCommand(args, identity)
+  const resumedRoot = claudeLaunchCommand(args, identity, {}, "wait", "error", "stream_root", "stream_root")
+
+  expect(attached).toContain("'THREA_API_KEY='")
+  expect(parseClaudeLaunch(attached)?.environment).toContainEqual({ name: "THREA_API_KEY", value: "" })
+  expect(parseClaudeLaunch(attached.replace("THREA_API_KEY=", "THREA_API_KEY=secret"))).toBeUndefined()
+  expect(standalone).not.toContain("THREA_API_KEY")
+  expect(resumedRoot).not.toContain("THREA_API_KEY")
 })
 
 test("Pi remote linking retries a command lost during startup and stops after the link is persisted", async () => {
@@ -330,18 +349,34 @@ test("a response missing rootStreamId or activeStreamId dies instead of returnin
   ).rejects.toThrow("missing rootStreamId/activeStreamId")
 })
 
-test("requireThreadSessionTarget dies loudly when Threa credentials are missing", () => {
+test("requireThreadSessionTarget rejects an ambient key when the runtime has no explicit identity", () => {
   const savedWorkspace = process.env.THREA_WORKSPACE_ID
   const savedApiKey = process.env.THREA_API_KEY
-  delete process.env.THREA_WORKSPACE_ID
-  delete process.env.THREA_API_KEY
+  process.env.THREA_WORKSPACE_ID = "workspace"
+  process.env.THREA_API_KEY = "parent-key"
   try {
     expect(() => requireThreadSessionTarget({}, "link the Pi thread session")).toThrow(
-      "no Threa credentials found to link the Pi thread session"
+      "no runtime-specific Threa credentials found to link the Pi thread session"
     )
   } finally {
     if (savedWorkspace === undefined) delete process.env.THREA_WORKSPACE_ID
     else process.env.THREA_WORKSPACE_ID = savedWorkspace
+    if (savedApiKey === undefined) delete process.env.THREA_API_KEY
+    else process.env.THREA_API_KEY = savedApiKey
+  }
+})
+
+test("requireThreadSessionTarget keeps the runtime key when an ambient parent key is present", () => {
+  const savedApiKey = process.env.THREA_API_KEY
+  process.env.THREA_API_KEY = "parent-key"
+  try {
+    expect(
+      requireThreadSessionTarget(
+        { baseUrl: "https://pi.example", workspaceId: "workspace", apiKey: "pi-key" },
+        "link the Pi thread session"
+      )
+    ).toEqual({ baseUrl: "https://pi.example", workspaceId: "workspace", apiKey: "pi-key" })
+  } finally {
     if (savedApiKey === undefined) delete process.env.THREA_API_KEY
     else process.env.THREA_API_KEY = savedApiKey
   }
