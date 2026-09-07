@@ -13,6 +13,7 @@ import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-me
 import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
 import { SearchRefineChips } from "@/components/search/search-refine-chips"
+import { SearchRefineStatus } from "@/components/search/search-refine-status"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResults } from "@/components/search/search-results"
 import { SearchClusterList, countClusterResults } from "@/components/search/search-cluster-list"
@@ -205,27 +206,8 @@ export function SearchPage() {
               <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} size="touch" />
             </div>
           )}
-          {refineNote && !isLoading && (
-            <p className="w-full text-xs leading-snug text-muted-foreground" data-search-refine-note>
-              {refineNote}
-            </p>
-          )}
-          {refineFailed && !isLoading && (
-            <p
-              className="flex w-full flex-wrap items-center gap-x-1 text-xs leading-snug text-destructive"
-              data-search-refine-failed
-            >
-              Couldn&apos;t apply the refinement after two tries. Showing all results.
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={retryRefine}
-              >
-                Retry
-              </Button>
-            </p>
+          {!isLoading && (
+            <SearchRefineStatus note={refineNote} failed={refineFailed} onRetry={retryRefine} size="touch" />
           )}
         </div>
         <StreamLoadingIndicator isLoading={isLoading} />

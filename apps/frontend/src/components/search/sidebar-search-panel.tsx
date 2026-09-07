@@ -21,6 +21,7 @@ import { useMessageSearch } from "./use-message-search"
 import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
 import { SearchRefineChips } from "./search-refine-chips"
+import { SearchRefineStatus } from "./search-refine-status"
 import { SearchFilterMenu } from "./search-filter-menu"
 import { SearchResults } from "./search-results"
 import { SearchClusterList, countClusterResults } from "./search-cluster-list"
@@ -236,28 +237,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 )}
                 <SearchResultDisplayToggle value={displayMode} onChange={setDisplayMode} />
               </div>
-              {refineNote && !isLoading && (
-                <p className="w-full text-[11px] leading-snug text-muted-foreground" data-search-refine-note>
-                  {refineNote}
-                </p>
-              )}
-              {refineFailed && !isLoading && (
-                <p
-                  className="flex w-full flex-wrap items-center gap-x-1 text-[11px] leading-snug text-destructive"
-                  data-search-refine-failed
-                >
-                  Couldn&apos;t apply the refinement after two tries. Showing all results.
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-5 px-1.5 text-[11px] text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={retryRefine}
-                  >
-                    Retry
-                  </Button>
-                </p>
-              )}
+              {!isLoading && <SearchRefineStatus note={refineNote} failed={refineFailed} onRetry={retryRefine} />}
             </div>
           )}
           <StreamLoadingIndicator isLoading={isLoading} />
