@@ -1,6 +1,13 @@
 import api from "./client"
 import type { MemoExplorerResult } from "./memos"
-import type { AuthorType, ConversationStatus, SearchClickKind, SearchClusterMatch, StreamType } from "@threahq/types"
+import type {
+  AuthorType,
+  ConversationStatus,
+  SearchClickKind,
+  SearchClusterMatch,
+  SearchRefinement,
+  StreamType,
+} from "@threahq/types"
 
 export type ArchiveStatus = "active" | "archived"
 
@@ -21,8 +28,8 @@ export interface SearchRequest {
   filters?: SearchFilters
   /** Use exact substring matching (ILIKE) instead of full-text/semantic search */
   exact?: boolean
-  /** Plain-language refinements applied to the clustered list, oldest first. */
-  refine?: string[]
+  /** Refinements applied to the clustered list, oldest first: prose, or an action on one row. */
+  refine?: SearchRefinement[]
 }
 
 /**

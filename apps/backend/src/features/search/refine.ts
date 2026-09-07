@@ -1,5 +1,6 @@
 import type { AI, CostContext } from "@threahq/agent-runtime"
 import { isAbortError } from "@threahq/agent-runtime"
+import type { SearchRefinement } from "@threahq/types"
 import { logger } from "../../lib/logger"
 import type { MemoExplorerResult } from "../memos"
 import { latestAt, type SearchCluster } from "./clusters"
@@ -15,8 +16,8 @@ import {
 
 export interface SearchRefineInput {
   query: string
-  /** Plain-language refinements, oldest first; all of them apply. */
-  refines: string[]
+  /** Refinements, oldest first; all of them apply. */
+  refines: SearchRefinement[]
   clusters: SearchCluster[]
   memos: MemoExplorerResult[]
   context: { workspaceId: string; userId?: string }
@@ -136,8 +137,20 @@ export function renderRefinePrompt(input: SearchRefineInput): string {
     return lines.join("\n")
   })
 
-  const refines = input.refines.map((refine, index) => `${index + 1}. ${refine}`)
+  const rowByConversationId = new Map<string, number>()
+  input.clusters.forEach((cluster, index) => {
+    if (cluster.conversation) rowByConversationId.set(cluster.conversation.id, index + 1)
+  })
+  const refines = input.refines.map((refine, index) => `${index + 1}. ${renderRefinement(refine, rowByConversationId)}`)
   return [`Query: ${input.query || "(none)"}`, "", "Instructions:", ...refines, "", "Rows:", ...rows].join("\n")
+}
+
+/** A row that left the list still reaches the model as its conversation id, never dropped (INV-11). */
+function renderRefinement(refine: SearchRefinement, rowByConversationId: Map<string, number>): string {
+  if (typeof refine === "string") return refine
+  const action = refine.kind === "more" ? "More like" : "Drop"
+  const row = rowByConversationId.get(refine.conversationId)
+  return row ? `${action} row [${row}]` : `${action} conversation ${refine.conversationId} (not in the list)`
 }
 
 function isoDay(date: Date): string {

@@ -1,3 +1,4 @@
+import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import type { MemoExplorerResult, SearchCluster } from "@/api"
 
 export interface SearchStreamGroup {
@@ -10,6 +11,18 @@ export interface SearchStreamGroup {
 /** What the "N results" summary counts: every hit, and a hit-less topic row as one. */
 export function countClusterResults(clusters: readonly SearchCluster[]): number {
   return clusters.reduce((count, cluster) => count + Math.max(cluster.hits.length, 1), 0)
+}
+
+/** Row titles by conversation id, stripped for inline display (INV-60), for the surfaces that name a row. */
+export function conversationTitles(clusters: readonly SearchCluster[]): Map<string, string> {
+  return new Map(
+    clusters.flatMap((cluster) => {
+      const { conversation } = cluster
+      if (!conversation) return []
+      const title = stripMarkdownToInline(conversation.topicSummary ?? conversation.summary ?? "").trim()
+      return title.length > 0 ? [[conversation.id, title] as const] : []
+    })
+  )
 }
 
 /**

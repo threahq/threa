@@ -4,7 +4,7 @@
 import type React from "react"
 import { useState } from "react"
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Router } from "react-router-dom"
@@ -32,6 +32,7 @@ import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
+import * as sonnerModule from "sonner"
 
 const mockNavigate = vi.fn()
 let workspaceStreams = mockStreamsList
@@ -227,6 +228,9 @@ function installSpies() {
   vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
     get: vi.fn(),
   } as unknown as ReturnType<typeof contextsModule.useStreamService>)
+  vi.spyOn(contextsModule, "useSavedService").mockReturnValue({
+    create: vi.fn(),
+  } as unknown as ReturnType<typeof contextsModule.useSavedService>)
 }
 
 describe("SidebarSearchPanel Integration Tests", () => {
@@ -1613,6 +1617,147 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.keyboard("{Enter}")
 
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
+    })
+  })
+
+  describe("row menu", () => {
+    const baseFilters = { status: ["active", "archived"] }
+    const searchOn: FeatureFlagLayers = { workspace: { search: "on" }, user: {} }
+
+    async function renderWithConversationRow(featureFlags: FeatureFlagLayers = searchOn) {
+      mockSearchState.results = mockSearchResultsList
+      mockSearchState.clusters = [launchCluster()]
+      const user = userEvent.setup()
+      renderPanel(featureFlags)
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+      await screen.findByText("Choosing the launch date")
+      return user
+    }
+
+    /** The header row's own action cluster, not the nested hit's. */
+    function conversationHeader(): HTMLElement {
+      return document.querySelector('[data-search-conversation-id="conv_1"]')!.parentElement as HTMLElement
+    }
+
+    async function openConversationMenu(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(within(conversationHeader()).getByRole("button", { name: "Row actions" }))
+      return screen.findByRole("menu")
+    }
+
+    it("keeps the trigger in the layout on every row, revealed rather than mounted on hover", async () => {
+      await renderWithConversationRow()
+
+      const trigger = within(conversationHeader()).getByRole("button", { name: "Row actions" })
+      expect(trigger.parentElement).toHaveClass("reveal-actions-hover-only")
+      const hitRow = document.querySelector('[data-search-result-id="msg_1"]')!.closest("li") as HTMLElement
+      expect(within(hitRow).getByRole("button", { name: "Row actions" })).toBeInTheDocument()
+    })
+
+    it("refines by the row on More like this, and renders the chip by the row's title", async () => {
+      const user = await renderWithConversationRow()
+
+      await openConversationMenu(user)
+      await user.click(screen.getByRole("menuitem", { name: "More like this" }))
+
+      expect(document.querySelector('[data-search-refine="more:conv_1"]')).toBeInTheDocument()
+      expect(screen.getByText("More like Choosing the launch date")).toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockSearchState.search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
+          ["hello", baseFilters, [], [{ kind: "more", conversationId: "conv_1" }]],
+        ])
+      })
+    })
+
+    it("refines by the row on Drop, from the menu the right-click opens", async () => {
+      const user = await renderWithConversationRow()
+
+      fireEvent.contextMenu(conversationHeader())
+      await user.click(await screen.findByRole("menuitem", { name: "Drop" }))
+
+      expect(document.querySelector('[data-search-refine="drop:conv_1"]')).toBeInTheDocument()
+      expect(screen.getByText("Drop Choosing the launch date")).toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockSearchState.search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([
+          ["hello", baseFilters, [], [{ kind: "drop", conversationId: "conv_1" }]],
+        ])
+      })
+    })
+
+    it("waits for the button to come up when contextmenu fires on mousedown, so the release selects nothing", async () => {
+      const user = await renderWithConversationRow()
+
+      fireEvent.contextMenu(conversationHeader(), { buttons: 2 })
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument()
+
+      fireEvent.mouseUp(window)
+      expect(await screen.findByRole("menu")).toBeInTheDocument()
+      expect(screen.getByRole("menuitem", { name: "Drop" })).toBeInTheDocument()
+      expect(mockSearchState.search.mock.calls.filter((call) => call[3] !== undefined)).toEqual([])
+
+      await user.click(screen.getByRole("menuitem", { name: "Drop" }))
+      expect(document.querySelector('[data-search-refine="drop:conv_1"]')).toBeInTheDocument()
+    })
+
+    it("confirms Copy link in place, with no toast and the menu still open", async () => {
+      const user = await renderWithConversationRow()
+      const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined)
+      const success = vi.spyOn(sonnerModule.toast, "success")
+      const error = vi.spyOn(sonnerModule.toast, "error")
+
+      await openConversationMenu(user)
+      const copy = screen.getByRole("menuitem", { name: "Copy link" })
+      expect(copy.querySelector(".lucide-check")).not.toBeInTheDocument()
+      await user.click(copy)
+
+      expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/workspace_1/s/stream_channel1?m=msg_first`)
+      await waitFor(() => {
+        expect(screen.getByRole("menuitem", { name: "Copy link" }).querySelector(".lucide-check")).toBeInTheDocument()
+      })
+      expect(success).not.toHaveBeenCalled()
+      expect(error).not.toHaveBeenCalled()
+    })
+
+    it("opens the row and its stream, and saves the row's first hit", async () => {
+      const user = await renderWithConversationRow()
+
+      await openConversationMenu(user)
+      expect(screen.getByRole("menuitem", { name: "Open conversation" })).toHaveAttribute(
+        "href",
+        "/w/workspace_1/s/stream_channel1?m=msg_first"
+      )
+      expect(screen.getByRole("menuitem", { name: "Show in #general" })).toHaveAttribute(
+        "href",
+        "/w/workspace_1/s/stream_channel1"
+      )
+      expect(screen.getByRole("menuitem", { name: "Save for later" })).toBeInTheDocument()
+    })
+
+    it("omits More like this and Drop on a lone-message row, and without the search flag", async () => {
+      mockSearchState.results = mockSearchResultsList
+      const user = userEvent.setup()
+      renderPanel(searchOn)
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+
+      await screen.findByText("#general")
+      const strayRow = document.querySelector('[data-search-result-id="msg_1"]')!.closest("li") as HTMLElement
+      await user.click(within(strayRow).getByRole("button", { name: "Row actions" }))
+
+      const menu = await screen.findByRole("menu")
+      expect(within(menu).getByRole("menuitem", { name: "Open message" })).toBeInTheDocument()
+      expect(within(menu).queryByRole("menuitem", { name: "More like this" })).not.toBeInTheDocument()
+      expect(within(menu).queryByRole("menuitem", { name: "Drop" })).not.toBeInTheDocument()
+    })
+
+    it("omits the refine items while the search flag is off", async () => {
+      const user = await renderWithConversationRow({ workspace: {}, user: {} })
+
+      const menu = await openConversationMenu(user)
+      expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument()
+      expect(within(menu).queryByRole("menuitem", { name: "More like this" })).not.toBeInTheDocument()
     })
   })
 })

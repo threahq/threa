@@ -108,6 +108,40 @@ describe("search handlers", () => {
     expect(res.body).toEqual(expect.objectContaining({ refine, queryLogId: "sqlog_1" }))
   })
 
+  it("passes a structured refinement through untouched", async () => {
+    spyOn(accessModule, "resolveUserAccessibleStreamIds").mockResolvedValue([])
+    const { handlers, searchClusters } = createHandlers({})
+
+    await handlers.search(
+      createRequest({
+        body: { query: "deploy", refine: [{ kind: "drop", conversationId: "conv_1" }, "only decisions"] },
+      }) as never,
+      createResponse() as never
+    )
+
+    expect(searchClusters).toHaveBeenCalledWith(
+      expect.objectContaining({ refine: [{ kind: "drop", conversationId: "conv_1" }, "only decisions"] })
+    )
+  })
+
+  it("rejects a structured refinement with an unknown kind or no conversation", async () => {
+    const { handlers, searchClusters } = createHandlers({})
+
+    await expect(
+      handlers.search(
+        createRequest({ body: { query: "deploy", refine: [{ kind: "keep", conversationId: "conv_1" }] } }) as never,
+        createResponse() as never
+      )
+    ).rejects.toMatchObject({ status: 400 })
+    await expect(
+      handlers.search(
+        createRequest({ body: { query: "deploy", refine: [{ kind: "more" }] } }) as never,
+        createResponse() as never
+      )
+    ).rejects.toMatchObject({ status: 400 })
+    expect(searchClusters).not.toHaveBeenCalled()
+  })
+
   it("rejects a refine trail longer than the cap", async () => {
     const { handlers, searchClusters } = createHandlers({})
 

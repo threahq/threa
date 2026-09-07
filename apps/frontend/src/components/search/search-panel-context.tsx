@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 import { useNavigate } from "react-router-dom"
 import { useSidebar } from "@/contexts/sidebar-context"
 import { capture } from "@/lib/analytics/posthog"
+import type { SearchRefinement } from "@threahq/types"
 
 interface OpenSearchOptions {
   /** Seed the search input (e.g. text carried over from the quick switcher). */
@@ -15,8 +16,8 @@ interface SearchPanelContextValue {
   query: string
   setQuery: (query: string) => void
   /** Committed refinements, oldest first; each is a removable chip. */
-  refines: string[]
-  setRefines: (refines: string[]) => void
+  refines: SearchRefinement[]
+  setRefines: (refines: SearchRefinement[]) => void
   /** Result the user last opened — drives the active row styling. */
   activeResultId: string | null
   setActiveResultId: (id: string | null) => void
@@ -42,7 +43,7 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
   const { state, isMobile, togglePinned, collapse } = useSidebar()
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState("")
-  const [refines, setRefines] = useState<string[]>([])
+  const [refines, setRefines] = useState<SearchRefinement[]>([])
   const [activeResultId, setActiveResultId] = useState<string | null>(null)
 
   const focusInputRef = useRef<(() => void) | null>(null)

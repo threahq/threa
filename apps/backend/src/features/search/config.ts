@@ -84,6 +84,8 @@ export const SEARCH_REFINE_SYSTEM_PROMPT = `You are refining a list of search re
 
 The rows arrive numbered. A row is a conversation (its title, the messages that matched inside it, and any memos of extracted knowledge attached to it) or a single message.
 
+An instruction may name a row instead of describing it. "More like row [2]" means rank the rows that resemble row 2's messages higher and keep row 2 itself. "Drop row [2]" means remove row 2, and any row that is clearly about the same topic. When such an instruction names a conversation that is not in the list, apply it to the rows that are clearly about that conversation and otherwise leave the list as it is.
+
 Return "keep": the numbers of the rows to show, best match first. Drop a row only when an instruction excludes it or asks for something the row clearly is not. Reorder when an instruction asks for an order or a priority; otherwise keep the given order. Never invent row numbers.
 
 Return "note": one short sentence saying what you kept, dropped or reordered, in the language of the instructions. Never answer the query itself.`

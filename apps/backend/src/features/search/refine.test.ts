@@ -115,6 +115,32 @@ describe("renderRefinePrompt", () => {
       ].join("\n")
     )
   })
+
+  it("should render a structured refinement as the row it names, and by conversation id when that row is gone", () => {
+    const prompt = renderRefinePrompt({
+      query: "deploy",
+      refines: [
+        { kind: "more", conversationId: "conv_2" },
+        { kind: "drop", conversationId: "conv_gone" },
+      ],
+      clusters: [
+        cluster({ hits: [{ content: "lone message", createdAt: new Date("2026-03-02T10:00:00Z") } as never] }),
+        cluster({
+          conversation: { id: "conv_2", topicSummary: "Railway cutover", summary: null, messageCount: 12 } as never,
+        }),
+      ],
+      memos: [],
+      context: { workspaceId: "ws_1" },
+    })
+
+    expect(prompt.split("\n").slice(0, 5)).toEqual([
+      "Query: deploy",
+      "",
+      "Instructions:",
+      "1. More like row [2]",
+      "2. Drop conversation conv_gone (not in the list)",
+    ])
+  })
 })
 
 describe("StubSearchRefiner", () => {

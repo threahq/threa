@@ -1,11 +1,15 @@
 import { Loader2, Sparkles, TriangleAlert, X } from "lucide-react"
+import type { SearchRefinement } from "@threahq/types"
 import { Badge } from "@/components/ui/badge"
+import { serializeRefine } from "@/lib/search-query-parser"
 import { cn } from "@/lib/utils"
 
 type RefineChipState = "idle" | "pending" | "failed"
 
 interface SearchRefineChipsProps {
-  refines: string[]
+  refines: SearchRefinement[]
+  /** Row titles by conversation id, for the chips that name a row. */
+  conversationTitles: Map<string, string>
   onRemove: (index: number) => void
   /** Reopens the refine row on that chip's prose; the text is inert without it. */
   onEdit?: (index: number) => void
@@ -23,6 +27,7 @@ interface SearchRefineChipsProps {
  */
 export function SearchRefineChips({
   refines,
+  conversationTitles,
   onRemove,
   onEdit,
   pending = false,
@@ -34,35 +39,38 @@ export function SearchRefineChips({
     <div className="contents">
       {refines.map((refine, index) => {
         const state = chipState(index === refines.length - 1, pending, failed)
+        const key = serializeRefine(refine)
+        const label = refineLabel(refine, conversationTitles)
+        const editable = typeof refine === "string" && onEdit !== undefined
         return (
           <Badge
-            key={`${refine}-${index}`}
+            key={`${key}-${index}`}
             variant="secondary"
             className={cn(
               "max-w-full gap-1 pr-0.5 text-[11px] font-normal",
               state === "failed" && "border-destructive/40 bg-destructive/10 text-destructive"
             )}
-            data-search-refine={refine}
+            data-search-refine={key}
             data-search-refine-state={state === "idle" ? undefined : state}
           >
             <RefineChipIcon state={state} />
-            {onEdit ? (
+            {editable ? (
               <button
                 type="button"
                 className="min-w-0 truncate hover:underline"
-                title={refine}
+                title={label}
                 onClick={() => onEdit(index)}
               >
-                {refine}
+                {label}
               </button>
             ) : (
-              <span className="min-w-0 truncate" title={refine}>
-                {refine}
+              <span className="min-w-0 truncate" title={label}>
+                {label}
               </span>
             )}
             <button
               type="button"
-              aria-label={`Remove refinement ${refine}`}
+              aria-label={`Remove refinement ${label}`}
               onClick={() => onRemove(index)}
               className="rounded-full p-0.5 transition-colors hover:bg-destructive/20"
             >
@@ -73,6 +81,13 @@ export function SearchRefineChips({
       })}
     </div>
   )
+}
+
+/** A row refinement whose conversation left the list still reads as itself, by action alone. */
+function refineLabel(refine: SearchRefinement, conversationTitles: Map<string, string>): string {
+  if (typeof refine === "string") return refine
+  const action = refine.kind === "more" ? "More like" : "Drop"
+  return `${action} ${conversationTitles.get(refine.conversationId) ?? "this conversation"}`
 }
 
 function chipState(isNewest: boolean, pending: boolean, failed: boolean): RefineChipState {

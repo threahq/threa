@@ -493,6 +493,18 @@ describe("SearchService refine", () => {
     })
   })
 
+  test("should hand a structured refinement to the refiner beside the prose", async () => {
+    stubLegs()
+    const refine = mock(async (_input: SearchRefineInput) => ({ keep: [0], note: "" }))
+    const service = makeService({ embeddingService: embedding, refiner: { refine } })
+
+    await service.searchClusters({ ...base, refine: [{ kind: "drop", conversationId: "conv_1" }, " ", "newest first"] })
+
+    expect(refine).toHaveBeenCalledWith(
+      expect.objectContaining({ refines: [{ kind: "drop", conversationId: "conv_1" }, "newest first"] })
+    )
+  })
+
   test("should keep the full list and report the refine as not applied when the refiner fails open", async () => {
     stubLegs()
     const service = makeService({ embeddingService: embedding, refiner: { refine: async () => null } })

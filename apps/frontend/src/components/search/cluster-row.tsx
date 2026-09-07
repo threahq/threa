@@ -1,10 +1,12 @@
 import { type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Archive, Brain, Loader2, MessagesSquare, Waypoints } from "lucide-react"
+import type { SearchRefinement } from "@threahq/types"
 import { RelativeTime } from "@/components/relative-time"
 import { cn } from "@/lib/utils"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem } from "@/api"
 import { ResultRow } from "./result-row"
+import { SearchRowMenu, useSearchRowMenu } from "./search-row-menu"
 import type { SearchStreamLabels } from "./use-search-stream-labels"
 
 /** Hits shown before a row folds the rest behind "N more". */
@@ -28,6 +30,8 @@ export interface ClusterRowProps {
   onResultSelect: (result: SearchResultItem) => void
   onConversationSelect: (conversationId: string) => void
   onMemoSelect: (memoId: string) => void
+  /** Absent while refining is unavailable; the row menu then omits More like this / Drop. */
+  onRefine?: (refine: SearchRefinement) => void
 }
 
 /**
@@ -51,6 +55,7 @@ export function ClusterRow({
   onResultSelect,
   onConversationSelect,
   onMemoSelect,
+  onRefine,
 }: ClusterRowProps) {
   const { conversation, hits } = cluster
   const matchedTopic = cluster.matchedVia.includes("topic")
@@ -72,9 +77,12 @@ export function ClusterRow({
         isActive={hits[0]!.id === activeResultId}
         onResultSelect={onResultSelect}
         actorName={getActorName(hits[0]!.authorId, hits[0]!.authorType)}
-        streamLabel={showStreamLabel ? label : undefined}
+        streamName={label}
+        showStreamLabel={showStreamLabel}
         isResolving={isResolving}
         isArchived={isArchived}
+        conversationId={null}
+        onRefine={onRefine}
       />
     )
   }
@@ -107,8 +115,10 @@ export function ClusterRow({
           conversation={conversation}
           anchorMessageId={conversation.firstMessageId ?? hits[0]?.id ?? null}
           streamLine={streamLine}
+          streamLabel={label}
           getActorName={getActorName}
           onSelect={onConversationSelect}
+          onRefine={onRefine}
         />
       ) : (
         streamLine && <div className="px-3 pt-2">{streamLine}</div>
@@ -139,8 +149,12 @@ export function ClusterRow({
               isActive={hit.id === activeResultId}
               onResultSelect={onResultSelect}
               actorName={getActorName(hit.authorId, hit.authorType)}
+              streamName={label}
+              showStreamLabel={false}
               isResolving={false}
               isArchived={false}
+              conversationId={conversation?.id ?? null}
+              onRefine={onRefine}
             />
           ))}
         </ul>
@@ -192,53 +206,76 @@ function ConversationHeader({
   conversation,
   anchorMessageId,
   streamLine,
+  streamLabel,
   getActorName,
   onSelect,
+  onRefine,
 }: {
   workspaceId: string
   conversation: NonNullable<SearchCluster["conversation"]>
   anchorMessageId: string | null
   streamLine: ReactNode
+  streamLabel: string
   getActorName: ClusterRowProps["getActorName"]
   onSelect: (conversationId: string) => void
+  onRefine?: (refine: SearchRefinement) => void
 }) {
   const title = conversation.topicSummary ?? conversation.summary ?? "Untitled conversation"
   const names = conversation.participantIds.slice(0, VISIBLE_PARTICIPANTS).map((id) => getActorName(id, "user"))
   const extra = conversation.participantIds.length - names.length
+  const menu = useSearchRowMenu()
+  const openHref = `/w/${workspaceId}/s/${conversation.streamId}${anchorMessageId ? `?m=${anchorMessageId}` : ""}`
 
   return (
-    <Link
-      to={`/w/${workspaceId}/s/${conversation.streamId}${anchorMessageId ? `?m=${anchorMessageId}` : ""}`}
-      onClick={() => onSelect(conversation.id)}
-      data-search-conversation-id={conversation.id}
-      className="block min-w-0 rounded-t-lg px-3 pb-1.5 pt-2 transition-colors hover:bg-muted/60"
-    >
-      <div className={cn("flex min-w-0 items-center gap-2", streamLine ? "justify-between" : "justify-end")}>
-        {streamLine}
-        {conversation.lastMessageAt && (
-          <RelativeTime
-            date={conversation.lastMessageAt}
-            className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
-            terse
-          />
-        )}
-      </div>
-      <h3 className="mt-0.5 text-[13px] font-semibold leading-snug text-foreground line-clamp-2">{title}</h3>
-      <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground/70">
-        <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
-          <MessagesSquare className="h-2.5 w-2.5" aria-hidden="true" />
-          {conversation.messageCount} {conversation.messageCount === 1 ? "message" : "messages"}
-        </span>
-        {names.length > 0 && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span className="min-w-0 truncate">
-              {names.join(", ")}
-              {extra > 0 && ` +${extra}`}
-            </span>
-          </>
-        )}
-      </p>
-    </Link>
+    <div className="reveal-host relative" {...menu.rowHandlers}>
+      <Link
+        to={openHref}
+        onClick={() => onSelect(conversation.id)}
+        data-search-conversation-id={conversation.id}
+        className="block min-w-0 rounded-t-lg pb-1.5 pl-3 pr-8 pt-2 transition-colors hover:bg-muted/60"
+      >
+        <div className={cn("flex min-w-0 items-center gap-2", streamLine ? "justify-between" : "justify-end")}>
+          {streamLine}
+          {conversation.lastMessageAt && (
+            <RelativeTime
+              date={conversation.lastMessageAt}
+              className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
+              terse
+            />
+          )}
+        </div>
+        <h3 className="mt-0.5 text-[13px] font-semibold leading-snug text-foreground line-clamp-2">{title}</h3>
+        <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground/70">
+          <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
+            <MessagesSquare className="h-2.5 w-2.5" aria-hidden="true" />
+            {conversation.messageCount} {conversation.messageCount === 1 ? "message" : "messages"}
+          </span>
+          {names.length > 0 && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="min-w-0 truncate">
+                {names.join(", ")}
+                {extra > 0 && ` +${extra}`}
+              </span>
+            </>
+          )}
+        </p>
+      </Link>
+      <SearchRowMenu
+        className="right-1.5 top-1.5"
+        state={menu}
+        target={{
+          workspaceId,
+          title,
+          openHref,
+          openLabel: "Open conversation",
+          streamId: conversation.streamId,
+          streamLabel,
+          messageId: anchorMessageId,
+          conversationId: conversation.id,
+          onRefine,
+        }}
+      />
+    </div>
   )
 }

@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest"
-import { MAX_SEARCH_REFINE_CHARS } from "@threahq/types"
+import { MAX_SEARCH_REFINE_CHARS, type SearchRefinement } from "@threahq/types"
 import {
   parseSearchQuery,
   serializeSearchQuery,
   removeFilterFromQuery,
   boundRefines,
+  serializeRefine,
   addFilterToQuery,
   getFilterLabel,
 } from "./search-query-parser"
@@ -196,6 +197,38 @@ describe("boundRefines", () => {
     expect(boundRefines([" one ", "", "   ", "x".repeat(MAX_SEARCH_REFINE_CHARS + 1), "two"])).toEqual(["one", "two"])
     expect(boundRefines(["a", "b", "c", "d", "e", "f", "g"])).toEqual(["c", "d", "e", "f", "g"])
     expect(boundRefines(["x".repeat(MAX_SEARCH_REFINE_CHARS)])).toEqual(["x".repeat(MAX_SEARCH_REFINE_CHARS)])
+  })
+
+  it("reads a row refinement out of its URL form; anything but a bare conversation id stays prose", () => {
+    expect(
+      boundRefines([
+        "more:conv_1",
+        "drop:conv_2",
+        "more:",
+        "drop: anything from Bob",
+        "more:conv_1 please",
+        { kind: "drop", conversationId: "" },
+      ])
+    ).toEqual([
+      { kind: "more", conversationId: "conv_1" },
+      { kind: "drop", conversationId: "conv_2" },
+      "more:",
+      "drop: anything from Bob",
+      "more:conv_1 please",
+    ])
+  })
+
+  it("keeps a structured refinement whatever its length", () => {
+    const long = { kind: "more", conversationId: "c".repeat(MAX_SEARCH_REFINE_CHARS + 1) } as const
+    expect(boundRefines([long])).toEqual([long])
+  })
+})
+
+describe("serializeRefine", () => {
+  it("round-trips both shapes through the URL form", () => {
+    const refines: SearchRefinement[] = ["only decisions", { kind: "more", conversationId: "conv_1" }]
+    expect(refines.map(serializeRefine)).toEqual(["only decisions", "more:conv_1"])
+    expect(boundRefines(refines.map(serializeRefine))).toEqual(refines)
   })
 })
 

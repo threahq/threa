@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { SearchRefinement } from "@threahq/types"
 import type { SearchResultItem } from "@/api"
 import { ArrowLeft, Brain, Search as SearchIcon } from "lucide-react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
@@ -19,11 +20,11 @@ import { SearchRefineTrigger } from "@/components/search/search-refine-trigger"
 import { useRefineControl } from "@/components/search/use-refine-control"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResultList } from "@/components/search/search-result-list"
-import { countClusterResults, groupClustersByStream } from "@/components/search/group-clusters"
+import { conversationTitles, countClusterResults, groupClustersByStream } from "@/components/search/group-clusters"
 import { useStreamGroupCollapse } from "@/components/search/use-stream-group-collapse"
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
-import { boundRefines } from "@/lib/search-query-parser"
+import { boundRefines, serializeRefine } from "@/lib/search-query-parser"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -79,12 +80,12 @@ export function SearchPage() {
     }
   }, [])
 
-  function setRefines(next: string[]) {
+  function setRefines(next: SearchRefinement[]) {
     setSearchParams(
       (prev) => {
         const params = new URLSearchParams(prev)
         params.delete("refine")
-        for (const refine of next) params.append("refine", refine)
+        for (const refine of next) params.append("refine", serializeRefine(refine))
         return params
       },
       { replace: true }
@@ -113,6 +114,7 @@ export function SearchPage() {
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId ?? "")
   const groups = useMemo(() => groupClustersByStream(clusters, memos), [clusters, memos])
+  const rowTitles = useMemo(() => conversationTitles(clusters), [clusters])
   const { collapsedStreamIds, toggle: toggleStreamGroup } = useStreamGroupCollapse(clusters)
   const resultCount = countClusterResults(clusters)
   const hasResults = clusters.length > 0
@@ -164,6 +166,7 @@ export function SearchPage() {
           <SearchFilterChips query={localQuery} parsedFilters={parsedFilters} onQueryChange={handleQueryChange} />
           <SearchRefineChips
             refines={refines}
+            conversationTitles={rowTitles}
             onRemove={(index) => setRefines(refines.filter((_, i) => i !== index))}
             onEdit={canRefine ? refineControl.edit : undefined}
             pending={isLoading && refines.length > 0}
@@ -263,6 +266,7 @@ export function SearchPage() {
               onResultSelect={handleResultSelect}
               onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
               onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
+              onRefine={canRefine ? refineControl.append : undefined}
             />
           )}
 
