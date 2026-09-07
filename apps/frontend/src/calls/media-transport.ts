@@ -273,7 +273,7 @@ export class CloudflareSfuTransport implements MediaTransport {
       const mid = event.transceiver?.mid ?? null
       const ref = mid ? this.pullByMid.get(mid) : undefined
       if (!ref) return
-      const key = this.refKey(ref)
+      const key = peerTrackRefKey(ref)
       this.remoteTracks.set(key, event.track)
       this.onRemoteTrack?.({ ref, track: event.track })
       event.track.addEventListener(
@@ -323,7 +323,7 @@ export class CloudflareSfuTransport implements MediaTransport {
     for (const peer of peers) {
       for (const publication of peer.publications) {
         if (publication.providerLocator)
-          this.providerLocators.set(this.refKey(publication.ref), publication.providerLocator)
+          this.providerLocators.set(peerTrackRefKey(publication.ref), publication.providerLocator)
       }
     }
   }
@@ -453,14 +453,14 @@ export class CloudflareSfuTransport implements MediaTransport {
       const pc = this.requirePc()
       let cfOfferSdp: string | undefined
       try {
-        const locator = this.providerLocators.get(this.refKey(ref))
+        const locator = this.providerLocators.get(peerTrackRefKey(ref))
         if (!locator) throw new Error("Peer publication has no SFU locator")
         const result = await this.proxy!.pullTracks([locator])
         cfOfferSdp = result.sessionDescription?.sdp
         for (const t of result.tracks) {
           if (t.mid) this.pullByMid.set(t.mid, ref)
         }
-        this.pulledRefs.set(this.refKey(ref), ref)
+        this.pulledRefs.set(peerTrackRefKey(ref), ref)
         // A pull answers with an OFFER (CF adds the remote m-line); we answer it.
         if (result.sessionDescription?.type === "offer") {
           await pc.setRemoteDescription(result.sessionDescription)
@@ -474,10 +474,10 @@ export class CloudflareSfuTransport implements MediaTransport {
         // Unwind fully so the caller's retry starts clean: stale mid→ref entries
         // would attribute a future negotiation's ontrack to this dead pull, and a
         // half-applied offer leaves the PC unable to negotiate anything else.
-        const key = this.refKey(ref)
+        const key = peerTrackRefKey(ref)
         this.pulledRefs.delete(key)
         for (const [mid, r] of this.pullByMid) {
-          if (this.refKey(r) === key) this.pullByMid.delete(mid)
+          if (peerTrackRefKey(r) === key) this.pullByMid.delete(mid)
         }
         await this.rollbackToStable(pc)
         throw describeNegotiationFailure(`pull ${ref.kind}`, err, cfOfferSdp, undefined)
@@ -487,13 +487,13 @@ export class CloudflareSfuTransport implements MediaTransport {
 
   async stopPull(ref: PeerTrackRef): Promise<void> {
     await this.enqueue(async () => {
-      const key = this.refKey(ref)
+      const key = peerTrackRefKey(ref)
       if (!this.pulledRefs.has(key)) return
       this.pulledRefs.delete(key)
       this.remoteTracks.delete(key)
       const mids: string[] = []
       for (const [mid, r] of this.pullByMid) {
-        if (this.refKey(r) === key) mids.push(mid)
+        if (peerTrackRefKey(r) === key) mids.push(mid)
       }
       for (const mid of mids) this.pullByMid.delete(mid)
       if (mids.length === 0) return
@@ -610,8 +610,8 @@ export class CloudflareSfuTransport implements MediaTransport {
   private trackName(kind: PublishedTrackKind): string {
     return `${this.descriptor!.endpointId}:${kind}`
   }
+}
 
-  private refKey(ref: PeerTrackRef): string {
-    return JSON.stringify([ref.endpointId, ref.kind, ref.publicationId])
-  }
+export function peerTrackRefKey(ref: PeerTrackRef): string {
+  return JSON.stringify([ref.endpointId, ref.kind, ref.publicationId])
 }

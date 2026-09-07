@@ -64,11 +64,10 @@ const backendPort = getOrAllocatePort("PLAYWRIGHT_BACKEND_PORT")
 const controlPlanePort = getOrAllocatePort("PLAYWRIGHT_CONTROL_PLANE_PORT")
 const routerPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_PORT")
 const frontendPort = getOrAllocatePort("PLAYWRIGHT_FRONTEND_PORT")
-// The calls media plane in e2e: a local fake Cloudflare Realtime server (the spike
-// harness's fake-cf-server in negotiationless mode) makes the backend's media plane
-// "configured" without a real CF account. The calls suite asserts the control plane
-// (roster/dock), never media bytes — see tests/browser/fake-cf-runner.ts.
+// Fake CF exercises SFU signaling only; direct P2P tests carry native browser media.
 const fakeCfPort = getOrAllocatePort("FAKE_CF_PORT")
+const internalApiKey = "test-internal-key"
+process.env.PLAYWRIGHT_INTERNAL_API_KEY = internalApiKey
 const dbName = deriveTestDatabaseName()
 const cpDbName = `${dbName}_cp`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
@@ -220,7 +219,7 @@ export default defineConfig({
         GLOBAL_RATE_LIMIT_MAX: "10000",
         AUTH_RATE_LIMIT_MAX: "10000",
         CONTROL_PLANE_URL: `http://localhost:${controlPlanePort}`,
-        INTERNAL_API_KEY: "test-internal-key",
+        INTERNAL_API_KEY: internalApiKey,
         ENCLAVE_INTERNAL_API_KEY: "test-enclave-key",
         REGION: "local",
         // VAPID keys for push notification E2E tests
@@ -239,7 +238,7 @@ export default defineConfig({
         DATABASE_URL: `postgresql://threa:threa@localhost:${DB_PORT}/${cpDbName}`,
         USE_STUB_AUTH: "true",
         SESSION_COOKIE_NAME: "wos_session_browser_test",
-        INTERNAL_API_KEY: "test-internal-key",
+        INTERNAL_API_KEY: internalApiKey,
         REGIONS: JSON.stringify({ local: { internalUrl: `http://localhost:${backendPort}` } }),
         CORS_ALLOWED_ORIGINS: `http://localhost:${controlPlanePort},http://localhost:${frontendPort}`,
         GLOBAL_RATE_LIMIT_MAX: "10000",
@@ -247,7 +246,7 @@ export default defineConfig({
       },
     },
     {
-      command: `bunx wrangler dev --port ${routerPort} --var CONTROL_PLANE_URL:http://localhost:${controlPlanePort} --var INTERNAL_API_KEY:test-internal-key --var 'REGIONS:${JSON.stringify({ local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` } })}'`,
+      command: `bunx wrangler dev --port ${routerPort} --var CONTROL_PLANE_URL:http://localhost:${controlPlanePort} --var INTERNAL_API_KEY:${internalApiKey} --var 'REGIONS:${JSON.stringify({ local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` } })}'`,
       cwd: "./apps/workspace-router",
       url: `http://localhost:${routerPort}/readyz`,
       reuseExistingServer: !process.env.CI,

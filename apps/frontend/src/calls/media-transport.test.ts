@@ -179,6 +179,16 @@ describe("CloudflareSfuTransport", () => {
     expect(closeCall?.body.mids).toEqual(["remote-0"])
   })
 
+  it("should reject a pull with no provider locator before calling the proxy", async () => {
+    const { transport, calls } = makeTransport()
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    const ref: PeerTrackRef = { endpointId: "ep_peer", kind: "mic", publicationId: "pub_missing" }
+
+    await expect(transport.pull(ref)).rejects.toThrow("Peer publication has no SFU locator")
+
+    expect(calls.some(({ path }) => path.endsWith("/tracks/pull"))).toBe(false)
+  })
+
   it("unpublish applies CF's close answer so the PC leaves have-local-offer and re-publish works", async () => {
     const closeAnswer = { type: "answer", sdp: "close-answer-sdp" }
     const pc = makeFakePc()

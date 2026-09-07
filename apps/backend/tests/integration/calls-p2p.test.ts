@@ -154,6 +154,49 @@ describe("calls P2P schema and negotiation state", () => {
     })
   })
 
+  test("should preserve publication revision when the SFU registry mutates without one", async () => {
+    const scenario = await seedScenario()
+    const service = new CallService({
+      pool,
+      cloudflare: {
+        createSession: async () => ({ sessionId: "cf_sfu" }),
+        addLocalTracks: async () => ({
+          requiresImmediateRenegotiation: false,
+          tracks: [{ trackName: "mic" }],
+        }),
+      } as never,
+    })
+    const started = await service.startCall({
+      ...scenario,
+      userId: scenario.aUserId,
+      mode: "video",
+      mediaIncarnation: "inc_sfu",
+    })
+    await service.createEndpointCfSession({
+      workspaceId: scenario.workspaceId,
+      callId: started.call.id,
+      userId: scenario.aUserId,
+      endpointId: started.endpoint.id,
+      mediaIncarnation: "inc_sfu",
+    })
+
+    await service.publishTracks({
+      workspaceId: scenario.workspaceId,
+      callId: started.call.id,
+      userId: scenario.aUserId,
+      endpointId: started.endpoint.id,
+      mediaIncarnation: "inc_sfu",
+      sdp: { type: "offer", sdp: "v=0" },
+      tracks: [{ kind: "mic", mid: "0", trackName: "mic" }],
+    })
+
+    const persisted = await CallEndpointRepository.findById(pool, scenario.workspaceId, started.endpoint.id)
+    expect({ revision: persisted?.publicationRevision, tracks: persisted?.publishedTracks }).toEqual({
+      revision: 0,
+      tracks: [{ kind: "mic", trackName: "mic" }],
+    })
+  })
+
   test("should fence the prior browser when the same endpoint and epoch bind a new media incarnation", async () => {
     const scenario = await seedScenario()
     const started = await calls.startCall({

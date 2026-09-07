@@ -344,6 +344,7 @@ export class P2pMeshTransport implements MediaTransport {
     state.emittedRefs.clear()
     state.remoteTracks.clear()
     state.pc.close()
+    if (!this.closed) this.updateAggregateState()
   }
 
   private handleConnectionState(state: PeerState): void {
@@ -416,7 +417,7 @@ export class P2pMeshTransport implements MediaTransport {
       await state.pc.setRemoteDescription(signal.description)
       if (!this.isCurrent(state)) return
       for (const candidate of state.pendingCandidates.get(signal.negotiationId) ?? [])
-        await state.pc.addIceCandidate(candidate)
+        await this.addIceCandidate(state, signal.negotiationId, candidate)
       state.pendingCandidates.delete(signal.negotiationId)
       if (signal.description.type === "answer") this.clearOfferRetry(state)
       if (signal.description.type === "offer") {
@@ -428,8 +429,24 @@ export class P2pMeshTransport implements MediaTransport {
     } else if (signal.kind === "candidate" && signal.candidate) {
       if (state.ignoreOfferId === signal.negotiationId) return
       if (state.pc.remoteDescription && state.remoteNegotiationId === signal.negotiationId)
-        await state.pc.addIceCandidate(signal.candidate)
+        await this.addIceCandidate(state, signal.negotiationId, signal.candidate)
       else this.bufferCandidate(state, signal.negotiationId, signal.candidate)
+    }
+  }
+
+  private async addIceCandidate(
+    state: PeerState,
+    negotiationId: string,
+    candidate: RTCIceCandidateInit
+  ): Promise<void> {
+    try {
+      await state.pc.addIceCandidate(candidate)
+    } catch (error) {
+      console.warn("P2P ICE candidate rejected", {
+        endpointId: state.identity.endpointId,
+        negotiationId,
+        error,
+      })
     }
   }
 

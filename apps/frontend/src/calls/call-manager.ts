@@ -30,6 +30,7 @@ import { createCallMediaSession, type CallMediaSession } from "./media-session"
 import { P2pMeshTransport } from "./p2p-mesh-transport"
 import {
   CloudflareSfuTransport,
+  peerTrackRefKey,
   type MediaTransport,
   type PeerDescriptor,
   type PeerTrackRef,
@@ -250,10 +251,6 @@ interface CallSession {
   /** Detaches every page-lifecycle listener installed for this session. */
   onLifecycle: (() => void) | null
   onDeviceChange: (() => void) | null
-}
-
-function refKey(ref: PeerTrackRef): string {
-  return JSON.stringify([ref.endpointId, ref.kind, ref.publicationId])
 }
 
 /**
@@ -1024,7 +1021,7 @@ export class CallManager implements CallController {
     const desired = new Map<string, PullEntry>()
     for (const peer of this.peerDescriptors(session, roster)) {
       for (const { ref } of peer.publications) {
-        desired.set(refKey(ref), { ref })
+        desired.set(peerTrackRefKey(ref), { ref })
       }
     }
     for (const [key, entry] of desired) {

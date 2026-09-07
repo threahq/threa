@@ -43,18 +43,23 @@ export const p2pSignalSchema = z
     }
   })
 
-export const p2pPublicationSchema = z.object({
-  generation: z.number().int().positive(),
-  revision: z.number().int().positive(),
-  publications: z
-    .array(
-      z.object({
-        kind: z.enum(["mic", "camera"]),
-        publicationId: z.string().min(1).max(128),
-      })
-    )
-    .max(2),
-})
+export const p2pPublicationSchema = z
+  .object({
+    generation: z.number().int().positive(),
+    revision: z.number().int().positive().max(2_147_483_647),
+    publications: z
+      .array(
+        z.object({
+          kind: z.enum(["mic", "camera"]),
+          publicationId: z.string().min(1).max(128),
+        })
+      )
+      .max(2),
+  })
+  .refine((body) => new Set(body.publications.map(({ kind }) => kind)).size === body.publications.length, {
+    message: "publications must be unique per kind",
+    path: ["publications"],
+  })
 
 export type P2pSignal = z.infer<typeof p2pSignalSchema>
 

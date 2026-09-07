@@ -75,8 +75,10 @@ async function setUpDmPair(browser: Browser, options: { p2p?: boolean } = {}): P
   if (options.p2p) {
     const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
     if (!backendPort) throw new Error("PLAYWRIGHT_BACKEND_PORT is required for P2P enrollment")
+    const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
+    if (!internalApiKey) throw new Error("PLAYWRIGHT_INTERNAL_API_KEY is required for P2P enrollment")
     const enrolled = await ownerPage.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
-      headers: { "x-internal-api-key": "test-internal-key" },
+      headers: { "x-internal-api-key": internalApiKey },
       data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { callsP2p: "on" } },
     })
     await expectApiOk(enrolled, "Enroll workspace in callsP2p")
@@ -158,7 +160,9 @@ test.describe("1:1 DM calls", () => {
       )
       await a.getByRole("button", { name: "Start a call" }).click()
       await a.getByRole("menuitem", { name: "Start video call" }).click()
-      const callId = (await (await startedResponse).json()).call.id as string
+      const started = await startedResponse
+      await expectApiOk(started, "Start video call")
+      const callId = (await started.json()).call.id as string
       const readSelf = async () => {
         const response = await b.request.get(
           new URL(`/api/workspaces/${workspaceId}/calls/${callId}`, b.url()).toString()

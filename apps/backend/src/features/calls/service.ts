@@ -9,6 +9,7 @@ import {
   type Visibility,
   type ActiveCall,
   type StreamActiveCall,
+  type CallTransportCapability,
 } from "@threahq/types"
 import { withTransaction, withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -299,7 +300,7 @@ export class CallService {
       mode: CallMode
       mediaIncarnation?: string
       expectedCallId?: string
-      transportCapability?: string
+      transportCapability?: CallTransportCapability
       allowP2p?: boolean
       /** Displace this user's other device rather than 409 — see {@link admitEndpoint}. */
       takeover?: boolean
@@ -435,7 +436,7 @@ export class CallService {
       userId: string
       takeover?: boolean
       mediaIncarnation?: string
-      transportCapability?: string
+      transportCapability?: CallTransportCapability
     },
     tx?: PoolClient
   ): Promise<JoinCallResult> {
@@ -478,7 +479,7 @@ export class CallService {
       userId: string
       takeover?: boolean
       mediaIncarnation?: string
-      transportCapability?: string
+      transportCapability?: CallTransportCapability
     }
   ): Promise<JoinCallResult & { closedSessionIds: string[] }> {
     let call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
@@ -561,7 +562,12 @@ export class CallService {
   private async admitEndpoint(
     client: PoolClient,
     args: {
-      params: { workspaceId: string; callId: string; takeover?: boolean; transportCapability?: string }
+      params: {
+        workspaceId: string
+        callId: string
+        takeover?: boolean
+        transportCapability?: CallTransportCapability
+      }
       participant: CallParticipant
       live: CallEndpoint | null
       incarnation: string | null

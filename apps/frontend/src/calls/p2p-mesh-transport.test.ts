@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { P2pMeshTransport } from "./p2p-mesh-transport"
 
 function makeSocket() {
@@ -98,6 +98,8 @@ async function setup(ids: { local: string; peer: string } = { local: "ep_a", pee
 }
 
 describe("P2pMeshTransport", () => {
+  afterEach(() => vi.useRealTimers())
+
   it("should buffer candidates by negotiation identity and discard delayed generations", async () => {
     const { socket, pc, transport } = await setup()
     socket.fire("call:p2p:signal", {
@@ -143,6 +145,76 @@ describe("P2pMeshTransport", () => {
 
     expect(pc.addIceCandidate).toHaveBeenCalledTimes(1)
     expect(pc.addIceCandidate).toHaveBeenCalledWith({ candidate: "current-candidate" })
+    await transport.close()
+  })
+
+  it("should keep a healthy transport connected after a disconnected peer leaves", async () => {
+    const { pc, transport } = await setup()
+    pc.connectionState = "disconnected"
+    const onConnectionStateChange = pc.onconnectionstatechange as () => void
+    onConnectionStateChange()
+    expect(transport.connectionState).toBe("reconnecting")
+
+    await transport.syncPeers([], 4)
+
+    expect(transport.connectionState).toBe("connected")
+    await transport.close()
+  })
+
+  it("should contain rejected ICE candidates without failing the transport", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const { socket, pc, transport } = await setup()
+    pc.addIceCandidate.mockRejectedValue(new DOMException("stale candidate", "OperationError"))
+    const signal = {
+      callId: "call_1",
+      recipientEndpointId: "ep_a",
+      recipientEpoch: 1,
+      senderEndpointId: "ep_b",
+      senderEpoch: 2,
+      senderMediaIncarnation: "inc_b",
+      recipientMediaIncarnation: "inc_a",
+      generation: 4,
+      negotiationId: "current",
+    }
+    socket.fire("call:p2p:signal", {
+      ...signal,
+      kind: "candidate",
+      candidate: { candidate: "buffered-candidate" },
+    })
+    socket.fire("call:p2p:signal", {
+      ...signal,
+      kind: "description",
+      description: { type: "offer", sdp: "offer" },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    socket.fire("call:p2p:signal", {
+      ...signal,
+      kind: "candidate",
+      candidate: { candidate: "direct-candidate" },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect({ state: transport.connectionState, warnings: warning.mock.calls }).toEqual({
+      state: "connected",
+      warnings: [
+        [
+          "P2P ICE candidate rejected",
+          expect.objectContaining({
+            endpointId: "ep_b",
+            negotiationId: "current",
+            error: expect.objectContaining({ name: "OperationError", message: "stale candidate" }),
+          }),
+        ],
+        [
+          "P2P ICE candidate rejected",
+          expect.objectContaining({
+            endpointId: "ep_b",
+            negotiationId: "current",
+            error: expect.objectContaining({ name: "OperationError", message: "stale candidate" }),
+          }),
+        ],
+      ],
+    })
     await transport.close()
   })
 
@@ -326,6 +398,5 @@ describe("P2pMeshTransport", () => {
     await vi.advanceTimersByTimeAsync(9 * 60_000)
     expect(pc.setConfiguration).toHaveBeenCalledWith(expect.objectContaining({ iceServers: credentials.iceServers }))
     await transport.close()
-    vi.useRealTimers()
   })
 })
