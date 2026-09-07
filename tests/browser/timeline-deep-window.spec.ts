@@ -49,6 +49,29 @@ async function scrollUp(page: Page): Promise<void> {
   }
 }
 
+async function waitForStableViewport(page: Page, anchor: ReturnType<typeof messageLocator>): Promise<void> {
+  let previous: { y: number; scrollTop: number } | null = null
+  let stableSamples = 0
+
+  await expect
+    .poll(
+      async () => {
+        const box = await anchor.boundingBox()
+        const scrollTop = await page.locator(SCROLLER).evaluate((el) => el.scrollTop)
+        if (!box) return false
+
+        const stable =
+          previous !== null && Math.abs(box.y - previous.y) <= 1 && Math.abs(scrollTop - previous.scrollTop) <= 1
+        previous = { y: box.y, scrollTop }
+        stableSamples = stable ? stableSamples + 1 : 0
+        // Outlast the 1s older-page skeleton grace period before taking the baseline.
+        return stableSamples >= 12
+      },
+      { timeout: 10_000, intervals: [100] }
+    )
+    .toBe(true)
+}
+
 test.describe("Bounded timeline read", () => {
   test("a message arriving into a deep scroll-back window does not move the viewport", async ({ page }) => {
     const { testId } = await loginAndCreateWorkspace(page, "deep-window")
@@ -95,7 +118,7 @@ test.describe("Bounded timeline read", () => {
       )
       .toBeGreaterThan(0)
 
-    await page.waitForTimeout(500)
+    await waitForStableViewport(page, deepAnchor)
     const before = await deepAnchor.boundingBox()
     expect(before).not.toBeNull()
     const scrollTopBefore = await page.locator(SCROLLER).evaluate((el) => el.scrollTop)
