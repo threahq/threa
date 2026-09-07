@@ -17,6 +17,7 @@ import { companionSuite } from "./suites/companion/suite"
 import { streamNamingSuite } from "./suites/stream-naming/suite"
 import { boundaryExtractionSuite } from "./suites/boundary-extraction/suite"
 import { multimodalVisionSuite } from "./suites/multimodal-vision/suite"
+import { imageCaptionSuite } from "./suites/image-caption/suite"
 import { memoClassifierSuite } from "./suites/memo-classifier/suite"
 import { memorizerSuite } from "./suites/memorizer/suite"
 import { briefCorrectionSuite } from "./suites/brief-correction/suite"
@@ -32,6 +33,7 @@ const allSuites = [
   streamNamingSuite,
   boundaryExtractionSuite,
   multimodalVisionSuite,
+  imageCaptionSuite,
   memoClassifierSuite,
   memorizerSuite,
   briefCorrectionSuite,

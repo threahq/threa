@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    padding: 24px 76px 24px 28px;
+    font:
+      13px/1.4 "DejaVu Sans",
+      system-ui,
+      sans-serif;
+    background: #fff;
+    color: #1b1f27;
+  }
+  h1 {
+    margin: 0 0 2px;
+    font-size: 17px;
+  }
+  .sub {
+    margin: 0 0 20px;
+    color: #6b7280;
+    font-size: 12px;
+  }
+  .plot {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    row-gap: 12px;
+    align-items: center;
+  }
+  .label {
+    text-align: right;
+    padding-right: 12px;
+    color: #374151;
+  }
+  .bar {
+    height: 22px;
+    background: #2f6fed;
+    position: relative;
+  }
+  .bar.slow {
+    background: #d9484f;
+  }
+  .bar span {
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 2px;
+    color: #1b1f27;
+    white-space: nowrap;
+  }
+  .axis {
+    grid-column: 2;
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid #d5d9e0;
+    padding-top: 6px;
+    color: #6b7280;
+    font-size: 11px;
+  }
+  .xlabel {
+    grid-column: 2;
+    text-align: center;
+    color: #374151;
+    margin-top: 6px;
+  }
+  .legend {
+    margin-top: 18px;
+    display: flex;
+    gap: 18px;
+    color: #374151;
+    font-size: 12px;
+  }
+  .key {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    margin-right: 6px;
+    vertical-align: -1px;
+  }
+</style>
+<h1>API p95 latency by region</h1>
+<p class="sub">Week of 2026-08-31 · 4.1M requests · target 300 ms</p>
+<div class="plot">
+  <div class="label">eu-west-1</div>
+  <div class="bar" style="width: 41%"><span>182 ms</span></div>
+  <div class="label">eu-north-1</div>
+  <div class="bar" style="width: 47%"><span>210 ms</span></div>
+  <div class="label">us-east-1</div>
+  <div class="bar" style="width: 66%"><span>294 ms</span></div>
+  <div class="label">us-west-2</div>
+  <div class="bar slow" style="width: 78%"><span>348 ms</span></div>
+  <div class="label">ap-south-1</div>
+  <div class="bar slow" style="width: 100%"><span>446 ms</span></div>
+  <div class="axis"><span>0</span><span>150</span><span>300</span><span>450 ms</span></div>
+  <div class="xlabel">p95 latency (ms)</div>
+</div>
+<div class="legend">
+  <span><i class="key" style="background: #2f6fed"></i>Within target</span>
+  <span><i class="key" style="background: #d9484f"></i>Over target</span>
+</div>
