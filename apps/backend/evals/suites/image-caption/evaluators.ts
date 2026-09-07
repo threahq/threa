@@ -14,7 +14,7 @@ function normalize(text: string): string {
   return text.replace(/[\s\u00a0\u202f]+/g, " ").toLowerCase()
 }
 
-function coverage(haystack: string, needles: string[]): { found: string[]; missing: string[] } {
+function coverage(haystack: string, needles: string[]): { found: string[]; missing: string[]; score: number } {
   const hay = normalize(haystack)
   const found: string[] = []
   const missing: string[] = []
@@ -25,7 +25,7 @@ function coverage(haystack: string, needles: string[]): { found: string[]; missi
       missing.push(needle)
     }
   }
-  return { found, missing }
+  return { found, missing, score: needles.length > 0 ? found.length / needles.length : 1 }
 }
 
 function failed(name: string, details: string): EvaluatorResult {
@@ -56,8 +56,7 @@ export const textCoverageEvaluator: Evaluator<ImageCaptionOutput, ImageCaptionEx
     if (!output.analysis) return failed("text-coverage", output.error ?? "No analysis")
     if (!output.flatText) return failed("text-coverage", "No text transcribed")
 
-    const { found, missing } = coverage(output.flatText, expected.requiredText)
-    const score = found.length / expected.requiredText.length
+    const { missing, score } = coverage(output.flatText, expected.requiredText)
     return {
       name: "text-coverage",
       score,
@@ -76,8 +75,7 @@ export const summaryDetailEvaluator: Evaluator<ImageCaptionOutput, ImageCaptionE
   evaluate: (output, expected) => {
     if (!output.analysis) return failed("summary-detail", output.error ?? "No analysis")
 
-    const { found, missing } = coverage(output.analysis.summary, expected.summaryMentions)
-    const score = found.length / expected.summaryMentions.length
+    const { missing, score } = coverage(output.analysis.summary, expected.summaryMentions)
     return {
       name: "summary-detail",
       score,
