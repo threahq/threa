@@ -18,8 +18,7 @@ import { SearchRefineRow } from "@/components/search/search-refine-row"
 import { SearchRefineTrigger } from "@/components/search/search-refine-trigger"
 import { useRefineControl } from "@/components/search/use-refine-control"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
-import { SearchGroupedList } from "@/components/search/search-grouped-list"
-import { SearchRankedList } from "@/components/search/search-ranked-list"
+import { SearchResultList } from "@/components/search/search-result-list"
 import { countClusterResults, groupClustersByStream } from "@/components/search/group-clusters"
 import { useStreamGroupCollapse } from "@/components/search/use-stream-group-collapse"
 import { SearchResultDisplayToggle } from "@/components/search/search-result-display-toggle"
@@ -248,37 +247,24 @@ export function SearchPage() {
 
           {displayError && <p className="py-8 text-center text-sm text-destructive">{displayError}</p>}
 
-          {hasQuery &&
-            !displayError &&
-            hasResults &&
-            (displayMode === "ranked" ? (
-              <SearchRankedList
-                workspaceId={workspaceId}
-                clusters={clusters}
-                memos={memos}
-                terms={terms}
-                activeResultId={activeResultId}
-                exploreHref={exploreHref}
-                foldHits={isMobile}
-                onResultSelect={handleResultSelect}
-                onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
-                onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
-              />
-            ) : (
-              <SearchGroupedList
-                workspaceId={workspaceId}
-                groups={groups}
-                terms={terms}
-                activeResultId={activeResultId}
-                exploreHref={exploreHref}
-                collapsedStreamIds={collapsedStreamIds}
-                onToggleStream={toggleStreamGroup}
-                foldHits={isMobile}
-                onResultSelect={handleResultSelect}
-                onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
-                onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
-              />
-            ))}
+          {hasQuery && !displayError && hasResults && (
+            <SearchResultList
+              workspaceId={workspaceId}
+              displayMode={displayMode}
+              clusters={clusters}
+              memos={memos}
+              groups={groups}
+              terms={terms}
+              activeResultId={activeResultId}
+              exploreHref={exploreHref}
+              collapsedStreamIds={collapsedStreamIds}
+              onToggleStream={toggleStreamGroup}
+              foldHits={isMobile}
+              onResultSelect={handleResultSelect}
+              onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
+              onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
+            />
+          )}
 
           {hasQuery && !isLoading && !displayError && !hasResults && (
             <div className="flex flex-col items-center justify-center py-16 text-center">

@@ -21,8 +21,7 @@ import { SearchRefineRow } from "./search-refine-row"
 import { SearchRefineTrigger } from "./search-refine-trigger"
 import { useRefineControl } from "./use-refine-control"
 import { SearchFilterMenu } from "./search-filter-menu"
-import { SearchGroupedList } from "./search-grouped-list"
-import { SearchRankedList } from "./search-ranked-list"
+import { SearchResultList } from "./search-result-list"
 import { countClusterResults, groupClustersByStream } from "./group-clusters"
 import { useStreamGroupCollapse } from "./use-stream-group-collapse"
 import { SearchResultDisplayToggle } from "./search-result-display-toggle"
@@ -283,32 +282,21 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
           {hasQuery && !displayError && hasResults && (
             <div className="px-1 pt-1">
-              {displayMode === "ranked" ? (
-                <SearchRankedList
-                  workspaceId={workspaceId}
-                  clusters={clusters}
-                  memos={memos}
-                  terms={terms}
-                  activeResultId={activeResultId}
-                  exploreHref={exploreHref}
-                  onResultSelect={handleResultSelect}
-                  onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
-                  onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
-                />
-              ) : (
-                <SearchGroupedList
-                  workspaceId={workspaceId}
-                  groups={groups}
-                  terms={terms}
-                  activeResultId={activeResultId}
-                  exploreHref={exploreHref}
-                  collapsedStreamIds={collapsedStreamIds}
-                  onToggleStream={toggleStreamGroup}
-                  onResultSelect={handleResultSelect}
-                  onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
-                  onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
-                />
-              )}
+              <SearchResultList
+                workspaceId={workspaceId}
+                displayMode={displayMode}
+                clusters={clusters}
+                memos={memos}
+                groups={groups}
+                terms={terms}
+                activeResultId={activeResultId}
+                exploreHref={exploreHref}
+                collapsedStreamIds={collapsedStreamIds}
+                onToggleStream={toggleStreamGroup}
+                onResultSelect={handleResultSelect}
+                onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
+                onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
+              />
             </div>
           )}
 
