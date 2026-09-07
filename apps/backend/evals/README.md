@@ -38,6 +38,7 @@ bun run eval -- --config evals/companion-model-comparison.yaml -s persona-style
 | `stream-naming`       | Stream name generation              |
 | `boundary-extraction` | Conversation boundary detection     |
 | `multimodal-vision`   | Vision/attachment understanding     |
+| `image-caption`       | Image captioning and OCR quality    |
 | `memo-classifier`     | Knowledge-worthiness classification |
 | `memorizer`           | Memo generation from messages       |
 | `voice-polish`        | Dictation correction and structure  |
@@ -201,7 +202,7 @@ Each suite supports specific component keys:
 - `companion` - Main agent model
 - `researcher` - Research subcomponent (if integrated)
 
-**stream-naming**, **boundary-extraction**, **memo-classifier**, **memorizer**, **voice-polish**:
+**stream-naming**, **boundary-extraction**, **memo-classifier**, **memorizer**, **voice-polish**, **image-caption**:
 
 - Single model, use the suite name as the component key
 

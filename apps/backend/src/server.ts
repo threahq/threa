@@ -1380,7 +1380,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   const imageCaptionService = config.useStubAI
     ? new StubImageCaptionService(pool)
-    : new ImageCaptionService({ pool, ai, storage })
+    : new ImageCaptionService({ pool, ai, storage, configResolver })
   const imageCaptionWorker = createImageCaptionWorker({ imageCaptionService })
   const imageCaptionOnDLQ: OnDLQHook<ImageCaptionJobData> = async (querier, job) => {
     await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)

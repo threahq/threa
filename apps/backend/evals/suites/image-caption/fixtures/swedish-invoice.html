@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  body {
+    margin: 0;
+    padding: 28px 32px;
+    font:
+      13px/1.6 "DejaVu Sans",
+      system-ui,
+      sans-serif;
+    background: #fff;
+    color: #1b1f27;
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 19px;
+  }
+  .rows {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    max-width: 460px;
+    margin: 14px 0 20px;
+  }
+  .rows div {
+    padding: 2px 0;
+  }
+  .rows .k {
+    color: #6b7280;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    max-width: 620px;
+  }
+  th,
+  td {
+    border-bottom: 1px solid #d5d9e0;
+    padding: 6px 10px;
+    text-align: left;
+  }
+  th {
+    color: #6b7280;
+    font-weight: 600;
+  }
+  td.num,
+  th.num {
+    text-align: right;
+  }
+  .total {
+    margin-top: 14px;
+    font-weight: 600;
+  }
+  .note {
+    margin-top: 20px;
+    color: #6b7280;
+    font-size: 12px;
+  }
+</style>
+<h1>Faktura 2026-4471</h1>
+<div class="rows">
+  <div class="k">Fakturadatum</div>
+  <div>2026-08-31</div>
+  <div class="k">Förfallodatum</div>
+  <div>2026-09-30</div>
+  <div class="k">Kund</div>
+  <div>Threa AB, Stockholm</div>
+  <div class="k">Organisationsnummer</div>
+  <div>559312-4478</div>
+  <div class="k">Betalningsvillkor</div>
+  <div>30 dagar netto</div>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Beskrivning</th>
+      <th class="num">Antal</th>
+      <th class="num">Á-pris</th>
+      <th class="num">Belopp</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Molndrift, augusti</td>
+      <td class="num">1</td>
+      <td class="num">18 400,00</td>
+      <td class="num">18 400,00</td>
+    </tr>
+    <tr>
+      <td>Objektlagring (TB)</td>
+      <td class="num">6</td>
+      <td class="num">420,00</td>
+      <td class="num">2 520,00</td>
+    </tr>
+    <tr>
+      <td>Konsulttimmar</td>
+      <td class="num">12</td>
+      <td class="num">1 150,00</td>
+      <td class="num">13 800,00</td>
+    </tr>
+  </tbody>
+</table>
+<div class="total">Summa exklusive moms: 34 720,00 SEK · Moms 25 %: 8 680,00 SEK · Att betala: 43 400,00 SEK</div>
+<p class="note">Betalas till bankgiro 5312-4478. Vid försenad betalning debiteras dröjsmålsränta enligt räntelagen.</p>

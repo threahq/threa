@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  body {
+    margin: 0;
+    padding: 20px 24px;
+    font:
+      13px/1.4 "DejaVu Sans",
+      system-ui,
+      sans-serif;
+    background: #fff;
+    color: #1b1f27;
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 16px;
+  }
+  p {
+    margin: 6px 0 0;
+  }
+  p.small {
+    color: #6b7280;
+    font-size: 12px;
+  }
+  svg text {
+    font:
+      12px "DejaVu Sans",
+      system-ui,
+      sans-serif;
+    fill: #1b1f27;
+  }
+  svg text.edge {
+    font-size: 10px;
+    fill: #6b7280;
+  }
+</style>
+<h1>Attachment extraction pipeline</h1>
+<svg width="880" height="200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#5b6270" />
+    </marker>
+  </defs>
+  <g stroke="#5b6270" stroke-width="1.4" fill="none" marker-end="url(#a)">
+    <path d="M140,90 L168,90" />
+    <path d="M304,90 L324,90 L324,40 L348,40" />
+    <path d="M304,90 L324,90 L324,140 L348,140" />
+    <path d="M474,40 L494,40 L494,90 L548,90" />
+    <path d="M474,140 L494,140 L494,90 L548,90" />
+    <path d="M674,90 L728,90" />
+  </g>
+  <g fill="#eef2fb" stroke="#2f6fed">
+    <rect x="20" y="70" width="120" height="40" rx="4" />
+    <rect x="168" y="70" width="136" height="40" rx="4" />
+    <rect x="348" y="20" width="126" height="40" rx="4" />
+    <rect x="348" y="120" width="126" height="40" rx="4" />
+    <rect x="548" y="70" width="126" height="40" rx="4" />
+    <rect x="728" y="70" width="126" height="40" rx="4" />
+  </g>
+  <g>
+    <text x="80" y="95" text-anchor="middle">Upload</text>
+    <text x="236" y="95" text-anchor="middle">Detect type</text>
+    <text x="411" y="45" text-anchor="middle">image-caption</text>
+    <text x="411" y="145" text-anchor="middle">pdf / word / excel</text>
+    <text x="611" y="95" text-anchor="middle">Extraction row</text>
+    <text x="791" y="95" text-anchor="middle">Search index</text>
+    <text x="330" y="30" class="edge">image/*</text>
+    <text x="330" y="168" class="edge">documents</text>
+    <text x="500" y="30" class="edge">summary + full_text</text>
+    <text x="700" y="82" class="edge">tsvector</text>
+  </g>
+</svg>
+<p>Failure path: a throwing extractor marks the attachment failed and retries three times.</p>
+<p class="small">Owner: attachments feature · queue: attachment-extraction · concurrency 4</p>

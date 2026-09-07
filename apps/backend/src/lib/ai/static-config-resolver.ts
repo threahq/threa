@@ -32,6 +32,13 @@ import {
   TOOL_GUARDIAN_SYSTEM_PROMPT,
 } from "../../features/agents"
 import { EMBEDDING_MODEL_ID } from "../../features/memos"
+import {
+  IMAGE_CAPTION_MODEL_ID,
+  IMAGE_CAPTION_TEMPERATURE,
+  IMAGE_CAPTION_MAX_TOKENS,
+  IMAGE_CAPTION_SYSTEM_PROMPT,
+  IMAGE_CAPTION_USER_PROMPT,
+} from "../../features/attachments"
 
 function buildDefaultConfigs(): Map<string, AnyComponentConfig> {
   const configs = new Map<string, AnyComponentConfig>()
@@ -87,6 +94,14 @@ function buildDefaultConfigs(): Map<string, AnyComponentConfig> {
     modelId: TOOL_GUARDIAN_MODEL_ID,
     temperature: TOOL_GUARDIAN_TEMPERATURE,
     systemPrompt: TOOL_GUARDIAN_SYSTEM_PROMPT,
+  })
+
+  configs.set(COMPONENT_PATHS.ATTACHMENT_IMAGE_CAPTION, {
+    modelId: IMAGE_CAPTION_MODEL_ID,
+    temperature: IMAGE_CAPTION_TEMPERATURE,
+    maxTokens: IMAGE_CAPTION_MAX_TOKENS,
+    systemPrompt: IMAGE_CAPTION_SYSTEM_PROMPT,
+    userPrompt: IMAGE_CAPTION_USER_PROMPT,
   })
 
   configs.set(COMPONENT_PATHS.EMBEDDING, {

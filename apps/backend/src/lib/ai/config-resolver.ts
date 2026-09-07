@@ -62,6 +62,13 @@ export interface CompanionAgentConfig extends ComponentConfig {
   temperature: number
 }
 
+export interface ImageCaptionConfig extends ComponentConfig {
+  temperature: number
+  systemPrompt: string
+  userPrompt: string
+  maxTokens: number
+}
+
 /** Convention: "component" or "component:subcomponent" */
 export const COMPONENT_PATHS = {
   BOUNDARY_EXTRACTION: "boundary-extraction",
@@ -73,6 +80,7 @@ export const COMPONENT_PATHS = {
   COMPANION_RESEARCHER: "companion:researcher",
   GENERAL_RESEARCHER: "general:researcher",
   TOOL_GUARDIAN: "agents:tool-guardian",
+  ATTACHMENT_IMAGE_CAPTION: "attachments:image-caption",
   EMBEDDING: "embedding",
 } as const
 
@@ -89,6 +97,7 @@ export interface PathConfigMap {
   "companion:researcher": ResearcherConfig
   "general:researcher": GeneralResearcherConfig
   "agents:tool-guardian": ComponentConfig
+  "attachments:image-caption": ImageCaptionConfig
   embedding: ComponentConfig
 }
 
