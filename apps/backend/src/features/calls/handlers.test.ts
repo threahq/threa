@@ -29,10 +29,13 @@ function fakeReq(overrides: Partial<Request> = {}): Request {
 function makeHandlers(opts: {
   cloudflareEnabled?: boolean
   callsEnabled?: boolean
+  callsP2pEnabled?: boolean
   callService?: Record<string, unknown>
 }) {
   const featureFlagService = {
-    getWorkspaceFlag: mock(async () => ((opts.callsEnabled ?? true) ? "on" : "off")),
+    getWorkspaceFlag: mock(async (_workspaceId: string, flag: string) =>
+      (flag === "callsP2p" ? opts.callsP2pEnabled : (opts.callsEnabled ?? true)) ? "on" : "off"
+    ),
   }
   return createCallHandlers({
     pool: {} as Pool,
@@ -157,6 +160,20 @@ describe("createCallHandlers.bootstrap", () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ rosterVersion: 3, self: { userId: "usr_1", endpointId: "callep_1" } })
     )
+  })
+})
+
+describe("createCallHandlers.turnCredentials", () => {
+  it("should reject credential issuance when P2P enrollment is disabled", async () => {
+    const issueTurnCredentials = mock(async () => ({}))
+    const handlers = makeHandlers({ callService: { issueTurnCredentials }, callsP2pEnabled: false })
+    await expect(
+      handlers.turnCredentials(
+        fakeReq({ params: { callId: "call_1", endpointId: "ep_1" }, body: { mediaIncarnation: "inc_1" } }),
+        fakeRes()
+      )
+    ).rejects.toMatchObject({ status: 404, code: "CALL_P2P_UNAVAILABLE" })
+    expect(issueTurnCredentials).not.toHaveBeenCalled()
   })
 })
 

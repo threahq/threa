@@ -73,6 +73,13 @@ function setup(overrides?: {
     })),
     renewEndpointLease: mock(async () => ({ leaseExpiresAt: new Date("2026-07-19T12:00:45.000Z") })),
     markEndpointReconnecting: mock(async () => ({ id: "callep_1", status: "reconnecting" })),
+    validateP2pSignal: mock(async () => {}),
+    setP2pPublications: mock(async () => ({
+      rosterVersion: 9,
+      roster: [],
+      mediaTransport: "p2p",
+      transportGeneration: 1,
+    })),
     ...overrides?.callService,
   }
 
@@ -318,6 +325,116 @@ describe("registerCallGateway call:join", () => {
     // The new join succeeds despite the prior-call teardown throwing.
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: true }))
     expect(socket.joined.has("call:call_2:ep:callep_2")).toBe(true)
+  })
+})
+
+describe("registerCallGateway P2P signaling", () => {
+  afterEach(() => mock.restore())
+
+  it("should derive the sender from the current socket binding and address the live recipient endpoint", async () => {
+    const { socket, callService, to, emit } = setup()
+    await socket.trigger(
+      "call:join",
+      { ...JOIN, transportCapability: "p2p-v1" },
+      mock(() => {})
+    )
+    const ack = mock(() => {})
+    await socket.trigger(
+      "call:p2p:signal",
+      {
+        callId: "call_1",
+        recipientEndpointId: "callep_2",
+        recipientEpoch: 3,
+        recipientMediaIncarnation: "inc_2",
+        generation: 1,
+        negotiationId: "neg_1",
+        kind: "description",
+        description: { type: "offer", sdp: "offer" },
+      },
+      ack
+    )
+
+    expect(callService.validateP2pSignal).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      userId: "usr_1",
+      senderEndpointId: "callep_1",
+      senderEpoch: 2,
+      senderIncarnation: "inc_1",
+      senderConnectionSeq: 4,
+      recipientEndpointId: "callep_2",
+      recipientEpoch: 3,
+      recipientMediaIncarnation: "inc_2",
+      generation: 1,
+    })
+    expect(to).toHaveBeenCalledWith("call:call_1:ep:callep_2:inc:inc_2")
+    expect(emit).toHaveBeenCalledWith(
+      "call:p2p:signal",
+      expect.objectContaining({ senderEndpointId: "callep_1", senderEpoch: 2, senderMediaIncarnation: "inc_1" })
+    )
+    expect(ack).toHaveBeenCalledWith({ ok: true })
+  })
+
+  it("should not forward a stale or cross-call signal rejected by the service", async () => {
+    const validateP2pSignal = mock(async () => {
+      throw new HttpError("stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+    })
+    const { socket, emit } = setup({ callService: { validateP2pSignal } })
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    const ack = mock(() => {})
+    await socket.trigger(
+      "call:p2p:signal",
+      {
+        callId: "call_1",
+        recipientEndpointId: "callep_other",
+        recipientEpoch: 1,
+        recipientMediaIncarnation: "inc_other",
+        generation: 1,
+        negotiationId: "neg_1",
+        kind: "end-of-candidates",
+      },
+      ack
+    )
+
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALL_STALE_ENDPOINT" }))
+    expect(emit).not.toHaveBeenCalledWith("call:p2p:signal", expect.anything())
+  })
+
+  it("should persist generation-qualified publications and broadcast the resulting roster", async () => {
+    const { socket, callService, emit } = setup()
+    await socket.trigger(
+      "call:join",
+      JOIN,
+      mock(() => {})
+    )
+    const ack = mock(() => {})
+    await socket.trigger(
+      "call:p2p:publications",
+      { generation: 1, revision: 1, publications: [{ kind: "mic", publicationId: "pub_1" }] },
+      ack
+    )
+
+    expect(callService.setP2pPublications).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpointId: "callep_1",
+        endpointEpoch: 2,
+        endpointConnectionSeq: 4,
+        mediaIncarnation: "inc_1",
+        generation: 1,
+      })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      "call:roster",
+      expect.objectContaining({
+        mediaTransport: "p2p",
+        transportGeneration: 1,
+      })
+    )
+    expect(ack).toHaveBeenCalledWith({ ok: true, data: { rosterVersion: 9 } })
   })
 })
 

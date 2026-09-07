@@ -23,6 +23,8 @@ export type CallSurfaceMode = "min" | "compact" | "standard" | "full"
 export interface CallPublishedTrack {
   kind: PublishedTrackKind
   trackName: string
+  publicationId?: string
+  transportGeneration?: number
 }
 
 export interface CallRosterParticipant {
@@ -38,6 +40,9 @@ export interface CallRosterParticipant {
    * absent the CallManager cannot pull this peer's media.
    */
   cfSessionId?: string | null
+  epoch?: number | null
+  mediaIncarnation?: string | null
+  transportCapability?: string | null
 }
 
 export interface CallDeviceState {
@@ -67,6 +72,10 @@ export interface CallLocalState {
 }
 
 export interface CallDiagnostics {
+  mediaTransport?: "sfu" | "p2p"
+  candidateType?: "host" | "srflx" | "relay" | null
+  bytesSent?: number
+  bytesReceived?: number
   rttMs: number | null
   packetLoss: number | null
   qualityLimitation: "none" | "cpu" | "bandwidth" | "other" | null

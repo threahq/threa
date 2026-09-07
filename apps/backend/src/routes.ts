@@ -197,6 +197,7 @@ interface Dependencies {
   callService: CallService
   /** True when the CF Realtime media plane is configured; when false, calls surfaces 503. */
   callsCloudflareEnabled: boolean
+  callsTurnEnabled: boolean
   enclaveRuntimesService: EnclaveRuntimesService
   enclaveClaimService: EnclaveClaimService
   enclaveClaimNudge: EnclaveClaimWaiter | null
@@ -269,6 +270,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     voiceTranscriptionService,
     callService,
     callsCloudflareEnabled,
+    callsTurnEnabled,
     enclaveRuntimesService,
     enclaveClaimService,
     enclaveClaimNudge,
@@ -1747,6 +1749,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     callService,
     featureFlagService,
     cloudflareEnabled: callsCloudflareEnabled,
+    turnEnabled: callsTurnEnabled,
   })
   app.post(
     "/api/workspaces/:workspaceId/calls",
@@ -1782,6 +1785,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("calls.bootstrap", "read"),
     rateLimits.calls,
     calls.bootstrap
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/turn-credentials",
+    ...authed,
+    audit("calls.cf_session", "write"),
+    rateLimits.calls,
+    calls.turnCredentials
   )
   app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/cf/session",

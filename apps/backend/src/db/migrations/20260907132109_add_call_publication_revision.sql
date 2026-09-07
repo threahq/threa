@@ -1,0 +1,2 @@
+ALTER TABLE call_endpoints
+  ADD COLUMN IF NOT EXISTS publication_revision INTEGER NOT NULL DEFAULT 0;

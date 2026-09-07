@@ -2,13 +2,6 @@ import { summarizeSdpMSections } from "@threahq/types"
 import { api } from "@/api/client"
 import type { PublishedTrackKind } from "./config"
 
-// The media-transport seam: an actor/track-oriented, provider-agnostic boundary
-// (the plan's provider boundary — a future >50-participant SFU or the Later P2P
-// direct mode slots in here without touching CallManager). One implementation
-// today: CloudflareSfuTransport. All CF negotiation rides the 0.2 backend proxy
-// endpoints; no CF URL ever appears client-side, and the app secret never
-// leaves the backend.
-
 /** The per-media-session handle a transport connects with (endpoint + incarnation). */
 export interface SessionDescriptor {
   endpointId: string
@@ -16,11 +9,20 @@ export interface SessionDescriptor {
   mediaIncarnation: string
 }
 
-/** A peer track to pull: the publisher's CF session + the advertised track name. */
 export interface PeerTrackRef {
-  /** The publisher's CF session id (from the roster's published-track registry). */
-  sessionId: string
-  trackName: string
+  endpointId: string
+  kind: PublishedTrackKind
+  publicationId: string
+}
+
+export interface PeerDescriptor {
+  endpointId: string
+  epoch: number
+  mediaIncarnation: string | null
+  publications: Array<{
+    ref: PeerTrackRef
+    providerLocator?: { sessionId: string; trackName: string }
+  }>
 }
 
 /** A remote track surfaced by a `pull`, tagged with the ref it satisfied. */
@@ -40,6 +42,9 @@ export interface TransportStats {
   qualityLimitation: "none" | "cpu" | "bandwidth" | "other" | null
   /** Sum of outbound encode time / frames, a rough encoder-pressure signal (ms), or null. */
   encodeTimeMs: number | null
+  candidateType?: "host" | "srflx" | "relay" | null
+  bytesSent?: number
+  bytesReceived?: number
 }
 
 /**
@@ -56,6 +61,8 @@ export interface MediaTransport {
   setPublishEncoding(kind: PublishedTrackKind, params: { maxBitrate?: number }): Promise<void>
   pull(ref: PeerTrackRef): Promise<void>
   stopPull(ref: PeerTrackRef): Promise<void>
+  syncPeers(peers: PeerDescriptor[], generation: number): Promise<void>
+  reconnect?(): Promise<void>
   getStats(): Promise<TransportStats>
   close(): Promise<void>
   readonly connectionState: TransportConnectionState
@@ -115,7 +122,7 @@ export interface CallProxyClient {
     sdp: CfSessionDescription
     tracks: Array<{ kind: PublishedTrackKind; mid: string; trackName: string }>
   }): Promise<CfTracksResult>
-  pullTracks(tracks: PeerTrackRef[]): Promise<CfTracksResult>
+  pullTracks(tracks: Array<{ sessionId: string; trackName: string }>): Promise<CfTracksResult>
   renegotiate(sdp: CfSessionDescription): Promise<CfRenegotiateResult>
   closeTracks(args: {
     mids: string[]
@@ -209,6 +216,8 @@ export class CloudflareSfuTransport implements MediaTransport {
   /** mid → ref, so an `ontrack` can be attributed to the pull that requested it. */
   private readonly pullByMid = new Map<string, PeerTrackRef>()
   private readonly pulledRefs = new Map<string, PeerTrackRef>()
+  private readonly remoteTracks = new Map<string, MediaStreamTrack>()
+  private readonly providerLocators = new Map<string, { sessionId: string; trackName: string }>()
 
   private queue: Promise<unknown> = Promise.resolve()
   private _state: TransportConnectionState = "new"
@@ -264,8 +273,18 @@ export class CloudflareSfuTransport implements MediaTransport {
       const mid = event.transceiver?.mid ?? null
       const ref = mid ? this.pullByMid.get(mid) : undefined
       if (!ref) return
+      const key = this.refKey(ref)
+      this.remoteTracks.set(key, event.track)
       this.onRemoteTrack?.({ ref, track: event.track })
-      event.track.addEventListener("ended", () => this.onRemoteTrackEnded?.(ref))
+      event.track.addEventListener(
+        "ended",
+        () => {
+          if (this.remoteTracks.get(key) !== event.track) return
+          this.remoteTracks.delete(key)
+          this.onRemoteTrackEnded?.(ref)
+        },
+        { once: true }
+      )
     }
     pc.onconnectionstatechange = () => {
       if (this.closed) return
@@ -297,6 +316,16 @@ export class CloudflareSfuTransport implements MediaTransport {
         await this.proxy!.renegotiate({ type: "answer", sdp: answer.sdp ?? "" })
       }
     })
+  }
+
+  async syncPeers(peers: PeerDescriptor[], _generation: number): Promise<void> {
+    this.providerLocators.clear()
+    for (const peer of peers) {
+      for (const publication of peer.publications) {
+        if (publication.providerLocator)
+          this.providerLocators.set(this.refKey(publication.ref), publication.providerLocator)
+      }
+    }
   }
 
   async publish(kind: PublishedTrackKind, track: MediaStreamTrack): Promise<void> {
@@ -424,7 +453,9 @@ export class CloudflareSfuTransport implements MediaTransport {
       const pc = this.requirePc()
       let cfOfferSdp: string | undefined
       try {
-        const result = await this.proxy!.pullTracks([ref])
+        const locator = this.providerLocators.get(this.refKey(ref))
+        if (!locator) throw new Error("Peer publication has no SFU locator")
+        const result = await this.proxy!.pullTracks([locator])
         cfOfferSdp = result.sessionDescription?.sdp
         for (const t of result.tracks) {
           if (t.mid) this.pullByMid.set(t.mid, ref)
@@ -449,7 +480,7 @@ export class CloudflareSfuTransport implements MediaTransport {
           if (this.refKey(r) === key) this.pullByMid.delete(mid)
         }
         await this.rollbackToStable(pc)
-        throw describeNegotiationFailure(`pull ${ref.trackName}`, err, cfOfferSdp, undefined)
+        throw describeNegotiationFailure(`pull ${ref.kind}`, err, cfOfferSdp, undefined)
       }
     })
   }
@@ -459,6 +490,7 @@ export class CloudflareSfuTransport implements MediaTransport {
       const key = this.refKey(ref)
       if (!this.pulledRefs.has(key)) return
       this.pulledRefs.delete(key)
+      this.remoteTracks.delete(key)
       const mids: string[] = []
       for (const [mid, r] of this.pullByMid) {
         if (this.refKey(r) === key) mids.push(mid)
@@ -522,6 +554,8 @@ export class CloudflareSfuTransport implements MediaTransport {
     this.publishTransceivers.clear()
     this.pullByMid.clear()
     this.pulledRefs.clear()
+    this.remoteTracks.clear()
+    this.providerLocators.clear()
   }
 
   private async applyAnswerAndMaybeRenegotiate(result: CfTracksResult): Promise<void> {
@@ -578,6 +612,6 @@ export class CloudflareSfuTransport implements MediaTransport {
   }
 
   private refKey(ref: PeerTrackRef): string {
-    return `${ref.sessionId}:${ref.trackName}`
+    return JSON.stringify([ref.endpointId, ref.kind, ref.publicationId])
   }
 }

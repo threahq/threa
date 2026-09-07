@@ -36,6 +36,7 @@ import {
 import {
   CallService,
   CloudflareRealtimeApi,
+  CloudflareTurnIssuer,
   createCallSweeper,
   registerCallGateway,
   CALL_SWEEP_INTERVAL_MS,
@@ -794,7 +795,14 @@ export async function startServer(): Promise<ServerInstance> {
   const cloudflareRealtime: RealtimeMediaApi | null = config.cloudflareRealtime.enabled
     ? new CloudflareRealtimeApi(config.cloudflareRealtime)
     : null
-  const callService = new CallService({ pool, cloudflare: cloudflareRealtime })
+  const turnIssuer = config.cloudflareTurn.enabled
+    ? new CloudflareTurnIssuer({
+        keyId: config.cloudflareTurn.keyId,
+        apiToken: config.cloudflareTurn.apiToken,
+        apiBase: config.cloudflareTurn.apiBase,
+      })
+    : null
+  const callService = new CallService({ pool, cloudflare: cloudflareRealtime, turnIssuer })
   const callSweeper = createCallSweeper(callService, {
     intervalMs: Number(process.env.CALL_SWEEP_INTERVAL_MS) || CALL_SWEEP_INTERVAL_MS,
   })
@@ -934,6 +942,7 @@ export async function startServer(): Promise<ServerInstance> {
     voiceTranscriptionService,
     callService,
     callsCloudflareEnabled: config.cloudflareRealtime.enabled,
+    callsTurnEnabled: config.cloudflareTurn.enabled,
     enclaveRuntimesService,
     enclaveClaimService,
     enclaveClaimNudge,

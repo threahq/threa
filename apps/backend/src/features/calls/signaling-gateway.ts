@@ -1,6 +1,7 @@
 import type { Server } from "socket.io"
 import { z } from "zod"
 import type { AuthService, SessionCookies } from "@threahq/backend-common"
+import { p2pPublicationSchema, p2pSignalSchema } from "@threahq/types"
 import type { Pool } from "pg"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
@@ -23,6 +24,10 @@ export function endpointRoom(callId: string, endpointId: string): string {
   return `call:${callId}:ep:${endpointId}`
 }
 
+export function endpointIncarnationRoom(callId: string, endpointId: string, mediaIncarnation: string): string {
+  return `call:${callId}:ep:${endpointId}:inc:${mediaIncarnation}`
+}
+
 /**
  * Fan a versioned roster snapshot to a call's room. Shared by the gateway and
  * the REST proxy handlers (a publish/close over HTTP must reach the sockets), so
@@ -35,6 +40,8 @@ export function broadcastRoster(io: Server, callId: string, snapshot: CallRoster
     callId,
     rosterVersion: snapshot.rosterVersion,
     roster: snapshot.roster,
+    mediaTransport: snapshot.mediaTransport,
+    transportGeneration: snapshot.transportGeneration,
   })
 }
 
@@ -64,6 +71,7 @@ const joinSchema = z.object({
   callId: z.string().min(1),
   mediaIncarnation: z.string().min(1).max(128),
   takeover: z.boolean().optional(),
+  transportCapability: z.literal("p2p-v1").optional(),
 })
 
 const stateSchema = z.object({
@@ -90,6 +98,7 @@ interface SocketBinding {
   epoch: number
   connectionSeq: number
   mediaIncarnation: string
+  transportGeneration: number
 }
 
 type Ack = (result: { ok: boolean; error?: string; code?: string; data?: unknown }) => void
@@ -142,6 +151,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
   namespace.on("connection", (socket) => {
     const workosUserId = socket.data.workosUserId as string
     let binding: SocketBinding | null = null
+    let publicationQueue = Promise.resolve()
     const bucket = createTokenBucket()
 
     const rateLimited = (ack?: Ack): boolean => {
@@ -154,6 +164,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
     const leaveCallRooms = async (bound: SocketBinding): Promise<void> => {
       await socket.leave(callRoom(bound.callId))
       await socket.leave(endpointRoom(bound.callId, bound.endpointId))
+      await socket.leave(endpointIncarnationRoom(bound.callId, bound.endpointId, bound.mediaIncarnation))
     }
 
     socket.on("call:join", async (payload: unknown, ack?: Ack) => {
@@ -170,7 +181,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
         ack?.({ ok: false, error: "Invalid call:join payload", code: "VALIDATION_ERROR" })
         return
       }
-      const { workspaceId, callId, mediaIncarnation, takeover } = parsed.data
+      const { workspaceId, callId, mediaIncarnation, takeover, transportCapability } = parsed.data
       try {
         await assertWorkspaceCallsEnabled(workspaceId)
         const user = await UserRepository.findByWorkosUserIdInWorkspace(pool, workspaceId, workosUserId)
@@ -184,6 +195,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
           userId: user.id,
           takeover,
           mediaIncarnation,
+          transportCapability,
         })
 
         // A rebind on a live socket (hostile/custom client) must leave the prior
@@ -192,6 +204,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
           const prior = binding
           await socket.leave(callRoom(prior.callId))
           await socket.leave(endpointRoom(prior.callId, prior.endpointId))
+          await socket.leave(endpointIncarnationRoom(prior.callId, prior.endpointId, prior.mediaIncarnation))
           // Also leave the prior CALL's domain state: without this the old
           // endpoint/participant stay live until lease reap (~45s), holding call
           // capacity and any DM ring. Best-effort — a failure must not fail the new
@@ -220,9 +233,11 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
           epoch: result.endpoint.epoch,
           connectionSeq: result.endpoint.connectionSeq,
           mediaIncarnation,
+          transportGeneration: result.call.transportGeneration,
         }
         await socket.join(callRoom(callId))
         await socket.join(endpointRoom(callId, result.endpoint.id))
+        await socket.join(endpointIncarnationRoom(callId, result.endpoint.id, mediaIncarnation))
 
         const snapshot = await callService.getRosterSnapshot(workspaceId, callId)
         ack?.({
@@ -233,6 +248,8 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
             rosterVersion: snapshot.rosterVersion,
             roster: snapshot.roster,
             leaseTtlMs: ENDPOINT_LEASE_TTL_MS,
+            mediaTransport: snapshot.mediaTransport,
+            transportGeneration: snapshot.transportGeneration,
           },
         })
         // Let existing members observe the new arrival.
@@ -259,6 +276,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
         })
         await socket.leave(callRoom(bound.callId))
         await socket.leave(endpointRoom(bound.callId, bound.endpointId))
+        await socket.leave(endpointIncarnationRoom(bound.callId, bound.endpointId, bound.mediaIncarnation))
         binding = null
         const snapshot = await callService.getRosterSnapshot(bound.workspaceId, bound.callId)
         ack?.({ ok: true })
@@ -266,6 +284,90 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
       } catch (err) {
         respondError(err, ack, "call:leave", { callId: bound.callId })
       }
+    })
+
+    socket.on("call:p2p:signal", async (payload: unknown, ack?: Ack) => {
+      if (rateLimited(ack)) return
+      if (!binding) {
+        ack?.({ ok: false, error: "Not joined", code: "CALL_NOT_JOINED" })
+        return
+      }
+      const parsed = p2pSignalSchema.safeParse(payload)
+      if (!parsed.success || parsed.data.callId !== binding.callId) {
+        ack?.({ ok: false, error: "Invalid P2P signal", code: "VALIDATION_ERROR" })
+        return
+      }
+      const bound = binding
+      try {
+        await callService.validateP2pSignal({
+          workspaceId: bound.workspaceId,
+          callId: bound.callId,
+          userId: bound.userId,
+          senderEndpointId: bound.endpointId,
+          senderEpoch: bound.epoch,
+          senderIncarnation: bound.mediaIncarnation,
+          senderConnectionSeq: bound.connectionSeq,
+          recipientEndpointId: parsed.data.recipientEndpointId,
+          recipientEpoch: parsed.data.recipientEpoch,
+          recipientMediaIncarnation: parsed.data.recipientMediaIncarnation,
+          generation: parsed.data.generation,
+        })
+        if (binding !== bound) {
+          throw new HttpError("P2P signaling socket binding is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+        }
+        namespace
+          .to(
+            endpointIncarnationRoom(
+              bound.callId,
+              parsed.data.recipientEndpointId,
+              parsed.data.recipientMediaIncarnation
+            )
+          )
+          .emit("call:p2p:signal", {
+            ...parsed.data,
+            senderEndpointId: bound.endpointId,
+            senderEpoch: bound.epoch,
+            senderMediaIncarnation: bound.mediaIncarnation,
+          })
+        ack?.({ ok: true })
+      } catch (err) {
+        respondError(err, ack, "call:p2p:signal", { callId: bound.callId })
+      }
+    })
+
+    socket.on("call:p2p:publications", async (payload: unknown, ack?: Ack) => {
+      if (rateLimited(ack)) return
+      if (!binding) {
+        ack?.({ ok: false, error: "Not joined", code: "CALL_NOT_JOINED" })
+        return
+      }
+      const parsed = p2pPublicationSchema.safeParse(payload)
+      if (!parsed.success) {
+        ack?.({ ok: false, error: "Invalid P2P publications", code: "VALIDATION_ERROR" })
+        return
+      }
+      const bound = binding
+      publicationQueue = publicationQueue.then(async () => {
+        try {
+          const snapshot = await callService.setP2pPublications({
+            workspaceId: bound.workspaceId,
+            callId: bound.callId,
+            userId: bound.userId,
+            endpointId: bound.endpointId,
+            endpointEpoch: bound.epoch,
+            endpointConnectionSeq: bound.connectionSeq,
+            mediaIncarnation: bound.mediaIncarnation,
+            generation: parsed.data.generation,
+            revision: parsed.data.revision,
+            publications: parsed.data.publications,
+          })
+          broadcastRoster(io, bound.callId, snapshot)
+          ack?.({ ok: true, data: { rosterVersion: snapshot.rosterVersion } })
+        } catch (err) {
+          respondError(err, ack, "call:p2p:publications", { callId: bound.callId })
+        }
+      })
+      await publicationQueue
     })
 
     socket.on("call:state", async (payload: unknown, ack?: Ack) => {

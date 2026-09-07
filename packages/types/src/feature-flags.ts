@@ -55,6 +55,7 @@ export function defineFlag<
  */
 export const FEATURE_FLAGS = {
   calls: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "on" }),
+  callsP2p: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
   composeTraces: defineFlag({ values: ["off", "capture"], scopes: ["workspace"], default: "off" }),
   // Availability only: "available" offers the Diagnostics settings toggle. The
   // user's own opt-in preference is the consent, and the upload path re-checks

@@ -60,6 +60,7 @@ function makeTransport() {
       events.push(`unpublish:${kind}`)
     }),
     setPublishEncoding: vi.fn(async () => {}),
+    syncPeers: vi.fn(async () => {}),
     pull: vi.fn(async (ref) => {
       events.push(`pull:${ref.trackName}`)
     }),
@@ -85,6 +86,8 @@ interface FakeSocket extends CallSocket {
     rosterVersion: number
     roster: CallRosterParticipant[]
     leaseTtlMs: number
+    mediaTransport: "sfu" | "p2p"
+    transportGeneration: number
   }
   /** When true, `call:join` stores its ack on `pendingJoinAck` instead of resolving it. */
   deferJoin: boolean
@@ -101,7 +104,15 @@ function makeSocket(): FakeSocket {
   const emitted: Array<{ event: string; payload: unknown }> = []
   const socket: FakeSocket = {
     connected: true,
-    joinAck: { endpointId: "ep_1", epoch: 1, rosterVersion: 0, roster: [], leaseTtlMs: 45_000 },
+    joinAck: {
+      endpointId: "ep_1",
+      epoch: 1,
+      rosterVersion: 0,
+      roster: [],
+      leaseTtlMs: 45_000,
+      mediaTransport: "sfu",
+      transportGeneration: 1,
+    },
     handlers,
     emitted,
     deferJoin: false,
@@ -176,7 +187,7 @@ function makeDeps(socket: FakeSocket, transport: MediaTransport, mediaSession: C
   let inc = 0
   const deps: CallManagerDeps = {
     startCallRest: vi.fn(async ({ workspaceId, streamId, mode }) => ({
-      call: { id: "call_1", workspaceId, streamId, mode },
+      call: { id: "call_1", workspaceId, streamId, mode, mediaTransport: "sfu" as const, transportGeneration: 1 },
       created: true,
       participant: { id: "p_1" },
       endpoint: { id: "ep_rest" },
@@ -235,6 +246,7 @@ describe("CallManager", () => {
   })
   afterEach(async () => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
     for (const manager of managers.splice(0)) {
       await manager.leaveCall()
     }
@@ -290,7 +302,14 @@ describe("CallManager", () => {
     // The launch surface hardcodes "video", but this stream already hosts an
     // audio_only call — the server returns audio_only and the client must adopt it.
     ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockResolvedValue({
-      call: { id: "call_1", workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" },
+      call: {
+        id: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "audio_only",
+        mediaTransport: "sfu",
+        transportGeneration: 1,
+      },
       created: false,
       participant: { id: "p_1" },
       endpoint: { id: "ep_rest" },
@@ -334,6 +353,39 @@ describe("CallManager", () => {
     expect(getCallState().roster).toHaveLength(1)
   })
 
+  it("should map existing SFU publications and replace them when the provider session changes", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    const announce = (version: number, cfSessionId: string) =>
+      socket.fire("call:roster", {
+        callId: "call_1",
+        rosterVersion: version,
+        roster: [
+          participant({
+            endpointId: "ep_peer",
+            cfSessionId,
+            publishedTracks: [{ kind: "mic", trackName: "peer:mic" }],
+          }),
+        ],
+      })
+    announce(2, "cf-old")
+    const oldRef = { endpointId: "ep_peer", kind: "mic", publicationId: "cf-old:peer:mic" }
+    expect(transport.syncPeers).toHaveBeenLastCalledWith(
+      [
+        expect.objectContaining({
+          publications: [{ ref: oldRef, providerLocator: { sessionId: "cf-old", trackName: "peer:mic" } }],
+        }),
+      ],
+      1
+    )
+    expect(transport.pull).toHaveBeenCalledWith(oldRef)
+    announce(3, "cf-new")
+    expect(transport.pull).toHaveBeenCalledWith({ ...oldRef, publicationId: "cf-new:peer:mic" })
+    expect(transport.stopPull).toHaveBeenCalledWith(oldRef)
+  })
+
   it("track-registry diff drives pull then stopPull", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
@@ -352,11 +404,19 @@ describe("CallManager", () => {
         }),
       ],
     })
-    expect(transport.pull).toHaveBeenCalledWith({ sessionId: "cf-peer", trackName: "peer:mic" })
+    expect(transport.pull).toHaveBeenCalledWith({
+      endpointId: "ep_peer",
+      kind: "mic",
+      publicationId: "cf-peer:peer:mic",
+    })
 
     // Peer leaves the roster → stopPull.
     socket.fire("call:roster", { callId: "call_1", rosterVersion: 3, roster: [] })
-    expect(transport.stopPull).toHaveBeenCalledWith({ sessionId: "cf-peer", trackName: "peer:mic" })
+    expect(transport.stopPull).toHaveBeenCalledWith({
+      endpointId: "ep_peer",
+      kind: "mic",
+      publicationId: "cf-peer:peer:mic",
+    })
   })
 
   it("should retry a failed pull against the live roster instead of losing the track for the call", async () => {
@@ -386,7 +446,11 @@ describe("CallManager", () => {
     // timer re-diffs against the store's roster and pulls again.
     await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
     expect(transport.pull).toHaveBeenCalledTimes(2)
-    expect(transport.pull).toHaveBeenLastCalledWith({ sessionId: "cf-peer", trackName: "peer:camera" })
+    expect(transport.pull).toHaveBeenLastCalledWith({
+      endpointId: "ep_peer",
+      kind: "camera",
+      publicationId: "cf-peer:peer:camera",
+    })
   })
 
   it("should stop retrying a pull at the attempt cap", async () => {
@@ -473,7 +537,7 @@ describe("CallManager", () => {
         }),
       ],
     })
-    const peerCameraRef = { sessionId: "cf-peer", trackName: "peer:camera" }
+    const peerCameraRef = { endpointId: "ep_peer", kind: "camera", publicationId: "cf-peer:peer:camera" }
     socket.fire("call:roster", peerRoster(2))
     // Track removed and re-added while the first pull is still in flight.
     socket.fire("call:roster", { callId: "call_1", rosterVersion: 3, roster: [] })
@@ -488,7 +552,7 @@ describe("CallManager", () => {
     expect((transport.pull as ReturnType<typeof vi.fn>).mock.calls).toEqual([[peerCameraRef], [peerCameraRef]])
   })
 
-  it("skips peers with no cfSessionId (0.2 roster gap) rather than pulling an unaddressable ref", async () => {
+  it("passes a logical publication to the transport without exposing an SFU locator", async () => {
     const socket = makeSocket()
     const transport = makeTransport()
     const manager = newManager(makeDeps(socket, transport), null)
@@ -498,10 +562,90 @@ describe("CallManager", () => {
       callId: "call_1",
       rosterVersion: 2,
       roster: [
-        participant({ userId: "usr_1", cfSessionId: null, publishedTracks: [{ kind: "mic", trackName: "peer:mic" }] }),
+        participant({
+          userId: "usr_1",
+          epoch: 1,
+          mediaIncarnation: "inc_peer",
+          cfSessionId: null,
+          publishedTracks: [{ kind: "mic", trackName: "peer:mic", publicationId: "peer:mic", transportGeneration: 1 }],
+        }),
       ],
     })
-    expect(transport.pull).not.toHaveBeenCalled()
+    expect(transport.pull).toHaveBeenCalledWith({ endpointId: "ep_peer", kind: "mic", publicationId: "peer:mic" })
+  })
+
+  it("should preserve the remote audio element for the same logical publication", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const container = document.createElement("div")
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue()
+    vi.stubGlobal(
+      "MediaStream",
+      class {
+        constructor(private readonly tracks: MediaStreamTrack[]) {}
+        getAudioTracks() {
+          return this.tracks.filter((track) => track.kind === "audio")
+        }
+      }
+    )
+    const manager = newManager(makeDeps(socket, transport), container)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    const ref = { endpointId: "ep_peer", kind: "mic" as const, publicationId: "pub_1" }
+    const track = makeTrack("audio")
+
+    transport.onRemoteTrack?.({ ref, track })
+    const first = container.querySelector("audio")
+    transport.onRemoteTrack?.({ ref, track })
+
+    expect({
+      elements: container.querySelectorAll("audio").length,
+      sameElement: container.querySelector("audio") === first,
+      playCalls: play.mock.calls.length,
+    }).toEqual({
+      elements: 1,
+      sameElement: true,
+      playCalls: 1,
+    })
+  })
+
+  it("should keep replacement media when an old publication ends late", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const container = document.createElement("div")
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue()
+    vi.stubGlobal(
+      "MediaStream",
+      class {
+        constructor(private readonly tracks: MediaStreamTrack[]) {}
+        getAudioTracks() {
+          return this.tracks.filter((track) => track.kind === "audio")
+        }
+        getVideoTracks() {
+          return this.tracks.filter((track) => track.kind === "video")
+        }
+      }
+    )
+    const manager = newManager(makeDeps(socket, transport), container)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    const oldAudio = { endpointId: "ep_peer", kind: "mic" as const, publicationId: "pub_audio_old" }
+    const newAudio = { ...oldAudio, publicationId: "pub_audio_new" }
+    const oldVideo = { endpointId: "ep_peer", kind: "camera" as const, publicationId: "pub_video_old" }
+    const newVideo = { ...oldVideo, publicationId: "pub_video_new" }
+    const replacementAudio = makeTrack("audio")
+    const replacementVideo = makeTrack("video")
+
+    transport.onRemoteTrack?.({ ref: oldAudio, track: makeTrack("audio") })
+    transport.onRemoteTrack?.({ ref: newAudio, track: replacementAudio })
+    transport.onRemoteTrack?.({ ref: oldVideo, track: makeTrack("video") })
+    transport.onRemoteTrack?.({ ref: newVideo, track: replacementVideo })
+    transport.onRemoteTrackEnded?.(oldAudio)
+    transport.onRemoteTrackEnded?.(oldVideo)
+
+    expect({
+      audioElements: container.querySelectorAll("audio").length,
+      audioTrack: (container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks()[0],
+      videoTrack: manager.getVideoStream("ep_peer")?.getVideoTracks()[0],
+    }).toEqual({ audioElements: 1, audioTrack: replacementAudio, videoTrack: replacementVideo })
   })
 
   it("renews the lease at TTL/3", async () => {

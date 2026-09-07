@@ -12,6 +12,8 @@ export type { CallAccessResult } from "./access"
 export { createCallSweeper } from "./sweeper"
 export type { CallSweeper } from "./sweeper"
 export { CloudflareRealtimeApi, CloudflareRealtimeError } from "./cloudflare"
+export { CloudflareTurnIssuer } from "./turn"
+export type { TurnCredentialIssuer, TurnCredentials } from "./turn"
 export type { RealtimeMediaApi } from "./cloudflare"
 export { createCallHandlers } from "./handlers"
 export { registerCallGateway } from "./signaling-gateway"
@@ -28,6 +30,7 @@ export {
   ENDPOINT_LEASE_RENEW_MS,
   INVITATION_TTL_MS,
   CALL_PRODUCT_CAP,
+  CALL_P2P_INITIAL_CAP,
   CALL_SWEEP_INTERVAL_MS,
   PUBLISHED_TRACK_KINDS,
   CALL_SOCKET_RATE_BURST,

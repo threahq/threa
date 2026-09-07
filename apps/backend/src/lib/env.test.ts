@@ -27,12 +27,34 @@ function setBaseEnv() {
   delete process.env.CLOUDFLARE_REALTIME_APP_ID
   delete process.env.CLOUDFLARE_REALTIME_APP_SECRET
   delete process.env.CLOUDFLARE_REALTIME_API_BASE
+  delete process.env.CLOUDFLARE_TURN_KEY_ID
+  delete process.env.CLOUDFLARE_TURN_KEY_API_TOKEN
+  delete process.env.CLOUDFLARE_TURN_API_BASE
   delete process.env.POSTHOG_PROJECT_TOKEN
   delete process.env.POSTHOG_HOST
 }
 
 afterEach(() => {
   resetEnv()
+})
+
+describe("loadConfig Cloudflare TURN", () => {
+  test("requires the key id and API token together", () => {
+    setBaseEnv()
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CLOUDFLARE_TURN_KEY_ID = "key"
+    expect(() => loadConfig()).toThrow(
+      "CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_KEY_API_TOKEN must both be set together"
+    )
+  })
+
+  test("enables TURN only when both credentials are present", () => {
+    setBaseEnv()
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CLOUDFLARE_TURN_KEY_ID = "key"
+    process.env.CLOUDFLARE_TURN_KEY_API_TOKEN = "token"
+    expect(loadConfig().cloudflareTurn).toEqual({ keyId: "key", apiToken: "token", enabled: true })
+  })
 })
 
 describe("loadConfig stub auth safety", () => {

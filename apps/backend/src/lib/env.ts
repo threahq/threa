@@ -81,6 +81,13 @@ export interface CloudflareRealtimeConfig {
   enabled: boolean
 }
 
+export interface CloudflareTurnConfig {
+  keyId: string
+  apiToken: string
+  apiBase?: string
+  enabled: boolean
+}
+
 export interface MediaConvertConfig {
   /** IAM role ARN that MediaConvert assumes to access S3 */
   roleArn: string
@@ -117,6 +124,7 @@ export interface Config {
   linear: LinearOAuthConfig
   mediaConvert: MediaConvertConfig
   cloudflareRealtime: CloudflareRealtimeConfig
+  cloudflareTurn: CloudflareTurnConfig
   /** Control-plane URL for inter-service communication (optional — only needed in multi-region) */
   controlPlaneUrl: string | null
   /** Shared secret for authenticating internal API calls from the control-plane */
@@ -257,6 +265,12 @@ export function loadConfig(): Config {
       apiBase: process.env.CLOUDFLARE_REALTIME_API_BASE || undefined,
       enabled: !!(process.env.CLOUDFLARE_REALTIME_APP_ID && process.env.CLOUDFLARE_REALTIME_APP_SECRET),
     },
+    cloudflareTurn: {
+      keyId: process.env.CLOUDFLARE_TURN_KEY_ID || "",
+      apiToken: process.env.CLOUDFLARE_TURN_KEY_API_TOKEN || "",
+      apiBase: process.env.CLOUDFLARE_TURN_API_BASE || undefined,
+      enabled: !!(process.env.CLOUDFLARE_TURN_KEY_ID && process.env.CLOUDFLARE_TURN_KEY_API_TOKEN),
+    },
     controlPlaneUrl: process.env.CONTROL_PLANE_URL || null,
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
@@ -320,6 +334,12 @@ export function loadConfig(): Config {
     throw new Error(
       "CLOUDFLARE_REALTIME_APP_ID and CLOUDFLARE_REALTIME_APP_SECRET must both be set together — the calls media plane needs the app id and its secret"
     )
+  }
+
+  const cfTurnVars = [process.env.CLOUDFLARE_TURN_KEY_ID, process.env.CLOUDFLARE_TURN_KEY_API_TOKEN]
+  const cfTurnSetCount = cfTurnVars.filter(Boolean).length
+  if (cfTurnSetCount === 1) {
+    throw new Error("CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_KEY_API_TOKEN must both be set together")
   }
 
   if (config.mediaConvert.enabled && !config.mediaConvert.roleArn) {

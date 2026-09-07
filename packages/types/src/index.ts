@@ -1102,6 +1102,21 @@ export {
   coerceLayers,
 } from "./feature-flags"
 
+export {
+  CALL_MEDIA_TRANSPORTS,
+  CALL_TRANSPORT_CAPABILITIES,
+  P2P_SIGNAL_KINDS,
+  p2pSignalSchema,
+  p2pPublicationSchema,
+  turnCredentialsResponseSchema,
+  type CallMediaTransport,
+  type CallTransportCapability,
+  type P2pSignalKind,
+  type P2pSignal,
+  type P2pSignalEnvelope,
+  type TurnCredentialsResponse,
+} from "./calls"
+
 // Client performance capture (closed mark registry + wire schema)
 export {
   PERF_MARK_NAMES,

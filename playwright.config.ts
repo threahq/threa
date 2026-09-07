@@ -149,12 +149,12 @@ export default defineConfig({
       name: "chromium",
       // The calls suite needs fake-media launch flags + granted mic/camera, so it
       // runs as its own project below; keep it out of the default project.
-      testIgnore: "**/calls.spec.ts",
+      testIgnore: ["**/calls.spec.ts", "**/p2p-rtc.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "calls",
-      testMatch: "**/calls.spec.ts",
+      testMatch: ["**/calls.spec.ts", "**/p2p-rtc.spec.ts"],
       use: {
         ...devices["Desktop Chrome"],
         // getUserMedia resolves with a synthetic mic/camera and the permission
@@ -204,6 +204,9 @@ export default defineConfig({
         CLOUDFLARE_REALTIME_APP_ID: "e2e-calls-app",
         CLOUDFLARE_REALTIME_APP_SECRET: "e2e-calls-secret",
         CLOUDFLARE_REALTIME_API_BASE: `http://localhost:${fakeCfPort}/v1/apps`,
+        CLOUDFLARE_TURN_KEY_ID: "e2e-turn-key",
+        CLOUDFLARE_TURN_KEY_API_TOKEN: "e2e-turn-token",
+        CLOUDFLARE_TURN_API_BASE: `http://localhost:${fakeCfPort}/v1`,
         CALL_EMPTY_GRACE_MS: "2000",
         CALL_SWEEP_INTERVAL_MS: "1000",
         // MinIO S3-compatible storage for file uploads

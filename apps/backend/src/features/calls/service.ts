@@ -49,10 +49,12 @@ import {
   ENDPOINT_LEASE_TTL_MS,
   INVITATION_TTL_MS,
   CALL_PRODUCT_CAP,
+  CALL_P2P_INITIAL_CAP,
   type CallMode,
   type MediaState,
   type PublishedTrack,
 } from "./config"
+import type { TurnCredentialIssuer, TurnCredentials } from "./turn"
 import {
   CloudflareRealtimeError,
   type RealtimeMediaApi,
@@ -105,6 +107,8 @@ export interface JoinCallResult {
 export interface CallRosterSnapshot {
   rosterVersion: number
   roster: CallRosterEntry[]
+  mediaTransport: "sfu" | "p2p"
+  transportGeneration: number
 }
 
 /**
@@ -128,10 +132,146 @@ export interface CallRosterSnapshot {
 export class CallService {
   private readonly pool: Pool
   private readonly cloudflare: RealtimeMediaApi | null
+  private readonly turnIssuer: TurnCredentialIssuer | null
 
-  constructor(deps: { pool: Pool; cloudflare?: RealtimeMediaApi | null }) {
+  constructor(deps: { pool: Pool; cloudflare?: RealtimeMediaApi | null; turnIssuer?: TurnCredentialIssuer | null }) {
     this.pool = deps.pool
     this.cloudflare = deps.cloudflare ?? null
+    this.turnIssuer = deps.turnIssuer ?? null
+  }
+
+  async validateP2pSignal(params: {
+    workspaceId: string
+    callId: string
+    userId: string
+    senderEndpointId: string
+    senderEpoch: number
+    senderIncarnation: string
+    senderConnectionSeq: number
+    recipientEndpointId: string
+    recipientEpoch: number
+    recipientMediaIncarnation: string
+    generation: number
+  }): Promise<void> {
+    const access = await checkCallAccess(this.pool, {
+      workspaceId: params.workspaceId,
+      callId: params.callId,
+      userId: params.userId,
+    })
+    if (!access || access.call.mediaTransport !== "p2p" || access.call.transportGeneration !== params.generation) {
+      throw new HttpError("P2P signaling generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    }
+    const [sender, recipient] = await Promise.all([
+      CallEndpointRepository.findById(this.pool, params.workspaceId, params.senderEndpointId),
+      CallEndpointRepository.findById(this.pool, params.workspaceId, params.recipientEndpointId),
+    ])
+    const senderCurrent =
+      sender?.callId === params.callId &&
+      sender.epoch === params.senderEpoch &&
+      sender.mediaIncarnation === params.senderIncarnation &&
+      sender.connectionSeq === params.senderConnectionSeq &&
+      sender.transportCapability === "p2p-v1" &&
+      sender.status === "connected" &&
+      sender.leaseExpiresAt.getTime() > Date.now()
+    const recipientCurrent =
+      params.recipientEndpointId !== params.senderEndpointId &&
+      recipient?.callId === params.callId &&
+      recipient.epoch === params.recipientEpoch &&
+      recipient.mediaIncarnation === params.recipientMediaIncarnation &&
+      recipient.transportCapability === "p2p-v1" &&
+      recipient.status !== "closed" &&
+      recipient.leaseExpiresAt.getTime() > Date.now()
+    if (!senderCurrent || !recipientCurrent) {
+      throw new HttpError("P2P signaling endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+    }
+  }
+
+  async setP2pPublications(params: {
+    workspaceId: string
+    callId: string
+    userId: string
+    endpointId: string
+    endpointEpoch: number
+    endpointConnectionSeq: number
+    mediaIncarnation: string
+    generation: number
+    revision: number
+    publications: Array<{ kind: "mic" | "camera"; publicationId: string }>
+  }): Promise<CallRosterSnapshot> {
+    const access = await checkCallAccess(this.pool, params)
+    if (!access) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+    return withTransaction(this.pool, async (client) => {
+      const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      if (!call || call.mediaTransport !== "p2p" || call.transportGeneration !== params.generation) {
+        throw new HttpError("P2P publication generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+      }
+      const endpoint = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+      if (
+        !endpoint ||
+        endpoint.callId !== params.callId ||
+        endpoint.epoch !== params.endpointEpoch ||
+        endpoint.connectionSeq !== params.endpointConnectionSeq ||
+        endpoint.mediaIncarnation !== params.mediaIncarnation ||
+        endpoint.status !== "connected" ||
+        endpoint.leaseExpiresAt.getTime() <= Date.now()
+      ) {
+        throw new HttpError("P2P publication endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+      }
+      if (params.revision < endpoint.publicationRevision) {
+        throw new HttpError("P2P publication revision is stale", { status: 409, code: "CALL_STALE_PUBLICATION" })
+      }
+      if (params.revision === endpoint.publicationRevision) {
+        return {
+          rosterVersion: call.rosterVersion,
+          roster: await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId),
+          mediaTransport: call.mediaTransport,
+          transportGeneration: call.transportGeneration,
+        }
+      }
+      const publishedTracks: PublishedTrack[] = params.publications.map((publication) => ({
+        kind: publication.kind,
+        trackName: `${params.endpointId}:${publication.kind}`,
+        publicationId: publication.publicationId,
+        transportGeneration: params.generation,
+      }))
+      const updated = await CallEndpointRepository.setPublishedTracks(client, {
+        workspaceId: params.workspaceId,
+        id: params.endpointId,
+        mediaIncarnation: params.mediaIncarnation,
+        publishedTracks,
+        publicationRevision: params.revision,
+      })
+      if (!updated)
+        throw new HttpError("P2P publication endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+      const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      return {
+        rosterVersion: rosterVersion ?? call.rosterVersion,
+        roster: await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId),
+        mediaTransport: call.mediaTransport,
+        transportGeneration: call.transportGeneration,
+      }
+    })
+  }
+
+  async issueTurnCredentials(params: {
+    workspaceId: string
+    callId: string
+    userId: string
+    endpointId: string
+    mediaIncarnation: string
+  }): Promise<TurnCredentials> {
+    const { call, endpoint } = await this.fenceEndpoint(params)
+    if (
+      call.mediaTransport !== "p2p" ||
+      endpoint.transportCapability !== "p2p-v1" ||
+      endpoint.leaseExpiresAt.getTime() <= Date.now()
+    ) {
+      throw new HttpError("TURN credentials require a live P2P endpoint", { status: 403, code: "CALL_P2P_UNAVAILABLE" })
+    }
+    if (!this.turnIssuer) {
+      throw new HttpError("TURN credentials are not configured", { status: 503, code: "CALL_TURN_UNAVAILABLE" })
+    }
+    return this.turnIssuer.issue()
   }
 
   /** Fail loudly (503) when the CF media plane is not configured (INV-11). */
@@ -159,6 +299,8 @@ export class CallService {
       mode: CallMode
       mediaIncarnation?: string
       expectedCallId?: string
+      transportCapability?: string
+      allowP2p?: boolean
       /** Displace this user's other device rather than 409 — see {@link admitEndpoint}. */
       takeover?: boolean
     },
@@ -177,7 +319,7 @@ export class CallService {
         streamId: params.streamId,
         startedBy: params.userId,
         mode: params.mode,
-        mediaTransport: "sfu",
+        mediaTransport: params.allowP2p && params.transportCapability === "p2p-v1" ? "p2p" : "sfu",
       })
 
       let targetCallId: string
@@ -209,6 +351,7 @@ export class CallService {
         userId: params.userId,
         mediaIncarnation: params.mediaIncarnation,
         takeover: params.takeover,
+        transportCapability: params.transportCapability,
       })
 
       // A newly created call is a slotted broadcast row on the host stream
@@ -286,7 +429,14 @@ export class CallService {
    * is accepted.
    */
   async joinCall(
-    params: { workspaceId: string; callId: string; userId: string; takeover?: boolean; mediaIncarnation?: string },
+    params: {
+      workspaceId: string
+      callId: string
+      userId: string
+      takeover?: boolean
+      mediaIncarnation?: string
+      transportCapability?: string
+    },
     tx?: PoolClient
   ): Promise<JoinCallResult> {
     const { closedSessionIds, ...result } = await withTransaction(tx ?? this.pool, async (client) => {
@@ -322,7 +472,14 @@ export class CallService {
    */
   private async joinLockedCall(
     client: PoolClient,
-    params: { workspaceId: string; callId: string; userId: string; takeover?: boolean; mediaIncarnation?: string }
+    params: {
+      workspaceId: string
+      callId: string
+      userId: string
+      takeover?: boolean
+      mediaIncarnation?: string
+      transportCapability?: string
+    }
   ): Promise<JoinCallResult & { closedSessionIds: string[] }> {
     let call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
     if (!call) {
@@ -335,10 +492,18 @@ export class CallService {
       call = (await CallRepository.reviveFromGrace(client, params.workspaceId, params.callId)) ?? call
     }
 
+    if (call.mediaTransport === "p2p" && params.transportCapability !== "p2p-v1") {
+      throw new HttpError("This call requires a client with P2P support", {
+        status: 409,
+        code: "CALL_P2P_UNSUPPORTED_CLIENT",
+      })
+    }
+
     const others = await CallParticipantRepository.countJoined(client, params.workspaceId, params.callId, {
       excludeUserId: params.userId,
     })
-    if (others >= CALL_PRODUCT_CAP) {
+    const capacity = call.mediaTransport === "p2p" ? CALL_P2P_INITIAL_CAP : CALL_PRODUCT_CAP
+    if (others >= capacity) {
       throw new HttpError("Call is full", { status: 409, code: "CALL_FULL" })
     }
 
@@ -396,7 +561,7 @@ export class CallService {
   private async admitEndpoint(
     client: PoolClient,
     args: {
-      params: { workspaceId: string; callId: string; takeover?: boolean }
+      params: { workspaceId: string; callId: string; takeover?: boolean; transportCapability?: string }
       participant: CallParticipant
       live: CallEndpoint | null
       incarnation: string | null
@@ -425,6 +590,7 @@ export class CallService {
           workspaceId: params.workspaceId,
           id: live.id,
           mediaIncarnation: incarnation,
+          transportCapability: params.transportCapability ?? null,
           leaseExpiresAt,
         })
         if (rebound) {
@@ -458,6 +624,7 @@ export class CallService {
       participantId: participant.id,
       epoch: maxEpoch + 1,
       mediaIncarnation: incarnation,
+      transportCapability: params.transportCapability ?? null,
       leaseExpiresAt,
     })
     return { endpoint, closedCfSessionId, supersededEndpointId }
@@ -807,7 +974,12 @@ export class CallService {
         throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
       }
       const roster = await CallParticipantRepository.listRoster(client, workspaceId, targetCallId)
-      return { rosterVersion: call.rosterVersion, roster }
+      return {
+        rosterVersion: call.rosterVersion,
+        roster,
+        mediaTransport: call.mediaTransport,
+        transportGeneration: call.transportGeneration,
+      }
     })
   }
 
@@ -850,7 +1022,12 @@ export class CallService {
       }
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
       const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId)
-      return { rosterVersion: rosterVersion ?? call.rosterVersion, roster }
+      return {
+        rosterVersion: rosterVersion ?? call.rosterVersion,
+        roster,
+        mediaTransport: call.mediaTransport,
+        transportGeneration: call.transportGeneration,
+      }
     })
   }
 
@@ -1052,7 +1229,14 @@ export class CallService {
       }
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
       const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId)
-      return { rosterVersion: rosterVersion ?? 0, roster }
+      const call = await CallRepository.findById(client, params.workspaceId, params.callId)
+      if (!call) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+      return {
+        rosterVersion: rosterVersion ?? call.rosterVersion,
+        roster,
+        mediaTransport: call.mediaTransport,
+        transportGeneration: call.transportGeneration,
+      }
     })
   }
 

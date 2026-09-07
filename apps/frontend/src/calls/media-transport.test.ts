@@ -157,7 +157,18 @@ describe("CloudflareSfuTransport", () => {
     transport.onRemoteTrack = (e) => seen.push(e.ref)
     await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
 
-    const ref: PeerTrackRef = { sessionId: "cf-peer", trackName: "peer:mic" }
+    const ref: PeerTrackRef = { endpointId: "ep_peer", kind: "mic", publicationId: "pub_mic" }
+    await transport.syncPeers(
+      [
+        {
+          endpointId: "ep_peer",
+          epoch: 1,
+          mediaIncarnation: "inc_peer",
+          publications: [{ ref, providerLocator: { sessionId: "cf-peer", trackName: "peer:mic" } }],
+        },
+      ],
+      1
+    )
     await transport.pull(ref)
     // Simulate the engine delivering the pulled track on its transceiver.
     pc.ontrack?.({ transceiver: { mid: "remote-0" }, track: makeTrack("audio") })
@@ -346,7 +357,18 @@ describe("CloudflareSfuTransport", () => {
     transport.onRemoteTrack = (e) => seen.push(e.ref)
     await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
 
-    const ref: PeerTrackRef = { sessionId: "cf-peer", trackName: "peer:camera" }
+    const ref: PeerTrackRef = { endpointId: "ep_peer", kind: "camera", publicationId: "pub_camera" }
+    await transport.syncPeers(
+      [
+        {
+          endpointId: "ep_peer",
+          epoch: 1,
+          mediaIncarnation: "inc_peer",
+          publications: [{ ref, providerLocator: { sessionId: "cf-peer", trackName: "peer:camera" } }],
+        },
+      ],
+      1
+    )
     await expect(transport.pull(ref)).rejects.toThrow(/OperationError: bad offer/)
     expect(pc.setRemoteDescription).toHaveBeenCalledWith({ type: "rollback" })
     // The dead pull's mid attribution is gone: a track landing on it is ignored.

@@ -33,7 +33,7 @@ interface DmPair {
 }
 
 /** A owner + B member sharing a real DM stream, both viewing it, calls enabled. */
-async function setUpDmPair(browser: Browser): Promise<DmPair> {
+async function setUpDmPair(browser: Browser, options: { p2p?: boolean } = {}): Promise<DmPair> {
   const testId = generateTestId()
   const inviteeEmail = `calls-b-${testId}@example.com`
   const inviteeName = `Calls B ${testId}`
@@ -42,9 +42,46 @@ async function setUpDmPair(browser: Browser): Promise<DmPair> {
   const ownerPage = await ownerContext.newPage()
   const invitee = await loginInNewContext(browser, inviteeEmail, inviteeName)
 
+  if (options.p2p) {
+    const observePeerConnections = () => {
+      const NativePeerConnection = window.RTCPeerConnection
+      const peers: RTCPeerConnection[] = []
+      Object.defineProperty(window, "__testCallPeerConnections", { value: peers })
+      window.RTCPeerConnection = new Proxy(NativePeerConnection, {
+        construct(Target, args) {
+          const peer = new Target(...(args as ConstructorParameters<typeof RTCPeerConnection>))
+          peers.push(peer)
+          return peer
+        },
+      })
+    }
+    await ownerContext.addInitScript(observePeerConnections)
+    await invitee.context.addInitScript(observePeerConnections)
+    await invitee.page.reload()
+    const directOnlyCredentials = (route: import("@playwright/test").Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ iceServers: [], expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }),
+      })
+    await ownerContext.route("**/turn-credentials", directOnlyCredentials)
+    await invitee.context.route("**/turn-credentials", directOnlyCredentials)
+  }
+
   const owner = await loginAndCreateWorkspace(ownerPage, "calls-a")
   const workspaceId = ownerPage.url().match(/\/w\/([^/]+)/)?.[1]
   if (!workspaceId) throw new Error("Could not resolve workspaceId from owner URL")
+
+  if (options.p2p) {
+    const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
+    if (!backendPort) throw new Error("PLAYWRIGHT_BACKEND_PORT is required for P2P enrollment")
+    const enrolled = await ownerPage.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
+      headers: { "x-internal-api-key": "test-internal-key" },
+      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { callsP2p: "on" } },
+    })
+    await expectApiOk(enrolled, "Enroll workspace in callsP2p")
+    await ownerPage.reload()
+  }
 
   // Calls are governed by the `calls` feature flag (workspace scope, default on).
   // The flag is control-plane-written only — there is no regional enable path to
@@ -108,6 +145,179 @@ async function startCallFromHeader(page: Page): Promise<void> {
 }
 
 test.describe("1:1 DM calls", () => {
+  test("direct-only opted-in peers exchange decoded P2P media, controls, reconnect, and hang up", async ({
+    browser,
+  }) => {
+    test.setTimeout(80000)
+    const pair = await setUpDmPair(browser, { p2p: true })
+    const { ownerPage: a, inviteePage: b, workspaceId, dmStreamId } = pair
+    try {
+      const startedResponse = a.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" && response.url().endsWith(`/workspaces/${workspaceId}/calls`)
+      )
+      await a.getByRole("button", { name: "Start a call" }).click()
+      await a.getByRole("menuitem", { name: "Start video call" }).click()
+      const callId = (await (await startedResponse).json()).call.id as string
+      const readSelf = async () => {
+        const response = await b.request.get(
+          new URL(`/api/workspaces/${workspaceId}/calls/${callId}`, b.url()).toString()
+        )
+        await expectApiOk(response, "Read current call endpoint")
+        return (await response.json()).self as { endpointId: string; mediaIncarnation: string }
+      }
+      await expect(b.getByText(/is calling/i)).toBeVisible({ timeout: 20000 })
+      await b.getByRole("button", { name: "Accept call" }).click()
+      await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+      await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+
+      await expect(a.getByRole("button", { name: "Turn camera off" })).toBeVisible()
+      await b.getByRole("button", { name: "Turn camera on" }).click()
+      const playableVideos = (page: Page) =>
+        page.locator(`${CALL_TILE} video`).evaluateAll(
+          (nodes) =>
+            nodes.filter((node) => {
+              const video = node as HTMLVideoElement
+              const stream = video.srcObject as MediaStream | null
+              return !!stream?.getVideoTracks().some((track) => track.readyState === "live")
+            }).length
+        )
+      const inboundMedia = (page: Page) =>
+        page.evaluate(async () => {
+          const peers = (
+            (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ??
+            []
+          ).filter((peer) => peer.connectionState !== "closed")
+          let audioBytes = 0
+          let audioEnergy = 0
+          let videoBytes = 0
+          let videoFrames = 0
+          for (const peer of peers) {
+            const stats = await peer.getStats()
+            stats.forEach((report) => {
+              if (report.type !== "inbound-rtp") return
+              if (report.kind === "audio" || report.mediaType === "audio") {
+                audioBytes += report.bytesReceived ?? 0
+                audioEnergy += report.totalAudioEnergy ?? 0
+              }
+              if (report.kind === "video" || report.mediaType === "video") {
+                videoBytes += report.bytesReceived ?? 0
+                videoFrames += report.framesDecoded ?? 0
+              }
+            })
+          }
+          return { audioBytes, audioEnergy, videoBytes, videoFrames }
+        })
+      const decodedAudioFlow = (page: Page) =>
+        page.evaluate(async () => {
+          const outputReady = [...document.querySelectorAll("body > audio")].some((node) => {
+            const audio = node as HTMLAudioElement
+            return (
+              !audio.paused &&
+              audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+              !!(audio.srcObject as MediaStream | null)
+                ?.getAudioTracks()
+                .some((track) => track.readyState === "live" && !track.muted)
+            )
+          })
+          const peers =
+            (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ??
+            []
+          let inboundAudioBytes = 0
+          const inboundVideoTrackIds = new Set(
+            peers.flatMap((peer) =>
+              peer
+                .getReceivers()
+                .filter((receiver) => receiver.track.kind === "video")
+                .map((receiver) => receiver.track.id)
+            )
+          )
+          let decodedVideo = false
+          for (const peer of peers) {
+            const stats = await peer.getStats()
+            stats.forEach((report) => {
+              if (report.type !== "inbound-rtp") return
+              if (report.kind === "audio" || report.mediaType === "audio")
+                inboundAudioBytes += report.bytesReceived ?? 0
+              if (
+                (report.kind === "video" || report.mediaType === "video") &&
+                report.bytesReceived > 0 &&
+                report.framesDecoded > 0
+              )
+                decodedVideo = true
+            })
+          }
+          const renderedVideo = [...document.querySelectorAll(`[data-testid='call-tile'] video`)].some((node) => {
+            const video = node as HTMLVideoElement
+            const stream = video.srcObject as MediaStream | null
+            return (
+              video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+              video.videoWidth > 0 &&
+              video.videoHeight > 0 &&
+              !!stream?.getVideoTracks().some((track) => inboundVideoTrackIds.has(track.id))
+            )
+          })
+          return outputReady && decodedVideo && renderedVideo && inboundAudioBytes > 0
+        })
+      await expect.poll(() => decodedAudioFlow(a), { timeout: 20000 }).toBe(true)
+      await expect.poll(() => decodedAudioFlow(b), { timeout: 20000 }).toBe(true)
+      await expect.poll(() => playableVideos(a), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
+      await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
+
+      await a.getByRole("button", { name: "Connection diagnostics" }).click()
+      await expect(a.getByText("Peer to peer")).toBeVisible()
+      await expect(a.getByText("Path").locator("..").getByText("Direct", { exact: true })).toBeVisible({
+        timeout: 20000,
+      })
+      await a.keyboard.press("Escape")
+
+      await a.getByRole("button", { name: "Mute", exact: true }).click()
+      await expect(a.getByRole("button", { name: "Unmute", exact: true })).toBeVisible()
+      await expect(b.getByLabel("Muted")).toBeVisible({ timeout: 10000 })
+      await b.waitForTimeout(1000)
+      const mutedAudio = await inboundMedia(b)
+      await b.waitForTimeout(1500)
+      const stillMutedAudio = await inboundMedia(b)
+      expect(stillMutedAudio.audioEnergy - mutedAudio.audioEnergy).toBeLessThan(0.0001)
+      await a.getByRole("button", { name: "Unmute", exact: true }).click()
+      await expect(b.getByLabel("Muted")).toHaveCount(0, { timeout: 10000 })
+      await expect
+        .poll(async () => (await inboundMedia(b)).audioEnergy, { timeout: 10000 })
+        .toBeGreaterThan(stillMutedAudio.audioEnergy)
+      await a.getByRole("button", { name: "Turn camera off" }).click()
+      await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBe(1)
+      const cameraOffMedia = await inboundMedia(b)
+      await a.getByRole("button", { name: "Turn camera on" }).click()
+      await expect
+        .poll(async () => (await inboundMedia(b)).videoFrames, { timeout: 20000 })
+        .toBeGreaterThan(cameraOffMedia.videoFrames)
+      await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBeGreaterThanOrEqual(2)
+
+      const beforeReload = await readSelf()
+      await b.reload()
+      await b.goto(`/w/${workspaceId}/s/${dmStreamId}`)
+      await expect(b.getByText(/still in this call/i)).toBeVisible({ timeout: 20000 })
+      await b.getByRole("button", { name: "Take over", exact: true }).first().click()
+      await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+      await expect.poll(async () => (await readSelf()).mediaIncarnation).not.toBe(beforeReload.mediaIncarnation)
+      expect((await readSelf()).endpointId).toBe(beforeReload.endpointId)
+      await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+      await b.getByRole("button", { name: "Turn camera on" }).click()
+      await expect.poll(() => playableVideos(a), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
+      await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
+      await expect.poll(() => decodedAudioFlow(a), { timeout: 20000 }).toBe(true)
+      await expect.poll(() => decodedAudioFlow(b), { timeout: 20000 }).toBe(true)
+
+      await a.getByRole("button", { name: "Leave call" }).click()
+      await expect(a.locator(CALL_TILE)).toHaveCount(0, { timeout: 20000 })
+      await expect(b.locator(CALL_TILE)).toHaveCount(1, { timeout: 20000 })
+      await expect(b.locator("body > audio")).toHaveCount(0, { timeout: 10000 })
+    } finally {
+      await pair.ownerContext.close()
+      await pair.inviteeContext.close()
+    }
+  })
+
   test("happy path: ring → accept → both docks converge → leave → ended card", async ({ browser }) => {
     test.setTimeout(120000)
     const pair = await setUpDmPair(browser)

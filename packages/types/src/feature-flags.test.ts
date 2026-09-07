@@ -124,6 +124,11 @@ describe("registryAllowsScope", () => {
 })
 
 describe("resolveFeatureFlags", () => {
+  test("keeps P2P calls off unless a workspace is enrolled", () => {
+    expect(resolveFeatureFlags({ workspace: {}, user: {} }).callsP2p).toBe("off")
+    expect(resolveFeatureFlags({ workspace: { callsP2p: "on" }, user: {} }).callsP2p).toBe("on")
+  })
+
   test("resolves against the shipped registry and ignores unregistered overrides", () => {
     expect(resolveFeatureFlags({ workspace: { retired: "on" }, user: { retired: "on" } })).toEqual(
       defaultFeatureFlags()
