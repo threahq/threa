@@ -15,14 +15,18 @@ describe("listRunningByWorkspace anchors", () => {
 
   const rootStream = streamId()
   const threadStream = streamId()
+  const asideStream = streamId()
   const otherWorkspaceStream = streamId()
 
   const threadAnchor = messageId()
+  const asideAnchor = messageId()
   const rootTrigger = messageId()
   const threadTrigger = messageId()
+  const asideTrigger = messageId()
 
   const rootSession = sessionId()
   const threadSession = sessionId()
+  const asideSession = sessionId()
   const otherWorkspaceSession = sessionId()
 
   beforeAll(async () => {
@@ -36,6 +40,11 @@ describe("listRunningByWorkspace anchors", () => {
       `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_anchor_id, root_stream_id)
        VALUES ($1, $2, 'thread', 'private', $3, $4, $5, $4)`,
       [threadStream, workspace, author, rootStream, threadAnchor]
+    )
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_anchor_id, companion_mode)
+       VALUES ($1, $2, 'aside', 'private', $3, $4, $5, 'on')`,
+      [asideStream, workspace, author, rootStream, asideAnchor]
     )
     await pool.query(
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)",
@@ -55,6 +64,14 @@ describe("listRunningByWorkspace anchors", () => {
       streamId: threadStream,
       personaId: persona,
       triggerMessageId: threadTrigger,
+      status: SessionStatuses.RUNNING,
+      serverId: "test-server",
+    })
+    await AgentSessionRepository.insert(pool, {
+      id: asideSession,
+      streamId: asideStream,
+      personaId: persona,
+      triggerMessageId: asideTrigger,
       status: SessionStatuses.RUNNING,
       serverId: "test-server",
     })
@@ -103,9 +120,26 @@ describe("listRunningByWorkspace anchors", () => {
     })
   })
 
+  test("an aside's companion reports no anchor, so it never lights its host's row", async () => {
+    // An aside carries `parent_anchor_id` like a thread does, but its companion
+    // is not the anchor's reply — the anchor row must not show it as working.
+    const rows = await AgentSessionRepository.listRunningByWorkspace(pool, workspace)
+
+    expect(rows.find((row) => row.sessionId === asideSession)).toEqual({
+      sessionId: asideSession,
+      streamId: asideStream,
+      rootStreamId: asideStream,
+      parentAnchorId: null,
+      triggerMessageId: asideTrigger,
+      personaId: persona,
+      startedAt: expect.any(Date),
+      currentStepType: null,
+    })
+  })
+
   test("a running session in another workspace is not returned", async () => {
     const rows = await AgentSessionRepository.listRunningByWorkspace(pool, workspace)
 
-    expect(rows.map((row) => row.sessionId).sort()).toEqual([rootSession, threadSession].sort())
+    expect(rows.map((row) => row.sessionId).sort()).toEqual([rootSession, threadSession, asideSession].sort())
   })
 })

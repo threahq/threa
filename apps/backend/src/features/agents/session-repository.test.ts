@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
+import { StreamTypes } from "@threahq/types"
 
 const SESSION_ROW = {
   id: "session_1",
@@ -100,7 +101,7 @@ describe("AgentSessionRepository.listRunningByWorkspace", () => {
     mock.restore()
   })
 
-  it("binds the workspace and running status and maps rows to the bootstrap shape", async () => {
+  it("binds the workspace, the running status and the thread gate, and maps rows to the bootstrap shape", async () => {
     let capturedValues: unknown[] = []
     const db: Querier = {
       query: mock(async (queryTextOrConfig) => {
@@ -135,7 +136,7 @@ describe("AgentSessionRepository.listRunningByWorkspace", () => {
 
     const rows = await AgentSessionRepository.listRunningByWorkspace(db, "ws_1")
 
-    expect(capturedValues).toEqual(["ws_1", SessionStatuses.RUNNING])
+    expect(capturedValues).toEqual([StreamTypes.THREAD, "ws_1", SessionStatuses.RUNNING])
 
     expect(rows).toEqual([
       {
