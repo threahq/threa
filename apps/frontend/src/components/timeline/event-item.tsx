@@ -5,7 +5,6 @@ import type {
   StreamEvent,
   SubagentSummary,
 } from "@threahq/types"
-import type { MessageAgentActivity } from "@/hooks"
 import { isSubagentAuthoredMessage, type SubagentThreadRun } from "@/lib/subagent-display"
 import type { BatchTimelineState } from "./event-list"
 import type { ConversationRevival } from "./conversation-overlay/model"
@@ -33,16 +32,8 @@ interface EventItemProps {
   /** ID of message to highlight and scroll to */
   highlightMessageId?: string | null
   /**
-   * Active agent sessions keyed by the anchor they light up: a trigger message
-   * id, or — for a session running in a thread — the thread's parent anchor
-   * (a message id, or a threadable card's event id).
-   */
-  agentActivity?: Map<string, MessageAgentActivity>
-  /**
    * True in views that suppress session cards (channels), where a message row
-   * carries the inline activity indicator instead. Card rows read `agentActivity`
-   * either way: a subagent's session runs in its thread, so the parent stream
-   * never renders a session card for it regardless of this flag.
+   * carries the inline activity indicator instead.
    */
   hideSessionCards?: boolean
   /** Whether this event just arrived via socket (brief visual indicator) */
@@ -100,7 +91,6 @@ export function EventItem({
   streamId,
   isThreadParent,
   highlightMessageId,
-  agentActivity,
   hideSessionCards = false,
   isNew,
   cancelledFollowUpIds,
@@ -263,9 +253,6 @@ export function EventItem({
             workspaceId={workspaceId}
             statusPatch={statusPatch}
             runFallback={statusPatch ? undefined : subagentRunFallback}
-            // The subagent's session runs in its thread, so it is aliased under
-            // this card's event id — the anchor the thread was created on.
-            activity={agentActivity?.get(event.id)}
             isThreadParent={isThreadParent}
           />
         </div>

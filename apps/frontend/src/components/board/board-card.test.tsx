@@ -34,6 +34,7 @@ import * as inputModeModule from "@/hooks/use-input-mode"
 import * as boardStoreModule from "@/stores/board-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as revealAnchorModule from "@/hooks/use-board-card-reveal-anchor"
+import * as agentTraceModule from "@/hooks/use-agent-trace"
 import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
 import { spyOnExport } from "@/test/spy"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
@@ -202,6 +203,19 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 
 beforeEach(async () => {
   __resetAgentActivityStore()
+  // A running session row mounts the live effect grid, which joins the session's
+  // socket room; the board card's own behaviour is what these cases assert.
+  vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue({
+    steps: [],
+    streamingContent: {},
+    streamingSubsteps: {},
+    session: null,
+    relatedSessions: [],
+    persona: null,
+    status: "running",
+    isLoading: false,
+    error: null,
+  })
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
   __resetCollapseCacheForTests()

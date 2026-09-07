@@ -998,8 +998,6 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     return {
       workspaceId: "ws_1",
       streamId: "stream_123",
-      sessionLiveCounts: new Map(),
-      sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: new Map(),
       subagentStatusPatches: new Map(),
@@ -1125,31 +1123,13 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
   })
 
-  it("agent activity for the row's message invalidates it; other rows stay equal", () => {
-    const activity = {
-      sessionId: "sess_1",
-      personaName: "Ariadne",
-      stepCount: 1,
-      messageCount: 0,
-      substep: null,
-      currentStepType: null,
-    }
-    const before = makeCtx({ agentActivity: new Map() })
-    const after = makeCtx({ agentActivity: new Map([["msg_a", activity]]) })
-    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
-    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
-    expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
-    expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
-  })
-
-  it("session group: live count value change invalidates; rebuilt-but-equal maps do not", () => {
+  // A session card subscribes to the agent-activity store itself, so a progress
+  // tick must not travel through ctx and re-render the row (or its neighbours).
+  it("session group: a rebuilt ctx never invalidates the row", () => {
     const started = createSessionStartedEvent("evt_s", "300", "sess_1", "msg_a")
     const item: TimelineItem = { type: "session_group", sessionId: "sess_1", sessionVersion: 1, events: [started] }
-    const counts = (stepCount: number) =>
-      makeCtx({ sessionLiveCounts: new Map([["sess_1", { stepCount, messageCount: 0 }]]) })
     const row = (ctx: TimelineItemRenderContext) => ({ item, ctx, deferSecondaryHydration: false })
-    expect(timelineRowPropsEqual(row(counts(1)), row(counts(1)))).toBe(true)
-    expect(timelineRowPropsEqual(row(counts(1)), row(counts(2)))).toBe(false)
+    expect(timelineRowPropsEqual(row(makeCtx()), row(makeCtx()))).toBe(true)
   })
 
   it("timelineItemEqual: rebuilt wrapper with same event identities is equal; changed groupContinuation is not", () => {

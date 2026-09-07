@@ -10,7 +10,6 @@ import {
 } from "@threahq/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
-import type { MessageAgentActivity } from "@/hooks"
 import type { SubagentThreadRun } from "@/lib/subagent-display"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
@@ -41,7 +40,6 @@ interface EventListProps {
   highlightMessageId?: string | null
   firstUnreadEventId?: string
   isDividerDimmed?: boolean
-  agentActivity?: Map<string, MessageAgentActivity>
   /** Hide session group cards (used in channels where responses go to threads) */
   hideSessionCards?: boolean
   /** The subagent run this stream is the thread of, when it is one. */
@@ -839,7 +837,6 @@ export interface TimelineItemRenderContext {
   highlightMessageId?: string | null
   firstUnreadEventId?: string
   isDividerDimmed?: boolean
-  agentActivity?: Map<string, MessageAgentActivity>
   hideSessionCards?: boolean
   newMessageIds?: Set<string>
   /**
@@ -850,9 +847,6 @@ export interface TimelineItemRenderContext {
    * messages yet.
    */
   firstMessageId?: string
-  sessionLiveCounts: Map<string, { stepCount: number; messageCount: number }>
-  /** Live substep text per session (e.g. "Evaluating results…"). */
-  sessionLiveSubsteps: Map<string, string | null>
   /** Click handler for the session card's Stop button. */
   onStopSession?: (sessionId: string) => void
   /** Prepare the composer to dispatch its next message through /steer when supported. */
@@ -913,7 +907,6 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         workspaceId={ctx.workspaceId}
         streamId={ctx.streamId}
         highlightMessageId={ctx.highlightMessageId}
-        agentActivity={ctx.agentActivity}
         hideSessionCards={ctx.hideSessionCards}
         isNew={ctx.newMessageIds?.has(item.event.id)}
         deferSecondaryHydration={deferSecondaryHydration}
@@ -994,9 +987,8 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         <div className="px-3 sm:px-6" data-event-id={item.events[0]?.id}>
           <AgentSessionEvent
             events={item.events}
+            workspaceId={ctx.workspaceId}
             sessionVersion={item.sessionVersion}
-            liveCounts={ctx.sessionLiveCounts.get(item.sessionId)}
-            liveSubstep={ctx.sessionLiveSubsteps.get(item.sessionId)}
             onStopSession={ctx.onStopSession}
             onSteerSession={ctx.onSteerSession}
           />
@@ -1100,10 +1092,10 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
 
 /**
  * Per-item props equality for the memoized row. `ctx` is rebuilt (new object,
- * new Maps/Sets) on every message arrival, agent-activity tick, or batch
- * interaction, so comparing ctx by identity would defeat the memo. Instead we
- * compare only what this *item* actually reads out of ctx — set membership
- * and map lookups rather than container identity.
+ * new Maps/Sets) on every message arrival or batch interaction, so comparing ctx
+ * by identity would defeat the memo. Instead we compare only what this *item*
+ * actually reads out of ctx — set membership and map lookups rather than
+ * container identity.
  *
  * IMPORTANT: when adding a field to TimelineItemRenderContext that affects
  * row rendering, it must be compared here, or rows will render stale.
@@ -1129,16 +1121,8 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
   const item = next.item
   if (isFirstUnread(item, p.firstUnreadEventId) !== isFirstUnread(item, n.firstUnreadEventId)) return false
 
-  if (item.type === "session_group") {
-    const prevCounts = p.sessionLiveCounts.get(item.sessionId)
-    const nextCounts = n.sessionLiveCounts.get(item.sessionId)
-    if (prevCounts?.stepCount !== nextCounts?.stepCount || prevCounts?.messageCount !== nextCounts?.messageCount) {
-      return false
-    }
-    if (p.sessionLiveSubsteps.get(item.sessionId) !== n.sessionLiveSubsteps.get(item.sessionId)) return false
-    return true
-  }
-
+  // A session_group row reads its live progress from the agent-activity store,
+  // so no ctx field can make it stale.
   if (item.type !== "event") return true
 
   // The overlay context is memoized in useConversationOverlay and only gets a
@@ -1167,13 +1151,10 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
   }
 
   // A subagent card repaints when its own latest patch changes (a new patch is a
-  // new event id) or when the live session in its thread starts, steps, or ends.
-  // Its activity is keyed under the CARD's event id, not a message id, so the
-  // message-keyed check below never sees it.
+  // new event id); the live session in its thread reaches it through the store.
   if (item.event.eventType === "subagent:created") {
     const sid = (item.event.payload as { subagentId?: string })?.subagentId
     if (sid !== undefined && p.subagentStatusPatches.get(sid)?.id !== n.subagentStatusPatches.get(sid)?.id) return false
-    if (p.agentActivity?.get(item.event.id) !== n.agentActivity?.get(item.event.id)) return false
   }
 
   // A bot-access request card repaints when its own latest patch changes or when
@@ -1199,7 +1180,6 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
   if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
   if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
   if ((p.newMessageIds?.has(item.event.id) ?? false) !== (n.newMessageIds?.has(item.event.id) ?? false)) return false
-  if (messageId !== undefined && p.agentActivity?.get(messageId) !== n.agentActivity?.get(messageId)) return false
 
   const pb = p.batch
   const nb = n.batch
@@ -1274,7 +1254,6 @@ export function EventList({
   highlightMessageId,
   firstUnreadEventId,
   isDividerDimmed,
-  agentActivity,
   hideSessionCards,
   subagentThreadRun,
   newMessageIds,
@@ -1286,21 +1265,6 @@ export function EventList({
   const socket = useSocket()
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
   const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
-
-  const { sessionLiveCounts, sessionLiveSubsteps } = useMemo(() => {
-    const counts = new Map<string, { stepCount: number; messageCount: number }>()
-    const substeps = new Map<string, string | null>()
-    if (agentActivity) {
-      for (const activity of agentActivity.values()) {
-        counts.set(activity.sessionId, {
-          stepCount: activity.stepCount,
-          messageCount: activity.messageCount,
-        })
-        substeps.set(activity.sessionId, activity.substep)
-      }
-    }
-    return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps }
-  }, [agentActivity])
 
   const handleStopSession = useMemo(() => (sessionId: string) => stopAgentSession(sessionId), [stopAgentSession])
 
@@ -1360,12 +1324,9 @@ export function EventList({
     highlightMessageId,
     firstUnreadEventId,
     isDividerDimmed,
-    agentActivity,
     hideSessionCards,
     newMessageIds,
     firstMessageId,
-    sessionLiveCounts,
-    sessionLiveSubsteps,
     onStopSession: handleStopSession,
     onSteerSession: steerAgentSession,
     cancelledFollowUpIds,

@@ -1,17 +1,49 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import type { StreamEvent } from "@threahq/types"
+import type { ActiveAgentSession, StreamEvent } from "@threahq/types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as agentTraceModule from "@/hooks/use-agent-trace"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { AgentSessionStep } from "@threahq/types"
+import { seedAgentActivity, updateAgentSessionProgress, __resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { AgentSessionEvent } from "./agent-session-event"
+
+const WS = "ws_1"
+
+function liveSession(sessionId: string, overrides: Partial<ActiveAgentSession> = {}): ActiveAgentSession {
+  return {
+    sessionId,
+    streamId: "stream_1",
+    rootStreamId: "stream_1",
+    personaName: "Ariadne",
+    startedAt: "2026-02-19T18:00:00.000Z",
+    ...overrides,
+  }
+}
+
+function traceResult(steps: AgentSessionStep[]): ReturnType<typeof agentTraceModule.useAgentTrace> {
+  return {
+    steps,
+    streamingContent: {},
+    streamingSubsteps: {},
+    session: null,
+    relatedSessions: [],
+    persona: null,
+    status: "running",
+    isLoading: false,
+    error: null,
+  }
+}
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  __resetAgentActivityStore()
+  // A running card mounts the live effect grid, which subscribes to the session
+  // room; these cases are about the card's own meta line, not the trace rail.
+  vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(traceResult([]))
   vi.spyOn(contextsModule, "useTrace").mockReturnValue({
     getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
   } as ReturnType<typeof contextsModule.useTrace>)
@@ -31,8 +63,14 @@ function createSessionEvent(eventType: StreamEvent["eventType"], payload: unknow
   }
 }
 
+// A running card subscribes through `useAgentTrace`, which needs a query client.
 function renderEvent(ui: React.ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>)
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>
+  )
 }
 
 describe("AgentSessionEvent", () => {
@@ -54,7 +92,7 @@ describe("AgentSessionEvent", () => {
       }),
     ]
 
-    renderEvent(<AgentSessionEvent events={events} sessionVersion={2} />)
+    renderEvent(<AgentSessionEvent workspaceId={WS} events={events} sessionVersion={2} />)
 
     expect(screen.getByText("Version 2")).toBeInTheDocument()
   })
@@ -77,7 +115,7 @@ describe("AgentSessionEvent", () => {
       }),
     ]
 
-    renderEvent(<AgentSessionEvent events={events} sessionVersion={1} />)
+    renderEvent(<AgentSessionEvent workspaceId={WS} events={events} sessionVersion={1} />)
 
     expect(screen.queryByText("Version 1")).not.toBeInTheDocument()
   })
@@ -104,7 +142,7 @@ describe("AgentSessionEvent", () => {
       }),
     ]
 
-    renderEvent(<AgentSessionEvent events={events} sessionVersion={2} />)
+    renderEvent(<AgentSessionEvent workspaceId={WS} events={events} sessionVersion={2} />)
 
     expect(screen.getByText("Rerun after follow-up message edit • 1 step • 1.0s • 1 message sent")).toBeInTheDocument()
   })
@@ -127,7 +165,7 @@ describe("AgentSessionEvent", () => {
     })
 
     it("renders the retrying state with the interrupted snapshot step count", () => {
-      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent]} />)
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, interruptedEvent]} />)
 
       expect(screen.getByText("Interrupted, retrying…")).toBeInTheDocument()
       expect(screen.getByText("2 steps")).toBeInTheDocument()
@@ -137,24 +175,24 @@ describe("AgentSessionEvent", () => {
     it("follows the live count while the retry is actively progressing", () => {
       // Active retry ticking (its counter restarts from 1) → show the live count so
       // it moves every step instead of freezing at the snapshot and reading as a hang.
-      renderEvent(
-        <AgentSessionEvent events={[startedEvent, interruptedEvent]} liveCounts={{ stepCount: 1, messageCount: 0 }} />
-      )
+      seedAgentActivity(WS, [liveSession("session_int", { stepCount: 1, messageCount: 0 })])
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, interruptedEvent]} />)
 
       expect(screen.getByText("Interrupted, retrying…")).toBeInTheDocument()
       expect(screen.getByText("1 step")).toBeInTheDocument()
     })
 
     it("falls back to the snapshot when the live rail reports 0 (backoff)", () => {
-      renderEvent(
-        <AgentSessionEvent events={[startedEvent, interruptedEvent]} liveCounts={{ stepCount: 0, messageCount: 0 }} />
-      )
+      seedAgentActivity(WS, [liveSession("session_int", { stepCount: 0, messageCount: 0 })])
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, interruptedEvent]} />)
 
       expect(screen.getByText("2 steps")).toBeInTheDocument()
     })
 
     it("shows no Stop/Redirect actions while retrying (not running)", () => {
-      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent]} onStopSession={vi.fn()} />)
+      renderEvent(
+        <AgentSessionEvent workspaceId={WS} events={[startedEvent, interruptedEvent]} onStopSession={vi.fn()} />
+      )
 
       expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument()
       expect(screen.queryByRole("button", { name: "Redirect" })).not.toBeInTheDocument()
@@ -169,7 +207,7 @@ describe("AgentSessionEvent", () => {
         completedAt: "2026-02-19T18:00:09.000Z",
       })
 
-      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent, completedEvent]} />)
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, interruptedEvent, completedEvent]} />)
 
       expect(screen.getByText("Session complete")).toBeInTheDocument()
       expect(screen.queryByText("Interrupted, retrying…")).not.toBeInTheDocument()
@@ -184,7 +222,7 @@ describe("AgentSessionEvent", () => {
         failedAt: "2026-02-19T18:00:09.000Z",
       })
 
-      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent, failedEvent]} />)
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, interruptedEvent, failedEvent]} />)
 
       expect(screen.getByText("Session failed")).toBeInTheDocument()
       expect(screen.queryByText("Interrupted, retrying…")).not.toBeInTheDocument()
@@ -203,7 +241,7 @@ describe("AgentSessionEvent", () => {
     ]
 
     it("renders both buttons while the session is running", () => {
-      renderEvent(<AgentSessionEvent events={runningEvents} onStopSession={vi.fn()} />)
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={runningEvents} onStopSession={vi.fn()} />)
 
       expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Redirect" })).toBeInTheDocument()
@@ -221,7 +259,7 @@ describe("AgentSessionEvent", () => {
         }),
       ]
 
-      renderEvent(<AgentSessionEvent events={events} onStopSession={vi.fn()} />)
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={events} onStopSession={vi.fn()} />)
 
       expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument()
       expect(screen.queryByRole("button", { name: "Redirect" })).not.toBeInTheDocument()
@@ -229,7 +267,7 @@ describe("AgentSessionEvent", () => {
 
     it("Stop calls the abort handler with the session id", () => {
       const onStopSession = vi.fn()
-      renderEvent(<AgentSessionEvent events={runningEvents} onStopSession={onStopSession} />)
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={runningEvents} onStopSession={onStopSession} />)
 
       fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
@@ -243,7 +281,12 @@ describe("AgentSessionEvent", () => {
       render(
         <div data-editor-zone="main">
           <MemoryRouter>
-            <AgentSessionEvent events={runningEvents} onStopSession={vi.fn()} onSteerSession={onSteerSession} />
+            <AgentSessionEvent
+              workspaceId={WS}
+              events={runningEvents}
+              onStopSession={vi.fn()}
+              onSteerSession={onSteerSession}
+            />
           </MemoryRouter>
           <div data-testid="zone-editor" contentEditable />
         </div>
@@ -295,6 +338,7 @@ describe("AgentSessionEvent", () => {
       // owns opening + focusing its own composer via onRedirect.
       renderEvent(
         <AgentSessionEvent
+          workspaceId={WS}
           events={runningEvents}
           onStopSession={vi.fn()}
           onRedirect={onRedirect}
@@ -326,7 +370,7 @@ describe("AgentSessionEvent", () => {
       render(
         <div data-editor-zone="main">
           <MemoryRouter>
-            <AgentSessionEvent events={runningEvents} onStopSession={vi.fn()} />
+            <AgentSessionEvent workspaceId={WS} events={runningEvents} onStopSession={vi.fn()} />
           </MemoryRouter>
         </div>
       )
@@ -336,6 +380,40 @@ describe("AgentSessionEvent", () => {
       expect(focusAtEnd).not.toHaveBeenCalled()
       expect(screen.queryByText("Ariadne will fold your message into the current work")).not.toBeInTheDocument()
     })
+  })
+})
+
+describe("AgentSessionEvent live progress", () => {
+  const runningEvents: StreamEvent[] = [
+    createSessionEvent("agent_session:started", {
+      sessionId: "session_live",
+      personaId: "persona_1",
+      personaName: "Ariadne",
+      triggerMessageId: "msg_1",
+      startedAt: "2026-02-19T18:00:00.000Z",
+    }),
+  ]
+
+  it("shows the store's step count on first render and follows a progress tick", () => {
+    seedAgentActivity(WS, [liveSession("session_live", { stepCount: 3, messageCount: 1 })])
+
+    renderEvent(<AgentSessionEvent workspaceId={WS} events={runningEvents} />)
+
+    expect(screen.getByText("3 steps • 1 message sent")).toBeInTheDocument()
+
+    act(() => updateAgentSessionProgress(WS, "session_live", { stepCount: 4, messageCount: 2 }))
+
+    expect(screen.getByText("4 steps • 2 messages sent")).toBeInTheDocument()
+  })
+
+  it("promotes the live substep onto its own row", () => {
+    seedAgentActivity(WS, [liveSession("session_live", { stepCount: 1 })])
+
+    renderEvent(<AgentSessionEvent workspaceId={WS} events={runningEvents} />)
+
+    act(() => updateAgentSessionProgress(WS, "session_live", { substep: "reading repository.ts…" }))
+
+    expect(screen.getByText("reading repository.ts…")).toBeInTheDocument()
   })
 })
 
@@ -369,25 +447,14 @@ describe("AgentSessionEvent effects", () => {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
           <Routes>
-            <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={events} />} />
+            <Route
+              path="/w/:workspaceId/s/:streamId"
+              element={<AgentSessionEvent workspaceId={WS} events={events} />}
+            />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
     )
-  }
-
-  function traceResult(steps: AgentSessionStep[]): ReturnType<typeof agentTraceModule.useAgentTrace> {
-    return {
-      steps,
-      streamingContent: {},
-      streamingSubsteps: {},
-      session: null,
-      relatedSessions: [],
-      persona: null,
-      status: "running",
-      isLoading: false,
-      error: null,
-    }
   }
 
   function toolStep(
@@ -513,7 +580,10 @@ describe("AgentSessionEvent effects", () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
           <Routes>
-            <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={[startedEvent()]} />} />
+            <Route
+              path="/w/:workspaceId/s/:streamId"
+              element={<AgentSessionEvent workspaceId={WS} events={[startedEvent()]} />}
+            />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -525,7 +595,10 @@ describe("AgentSessionEvent effects", () => {
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter initialEntries={["/w/ws_1/s/stream_1"]}>
           <Routes>
-            <Route path="/w/:workspaceId/s/:streamId" element={<AgentSessionEvent events={[startedEvent()]} />} />
+            <Route
+              path="/w/:workspaceId/s/:streamId"
+              element={<AgentSessionEvent workspaceId={WS} events={[startedEvent()]} />}
+            />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>

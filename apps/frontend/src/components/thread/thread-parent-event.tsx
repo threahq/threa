@@ -1,6 +1,5 @@
 import { Separator } from "@/components/ui/separator"
 import { EventItem } from "@/components/timeline"
-import type { MessageAgentActivity } from "@/hooks"
 import type { StreamEvent, SubagentSummary } from "@threahq/types"
 
 interface ThreadParentEventProps {
@@ -16,7 +15,6 @@ interface ThreadParentEventProps {
    */
   subagentStatusPatches?: Map<string, StreamEvent>
   subagentRunFallback?: SubagentSummary
-  agentActivity?: Map<string, MessageAgentActivity>
 }
 
 /**
@@ -39,7 +37,6 @@ export function ThreadParentEvent({
   replyCount,
   subagentStatusPatches,
   subagentRunFallback,
-  agentActivity,
 }: ThreadParentEventProps) {
   return (
     <div className="border-b">
@@ -52,7 +49,6 @@ export function ThreadParentEvent({
             isThreadParent
             subagentStatusPatches={subagentStatusPatches}
             subagentRunFallback={subagentRunFallback}
-            agentActivity={agentActivity}
           />
         </div>
       </div>

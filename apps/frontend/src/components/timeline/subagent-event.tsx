@@ -26,7 +26,6 @@ import {
 import { subagentsApi } from "@/api"
 import { usePanel } from "@/contexts"
 import { useActors } from "@/hooks"
-import type { MessageAgentActivity } from "@/hooks"
 import { agentOutcomeKeys } from "@/hooks/use-agent-outcomes"
 import { formatRelativeTime, formatTime } from "@/lib/dates"
 import { modelDisplayName } from "@/lib/model-display"
@@ -41,6 +40,7 @@ import {
   type SubagentCardState,
 } from "@/lib/subagent-display"
 import { cn } from "@/lib/utils"
+import { useAgentActivityForAnchor } from "@/stores/agent-activity-store"
 import {
   TimelineCardActionDrawer,
   TimelineCardContextMenu,
@@ -71,12 +71,6 @@ interface SubagentEventProps {
    * transition read from it names the state without naming who drove it.
    */
   runFallback?: SubagentSummary
-  /**
-   * The live session in the subagent's thread, aliased under this card's event id
-   * by `useAgentActivity` (a thread's activity lights up its anchor). Present
-   * only while a turn is actually running.
-   */
-  activity?: MessageAgentActivity
   /** True when this card is pinned atop its OWN thread panel — the link would loop back. */
   isThreadParent?: boolean
 }
@@ -100,15 +94,9 @@ const STATE_ICON = {
  * The whole card is a link to the subagent's thread (INV-40); every action lives
  * in the hover toolbar / long-press drawer, never in the flow.
  */
-export function SubagentEvent({
-  event,
-  workspaceId,
-  statusPatch,
-  runFallback,
-  activity,
-  isThreadParent,
-}: SubagentEventProps) {
+export function SubagentEvent({ event, workspaceId, statusPatch, runFallback, isThreadParent }: SubagentEventProps) {
   const { getActorName } = useActors(workspaceId)
+  const anchoredSessions = useAgentActivityForAnchor(workspaceId, event.id)
   const { getPanelUrl } = usePanel()
   const queryClient = useQueryClient()
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
@@ -135,13 +123,16 @@ export function SubagentEvent({
   else if (optimisticallyRequeued) status = SubagentStatuses.ACTIVE
   const optimisticFlip = optimisticallyCancelled || optimisticallyRequeued
 
-  // A live session in the thread is only this run's if the persona matches: an
-  // @mention of another persona can win the thread's one-session slot, and the
-  // card must not spin for someone else's turn. An unresolved actor name
+  // This run's session lives in the card's THREAD, so a session anchored here
+  // but running in the card's own stream is another row's. Persona has to match
+  // too: an @mention of another persona in the thread anchors here as well, and
+  // the card must not spin for someone else's turn. An unresolved actor name
   // mismatches, which degrades toward "starting" — under-claiming motion, never
   // claiming work that isn't the subagent's.
-  const runActivity =
-    activity && activity.personaName === getActorName(payload.personaId, AuthorTypes.PERSONA) ? activity : undefined
+  const personaName = getActorName(payload.personaId, AuthorTypes.PERSONA)
+  const runActivity = anchoredSessions.find(
+    (session) => session.streamId !== event.streamId && session.personaName === personaName
+  )
 
   const state = resolveSubagentCardState({
     status,
@@ -161,7 +152,7 @@ export function SubagentEvent({
     case "working":
       metaParts.push(
         modelLabel,
-        runActivity ? (runActivity.substep ?? getStepInlineLabel(runActivity.currentStepType)) : null
+        runActivity ? (runActivity.substep ?? getStepInlineLabel(runActivity.currentStepType ?? null)) : null
       )
       break
     case "starting":

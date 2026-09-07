@@ -594,7 +594,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
       responseMessageId: "msg_a",
     })
     // The completed lifecycle event is what clears the inline stream-view trace
-    // (useAgentActivity) — emitted via a stream event + outbox, like in-process.
+    // (the agent-activity store) — emitted via a stream event + outbox, like in-process.
     expect(insertEvent.mock.calls[0]![1]).toMatchObject({
       streamId: "stream_1",
       eventType: "agent_session:completed",

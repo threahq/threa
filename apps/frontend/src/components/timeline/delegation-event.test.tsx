@@ -375,8 +375,6 @@ describe("DelegationEvent", () => {
     const ctx = (patches: TimelineItem[]): TimelineItemRenderContext => ({
       workspaceId: "ws_1",
       streamId: "stream_1",
-      sessionLiveCounts: new Map(),
-      sessionLiveSubsteps: new Map(),
       cancelledFollowUpIds: new Set(),
       delegationStatusPatches: collectDelegationStatusPatches(patches),
       subagentStatusPatches: new Map(),
