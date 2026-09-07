@@ -25,6 +25,29 @@ function makeSocket() {
 }
 
 function makePeerConnection() {
+  const transceivers: Array<{
+    direction: RTCRtpTransceiverDirection
+    receiver: { track: { kind: string } }
+    sender: {
+      replaceTrack: ReturnType<typeof vi.fn>
+      getParameters: ReturnType<typeof vi.fn>
+      setParameters: ReturnType<typeof vi.fn>
+    }
+  }> = []
+  const makeTransceiver = (trackOrKind: MediaStreamTrack | string) => {
+    const kind = typeof trackOrKind === "string" ? trackOrKind : trackOrKind.kind
+    const transceiver = {
+      direction: "sendrecv" as RTCRtpTransceiverDirection,
+      receiver: { track: { kind } },
+      sender: {
+        replaceTrack: vi.fn(async () => {}),
+        getParameters: vi.fn(() => ({ encodings: [] })),
+        setParameters: vi.fn(async () => {}),
+      },
+    }
+    transceivers.push(transceiver)
+    return transceiver
+  }
   const pc = {
     connectionState: "new",
     signalingState: "stable",
@@ -34,15 +57,8 @@ function makePeerConnection() {
     onicecandidate: null as RTCPeerConnection["onicecandidate"],
     onnegotiationneeded: null as RTCPeerConnection["onnegotiationneeded"],
     onconnectionstatechange: null as RTCPeerConnection["onconnectionstatechange"],
-    addTrack: vi.fn(),
-    addTransceiver: vi.fn(() => ({
-      sender: {
-        replaceTrack: vi.fn(async () => {}),
-        getParameters: vi.fn(() => ({ encodings: [] })),
-        setParameters: vi.fn(async () => {}),
-      },
-    })),
-    getSenders: vi.fn(() => []),
+    addTransceiver: vi.fn(makeTransceiver),
+    getTransceivers: vi.fn(() => transceivers),
     createOffer: vi.fn(async () => ({ type: "offer" as const, sdp: "offer" })),
     createAnswer: vi.fn(async () => ({ type: "answer" as const, sdp: "answer" })),
     setLocalDescription: vi.fn(async (description: RTCSessionDescriptionInit) => {
@@ -52,6 +68,10 @@ function makePeerConnection() {
     setRemoteDescription: vi.fn(async (description: RTCSessionDescriptionInit) => {
       pc.remoteDescription = description
       pc.signalingState = description.type === "offer" ? "have-remote-offer" : "stable"
+      if (description.type === "offer" && transceivers.length === 0) {
+        makeTransceiver("audio")
+        makeTransceiver("video")
+      }
     }),
     addIceCandidate: vi.fn(async () => {}),
     restartIce: vi.fn(),
@@ -274,16 +294,77 @@ describe("P2pMeshTransport", () => {
     await transport.close()
   })
 
-  it("should reuse the per-kind sender after camera off and on", async () => {
-    const { pc, transport } = await setup()
+  it("should let the impolite peer own the initial offer and reuse its camera sender", async () => {
+    vi.useFakeTimers()
+    const { socket, pc, transport } = await setup()
     const first = { kind: "video", id: "first" } as MediaStreamTrack
     const second = { kind: "video", id: "second" } as MediaStreamTrack
+
+    expect(pc.addTransceiver.mock.calls).toEqual([
+      ["audio", { direction: "sendrecv", sendEncodings: [{}] }],
+      ["video", { direction: "sendrecv", sendEncodings: [{}] }],
+    ])
+    await vi.advanceTimersByTimeAsync(50)
+    expect(socket.emitted).toContainEqual({
+      event: "call:p2p:signal",
+      payload: expect.objectContaining({ kind: "description", description: { type: "offer", sdp: "offer" } }),
+    })
+
     await transport.publish("camera", first)
     await transport.unpublish("camera")
     await transport.publish("camera", second)
-    expect(pc.addTransceiver).toHaveBeenCalledTimes(1)
-    const sender = pc.addTransceiver.mock.results[0].value.sender
-    expect(sender.replaceTrack.mock.calls.map((call: [MediaStreamTrack | null]) => call[0])).toEqual([null, second])
+
+    expect(pc.addTransceiver).toHaveBeenCalledTimes(2)
+    const sender = pc.addTransceiver.mock.results[1].value.sender
+    expect(sender.replaceTrack.mock.calls.map((call: [MediaStreamTrack | null]) => call[0])).toEqual([
+      first,
+      null,
+      second,
+    ])
+    await transport.close()
+  })
+
+  it("should let a polite peer wait for offer-created slots and bind delayed capture", async () => {
+    vi.useFakeTimers()
+    const { socket, pc, transport } = await setup({ local: "ep_z", peer: "ep_a" })
+    const track = { kind: "audio", id: "delayed" } as MediaStreamTrack
+
+    await transport.publish("mic", track)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(pc.addTransceiver).not.toHaveBeenCalled()
+    expect(socket.emitted.filter(({ event }) => event === "call:p2p:signal")).toEqual([])
+
+    socket.fire("call:p2p:signal", {
+      callId: "call_1",
+      recipientEndpointId: "ep_z",
+      recipientEpoch: 1,
+      senderEndpointId: "ep_a",
+      senderEpoch: 2,
+      senderMediaIncarnation: "inc_b",
+      recipientMediaIncarnation: "inc_a",
+      generation: 4,
+      negotiationId: "initial-offer",
+      kind: "description",
+      description: { type: "offer", sdp: "offer" },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(pc.getTransceivers()).toHaveLength(2)
+    expect(pc.getTransceivers()[0].sender.replaceTrack).toHaveBeenCalledWith(track)
+    expect(socket.emitted).toContainEqual({
+      event: "call:p2p:signal",
+      payload: expect.objectContaining({
+        negotiationId: "initial-offer",
+        description: { type: "answer", sdp: "answer" },
+      }),
+    })
+    ;(pc.onicecandidate as unknown as (event: RTCPeerConnectionIceEvent) => void)({
+      candidate: null,
+    } as RTCPeerConnectionIceEvent)
+    expect(socket.emitted).toContainEqual({
+      event: "call:p2p:signal",
+      payload: expect.objectContaining({ kind: "end-of-candidates", negotiationId: "initial-offer" }),
+    })
     await transport.close()
   })
 
@@ -314,6 +395,57 @@ describe("P2pMeshTransport", () => {
         description: { type: "answer", sdp: "answer" },
       }),
     })
+    await transport.close()
+  })
+
+  it("should retry the pending offer without rolling back on negotiation-needed events", async () => {
+    vi.useFakeTimers()
+    const { socket, pc, transport } = await setup()
+    await vi.advanceTimersByTimeAsync(50)
+    ;(pc.onnegotiationneeded as unknown as () => void)()
+    await vi.advanceTimersByTimeAsync(50)
+    await vi.advanceTimersByTimeAsync(1500)
+    const descriptions = socket.emitted.filter(
+      ({ event, payload }) => event === "call:p2p:signal" && (payload as { kind: string }).kind === "description"
+    )
+    try {
+      expect(pc.setLocalDescription.mock.calls).toEqual([[{ type: "offer", sdp: "offer" }]])
+      expect(descriptions.at(-1)).toEqual(descriptions[0])
+    } finally {
+      await transport.close()
+    }
+  })
+
+  it("should wait for the initial remote offer when passive signaling reconnects", async () => {
+    const { pc, transport } = await setup({ local: "ep_z", peer: "ep_a" })
+    await transport.reconnect()
+    expect(pc.createOffer).not.toHaveBeenCalled()
+    await transport.close()
+  })
+
+  it("should ignore a repeated answer after its negotiation has settled", async () => {
+    vi.useFakeTimers()
+    const { socket, pc, transport } = await setup()
+    await transport.reconnect()
+    const offer = socket.emitted.find(({ event }) => event === "call:p2p:signal")!.payload as { negotiationId: string }
+    const answer = {
+      callId: "call_1",
+      recipientEndpointId: "ep_a",
+      recipientEpoch: 1,
+      senderEndpointId: "ep_b",
+      senderEpoch: 2,
+      senderMediaIncarnation: "inc_b",
+      recipientMediaIncarnation: "inc_a",
+      generation: 4,
+      negotiationId: offer.negotiationId,
+      kind: "description",
+      description: { type: "answer", sdp: "answer" },
+    }
+    socket.fire("call:p2p:signal", answer)
+    await vi.advanceTimersByTimeAsync(0)
+    socket.fire("call:p2p:signal", answer)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pc.setRemoteDescription.mock.calls).toEqual([[{ type: "answer", sdp: "answer" }]])
     await transport.close()
   })
 
@@ -349,7 +481,75 @@ describe("P2pMeshTransport", () => {
     await transport.close()
   })
 
-  it("should not install signaling or timers when closed while credentials are pending", async () => {
+  it("should wait for credentials before constructing peers from an early roster", async () => {
+    const socket = makeSocket()
+    const pc = makePeerConnection()
+    const createPeerConnection = vi.fn(() => pc as unknown as RTCPeerConnection)
+    let resolveCredentials!: (value: typeof credentials) => void
+    const transport = new P2pMeshTransport({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      socket,
+      generation: 4,
+      createPeerConnection,
+      fetchCredentials: () =>
+        new Promise((resolve) => {
+          resolveCredentials = resolve
+        }),
+    })
+    const connecting = transport.connect({ endpointId: "ep_a", mediaIncarnation: "inc_a" })
+    await transport.syncPeers([{ endpointId: "ep_b", epoch: 2, mediaIncarnation: "inc_b", publications: [] }], 4)
+    const constructedBeforeCredentials = createPeerConnection.mock.calls.length
+    resolveCredentials(credentials)
+    await connecting
+    try {
+      expect({ constructedBeforeCredentials, configurations: createPeerConnection.mock.calls }).toEqual({
+        constructedBeforeCredentials: 0,
+        configurations: [[{ iceServers: credentials.iceServers }]],
+      })
+    } finally {
+      await transport.close()
+    }
+  })
+
+  it("should preserve signaling received while TURN credentials are pending", async () => {
+    const socket = makeSocket()
+    const pc = makePeerConnection()
+    let resolveCredentials!: (value: typeof credentials) => void
+    const transport = new P2pMeshTransport({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      socket,
+      generation: 4,
+      createPeerConnection: () => pc as unknown as RTCPeerConnection,
+      fetchCredentials: () =>
+        new Promise((resolve) => {
+          resolveCredentials = resolve
+        }),
+    })
+    const connecting = transport.connect({ endpointId: "ep_z", mediaIncarnation: "inc_a" })
+    socket.fire("call:p2p:signal", {
+      callId: "call_1",
+      recipientEndpointId: "ep_z",
+      recipientEpoch: 1,
+      senderEndpointId: "ep_a",
+      senderEpoch: 2,
+      senderMediaIncarnation: "inc_b",
+      recipientMediaIncarnation: "inc_a",
+      generation: 4,
+      negotiationId: "early",
+      kind: "description",
+      description: { type: "offer", sdp: "early-offer" },
+    })
+    resolveCredentials(credentials)
+    await connecting
+    await transport.syncPeers([{ endpointId: "ep_a", epoch: 2, mediaIncarnation: "inc_b", publications: [] }], 4)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(pc.setRemoteDescription).toHaveBeenCalledWith({ type: "offer", sdp: "early-offer" })
+    await transport.close()
+  })
+
+  it("should remove signaling and not rearm timers when closed while credentials are pending", async () => {
     const socket = makeSocket()
     let resolveCredentials!: (value: typeof credentials) => void
     const pending = new Promise<typeof credentials>((resolve) => {

@@ -269,6 +269,40 @@ describe("CallManager", () => {
     expect(isDictationExternalHeld()).toBe(true)
   })
 
+  it("should finish initial capture before connected controls and a queued camera change", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    let releaseConnect!: () => void
+    vi.spyOn(transport, "connect").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseConnect = resolve
+        })
+    )
+    const manager = newManager(deps, null)
+    const starting = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video" })
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalled())
+    transport.onConnectionStateChange?.("connected")
+    const phaseBeforeCapture = getCallState().phase
+    const cameraChange = manager.setCameraOn(true)
+    await Promise.resolve()
+    const capturesBeforeConnect = vi.mocked(deps.acquireUserMedia).mock.calls.length
+    releaseConnect()
+    await Promise.all([starting, cameraChange])
+    expect({
+      phaseBeforeCapture,
+      capturesBeforeConnect,
+      requestedVideo: vi.mocked(deps.acquireUserMedia).mock.calls.map(([constraints]) => Boolean(constraints.video)),
+      finalCameraOn: getCallState().local.cameraOn,
+    }).toEqual({
+      phaseBeforeCapture: "joining",
+      capturesBeforeConnect: 0,
+      requestedVideo: [false, true],
+      finalCameraOn: true,
+    })
+  })
+
   it("join defaults to mic-on / camera-off even in video mode; camera publishes only on setCameraOn", async () => {
     const socket = makeSocket()
     const transport = makeTransport()

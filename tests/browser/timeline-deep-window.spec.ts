@@ -58,7 +58,9 @@ async function waitForStableViewport(page: Page, anchor: ReturnType<typeof messa
       async () => {
         const box = await anchor.boundingBox()
         const scrollTop = await page.locator(SCROLLER).evaluate((el) => el.scrollTop)
-        if (!box) {
+        const fetching = await page.getByText("Loading older messages...", { exact: true }).getAttribute("aria-hidden")
+        const skeletons = await page.getByTestId("older-skeleton-row").count()
+        if (!box || fetching !== "true" || skeletons > 0) {
           baseline = null
           stableSamples = 0
           return false

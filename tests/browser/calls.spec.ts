@@ -33,7 +33,10 @@ interface DmPair {
 }
 
 /** A owner + B member sharing a real DM stream, both viewing it, calls enabled. */
-async function setUpDmPair(browser: Browser, options: { p2p?: boolean } = {}): Promise<DmPair> {
+async function setUpDmPair(
+  browser: Browser,
+  options: { p2p?: boolean; inviteeCaptureDelayMs?: number; inviteeCredentialsDelayMs?: number } = {}
+): Promise<DmPair> {
   const testId = generateTestId()
   const inviteeEmail = `calls-b-${testId}@example.com`
   const inviteeName = `Calls B ${testId}`
@@ -57,6 +60,15 @@ async function setUpDmPair(browser: Browser, options: { p2p?: boolean } = {}): P
     }
     await ownerContext.addInitScript(observePeerConnections)
     await invitee.context.addInitScript(observePeerConnections)
+    if (options.inviteeCaptureDelayMs) {
+      await invitee.context.addInitScript((delayMs) => {
+        const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+        navigator.mediaDevices.getUserMedia = async (constraints) => {
+          await new Promise((resolve) => setTimeout(resolve, delayMs))
+          return nativeGetUserMedia(constraints)
+        }
+      }, options.inviteeCaptureDelayMs)
+    }
     await invitee.page.reload()
     const directOnlyCredentials = (route: import("@playwright/test").Route) =>
       route.fulfill({
@@ -65,7 +77,11 @@ async function setUpDmPair(browser: Browser, options: { p2p?: boolean } = {}): P
         body: JSON.stringify({ iceServers: [], expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }),
       })
     await ownerContext.route("**/turn-credentials", directOnlyCredentials)
-    await invitee.context.route("**/turn-credentials", directOnlyCredentials)
+    await invitee.context.route("**/turn-credentials", async (route) => {
+      if (options.inviteeCredentialsDelayMs)
+        await new Promise((resolve) => setTimeout(resolve, options.inviteeCredentialsDelayMs))
+      await directOnlyCredentials(route)
+    })
   }
 
   const owner = await loginAndCreateWorkspace(ownerPage, "calls-a")
@@ -151,7 +167,11 @@ test.describe("1:1 DM calls", () => {
     browser,
   }) => {
     test.setTimeout(80000)
-    const pair = await setUpDmPair(browser, { p2p: true })
+    const pair = await setUpDmPair(browser, {
+      p2p: true,
+      inviteeCaptureDelayMs: 1_500,
+      inviteeCredentialsDelayMs: 2_000,
+    })
     const { ownerPage: a, inviteePage: b, workspaceId, dmStreamId } = pair
     try {
       const startedResponse = a.waitForResponse(
@@ -212,8 +232,21 @@ test.describe("1:1 DM calls", () => {
           }
           return { audioBytes, audioEnergy, videoBytes, videoFrames }
         })
-      const decodedAudioFlow = (page: Page) =>
+      const decodedMediaFlow = (page: Page) =>
         page.evaluate(async () => {
+          const peers = (
+            (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ??
+            []
+          ).filter((peer) => peer.connectionState !== "closed")
+          const audioIds = new Set(
+            peers.flatMap((peer) =>
+              peer
+                .getReceivers()
+                .filter(({ track }) => track.kind === "audio")
+                .map(({ track }) => track.id)
+            )
+          )
+          const details: unknown[] = []
           const outputReady = [...document.querySelectorAll("body > audio")].some((node) => {
             const audio = node as HTMLAudioElement
             return (
@@ -221,12 +254,9 @@ test.describe("1:1 DM calls", () => {
               audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
               !!(audio.srcObject as MediaStream | null)
                 ?.getAudioTracks()
-                .some((track) => track.readyState === "live" && !track.muted)
+                .some((track) => track.readyState === "live" && !track.muted && audioIds.has(track.id))
             )
           })
-          const peers =
-            (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ??
-            []
           let inboundAudioBytes = 0
           const inboundVideoTrackIds = new Set(
             peers.flatMap((peer) =>
@@ -239,7 +269,24 @@ test.describe("1:1 DM calls", () => {
           let decodedVideo = false
           for (const peer of peers) {
             const stats = await peer.getStats()
+            const candidates: unknown[] = []
             stats.forEach((report) => {
+              if (report.type === "candidate-pair")
+                candidates.push({
+                  type: report.type,
+                  state: report.state,
+                  nominated: report.nominated,
+                  requestsSent: report.requestsSent,
+                  responsesReceived: report.responsesReceived,
+                  bytesSent: report.bytesSent,
+                  bytesReceived: report.bytesReceived,
+                })
+              if (report.type === "local-candidate" || report.type === "remote-candidate")
+                candidates.push({
+                  type: report.type,
+                  candidateType: report.candidateType,
+                  mdns: typeof report.address === "string" && report.address.endsWith(".local"),
+                })
               if (report.type !== "inbound-rtp") return
               if (report.kind === "audio" || report.mediaType === "audio")
                 inboundAudioBytes += report.bytesReceived ?? 0
@@ -249,6 +296,22 @@ test.describe("1:1 DM calls", () => {
                 report.framesDecoded > 0
               )
                 decodedVideo = true
+            })
+            details.push({
+              connection: peer.connectionState,
+              signaling: peer.signalingState,
+              ice: peer.iceConnectionState,
+              gathering: peer.iceGatheringState,
+              candidates,
+              transceivers: peer.getTransceivers().map((t) => ({
+                mid: t.mid,
+                direction: t.direction,
+                currentDirection: t.currentDirection,
+                senderKind: t.sender.track?.kind,
+                senderEnabled: t.sender.track?.enabled,
+                receiverKind: t.receiver.track.kind,
+                receiverMuted: t.receiver.track.muted,
+              })),
             })
           }
           const renderedVideo = [...document.querySelectorAll(`[data-testid='call-tile'] video`)].some((node) => {
@@ -261,10 +324,17 @@ test.describe("1:1 DM calls", () => {
               !!stream?.getVideoTracks().some((track) => inboundVideoTrackIds.has(track.id))
             )
           })
-          return outputReady && decodedVideo && renderedVideo && inboundAudioBytes > 0
+          const result = { outputReady, inboundAudio: inboundAudioBytes > 0, decodedVideo, renderedVideo }
+          return Object.values(result).every(Boolean) ? result : { ...result, details }
         })
-      await expect.poll(() => decodedAudioFlow(a), { timeout: 20000 }).toBe(true)
-      await expect.poll(() => decodedAudioFlow(b), { timeout: 20000 }).toBe(true)
+      const flowingMedia = {
+        outputReady: true,
+        inboundAudio: true,
+        decodedVideo: true,
+        renderedVideo: true,
+      }
+      await expect.poll(() => decodedMediaFlow(a), { timeout: 20000 }).toEqual(flowingMedia)
+      await expect.poll(() => decodedMediaFlow(b), { timeout: 20000 }).toEqual(flowingMedia)
       await expect.poll(() => playableVideos(a), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
       await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
 
@@ -309,8 +379,8 @@ test.describe("1:1 DM calls", () => {
       await b.getByRole("button", { name: "Turn camera on" }).click()
       await expect.poll(() => playableVideos(a), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
       await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
-      await expect.poll(() => decodedAudioFlow(a), { timeout: 20000 }).toBe(true)
-      await expect.poll(() => decodedAudioFlow(b), { timeout: 20000 }).toBe(true)
+      await expect.poll(() => decodedMediaFlow(a), { timeout: 20000 }).toEqual(flowingMedia)
+      await expect.poll(() => decodedMediaFlow(b), { timeout: 20000 }).toEqual(flowingMedia)
 
       await a.getByRole("button", { name: "Leave call" }).click()
       await expect(a.locator(CALL_TILE)).toHaveCount(0, { timeout: 20000 })

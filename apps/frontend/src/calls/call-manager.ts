@@ -483,22 +483,19 @@ export class CallManager implements CallController {
       this.wireTransport(session)
       this.wireSocket(session)
 
-      await transport.connect({ endpointId: join.endpointId, mediaIncarnation })
-      this.assertStartLive(gen)
       // Join is mic-on; the camera comes up only when the launch asked for it
       // ("Start with camera") and the server's mode allows it — `mode: "video"` is
       // a capability, not "camera on now", and an audio_only call never publishes
       // one. A mic-only join keeps the camera dark and lets a camera-less device
       // join a video call; the camera is toggled later via setCameraOn.
       const joinWithCamera = !!params.cameraOn && mode !== "audio_only"
-      // Set cameraOn BEFORE the capture: the transport's own connectionState handler
-      // can flip phase→"connected" while captureAndPublish is still awaiting (mic
-      // publish → ICE connects → camera publish still pending), and the surface's
-      // open-state effect reads local.cameraOn on that transition — so it must
-      // already be true or a camera-join opens to the bar instead of the gallery. A
-      // failed capture rolls back via clearCallState, which resets cameraOn.
       if (joinWithCamera) patchCallLocal({ cameraOn: true })
-      await this.captureAndPublish(session, { camera: joinWithCamera })
+      // Queue startup before connect yields, so later camera/device changes cannot be overwritten by initial capture.
+      await this.serializeCapture(session, async () => {
+        await transport.connect({ endpointId: join.endpointId, mediaIncarnation })
+        this.assertStartLive(gen)
+        await this.doCaptureAndPublish(session, { camera: joinWithCamera })
+      })
       this.assertStartLive(gen)
       if (joinWithCamera) this.emitState(session, { cameraOn: true })
       // After the capture, not before: the toggles are seeded from `local`, and a
@@ -876,7 +873,7 @@ export class CallManager implements CallController {
       // reconnecting; the CF media session survives brief socket loss.
       if (!this.sessionForGen(gen)) return
       recordCallLifecycleEvent({ kind: "socket_disconnect" })
-      setCallPhase("reconnecting")
+      if (!this.starting) setCallPhase("reconnecting")
     })
     this.onSocket(session, "connect", () => {
       if (!this.sessionForGen(gen)) return
@@ -914,7 +911,7 @@ export class CallManager implements CallController {
         })
         .then(() => {
           if (!this.sessionForGen(gen)) return
-          setCallPhase("connected")
+          if (!this.starting) setCallPhase("connected")
         })
         .catch((err: unknown) => {
           // Same recheck: a stale failed rejoin for the OLD call must not tear
@@ -1100,10 +1097,6 @@ export class CallManager implements CallController {
       () => {}
     )
     return run
-  }
-
-  private captureAndPublish(session: CallSession, opts: CaptureOpts): Promise<void> {
-    return this.serializeCapture(session, () => this.doCaptureAndPublish(session, opts))
   }
 
   private buildCaptureConstraints(opts: CaptureOpts): MediaStreamConstraints {
@@ -1356,7 +1349,7 @@ export class CallManager implements CallController {
       this.detachRemoteVideo(session, ref)
     }
     session.transport.onConnectionStateChange = (state) => {
-      if (this.session !== session) return
+      if (this.session !== session || this.starting) return
       if (state === "reconnecting") setCallPhase("reconnecting")
       else if (state === "connected") setCallPhase("connected")
     }
