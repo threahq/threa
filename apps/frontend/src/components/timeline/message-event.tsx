@@ -41,7 +41,6 @@ import {
   focusAtEnd,
   findVisibleZoneEditor,
   useThreadDraft,
-  type MessageAgentActivity,
 } from "@/hooks"
 import { Quote, MessageSquareReply, Check, Layers } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
@@ -147,8 +146,9 @@ interface MessageEventProps {
   isHighlighted?: boolean
   /** Whether this message just arrived via socket (brief subtle indicator) */
   isNew?: boolean
-  /** Active agent session triggered by this message */
-  activity?: MessageAgentActivity
+  /** Views that suppress session cards (channels): a session running in this
+   *  stream has no card, so the thread slot carries its indicator instead. */
+  hideSessionCards?: boolean
   /** Defer non-critical per-message hydration until coordinated reveal completes */
   deferSecondaryHydration?: boolean
   /**
@@ -855,7 +855,7 @@ interface MessageEventInnerProps {
   isThreadParent?: boolean
   isHighlighted?: boolean
   isNew?: boolean
-  activity?: MessageAgentActivity
+  hideSessionCards?: boolean
   deferSecondaryHydration?: boolean
   /**
    * See MessageEventProps.groupContinuation. Honored by SentMessageEvent and
@@ -924,7 +924,7 @@ function SentMessageEvent({
   isThreadParent: isThreadParentProp,
   isHighlighted,
   isNew,
-  activity,
+  hideSessionCards,
   deferSecondaryHydration,
   groupContinuation,
   isFirstMessage,
@@ -1069,11 +1069,8 @@ function SentMessageEvent({
   }, [payload.messageId, registerMessage, startEditing])
 
   // Shared thread affordance wiring, keyed on this message's canonical id.
-  // `activity.threadStreamId` lets us link to the real thread immediately when
-  // an agent response is in flight, before the slower stream:created event.
-  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(streamId, payload.messageId, {
+  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(workspaceId, streamId, payload.messageId, {
     threadId,
-    activityThreadStreamId: activity?.threadStreamId,
   })
   // The viewer's unsent reply in this thread — indicated on the slot whether or
   // not the thread stream exists yet (the draft is keyed on the anchor until
@@ -1090,7 +1087,9 @@ function SentMessageEvent({
   // recursion on the thread panel's top-pinned parent).
   const threadSlot = !isThreadParentProp ? (
     <ThreadSlot
-      activity={activity}
+      anchorId={payload.messageId}
+      streamId={streamId}
+      hideSessionCards={hideSessionCards}
       replyCount={replyCount}
       threadHref={threadHref}
       summary={payload.threadSummary}
@@ -2029,7 +2028,7 @@ export function MessageEvent({
   isThreadParent,
   isHighlighted,
   isNew,
-  activity,
+  hideSessionCards = false,
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
@@ -2112,7 +2111,7 @@ export function MessageEvent({
           isThreadParent={isThreadParent}
           isHighlighted={isHighlighted}
           isNew={isNew}
-          activity={activity}
+          hideSessionCards={hideSessionCards}
           deferSecondaryHydration={deferSecondaryHydration}
           groupContinuation={groupContinuation}
           isFirstMessage={isFirstMessage}

@@ -144,7 +144,7 @@ export function EventItem({
             isThreadParent={isThreadParent}
             isHighlighted={isHighlighted}
             isNew={isNew}
-            activity={hideSessionCards && messageId ? agentActivity?.get(messageId) : undefined}
+            hideSessionCards={hideSessionCards}
             modelBadgeId={
               subagentThreadRun && isSubagentAuthoredMessage(subagentThreadRun, event)
                 ? subagentThreadRun.model

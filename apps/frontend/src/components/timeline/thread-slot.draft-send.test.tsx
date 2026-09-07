@@ -74,7 +74,8 @@ function SendHarness() {
       <button onClick={() => void resolveLoadedDraft(workspaceId, scope)}>resolve draft</button>
       <div data-testid="slot-host">
         <ThreadSlot
-          activity={undefined}
+          anchorId={anchorId}
+          streamId="stream_1"
           replyCount={replyLanded ? 1 : 0}
           threadHref={replyLanded ? "/panel/thread_1" : null}
           summary={replyLanded ? summary : undefined}

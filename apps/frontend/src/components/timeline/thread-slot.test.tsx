@@ -1,22 +1,25 @@
 import { beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import type { MessageAgentActivity } from "@/hooks"
-import type { ThreadSummary } from "@threahq/types"
+import type { ActiveAgentSession, ThreadSummary } from "@threahq/types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as relativeTimeModule from "@/components/relative-time"
+import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { ThreadSlot } from "./thread-slot"
+
+const workspaceId = "ws_1"
+const anchorId = "msg_anchor"
+const streamId = "stream_parent"
+const threadStreamId = "stream_thread"
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  __resetAgentActivityStore()
   vi.spyOn(contextsModule, "useTrace").mockReturnValue({
     getTraceUrl: (id: string) => `/trace/${id}`,
   } as ReturnType<typeof contextsModule.useTrace>)
-  vi.spyOn(hooksModule, "getStepLabel").mockImplementation((step: string | null) =>
-    step ? `Step-${step}` : "Thinking"
-  )
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: (id: string) => `Name-${id.slice(-4)}`,
     getActorAvatar: (id: string) => ({ fallback: id.slice(0, 2).toUpperCase(), avatarUrl: null }),
@@ -29,16 +32,23 @@ beforeEach(() => {
   )) as unknown as typeof relativeTimeModule.RelativeTime)
 })
 
-function makeActivity(overrides: Partial<MessageAgentActivity> = {}): MessageAgentActivity {
-  return {
-    sessionId: "session_1",
-    personaName: "Ariadne",
-    currentStepType: "workspace_search",
-    stepCount: 1,
-    messageCount: 0,
-    substep: null,
-    ...overrides,
-  }
+/** A session running in the thread that hangs under this anchor. */
+function seedThreadSession(overrides: Partial<ActiveAgentSession> = {}) {
+  seedAgentActivity(workspaceId, [
+    {
+      sessionId: "session_1",
+      streamId: threadStreamId,
+      rootStreamId: streamId,
+      parentAnchorId: anchorId,
+      personaName: "Ariadne",
+      startedAt: "2026-04-19T12:00:00.000Z",
+      currentStepType: "workspace_search",
+      stepCount: 1,
+      messageCount: 0,
+      substep: null,
+      ...overrides,
+    },
+  ])
 }
 
 const summary: ThreadSummary = {
@@ -59,37 +69,61 @@ function renderSlot(ui: React.ReactElement) {
 describe("ThreadSlot", () => {
   it("renders nothing when there's no activity and no replies", () => {
     const { container } = renderSlot(
-      <ThreadSlot activity={undefined} replyCount={0} threadHref={null} summary={undefined} workspaceId="ws_1" />
+      <ThreadSlot
+        anchorId={anchorId}
+        streamId={streamId}
+        replyCount={0}
+        threadHref={null}
+        summary={undefined}
+        workspaceId={workspaceId}
+      />
     )
     expect(container.firstChild).toBeNull()
   })
 
   it("renders the thinking row when session is active with no replies yet", () => {
+    seedThreadSession()
     renderSlot(
-      <ThreadSlot activity={makeActivity()} replyCount={0} threadHref={null} summary={undefined} workspaceId="ws_1" />
+      <ThreadSlot
+        anchorId={anchorId}
+        streamId={streamId}
+        replyCount={0}
+        threadHref={null}
+        summary={undefined}
+        workspaceId={workspaceId}
+      />
     )
     expect(screen.getByText("Ariadne")).toBeInTheDocument()
-    expect(screen.getByText(/is step-workspace_search…$/)).toBeInTheDocument()
+    expect(screen.getByText("is searching workspace…")).toBeInTheDocument()
   })
 
   it("renders the ThreadCard for a thread that exists with no replies (idle spawned session)", () => {
     // `/spawn` creates the thread and attaches a session to it; between turns
     // there is no activity and no reply, and the anchor still has to show it.
     renderSlot(
-      <ThreadSlot activity={undefined} replyCount={0} threadHref="/thread/1" summary={undefined} workspaceId="ws_1" />
+      <ThreadSlot
+        anchorId={anchorId}
+        streamId={streamId}
+        replyCount={0}
+        threadHref="/thread/1"
+        summary={undefined}
+        workspaceId={workspaceId}
+      />
     )
     expect(screen.getByRole("link")).toHaveAttribute("href", "/thread/1")
     expect(screen.getByText("No replies yet")).toBeInTheDocument()
   })
 
   it("keeps the thinking row over an empty thread while the session is working", () => {
+    seedThreadSession()
     renderSlot(
       <ThreadSlot
-        activity={makeActivity()}
+        anchorId={anchorId}
+        streamId={streamId}
         replyCount={0}
         threadHref="/thread/1"
         summary={undefined}
-        workspaceId="ws_1"
+        workspaceId={workspaceId}
       />
     )
     expect(screen.getByText("Ariadne")).toBeInTheDocument()
@@ -98,21 +132,31 @@ describe("ThreadSlot", () => {
 
   it("renders the ThreadCard when replies exist", () => {
     renderSlot(
-      <ThreadSlot activity={undefined} replyCount={2} threadHref="/thread/1" summary={summary} workspaceId="ws_1" />
+      <ThreadSlot
+        anchorId={anchorId}
+        streamId={streamId}
+        replyCount={2}
+        threadHref="/thread/1"
+        summary={summary}
+        workspaceId={workspaceId}
+      />
     )
     expect(screen.getByText("2 replies")).toBeInTheDocument()
   })
 
-  it("renders the ThreadCard with activity indicator when both are present (mid-session thread)", () => {
+  it("keeps the thinking row above the card when both are present (mid-session thread)", () => {
+    seedThreadSession()
     const { container } = renderSlot(
       <ThreadSlot
-        activity={makeActivity()}
+        anchorId={anchorId}
+        streamId={streamId}
         replyCount={1}
         threadHref="/thread/1"
         summary={summary}
-        workspaceId="ws_1"
+        workspaceId={workspaceId}
       />
     )
+    expect(screen.getByText("Ariadne")).toBeInTheDocument()
     expect(screen.getByText("1 reply")).toBeInTheDocument()
     // Card's active dot (animate-ping) is present when `isActive`.
     expect(container.querySelector(".animate-ping")).not.toBeNull()
@@ -120,7 +164,14 @@ describe("ThreadSlot", () => {
 
   it("owns the gold left-line so the card suppresses its own (no double-draw)", () => {
     const { container } = renderSlot(
-      <ThreadSlot activity={undefined} replyCount={2} threadHref="/thread/1" summary={summary} workspaceId="ws_1" />
+      <ThreadSlot
+        anchorId={anchorId}
+        streamId={streamId}
+        replyCount={2}
+        threadHref="/thread/1"
+        summary={summary}
+        workspaceId={workspaceId}
+      />
     )
     // Exactly one 2px gold line should be in the DOM. The slot's line is a
     // `<span class="w-[2px]">`; the card's `before:` line is a pseudo-element
@@ -133,11 +184,12 @@ describe("ThreadSlot", () => {
   it("is visible for a draft with no thread yet, rendering the draft card at the draft panel url", () => {
     renderSlot(
       <ThreadSlot
-        activity={undefined}
+        anchorId={anchorId}
+        streamId={streamId}
         replyCount={0}
         threadHref={null}
         summary={undefined}
-        workspaceId="ws_1"
+        workspaceId={workspaceId}
         draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
         draftHref="/panel/draft:stream_1:msg_1"
       />
@@ -150,11 +202,12 @@ describe("ThreadSlot", () => {
   it("stays null for a draft with nowhere to point (no thread and no draft url)", () => {
     const { container } = renderSlot(
       <ThreadSlot
-        activity={undefined}
+        anchorId={anchorId}
+        streamId={streamId}
         replyCount={0}
         threadHref={null}
         summary={undefined}
-        workspaceId="ws_1"
+        workspaceId={workspaceId}
         draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
         draftHref={null}
       />
@@ -165,11 +218,12 @@ describe("ThreadSlot", () => {
   it("keeps the same slot element (and no replayed grow-in) when the draft card becomes the reply card", () => {
     const { container, rerender } = renderSlot(
       <ThreadSlot
-        activity={undefined}
+        anchorId={anchorId}
+        streamId={streamId}
         replyCount={0}
         threadHref={null}
         summary={undefined}
-        workspaceId="ws_1"
+        workspaceId={workspaceId}
         draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
         draftHref="/panel/draft:stream_1:msg_1"
       />
@@ -182,11 +236,12 @@ describe("ThreadSlot", () => {
     rerender(
       <MemoryRouter>
         <ThreadSlot
-          activity={undefined}
+          anchorId={anchorId}
+          streamId={streamId}
           replyCount={1}
           threadHref="/panel/thread_1"
           summary={summary}
-          workspaceId="ws_1"
+          workspaceId={workspaceId}
           draft={null}
           draftHref="/panel/draft:stream_1:msg_1"
         />
@@ -203,7 +258,14 @@ describe("ThreadSlot", () => {
     // see the component, e.g. a Virtuoso scroll-in), the useEffect's wasRef
     // matches the current value and animation does not fire.
     const { container } = renderSlot(
-      <ThreadSlot activity={undefined} replyCount={2} threadHref="/thread/1" summary={summary} workspaceId="ws_1" />
+      <ThreadSlot
+        anchorId={anchorId}
+        streamId={streamId}
+        replyCount={2}
+        threadHref="/thread/1"
+        summary={summary}
+        workspaceId={workspaceId}
+      />
     )
     expect(container.querySelector(".animate-thread-grow")).toBeNull()
   })

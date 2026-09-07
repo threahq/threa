@@ -1,13 +1,22 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import type { ThreadSummary } from "@threahq/types"
-import { getStepLabel, type MessageAgentActivity, type ScopeDraftPreview } from "@/hooks"
+import type { ActiveAgentSession, ThreadSummary } from "@threahq/types"
+import type { ScopeDraftPreview } from "@/hooks"
 import { useTrace } from "@/contexts"
+import { getStepInlineLabel } from "@/lib/step-config"
 import { cn } from "@/lib/utils"
+import { useAgentActivityForAnchor } from "@/stores/agent-activity-store"
 import { ThreadCard } from "./thread-card"
 
 interface ThreadSlotProps {
-  activity?: MessageAgentActivity
+  /** The timeline row this slot hangs under (`msg_…` message / `event_…` card). */
+  anchorId: string
+  /** The stream the anchor lives in — a session running here has its own session
+   *  card, one running in a thread under the anchor has no other home. */
+  streamId: string
+  /** Views that hide session cards (channels): the anchor's own in-stream
+   *  session then has nowhere else to surface either. */
+  hideSessionCards?: boolean
   replyCount: number
   threadHref: string | null
   summary?: ThreadSummary
@@ -24,18 +33,18 @@ interface ThreadSlotProps {
  * and the ThreadCard. The gold 2px left-line is owned by the slot (not the
  * card) so it:
  *
- *   1. persists across pill → card transitions without unmounting (no null
- *      frame, no flicker between the two states)
+ *   1. persists as rows open and close without unmounting (no null frame, no
+ *      flicker as the body changes)
  *   2. grows in from top-to-bottom via `animate-thread-grow` the first time
  *      the slot becomes visible during this component's lifetime (not on
  *      every Virtuoso remount — ref-gated)
- *   3. extends smoothly when the thinking row expands into the card via a
- *      `grid-template-rows` transition — the line is absolute-positioned to
- *      the slot container, so it follows the container's growing height
+ *   3. extends smoothly when a row opens or closes via a `grid-template-rows`
+ *      transition — the line is absolute-positioned to the slot container, so
+ *      it follows the container's changing height
  *
  * When nothing is thread-related (no activity, no thread, no draft), the slot
- * returns null. Otherwise the line is always present; the body swaps between a
- * "thinking" line (italic text + persona) and the full ThreadCard body.
+ * returns null. Otherwise the line is always present, over a "thinking" line
+ * (italic text + persona), the ThreadCard body, or both at once.
  *
  * A viewer's unsent draft reply keeps the slot visible before the thread stream
  * exists, and the card it renders occupies the SAME grid cell as the reply card
@@ -44,7 +53,9 @@ interface ThreadSlotProps {
  * from replaying on the send.
  */
 export function ThreadSlot({
-  activity,
+  anchorId,
+  streamId,
+  hideSessionCards = false,
   replyCount,
   threadHref,
   summary,
@@ -52,13 +63,16 @@ export function ThreadSlot({
   draft,
   draftHref,
 }: ThreadSlotProps) {
+  const sessions = useAgentActivityForAnchor(workspaceId, anchorId)
+  // A session running in another stream is a thread under this anchor and has
+  // nowhere else to render. One running in THIS stream already has its own
+  // session card — except where those are hidden, and then this is its only home.
+  const activity = sessions.find((s) => s.streamId !== streamId) ?? (hideSessionCards ? sessions[0] : undefined)
   const hasActivity = !!activity
   const hasThread = replyCount > 0 && !!threadHref
   // A thread that exists but holds nothing yet — a `/spawn` session attached to
-  // its anchor before it has posted. Suppressed while a session is running: the
-  // thinking row says more than an empty card, and a `threadHref` that is NOT
-  // backed by a stream comes from `activity.threadStreamId`, which can only be
-  // set while that activity is live.
+  // its anchor before it has posted. Suppressed while a session is running: an
+  // empty "No replies yet" card contradicts the thinking row directly above it.
   const hasEmptyThread = replyCount === 0 && !!threadHref && !hasActivity
   const cardHref = threadHref ?? draftHref ?? null
   const hasDraft = !!draft && !!cardHref
@@ -121,18 +135,18 @@ export function ThreadSlot({
         )}
       </span>
 
-      {/* Grid with two rows — thinking (1fr when pill-only, 0fr when card)
-          and card (1fr when card, 0fr when pill-only). `grid-template-rows`
-          animates in modern browsers (Chrome 111+, Firefox 120+, Safari 17+),
-          smoothly extending the slot height on pill → card. Older browsers
-          snap to the final rows without transition. */}
+      {/* Two independent rows — thinking and card — each 1fr when it has content
+          and 0fr when it does not, so a session working on a thread that already
+          has replies still shows as working, above the card. `grid-template-rows`
+          animates in Chrome 111+, Firefox 120+, Safari 17+; older browsers snap
+          to the final rows without transition. */}
       <div
         className="grid transition-[grid-template-rows] duration-[450ms] ease-out"
         style={{
-          gridTemplateRows: showCard ? "0fr 1fr" : "1fr 0fr",
+          gridTemplateRows: `${hasActivity ? "1fr" : "0fr"} ${showCard ? "1fr" : "0fr"}`,
         }}
       >
-        <div className="overflow-hidden">{activity && !showCard ? <ThinkingRow activity={activity} /> : null}</div>
+        <div className="overflow-hidden">{activity ? <ThinkingRow activity={activity} /> : null}</div>
         <div className="overflow-hidden">
           {showCard && cardHref ? (
             <ThreadCard
@@ -160,11 +174,11 @@ function withTrailingEllipsis(text: string): string {
  * (no line, no background) — the slot's left-line and the row's own indent are
  * all the visual structure it needs. Clicking opens the trace.
  */
-function ThinkingRow({ activity }: { activity: MessageAgentActivity }) {
+function ThinkingRow({ activity }: { activity: ActiveAgentSession }) {
   const { getTraceUrl } = useTrace()
   const label = activity.substep
     ? withTrailingEllipsis(activity.substep)
-    : `is ${withTrailingEllipsis(getStepLabel(activity.currentStepType).toLowerCase())}`
+    : `is ${withTrailingEllipsis(getStepInlineLabel(activity.currentStepType ?? null).toLowerCase())}`
 
   return (
     <Link
