@@ -7,10 +7,15 @@ import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
 import { INTERNAL_API_KEY_HEADER, THREA_VERSION_HEADER } from "@threahq/types"
 import { logger } from "./lib/logger"
-import { bigIntReplacer } from "@threahq/backend-common"
+import { bigIntReplacer, sanitizeRoutePath } from "@threahq/backend-common"
 import { createMetricsMiddleware } from "./middleware/metrics"
 import type { ApiVersionLog } from "./middleware/api-version"
 import { createCorsOriginChecker } from "./lib/cors"
+
+/** pino-http hands over the raw URL, and the query string is not part of the route. */
+function routeTemplate(url: string | undefined): string {
+  return sanitizeRoutePath((url ?? "").split("?")[0] ?? "")
+}
 
 interface CreateAppOptions {
   corsAllowedOrigins: string[]
@@ -101,11 +106,14 @@ export function createApp(options: CreateAppOptions): Express {
         ],
         censor: "[REDACTED]",
       },
+      // The route template, not the URL: a message carrying prefixed ULIDs is
+      // unique per request, so nothing groups downstream and 600 identical 4xx
+      // read as 600 unrelated ones. The full URL stays in the `req` attribute.
       customSuccessMessage: (req, res) => {
-        return `${req.method} ${req.url} ${res.statusCode}`
+        return `${req.method} ${routeTemplate(req.url)} ${res.statusCode}`
       },
       customErrorMessage: (req, res, err) => {
-        return `${req.method} ${req.url} ${res.statusCode} - ${err?.message || "Error"}`
+        return `${req.method} ${routeTemplate(req.url)} ${res.statusCode} - ${err?.message || "Error"}`
       },
     })
   )

@@ -24,6 +24,13 @@ export class QueueDynamicNamingScheduler implements DynamicNamingJobScheduler {
   }
 }
 
+/**
+ * Dynamic naming is user-initiated, so a bot-authored message resolves no
+ * initiating user and the automatic triggers (assigned, reassigned, structural)
+ * skip at `debug`: in a workspace where agents post, that is the ordinary case
+ * and not a fault. `dynamic_naming:requested` keeps its warn — someone asked
+ * for a rename by hand and got nothing back.
+ */
 export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
   constructor(
     pool: Pool,
@@ -78,7 +85,7 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
         [...structural.values()].map(async ({ ref, eventId, messageId, initiatingUserId }) => {
           const authorityUserId = await this.resolveInitiatingUserId(messageId, initiatingUserId)
           if (!authorityUserId) {
-            logger.warn(
+            logger.debug(
               { workspaceId: ref.workspaceId, targetKind: ref.targetKind, targetId: ref.targetId, messageId },
               "Skipping dynamic naming structural event: no initiating user could be resolved"
             )
@@ -122,7 +129,7 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
         return
       const initiatingUserId = await this.resolveInitiatingUserId(payload.messageId, payload.initiatingUserId)
       if (!initiatingUserId) {
-        logger.warn(
+        logger.debug(
           {
             workspaceId: payload.workspaceId,
             targetKind: "conversation",
@@ -149,7 +156,7 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
       const payload = event.payload
       const initiatingUserId = await this.resolveInitiatingUserId(payload.messageId, payload.initiatingUserId)
       if (!initiatingUserId) {
-        logger.warn(
+        logger.debug(
           {
             workspaceId: payload.workspaceId,
             targetKind: "conversation",

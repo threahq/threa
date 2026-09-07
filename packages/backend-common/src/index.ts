@@ -36,7 +36,7 @@ export { createMigrator, runMigrations } from "./db/migrations"
 
 export { HttpError, isUniqueViolation } from "./errors"
 
-export { createErrorHandler } from "./middleware/error-handler"
+export { createErrorHandler, sanitizeRoutePath } from "./middleware/error-handler"
 export { createInternalAuthMiddleware, INTERNAL_API_KEY_HEADER } from "./middleware/internal-auth"
 export { createRateLimit, getClientIp } from "./middleware/rate-limit"
 export type { RateLimitOptions } from "./middleware/rate-limit"
