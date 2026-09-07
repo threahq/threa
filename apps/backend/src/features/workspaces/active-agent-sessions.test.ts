@@ -8,8 +8,11 @@ function row(overrides: Partial<RunningSessionRow>): RunningSessionRow {
     sessionId: "session_1",
     streamId: "stream_channel",
     rootStreamId: "stream_channel",
+    parentAnchorId: null,
+    triggerMessageId: "msg_trigger",
     personaId: "persona_1",
     startedAt,
+    currentStepType: null,
     ...overrides,
   }
 }
@@ -18,7 +21,14 @@ describe("projectActiveAgentSessions", () => {
   it("projects accessible running sessions and resolves persona + bot names", () => {
     const sessions = [
       row({ sessionId: "s_persona", personaId: "persona_1", rootStreamId: "stream_a", streamId: "stream_a" }),
-      row({ sessionId: "s_bot", personaId: "bot_1", rootStreamId: "stream_a", streamId: "stream_thread" }),
+      row({
+        sessionId: "s_bot",
+        personaId: "bot_1",
+        rootStreamId: "stream_a",
+        streamId: "stream_thread",
+        parentAnchorId: "msg_anchor",
+        triggerMessageId: "msg_bot",
+      }),
     ]
     const accessible = new Set(["stream_a"])
     const names = new Map([
@@ -31,15 +41,21 @@ describe("projectActiveAgentSessions", () => {
         sessionId: "s_persona",
         streamId: "stream_a",
         rootStreamId: "stream_a",
+        parentAnchorId: null,
+        triggerMessageId: "msg_trigger",
         personaName: "Ada",
         startedAt: startedAt.toISOString(),
+        currentStepType: null,
       },
       {
         sessionId: "s_bot",
         streamId: "stream_thread",
         rootStreamId: "stream_a",
+        parentAnchorId: "msg_anchor",
+        triggerMessageId: "msg_bot",
         personaName: "Codey",
         startedAt: startedAt.toISOString(),
+        currentStepType: null,
       },
     ])
   })

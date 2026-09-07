@@ -1,12 +1,15 @@
-import type { ActiveAgentSession } from "@threahq/types"
+import type { ActiveAgentSession, AgentStepType } from "@threahq/types"
 
 /** A running session as returned by `AgentSessionRepository.listRunningByWorkspace`. */
 export interface RunningSessionRow {
   sessionId: string
   streamId: string
   rootStreamId: string
+  parentAnchorId: string | null
+  triggerMessageId: string
   personaId: string
   startedAt: Date
+  currentStepType: AgentStepType | null
 }
 
 /**
@@ -29,7 +32,10 @@ export function projectActiveAgentSessions(
       sessionId: session.sessionId,
       streamId: session.streamId,
       rootStreamId: session.rootStreamId,
+      parentAnchorId: session.parentAnchorId,
+      triggerMessageId: session.triggerMessageId,
       personaName: agentNameById.get(session.personaId) ?? "Agent",
       startedAt: session.startedAt.toISOString(),
+      currentStepType: session.currentStepType,
     }))
 }
