@@ -9,25 +9,28 @@ import {
 import { router } from "./routes"
 import { TooltipProvider } from "./components/ui/tooltip"
 import { useInlineEditPresenceAttribute } from "./hooks/use-inline-edit-presence-attribute"
+import { AppUpdateProvider } from "./hooks/use-app-update"
 
 export function App() {
   useInlineEditPresenceAttribute()
 
   return (
-    <AuthProvider>
-      <AccountScopeProvider>
-        <AccountQueryClientProvider>
-          <ServicesProvider>
-            <PendingMessagesProvider>
-              <DictationCoordinatorProvider>
-                <TooltipProvider delayDuration={300}>
-                  <RouterProvider router={router} />
-                </TooltipProvider>
-              </DictationCoordinatorProvider>
-            </PendingMessagesProvider>
-          </ServicesProvider>
-        </AccountQueryClientProvider>
-      </AccountScopeProvider>
-    </AuthProvider>
+    <AppUpdateProvider>
+      <AuthProvider>
+        <AccountScopeProvider>
+          <AccountQueryClientProvider>
+            <ServicesProvider>
+              <PendingMessagesProvider>
+                <DictationCoordinatorProvider>
+                  <TooltipProvider delayDuration={300}>
+                    <RouterProvider router={router} />
+                  </TooltipProvider>
+                </DictationCoordinatorProvider>
+              </PendingMessagesProvider>
+            </ServicesProvider>
+          </AccountQueryClientProvider>
+        </AccountScopeProvider>
+      </AuthProvider>
+    </AppUpdateProvider>
   )
 }

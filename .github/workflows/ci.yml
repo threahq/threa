@@ -315,6 +315,33 @@ jobs:
       - name: Build frontend
         run: bun run --cwd apps/frontend build
 
+  app-update-browser:
+    name: App Update Browser Proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Install Playwright browsers
+        run: bunx playwright install chromium firefox
+
+      - name: Install Playwright system dependencies
+        run: bunx playwright install-deps chromium firefox
+
+      - name: Run app-update browser proof
+        run: bun run test:app-update
+        env:
+          CI: true
+
   workos-permissions:
     name: WorkOS Permissions
     runs-on: ubuntu-latest

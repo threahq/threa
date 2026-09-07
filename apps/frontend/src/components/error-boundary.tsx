@@ -35,28 +35,20 @@ export function ErrorBoundary() {
     if (error !== undefined) captureException(error)
   }, [error])
 
-  // "checking" while the staleness probe runs, "recovering" once the wipe is
-  // in flight (both render the "Updating" spinner so the scary card doesn't
-  // flash before the reload). "declined_unverified" falls through to the
-  // ordinary error card; "declined_cap" to the update-needed copy.
-  const [chunkRecovery, setChunkRecovery] = useState<
-    "checking" | "recovering" | "declined_unverified" | "declined_cap"
-  >("checking")
+  // "checking" while the deploy probe runs, "reloading" once the reload is in
+  // flight (both render the spinner so the error card doesn't flash first).
+  // "declined_unverified" falls through to the ordinary error card;
+  // "declined_cap" to the update-needed copy.
+  const [chunkRecovery, setChunkRecovery] = useState<"checking" | "reloading" | "declined_unverified" | "declined_cap">(
+    "checking"
+  )
 
-  // Stale-deploy auto-recovery: when a lazy route's dynamic import 404s, old
-  // JS is trying to fetch a chunk whose filename has been replaced by a newer
-  // build. Unregister the SW, clear caches, and hard-reload so the tab picks
-  // up the current asset manifest. Gated by a shared sessionStorage counter
-  // (see lib/sw-recovery.ts) so we can't loop past the cap.
-  //
-  // The browser reports a slow-network fetch failure and a stale-deploy 404
-  // with the SAME generic dynamic-import message, so the error alone never
-  // justifies the wipe: destroying the precached shell on a flaky connection
-  // makes the next load fully network-bound — the reload-to-white loop. Wipe
-  // only on a CONFIRMED newer deploy (shouldRecoverForVersion: both versions
-  // known and different — a successful probe also proves we're online enough
-  // for the recovery refetch to land); otherwise fall through to the error
-  // card, whose plain reload serves from the intact cache.
+  // A lazy route's dynamic import fails with the same generic browser message
+  // whether a newer deploy replaced the chunk or the network dropped it, so
+  // reload only on a CONFIRMED newer deploy; otherwise fall through to the error
+  // card, whose plain reload serves from the intact cache. This path is a capped
+  // plain reload that keeps the worker registered and every cache intact —
+  // clearing caches happens only when the user picks it below.
   useEffect(() => {
     if (!chunkLoadFailed) return
     let cancelled = false
@@ -67,18 +59,14 @@ export function ErrorBoundary() {
         setChunkRecovery("declined_unverified")
         return
       }
-      setChunkRecovery("recovering")
-      // Pass the failing chunk URL so recovery force-refetches it past the
-      // browser HTTP cache — an immutable-cached bad response (HTML served as JS
-      // at an /assets/* URL) is what unregister + caches.delete can't evict.
-      const bustUrl = chunkUrlFromError(error)
-      const triggered = await runSwRecovery({ bustUrls: bustUrl ? [bustUrl] : undefined })
+      setChunkRecovery("reloading")
+      const triggered = await runSwRecovery()
       if (!cancelled && !triggered) setChunkRecovery("declined_cap")
     })()
     return () => {
       cancelled = true
     }
-  }, [chunkLoadFailed, error])
+  }, [chunkLoadFailed])
 
   let title = "Something Went Wrong"
   let description = "The labyrinth has shifted unexpectedly. We encountered an error while navigating your path."
@@ -94,7 +82,7 @@ export function ErrorBoundary() {
   } else if (chunkLoadFailed && chunkRecovery === "declined_cap") {
     title = "Update needed"
     description =
-      "A newer version of Threa was deployed, and we couldn't auto-update this tab. Visit /recover to force a full reset."
+      "Part of Threa couldn't load after reloading. Clearing the cache will require downloading the app again."
   }
 
   const handleReload = () => {
@@ -108,10 +96,10 @@ export function ErrorBoundary() {
 
   const errorText = formatError(error)
 
-  // Recovery is imminent (or the staleness probe is still deciding) — show a
+  // A reload is imminent (or the deploy probe is still deciding) — show a
   // lightweight status instead of the scary error UI, which would flash for a
   // few hundred ms before the reload.
-  if (chunkLoadFailed && (chunkRecovery === "checking" || chunkRecovery === "recovering")) {
+  if (chunkLoadFailed && (chunkRecovery === "checking" || chunkRecovery === "reloading")) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-background p-4">
         <Empty className="border-0 max-w-md w-full">
@@ -119,8 +107,8 @@ export function ErrorBoundary() {
             <EmptyMedia variant="icon">
               <Loader2 className="animate-spin" />
             </EmptyMedia>
-            <EmptyTitle>Updating Threa</EmptyTitle>
-            <EmptyDescription>Fetching the latest version…</EmptyDescription>
+            <EmptyTitle>Reloading Threa</EmptyTitle>
+            <EmptyDescription>Part of the app didn't load. Trying again…</EmptyDescription>
           </EmptyHeader>
         </Empty>
       </div>

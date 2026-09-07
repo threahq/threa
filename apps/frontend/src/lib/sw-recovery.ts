@@ -1,21 +1,13 @@
 /**
  * Recovery for stale-deploy states where cached JS/SW refers to asset
- * filenames that no longer exist on the server. Shared by:
+ * filenames that no longer exist on the server. Shared by index.html's CSS
+ * watchdog and the router error boundary.
  *
- * - index.html's inline "styles didn't load after 3s" watchdog, and
- * - the router error boundary, when a lazy route's dynamic import 404s.
- *
- * The sessionStorage counter is shared (same key) so both paths together
- * can only reload at most MAX_ATTEMPTS times before falling through to the
- * normal error UI — otherwise a persistent failure could loop forever.
- *
- * Every increment also stamps LAST_ATTEMPT_KEY with the current time. The
- * index.html watchdog only clears the counter on a healthy load when that
- * stamp is older than its reset cooldown — so a broken JS chunk (CSS still
- * loads fine!) can't keep zeroing the counter on every reload and loop past
- * the cap. The reset cooldown (60s) is enforced in index.html, which owns the
- * only read of the stamp — it can't import this module, so keep the two in
- * sync.
+ * The sessionStorage counter is shared so both paths together can only reload
+ * at most MAX_ATTEMPTS times. The LAST_ATTEMPT_KEY stamp lets the CSS
+ * watchdog clear the counter on a healthy load only after a cooldown, so a
+ * broken JS chunk (CSS still loads fine!) can't loop past the cap. Keep the
+ * 60s cooldown in sync with index.html.
  */
 
 const ATTEMPTS_KEY = "sw-recovery-attempts"
@@ -23,9 +15,7 @@ const LAST_ATTEMPT_KEY = "sw-recovery-last"
 const MAX_ATTEMPTS = 2
 
 /**
- * Detect the various dynamic-import failure messages across browsers.
- * After a deploy, old JS running in a user's tab tries to import() a chunk
- * whose content-hashed filename was replaced in the new build — producing:
+ * Detect dynamic-import failure messages across browsers.
  *   Chromium/Firefox: "Failed to fetch dynamically imported module"
  *   Safari:           "error loading dynamically imported module"
  *   Older Edge:       "Importing a module script failed"
@@ -43,12 +33,8 @@ export function isChunkLoadError(error: unknown): boolean {
 }
 
 /**
- * Pull the asset URL out of a dynamic-import failure message, e.g.
- *   "Failed to fetch dynamically imported module: https://app.threa.io/assets/x-AbC123.js"
- * Returns null when the message carries no URL (some Safari variants).
- *
- * The URL is what recovery force-refetches with `cache: "reload"` — see the
- * `bustUrls` rationale in runSwRecovery.
+ * Pull the asset URL out of a dynamic-import failure message for the manual
+ * recovery path (`force: true`). Returns null when the message carries no URL.
  */
 export function chunkUrlFromError(error: unknown): string | null {
   let message = ""
@@ -60,34 +46,44 @@ export function chunkUrlFromError(error: unknown): string | null {
 }
 
 /**
- * Unregister the service worker, clear all Cache Storage buckets, then
- * hard-reload. Returns true if recovery was kicked off (a reload will
- * follow), false if the per-session cap has been reached and the caller
+ * Automatic recovery performs a capped plain reload and never destroys the
+ * working offline cache. Returns true if recovery was kicked off (a reload
+ * will follow), false if the per-session cap has been reached and the caller
  * should fall through to a normal error UI.
  *
- * Pass `force: true` for user-initiated clicks — the attempt cap only
- * exists to prevent auto-recovery loops when recovery itself is broken,
- * not to limit the user's ability to ask for a clean reload.
+ * Pass `force: true` for user-initiated clicks — this is the destructive
+ * escape hatch that unregisters the service worker, clears Cache Storage, and
+ * force-refetches the app shell and any `bustUrls` with `cache: "reload"`.
+ * The attempt cap only exists to prevent auto-recovery loops when recovery
+ * itself is broken, not to limit the user's ability to ask for a clean reload.
  *
- * `bustUrls` are force-refetched with `cache: "reload"` before the reload.
- * The poison this recovers from often lives in the *browser HTTP cache*, not
- * CacheStorage: a hashed `/assets/*.js` URL requested while the edge was
- * mid-deploy gets the SPA `index.html` fallback (200 text/html) stamped with
- * our `immutable, max-age=1yr` header (see public/_headers). That entry never
+ * `bustUrls` are only used when `force: true`. The poison this recovers from
+ * often lives in the *browser HTTP cache*, not CacheStorage: a hashed
+ * `/assets/*.js` URL requested while the edge was mid-deploy gets the SPA
+ * `index.html` fallback (200 text/html) stamped with our
+ * `immutable, max-age=1yr` header (see public/_headers). That entry never
  * revalidates, so unregister + caches.delete + location.reload() can't shift
  * it — only a `cache: "reload"` fetch bypasses and overwrites it.
  */
 export async function runSwRecovery(options?: { force?: boolean; bustUrls?: string[] }): Promise<boolean> {
   if (!options?.force) {
-    const attempts = Number.parseInt(sessionStorage.getItem(ATTEMPTS_KEY) ?? "0", 10)
-    if (attempts >= MAX_ATTEMPTS) return false
-    sessionStorage.setItem(ATTEMPTS_KEY, String(attempts + 1))
-    sessionStorage.setItem(LAST_ATTEMPT_KEY, String(Date.now()))
+    // Non-destructive automatic path: capped plain reload only. If storage is
+    // denied we can't count attempts, so refuse to reload rather than loop.
+    try {
+      const attempts = Number.parseInt(sessionStorage.getItem(ATTEMPTS_KEY) ?? "0", 10)
+      if (attempts >= MAX_ATTEMPTS) return false
+      sessionStorage.setItem(ATTEMPTS_KEY, String(attempts + 1))
+      sessionStorage.setItem(LAST_ATTEMPT_KEY, String(Date.now()))
+    } catch {
+      return false
+    }
+    window.location.reload()
+    return true
   }
 
-  // Clear SW-owned state before cache-busting HTTP-cache entries. The current
-  // page can remain controlled until the reload, so doing these in parallel can
-  // let Workbox answer the cache-bust fetch from CacheStorage before deletion.
+  // A controlled page can still fetch through its worker after unregistering.
+  // Delete CacheStorage before busting HTTP entries so Workbox cannot intercept
+  // those fetches with the cached responses being replaced.
   if ("serviceWorker" in navigator) {
     await navigator.serviceWorker
       .getRegistrations()
@@ -104,7 +100,7 @@ export async function runSwRecovery(options?: { force?: boolean; bustUrls?: stri
   // Always bust the app shell; bust the specific failing chunk when we have it.
   // Bounded: a hung bust fetch on a dead connection must not stall the reload
   // that recovery exists to deliver.
-  const bustUrls = new Set(["/index.html", ...(options?.bustUrls ?? [])])
+  const bustUrls = new Set(["/index.html", ...(options.bustUrls ?? [])])
   await Promise.all(
     [...bustUrls].map((url) => fetch(url, { cache: "reload", signal: AbortSignal.timeout(10_000) }).catch(() => {}))
   )

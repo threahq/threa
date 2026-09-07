@@ -12,7 +12,7 @@ import {
 import { Outlet, useParams, useSearchParams, useMatch, Navigate } from "react-router-dom"
 import { AppShell } from "@/components/layout/app-shell"
 import { Sidebar } from "@/components/layout/sidebar"
-import { Toaster } from "@/components/ui/sonner"
+import { AppToastHost } from "@/components/app-update-toast"
 import { MentionableMarkdownWrapper, type MentionableMarkdownWrapperProps } from "@/components/ui/markdown-content"
 import type { MentionType } from "@/lib/markdown/mention-context"
 import { UserProfileProvider, useUserProfile } from "@/components/user-profile"
@@ -403,8 +403,22 @@ function VisibleStreamPresence({ streamIds }: { streamIds: string[] }) {
   return null
 }
 
+/**
+ * Wires the socket's reconnect signal into the app-lifetime update controller.
+ * The update notifier itself lives at the app root so its per-build dedup is
+ * mount-once; this checker only triggers a check on reconnect.
+ */
 function AppUpdateChecker() {
-  useAppUpdate()
+  const reconnectCount = useSocketReconnectCount()
+  const { check } = useAppUpdate()
+  const checkRef = useRef(check)
+  checkRef.current = check
+
+  useEffect(() => {
+    if (reconnectCount === 0) return
+    void checkRef.current()
+  }, [reconnectCount])
+
   return null
 }
 
@@ -584,7 +598,7 @@ export function WorkspaceLayout() {
                                             <AttachmentExplorer workspaceId={workspaceId} />
                                             <AgentOutcomesExplorer workspaceId={workspaceId} />
                                             <TraceDialogContainer />
-                                            <Toaster />
+                                            <AppToastHost />
                                           </TraceProvider>
                                         </CodeViewerProvider>
                                       </MediaGalleryProvider>

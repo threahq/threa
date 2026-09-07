@@ -6,7 +6,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
+import { setupIsolatedTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { EventService, MessageRepository, type Message } from "../../src/features/messaging"
@@ -29,6 +29,7 @@ function unitVector(index: number): number[] {
 
 describe("embedMessageWithContext hash guard", () => {
   let pool: Pool
+  let cleanup: () => Promise<void>
   const wsId = workspaceId()
   let message: Message
 
@@ -41,7 +42,7 @@ describe("embedMessageWithContext hash guard", () => {
   }
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    ;({ pool, cleanup } = await setupIsolatedTestDatabase("message_embedding_live"))
     let ownerId = ""
     await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
@@ -66,11 +67,11 @@ describe("embedMessageWithContext hash guard", () => {
       authorType: AuthorTypes.USER,
       ...testMessageContent("a message embedded once, then left alone"),
     })
-  })
+  }, 30_000)
 
   afterAll(async () => {
-    await pool.end()
-  })
+    await cleanup()
+  }, 30_000)
 
   test("should embed once and skip the model call when the same text comes around again", async () => {
     const calls: string[] = []

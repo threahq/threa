@@ -3,7 +3,10 @@ import { defineConfig, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import { VitePWA } from "vite-plugin-pwa"
 import { execSync } from "child_process"
+import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
 import path from "path"
+import { postHogSourceMapPlugins } from "./scripts/posthog-source-maps"
 
 // Ports can be configured via env vars for browser E2E tests
 const backendPort = process.env.VITE_BACKEND_PORT || "3001"
@@ -29,10 +32,18 @@ try {
   buildVersion = `build-${Date.parse(buildTimestamp)}`
 }
 
+// Unique artifact identity: same commit rebuilt produces a different id.
+const buildId = `${buildVersion}@${buildTimestamp}`
+
+let buildOutputDir: string
+
 function versionJsonPlugin(): Plugin {
   return {
     name: "version-json",
     apply: "build",
+    configResolved(config) {
+      buildOutputDir = path.resolve(config.root, config.build.outDir)
+    },
     generateBundle() {
       this.emitFile({
         type: "asset",
@@ -107,6 +118,7 @@ export default defineConfig({
   plugins: [
     react(),
     versionJsonPlugin(),
+    ...postHogSourceMapPlugins(),
     VitePWA({
       strategies: "injectManifest",
       srcDir: "src",
@@ -119,11 +131,26 @@ export default defineConfig({
         // hundreds of background requests per test and competes with the run.
         // The SW still registers (push tests need it) and its navigation handler
         // falls through to the network when nothing is precached.
-        globPatterns: isE2ETest ? [] : ["**/*.{js,css,html,ico,png,svg}"],
+        globPatterns: isE2ETest ? [] : ["**/*.{js,mjs,css,html,ico,png,svg,woff,woff2}"],
         // recover.html is the nuclear-option SW-unregister page (public/recover.html).
         // It must stay network-served even when the app shell is broken; precaching
         // it would route recovery through the SW it is trying to unregister.
         globIgnores: ["**/recover.html"],
+        // Add Subresource Integrity to each precache entry. A failed integrity
+        // match aborts the install, so a stale HTTP response or mis-served HTML
+        // can never silently become the precached shell for the next build.
+        manifestTransforms: [
+          async (entries) => ({
+            manifest: await Promise.all(
+              entries.map(async (entry) => {
+                const bytes = await readFile(path.join(buildOutputDir, entry.url))
+                const integrity = `sha384-${createHash("sha384").update(bytes).digest("base64")}`
+                return { ...entry, integrity }
+              })
+            ),
+            warnings: [],
+          }),
+        ],
       },
       devOptions: {
         enabled: true,
@@ -132,16 +159,17 @@ export default defineConfig({
     }),
   ],
   // Bake the build version into the bundle so the running app can tell whether a
-  // reload actually swapped in new code (see use-app-update reconcilePostReload).
-  // Same value as the emitted version.json, so a post-reload mismatch is decisive.
+  // reload actually swapped in new code. Same value as the emitted version.json.
+  // __APP_BUILD_ID__ is the unique artifact identity used for precache buckets
+  // and update notification deduplication.
   define: {
     __APP_VERSION__: JSON.stringify(buildVersion),
     __APP_BUILT_AT__: JSON.stringify(buildTimestamp),
+    __APP_BUILD_ID__: JSON.stringify(buildId),
     // True only in the Playwright E2E build (VITE_BACKEND_PORT is set). Lets the
     // app suppress the persistent "new version available" update toast, which
     // otherwise parks over the composer in the aria-live region and intercepts
-    // pointer events for the rest of a test (see use-app-update). The SW itself
-    // still registers — only the click-blocking toast is gated.
+    // pointer events for the rest of a test. The SW itself still registers.
     __E2E_BUILD__: JSON.stringify(isE2ETest),
   },
   resolve: {
