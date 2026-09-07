@@ -83,12 +83,6 @@ export interface AttachmentContext {
       }>
     }
   } | null
-  /**
-   * Base64 data URL for image attachments.
-   * Only populated for recent messages when the model supports vision.
-   * Format: "data:image/png;base64,..."
-   */
-  dataUrl?: string
 }
 
 export interface MessageWithAttachments extends Message {
@@ -171,19 +165,6 @@ export interface BuildStreamContextOptions {
   includeAttachments?: boolean
   /** Whether to append completed link-preview card metadata to each message. */
   includeLinkPreviews?: boolean
-  /**
-   * Storage provider for loading image data.
-   * Required when loadImages is true.
-   */
-  storage?: {
-    getObject(key: string): Promise<Buffer>
-  }
-  /**
-   * Whether to load actual image data for vision models.
-   * When true, images in recent messages will be loaded from storage
-   * and included as base64 data URLs so the model can see them.
-   */
-  loadImages?: boolean
 }
 
 /**
@@ -283,8 +264,6 @@ export async function buildStreamContext(
   if (options?.includeAttachments) {
     context.conversationHistory = await enrichMessagesWithAttachments(db, context.conversationHistory, {
       triggerMessageId: options.triggerMessageId,
-      storage: options.storage,
-      loadImages: options.loadImages,
     })
   }
   if (options?.includeLinkPreviews) {
@@ -562,39 +541,25 @@ const FULL_EXTRACTION_USER_MESSAGES = 3
 export interface EnrichAttachmentsOptions {
   /** The trigger message ID (for determining detail levels) */
   triggerMessageId?: string
-  /**
-   * Storage provider for loading image data.
-   * If provided along with loadImages=true, actual image data will be loaded
-   * for recent messages so vision models can see the images.
-   */
-  storage?: {
-    getObject(key: string): Promise<Buffer>
-  }
-  /**
-   * Whether to load actual image data for vision models.
-   * Requires storage to be provided.
-   */
-  loadImages?: boolean
 }
 
 /**
  * Enrich messages with attachment context.
  *
  * Detail levels based on message position:
- * - Trigger message + messages after it: Full extraction (summary + fullText) + image data
- * - Last N user messages before trigger: Full extraction + image data
- * - Older messages: Summary only (no image data)
+ * - Trigger message + messages after it: full extraction (summary + fullText)
+ * - Last N user messages before trigger: full extraction
+ * - Older messages: summary only
  *
- * When loadImages is true and storage is provided, actual image data (as base64 data URLs)
- * will be included for recent messages with image attachments. This allows vision models
- * to see the images directly in the conversation.
+ * Pixels are never loaded here: the extraction text is what the agent reads,
+ * and `read_attachment` is the one path to the image itself.
  */
 export async function enrichMessagesWithAttachments(
   db: Querier,
   messages: Message[],
   options?: EnrichAttachmentsOptions
 ): Promise<MessageWithAttachments[]> {
-  const { triggerMessageId, storage, loadImages } = options ?? {}
+  const { triggerMessageId } = options ?? {}
   if (messages.length === 0) return []
 
   const messageIds = messages.map((m) => m.id)
@@ -633,43 +598,6 @@ export async function enrichMessagesWithAttachments(
     fullExtractionIndices.add(idx)
   }
 
-  const shouldLoadImages = loadImages && storage
-
-  const imageAttachmentsToLoad: Array<{ attachmentId: string; storagePath: string; mimeType: string }> = []
-  if (shouldLoadImages) {
-    for (let idx = 0; idx < messages.length; idx++) {
-      if (!fullExtractionIndices.has(idx)) continue
-      const attachments = attachmentsByMessage.get(messages[idx].id)
-      if (!attachments) continue
-      for (const att of attachments) {
-        if (att.mimeType.startsWith("image/")) {
-          imageAttachmentsToLoad.push({
-            attachmentId: att.id,
-            storagePath: att.storagePath,
-            mimeType: att.mimeType,
-          })
-        }
-      }
-    }
-  }
-
-  const imageDataByAttachment = new Map<string, string>()
-  if (imageAttachmentsToLoad.length > 0 && storage) {
-    const results = await Promise.allSettled(
-      imageAttachmentsToLoad.map(async ({ attachmentId, storagePath, mimeType }) => {
-        const buffer = await storage.getObject(storagePath)
-        const base64 = buffer.toString("base64")
-        return { attachmentId, dataUrl: `data:${mimeType};base64,${base64}` }
-      })
-    )
-    for (const result of results) {
-      if (result.status === "fulfilled") {
-        imageDataByAttachment.set(result.value.attachmentId, result.value.dataUrl)
-      }
-      // Silently skip failed image loads - the caption will still be available
-    }
-  }
-
   return messages.map((message, idx): MessageWithAttachments => {
     const attachments = attachmentsByMessage.get(message.id)
     if (!attachments || attachments.length === 0) {
@@ -677,11 +605,9 @@ export async function enrichMessagesWithAttachments(
     }
 
     const includeFullText = fullExtractionIndices.has(idx)
-    const includeImageData = shouldLoadImages && fullExtractionIndices.has(idx)
 
     const attachmentContexts: AttachmentContext[] = attachments.map((attachment) => {
       const extraction = extractionsByAttachment.get(attachment.id)
-      const dataUrl = includeImageData ? imageDataByAttachment.get(attachment.id) : undefined
 
       // For large PDFs, don't include full text (use read_attachment tool instead)
       const isLargePdf =
@@ -720,7 +646,6 @@ export async function enrichMessagesWithAttachments(
                 : undefined,
             }
           : null,
-        dataUrl,
       }
     })
 
