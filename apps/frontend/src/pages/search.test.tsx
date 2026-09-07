@@ -150,7 +150,25 @@ describe("SearchPage", () => {
 
     expect(await screen.findByText("#general")).toBeInTheDocument()
     expect(screen.getByRole("radio", { name: "Ranked results" })).toHaveAttribute("data-state", "on")
-    expect(screen.getByRole("radio", { name: "Conversation results" })).toHaveAttribute("data-state", "off")
+    expect(screen.getByRole("radio", { name: "Grouped results" })).toHaveAttribute("data-state", "off")
+  })
+
+  it("keeps the same rows and count when switching between grouped and ranked", async () => {
+    mockSearchState.clusters = [launchCluster(), createMockSearchCluster({ hits: [mockSearchResultsList[1]!] })]
+    const user = userEvent.setup()
+    renderPage()
+
+    await screen.findByText("Choosing the launch date")
+    expect(document.querySelectorAll("[data-search-group]")).toHaveLength(2)
+    expect(resultIds()).toEqual(["msg_1", "msg_2"])
+    expect(screen.getByText("2 results")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("radio", { name: "Ranked results" }))
+
+    expect(document.querySelectorAll("[data-search-group]")).toHaveLength(0)
+    expect(screen.getByText("Choosing the launch date")).toBeInTheDocument()
+    expect(resultIds()).toEqual(["msg_1", "msg_2"])
+    expect(screen.getByText("2 results")).toBeInTheDocument()
   })
 
   it("searches as you type and leaves Enter to the result list", async () => {
@@ -183,13 +201,13 @@ describe("SearchPage", () => {
 
       const header = (await screen.findByText("Choosing the launch date")).closest("a")
       expect(header).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1?m=msg_first")
-      expect(header).toHaveTextContent("#general")
       expect(header).toHaveTextContent("7 messages")
       expect(header).toHaveTextContent("Martin")
 
-      const row = document.querySelector('[data-search-cluster="conv_1"]')
+      const group = document.querySelector('[data-search-group="stream_channel1"]')
+      expect(group?.querySelector("[data-search-stream-label]")).toHaveTextContent("#general")
+      const row = group?.querySelector('[data-search-cluster="conv_1"]')
       expect(row?.querySelector('[data-search-result-id="msg_1"]')).toBeInTheDocument()
-      expect(row?.querySelector("[data-search-stream-label]")).toHaveTextContent("#general")
       expect(resultIds()).toEqual(["msg_1", "msg_2"])
       expect(screen.getByText("2 results")).toBeInTheDocument()
     })
@@ -229,7 +247,7 @@ describe("SearchPage", () => {
       expect(screen.queryByRole("button", { name: /more in this conversation/ })).not.toBeInTheDocument()
     })
 
-    it("folds a memo hit into its row as a chip that opens the memory explorer", async () => {
+    it("gathers a memo hit as a chip after the group's rows, opening the memory explorer", async () => {
       mockSearchState.memos = [createMockMemoResult()]
       mockSearchState.clusters = [
         createMockSearchCluster({
@@ -243,7 +261,9 @@ describe("SearchPage", () => {
 
       const chip = (await screen.findByText("Launch decision")).closest("a")
       expect(chip).toHaveAttribute("href", "/w/workspace_1/memory?q=hello&memo=memo_1")
-      expect(document.querySelector('[data-search-cluster="conv_1"]')).toContainElement(chip)
+      const group = document.querySelector('[data-search-group="stream_channel1"]')
+      expect(group).toContainElement(chip)
+      expect(group!.querySelector('[data-search-cluster="conv_1"]')).not.toContainElement(chip)
       expect(resultIds()).toEqual(["msg_1"])
     })
   })
@@ -305,6 +325,19 @@ describe("SearchPage", () => {
       await user.click(fold)
       expect(resultIds()).toEqual(["msg_1", "msg_2"])
       expect(screen.queryByRole("button", { name: /matches of/ })).not.toBeInTheDocument()
+    })
+
+    it("still folds them behind a count in ranked mode", async () => {
+      const user = userEvent.setup()
+      mockSearchState.clusters = [launchCluster([mockSearchResultsList[0]!, mockSearchResultsList[1]!])]
+      renderPage()
+
+      await screen.findByRole("button", { name: "2 matches of 7" })
+      await user.click(screen.getByRole("radio", { name: "Ranked results" }))
+
+      expect(resultIds()).toEqual([])
+      await user.click(screen.getByRole("button", { name: "2 matches of 7" }))
+      expect(resultIds()).toEqual(["msg_1", "msg_2"])
     })
   })
 

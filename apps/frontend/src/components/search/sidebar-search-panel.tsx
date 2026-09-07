@@ -21,8 +21,9 @@ import { SearchRefineRow } from "./search-refine-row"
 import { SearchRefineTrigger } from "./search-refine-trigger"
 import { useRefineControl } from "./use-refine-control"
 import { SearchFilterMenu } from "./search-filter-menu"
-import { SearchResults } from "./search-results"
-import { SearchClusterList, countClusterResults } from "./search-cluster-list"
+import { SearchResultList } from "./search-result-list"
+import { countClusterResults, groupClustersByStream } from "./group-clusters"
+import { useStreamGroupCollapse } from "./use-stream-group-collapse"
 import { SearchResultDisplayToggle } from "./search-result-display-toggle"
 import { useStoredSearchResultDisplayMode } from "@/lib/search-result-display-mode"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
@@ -39,7 +40,6 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const { query, setQuery, refines, setRefines, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } =
     useSearchPanel()
   const {
-    results,
     clusters,
     memos,
     isLoading,
@@ -60,13 +60,20 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const canRefine = refineEnabled && hasQuery
   const { preferences } = usePreferences()
   const [displayMode, setDisplayMode] = useStoredSearchResultDisplayMode(workspaceId)
-  // Keyboard navigation walks the rows in the order they are on screen.
+  const groups = useMemo(() => groupClustersByStream(clusters, memos), [clusters, memos])
+  const { collapsedStreamIds, toggle: toggleStreamGroup } = useStreamGroupCollapse(clusters)
+  // Keyboard navigation walks the hits in the order they are on screen.
   const navigableResults = useMemo(
-    () => (displayMode === "ranked" ? results : clusters.flatMap((cluster) => cluster.hits)),
-    [displayMode, results, clusters]
+    () =>
+      displayMode === "ranked"
+        ? clusters.flatMap((cluster) => cluster.hits)
+        : groups.flatMap((group) =>
+            collapsedStreamIds.has(group.streamId) ? [] : group.clusters.flatMap((cluster) => cluster.hits)
+          ),
+    [displayMode, clusters, groups, collapsedStreamIds]
   )
-  const resultCount = displayMode === "ranked" ? results.length : countClusterResults(clusters)
-  const hasResults = displayMode === "ranked" ? results.length > 0 : clusters.length > 0
+  const resultCount = countClusterResults(clusters)
+  const hasResults = clusters.length > 0
 
   const inputRef = useRef<RichInputRef>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -273,30 +280,24 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
 
           {displayError && <p className="px-2 py-4 text-center text-xs text-destructive">{displayError}</p>}
 
-          {hasQuery && !displayError && hasResults && displayMode === "clusters" && (
+          {hasQuery && !displayError && hasResults && (
             <div className="px-1 pt-1">
-              <SearchClusterList
+              <SearchResultList
                 workspaceId={workspaceId}
+                displayMode={displayMode}
                 clusters={clusters}
                 memos={memos}
+                groups={groups}
                 terms={terms}
                 activeResultId={activeResultId}
                 exploreHref={exploreHref}
+                collapsedStreamIds={collapsedStreamIds}
+                onToggleStream={toggleStreamGroup}
                 onResultSelect={handleResultSelect}
                 onConversationSelect={(id) => recordResultClick({ kind: "conversation", id })}
                 onMemoSelect={(id) => recordResultClick({ kind: "memo", id })}
               />
             </div>
-          )}
-
-          {hasQuery && !displayError && hasResults && displayMode === "ranked" && (
-            <SearchResults
-              workspaceId={workspaceId}
-              results={results}
-              terms={terms}
-              activeResultId={activeResultId}
-              onResultSelect={handleResultSelect}
-            />
           )}
 
           {hasQuery && !isLoading && !displayError && !hasResults && (
