@@ -16,18 +16,25 @@ import { BotChannelAccessRepository } from "./repository"
  * this arm covers, or the write path softens existence hiding for a stream the
  * bot cannot actually read. Takes a `Querier` so the write authority can call
  * it inside its transaction.
+ *
+ * `allowArchived` drops only the archive filter, never a permission one, and
+ * only `getStream` passes it (see `isStreamRetrievableForBot`). The write
+ * authority must never pass it: softening the archive check there would let a
+ * bot address a stream it cannot write.
  */
 export async function isStreamReadableAsOwner(
   db: Querier,
   workspaceId: string,
   botId: string,
-  streamId: string
+  streamId: string,
+  options: { allowArchived?: boolean } = {}
 ): Promise<boolean> {
   const ownerUserId = await BotChannelAccessRepository.getReadAsOwnerDelegate(db, workspaceId, botId)
   if (!ownerUserId) return false
 
   const stream = await StreamRepository.findByIdForWorkspace(db, streamId, workspaceId)
-  if (!stream || stream.archivedAt) return false
+  if (!stream) return false
+  if (stream.archivedAt && !options.allowArchived) return false
 
   const readable = await checkStreamAccess(db, streamId, workspaceId, ownerUserId)
   if (!readable) return false
@@ -36,7 +43,8 @@ export async function isStreamReadableAsOwner(
   // its root archives, and the owner can still read it — this arm must not.
   if (readable.rootStreamId) {
     const root = await StreamRepository.findById(db, readable.rootStreamId)
-    if (!root || root.archivedAt) return false
+    if (!root) return false
+    if (root.archivedAt && !options.allowArchived) return false
   }
 
   return !(await E2eStreamsRepository.isE2eStream(db, workspaceId, readable.rootStreamId ?? readable.id))

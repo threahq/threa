@@ -74,9 +74,15 @@ export class BotChannelService {
     )
   }
 
-  async isStreamActionableForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {
+  async isStreamActionableForBot(
+    workspaceId: string,
+    botId: string,
+    streamId: string,
+    options: { allowArchived?: boolean } = {}
+  ): Promise<boolean> {
     const stream = await StreamRepository.findByIdForWorkspace(this.pool, streamId, workspaceId)
-    if (!stream || stream.archivedAt) return false
+    if (!stream) return false
+    if (stream.archivedAt && !options.allowArchived) return false
 
     // Publicness is the ROOT's visibility (INV-62) — a thread's own row can
     // hold a stale copied "public" long after its root went private. A
@@ -95,6 +101,29 @@ export class BotChannelService {
   async isStreamAccessibleForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {
     if (await this.isStreamActionableForBot(workspaceId, botId, streamId)) return true
     return isStreamReadableAsOwner(this.pool, workspaceId, botId, streamId)
+  }
+
+  /**
+   * Accessible, evaluated as if the stream were not archived. The permission
+   * question is unchanged — grant, public root, or read-as-owner — only the
+   * lifecycle filter is dropped.
+   *
+   * `getStream` is the only caller, because archiving a stream is not a
+   * revocation and the id read is how a caller learns the archive happened.
+   * User keys already work this way (`checkStreamAccess` never reads
+   * `archived_at`), so before this a bot key was the one principal that got
+   * 403 where the app gets the row with `archivedAt` set — indistinguishable
+   * from "you were never allowed in here". A runtime supervisor cannot clean
+   * up after a scratchpad it can no longer identify as archived, which is how
+   * harnessd came to re-probe 79 dead scratchpads until the rate limiter
+   * stopped it.
+   *
+   * Everything else a bot reads — messages, conversations, search, memos,
+   * attachments, labels — still denies archived, and so does every write.
+   */
+  async isStreamRetrievableForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {
+    if (await this.isStreamActionableForBot(workspaceId, botId, streamId, { allowArchived: true })) return true
+    return isStreamReadableAsOwner(this.pool, workspaceId, botId, streamId, { allowArchived: true })
   }
 
   async getPublicStreamIds(workspaceId: string): Promise<string[]> {
