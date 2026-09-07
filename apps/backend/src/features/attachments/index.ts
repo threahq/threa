@@ -74,15 +74,8 @@ export {
   IMAGE_CAPTION_MAX_TOKENS,
   IMAGE_CAPTION_SYSTEM_PROMPT,
   IMAGE_CAPTION_USER_PROMPT,
-  imageAnalysisSchema,
 } from "./image-caption"
-export type {
-  ImageCaptionServiceDeps,
-  ImageCaptionServiceLike,
-  ImageAnalysisOutput,
-  AnalyzeImageDeps,
-  AnalyzeImageContext,
-} from "./image-caption"
+export type { ImageCaptionServiceDeps, ImageCaptionServiceLike, ImageAnalysisOutput } from "./image-caption"
 
 export { ImageThumbnailService, shouldGenerateThumbnail } from "./image"
 export type { ImageThumbnailServiceDeps, ImageThumbnailServiceLike } from "./image"

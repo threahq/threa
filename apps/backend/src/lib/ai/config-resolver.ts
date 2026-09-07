@@ -66,7 +66,6 @@ export interface ImageCaptionConfig extends ComponentConfig {
   temperature: number
   systemPrompt: string
   userPrompt: string
-  /** Explicit output cap: a verbatim transcription of a dense screenshot is long. */
   maxTokens: number
 }
 

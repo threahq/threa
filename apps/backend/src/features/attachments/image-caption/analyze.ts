@@ -8,7 +8,6 @@ export interface AnalyzeImageDeps {
   configResolver: ConfigResolver
 }
 
-/** Everything the call needs that is not the pixels themselves. */
 export interface AnalyzeImageContext {
   workspaceId: string
   attachmentId?: string
