@@ -163,6 +163,118 @@ describe("attachRuntimeSessionToThread", () => {
     ])
   })
 
+  test("copies each actor's own assignments and leaves one the thread already has alone", async () => {
+    const other = userId()
+    const shared = await LabelRepository.insert(pool, {
+      id: labelId(),
+      workspaceId: workspace,
+      creatorActorType: "user",
+      creatorUserId: author,
+      name: "Shared",
+      slug: "shared",
+      color: "#64748b",
+      emoji: null,
+      description: null,
+    })
+    const source = streamId()
+    const thread = streamId()
+    for (const user of [author, other]) {
+      await LabelAssignmentRepository.assign(pool, {
+        workspaceId: workspace,
+        labelId: shared.id,
+        resourceType: "stream",
+        resourceId: source,
+        actorType: "user",
+        userId: user,
+      })
+    }
+    const existing = await LabelAssignmentRepository.assign(pool, {
+      workspaceId: workspace,
+      labelId: shared.id,
+      resourceType: "stream",
+      resourceId: thread,
+      actorType: "user",
+      userId: author,
+    })
+
+    const copied = await LabelAssignmentRepository.copyForResource(pool, {
+      workspaceId: workspace,
+      from: { resourceType: "stream", resourceId: source },
+      to: { resourceType: "stream", resourceId: thread },
+    })
+
+    expect(copied).toEqual([
+      {
+        labelId: shared.id,
+        resourceType: "stream",
+        resourceId: thread,
+        actorType: "user",
+        userId: other,
+        workspaceId: workspace,
+        assignedAt: expect.any(String),
+      },
+    ])
+    const onThread = async (user: string) =>
+      (await LabelAssignmentRepository.listForActor(pool, workspace, user)).filter((a) => a.resourceId === thread)
+    expect(await onThread(author)).toEqual([existing])
+    expect(await onThread(other)).toEqual(copied)
+  })
+
+  test("waits for an in-flight archive of the label and then copies nothing", async () => {
+    const doomed = await LabelRepository.insert(pool, {
+      id: labelId(),
+      workspaceId: workspace,
+      creatorActorType: "user",
+      creatorUserId: author,
+      name: "Doomed",
+      slug: "doomed",
+      color: "#64748b",
+      emoji: null,
+      description: null,
+    })
+    const source = streamId()
+    const thread = streamId()
+    await LabelAssignmentRepository.assign(pool, {
+      workspaceId: workspace,
+      labelId: doomed.id,
+      resourceType: "stream",
+      resourceId: source,
+      actorType: "user",
+      userId: author,
+    })
+
+    const archiver = await pool.connect()
+    const copier = await pool.connect()
+    try {
+      await archiver.query("BEGIN")
+      await LabelRepository.archive(archiver, workspace, doomed.id)
+
+      let copyDone = false
+      const copy = LabelAssignmentRepository.copyForResource(copier, {
+        workspaceId: workspace,
+        from: { resourceType: "stream", resourceId: source },
+        to: { resourceType: "stream", resourceId: thread },
+      }).then((rows) => {
+        copyDone = true
+        return rows
+      })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(copyDone).toBe(false)
+
+      await LabelAssignmentRepository.deleteAllForLabel(archiver, workspace, doomed.id)
+      await archiver.query("COMMIT")
+
+      expect(await copy).toEqual([])
+      const onThread = (await LabelAssignmentRepository.listForActor(pool, workspace, author)).filter(
+        (a) => a.resourceId === thread
+      )
+      expect(onThread).toEqual([])
+    } finally {
+      archiver.release()
+      copier.release()
+    }
+  })
+
   test("grants the bot access to the root before creating the thread", async () => {
     // `/spawn pi` in a scratchpad only the Claude bot can reach: without the
     // grant the bot's own thread create is refused as STREAM_READ_ONLY /

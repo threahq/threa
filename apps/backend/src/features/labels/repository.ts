@@ -353,7 +353,9 @@ export const LabelAssignmentRepository = {
    * Copy every live assignment on one resource onto another, one row per
    * (label, actor), so each actor's own grouping carries over. Archived labels
    * are skipped and an assignment the target already has is left untouched
-   * (INV-20). Returns only the rows this call inserted.
+   * (INV-20). The share lock on the label row makes a concurrent archive wait
+   * for this copy, so its assignment sweep also removes the copied rows.
+   * Returns only the rows this call inserted.
    */
   async copyForResource(
     db: Querier,
@@ -372,6 +374,7 @@ export const LabelAssignmentRepository = {
         AND a.resource_type = ${params.from.resourceType}
         AND a.resource_id = ${params.from.resourceId}
         AND l.archived_at IS NULL
+      FOR SHARE OF l
       ON CONFLICT (workspace_id, resource_type, resource_id, label_id, user_id) DO NOTHING
       RETURNING ${sql.raw(ASSIGNMENT_COLUMNS)}
     `)

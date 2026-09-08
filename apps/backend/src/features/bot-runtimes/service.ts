@@ -448,8 +448,6 @@ export class BotRuntimeService {
           createdByType: "bot",
         }
       )
-      // The thread files under the scratchpad's labels so a spawned session
-      // keeps the grouping its parent has.
       await labelAssignmentService.inheritInTransaction(client, {
         workspaceId: params.workspaceId,
         from: { resourceType: LabelableResourceTypes.STREAM, resourceId: params.rootStreamId },
