@@ -31,7 +31,7 @@ import {
   useMemoSuggestion,
   useCommandArgPicker,
   useAttachmentPicker,
-  findPickableArg,
+  pickableArgs,
 } from "./triggers"
 import type { CommandItem } from "./triggers/types"
 import { parseMemoUrl } from "@/lib/memo-url"
@@ -513,15 +513,17 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const editorRef = useRef<ReturnType<typeof useEditor>>(null)
   const onFocusRef = useRef(onFocusProp)
 
-  // Argument option picker (e.g. `/model` → choose a model). Opens after a
-  // command with advertised `args[].suggestions` is inserted; its keys are
-  // routed through editorProps.handleKeyDown below so it preempts send/blur.
+  // Argument option picker (e.g. `/model` → choose a model, `/spawn pi /model`
+  // → choose one of Pi's). Opens after a command with advertised
+  // `args[].suggestions` is inserted and follows the arguments the user types;
+  // its keys are routed through editorProps.handleKeyDown below so it preempts
+  // send/blur.
   const { openArgPicker, renderArgPicker, handleArgPickerKeyDown } = useCommandArgPicker(editorRef)
   const argPickerKeyDownRef = useRef(handleArgPickerKeyDown)
   argPickerKeyDownRef.current = handleArgPickerKeyDown
   onCommandPickedRef.current = (item: CommandItem) => {
-    const arg = findPickableArg(item)
-    if (arg) openArgPicker(arg)
+    const args = pickableArgs(item)
+    if (args) openArgPicker(args)
   }
 
   // The `/attachment` picker: same programmatic shape, plus a hand-off to the

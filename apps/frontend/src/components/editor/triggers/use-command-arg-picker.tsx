@@ -8,16 +8,54 @@ import type { CommandItem } from "./types"
 import type { SuggestionListRef } from "./suggestion-list"
 
 /**
- * The argument a freshly-picked command opens an option picker for, or null
- * when the command takes no pickable argument. A command is "pickable" when it
- * inserts a chip (i.e. it's not a client-action) and its first argument carries
- * advertised `suggestions` — the model list on `/model`, the levels on
- * `/thinking`. Client-action entries (`/memo`, `/giphy`, `/snippet`) insert no
+ * The arguments a freshly-picked command offers options for, or null when it
+ * offers none. A command is "pickable" when it inserts a chip (i.e. it's not a
+ * client-action) and at least one argument carries advertised `suggestions` —
+ * the model list on `/model`, the runtimes and their per-runtime overrides on
+ * `/spawn`. Client-action entries (`/memo`, `/giphy`, `/snippet`) insert no
  * chip, so there is nothing to anchor a picker to.
  */
-export function findPickableArg(item: CommandItem): CommandArgumentInfo | null {
+export function pickableArgs(item: CommandItem): CommandArgumentInfo[] | null {
   if (item.clientActionId) return null
-  return item.args?.find((arg) => (arg.suggestions?.length ?? 0) > 0) ?? null
+  if (!item.args?.some((arg) => (arg.suggestions?.length ?? 0) > 0)) return null
+  return item.args
+}
+
+/** An argument addressed by name rather than by position: `/spawn pi /model opus`. */
+function isFlagArg(arg: CommandArgumentInfo): boolean {
+  return arg.name.startsWith("/") || arg.name.startsWith("-")
+}
+
+interface ActiveArg {
+  arg: CommandArgumentInfo
+  /** The word being typed for it, which filters the options. */
+  query: string
+}
+
+/**
+ * Which argument the caret is filling, given everything typed after the chip.
+ *
+ * The first word fills the leading positional argument (`/spawn <runtime>`,
+ * `/model <model>`); after that, only a word that follows a flag argument's own
+ * name does (`/spawn pi /model <model>`). Anything else — the session name, the
+ * word right after a chosen value — fills no argument and closes the list.
+ *
+ * A chosen positional value swaps in its own arguments where the names match,
+ * so `/spawn pi /model` offers Pi's models and `/spawn claude /model` Claude's.
+ */
+export function resolveActiveArg(args: readonly CommandArgumentInfo[], text: string): ActiveArg | null {
+  const positional = args.find((arg) => !isFlagArg(arg) && (arg.suggestions?.length ?? 0) > 0)
+  const words = text.split(/\s+/)
+  const trailingSpace = text.length > 0 && /\s$/.test(text)
+  const query = trailingSpace ? "" : (words[words.length - 1] ?? "")
+  const completed = (trailingSpace ? words : words.slice(0, -1)).filter(Boolean)
+  if (completed.length === 0) return positional ? { arg: positional, query } : null
+  const chosen = positional?.suggestions?.find((suggestion) => suggestion.value === completed[0])
+  const preceding = completed[completed.length - 1]
+  const scoped = (chosen?.args ?? []).find((arg) => arg.name === preceding)
+  const declared = args.find((arg) => arg.name === preceding && isFlagArg(arg))
+  const arg = scoped ?? declared
+  return arg ? { arg, query } : null
 }
 
 /** Rank the option list by the text typed after the command, label first. */
@@ -32,11 +70,14 @@ export function filterArgSuggestions(
 }
 
 interface ArgPickerState {
-  arg: CommandArgumentInfo
+  /** Every argument the command takes, so a flag typed later reopens the list for it. */
+  args: readonly CommandArgumentInfo[]
   /** Doc position right after the inserted `/command ` chip+space — the start of the argument text. */
   anchorPos: number
-  /** Text typed between `anchorPos` and the caret, used to filter the options. */
-  query: string
+  /** Everything typed between `anchorPos` and the caret. */
+  text: string
+  /** Name of the argument whose list was escaped; it stays shut until another argument takes over. */
+  dismissed: string | null
 }
 
 /**
@@ -57,8 +98,8 @@ function posClientRect(editor: Editor | null, pos: number): DOMRect | null {
 }
 
 export interface UseCommandArgPickerResult {
-  /** Open the picker for a command's argument; call right after the chip is inserted. */
-  openArgPicker: (arg: CommandArgumentInfo) => void
+  /** Start an argument session for a command; call right after the chip is inserted. */
+  openArgPicker: (args: readonly CommandArgumentInfo[]) => void
   /** Render the picker portal — call in the editor's JSX. */
   renderArgPicker: () => React.ReactNode
   /**
@@ -88,26 +129,25 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
   const isOpen = state !== null
 
   const openArgPicker = useCallback(
-    (arg: CommandArgumentInfo) => {
+    (args: readonly CommandArgumentInfo[]) => {
       const editor = editorRef.current
       if (!editor || editor.isDestroyed) return
-      setState({ arg, anchorPos: editor.state.selection.from, query: "" })
+      setState({ args, anchorPos: editor.state.selection.from, text: "", dismissed: null })
     },
     [editorRef]
   )
 
   const select = useCallback(
-    (value: string) => {
+    (value: string, query: string) => {
       const editor = editorRef.current
       const current = stateRef.current
       if (!editor || editor.isDestroyed || !current) return
       const caret = editor.state.selection.from
-      const from = Math.min(current.anchorPos, caret)
-      const to = Math.max(current.anchorPos, caret)
-      // Replace whatever the user has typed for the argument with the chosen
-      // value, leaving the caret after it so Enter sends `/command <value>`.
-      editor.chain().focus().deleteRange({ from, to }).insertContent(value).run()
-      setState(null)
+      // Replace only the word being typed for this argument — the rest of the
+      // line is another argument's — and follow the value with a space, which
+      // both ends the option list and starts whatever comes next.
+      const from = Math.max(current.anchorPos, caret - query.length)
+      editor.chain().focus().deleteRange({ from, to: caret }).insertContent(`${value} `).run()
     },
     [editorRef]
   )
@@ -133,7 +173,11 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
         setState(null)
         return
       }
-      if (text !== current.query) setState({ ...current, query: text })
+      if (text === current.text) return
+      // A dismissal only covers the argument it was made on; moving to another
+      // one (typing `/model` after escaping the runtime list) re-arms the list.
+      const dismissed = resolveActiveArg(current.args, text)?.arg.name === current.dismissed ? current.dismissed : null
+      setState({ ...current, text, dismissed })
     }
     editor.on("update", sync)
     editor.on("selectionUpdate", sync)
@@ -157,30 +201,45 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
     return () => document.removeEventListener("pointerdown", onPointerDown, true)
   }, [isOpen])
 
+  // The argument the list is currently for, or null while the caret sits between
+  // arguments (typing the session name) or after the list was escaped.
+  const active = useMemo(() => {
+    if (!state) return null
+    const resolved = resolveActiveArg(state.args, state.text)
+    return resolved && resolved.arg.name !== state.dismissed ? resolved : null
+  }, [state])
+  const activeRef = useRef<ActiveArg | null>(null)
+  activeRef.current = active
+
   const handleArgPickerKeyDown = useCallback((event: KeyboardEvent): boolean => {
-    if (!stateRef.current) return false
+    const current = stateRef.current
+    const open = activeRef.current
+    if (!current || !open) return false
     if (event.key === "Escape") {
-      setState(null)
+      setState({ ...current, dismissed: open.arg.name })
       return true
     }
     return listRef.current?.onKeyDown(event) ?? false
   }, [])
 
-  const items = useMemo(() => (state ? filterArgSuggestions(state.arg.suggestions ?? [], state.query) : []), [state])
+  const items = useMemo(
+    () => (active ? filterArgSuggestions(active.arg.suggestions ?? [], active.query) : []),
+    [active]
+  )
 
   const renderArgPicker = useCallback(() => {
-    if (!state) return null
+    if (!state || !active) return null
     return createPortal(
       <CommandArgPicker
         ref={listRef}
         items={items}
         clientRect={() => posClientRect(editorRef.current, state.anchorPos)}
-        command={(suggestion) => select(suggestion.value)}
-        deferSelection={!state.arg.required}
+        command={(suggestion) => select(suggestion.value, active.query)}
+        deferSelection={!active.arg.required}
       />,
       document.body
     )
-  }, [state, items, select, editorRef])
+  }, [state, active, items, select, editorRef])
 
   return { openArgPicker, renderArgPicker, handleArgPickerKeyDown }
 }
