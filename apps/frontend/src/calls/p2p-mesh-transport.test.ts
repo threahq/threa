@@ -26,8 +26,10 @@ function makeSocket() {
 
 function makePeerConnection() {
   const transceivers: Array<{
+    mid: string | null
     direction: RTCRtpTransceiverDirection
     receiver: { track: { kind: string } }
+    stop: ReturnType<typeof vi.fn>
     sender: {
       replaceTrack: ReturnType<typeof vi.fn>
       getParameters: ReturnType<typeof vi.fn>
@@ -37,8 +39,10 @@ function makePeerConnection() {
   const makeTransceiver = (trackOrKind: MediaStreamTrack | string) => {
     const kind = typeof trackOrKind === "string" ? trackOrKind : trackOrKind.kind
     const transceiver = {
+      mid: null as string | null,
       direction: "sendrecv" as RTCRtpTransceiverDirection,
       receiver: { track: { kind } },
+      stop: vi.fn(),
       sender: {
         replaceTrack: vi.fn(async () => {}),
         getParameters: vi.fn(() => ({ encodings: [] })),
@@ -68,9 +72,9 @@ function makePeerConnection() {
     setRemoteDescription: vi.fn(async (description: RTCSessionDescriptionInit) => {
       pc.remoteDescription = description
       pc.signalingState = description.type === "offer" ? "have-remote-offer" : "stable"
-      if (description.type === "offer" && transceivers.length === 0) {
-        makeTransceiver("audio")
-        makeTransceiver("video")
+      if (description.type === "offer" && !transceivers.some(({ mid }) => mid !== null)) {
+        makeTransceiver("audio").mid = "0"
+        makeTransceiver("video").mid = "1"
       }
     }),
     addIceCandidate: vi.fn(async () => {}),
@@ -862,6 +866,144 @@ describe("P2pMeshTransport", () => {
     for (const sender of senders.slice(1)) {
       expect(sender.setParameters).toHaveBeenLastCalledWith({ encodings: [{ maxBitrate: 300_000 }] })
     }
+    await transport.close()
+  })
+
+  it("should preserve a peer cap set while the peer is absent", async () => {
+    const socket = makeSocket()
+    const pc = makePeerConnection()
+    const transport = new P2pMeshTransport({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      socket,
+      generation: 4,
+      createPeerConnection: () => pc as unknown as RTCPeerConnection,
+      fetchCredentials: vi.fn(async () => credentials),
+    })
+    await transport.connect({ endpointId: "ep_a", mediaIncarnation: "inc_a" })
+    await transport.setPublishEncoding("camera", { maxBitrate: 1_500_000 })
+    await transport.setPeerPublishEncoding("ep_b", "camera", { maxBitrate: 350_000 })
+
+    await transport.syncPeers([{ endpointId: "ep_b", epoch: 2, mediaIncarnation: "inc_b", publications: [] }], 4)
+
+    expect(pc.addTransceiver.mock.results[1].value.sender.setParameters).toHaveBeenLastCalledWith({
+      encodings: [{ maxBitrate: 350_000 }],
+    })
+    await transport.close()
+  })
+
+  it("should await a final traffic sample before closing a removed peer", async () => {
+    const { pc, transport } = await setup()
+    let resolveStats!: (report: Map<string, unknown>) => void
+    pc.getStats.mockImplementationOnce(() => new Promise((resolve) => (resolveStats = resolve)))
+
+    await transport.syncPeers([], 4)
+    expect(pc.close).not.toHaveBeenCalled()
+
+    resolveStats(new Map())
+    await vi.waitFor(() => expect(pc.close).toHaveBeenCalledTimes(1))
+    await transport.close()
+  })
+
+  it("should close a removed peer when the final traffic sample throws synchronously", async () => {
+    const { pc, transport } = await setup()
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    pc.getStats.mockImplementationOnce(() => {
+      throw new Error("stats unavailable")
+    })
+
+    await transport.syncPeers([], 4)
+    await vi.waitFor(() => expect(pc.close).toHaveBeenCalledTimes(1))
+    expect(console.warn).toHaveBeenCalledWith(
+      "P2P final traffic sample failed",
+      expect.objectContaining({ endpointId: "ep_b", error: expect.any(Error) })
+    )
+    await transport.close()
+  })
+
+  it("should rebind polite recovery slots after losing offer glare", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const pcs = [makePeerConnection(), makePeerConnection()]
+    let nextPc = 0
+    const transport = new P2pMeshTransport({
+      workspaceId: "ws_1",
+      callId: "call_1",
+      socket,
+      generation: 4,
+      createPeerConnection: () => pcs[nextPc++] as unknown as RTCPeerConnection,
+      fetchCredentials: vi.fn(async () => credentials),
+    })
+    await transport.connect({ endpointId: "ep_b", mediaIncarnation: "inc_a" })
+    await transport.syncPeers([{ endpointId: "ep_a", epoch: 2, mediaIncarnation: "inc_b", publications: [] }], 4)
+    socket.fire("call:p2p:signal", {
+      callId: "call_1",
+      recipientEndpointId: "ep_b",
+      recipientMediaIncarnation: "inc_a",
+      senderEndpointId: "ep_a",
+      senderEpoch: 2,
+      senderMediaIncarnation: "inc_b",
+      generation: 4,
+      negotiationId: "initial",
+      kind: "description",
+      description: { type: "offer", sdp: "offer" },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    const initial = pcs[0]
+    initial.getTransceivers()[1].sender.setParameters.mockRejectedValueOnce(new Error("encoder rejected"))
+
+    await expect(transport.setPeerPublishEncoding("ep_a", "camera", { maxBitrate: 350_000 })).rejects.toThrow(
+      "encoder rejected"
+    )
+    await vi.advanceTimersByTimeAsync(50)
+    const replacement = pcs[1]
+    expect(replacement.signalingState).toBe("have-local-offer")
+
+    socket.fire("call:p2p:signal", {
+      callId: "call_1",
+      recipientEndpointId: "ep_b",
+      recipientMediaIncarnation: "inc_a",
+      senderEndpointId: "ep_a",
+      senderEpoch: 2,
+      senderMediaIncarnation: "inc_b",
+      generation: 4,
+      negotiationId: "glare-winner",
+      kind: "description",
+      description: { type: "offer", sdp: "offer" },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(replacement.getTransceivers()).toHaveLength(4)
+    expect(replacement.setLocalDescription.mock.calls.map(([description]) => description.type)).toContain("rollback")
+    const [abandonedAudio, abandonedVideo, remoteAudio, remoteVideo] = replacement.getTransceivers()
+    expect([abandonedAudio.mid, abandonedVideo.mid, remoteAudio.mid, remoteVideo.mid]).toEqual([null, null, "0", "1"])
+    expect(abandonedAudio.sender.replaceTrack).toHaveBeenLastCalledWith(null)
+    expect(abandonedVideo.sender.replaceTrack).toHaveBeenLastCalledWith(null)
+    expect(abandonedAudio.stop).toHaveBeenCalledTimes(1)
+    expect(abandonedVideo.stop).toHaveBeenCalledTimes(1)
+    expect(remoteVideo.sender.setParameters).toHaveBeenLastCalledWith({ encodings: [{ maxBitrate: 350_000 }] })
+
+    const reboundCalls = remoteVideo.sender.replaceTrack.mock.calls.length
+    const encodingCalls = remoteVideo.sender.setParameters.mock.calls.length
+    socket.fire("call:p2p:signal", {
+      callId: "call_1",
+      recipientEndpointId: "ep_b",
+      recipientMediaIncarnation: "inc_a",
+      senderEndpointId: "ep_a",
+      senderEpoch: 2,
+      senderMediaIncarnation: "inc_b",
+      generation: 4,
+      negotiationId: "later-offer",
+      kind: "description",
+      description: { type: "offer", sdp: "offer" },
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(remoteVideo.sender.replaceTrack).toHaveBeenCalledTimes(reboundCalls)
+    expect(remoteVideo.sender.setParameters).toHaveBeenCalledTimes(encodingCalls)
+    const descriptionCount = socket.emitted.filter(({ event }) => event === "call:p2p:signal").length
+    ;(replacement.onnegotiationneeded as unknown as () => void)()
+    await vi.advanceTimersByTimeAsync(50)
+    expect(socket.emitted.filter(({ event }) => event === "call:p2p:signal")).toHaveLength(descriptionCount)
     await transport.close()
   })
 

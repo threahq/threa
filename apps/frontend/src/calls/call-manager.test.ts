@@ -1541,6 +1541,43 @@ describe("CallManager", () => {
     expect(transport.setPublishEncoding).toHaveBeenLastCalledWith("camera", { maxBitrate: 1_500_000 })
   })
 
+  it("should serialize P2P watchdog samples while an encoder update is pending", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    socket.joinAck.mediaTransport = "p2p"
+    const transport = makeTransport()
+    let resolveEncoding!: () => void
+    transport.setPeerPublishEncoding = vi.fn(() => new Promise<void>((resolve) => (resolveEncoding = resolve)))
+    vi.mocked(transport.getStats).mockResolvedValue({
+      rttMs: 10,
+      packetLoss: 0,
+      qualityLimitation: "bandwidth",
+      encodeTimeMs: 1,
+      peers: [
+        {
+          endpointId: "ep_slow",
+          candidateType: "host",
+          rttMs: 10,
+          packetLoss: 0,
+          qualityLimitation: "bandwidth",
+          encodeTimeMs: 1,
+          intervalBytesSent: 1,
+          intervalBytesReceived: 1,
+        },
+      ],
+    })
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: true })
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_SAMPLE_MS)
+    await vi.advanceTimersByTimeAsync(WATCHDOG_SAMPLE_MS)
+    expect(transport.getStats).toHaveBeenCalledTimes(1)
+
+    resolveEncoding()
+    await vi.runOnlyPendingTimersAsync()
+    expect(transport.getStats).toHaveBeenCalledTimes(2)
+  })
+
   it("should adapt only the bandwidth-limited P2P sender and recover it after clean samples", async () => {
     vi.useFakeTimers()
     const socket = makeSocket()

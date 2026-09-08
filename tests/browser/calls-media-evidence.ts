@@ -4,15 +4,223 @@ export async function installPeerConnectionObserver(context: BrowserContext): Pr
   await context.addInitScript(() => {
     const NativePeerConnection = window.RTCPeerConnection
     const peers: RTCPeerConnection[] = []
+    const trace: unknown[] = []
+    const record = (event: Record<string, unknown>) => trace.push({ at: performance.now(), ...event })
+    const glare = {
+      holdNextPeerOffer: false,
+      offerApplied: false,
+      rollbackCount: 0,
+      releaseOffer: null as (() => void) | null,
+    }
     Object.defineProperty(window, "__testCallPeerConnections", { value: peers })
+    Object.defineProperty(window, "__testCallGlare", { value: glare })
+    Object.defineProperty(window, "__testCallRecoveryTrace", { value: trace })
     window.RTCPeerConnection = new Proxy(NativePeerConnection, {
       construct(Target, args) {
         const peer = new Target(...(args as ConstructorParameters<typeof RTCPeerConnection>))
-        peers.push(peer)
+        const index = peers.push(peer) - 1
+        const state = () =>
+          record({
+            event: "state",
+            peer: index,
+            connection: peer.connectionState,
+            ice: peer.iceConnectionState,
+            signaling: peer.signalingState,
+          })
+        peer.addEventListener("connectionstatechange", state)
+        peer.addEventListener("iceconnectionstatechange", state)
+        peer.addEventListener("signalingstatechange", state)
+        const nativeSetLocalDescription = peer.setLocalDescription.bind(peer)
+        const nativeSetRemoteDescription = peer.setRemoteDescription.bind(peer)
+        peer.setLocalDescription = async (description?: RTCLocalSessionDescriptionInit) => {
+          const type = description?.type ?? "implicit"
+          try {
+            await nativeSetLocalDescription(description)
+            record({ event: "operation", peer: index, operation: "setLocalDescription", type, result: "applied" })
+          } catch (error) {
+            record({
+              event: "operation",
+              peer: index,
+              operation: "setLocalDescription",
+              type,
+              result: "error",
+              error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            })
+            throw error
+          }
+          if (description?.type === "rollback") glare.rollbackCount++
+          if (!glare.holdNextPeerOffer || description?.type !== "offer" || glare.offerApplied) return
+          glare.holdNextPeerOffer = false
+          glare.offerApplied = true
+          await new Promise<void>((resolve) => {
+            glare.releaseOffer = resolve
+          })
+        }
+        peer.setRemoteDescription = async (description) => {
+          try {
+            await nativeSetRemoteDescription(description)
+            record({
+              event: "operation",
+              peer: index,
+              operation: "setRemoteDescription",
+              type: description.type,
+              result: "applied",
+            })
+          } catch (error) {
+            record({
+              event: "operation",
+              peer: index,
+              operation: "setRemoteDescription",
+              type: description.type,
+              result: "error",
+              error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            })
+            throw error
+          }
+        }
+        state()
         return peer
       },
     })
   })
+}
+
+export async function preparePoliteRecoveryGlare(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __testCallPeerConnections?: RTCPeerConnection[]
+      __testCallGlare?: { holdNextPeerOffer: boolean }
+      __testCallRecoveryTrace?: unknown[]
+    }
+    const peers = (testWindow.__testCallPeerConnections ?? []).filter((peer) => peer.connectionState !== "closed")
+    if (peers.length !== 1) throw new Error(`Expected one active peer connection, found ${peers.length}`)
+    if (!testWindow.__testCallGlare) throw new Error("Missing glare observer")
+    testWindow.__testCallGlare.holdNextPeerOffer = true
+    const peer = peers[0]
+    const nativeCreateOffer = peer.createOffer.bind(peer)
+    peer.createOffer = async (...args) => {
+      peer.createOffer = nativeCreateOffer
+      testWindow.__testCallRecoveryTrace?.push({
+        at: performance.now(),
+        event: "operation",
+        peer: (testWindow.__testCallPeerConnections ?? []).indexOf(peer),
+        operation: "createOffer",
+        result: "error",
+        error: "OperationError: Synthetic one-shot offer failure",
+      })
+      throw new DOMException("Synthetic one-shot offer failure", "OperationError")
+    }
+  })
+  await simulatePeerConnectionFailure(page)
+}
+
+export async function hasAppliedHeldPeerOffer(page: Page): Promise<boolean> {
+  return page.evaluate(
+    () => !!(window as typeof window & { __testCallGlare?: { offerApplied: boolean } }).__testCallGlare?.offerApplied
+  )
+}
+
+export async function simulatePeerConnectionFailure(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const peers = (
+      (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ?? []
+    ).filter((peer) => peer.connectionState !== "closed")
+    if (peers.length !== 1) throw new Error(`Expected one active peer connection, found ${peers.length}`)
+    const peer = peers[0]
+    Object.defineProperty(peer, "connectionState", { configurable: true, value: "failed" })
+    try {
+      peer.dispatchEvent(new Event("connectionstatechange"))
+    } finally {
+      Reflect.deleteProperty(peer, "connectionState")
+    }
+  })
+}
+
+export async function releaseHeldPeerOffer(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const glare = (window as typeof window & { __testCallGlare?: { releaseOffer: (() => void) | null } })
+      .__testCallGlare
+    if (!glare?.releaseOffer) throw new Error("No held peer offer")
+    glare.releaseOffer()
+    glare.releaseOffer = null
+  })
+}
+
+export async function readPeerRecoverySample(page: Page, label: string) {
+  return page.evaluate(async (sampleLabel) => {
+    const testWindow = window as typeof window & {
+      __testCallPeerConnections?: RTCPeerConnection[]
+      __testCallRecoveryTrace?: unknown[]
+    }
+    const codecs = (stats: RTCStatsReport) => {
+      const result = new Map<string, { mimeType: string | null; payloadType: number | null }>()
+      stats.forEach((report) => {
+        if (report.type === "codec")
+          result.set(report.id, { mimeType: report.mimeType ?? null, payloadType: report.payloadType ?? null })
+      })
+      return result
+    }
+    const peers = await Promise.all(
+      (testWindow.__testCallPeerConnections ?? []).map(async (peer, index) => {
+        const stats = await peer.getStats()
+        const codecById = codecs(stats)
+        const rtp: unknown[] = []
+        let dtls: string | null = null
+        stats.forEach((report) => {
+          if (report.type === "transport") dtls = report.dtlsState ?? null
+          if (report.type !== "outbound-rtp" && report.type !== "inbound-rtp") return
+          const kind = report.kind ?? report.mediaType
+          if (kind !== "video") return
+          rtp.push({
+            direction: report.type === "outbound-rtp" ? "outbound" : "inbound",
+            ssrc: report.ssrc ?? null,
+            codec: codecById.get(report.codecId) ?? null,
+            bytes: report.type === "outbound-rtp" ? (report.bytesSent ?? 0) : (report.bytesReceived ?? 0),
+            frames: report.type === "outbound-rtp" ? (report.framesEncoded ?? 0) : (report.framesDecoded ?? 0),
+            keyframes: report.type === "outbound-rtp" ? (report.keyFramesEncoded ?? 0) : (report.keyFramesDecoded ?? 0),
+            pli: report.pliCount ?? 0,
+            fir: report.firCount ?? 0,
+          })
+        })
+        return {
+          index,
+          connection: peer.connectionState,
+          ice: peer.iceConnectionState,
+          signaling: peer.signalingState,
+          dtls,
+          localType: peer.localDescription?.type ?? null,
+          remoteType: peer.remoteDescription?.type ?? null,
+          transceivers: peer
+            .getTransceivers()
+            .map(({ mid, direction, currentDirection, stopped, sender, receiver }) => ({
+              mid,
+              direction,
+              currentDirection,
+              stopped,
+              senderTrack: sender.track && {
+                id: sender.track.id,
+                enabled: sender.track.enabled,
+                muted: sender.track.muted,
+                readyState: sender.track.readyState,
+              },
+              encodings: sender.getParameters().encodings,
+              receiverTrack: {
+                id: receiver.track.id,
+                muted: receiver.track.muted,
+                readyState: receiver.track.readyState,
+              },
+            })),
+          rtp,
+        }
+      })
+    )
+    return {
+      label: sampleLabel,
+      at: performance.now(),
+      peers,
+      trace: [...(testWindow.__testCallRecoveryTrace ?? [])],
+    }
+  }, label)
 }
 
 export async function installDirectOnlyCredentials(context: BrowserContext, delayMs = 0): Promise<void> {

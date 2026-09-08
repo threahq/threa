@@ -241,6 +241,7 @@ interface CallSession {
   peerHealthySamples: Map<string, number>
   leaseTimer: ReturnType<typeof setInterval> | null
   watchdogTimer: ReturnType<typeof setInterval> | null
+  watchdogSample: Promise<void>
   meterRaf: number | null
   wakeLock: WakeLockLike | null
   releaseLock: (() => void) | null
@@ -473,6 +474,7 @@ export class CallManager implements CallController {
         peerHealthySamples: new Map(),
         leaseTimer: null,
         watchdogTimer: null,
+        watchdogSample: Promise.resolve(),
         meterRaf: null,
         wakeLock: null,
         releaseLock,
@@ -1474,9 +1476,9 @@ export class CallManager implements CallController {
   private startWatchdog(session: CallSession): void {
     const gen = session.gen
     session.watchdogTimer = setInterval(() => {
-      void session.transport
-        .getStats()
-        .then((stats) => {
+      session.watchdogSample = session.watchdogSample
+        .then(async () => {
+          const stats = await session.transport.getStats()
           if (this.sessionForGen(gen) !== session) return
           setCallDiagnostics({
             mediaTransport: session.mediaTransport,
@@ -1494,7 +1496,7 @@ export class CallManager implements CallController {
             packetLoss: stats.packetLoss,
             qualityLimitation: stats.qualityLimitation,
           })
-          return this.stepCameraLayers(session, stats.qualityLimitation, stats.peers ?? [])
+          await this.stepCameraLayers(session, stats.qualityLimitation, stats.peers ?? [])
         })
         .catch((error) => console.warn("Call watchdog sample failed", error))
     }, WATCHDOG_SAMPLE_MS)

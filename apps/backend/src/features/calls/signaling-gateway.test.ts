@@ -405,35 +405,39 @@ describe("registerCallGateway P2P signaling", () => {
   })
 
   it("should keep P2P signaling available when the shared control budget is exhausted", async () => {
-    const { socket, callService } = setup()
+    spyOn(Date, "now").mockReturnValue(1_000)
+    const { socket, callService, emit } = setup()
     await socket.trigger(
       "call:join",
       { ...JOIN, transportCapability: "p2p-v1" },
       mock(() => {})
     )
+    let finalStateAck = mock(() => {})
     for (let index = 0; index < 40; index++) {
-      await socket.trigger(
-        "call:state",
-        { muted: index % 2 === 0 },
-        mock(() => {})
-      )
+      finalStateAck = mock(() => {})
+      await socket.trigger("call:state", { muted: index % 2 === 0 }, finalStateAck)
+    }
+    expect(finalStateAck).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALL_RATE_LIMITED" }))
+
+    const signal = {
+      callId: "call_1",
+      recipientEndpointId: "callep_2",
+      recipientEpoch: 3,
+      recipientMediaIncarnation: "inc_2",
+      generation: 1,
+      negotiationId: "neg_after_control_burst",
+      kind: "end-of-candidates",
     }
     const ack = mock(() => {})
-    await socket.trigger(
-      "call:p2p:signal",
-      {
-        callId: "call_1",
-        recipientEndpointId: "callep_2",
-        recipientEpoch: 3,
-        recipientMediaIncarnation: "inc_2",
-        generation: 1,
-        negotiationId: "neg_after_control_burst",
-        kind: "end-of-candidates",
-      },
-      ack
-    )
+    await socket.trigger("call:p2p:signal", signal, ack)
 
-    expect(callService.validateP2pSignal).toHaveBeenCalledTimes(1)
+    expect(callService.validateP2pSignal).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: "call_1", recipientEndpointId: "callep_2", generation: 1 })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      "call:p2p:signal",
+      expect.objectContaining({ negotiationId: "neg_after_control_burst", kind: "end-of-candidates" })
+    )
     expect(ack).toHaveBeenCalledWith({ ok: true })
   })
 

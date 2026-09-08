@@ -139,6 +139,7 @@ export class P2pMeshTransport implements MediaTransport {
       const next = desired.get(id)
       if (!next || next.epoch !== state.identity.epoch || next.mediaIncarnation !== state.identity.mediaIncarnation) {
         this.removePeer(state, next !== undefined)
+        if (!next) this.peerRecoveryAttempts.delete(id)
       }
     }
     for (const peer of desired.values()) {
@@ -192,11 +193,11 @@ export class P2pMeshTransport implements MediaTransport {
     kind: PublishedTrackKind,
     params: { maxBitrate?: number }
   ): Promise<void> {
-    const state = this.peers.get(endpointId)
-    if (!state) return
     const settings = this.peerEncodingSettings.get(endpointId) ?? new Map()
     settings.set(kind, params)
     this.peerEncodingSettings.set(endpointId, settings)
+    const state = this.peers.get(endpointId)
+    if (!state) return
     await this.enqueue(state, () => this.applyEncoding(state.senders.get(kind), this.peerEncoding(state, kind)))
   }
 
@@ -320,16 +321,7 @@ export class P2pMeshTransport implements MediaTransport {
     }
     this.peers.set(peer.endpointId, state)
     // Preallocating on the answerer creates duplicate m-lines when its first remote offer arrives.
-    if (!state.polite) {
-      for (const [kind, mediaKind] of P2P_TRACK_KINDS) {
-        const track = this.tracks.get(kind)
-        const sender = pc.addTransceiver(track ?? mediaKind, {
-          direction: "sendrecv",
-          sendEncodings: [{ ...this.peerEncoding(state, kind) }],
-        }).sender
-        state.senders.set(kind, sender)
-      }
-    }
+    if (!state.polite) this.initializeSenderSlots(state)
     pc.ontrack = (event) => {
       if (!this.isCurrent(state)) return
       const kind: PublishedTrackKind = event.track.kind === "audio" ? "mic" : "camera"
@@ -366,11 +358,23 @@ export class P2pMeshTransport implements MediaTransport {
       )
     }
     pc.onnegotiationneeded = () => {
-      if (state.senders.size > 0) this.scheduleNegotiation(state, INITIAL_OFFER_DELAY_MS)
+      if (state.pc.localDescription === null && state.senders.size > 0)
+        this.scheduleNegotiation(state, INITIAL_OFFER_DELAY_MS)
     }
     pc.onconnectionstatechange = () => this.handleConnectionState(state)
     if (!state.polite) this.scheduleNegotiation(state, INITIAL_OFFER_DELAY_MS)
     return state
+  }
+
+  private initializeSenderSlots(state: PeerState): void {
+    for (const [kind, mediaKind] of P2P_TRACK_KINDS) {
+      const track = this.tracks.get(kind)
+      const sender = state.pc.addTransceiver(track ?? mediaKind, {
+        direction: "sendrecv",
+        sendEncodings: [{ ...this.peerEncoding(state, kind) }],
+      }).sender
+      state.senders.set(kind, sender)
+    }
   }
 
   private reconcileRemoteTracks(state: PeerState): void {
@@ -406,8 +410,8 @@ export class P2pMeshTransport implements MediaTransport {
     if (this.peers.get(state.identity.endpointId) !== state) return
     this.peers.delete(state.identity.endpointId)
     if (!preservePeerEncoding) this.peerEncodingSettings.delete(state.identity.endpointId)
-    const finalSample = state.pc
-      .getStats()
+    const finalSample = Promise.resolve()
+      .then(() => state.pc.getStats())
       .then((report) => {
         this.traffic.observe(state.token, report, selectedTrafficPath(report))
       })
@@ -415,6 +419,7 @@ export class P2pMeshTransport implements MediaTransport {
         console.warn("P2P final traffic sample failed", { endpointId: state.identity.endpointId, error })
       )
       .finally(() => {
+        state.pc.close()
         this.traffic.forget(state.token)
         this.finalTrafficSamples.delete(finalSample)
       })
@@ -429,7 +434,6 @@ export class P2pMeshTransport implements MediaTransport {
     for (const ref of state.emittedRefs.values()) this.onRemoteTrackEnded?.(ref)
     state.emittedRefs.clear()
     state.remoteTracks.clear()
-    state.pc.close()
     if (!this.closed) this.updateAggregateState()
   }
 
@@ -531,7 +535,7 @@ export class P2pMeshTransport implements MediaTransport {
       state.remoteNegotiationId = signal.negotiationId
       await state.pc.setRemoteDescription(signal.description)
       if (!this.isCurrent(state)) return
-      if (signal.description.type === "offer" && state.senders.size === 0) await this.bindRemoteOfferSlots(state)
+      const boundRemoteOfferSlots = signal.description.type === "offer" ? await this.bindRemoteOfferSlots(state) : false
       for (const candidate of state.pendingCandidates.get(signal.negotiationId) ?? [])
         await this.addIceCandidate(state, signal.negotiationId, candidate)
       state.pendingCandidates.delete(signal.negotiationId)
@@ -541,7 +545,9 @@ export class P2pMeshTransport implements MediaTransport {
         state.localNegotiationId = signal.negotiationId
         await state.pc.setLocalDescription(await state.pc.createAnswer())
         if (!this.isCurrent(state)) return
-        for (const [kind, sender] of state.senders) await this.applyEncoding(sender, this.peerEncoding(state, kind))
+        if (boundRemoteOfferSlots) {
+          for (const [kind, sender] of state.senders) await this.applyEncoding(sender, this.peerEncoding(state, kind))
+        }
         if (!this.isCurrent(state)) return
         this.rememberLocalUfrag(state, signal.negotiationId)
         this.send(state, "description", { description: this.localDescription(state.pc) }, signal.negotiationId)
@@ -554,14 +560,28 @@ export class P2pMeshTransport implements MediaTransport {
     }
   }
 
-  private async bindRemoteOfferSlots(state: PeerState): Promise<void> {
-    for (const transceiver of state.pc.getTransceivers()) {
+  private async bindRemoteOfferSlots(state: PeerState): Promise<boolean> {
+    const transceivers = state.pc.getTransceivers()
+    const abandonedSenders = new Set(state.senders.values())
+    const hasAbandonedSlot = transceivers.some(
+      (transceiver) => transceiver.mid === null && abandonedSenders.has(transceiver.sender)
+    )
+    if (state.senders.size > 0 && !hasAbandonedSlot) return false
+    for (const transceiver of transceivers) {
+      if (transceiver.mid !== null || !abandonedSenders.has(transceiver.sender)) continue
+      await transceiver.sender.replaceTrack(null)
+      transceiver.stop()
+    }
+    state.senders.clear()
+    for (const transceiver of transceivers) {
+      if (transceiver.mid === null) continue
       const kind = P2P_TRACK_KINDS.find(([, mediaKind]) => mediaKind === transceiver.receiver.track.kind)?.[0]
       if (!kind || state.senders.has(kind)) continue
       transceiver.direction = "sendrecv"
       state.senders.set(kind, transceiver.sender)
       await transceiver.sender.replaceTrack(this.tracks.get(kind) ?? null)
     }
+    return true
   }
 
   private async addIceCandidate(
@@ -688,7 +708,13 @@ export class P2pMeshTransport implements MediaTransport {
       this.peerRecoveryAttempts.set(state.identity.endpointId, attempts + 1)
       const identity = state.identity
       this.removePeer(state, true)
-      if (!this.closed) this.createPeer(identity)
+      if (!this.closed) {
+        const replacement = this.createPeer(identity)
+        if (replacement.polite) {
+          this.initializeSenderSlots(replacement)
+          this.scheduleNegotiation(replacement, INITIAL_OFFER_DELAY_MS)
+        }
+      }
     })
     return result
   }
