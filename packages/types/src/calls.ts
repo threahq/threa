@@ -12,8 +12,48 @@ export type CallTransferCapability = (typeof CALL_TRANSFER_CAPABILITIES)[number]
 export const CALL_TRANSFER_PHASES = ["preparing", "committing", "draining", "aborting", "failed", "completed"] as const
 export type CallTransferPhase = (typeof CALL_TRANSFER_PHASES)[number]
 
-export const CALL_TRANSFER_CAUSES = ["explicit"] as const
+export const CALL_TRANSFER_CAUSES = ["explicit", "automatic_threshold", "rollout_safety"] as const
 export type CallTransferCause = (typeof CALL_TRANSFER_CAUSES)[number]
+
+export const CALL_TRANSPORT_POLICY_REASONS = [
+  "initial_p2p_eligible",
+  "initial_sfu_flag_off",
+  "initial_sfu_turn_unavailable",
+  "initial_sfu_capability_missing",
+  "threshold_at_or_above_seven",
+  "threshold_below_seven",
+  "below_seven_deadline",
+  "explicit_hold",
+  "rollout_flag_off",
+  "rollout_turn_unavailable",
+  "rollout_capability_missing",
+  "call_empty_or_ended",
+  "transfer_active",
+] as const
+export type CallTransportPolicyReason = (typeof CALL_TRANSPORT_POLICY_REASONS)[number]
+
+export const callTransportActorSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("human"), userId: z.string().min(1), endpointId: z.string().min(1) }),
+  z.object({ type: z.literal("system"), policy: z.literal("call_transport") }),
+])
+export type CallTransferActor = z.infer<typeof callTransportActorSchema>
+
+export const callAdmissionRetrySchema = z.object({
+  callId: z.string().min(1),
+  target: z.literal("sfu"),
+  retryAfterMs: z.number().int().positive().max(5000),
+  reason: z.enum(["threshold", "legacy_entrant", "legacy_incumbent"]),
+})
+export type CallAdmissionRetry = z.infer<typeof callAdmissionRetrySchema>
+
+export const callTransportPolicyStatusSchema = z.object({
+  admittedCount: z.number().int().min(0).max(50),
+  desiredTransport: z.enum(CALL_MEDIA_TRANSPORTS),
+  eligibilityDeadline: z.string().datetime().nullable(),
+  explicitHoldTarget: z.enum(CALL_MEDIA_TRANSPORTS).nullable(),
+  latestReason: z.enum(CALL_TRANSPORT_POLICY_REASONS),
+})
+export type CallTransportPolicyStatus = z.infer<typeof callTransportPolicyStatusSchema>
 
 export const callTransportGenerationSchema = z.object({
   generation: z.number().int().positive(),
@@ -75,6 +115,7 @@ export const callTransportTransferSchema = z.object({
   membershipRevision: z.number().int().nonnegative(),
   phase: z.enum(CALL_TRANSFER_PHASES),
   cause: z.enum(CALL_TRANSFER_CAUSES),
+  actor: callTransportActorSchema.optional(),
   failureCode: z.string().max(128).nullable(),
   recoveryCode: z.string().max(128).nullable(),
   sessions: z.array(callTransportSessionSchema),

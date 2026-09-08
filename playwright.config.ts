@@ -154,6 +154,8 @@ export default defineConfig({
     },
     {
       name: "calls",
+      // Each mesh test runs six media clients; concurrent meshes oversubscribe the test host.
+      workers: 1,
       testMatch: ["**/calls.spec.ts", "**/calls-p2p-groups.spec.ts", "**/p2p-rtc.spec.ts"],
       use: {
         ...devices["Desktop Chrome"],

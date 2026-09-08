@@ -18,7 +18,11 @@ beforeAll(async () => {
   pool = await setupTestDatabase()
   streams = new StreamService(pool)
   featureFlags = new FeatureFlagService(pool)
-  calls = new CallService({ pool, featureFlagService: featureFlags })
+  calls = new CallService({
+    pool,
+    featureFlagService: featureFlags,
+    turnIssuer: { issue: async () => ({ iceServers: [], expiresAt: new Date(Date.now() + 60_000).toISOString() }) },
+  })
 })
 
 afterAll(async () => {
@@ -80,13 +84,14 @@ describe("calls P2P schema and negotiation state", () => {
       mode: "video" as const,
       mediaIncarnation: "inc_turn",
       transportCapability: "p2p-v1",
+      transferCapability: "transport-transfer-v1" as const,
     }
     const sfu = await service.startCall(params)
     await expect(
       service.issueTurnCredentials({ ...params, callId: sfu.call.id, endpointId: sfu.endpoint.id })
     ).rejects.toMatchObject({ code: "CALL_P2P_UNAVAILABLE" })
     await service.leaveCallAsUser({ workspaceId: scenario.workspaceId, callId: sfu.call.id, userId: scenario.aUserId })
-    const p2p = await service.startCall({ ...params, allowP2p: true })
+    const p2p = await service.startCall({ ...params, callsP2pEnabled: true, turnConfigured: true })
     const endpointParams = { ...params, callId: p2p.call.id, endpointId: p2p.endpoint.id }
     expect(await service.issueTurnCredentials(endpointParams)).toEqual(credentials)
     await CallEndpointRepository.rebind(pool, {
@@ -146,7 +151,9 @@ describe("calls P2P schema and negotiation state", () => {
       mode: "video",
       mediaIncarnation: "inc_a",
       transportCapability: "p2p-v1",
-      allowP2p: true,
+      transferCapability: "transport-transfer-v1",
+      callsP2pEnabled: true,
+      turnConfigured: true,
     })
     const joined = await calls.joinCall({
       workspaceId: scenario.workspaceId,
@@ -154,6 +161,7 @@ describe("calls P2P schema and negotiation state", () => {
       userId: scenario.bUserId,
       mediaIncarnation: "inc_b",
       transportCapability: "p2p-v1",
+      transferCapability: "transport-transfer-v1",
     })
 
     const snapshot = await calls.setP2pPublications({
@@ -560,7 +568,8 @@ describe("calls P2P schema and negotiation state", () => {
       mediaIncarnation: "inc_a",
       transportCapability: "p2p-v1",
       transferCapability: "transport-transfer-v1",
-      allowP2p: true,
+      callsP2pEnabled: true,
+      turnConfigured: true,
     })
     const prepared = await service.requestTransportTransfer({
       workspaceId: scenario.workspaceId,
@@ -629,6 +638,7 @@ describe("calls P2P schema and negotiation state", () => {
     const service = new CallService({
       pool,
       featureFlagService: featureFlags,
+      turnIssuer: { issue: async () => ({ iceServers: [], expiresAt: new Date(Date.now() + 60_000).toISOString() }) },
       cloudflare: {
         closeSession: async (id: string) => {
           closed.push(id)
@@ -701,7 +711,8 @@ describe("calls P2P schema and negotiation state", () => {
       mediaIncarnation: "inc_a",
       transportCapability: "p2p-v1",
       transferCapability: "transport-transfer-v1",
-      allowP2p: true,
+      callsP2pEnabled: true,
+      turnConfigured: true,
     })
     const joined = await service.joinCall({
       workspaceId: scenario.workspaceId,
@@ -816,7 +827,8 @@ describe("calls P2P schema and negotiation state", () => {
       mediaIncarnation: "inc_a",
       transportCapability: "p2p-v1",
       transferCapability: "transport-transfer-v1",
-      allowP2p: true,
+      callsP2pEnabled: true,
+      turnConfigured: true,
     })
     for (let revision = 1; revision <= 3; revision++) {
       await calls.setP2pPublications({
@@ -943,6 +955,7 @@ describe("calls P2P schema and negotiation state", () => {
     const service = new CallService({
       pool,
       featureFlagService: featureFlags,
+      turnIssuer: { issue: async () => ({ iceServers: [], expiresAt: new Date(Date.now() + 60_000).toISOString() }) },
       cloudflare: {
         createSession: async () => ({ sessionId: `cf_${++sessionCounter}` }),
         addLocalTracks: async (_sessionId: string, request: { tracks: Array<{ trackName: string }> }) => ({
@@ -962,7 +975,8 @@ describe("calls P2P schema and negotiation state", () => {
       mediaIncarnation: "inc_a",
       transportCapability: "p2p-v1",
       transferCapability: "transport-transfer-v1",
-      allowP2p: true,
+      callsP2pEnabled: true,
+      turnConfigured: true,
     })
     const joined = await service.joinCall({
       workspaceId: scenario.workspaceId,
@@ -1245,7 +1259,9 @@ describe("calls P2P schema and negotiation state", () => {
       mode: "video",
       mediaIncarnation: "inc_old",
       transportCapability: "p2p-v1",
-      allowP2p: true,
+      transferCapability: "transport-transfer-v1",
+      callsP2pEnabled: true,
+      turnConfigured: true,
     })
     const joined = await calls.joinCall({
       workspaceId: scenario.workspaceId,
@@ -1253,6 +1269,7 @@ describe("calls P2P schema and negotiation state", () => {
       userId: scenario.bUserId,
       mediaIncarnation: "inc_peer",
       transportCapability: "p2p-v1",
+      transferCapability: "transport-transfer-v1",
     })
     await calls.setP2pPublications({
       workspaceId: scenario.workspaceId,

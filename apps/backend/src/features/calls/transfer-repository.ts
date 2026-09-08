@@ -1,4 +1,10 @@
-import type { CallExpectedPublication, CallMediaTransport, CallTransferPhase } from "@threahq/types"
+import type {
+  CallExpectedPublication,
+  CallMediaTransport,
+  CallTransferActor,
+  CallTransferCause,
+  CallTransferPhase,
+} from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import type { PublishedTrack } from "./config"
@@ -15,9 +21,10 @@ export interface CallTransportTransferRow {
   targetTransport: CallMediaTransport
   membershipRevision: number
   phase: CallTransferPhase
-  cause: "explicit"
+  cause: CallTransferCause
+  actor: CallTransferActor | null
   idempotencyKey: string
-  requestedBy: string
+  requestedBy: string | null
   prepareDeadline: Date | null
   recoveryDeadline: Date | null
   failureCode: string | null
@@ -61,13 +68,21 @@ export interface CallTransferObligationRow {
 
 const TRANSFER_COLUMNS = `id, workspace_id, call_id, generation, source_generation, source_transport,
   target_generation, target_transport, membership_revision, phase, cause, idempotency_key, requested_by,
-  prepare_deadline, recovery_deadline, failure_code, recovery_code, version`
+  actor_type, actor_endpoint_id, prepare_deadline, recovery_deadline, failure_code, recovery_code, version`
 const SESSION_COLUMNS = `id, workspace_id, call_id, endpoint_id, endpoint_epoch, media_incarnation,
   transport_generation, media_transport, status, provider_session_id, publication_revision,
   published_tracks, failure_code, version`
 const OBLIGATION_COLUMNS = `id, workspace_id, transfer_id, call_id, endpoint_id, endpoint_epoch,
   media_incarnation, membership_revision, track_revision, expected_publications, ready_publications,
   own_publications_ready, switched, source_released, restored_to_source, version`
+
+function transferActor(row: Record<string, any>): CallTransferActor | null {
+  if (row.actor_type === "system") return { type: "system", policy: "call_transport" }
+  if (row.actor_type === "human" && row.requested_by && row.actor_endpoint_id) {
+    return { type: "human", userId: row.requested_by, endpointId: row.actor_endpoint_id }
+  }
+  return null
+}
 
 function transfer(row: Record<string, any>): CallTransportTransferRow {
   return {
@@ -82,6 +97,7 @@ function transfer(row: Record<string, any>): CallTransportTransferRow {
     membershipRevision: row.membership_revision,
     phase: row.phase,
     cause: row.cause,
+    actor: transferActor(row),
     idempotencyKey: row.idempotency_key,
     requestedBy: row.requested_by,
     prepareDeadline: row.prepare_deadline,
@@ -170,10 +186,11 @@ export const CallTransferRepository = {
     const result = await db.query(sql`INSERT INTO call_transport_transfers
       (id, workspace_id, call_id, generation, source_generation, source_transport, target_generation,
        target_transport, membership_revision, phase, cause, idempotency_key, requested_by,
-       prepare_deadline, recovery_deadline)
+       actor_type, actor_endpoint_id, prepare_deadline, recovery_deadline)
       VALUES (${p.id}, ${p.workspaceId}, ${p.callId}, ${p.generation}, ${p.sourceGeneration},
        ${p.sourceTransport}, ${p.targetGeneration}, ${p.targetTransport}, ${p.membershipRevision}, ${p.phase},
-       ${p.cause}, ${p.idempotencyKey}, ${p.requestedBy}, ${p.prepareDeadline}, ${p.recoveryDeadline})
+       ${p.cause}, ${p.idempotencyKey}, ${p.requestedBy}, ${p.actor?.type ?? null},
+       ${p.actor?.type === "human" ? p.actor.endpointId : null}, ${p.prepareDeadline}, ${p.recoveryDeadline})
       RETURNING ${sql.raw(TRANSFER_COLUMNS)}`)
     return transfer(result.rows[0])
   },

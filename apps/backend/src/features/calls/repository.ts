@@ -1114,11 +1114,17 @@ export const CallEndpointRepository = {
    * `(cf_session_id, trackName)` belongs to a live endpoint of THIS call, so a
    * hostile participant cannot replay a `cfSessionId` learned from another call.
    */
-  async listLiveByCall(db: Querier, workspaceId: string, callId: string): Promise<CallEndpoint[]> {
+  async listLiveByCall(
+    db: Querier,
+    workspaceId: string,
+    callId: string,
+    asOf: Date = new Date()
+  ): Promise<CallEndpoint[]> {
     const result = await db.query<CallEndpointRow>(sql`
       SELECT ${sql.raw(ENDPOINT_COLUMNS)} FROM call_endpoints
       WHERE workspace_id = ${workspaceId} AND call_id = ${callId}
-        AND status IN ('connected', 'reconnecting')
+        AND status IN ('connected', 'reconnecting') AND lease_expires_at > ${asOf}
+      ORDER BY id
     `)
     return result.rows.map(mapEndpoint)
   },
@@ -1182,6 +1188,14 @@ export const CallEndpointRepository = {
       WHERE status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
     `)
     return result.rows.map((r) => r.call_id)
+  },
+
+  async findLapsedWorkspaceIds(db: Querier, now: Date): Promise<string[]> {
+    const result = await db.query<{ workspace_id: string }>(sql`
+      SELECT DISTINCT workspace_id FROM call_endpoints
+      WHERE status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
+    `)
+    return result.rows.map((r) => r.workspace_id)
   },
 
   /**

@@ -32,6 +32,7 @@ export function createCallSweeper(callService: CallService, options: { intervalM
       const calls = await callService.endGraceExpiredCalls(now)
       const rings = await callService.expireStaleRings(now)
       await callService.sweepTransportTransfers(now)
+      await callService.sweepTransportPolicy(now)
       if (rings.expired > 0) callSweepReapedTotal.inc({ kind: "expired_ring" }, rings.expired)
       if (endpoints.endpoints > 0) callSweepReapedTotal.inc({ kind: "endpoint" }, endpoints.endpoints)
       if (endpoints.participants > 0) callSweepReapedTotal.inc({ kind: "participant" }, endpoints.participants)

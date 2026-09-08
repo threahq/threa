@@ -17,6 +17,9 @@ import {
   type CallTransferRestoredAck,
   type CallMediaTransport,
   type CallExpectedPublication,
+  type CallTransferActor,
+  type CallTransferCause,
+  type CallTransportPolicyStatus,
 } from "@threahq/types"
 import { ulid } from "ulid"
 import { withTransaction, withClient } from "../../db"
@@ -29,6 +32,10 @@ import {
   callTimeToJoinSeconds,
   callEndedTotal,
   callRingOutcomesTotal,
+  callTransportPolicyDecisionsTotal,
+  callTransportAdmissionTotal,
+  callTransportTransfersTotal,
+  callTransportPreparationDuration,
 } from "../../lib/observability"
 import { callId, callInvitationId, callParticipantId, callEndpointId, eventId } from "../../lib/id"
 import {
@@ -61,12 +68,16 @@ import {
   type CallTransportTransferRow,
   type CallTransportSessionRow,
 } from "./transfer-repository"
+import { CallTransportPolicyRepository, type CallTransportPolicyState } from "./policy-repository"
+import { decideCallTransportPolicy } from "./policy"
 import {
   EMPTY_GRACE_MS,
   ENDPOINT_LEASE_TTL_MS,
   INVITATION_TTL_MS,
   CALL_PRODUCT_CAP,
-  CALL_P2P_CAP,
+  CALL_P2P_THRESHOLD,
+  CALL_TRANSPORT_DOWNSHIFT_MS,
+  CALL_ADMISSION_RETRY_AFTER_MS,
   CALL_TRANSFER_RECOVERY_TIMEOUT_MS,
   type CallMode,
   type MediaState,
@@ -86,6 +97,14 @@ import {
 
 /** CF proxy operations, the label space for the connect-failure metric. */
 type CfOperation = "session_create" | "publish_tracks" | "pull_tracks" | "renegotiate" | "close_tracks"
+
+function canCoordinateTransfer(endpoint: CallEndpoint): boolean {
+  return endpoint.transferCapability === "transport-transfer-v1"
+}
+
+function canUseP2p(endpoint: CallEndpoint): boolean {
+  return endpoint.transportCapability === "p2p-v1" && canCoordinateTransfer(endpoint)
+}
 
 /** Collision-safe key for a pull authorization set; JSON so no separator can be forged. */
 function pullRefKey(sessionId: string, trackName: string): string {
@@ -108,6 +127,11 @@ export interface StartCallResult {
   supersededEndpointId: string | null
 }
 
+interface CallP2pEligibility {
+  callsP2pEnabled: boolean
+  turnConfigured: boolean
+}
+
 export interface JoinCallResult {
   call: Call
   participant: CallParticipant
@@ -128,6 +152,7 @@ export interface CallRosterSnapshot {
   mediaTransport: "sfu" | "p2p"
   transportGeneration: number
   transfer?: CallTransportTransfer | null
+  policy?: CallTransportPolicyStatus | null
 }
 
 /**
@@ -410,118 +435,182 @@ export class CallService {
           code: "CALL_TRANSFER_UNAVAILABLE",
         })
       }
-      const duplicate = await CallTransferRepository.findByIdempotencyKey(
-        client,
-        params.workspaceId,
-        call.id,
-        params.idempotencyKey
-      )
-      if (duplicate) return
-      const unsettled = await CallTransferRepository.findUnsettled(client, params.workspaceId, call.id)
-      if (unsettled) {
-        if (unsettled.targetTransport === params.target) return
-        throw new HttpError("Another transport transfer is active", { status: 409, code: "CALL_TRANSFER_CONFLICT" })
-      }
-      if (call.mediaTransport === params.target) {
-        throw new HttpError("Call already uses this transport", { status: 409, code: "CALL_TRANSPORT_ALREADY_ACTIVE" })
-      }
-      const endpoints = await CallEndpointRepository.listLiveByCall(client, params.workspaceId, call.id)
-      if (endpoints.some((endpoint) => endpoint.transferCapability !== "transport-transfer-v1")) {
-        throw new HttpError("A participant must update before transfer", {
-          status: 409,
-          code: "CALL_TRANSFER_CAPABILITY_REQUIRED",
-        })
-      }
-      const generation =
-        (await CallTransferRepository.maxGeneration(client, params.workspaceId, call.id, call.transportGeneration)) + 1
-      const transferId = `callxfer_${ulid()}`
-      const deadline = new Date(Date.now() + 30_000)
-      const row = await CallTransferRepository.insert(client, {
-        id: transferId,
-        workspaceId: params.workspaceId,
-        callId: call.id,
-        generation,
-        sourceGeneration: call.transportGeneration,
-        sourceTransport: call.mediaTransport,
-        targetGeneration: generation,
-        targetTransport: params.target,
-        membershipRevision: call.rosterVersion,
-        phase: "preparing",
-        cause: "explicit",
-        idempotencyKey: params.idempotencyKey,
-        requestedBy: params.userId,
-        prepareDeadline: deadline,
-        recoveryDeadline: null,
-      })
-      for (const endpoint of endpoints) {
-        if (!endpoint.mediaIncarnation) continue
-        const source = await CallTransportSessionRepository.find(client, {
-          workspaceId: params.workspaceId,
-          callId: call.id,
-          endpointId: endpoint.id,
-          generation: call.transportGeneration,
-        })
-        if (!source) {
-          await CallTransportSessionRepository.insert(client, {
-            id: `calltsess_${ulid()}`,
-            workspaceId: params.workspaceId,
-            callId: call.id,
-            endpointId: endpoint.id,
-            endpointEpoch: endpoint.epoch,
-            mediaIncarnation: endpoint.mediaIncarnation,
-            transportGeneration: call.transportGeneration,
-            mediaTransport: call.mediaTransport,
-            status: "active",
-            providerSessionId: endpoint.cfSessionId,
-            publicationRevision: endpoint.publicationRevision,
-            publishedTracks: endpoint.publishedTracks,
+      const endpoints = await CallEndpointRepository.listLiveByCall(client, call.workspaceId, call.id)
+      if (params.target === "p2p") {
+        if (!this.turnIssuer) {
+          throw new HttpError("TURN credentials are not configured", { status: 503, code: "CALL_TURN_UNAVAILABLE" })
+        }
+        if (!endpoints.every(canUseP2p)) {
+          throw new HttpError("A participant must update before using P2P", {
+            status: 409,
+            code: "CALL_P2P_CAPABILITY_REQUIRED",
           })
         }
-        await CallTransportSessionRepository.insert(client, {
-          id: `calltsess_${ulid()}`,
-          workspaceId: params.workspaceId,
-          callId: call.id,
-          endpointId: endpoint.id,
-          endpointEpoch: endpoint.epoch,
-          mediaIncarnation: endpoint.mediaIncarnation,
-          transportGeneration: generation,
-          mediaTransport: params.target,
-          status: "preparing",
-          providerSessionId: null,
-          publicationRevision: 0,
-          publishedTracks: [],
-        })
-        const expected = endpoints.flatMap((publisher) =>
-          publisher.id === endpoint.id || !publisher.mediaIncarnation
-            ? []
-            : publisher.publishedTracks
-                .filter((track) => track.kind === "mic" || track.kind === "camera")
-                .map((track) => ({
-                  endpointId: publisher.id,
-                  endpointEpoch: publisher.epoch,
-                  mediaIncarnation: publisher.mediaIncarnation!,
-                  kind: track.kind as "mic" | "camera",
-                  publicationId: track.publicationId ?? track.trackName,
-                  publicationRevision: publisher.publicationRevision,
-                  ...(track.kind === "mic" ? { muted: publisher.mediaState.muted ?? false } : {}),
-                }))
-        )
-        await CallTransferObligationRepository.insert(client, {
-          id: `callxob_${ulid()}`,
-          workspaceId: params.workspaceId,
-          transferId,
-          callId: call.id,
-          endpointId: endpoint.id,
-          endpointEpoch: endpoint.epoch,
-          mediaIncarnation: endpoint.mediaIncarnation,
-          membershipRevision: call.rosterVersion,
-          trackRevision: endpoint.publicationRevision,
-          expectedPublications: expected,
-        })
       }
-      await this.emitTransferChanged(client, call.streamId, row)
+      await this.createTransportTransition(client, call, {
+        target: params.target,
+        cause: "explicit",
+        actor: { type: "human", userId: params.userId, endpointId: params.endpointId },
+        idempotencyKey: params.idempotencyKey,
+        endpoints,
+      })
+      const currentPolicy = await CallTransportPolicyRepository.findForUpdate(client, call.workspaceId, call.id)
+      const held = {
+        admittedCount: endpoints.length,
+        desiredTransport: params.target,
+        eligibilityDeadline: null,
+        eligibilityGeneration: 0,
+        sourceTransportGeneration: call.transportGeneration,
+        explicitHoldTarget: params.target,
+        explicitHoldAdmittedCount: endpoints.length,
+        latestReason: "explicit_hold" as const,
+      }
+      if (currentPolicy) await CallTransportPolicyRepository.update(client, { ...currentPolicy, ...held })
+      else
+        await CallTransportPolicyRepository.insert(client, {
+          id: `callpolicy_${ulid()}`,
+          workspaceId: call.workspaceId,
+          callId: call.id,
+          ...held,
+        })
     })
     return this.getRosterSnapshot(params.workspaceId, params.callId)
+  }
+
+  private async createTransportTransition(
+    client: PoolClient,
+    call: Call,
+    intent: {
+      target: CallMediaTransport
+      cause: CallTransferCause
+      actor: CallTransferActor
+      idempotencyKey: string
+      endpoints?: CallEndpoint[]
+    }
+  ): Promise<CallTransportTransferRow | null> {
+    const duplicate = await CallTransferRepository.findByIdempotencyKey(
+      client,
+      call.workspaceId,
+      call.id,
+      intent.idempotencyKey
+    )
+    if (duplicate) return duplicate
+    const unsettled = await CallTransferRepository.findUnsettled(client, call.workspaceId, call.id)
+    if (unsettled) {
+      if (unsettled.targetTransport === intent.target) return unsettled
+      if (intent.cause === "explicit") {
+        throw new HttpError("Another transport transfer is active", { status: 409, code: "CALL_TRANSFER_CONFLICT" })
+      }
+      return null
+    }
+    if (call.mediaTransport === intent.target) {
+      if (intent.cause === "explicit") {
+        throw new HttpError("Call already uses this transport", {
+          status: 409,
+          code: "CALL_TRANSPORT_ALREADY_ACTIVE",
+        })
+      }
+      return null
+    }
+    const endpoints =
+      intent.endpoints ?? (await CallEndpointRepository.listLiveByCall(client, call.workspaceId, call.id))
+    if (endpoints.some((endpoint) => !canCoordinateTransfer(endpoint))) {
+      if (intent.cause !== "explicit") return null
+      throw new HttpError("A participant must update before transfer", {
+        status: 409,
+        code: "CALL_TRANSFER_CAPABILITY_REQUIRED",
+      })
+    }
+    const generation =
+      (await CallTransferRepository.maxGeneration(client, call.workspaceId, call.id, call.transportGeneration)) + 1
+    const transferId = `callxfer_${ulid()}`
+    const row = await CallTransferRepository.insert(client, {
+      id: transferId,
+      workspaceId: call.workspaceId,
+      callId: call.id,
+      generation,
+      sourceGeneration: call.transportGeneration,
+      sourceTransport: call.mediaTransport,
+      targetGeneration: generation,
+      targetTransport: intent.target,
+      membershipRevision: call.rosterVersion,
+      phase: "preparing",
+      cause: intent.cause,
+      actor: intent.actor,
+      idempotencyKey: intent.idempotencyKey,
+      requestedBy: intent.actor.type === "human" ? intent.actor.userId : null,
+      prepareDeadline: new Date(Date.now() + 30_000),
+      recoveryDeadline: null,
+    })
+    for (const endpoint of endpoints) {
+      if (!endpoint.mediaIncarnation) continue
+      const source = await CallTransportSessionRepository.find(client, {
+        workspaceId: call.workspaceId,
+        callId: call.id,
+        endpointId: endpoint.id,
+        generation: call.transportGeneration,
+      })
+      if (!source) {
+        await CallTransportSessionRepository.insert(client, {
+          id: `calltsess_${ulid()}`,
+          workspaceId: call.workspaceId,
+          callId: call.id,
+          endpointId: endpoint.id,
+          endpointEpoch: endpoint.epoch,
+          mediaIncarnation: endpoint.mediaIncarnation,
+          transportGeneration: call.transportGeneration,
+          mediaTransport: call.mediaTransport,
+          status: "active",
+          providerSessionId: endpoint.cfSessionId,
+          publicationRevision: endpoint.publicationRevision,
+          publishedTracks: endpoint.publishedTracks,
+        })
+      }
+      await CallTransportSessionRepository.insert(client, {
+        id: `calltsess_${ulid()}`,
+        workspaceId: call.workspaceId,
+        callId: call.id,
+        endpointId: endpoint.id,
+        endpointEpoch: endpoint.epoch,
+        mediaIncarnation: endpoint.mediaIncarnation,
+        transportGeneration: generation,
+        mediaTransport: intent.target,
+        status: "preparing",
+        providerSessionId: null,
+        publicationRevision: 0,
+        publishedTracks: [],
+      })
+      const expected = endpoints.flatMap((publisher) =>
+        publisher.id === endpoint.id || !publisher.mediaIncarnation
+          ? []
+          : publisher.publishedTracks
+              .filter((track) => track.kind === "mic" || track.kind === "camera")
+              .map((track) => ({
+                endpointId: publisher.id,
+                endpointEpoch: publisher.epoch,
+                mediaIncarnation: publisher.mediaIncarnation!,
+                kind: track.kind as "mic" | "camera",
+                publicationId: track.publicationId ?? track.trackName,
+                publicationRevision: publisher.publicationRevision,
+                ...(track.kind === "mic" ? { muted: publisher.mediaState.muted ?? false } : {}),
+              }))
+      )
+      await CallTransferObligationRepository.insert(client, {
+        id: `callxob_${ulid()}`,
+        workspaceId: call.workspaceId,
+        transferId,
+        callId: call.id,
+        endpointId: endpoint.id,
+        endpointEpoch: endpoint.epoch,
+        mediaIncarnation: endpoint.mediaIncarnation,
+        membershipRevision: call.rosterVersion,
+        trackRevision: endpoint.publicationRevision,
+        expectedPublications: expected,
+      })
+    }
+    await this.emitTransferChanged(client, call.streamId, row)
+    callTransportTransfersTotal.inc({ cause: intent.cause, target: intent.target })
+    return row
   }
 
   async acknowledgeTransferReady(
@@ -604,6 +693,7 @@ export class CallService {
   async acknowledgeTransferSwitched(
     params: { workspaceId: string; callId: string; userId: string } & CallTransferSwitchedAck
   ): Promise<CallRosterSnapshot> {
+    const eligibility = await this.resolveP2pEligibility(params.workspaceId)
     const providerSessionIds = await withTransaction(this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
@@ -690,7 +780,15 @@ export class CallService {
             version: draining.version,
             to: "completed",
           })
-          if (completed) await this.emitTransferChanged(client, call.streamId, completed)
+          if (completed) {
+            await this.emitTransferChanged(client, call.streamId, completed)
+            if (transfer.prepareDeadline)
+              callTransportPreparationDuration.observe(
+                Math.max(0, (Date.now() - (transfer.prepareDeadline.getTime() - 30_000)) / 1000)
+              )
+            const committedCall = (await CallRepository.findById(client, call.workspaceId, call.id)) ?? call
+            await this.reconcileTransportPolicyLocked(client, committedCall, eligibility)
+          }
           return closed.flatMap((session) => (session.providerSessionId ? [session.providerSessionId] : []))
         }
       }
@@ -703,6 +801,7 @@ export class CallService {
   async acknowledgeTransferRestored(
     params: { workspaceId: string; callId: string; userId: string } & CallTransferRestoredAck
   ): Promise<CallRosterSnapshot> {
+    const eligibility = await this.resolveP2pEligibility(params.workspaceId)
     const providerSessionIds = await withTransaction(this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
@@ -763,7 +862,10 @@ export class CallService {
         version: transfer.version,
         to: "failed",
       })
-      if (failed) await this.emitTransferChanged(client, call.streamId, failed)
+      if (failed) {
+        await this.emitTransferChanged(client, call.streamId, failed)
+        await this.reconcileTransportPolicyLocked(client, call, eligibility)
+      }
       return closed.flatMap((session) => (session.providerSessionId ? [session.providerSessionId] : []))
     })
     for (const sessionId of new Set(providerSessionIds)) await this.bestEffortCloseSession(sessionId)
@@ -1106,13 +1208,19 @@ export class CallService {
       expectedCallId?: string
       transportCapability?: CallTransportCapability
       transferCapability?: CallTransferCapability
-      allowP2p?: boolean
+      callsP2pEnabled?: boolean
+      turnConfigured?: boolean
       /** Displace this user's other device rather than 409 — see {@link admitEndpoint}. */
       takeover?: boolean
     },
     tx?: PoolClient
   ): Promise<StartCallResult> {
-    const { result, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
+    const eligibility = {
+      callsP2pEnabled: params.callsP2pEnabled ?? false,
+      turnConfigured: params.turnConfigured === true,
+    }
+    const p2pEligible = eligibility.callsP2pEnabled && eligibility.turnConfigured
+    const outcome = await withTransaction(tx ?? this.pool, async (client) => {
       const { target: stream } = await assertStreamWritable(client, {
         workspaceId: params.workspaceId,
         streamId: params.streamId,
@@ -1125,7 +1233,12 @@ export class CallService {
         streamId: params.streamId,
         startedBy: params.userId,
         mode: params.mode,
-        mediaTransport: params.allowP2p && params.transportCapability === "p2p-v1" ? "p2p" : "sfu",
+        mediaTransport:
+          p2pEligible &&
+          params.transportCapability === "p2p-v1" &&
+          params.transferCapability === "transport-transfer-v1"
+            ? "p2p"
+            : "sfu",
       })
 
       let targetCallId: string
@@ -1151,6 +1264,14 @@ export class CallService {
         throw new HttpError("Call has ended", { status: 409, code: "CALL_ENDED" })
       }
 
+      if (!created) {
+        const locked = await CallRepository.findByIdForUpdate(client, params.workspaceId, targetCallId)
+        if (!locked) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+        await this.validateLockedAdmission(client, locked, params)
+        const admissionError = await this.gateP2pAdmission(client, locked, params, eligibility)
+        if (admissionError) return { admissionError }
+      }
+
       const admitted = await this.joinLockedCall(client, {
         workspaceId: params.workspaceId,
         callId: targetCallId,
@@ -1160,6 +1281,7 @@ export class CallService {
         transportCapability: params.transportCapability,
         transferCapability: params.transferCapability,
       })
+      await this.reconcileTransportPolicyLocked(client, admitted.call, eligibility)
 
       // A newly created call is a slotted broadcast row on the host stream
       // (INV-4/7): append it in the SAME transaction as the call insert so every
@@ -1217,6 +1339,8 @@ export class CallService {
         closedSessionIds: admitted.closedSessionIds,
       }
     })
+    if ("admissionError" in outcome) throw outcome.admissionError
+    const { result, closedSessionIds } = outcome
     // Close the CF sessions of any endpoint this start superseded (takeover/rebind)
     // AFTER the tx commits, never inside it (INV-41). Only when we own the outermost
     // commit (`tx` unset); a caller-supplied savepoint owns its own teardown point.
@@ -1247,7 +1371,8 @@ export class CallService {
     },
     tx?: PoolClient
   ): Promise<JoinCallResult> {
-    const { closedSessionIds, ...result } = await withTransaction(tx ?? this.pool, async (client) => {
+    const eligibility = await this.resolveP2pEligibility(params.workspaceId)
+    const outcome = await withTransaction(tx ?? this.pool, async (client) => {
       const access = await checkCallAccess(client, {
         workspaceId: params.workspaceId,
         userId: params.userId,
@@ -1260,8 +1385,17 @@ export class CallService {
         principal: { kind: "user", userId: params.userId },
       })
 
-      return this.joinLockedCall(client, params)
+      const locked = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      if (!locked) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+      await this.validateLockedAdmission(client, locked, params)
+      const admissionError = await this.gateP2pAdmission(client, locked, params, eligibility)
+      if (admissionError) return { admissionError }
+      const joined = await this.joinLockedCall(client, params)
+      await this.reconcileTransportPolicyLocked(client, joined.call, eligibility)
+      return joined
     })
+    if ("admissionError" in outcome) throw outcome.admissionError
+    const { closedSessionIds, ...result } = outcome
     // Tear down any endpoint this join superseded (takeover/rebind) after commit (INV-41).
     if (!tx) {
       for (const sessionId of closedSessionIds) await this.bestEffortCloseSession(sessionId)
@@ -1269,15 +1403,215 @@ export class CallService {
     return result
   }
 
-  /**
-   * The single locked-join transition shared by {@link startCall} and
-   * {@link joinCall}: lock the call row (serializes revive-vs-reap), reject an
-   * ended call, revive from grace, enforce the cap, admit membership, and mint
-   * exactly one leased endpoint (epoch = prior max + 1). Because the creator
-   * takes this same path, every `joined` participant owns a lease the reaper can
-   * expire — a started-but-never-media-connected call cannot wedge the stream's
-   * active-call slot forever. Caller must already hold call/stream access.
-   */
+  private async resolveP2pEligibility(workspaceId: string): Promise<CallP2pEligibility> {
+    return {
+      callsP2pEnabled: (await this.featureFlagService.getWorkspaceFlag(workspaceId, "callsP2p")) === "on",
+      turnConfigured: this.turnIssuer !== null,
+    }
+  }
+
+  private async reconcileTransportPolicyLocked(
+    client: PoolClient,
+    call: Call,
+    eligibility: CallP2pEligibility,
+    now = new Date()
+  ): Promise<CallTransportPolicyState> {
+    const endpoints = await CallEndpointRepository.listLiveByCall(client, call.workspaceId, call.id, now)
+    let previous = await CallTransportPolicyRepository.findForUpdate(client, call.workspaceId, call.id)
+    const unsettled = await CallTransferRepository.findUnsettled(client, call.workspaceId, call.id)
+    const decision = decideCallTransportPolicy(previous, {
+      now,
+      activeTransport: call.mediaTransport,
+      sourceTransportGeneration: call.transportGeneration,
+      admittedCount: endpoints.length,
+      ...eligibility,
+      allCoordinatorCapable: endpoints.every(canCoordinateTransfer),
+      allP2pCapable: endpoints.every((endpoint) => endpoint.transportCapability === "p2p-v1"),
+      callActive: call.status !== "ended",
+      transferTarget: unsettled?.targetTransport ?? null,
+    })
+    if (!previous) {
+      previous = await CallTransportPolicyRepository.insert(client, {
+        id: `callpolicy_${ulid()}`,
+        workspaceId: call.workspaceId,
+        callId: call.id,
+        ...decision.state,
+      })
+    } else if (
+      previous.admittedCount !== decision.state.admittedCount ||
+      previous.desiredTransport !== decision.state.desiredTransport ||
+      previous.eligibilityDeadline?.getTime() !== decision.state.eligibilityDeadline?.getTime() ||
+      previous.eligibilityGeneration !== decision.state.eligibilityGeneration ||
+      previous.sourceTransportGeneration !== decision.state.sourceTransportGeneration ||
+      previous.explicitHoldTarget !== decision.state.explicitHoldTarget ||
+      previous.explicitHoldAdmittedCount !== decision.state.explicitHoldAdmittedCount ||
+      previous.latestReason !== decision.state.latestReason
+    ) {
+      previous = (await CallTransportPolicyRepository.update(client, { ...previous, ...decision.state })) ?? previous
+    }
+    callTransportPolicyDecisionsTotal.inc({
+      target: decision.state.desiredTransport,
+      reason: decision.state.latestReason,
+    })
+    if (decision.request) {
+      await this.createTransportTransition(client, call, {
+        ...decision.request,
+        actor: { type: "system", policy: "call_transport" },
+        idempotencyKey: `${call.id}:${previous.id}:${previous.version}:${decision.request.target}:${decision.request.cause}`,
+        endpoints,
+      })
+    }
+    return previous
+  }
+
+  private async validateLockedAdmission(
+    client: PoolClient,
+    call: Call,
+    params: {
+      workspaceId: string
+      userId: string
+      takeover?: boolean
+      mediaIncarnation?: string
+    }
+  ): Promise<void> {
+    const others = await CallParticipantRepository.countJoined(client, params.workspaceId, call.id, {
+      excludeUserId: params.userId,
+    })
+    if (others >= CALL_PRODUCT_CAP) {
+      throw new HttpError("Call is full", { status: 409, code: "CALL_FULL" })
+    }
+
+    const participant = await CallParticipantRepository.findByUser(client, params.workspaceId, call.id, params.userId)
+    if (participant?.status === "removed") {
+      throw new HttpError("Removed from this call", { status: 403, code: "CALL_PARTICIPANT_REMOVED" })
+    }
+    if (!participant || params.takeover) return
+
+    const live = await CallEndpointRepository.findLiveByParticipant(client, params.workspaceId, participant.id)
+    if (!live) return
+    const incarnation = params.mediaIncarnation ?? null
+    const rebindable =
+      incarnation !== null &&
+      (live.status === "reconnecting" || live.mediaIncarnation === null || live.mediaIncarnation === incarnation)
+    if (!rebindable) {
+      throw new HttpError("An active endpoint already exists for this user", {
+        status: 409,
+        code: "CALL_ENDPOINT_ACTIVE",
+      })
+    }
+  }
+
+  private async gateP2pAdmission(
+    client: PoolClient,
+    call: Call,
+    params: {
+      workspaceId: string
+      userId: string
+      takeover?: boolean
+      mediaIncarnation?: string
+      transportCapability?: CallTransportCapability
+      transferCapability?: CallTransferCapability
+    },
+    eligibility: CallP2pEligibility
+  ): Promise<HttpError | null> {
+    if (call.mediaTransport !== "p2p") return null
+    const participant = await CallParticipantRepository.findByUser(client, params.workspaceId, call.id, params.userId)
+    const live = participant
+      ? await CallEndpointRepository.findLiveByParticipant(client, params.workspaceId, participant.id)
+      : null
+    const replacesLiveEndpoint = live !== null && live.leaseExpiresAt.getTime() > Date.now()
+    if (replacesLiveEndpoint && !params.takeover) return null
+    const endpoints = await CallEndpointRepository.listLiveByCall(client, params.workspaceId, call.id)
+    const thresholdAdmission = !replacesLiveEndpoint && endpoints.length >= CALL_P2P_THRESHOLD
+    const entrantNeedsSfu =
+      params.transportCapability !== "p2p-v1" || params.transferCapability !== "transport-transfer-v1"
+    if (!thresholdAdmission && !entrantNeedsSfu) return null
+    const incumbentsCapable = endpoints.every(canCoordinateTransfer)
+    if (!incumbentsCapable) {
+      callTransportAdmissionTotal.inc({ result: "blocked", reason: "legacy_incumbent" })
+      await this.reconcileTransportPolicyLocked(client, call, eligibility)
+      return new HttpError("P2P incumbents cannot coordinate an SFU transfer", {
+        status: 409,
+        code: "CALL_TRANSPORT_BLOCKED_LEGACY",
+        details: {
+          callId: call.id,
+          target: "sfu",
+          retryAfterMs: CALL_ADMISSION_RETRY_AFTER_MS,
+          reason: "legacy_incumbent",
+        },
+      })
+    }
+    callTransportAdmissionTotal.inc({
+      result: "retry",
+      reason: thresholdAdmission ? "threshold" : "legacy_entrant",
+    })
+    const latestTransferGeneration = await CallTransferRepository.maxGeneration(
+      client,
+      call.workspaceId,
+      call.id,
+      call.transportGeneration
+    )
+    await this.createTransportTransition(client, call, {
+      target: "sfu",
+      cause: "automatic_threshold",
+      actor: { type: "system", policy: "call_transport" },
+      idempotencyKey: `${call.id}:${call.transportGeneration}:admission:sfu:${latestTransferGeneration}`,
+      endpoints,
+    })
+    await this.reconcileTransportPolicyLocked(client, call, eligibility)
+    return new HttpError("Call transport is preparing", {
+      status: 409,
+      code: "CALL_TRANSPORT_PREPARING",
+      details: {
+        callId: call.id,
+        target: "sfu",
+        retryAfterMs: CALL_ADMISSION_RETRY_AFTER_MS,
+        reason: thresholdAdmission ? "threshold" : "legacy_entrant",
+      },
+    })
+  }
+
+  async sweepTransportPolicy(now = new Date()): Promise<void> {
+    const [due, safety] = await Promise.all([
+      CallTransportPolicyRepository.listDue(this.pool, now),
+      CallTransportPolicyRepository.listPeriodicCandidates(this.pool),
+    ])
+    const candidates = new Map<string, { workspaceId: string; callId: string; due: CallTransportPolicyState | null }>()
+    for (const candidate of safety)
+      candidates.set(`${candidate.workspaceId}:${candidate.callId}`, { ...candidate, due: null })
+    for (const candidate of due)
+      candidates.set(`${candidate.workspaceId}:${candidate.callId}`, { ...candidate, due: candidate })
+    const eligibilityByWorkspace = new Map<string, CallP2pEligibility>()
+    for (const workspaceId of new Set([...candidates.values()].map((candidate) => candidate.workspaceId))) {
+      eligibilityByWorkspace.set(workspaceId, await this.resolveP2pEligibility(workspaceId))
+    }
+    for (const candidate of candidates.values()) {
+      const eligibility = eligibilityByWorkspace.get(candidate.workspaceId)
+      if (!eligibility) continue
+      await withTransaction(this.pool, async (client) => {
+        const call = await CallRepository.findByIdForUpdate(client, candidate.workspaceId, candidate.callId)
+        if (!call) return
+        if (candidate.due) {
+          const current = await CallTransportPolicyRepository.findForUpdate(
+            client,
+            candidate.workspaceId,
+            candidate.callId
+          )
+          if (
+            !current ||
+            current.version !== candidate.due.version ||
+            current.eligibilityGeneration !== candidate.due.eligibilityGeneration ||
+            current.eligibilityDeadline?.getTime() !== candidate.due.eligibilityDeadline?.getTime() ||
+            current.sourceTransportGeneration !== candidate.due.sourceTransportGeneration
+          )
+            return
+        }
+        await this.reconcileTransportPolicyLocked(client, call, eligibility, now)
+      })
+    }
+  }
+
+  // The call row lock serializes admission and lease revival with the endpoint reaper.
   private async joinLockedCall(
     client: PoolClient,
     params: {
@@ -1308,14 +1642,7 @@ export class CallService {
       })
     }
 
-    const others = await CallParticipantRepository.countJoined(client, params.workspaceId, params.callId, {
-      excludeUserId: params.userId,
-    })
-    const capacity = call.mediaTransport === "p2p" ? CALL_P2P_CAP : CALL_PRODUCT_CAP
-    if (others >= capacity) {
-      throw new HttpError("Call is full", { status: 409, code: "CALL_FULL" })
-    }
-
+    await this.validateLockedAdmission(client, call, params)
     const participant = await this.admitParticipant(client, { call, userId: params.userId, invitedBy: null })
 
     const incarnation = params.mediaIncarnation ?? null
@@ -1465,6 +1792,7 @@ export class CallService {
     params: { workspaceId: string; callId: string; userId: string; endpointId: string },
     tx?: PoolClient
   ): Promise<{ call: Call }> {
+    const eligibility = await this.resolveP2pEligibility(params.workspaceId)
     const { call, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       if (!call) {
@@ -1534,6 +1862,7 @@ export class CallService {
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
+      await this.reconcileTransportPolicyLocked(client, updated, eligibility)
       const transferSessions =
         updated.status === "ended"
           ? await CallTransportSessionRepository.closeAllForCall(client, params.workspaceId, params.callId)
@@ -1563,6 +1892,7 @@ export class CallService {
     params: { workspaceId: string; callId: string; userId: string },
     tx?: PoolClient
   ): Promise<{ call: Call }> {
+    const eligibility = await this.resolveP2pEligibility(params.workspaceId)
     const { call, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       if (!call) {
@@ -1621,6 +1951,7 @@ export class CallService {
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
+      await this.reconcileTransportPolicyLocked(client, updated, eligibility)
       const transferSessions =
         updated.status === "ended"
           ? await CallTransportSessionRepository.closeAllForCall(client, params.workspaceId, params.callId)
@@ -1818,6 +2149,7 @@ export class CallService {
       }
       const roster = await CallParticipantRepository.listRoster(client, workspaceId, targetCallId)
       const transfer = await CallTransferRepository.findLatest(client, workspaceId, targetCallId)
+      const policy = await CallTransportPolicyRepository.find(client, workspaceId, targetCallId)
       const sessions = transfer
         ? await CallTransportSessionRepository.listByCall(client, workspaceId, targetCallId)
         : []
@@ -1827,6 +2159,15 @@ export class CallService {
         roster,
         mediaTransport: call.mediaTransport,
         transportGeneration: call.transportGeneration,
+        policy: policy
+          ? {
+              admittedCount: policy.admittedCount,
+              desiredTransport: policy.desiredTransport,
+              eligibilityDeadline: policy.eligibilityDeadline?.toISOString() ?? null,
+              explicitHoldTarget: policy.explicitHoldTarget,
+              latestReason: policy.latestReason,
+            }
+          : null,
         transfer: transfer
           ? {
               id: transfer.id,
@@ -1836,6 +2177,7 @@ export class CallService {
               membershipRevision: transfer.membershipRevision,
               phase: transfer.phase,
               cause: transfer.cause,
+              actor: transfer.actor ?? undefined,
               failureCode: transfer.failureCode,
               recoveryCode: transfer.recoveryCode,
               sessions: sessions.map((item) => ({
@@ -2536,6 +2878,7 @@ export class CallService {
     params: { workspaceId: string; callId: string; byUserId: string; targetUserId: string },
     tx?: PoolClient
   ): Promise<CallParticipant> {
+    const eligibility = await this.resolveP2pEligibility(params.workspaceId)
     const { removed, closedSessionIds } = await withTransaction(tx ?? this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       if (!call) {
@@ -2597,6 +2940,8 @@ export class CallService {
       // the participant-removed/endpoint-close writes (INV-66).
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
       await this.reconcileTransferMembership(client, call, rosterVersion ?? call.rosterVersion + 1)
+      const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
+      await this.reconcileTransportPolicyLocked(client, updated, eligibility)
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const closedSessionIds = closedEndpoints.map((e) => e.cfSessionId).filter((id): id is string => !!id)
@@ -2695,6 +3040,10 @@ export class CallService {
   async reapLapsedEndpoints(
     now: Date = new Date()
   ): Promise<{ endpoints: number; participants: number; calls: number }> {
+    const eligibilityByWorkspace = new Map<string, CallP2pEligibility>()
+    for (const workspaceId of await CallEndpointRepository.findLapsedWorkspaceIds(this.pool, now)) {
+      eligibilityByWorkspace.set(workspaceId, await this.resolveP2pEligibility(workspaceId))
+    }
     const { closedSessionIds, result } = await withTransaction(this.pool, async (client) => {
       const lapsedCallIds = await CallEndpointRepository.findLapsedCallIds(client, now)
       if (lapsedCallIds.length === 0) {
@@ -2747,6 +3096,8 @@ export class CallService {
         const touched = await CallRepository.findById(client, wsId, cId)
         if (touched) {
           await this.reconcileTransferMembership(client, touched, touched.rosterVersion)
+          const eligibility = eligibilityByWorkspace.get(wsId)
+          if (eligibility) await this.reconcileTransportPolicyLocked(client, touched, eligibility, now)
           await this.emitParticipantsChanged(client, wsId, touched.streamId, cId)
         }
       }

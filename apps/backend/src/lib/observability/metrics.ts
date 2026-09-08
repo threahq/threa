@@ -218,6 +218,34 @@ export const callSweepReapedTotal = new Counter({
   registers: [registry],
 })
 
+export const callTransportPolicyDecisionsTotal = new Counter({
+  name: "call_transport_policy_decisions_total",
+  help: "Call transport policy decisions by target and reason",
+  labelNames: ["target", "reason"],
+  registers: [registry],
+})
+
+export const callTransportAdmissionTotal = new Counter({
+  name: "call_transport_admission_total",
+  help: "Deferred call admission attempts by result and reason",
+  labelNames: ["result", "reason"],
+  registers: [registry],
+})
+
+export const callTransportTransfersTotal = new Counter({
+  name: "call_transport_transfers_total",
+  help: "Call transport transfer requests by cause and target",
+  labelNames: ["cause", "target"],
+  registers: [registry],
+})
+
+export const callTransportPreparationDuration = new Histogram({
+  name: "call_transport_preparation_duration_seconds",
+  help: "Time from transfer request to authoritative transport commit",
+  buckets: [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60],
+  registers: [registry],
+})
+
 // ── Queue depth ──────────────────────────────────────────────────────────────
 // Sampled from queue_messages by QueueDepthSampler, not incremented at the call
 // site: in-flight counters answer "is work moving", these answer "is work

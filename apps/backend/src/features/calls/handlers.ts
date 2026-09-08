@@ -159,7 +159,8 @@ export function createCallHandlers({
         takeover: body.takeover,
         transportCapability: body.transportCapability,
         transferCapability: body.transferCapability,
-        allowP2p: turnEnabled && (await featureFlagService.getWorkspaceFlag(workspaceId, "callsP2p")) === "on",
+        callsP2pEnabled: (await featureFlagService.getWorkspaceFlag(workspaceId, "callsP2p")) === "on",
+        turnConfigured: turnEnabled,
       })
       const snapshot = await callService.getRosterSnapshot(workspaceId, result.call.id)
       // A takeover displaced another of this user's devices: tell it directly
@@ -179,6 +180,7 @@ export function createCallHandlers({
         mediaTransport: snapshot.mediaTransport,
         transportGeneration: snapshot.transportGeneration,
         transfer: snapshot.transfer ?? null,
+        policy: snapshot.policy ?? null,
       })
     },
 
@@ -240,6 +242,7 @@ export function createCallHandlers({
         mediaTransport: snapshot.mediaTransport,
         transportGeneration: snapshot.transportGeneration,
         transfer: snapshot.transfer ?? null,
+        policy: snapshot.policy ?? null,
       })
     },
 
