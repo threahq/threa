@@ -44,6 +44,7 @@ import {
 import {
   discardSpawnBrief,
   harnessReconnectAvailable,
+  installedSpawnRuntimes,
   parseSpawnCommandArgs,
   prepareHarnessClear,
   prepareHarnessDone,
@@ -56,6 +57,8 @@ import {
   killOwnWindow,
   markHarnessLinkWoundDown,
   recordHarnessLink,
+  spawnRuntimesResolver,
+  type SpawnRuntimeOption,
 } from "@threahq/harness-client"
 import type {
   ExtensionAPI,
@@ -892,10 +895,16 @@ function currentReconnectLink(
   return link && reconnectAvailable() ? link : undefined
 }
 
+const defaultSpawnRuntimes = spawnRuntimesResolver((error) =>
+  console.error(`Threa remote: harnessd runtimes: ${error}; /spawn disabled`)
+)
+
 function buildRuntimeCapabilities(
   ctx?: ExtensionContext,
-  reconnectAvailable: () => boolean = harnessReconnectAvailable
+  reconnectAvailable: () => boolean = harnessReconnectAvailable,
+  spawnRuntimes: () => SpawnRuntimeOption[] = defaultSpawnRuntimes
 ): Record<string, unknown> {
+  const runtimes = installedSpawnRuntimes(spawnRuntimes())
   return {
     supportsActiveScratchpad: true,
     supportsPersistentSessions: true,
@@ -914,12 +923,13 @@ function buildRuntimeCapabilities(
         // `/spawn` opens a thread under the desk's root; `/done` winds down the
         // thread session it is run from.
         const onDesk = link.activeStreamId === link.rootStreamId
-        return command === "spawn" ? onDesk : !onDesk
+        return command === "spawn" ? onDesk && runtimes.length > 0 : !onDesk
       }
       if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
       return true
     }),
     thinkingLevels: [...THINKING_LEVELS],
+    spawnRuntimes: runtimes,
     preferredModels: [...(config?.preferredModels ?? [])],
     ...(ctx?.model && { currentModel: `${ctx.model.provider}/${ctx.model.id}` }),
     ...(ctx && { modelSuggestions: buildModelSuggestions(ctx) }),
@@ -3804,6 +3814,7 @@ interface SpawnCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessSpawn
   complete: typeof completeInvocationWithMarkdown
+  spawnRuntimes: () => SpawnRuntimeOption[]
 }
 
 interface HarnessHandoffSpec {
@@ -4001,16 +4012,11 @@ async function runSpawnCommand(
     available: harnessReconnectAvailable,
     prepare: prepareHarnessSpawn,
     complete: completeInvocationWithMarkdown,
+    spawnRuntimes: defaultSpawnRuntimes,
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
-  const parsed = parseSpawnCommandArgs(args, {
-    runtimes: [
-      { value: "claude", label: "Claude Code", installed: true },
-      { value: "pi", label: "Pi", installed: true },
-    ],
-    defaultRuntime: "pi",
-  })
+  const parsed = parseSpawnCommandArgs(args, { runtimes: deps.spawnRuntimes(), defaultRuntime: "pi" })
   if ("error" in parsed) {
     await deps.complete(invocation, parsed.error, ctx)
     return
@@ -4027,7 +4033,6 @@ async function runSpawnCommand(
   if (invocation.rootStreamId !== link.rootStreamId || invocation.claimedInstanceId !== link.instanceId) {
     throw new Error("Spawn request no longer matches the linked scratchpad.")
   }
-  const runtime = parsed.runtime
   // A replacement claim reruns this command, so anything past here would start a
   // second session for the one `/spawn` the user typed.
   if (!isCurrent()) return
@@ -4041,7 +4046,7 @@ async function runSpawnCommand(
     return
   }
   try {
-    deps.prepare({ runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
+    deps.prepare({ runtime: parsed.runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
   } catch (error) {
     discardSpawnBrief(briefFile)
     throw new Error(`Spawn launch failed: ${summarizeError(error)}`)
