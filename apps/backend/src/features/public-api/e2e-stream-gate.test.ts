@@ -313,6 +313,7 @@ describe("public API E2E-stream plaintext gate", () => {
   it("rejects a plaintext trace step targeting an E2E stream with 400 (INV-E7 step sink)", async () => {
     const isE2e = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
     const findById = spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ streamId: "stream_1" } as never)
     spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as never)
     const activeClaim = {

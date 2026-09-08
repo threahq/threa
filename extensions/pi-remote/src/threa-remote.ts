@@ -1051,9 +1051,8 @@ async function recordInvocationTraceStep(
 ): Promise<void> {
   if (!config) return
   // Session-control claims have no agent session server-side, so the server
-  // can never persist their steps — it rejects each one (an INTERNAL_ERROR ack
-  // before SESSION_CONTROL_TRACE_UNSUPPORTED existed). Presence heartbeats
-  // carry the "Running /x…" status instead.
+  // would reject each step with INVOCATION_SESSION_MISSING; skip sending them.
+  // Presence heartbeats carry the "Running /x…" status instead.
   if (invocation.trigger === "session-control") return
   const revision = invocation.sourceRevision
   const sealing = invocation.sealing
@@ -3831,11 +3830,7 @@ interface HarnessHandoffDeps {
  */
 export const HARNESS_HANDOFF_FALLBACK_MS = 30_000
 
-function armHandoffFallback(
-  lifecycleGeneration: number,
-  ctx: ExtensionContext,
-  sendHeartbeat: typeof heartbeat
-): void {
+function armHandoffFallback(lifecycleGeneration: number, ctx: ExtensionContext, sendHeartbeat: typeof heartbeat): void {
   const timer = setTimeout(() => {
     if (!reconnectPending || sessionTearingDown || sessionLifecycleGeneration !== lifecycleGeneration) return
     reconnectPending = false

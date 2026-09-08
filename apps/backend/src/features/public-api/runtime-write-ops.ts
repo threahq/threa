@@ -4,12 +4,7 @@ import type { Server } from "socket.io"
 import { withTransaction } from "../../db"
 import { HttpError } from "@threahq/backend-common"
 import { invocationClaimNotFound } from "./errors"
-import {
-  BotInvocationTriggers,
-  BotRuntimeKinds,
-  type BotInvocationCancellationReason,
-  type InvocationInputUpdateWire,
-} from "@threahq/types"
+import { BotRuntimeKinds, type BotInvocationCancellationReason, type InvocationInputUpdateWire } from "@threahq/types"
 import { resolveDeliveryVerdict, TrustTiers } from "@threahq/agent-runtime"
 import {
   assertManifestAllows,
@@ -356,14 +351,13 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         if (!snapshot || snapshot.status !== "claimed") {
           throw invocationClaimNotFound()
         }
-        // Session-control claims create no agent_sessions row (the claim handler
-        // skips the insert), so appendStep below could only throw "row not found" —
-        // an error-level stack per step, acked to the runtime as INTERNAL_ERROR.
-        // Reject with a terminal code the runtime can treat as definitive instead.
-        if (snapshot.trigger === BotInvocationTriggers.SESSION_CONTROL) {
-          throw new HttpError("Session-control invocations record no trace steps", {
+        // A claim can lack an agent_sessions row two ways: session-control never
+        // inserts one, or a second claim on a stream with a RUNNING session skips it.
+        const session = await AgentSessionRepository.findById(tx, params.invocationId)
+        if (!session || session.streamId !== snapshot.responseStreamId) {
+          throw new HttpError("Invocation has no agent session; steps are not recorded", {
             status: 409,
-            code: "SESSION_CONTROL_TRACE_UNSUPPORTED",
+            code: "INVOCATION_SESSION_MISSING",
           })
         }
         const authority = await assertStreamWritable(tx, {
@@ -377,9 +371,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         }
         // INV-E1/INV-E7 at the plaintext step sink: a plaintext trace step must
         // never land in an E2E stream (`agent_session_steps.content` would store
-        // cleartext). Sealed turns use `/sealed-steps`; the only caller that reaches
-        // here on an E2E stream is a session-control invocation, which carries no
-        // sealed context — its steps are best-effort, so a rejection drops cleanly.
+        // cleartext). Sealed turns use `/sealed-steps`.
         if (await E2eStreamsRepository.isE2eStream(tx, params.workspaceId, claim.responseStreamId)) {
           throw new HttpError("Stream is end-to-end encrypted; use the sealed-steps endpoint", {
             status: 400,
