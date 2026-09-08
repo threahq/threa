@@ -19,6 +19,7 @@ import { CALL_SURFACE_PROTECTED_ATTR } from "./call-surface-geometry"
 import { useCallManager } from "./call-manager-context"
 import { CameraButton, ChatButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
 import { useCallDevices, useCallDiagnostics, useCallRoster, useCallWorkspaceId } from "./call-store-hooks"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useCallLifecycleEvents, type CallLifecycleEntry } from "@/calls/lifecycle-log"
 
@@ -234,8 +235,24 @@ function formatTransferredBytes(sent = 0, received = 0): string {
 }
 
 export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagnostics }) {
+  const manager = useCallManager()
   const roster = useCallRoster()
+  const [requesting, setRequesting] = useState(false)
+  const target = diagnostics.mediaTransport === "p2p" ? "sfu" : "p2p"
+  const transferActive = diagnostics.transfer && !["completed", "failed"].includes(diagnostics.transfer.phase)
+  const requestTransfer = async () => {
+    if (!manager.requestMediaTransport || requesting || transferActive) return
+    setRequesting(true)
+    try {
+      await manager.requestMediaTransport(target)
+    } catch {
+      toast.error("Could not start the media transfer")
+    } finally {
+      setRequesting(false)
+    }
+  }
   const workspaceId = useCallWorkspaceId()
+  const p2pEnabled = useFeatureFlag(workspaceId ?? "", "callsP2p") === "on"
   const users = useWorkspaceUsers(workspaceId ?? undefined)
   return (
     <Popover>
@@ -293,6 +310,35 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
             <dd>{formatLimitation(diagnostics.qualityLimitation)}</dd>
           </div>
         </dl>
+        {diagnostics.transfer && diagnostics.transfer.phase !== "completed" ? (
+          <div className="mt-3 border-t pt-2 text-xs" role="status">
+            <div>
+              {formatMediaTransport(diagnostics.transfer.source)} to {formatMediaTransport(diagnostics.transfer.target)}
+            </div>
+            <div className="text-muted-foreground">{diagnostics.transfer.phase}</div>
+            {diagnostics.transfer.failureCode ? (
+              <div className="text-destructive">Transfer failed. Source media was retained.</div>
+            ) : null}
+          </div>
+        ) : null}
+        {!transferActive && (target !== "p2p" || p2pEnabled) ? (
+          <div className="mt-3 border-t pt-2">
+            {target === "p2p" && roster.length > 6 ? (
+              <p className="text-muted-foreground mb-2 text-xs">
+                Peer to peer sends one video copy to each participant.
+              </p>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              disabled={requesting}
+              onClick={() => void requestTransfer()}
+            >
+              {requesting ? "Starting transfer..." : `Switch to ${formatMediaTransport(target)}`}
+            </Button>
+          </div>
+        ) : null}
         {diagnostics.peers && diagnostics.peers.length > 0 && (
           <ul aria-label="Peer connections" className="mt-3 max-h-40 space-y-2 overflow-y-auto border-t pt-2 text-xs">
             {diagnostics.peers.map((peer) => {

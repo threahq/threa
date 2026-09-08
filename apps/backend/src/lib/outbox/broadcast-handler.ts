@@ -225,6 +225,10 @@ export class BroadcastHandler implements OutboxHandler {
     }
 
     emitToGroups(this.io, event, groups, routedEvent?.syncId)
+    if (isOutboxEventType(event, "call:transport_transfer_changed")) {
+      const payload = event.payload as { callId: string }
+      this.io.of("/calls").to(`call:${payload.callId}`).emit(event.eventType, event.payload)
+    }
 
     // A new delegation additionally nudges every connected runtime in the
     // workspace (roadmap 5.4: push delivery; polling is the headless

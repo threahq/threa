@@ -99,6 +99,30 @@ describe("BroadcastHandler", () => {
     mock.restore()
   })
 
+  it("should route durable call transfer prompts to the call room on /calls", async () => {
+    const event = makeEvent(1n, "call:transport_transfer_changed", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      callId: "call_1",
+      transferId: "callxfer_1",
+      generation: 2,
+      version: 3,
+      phase: "preparing",
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "call:call_1",
+      namespace: "/calls",
+      eventType: "call:transport_transfer_changed",
+      payload: event.payload,
+    })
+  })
+
   it("should emit user-scoped event to user room", async () => {
     const event = makeEvent(1n, "activity:created", {
       workspaceId: "ws_1",

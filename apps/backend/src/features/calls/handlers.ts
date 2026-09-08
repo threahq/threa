@@ -1,3 +1,9 @@
+import {
+  callTransferReadyAckSchema,
+  callTransferSwitchedAckSchema,
+  callTransferRestoredAckSchema,
+  requestCallTransportTransferSchema,
+} from "@threahq/types"
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
@@ -28,19 +34,24 @@ const startSchema = z.object({
   // user's own live endpoint on another device instead of being rejected by it.
   takeover: z.boolean().optional(),
   transportCapability: z.literal("p2p-v1").optional(),
+  transferCapability: z.literal("transport-transfer-v1").optional(),
 })
 
-const cfSessionSchema = z.object({
+const transferRequestSchema = requestCallTransportTransferSchema.extend({ endpointId: z.string().min(1) })
+
+const generationSessionSchema = z.object({
   mediaIncarnation: mediaIncarnationSchema,
+  generation: z.number().int().positive().optional(),
+  sessionId: z.string().min(1).max(128).nullable().optional(),
 })
 
-const renegotiateSchema = z.object({
-  mediaIncarnation: mediaIncarnationSchema,
+const cfSessionSchema = generationSessionSchema
+
+const renegotiateSchema = generationSessionSchema.extend({
   sdp: sessionDescriptionSchema,
 })
 
-const publishSchema = z.object({
-  mediaIncarnation: mediaIncarnationSchema,
+const publishSchema = generationSessionSchema.extend({
   sdp: sessionDescriptionSchema,
   tracks: z
     .array(
@@ -54,17 +65,15 @@ const publishSchema = z.object({
     .max(8),
 })
 
-const pullSchema = z.object({
-  mediaIncarnation: mediaIncarnationSchema,
+const pullSchema = generationSessionSchema.extend({
   tracks: z
     .array(z.object({ sessionId: z.string().min(1).max(128), trackName: z.string().min(1).max(128) }))
     .min(1)
     .max(64),
 })
 
-const closeTracksSchema = z
-  .object({
-    mediaIncarnation: mediaIncarnationSchema,
+const closeTracksSchema = generationSessionSchema
+  .extend({
     // Empty mids = registry-only cleanup of a publish that failed client-side
     // before CF acknowledged an m-line; it must still name unpublishKinds.
     mids: z.array(z.string().min(1).max(64)).max(16),
@@ -149,6 +158,7 @@ export function createCallHandlers({
         expectedCallId: body.expectedCallId,
         takeover: body.takeover,
         transportCapability: body.transportCapability,
+        transferCapability: body.transferCapability,
         allowP2p: turnEnabled && (await featureFlagService.getWorkspaceFlag(workspaceId, "callsP2p")) === "on",
       })
       const snapshot = await callService.getRosterSnapshot(workspaceId, result.call.id)
@@ -168,6 +178,7 @@ export function createCallHandlers({
         roster: snapshot.roster,
         mediaTransport: snapshot.mediaTransport,
         transportGeneration: snapshot.transportGeneration,
+        transfer: snapshot.transfer ?? null,
       })
     },
 
@@ -228,7 +239,52 @@ export function createCallHandlers({
         self,
         mediaTransport: snapshot.mediaTransport,
         transportGeneration: snapshot.transportGeneration,
+        transfer: snapshot.transfer ?? null,
       })
+    },
+
+    async requestTransportTransfer(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { callId } = req.params
+      await assertAvailable(workspaceId)
+      const body = parseOrThrow(transferRequestSchema, req.body)
+      const snapshot = await callService.requestTransportTransfer({ workspaceId, callId, userId, ...body })
+      broadcastRoster(io, callId, snapshot)
+      res.status(202).json(snapshot)
+    },
+
+    async acknowledgeTransferReady(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { callId } = req.params
+      await assertAvailable(workspaceId)
+      const body = parseOrThrow(callTransferReadyAckSchema, req.body)
+      const snapshot = await callService.acknowledgeTransferReady({ workspaceId, callId, userId, ...body })
+      broadcastRoster(io, callId, snapshot)
+      res.json(snapshot)
+    },
+
+    async acknowledgeTransferSwitched(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { callId } = req.params
+      await assertAvailable(workspaceId)
+      const body = parseOrThrow(callTransferSwitchedAckSchema, req.body)
+      const snapshot = await callService.acknowledgeTransferSwitched({ workspaceId, callId, userId, ...body })
+      broadcastRoster(io, callId, snapshot)
+      res.json(snapshot)
+    },
+
+    async acknowledgeTransferRestored(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { callId } = req.params
+      await assertAvailable(workspaceId)
+      const body = parseOrThrow(callTransferRestoredAckSchema, req.body)
+      const snapshot = await callService.acknowledgeTransferRestored({ workspaceId, callId, userId, ...body })
+      broadcastRoster(io, callId, snapshot)
+      res.json(snapshot)
     },
 
     async turnCredentials(req: Request, res: Response) {
@@ -247,6 +303,7 @@ export function createCallHandlers({
         userId,
         endpointId,
         mediaIncarnation: body.mediaIncarnation,
+        generation: body.generation,
       })
       res.setHeader("Cache-Control", "no-store")
       res.json(result)
@@ -266,6 +323,8 @@ export function createCallHandlers({
         userId,
         endpointId,
         mediaIncarnation: body.mediaIncarnation,
+        generation: body.generation,
+        sessionId: body.sessionId,
       })
       res.json(result)
     },
@@ -284,6 +343,8 @@ export function createCallHandlers({
         userId,
         endpointId,
         mediaIncarnation: body.mediaIncarnation,
+        generation: body.generation,
+        sessionId: body.sessionId,
         sdp: body.sdp,
       })
       res.json(result.cf)
@@ -303,6 +364,8 @@ export function createCallHandlers({
         userId,
         endpointId,
         mediaIncarnation: body.mediaIncarnation,
+        generation: body.generation,
+        sessionId: body.sessionId,
         sdp: body.sdp,
         tracks: body.tracks,
       })
@@ -324,6 +387,8 @@ export function createCallHandlers({
         userId,
         endpointId,
         mediaIncarnation: body.mediaIncarnation,
+        generation: body.generation,
+        sessionId: body.sessionId,
         tracks: body.tracks.map((t) => ({
           location: "remote" as const,
           sessionId: t.sessionId,
@@ -347,6 +412,8 @@ export function createCallHandlers({
         userId,
         endpointId,
         mediaIncarnation: body.mediaIncarnation,
+        generation: body.generation,
+        sessionId: body.sessionId,
         mids: body.mids,
         unpublishKinds: body.unpublishKinds,
         sdp: body.sdp,

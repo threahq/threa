@@ -14,6 +14,7 @@ export { CALL_MEDIA_TRANSPORTS } from "@threahq/types"
 export type { CallMediaTransport } from "@threahq/types"
 
 export const CALL_P2P_CAP = 6
+export const CALL_TRANSFER_RECOVERY_TIMEOUT_MS = 30_000
 
 export const CALL_ENDED_REASONS = ["completed", "reaped"] as const
 export type CallEndedReason = (typeof CALL_ENDED_REASONS)[number]

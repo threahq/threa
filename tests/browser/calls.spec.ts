@@ -1,12 +1,14 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, loginInNewContext, expectApiOk, createDmDraftId, generateTestId } from "./helpers"
 import {
+  expectDecodedMediaOnEveryEdge,
   hasAppliedHeldPeerOffer,
   simulatePeerConnectionFailure,
   installDirectOnlyCredentials,
   installPeerConnectionObserver,
   preparePoliteRecoveryGlare,
   readInboundMedia,
+  readMediaEdgeEvidence,
   readPeerRecoverySample,
   releaseHeldPeerOffer,
 } from "./calls-media-evidence"
@@ -45,7 +47,11 @@ interface DmPair {
 /** A owner + B member sharing a real DM stream, both viewing it, calls enabled. */
 async function setUpDmPair(
   browser: Browser,
-  options: { p2p?: boolean; inviteeCaptureDelayMs?: number; inviteeCredentialsDelayMs?: number } = {}
+  options: {
+    p2p?: boolean | "enroll-after-start"
+    inviteeCaptureDelayMs?: number
+    inviteeCredentialsDelayMs?: number
+  } = {}
 ): Promise<DmPair> {
   const testId = generateTestId()
   const inviteeEmail = `calls-b-${testId}@example.com`
@@ -58,6 +64,22 @@ async function setUpDmPair(
   if (options.p2p) {
     await installPeerConnectionObserver(ownerContext)
     await installPeerConnectionObserver(invitee.context)
+    for (const context of [ownerContext, invitee.context]) {
+      await context.addInitScript(() => {
+        if (!navigator.mediaDevices) return
+        const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+        const captures: Array<{ audio: string[]; video: string[] }> = []
+        Object.defineProperty(window, "__testCallCaptures", { value: captures })
+        navigator.mediaDevices.getUserMedia = async (constraints) => {
+          const stream = await nativeGetUserMedia(constraints)
+          captures.push({
+            audio: stream.getAudioTracks().map(({ id }) => id),
+            video: stream.getVideoTracks().map(({ id }) => id),
+          })
+          return stream
+        }
+      })
+    }
     if (options.inviteeCaptureDelayMs) {
       await invitee.context.addInitScript((delayMs) => {
         const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
@@ -76,7 +98,7 @@ async function setUpDmPair(
   const workspaceId = ownerPage.url().match(/\/w\/([^/]+)/)?.[1]
   if (!workspaceId) throw new Error("Could not resolve workspaceId from owner URL")
 
-  if (options.p2p) {
+  if (options.p2p === true) {
     const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
     if (!backendPort) throw new Error("PLAYWRIGHT_BACKEND_PORT is required for P2P enrollment")
     const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
@@ -139,6 +161,19 @@ async function setUpDmPair(
     ownerEmail: owner.email,
     ownerName: owner.name,
   }
+}
+
+async function enrollCallsP2p(page: Page, workspaceId: string): Promise<void> {
+  const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
+  const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
+  if (!backendPort || !internalApiKey) throw new Error("Browser test feature-flag fixture is unavailable")
+  await expectApiOk(
+    await page.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
+      headers: { "x-internal-api-key": internalApiKey },
+      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { callsP2p: "on" } },
+    }),
+    "Enroll workspace in callsP2p"
+  )
 }
 
 async function startCallFromHeader(page: Page): Promise<void> {
@@ -475,6 +510,224 @@ test.describe("1:1 DM calls", () => {
       await expect(a.locator(CALL_TILE)).toHaveCount(0, { timeout: 20000 })
       await expect(b.locator(CALL_TILE)).toHaveCount(1, { timeout: 20000 })
       await expect(b.locator("body > audio")).toHaveCount(0, { timeout: 10000 })
+    } finally {
+      await pair.ownerContext.close()
+      await pair.inviteeContext.close()
+    }
+  })
+
+  test("explicit SFU to P2P completes with media, then an unready SFU target preserves P2P", async ({ browser }) => {
+    test.setTimeout(165000)
+    const pair = await setUpDmPair(browser, { p2p: "enroll-after-start" })
+    const { ownerPage: a, inviteePage: b, workspaceId } = pair
+    let readyPosts = 0
+    const credentialAttempts = new Map<Page, number>()
+    const switchedBodies = new Map<Page, unknown[]>()
+    for (const page of [a, b]) {
+      credentialAttempts.set(page, 0)
+      switchedBodies.set(page, [])
+      page.on("request", (request) => {
+        if (request.method() === "POST" && request.url().endsWith("/transport-transfers/ready")) readyPosts++
+      })
+      await page.route("**/turn-credentials", async (route) => {
+        const attempts = credentialAttempts.get(page) ?? 0
+        credentialAttempts.set(page, attempts + 1)
+        if (attempts === 0) {
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "injected setup failure" }),
+          })
+          return
+        }
+        await route.fallback()
+      })
+      await page.route("**/transport-transfers/switched", async (route) => {
+        const bodies = switchedBodies.get(page)!
+        bodies.push(route.request().postDataJSON())
+        if (bodies.length === 1) {
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "injected lost acknowledgement" }),
+          })
+          return
+        }
+        await route.fallback()
+      })
+    }
+    try {
+      const startedResponse = a.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" && response.url().endsWith(`/workspaces/${workspaceId}/calls`)
+      )
+      await a.getByRole("button", { name: "Start a call" }).click()
+      await a.getByRole("menuitem", { name: "Start video call" }).click()
+      const started = await startedResponse
+      await expectApiOk(started, "Start SFU video call")
+      const callId = (await started.json()).call.id as string
+      await expect(b.getByText(/is calling/i)).toBeVisible({ timeout: 20000 })
+      await b.getByRole("button", { name: "Accept call" }).click()
+      await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+      await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
+      await b.getByRole("button", { name: "Turn camera on" }).click()
+
+      const getSnapshot = async (page: Page) => {
+        const response = await page.request.get(`/api/workspaces/${workspaceId}/calls/${callId}`)
+        await expectApiOk(response, "Read transfer snapshot")
+        return (await response.json()) as {
+          mediaTransport: "sfu" | "p2p"
+          transportGeneration: number
+          transfer: null | {
+            phase: string
+            target: { generation: number; transport: "sfu" | "p2p" }
+            failureCode: string | null
+            obligations: Array<{ ownPublicationsReady: boolean; switched: boolean }>
+          }
+        }
+      }
+      expect(await getSnapshot(a)).toMatchObject({ mediaTransport: "sfu", transportGeneration: 1 })
+      await enrollCallsP2p(a, workspaceId)
+      const capturesBeforeForward = await Promise.all(
+        [a, b].map((page) =>
+          page.evaluate(
+            () =>
+              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
+                .__testCallCaptures ?? []
+          )
+        )
+      )
+
+      await a.getByRole("button", { name: "Connection diagnostics" }).click()
+      await a.getByRole("button", { name: "Switch to Peer to peer" }).click()
+      await a.keyboard.press("Escape")
+      const targetMediaFlows = async (page: Page) => {
+        const evidence = await readMediaEdgeEvidence(page)
+        return evidence.edges.some(
+          (edge) =>
+            edge.connectionState === "connected" &&
+            (edge.inbound.audio?.bytes ?? 0) > 0 &&
+            (edge.inbound.video?.bytes ?? 0) > 0 &&
+            (edge.inbound.video?.frames ?? 0) > 0
+        )
+      }
+      const sourceMediaSelected = async (page: Page) => {
+        const evidence = await readMediaEdgeEvidence(page)
+        const source = evidence.edges.find((edge) => edge.connectionState === "connected")
+        const inboundVideoIds = new Set(
+          source?.receivers.filter(({ kind }) => kind === "video").map(({ id }) => id) ?? []
+        )
+        return (
+          !!source &&
+          (source.inbound.audio?.bytes ?? 0) > 0 &&
+          (source.inbound.video?.frames ?? 0) > 0 &&
+          evidence.rendered.some(({ trackId, frames }) => !!trackId && inboundVideoIds.has(trackId) && frames > 0) &&
+          (await page.locator("body > audio").count()) === 1
+        )
+      }
+      await Promise.all([
+        expect.poll(() => targetMediaFlows(a), { timeout: 30000 }).toBe(true),
+        expect.poll(() => targetMediaFlows(b), { timeout: 30000 }).toBe(true),
+      ])
+      await expect.poll(() => readyPosts, { timeout: 10000 }).toBeGreaterThan(0)
+      await expect.poll(() => [...credentialAttempts.values()], { timeout: 10000 }).toEqual([2, 2])
+      await expect
+        .poll(() => [...switchedBodies.values()].map((bodies) => bodies.length), { timeout: 10000 })
+        .toEqual([2, 2])
+      for (const bodies of switchedBodies.values()) expect(bodies[1]).toEqual(bodies[0])
+      await expect
+        .poll(async () => await getSnapshot(a), { timeout: 30000 })
+        .toMatchObject({ mediaTransport: "p2p", transportGeneration: 2 })
+      await expect.poll(async () => (await getSnapshot(a)).transfer?.phase, { timeout: 10000 }).toBe("completed")
+      await Promise.all([expectDecodedMediaOnEveryEdge(a, 1), expectDecodedMediaOnEveryEdge(b, 1)])
+      const capturesAfterForward = await Promise.all(
+        [a, b].map((page) =>
+          page.evaluate(
+            () =>
+              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
+                .__testCallCaptures ?? []
+          )
+        )
+      )
+      expect(capturesAfterForward).toEqual(capturesBeforeForward)
+      const timerBefore = await a.getByLabel("Call duration").textContent()
+
+      await a.getByRole("button", { name: "Connection diagnostics" }).click()
+      await a.getByRole("button", { name: "Switch to Cloudflare SFU" }).click()
+      await a.keyboard.press("Escape")
+      await expect.poll(async () => (await getSnapshot(a)).transfer?.phase, { timeout: 10000 }).toBe("preparing")
+      await a.getByRole("button", { name: "Mute", exact: true }).click()
+      await expect(b.getByLabel("Muted")).toBeVisible({ timeout: 10000 })
+      await a.getByRole("button", { name: "Unmute", exact: true }).click()
+      await expect(b.getByLabel("Muted")).toHaveCount(0, { timeout: 10000 })
+      await a.getByRole("button", { name: "Turn camera off" }).click()
+      await expect
+        .poll(async () => (await readMediaEdgeEvidence(b)).rendered.filter(({ trackId }) => trackId).length, {
+          timeout: 10000,
+        })
+        .toBe(1)
+      await a.getByRole("button", { name: "Turn camera on" }).click()
+      await expect.poll(() => sourceMediaSelected(b), { timeout: 20000 }).toBe(true)
+      const [beforeAbortA, beforeAbortB] = await Promise.all([readMediaEdgeEvidence(a), readMediaEdgeEvidence(b)])
+      const capturesBeforeAbort = await Promise.all(
+        [a, b].map((page) =>
+          page.evaluate(
+            () =>
+              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
+                .__testCallCaptures ?? []
+          )
+        )
+      )
+
+      await expect
+        .poll(
+          async () => {
+            const transfer = (await getSnapshot(a)).transfer
+            return (
+              transfer && {
+                phase: transfer.phase,
+                failureCode: transfer.failureCode,
+                anyReady: transfer.obligations.some(({ ownPublicationsReady }) => ownPublicationsReady),
+                anySwitched: transfer.obligations.some(({ switched }) => switched),
+              }
+            )
+          },
+          { timeout: 45000, intervals: [1000] }
+        )
+        .toEqual({ phase: "failed", failureCode: "PREPARE_TIMEOUT", anyReady: false, anySwitched: false })
+      expect(await getSnapshot(a)).toMatchObject({ mediaTransport: "p2p", transportGeneration: 2 })
+      await Promise.all([
+        expect.poll(() => sourceMediaSelected(a), { timeout: 30000 }).toBe(true),
+        expect.poll(() => sourceMediaSelected(b), { timeout: 30000 }).toBe(true),
+      ])
+      const sourceProgressed = async (page: Page, before: Awaited<ReturnType<typeof readMediaEdgeEvidence>>) => {
+        const prior = before.edges.find((edge) => edge.connectionState === "connected")
+        const after = (await readMediaEdgeEvidence(page)).edges.find((edge) => edge.connectionState === "connected")
+        return (
+          !!prior &&
+          !!after &&
+          (after.inbound.audio?.bytes ?? 0) > (prior.inbound.audio?.bytes ?? 0) &&
+          (after.inbound.video?.frames ?? 0) > (prior.inbound.video?.frames ?? 0)
+        )
+      }
+      await Promise.all([
+        expect.poll(() => sourceProgressed(a, beforeAbortA), { timeout: 30000 }).toBe(true),
+        expect.poll(() => sourceProgressed(b, beforeAbortB), { timeout: 30000 }).toBe(true),
+      ])
+      await expect(a.locator("body > audio")).toHaveCount(1)
+      await expect(b.locator("body > audio")).toHaveCount(1)
+      const capturesAfter = await Promise.all(
+        [a, b].map((page) =>
+          page.evaluate(
+            () =>
+              (window as typeof window & { __testCallCaptures?: Array<{ audio: string[]; video: string[] }> })
+                .__testCallCaptures ?? []
+          )
+        )
+      )
+      expect(capturesAfter).toEqual(capturesBeforeAbort)
+      expect(await a.getByLabel("Call duration").textContent()).not.toBe("0:00")
+      expect(timerBefore).not.toBeNull()
     } finally {
       await pair.ownerContext.close()
       await pair.inviteeContext.close()
