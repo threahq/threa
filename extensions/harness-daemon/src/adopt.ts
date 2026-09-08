@@ -31,7 +31,8 @@ import {
   type RuntimePreflightResult,
   type ScratchpadStatus,
 } from "./resume"
-import { commandPath, output } from "./shell"
+import { output } from "./shell"
+import { requireRuntimeBinary, runtimeDefinition } from "./runtimes"
 import {
   claudeLaunchArgs,
   claudeLaunchCommand,
@@ -680,8 +681,7 @@ async function launchTakeover(params: {
   identity: { instanceId: string; runtimeSessionId: string }
   noYolo: boolean
 }): Promise<TakeoverLaunch> {
-  const claudeBin = process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")
-  if (!claudeBin) throw new Error("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
+  const claudeBin = requireRuntimeBinary(runtimeDefinition("claude"))
   const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
   const channelEntry = prepareClaudeChannel()
   const mcpConfig = mcpConfigPath(params.identity.runtimeSessionId)

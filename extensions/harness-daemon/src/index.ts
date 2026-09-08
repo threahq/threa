@@ -36,6 +36,7 @@ import { defaultDoneDeps, doneAgent } from "./done"
 import { die } from "./errors"
 import { resolveIdentity } from "./identity"
 import { reconnectRuntime } from "./reconnect"
+import { installedSpawnRuntimes } from "./runtimes"
 import { defaultAttachedSpawnDeps, runAttachedSpawn } from "./spawn-attached"
 
 async function main(): Promise<void> {
@@ -76,8 +77,7 @@ async function main(): Promise<void> {
   if (command === "stop") return stopAgent(args[0] ?? die("stop requires an agent id or name"))
   if (command === "kick") return kickAgent(args[0] ?? die("kick requires an agent id, name, or runtime session id"))
   if (command === "clear") return clearAgent(args[0] ?? die("clear requires an agent id, name, or runtime session id"))
-  if (command === "done")
-    return doneAgent(parseDone(args), defaultDoneDeps())
+  if (command === "done") return doneAgent(parseDone(args), defaultDoneDeps())
   if (command === "interrupt") return interruptAgent(args[0] ?? die("interrupt requires an agent id or name"))
   if (command === "steer")
     return steerAgent(args[0] ?? die("steer requires an agent id or name"), args.slice(1).join(" "))
@@ -87,6 +87,7 @@ async function main(): Promise<void> {
   if (command === "backfill-identities") return backfillIdentitiesCommand(parseBackfill(args))
   if (command === "tombstone") return tombstoneCommand(parseTombstone(args))
   if (command === "doctor") return doctor()
+  if (command === "runtimes") return console.log(JSON.stringify(installedSpawnRuntimes()))
   if (command === "do") return inferAndRun(args.join(" "))
   die(`unknown command: ${command}`)
 }

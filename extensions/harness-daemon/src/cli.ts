@@ -3,7 +3,8 @@ import type { AdoptOptions } from "./adopt"
 import type { DoneRequest } from "./done"
 import { die } from "./errors"
 import type { ReconnectOptions } from "./reconnect"
-import type { ResumeOptions, RuntimeKind, SpawnOptions } from "./types"
+import { isRuntimeKind, SPAWN_RUNTIMES } from "./runtimes"
+import type { ResumeOptions, SpawnOptions } from "./types"
 
 export function usage(): never {
   console.log(`threa-harnessd
@@ -39,6 +40,7 @@ Usage:
   threa-harnessd backfill-identities [--dry-run]  (record the identity two sources already agree on)
   threa-harnessd tombstone [--dry-run]           (retire rows whose worktree is gone and whose scratchpad is archived)
   threa-harnessd doctor
+  threa-harnessd runtimes   (JSON list of spawnable runtimes installed here: value, label, description=binary path)
 
 Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
@@ -223,8 +225,10 @@ export function parseResolve(args: string[]): string | undefined {
 }
 
 export function parseSpawn(args: string[]): SpawnOptions {
-  const runtime = args.shift() as RuntimeKind | undefined
-  if (runtime !== "pi" && runtime !== "claude") die("spawn requires runtime: pi or claude")
+  const runtime = args.shift()
+  if (!isRuntimeKind(runtime)) {
+    die(`spawn requires runtime: ${SPAWN_RUNTIMES.map((def) => def.kind).join(" or ")}`)
+  }
   const flags = parseFlags(args)
   const name = stringFlag(flags, "name")
   if (!name) die("spawn requires --name")
