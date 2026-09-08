@@ -9,8 +9,16 @@ import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
 import { commandExists, run, shellQuote } from "./shell"
 import { requireRuntimeBinary, runtimeDefinition } from "./runtimes"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
-import type { ManagedAgent, ResumeOptions, RuntimeKind, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
-import { recordedNoYolo } from "./resume"
+import type {
+  ManagedAgent,
+  ResumeOptions,
+  RuntimeKind,
+  RuntimeModelChoice,
+  SpawnOptions,
+  SpawnResult,
+  ThreaChannelConfig,
+} from "./types"
+import { recordedModelChoice, recordedNoYolo } from "./resume"
 import { recordProfileSnapshot } from "./identity-store"
 import { mintRuntimeIdentity } from "./mint"
 import { plannedWorktreePath, provisionWorkspace } from "./worktree"
@@ -103,8 +111,11 @@ export async function linkAttachedThread(input: AttachThreadSessionInput): Promi
   return { scratchpadUrl, activeStreamId: link.activeStreamId }
 }
 
-export function piLaunchArgs(piBin: string, runtimeSessionId: string): string[] {
-  return [piBin, "--session-id", runtimeSessionId]
+export function piLaunchArgs(piBin: string, runtimeSessionId: string, choice: RuntimeModelChoice = {}): string[] {
+  const args = [piBin, "--session-id", runtimeSessionId]
+  if (choice.model) args.push("--model", choice.model)
+  if (choice.thinking) args.push("--thinking", choice.thinking)
+  return args
 }
 
 function harnessDaemonEnvironment(): string[] {
@@ -114,24 +125,34 @@ function harnessDaemonEnvironment(): string[] {
   ]
 }
 
-export function piLaunchCommand(piBin: string, runtimeSessionId: string, instanceId: string): string {
+export function piLaunchCommand(
+  piBin: string,
+  runtimeSessionId: string,
+  instanceId: string,
+  choice: RuntimeModelChoice = {}
+): string {
   return [
     "env",
     ...harnessDaemonEnvironment(),
     `THREA_INSTANCE_ID=${instanceId}`,
     `THREA_RUNTIME_SESSION_ID=${runtimeSessionId}`,
-    ...piLaunchArgs(piBin, runtimeSessionId),
+    ...piLaunchArgs(piBin, runtimeSessionId, choice),
   ]
     .map(shellQuote)
     .join(" ")
 }
 
-export function piResumeCommand(piBin: string, runtimeSessionId: string, expectedRootStreamId: string): string {
+export function piResumeCommand(
+  piBin: string,
+  runtimeSessionId: string,
+  expectedRootStreamId: string,
+  choice: RuntimeModelChoice = {}
+): string {
   return [
     "env",
     ...harnessDaemonEnvironment(),
     `THREA_EXPECTED_ROOT_STREAM_ID=${expectedRootStreamId}`,
-    ...piLaunchArgs(piBin, runtimeSessionId),
+    ...piLaunchArgs(piBin, runtimeSessionId, choice),
   ]
     .map(shellQuote)
     .join(" ")
@@ -148,10 +169,14 @@ export function claudeLaunchArgs(params: {
   noYolo?: boolean
   /** Set only by a takeover: continue this native conversation instead of starting one. */
   resumeSessionId?: string
+  /** What the spawn named; the thinking level is actuated as Claude Code's `--effort`. */
+  choice?: RuntimeModelChoice
 }): string[] {
   const args = [params.claudeBin]
   if (params.resumeSessionId) args.push("--resume", params.resumeSessionId)
   args.push("--name", `threa.${params.name}`, "--autocompact", CLAUDE_AUTOCOMPACT_WINDOW)
+  if (params.choice?.model) args.push("--model", params.choice.model)
+  if (params.choice?.thinking) args.push("--effort", params.choice.thinking)
   if (params.mcpConfig) {
     args.push("--mcp-config", params.mcpConfig, "--dangerously-load-development-channels", `server:${params.channel}`)
   }
@@ -439,7 +464,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
         session,
         window,
         worktree,
-        piLaunchCommand(piBin, runtimeSessionId, instanceId)
+        piLaunchCommand(piBin, runtimeSessionId, instanceId, { model: options.model, thinking: options.thinking })
       )
       Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Pi in tmux ${session}:${window} (${windowId})`)
@@ -503,7 +528,8 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
       piResumeCommand(
         piBin,
         agent.runtimeSessionId,
-        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`)
+        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`),
+        recordedModelChoice(agent)
       )
     )
     await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
@@ -619,6 +645,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
           ? undefined
           : this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry),
         noYolo: options.noYolo,
+        choice: { model: options.model, thinking: options.thinking },
       })
 
       const window = pickTmuxWindow(session, options.name)
@@ -692,6 +719,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
           mcpConfig,
           noYolo,
           resumeSessionId: claudeResumeSessionId(options.fresh, transcript),
+          choice: recordedModelChoice(agent),
         }),
         identity,
         config,

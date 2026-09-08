@@ -4,12 +4,22 @@ import type { HarnessSpawnSpec, SpawnRuntimeOption } from "@threahq/harness-clie
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
 
 const SPAWN_RUNTIMES: SpawnRuntimeOption[] = [
-  { value: "claude", label: "Claude Code", installed: true },
-  { value: "pi", label: "Pi", installed: true },
+  { value: "claude", label: "Claude Code", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], installed: true },
+  {
+    value: "pi",
+    label: "Pi",
+    thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    installed: true,
+  },
 ]
 const CLAUDE_ONLY: SpawnRuntimeOption[] = [
-  { value: "claude", label: "Claude Code", installed: true },
-  { value: "pi", label: "Pi", installed: false },
+  { value: "claude", label: "Claude Code", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], installed: true },
+  {
+    value: "pi",
+    label: "Pi",
+    thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    installed: false,
+  },
 ]
 
 function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T): T {
@@ -183,7 +193,12 @@ describe("createClaudeSessionControl", () => {
       }).toEqual({
         noHarness: { spawn: false, runtimes: [] },
         nothingInstalled: { spawn: false, runtimes: [] },
-        claudeOnly: { spawn: true, runtimes: [{ value: "claude", label: "Claude Code" }] },
+        claudeOnly: {
+          spawn: true,
+          runtimes: [
+            { value: "claude", label: "Claude Code", thinkingLevels: ["low", "medium", "high", "xhigh", "max"] },
+          ],
+        },
       })
     })
   })
@@ -533,7 +548,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       expect(await runSpawn(args)).toEqual({
         outcome: {
           ok: false,
-          message: "Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines.",
+          message:
+            "Usage: `/spawn [claude|pi] [--model <model>] [--thinking <level>] <name>` with the prompt on the following lines.",
         },
         specs: [],
         started: 0,

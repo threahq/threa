@@ -9,6 +9,8 @@ import {
   mcpConfigDir,
   mcpConfigPath,
   parkPiSessionFiles,
+  claudeLaunchArgs,
+  piLaunchArgs,
   piLaunchCommand,
   prelinkThreadSession,
   requireThreadSessionTarget,
@@ -87,6 +89,41 @@ test("a managed Pi launch carries one stable instance identity into every remote
   expect(launch).toContain("'THREA_INSTANCE_ID=pi-launch-instance'")
   expect(launch).toContain("'THREA_RUNTIME_SESSION_ID=runtime-session'")
   expect(launch).toContain("'/opt/pi' '--session-id' 'runtime-session'")
+})
+
+test("a named model and thinking level reach each runtime's own launch flags", () => {
+  expect(piLaunchArgs("/opt/pi", "runtime-session", { model: "openai-codex/gpt-5.6-sol", thinking: "high" })).toEqual([
+    "/opt/pi",
+    "--session-id",
+    "runtime-session",
+    "--model",
+    "openai-codex/gpt-5.6-sol",
+    "--thinking",
+    "high",
+  ])
+  // Threa's canonical `thinking` is Claude Code's `--effort`.
+  expect(
+    claudeLaunchArgs({ claudeBin: "claude", name: "a", channel: "c", choice: { model: "opus", thinking: "high" } })
+  ).toEqual([
+    "claude",
+    "--name",
+    "threa.a",
+    "--autocompact",
+    "200k",
+    "--model",
+    "opus",
+    "--effort",
+    "high",
+    "--dangerously-skip-permissions",
+  ])
+  expect(claudeLaunchArgs({ claudeBin: "claude", name: "a", channel: "c" })).toEqual([
+    "claude",
+    "--name",
+    "threa.a",
+    "--autocompact",
+    "200k",
+    "--dangerously-skip-permissions",
+  ])
 })
 
 test("an attached Claude launch ignores an ambient parent key without recording a secret", () => {

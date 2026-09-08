@@ -261,7 +261,9 @@ describe("capability selection", () => {
     commands: ["stop", "steer", "model"],
     modelSuggestions: [{ value: "opus", label: "Opus" }],
     thinkingLevels: ["low", "high"],
-    spawnRuntimes: [{ value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" }],
+    spawnRuntimes: [
+      { value: "claude", label: "Claude Code", thinkingLevels: ["low", "high"], description: "/usr/local/bin/claude" },
+    ],
     interrupt: () => true,
     runCommand: async () => ({ ok: true, message: "ok" }),
   }
@@ -287,7 +289,7 @@ describe("capability selection", () => {
     expect(enabled.modelSuggestions).toEqual([{ value: "opus", label: "Opus" }])
     expect(enabled.thinkingLevels).toEqual(["low", "high"])
     expect(enabled.spawnRuntimes).toEqual([
-      { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
+      { value: "claude", label: "Claude Code", thinkingLevels: ["low", "high"], description: "/usr/local/bin/claude" },
     ])
     expect(enabled.runtimeSessionId).toBe("rts_1")
 

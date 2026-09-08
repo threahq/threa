@@ -120,6 +120,8 @@ export interface HarnessSpawnSpec {
   rootStreamId: string
   anchorId: string
   briefFile?: string
+  model?: string
+  thinking?: string
 }
 
 export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarnessClearOptions = {}): () => void {
@@ -128,6 +130,8 @@ export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarn
   const anchor = requireId(spec.anchorId, "Anchor id")
   const entrypoint = requireHarnessEntrypoint(options)
   const args = [entrypoint, "spawn", spec.runtime, "--name", name, "--attach", rootStream, "--anchor", anchor]
+  if (spec.model) args.push("--model", requireId(spec.model, "Model"))
+  if (spec.thinking) args.push("--thinking", requireId(spec.thinking, "Thinking level"))
   if (spec.briefFile) args.push("--brief-file", spec.briefFile)
   // A launch that fails after `spawn` returns reports through the child's async
   // "error" event, out of reach of the caller's own catch — and harnessd, which

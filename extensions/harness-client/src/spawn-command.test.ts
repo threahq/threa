@@ -4,14 +4,17 @@ import { tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { parseSpawnCommandArgs, writeSpawnBrief } from "./spawn-command"
 
-const USAGE = "Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines."
+const USAGE =
+  "Usage: `/spawn [claude|pi] [--model <model>] [--thinking <level>] <name>` with the prompt on the following lines."
+const CLAUDE_LEVELS = ["low", "medium", "high", "xhigh", "max"]
+const PI_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 const BOTH = [
-  { value: "claude", label: "Claude Code", installed: true },
-  { value: "pi", label: "Pi", installed: true },
+  { value: "claude", label: "Claude Code", installed: true, thinkingLevels: CLAUDE_LEVELS },
+  { value: "pi", label: "Pi", installed: true, thinkingLevels: PI_LEVELS },
 ]
 const PI_ONLY = [
-  { value: "claude", label: "Claude Code", installed: false },
-  { value: "pi", label: "Pi", installed: true },
+  { value: "claude", label: "Claude Code", installed: false, thinkingLevels: CLAUDE_LEVELS },
+  { value: "pi", label: "Pi", installed: true, thinkingLevels: PI_LEVELS },
 ]
 const parse = (args: string, runtimes = BOTH, defaultRuntime = "claude") =>
   parseSpawnCommandArgs(args, { runtimes, defaultRuntime })
@@ -41,6 +44,7 @@ describe("parseSpawnCommandArgs", () => {
     expect(parse("")).toEqual({ error: USAGE })
     expect(parse("pi")).toEqual({ error: USAGE })
     expect(parse("  \nDo X")).toEqual({ error: USAGE })
+    expect(parse("claude --model opus")).toEqual({ error: USAGE })
   })
 
   it("rejects a name token that would reach harnessd as a flag", () => {
@@ -65,12 +69,57 @@ describe("parseSpawnCommandArgs", () => {
 
   it("lists only the installed runtimes in the usage line", () => {
     expect(parse("", PI_ONLY, "pi")).toEqual({
-      error: "Usage: `/spawn [pi] <name>` with the prompt on the following lines.",
+      error:
+        "Usage: `/spawn [pi] [--model <model>] [--thinking <level>] <name>` with the prompt on the following lines.",
     })
   })
 
   it("names the missing default without a list when nothing is installed", () => {
     expect(parse("fix", [], "claude")).toEqual({ error: "`claude` is not installed on this machine." })
+  })
+
+  it("reads the model and thinking flags wherever they sit on the first line", () => {
+    expect(parse("claude --model opus fix sidebar --thinking HIGH\nDo X")).toEqual({
+      runtime: "claude",
+      name: "fix sidebar",
+      prompt: "Do X",
+      model: "opus",
+      thinking: "high",
+    })
+  })
+
+  it("keeps a pi model pattern, provider and thinking suffix intact", () => {
+    expect(parse("pi --model openai-codex/gpt-5.6-sol explore perf")).toEqual({
+      runtime: "pi",
+      name: "explore perf",
+      prompt: "",
+      model: "openai-codex/gpt-5.6-sol",
+    })
+  })
+
+  it("rejects a flag with no value", () => {
+    expect(parse("claude --model --thinking high name")).toEqual({
+      error: `\`--model\` needs a value. ${USAGE}`,
+    })
+    expect(parse("claude fix sidebar --thinking")).toEqual({
+      error: `\`--thinking\` needs a value. ${USAGE}`,
+    })
+  })
+
+  it("validates the thinking level against the spawned runtime, not the caller's", () => {
+    expect(parse("pi --thinking minimal explore perf")).toEqual({
+      runtime: "pi",
+      name: "explore perf",
+      prompt: "",
+      thinking: "minimal",
+    })
+    // `minimal` is a pi level and `ultracode` a Claude TUI-only /effort step; neither reaches `claude --effort`.
+    expect(parse("claude --thinking minimal fix sidebar", BOTH, "pi")).toEqual({
+      error: "`claude` takes `--thinking` low, medium, high, xhigh, max; set anything else in the session.",
+    })
+    expect(parse("claude --thinking ultracode fix sidebar")).toEqual({
+      error: "`claude` takes `--thinking` low, medium, high, xhigh, max; set anything else in the session.",
+    })
   })
 })
 

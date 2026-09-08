@@ -6,11 +6,27 @@ export interface SpawnRuntimeDefinition {
   label: string
   binary: string
   binEnv: string
+  /** Levels the binary accepts at launch: `claude --effort`, `pi --thinking`. */
+  thinkingLevels: readonly string[]
 }
 
 export const SPAWN_RUNTIMES = [
-  { kind: "claude", label: "Claude Code", binary: "claude", binEnv: "THREA_HARNESSD_CLAUDE_BIN" },
-  { kind: "pi", label: "Pi", binary: "pi", binEnv: "THREA_HARNESSD_PI_BIN" },
+  {
+    kind: "claude",
+    label: "Claude Code",
+    binary: "claude",
+    binEnv: "THREA_HARNESSD_CLAUDE_BIN",
+    // The TUI's `/effort` also offers `ultracode`, which has no launch flag: a
+    // spawn naming it would silently boot on the default effort instead.
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    kind: "pi",
+    label: "Pi",
+    binary: "pi",
+    binEnv: "THREA_HARNESSD_PI_BIN",
+    thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+  },
 ] as const satisfies readonly SpawnRuntimeDefinition[]
 
 export type RuntimeKind = (typeof SPAWN_RUNTIMES)[number]["kind"]
@@ -47,14 +63,14 @@ export interface SpawnRuntimeOption {
   value: RuntimeKind
   label: string
   installed: boolean
+  thinkingLevels: string[]
   description?: string
 }
 
 export function spawnRuntimeCatalog(deps?: ResolveRuntimeBinaryDeps): SpawnRuntimeOption[] {
   return SPAWN_RUNTIMES.map((runtime) => {
     const binary = resolveRuntimeBinary(runtime, deps)
-    return binary
-      ? { value: runtime.kind, label: runtime.label, installed: true, description: binary }
-      : { value: runtime.kind, label: runtime.label, installed: false }
+    const option = { value: runtime.kind, label: runtime.label, thinkingLevels: [...runtime.thinkingLevels] }
+    return binary ? { ...option, installed: true, description: binary } : { ...option, installed: false }
   })
 }
