@@ -222,23 +222,26 @@ test.describe("Command argument option picker", () => {
       await expect(commandPopup).toBeVisible({ timeout: 5000 })
       await commandPopup.getByRole("option", { name: /spawn/ }).first().click()
 
-      // The runtime list opens first; picking Pi closes it and leaves the value.
+      // The runtime list opens first; picking Pi leaves the value and offers the
+      // overrides themselves, which is the only way to reach one by keyboard.
       const argPopup = ctx.page.locator("[aria-label='Command option suggestions']")
       await expect(argPopup).toBeVisible({ timeout: 5000 })
       await argPopup.getByRole("option", { name: /^Pi/ }).click()
-      await expect(argPopup).not.toBeVisible()
+      await expect(argPopup.getByRole("option", { name: "/model" })).toBeVisible()
+      await expect(argPopup.getByRole("option", { name: "/thinking" })).toBeVisible()
 
-      // `/model` reopens it on Pi's models — the desk's own Opus is not offered.
-      await ctx.page.keyboard.type("/model ")
-      await expect(argPopup).toBeVisible()
+      // Picking `/model` types the flag and reopens the list on Pi's models —
+      // the desk's own Opus is not offered.
+      await argPopup.getByRole("option", { name: "/model" }).click()
       await expect(argPopup.getByRole("option", { name: /GPT-5.6 Luna/ })).toBeVisible()
       await expect(argPopup.getByRole("option", { name: /Opus/ })).not.toBeVisible()
       await ctx.page.keyboard.press("ArrowDown")
       await ctx.page.keyboard.press("Enter")
-      await expect(argPopup).not.toBeVisible()
 
-      // The other override takes Pi's levels, in either order.
+      // The other override takes Pi's levels, in either order, and typing its
+      // slash by hand does not open the command palette over the picker.
       await ctx.page.keyboard.type("/thinking ")
+      await expect(commandPopup).not.toBeVisible()
       await expect(argPopup).toBeVisible()
       await expect(argPopup.getByRole("option", { name: /medium/ })).toBeVisible()
       await ctx.page.keyboard.type("med")

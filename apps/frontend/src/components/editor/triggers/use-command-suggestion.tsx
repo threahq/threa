@@ -25,6 +25,25 @@ function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
   return editor.state.doc.textContent.trim() === `/${query}`
 }
 
+/** The command chip the message opens with — its arguments own every `/` after it. */
+function leadingCommand(items: CommandItem[], editor: Editor | undefined): CommandItem | undefined {
+  const first = editor?.state.doc.firstChild?.firstChild
+  if (first?.type.name !== "slashCommand") return undefined
+  const name = first.attrs.name as string | null
+  return name ? items.find((item) => item.name === name) : undefined
+}
+
+/**
+ * Whether the typed `/` is naming one of the open command's own flag arguments
+ * rather than a second command: `/spawn pi /model opus` is one dispatch. The
+ * option picker offers those, so the palette steps aside — otherwise it opens
+ * over the picker with nothing to show, which reads as "/model isn't a command".
+ */
+function namesAFlagArgument(items: CommandItem[], query: string, editor: Editor | undefined): boolean {
+  const flags = leadingCommand(items, editor)?.args?.filter((arg) => arg.name.startsWith("/")) ?? []
+  return flags.some((arg) => arg.name.slice(1).toLowerCase().startsWith(query.toLowerCase()))
+}
+
 /**
  * Filter commands by query string and cursor context.
  *
@@ -34,6 +53,7 @@ function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
  * name matches always sort above description-only matches.
  */
 export function filterCommands(items: CommandItem[], query: string, editor?: Editor): CommandItem[] {
+  if (namesAFlagArgument(items, query, editor)) return []
   const opensMessage = slashOpensMessage(editor, query)
   const placed = items.filter((item) => item.placement === "inline" || opensMessage)
   return rankMatches(placed, query, (item) => ({ labels: [item.name], keywords: [item.description] }))
