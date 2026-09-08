@@ -497,6 +497,33 @@ interface TieredStreamSectionProps extends Omit<StreamSectionProps, "state" | "o
 const TIER_VISIBLE_LIMIT = 10
 
 /**
+ * The rows a tiered section renders, in render order, plus the count left
+ * behind the "more" expander. Exported because the sidebar's quick-jump
+ * numbering has to walk exactly this order — deriving it a second time from the
+ * section's raw items would number rows that aren't on screen (INV-43).
+ */
+export function tieredVisibleItems(
+  items: StreamItemData[],
+  getUnreadCount: (streamId: string) => number,
+  getMentionCount: (streamId: string) => number,
+  moreOpen: boolean
+): { visible: StreamItemData[]; hiddenCount: number } {
+  const activeItems = filterActiveByRecency(items, getUnreadCount, getMentionCount)
+  const activeIds = new Set(activeItems.map((s) => s.id))
+  const quietItems = items.filter((s) => !activeIds.has(s.id))
+
+  // Fill the visible tier with quiet items up to the soft cap. Actives always
+  // render in full, even if that pushes past the cap.
+  const quietFillCount = Math.max(0, TIER_VISIBLE_LIMIT - activeItems.length)
+  const quietHidden = quietItems.slice(quietFillCount)
+
+  return {
+    visible: moreOpen ? [...activeItems, ...quietItems] : [...activeItems, ...quietItems.slice(0, quietFillCount)],
+    hiddenCount: quietHidden.length,
+  }
+}
+
+/**
  * Single-list section with a tiered reveal:
  *
  * - All streams with activity (unread / mentions) always render at the top,
@@ -541,18 +568,9 @@ export function TieredStreamSection({
   const unreadAggregate = sumUnread(items, getUnreadCount)
   const mentionAggregate = sumMentions(items, getMentionCount)
 
-  const activeItems = filterActiveByRecency(items, getUnreadCount, getMentionCount)
-  const activeIds = new Set(activeItems.map((s) => s.id))
-  const quietItems = items.filter((s) => !activeIds.has(s.id))
-
-  // Fill the visible tier with quiet items up to the soft cap. Actives always
-  // render in full, even if that pushes past the cap.
-  const quietFillCount = Math.max(0, TIER_VISIBLE_LIMIT - activeItems.length)
-  const quietVisible = quietItems.slice(0, quietFillCount)
-  const quietHidden = quietItems.slice(quietFillCount)
-  const hasMore = quietHidden.length > 0
   const isMoreOpen = moreState === "open"
-  const visibleItems = isMoreOpen ? [...activeItems, ...quietItems] : [...activeItems, ...quietVisible]
+  const { visible: visibleItems, hiddenCount } = tieredVisibleItems(items, getUnreadCount, getMentionCount, isMoreOpen)
+  const hasMore = hiddenCount > 0
 
   const renderItem = (stream: StreamItemData) =>
     renderSectionRow(stream, {
@@ -594,9 +612,7 @@ export function TieredStreamSection({
         <div className="mt-1 flex flex-col gap-0.5">{visibleItems.map(renderItem)}</div>
       )}
 
-      {!isCollapsed && hasMore && (
-        <MoreDivider isOpen={isMoreOpen} hiddenCount={quietHidden.length} onToggle={onToggleMore} />
-      )}
+      {!isCollapsed && hasMore && <MoreDivider isOpen={isMoreOpen} hiddenCount={hiddenCount} onToggle={onToggleMore} />}
     </div>
   )
 }

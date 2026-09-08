@@ -47,6 +47,7 @@ import {
 } from "./sidebar-actions"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { StreamLabelDots } from "./sidebar-labels"
+import { QuickJumpCap, useQuickJumpSlot } from "./quick-jump"
 import { truncateContent } from "./utils"
 import {
   ENCRYPTED_MESSAGE_PREVIEW_LABEL,
@@ -534,6 +535,9 @@ export function StreamItem({
   const isTouchInput = useInputMode() === "touch"
 
   const showHoverPreview = compact && showPreviewOnHover && !isTouchInput && !!preview?.content
+  // Non-null only while the quick-jump modifier is held and this row is one of
+  // the first nine. It takes over the "…" menu's slot below.
+  const quickJump = useQuickJumpSlot(stream.id)
 
   if (stream.type === StreamTypes.SCRATCHPAD) {
     return (
@@ -609,6 +613,7 @@ export function StreamItem({
           <Link
             ref={itemRef}
             to={rowTo}
+            aria-keyshortcuts={quickJump?.keyshortcut}
             onClick={handleRowClick}
             onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
             onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
@@ -689,7 +694,13 @@ export function StreamItem({
             />
           )}
 
-          <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
+          {/* The number cap takes the "…" menu's slot rather than adding one, so
+              a held modifier never reflows a row (INV-21). */}
+          {quickJump ? (
+            <QuickJumpCap slot={quickJump.slot} />
+          ) : (
+            <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
+          )}
         </div>
       </SidebarActionContextMenu>
       {labelPickerOpen && (
