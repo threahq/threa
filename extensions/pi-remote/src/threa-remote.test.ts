@@ -1,4 +1,4 @@
-import { readHarnessLinks } from "@threahq/harness-client"
+import { readHarnessLinks, type SpawnRuntimeOption } from "@threahq/harness-client"
 import { encryptAttachmentBytes } from "@threahq/bot-runtime-client"
 import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
@@ -13,9 +13,13 @@ process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-
 // must behave the same inside a supervised pane as in CI.
 delete process.env.THREA_EXPECTED_ROOT_STREAM_ID
 
-const SPAWN_RUNTIMES = [
-  { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
-  { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+const SPAWN_RUNTIMES: SpawnRuntimeOption[] = [
+  { value: "claude", label: "Claude Code", installed: true, description: "/usr/local/bin/claude" },
+  { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
+]
+const PI_ONLY: SpawnRuntimeOption[] = [
+  { value: "claude", label: "Claude Code", installed: false },
+  { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
 ]
 
 let testStorageDirectory: string
@@ -214,21 +218,10 @@ describe("Pi remote trace safety", () => {
   test("advertises session-control command capabilities", () => {
     // No ctx: nothing is linked yet, so every command needing a live link is
     // withheld. What remains is everything Pi actuates in-process.
-    expect(__testing.buildRuntimeCapabilities(undefined, undefined, () => SPAWN_RUNTIMES)).toMatchObject({
+    expect(__testing.buildRuntimeCapabilities(undefined, undefined, () => PI_ONLY)).toMatchObject({
       supportsSessionControlCommands: true,
       sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
-      spawnRuntimes: SPAWN_RUNTIMES,
-    })
-  })
-
-  test("drops spawn from the commands and advertises no spawnRuntimes when nothing is installed", () => {
-    const capabilities = __testing.buildRuntimeCapabilities(undefined, undefined, () => [])
-    expect({
-      sessionControlCommands: capabilities.sessionControlCommands,
-      spawnRuntimes: capabilities.spawnRuntimes,
-    }).toEqual({
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
-      spawnRuntimes: [],
+      spawnRuntimes: [{ value: "pi", label: "Pi", description: "/usr/local/bin/pi" }],
     })
   })
 
@@ -2022,26 +2015,25 @@ describe("Pi spawn and done session control", () => {
     })
   })
 
-  test("treats a leading token as the runtime only when harnessd reports it installed", async () => {
-    const prepared: Array<Record<string, unknown>> = []
-    await __testing.runSpawnCommand(invocation, "claude fix the parser", context(true), {
+  test("refuses a runtime this machine lacks without launching or writing a brief", async () => {
+    const messages: string[] = []
+    let prepared = 0
+    await __testing.runSpawnCommand(invocation, "claude fix the parser\nLook at parser.ts", context(true), {
       available: () => true,
-      prepare: (spec: Record<string, unknown>) => {
-        prepared.push(spec)
+      prepare: () => {
+        prepared++
         return () => undefined
       },
-      complete: async () => true,
-      spawnRuntimes: () => [{ value: "pi", label: "Pi" }],
-    } as never)
-    expect(prepared).toEqual([
-      {
-        runtime: "pi",
-        name: "claude fix the parser",
-        rootStreamId: "stream-root-exact",
-        anchorId: "msg_slash_spawn",
-        briefFile: undefined,
+      complete: async (_invocation: unknown, message: string) => {
+        messages.push(message)
+        return true
       },
-    ])
+      spawnRuntimes: () => PI_ONLY,
+    } as never)
+    expect({ messages, prepared }).toEqual({
+      messages: ["`claude` is not installed on this machine. Installed: pi."],
+      prepared: 0,
+    })
   })
 
   test("an unparseable first line launches nothing and returns the usage", async () => {
@@ -2295,18 +2287,22 @@ describe("Pi spawn and done session control", () => {
     })
   })
 
-  test("advertises spawn only on the desk, done only inside a thread, and neither without a link", () => {
+  test("advertises spawn only on the desk with an installed runtime, done only inside a thread, and neither without a link", () => {
     const ctx = context(true)
-    const advertised = (available: boolean) =>
+    const advertised = (available: boolean, runtimes = SPAWN_RUNTIMES) =>
       (
         __testing.buildRuntimeCapabilities(
           ctx,
           () => available,
-          () => SPAWN_RUNTIMES
+          () => runtimes
         ).sessionControlCommands as string[]
       ).filter((name) => name === "spawn" || name === "done")
 
     const desk = advertised(true)
+    const uninstalled = advertised(
+      true,
+      SPAWN_RUNTIMES.map(({ value, label }) => ({ value, label, installed: false }))
+    )
     const unavailable = advertised(false)
     __testing.setConfigForTesting(linkedConfig(threadLink) as never)
     const thread = advertised(true)
@@ -2314,8 +2310,9 @@ describe("Pi spawn and done session control", () => {
     delete process.env.TMUX_PANE
     const unpaned = advertised(true)
 
-    expect({ desk, thread, unavailable, unpaned }).toEqual({
+    expect({ desk, uninstalled, thread, unavailable, unpaned }).toEqual({
       desk: ["spawn"],
+      uninstalled: [],
       thread: ["done"],
       unavailable: [],
       unpaned: [],

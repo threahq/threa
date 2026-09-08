@@ -44,6 +44,7 @@ import {
 import {
   discardSpawnBrief,
   harnessReconnectAvailable,
+  installedSpawnRuntimes,
   parseSpawnCommandArgs,
   prepareHarnessClear,
   prepareHarnessDone,
@@ -903,7 +904,7 @@ function buildRuntimeCapabilities(
   reconnectAvailable: () => boolean = harnessReconnectAvailable,
   spawnRuntimes: () => SpawnRuntimeOption[] = defaultSpawnRuntimes
 ): Record<string, unknown> {
-  const runtimes = spawnRuntimes()
+  const runtimes = installedSpawnRuntimes(spawnRuntimes())
   return {
     supportsActiveScratchpad: true,
     supportsPersistentSessions: true,
@@ -4015,10 +4016,7 @@ async function runSpawnCommand(
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
-  const parsed = parseSpawnCommandArgs(
-    args,
-    deps.spawnRuntimes().map((r) => r.value)
-  )
+  const parsed = parseSpawnCommandArgs(args, { runtimes: deps.spawnRuntimes(), defaultRuntime: "pi" })
   if ("error" in parsed) {
     await deps.complete(invocation, parsed.error, ctx)
     return
@@ -4035,7 +4033,6 @@ async function runSpawnCommand(
   if (invocation.rootStreamId !== link.rootStreamId || invocation.claimedInstanceId !== link.instanceId) {
     throw new Error("Spawn request no longer matches the linked scratchpad.")
   }
-  const runtime = parsed.runtime
   // A replacement claim reruns this command, so anything past here would start a
   // second session for the one `/spawn` the user typed.
   if (!isCurrent()) return
@@ -4049,7 +4046,7 @@ async function runSpawnCommand(
     return
   }
   try {
-    deps.prepare({ runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
+    deps.prepare({ runtime: parsed.runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
   } catch (error) {
     discardSpawnBrief(briefFile)
     throw new Error(`Spawn launch failed: ${summarizeError(error)}`)
