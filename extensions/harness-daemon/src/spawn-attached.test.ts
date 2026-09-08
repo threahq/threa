@@ -48,7 +48,7 @@ function makeDeps(
       return options.spawnResult ?? RESULT
     },
     brief: async (body) => {
-      recorded.calls.push(`brief:${body.instanceId}:${body.runtimeSessionId}:${body.content}`)
+      recorded.calls.push(`brief:${body.runtime}:${body.instanceId}:${body.runtimeSessionId}:${body.content}`)
       if (options.briefResult instanceof Error) throw options.briefResult
     },
     unlinkBrief: (path) => {
@@ -74,7 +74,7 @@ describe("runAttachedSpawn", () => {
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/brief.md",
       "spawn:fix-sidebar",
-      "brief:cc-sidebar:ccs-sidebar:please fix the sidebar",
+      "brief:claude:cc-sidebar:ccs-sidebar:please fix the sidebar",
       "unlinkBrief:/tmp/brief.md",
     ])
     expect(result).toBe(RESULT)
@@ -107,7 +107,7 @@ describe("runAttachedSpawn", () => {
     expect(recorded.calls).toEqual([
       "readBrief:/tmp/brief.md",
       "spawn:fix-sidebar",
-      "brief:cc-sidebar:ccs-sidebar:please fix the sidebar",
+      "brief:claude:cc-sidebar:ccs-sidebar:please fix the sidebar",
       "postNotice:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: brief endpoint 500",
       "unlinkBrief:/tmp/brief.md",
     ])

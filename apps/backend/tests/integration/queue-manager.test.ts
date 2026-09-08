@@ -364,8 +364,11 @@ describe("QueueManager", () => {
           new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout waiting for retries")), 10000)),
         ])
 
-        // Hook signals from inside the transaction - wait for commit
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        await waitForCondition(
+          async () => (await QueueRepository.getById(pool, messageId))?.dlqAt != null,
+          2000,
+          `Message ${messageId} did not reach a committed DLQ state`
+        )
 
         // Handler should have been called maxRetries times
         expect(handlerCallCount).toBe(3)

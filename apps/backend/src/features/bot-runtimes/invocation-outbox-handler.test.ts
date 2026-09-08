@@ -85,6 +85,8 @@ beforeEach(() => {
     readOnlyReason: null,
   })) as never)
   spyOn(BotInvocationRepository, "listCompletedTurnRevisionsBySource").mockResolvedValue(new Map())
+  spyOn(BotRuntimeSessionLinkRepository, "listActiveByStreamForShare").mockResolvedValue([])
+  spyOn(BotRuntimeSessionLinkRepository, "findActiveByStreamForShare").mockResolvedValue(null)
 })
 
 afterEach(() => mock.restore())
@@ -160,7 +162,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
 
     const routes = await resolveCanonicalInvocationRoutes(pool, source())
 
-    expect({ routes, linkLookups: findLink.mock.calls.length }).toEqual({ routes: [], linkLookups: 0 })
+    expect({ routes, linkLookups: findLink.mock.calls.length }).toEqual({ routes: [], linkLookups: 1 })
   })
 
   it("ignores unresolved mention ids and @-shaped plain text", async () => {
@@ -183,7 +185,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
     })
   })
 
-  it("keeps E2E content server-blind and denies dispatch before session-link lookup", async () => {
+  it("keeps E2E content server-blind and denies dispatch", async () => {
     spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
@@ -202,7 +204,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
       })
     )
 
-    expect({ routes, linkLookups: findLink.mock.calls.length }).toEqual({ routes: [], linkLookups: 0 })
+    expect({ routes, linkLookups: findLink.mock.calls.length }).toEqual({ routes: [], linkLookups: 1 })
   })
 
   it("preserves required-link notices and link-free runtime routing", async () => {

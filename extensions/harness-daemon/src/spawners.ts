@@ -8,7 +8,7 @@ import { die } from "./errors"
 import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
-import type { ManagedAgent, ResumeOptions, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
+import type { ManagedAgent, ResumeOptions, RuntimeKind, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { recordedNoYolo } from "./resume"
 import { recordProfileSnapshot } from "./identity-store"
 import { mintRuntimeIdentity } from "./mint"
@@ -34,13 +34,19 @@ export function configuredThreaBaseUrl(config: ThreaChannelConfig): string {
   return (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
 }
 
-/** A missing credential dies (INV-11) before either spawner creates a tmux window. */
+/** A missing runtime credential dies (INV-11) before either spawner creates a tmux window. */
 export function requireThreadSessionTarget(config: ThreaChannelConfig, purpose: string): ThreaTarget {
   const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
-  const apiKey = process.env.THREA_API_KEY || config.apiKey
-  if (!workspaceId || !apiKey) die(`harnessd: no Threa credentials found to ${purpose}`)
-  return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey }
+  if (!workspaceId || !config.apiKey) {
+    die(`harnessd: no runtime-specific Threa credentials found to ${purpose}`)
+  }
+  return { baseUrl: configuredThreaBaseUrl(config), workspaceId, apiKey: config.apiKey }
 }
+
+export type RuntimeTargetResolver = (runtime: RuntimeKind, purpose: string) => ThreaTarget
+
+export const runtimeThreaTarget: RuntimeTargetResolver = (runtime, purpose) =>
+  requireThreadSessionTarget(runtime === "pi" ? readPiRemoteConfig() : readThreaChannelConfig(), purpose)
 
 export async function prelinkThreadSession(
   target: ThreaTarget,
@@ -64,7 +70,7 @@ export async function prelinkThreadSession(
   return { rootStreamId, activeStreamId }
 }
 
-interface AttachThreadSessionInput {
+export interface AttachThreadSessionInput {
   config: ThreaChannelConfig
   purpose: string
   runtimeKind: string
@@ -76,7 +82,7 @@ interface AttachThreadSessionInput {
 }
 
 /** One call site for both spawners' `--attach` path, so Claude and Pi report and store the link identically. */
-async function linkAttachedThread(input: AttachThreadSessionInput): Promise<{
+export async function linkAttachedThread(input: AttachThreadSessionInput): Promise<{
   scratchpadUrl: string
   activeStreamId: string
 }> {
@@ -618,7 +624,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
 
       const window = pickTmuxWindow(session, options.name)
       const launchCommand = options.attach
-        ? claudeLaunchCommand(args, identity, config, "wait", "error", options.attach.rootStreamId)
+        ? claudeLaunchCommand(args, identity, config, "wait", "error", options.attach.rootStreamId, activeStreamId)
         : claudeLaunchCommand(args, identity, config)
       const { windowId, paneId } = createWindow(session, window, worktree, launchCommand)
       Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
@@ -693,7 +699,8 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         config,
         "wait",
         "error",
-        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`)
+        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`),
+        agent.activeStreamId
       )
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
@@ -835,9 +842,13 @@ export function claudeLaunchCommand(
   config: ThreaChannelConfig = {},
   coldStartIfArchived: "wait" | "replace" = "replace",
   coldStartIfMissing: "create" | "error" = "create",
-  expectedRootStreamId?: string
+  expectedRootStreamId?: string,
+  activeStreamId?: string
 ): string {
+  const isAttachedThread = activeStreamId && expectedRootStreamId && activeStreamId !== expectedRootStreamId
   const environment = {
+    // The detached harness inherits the parent bot's key. An attached child must let its own config file win.
+    ...(isAttachedThread ? { THREA_API_KEY: "" } : {}),
     THREA_INSTANCE_ID: identity.instanceId,
     THREA_RUNTIME_SESSION_ID: identity.runtimeSessionId,
     THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",

@@ -373,12 +373,8 @@ export class BotRuntimeService {
   }
 
   /**
-   * Link a runtime session to a NEW thread under a scratchpad the caller
-   * already owns and the bot already has channel access to, rather than
-   * minting a fresh scratchpad. One transaction: thread create, then the same
-   * presence/active-actor/link writes `createLinkedScratchpadSession` does,
-   * so a failed link insert rolls back the thread too (INV-4/6/7). A thread
-   * that already carries an active link is refused rather than stolen.
+   * Create and link a thread atomically without replacing the root's active
+   * actor. Refuse a thread that already has an active link (INV-4/6/7).
    */
   async attachRuntimeSessionToThread(params: {
     workspaceId: string
@@ -450,6 +446,18 @@ export class BotRuntimeService {
         }
       )
 
+      const existingLinks = await BotRuntimeSessionLinkRepository.listActiveByStreamForShare(client, {
+        workspaceId: params.workspaceId,
+        rootStreamId: params.rootStreamId,
+        activeStreamId: thread.id,
+      })
+      if (existingLinks.length > 0) {
+        throw new HttpError("A runtime session is already linked to this thread", {
+          status: 409,
+          code: "THREAD_SESSION_EXISTS",
+        })
+      }
+
       await this.repairBotTraitsInTransaction(client, {
         workspaceId: params.workspaceId,
         botId: params.botId,
@@ -466,7 +474,7 @@ export class BotRuntimeService {
         linkedBy: params.ownerUserId,
         metadata: { displayName: params.displayName, localCwd: params.localCwd ?? null },
       }
-      await this.preparePiRemoteSessionInTransaction(client, linkParams)
+      await this.upsertPiRemoteSessionPresenceInTransaction(client, linkParams)
       const link = await BotRuntimeSessionLinkRepository.upsertUnlessActive(client, {
         id: botRuntimeSessionLinkId(),
         ...linkParams,
@@ -495,7 +503,16 @@ export class BotRuntimeService {
       metadata?: Record<string, unknown>
     }
   ): Promise<BotRuntimeSessionLink> {
-    await this.preparePiRemoteSessionInTransaction(db, params)
+    await this.upsertPiRemoteSessionPresenceInTransaction(db, params)
+    if (params.activeStreamId === params.rootStreamId) {
+      await this.setActiveActorInTransaction(db, {
+        workspaceId: params.workspaceId,
+        rootStreamId: params.rootStreamId,
+        actorType: "bot",
+        actorId: params.botId,
+        createdBy: params.linkedBy,
+      })
+    }
     return BotRuntimeSessionLinkRepository.upsert(db, {
       id: botRuntimeSessionLinkId(),
       workspaceId: params.workspaceId,
@@ -507,28 +524,6 @@ export class BotRuntimeService {
       activeStreamId: params.activeStreamId,
       linkedBy: params.linkedBy,
       metadata: params.metadata,
-    })
-  }
-
-  private async preparePiRemoteSessionInTransaction(
-    db: Querier,
-    params: {
-      workspaceId: string
-      botId: string
-      runtimeKind: BotRuntimeKind
-      instanceId: string
-      runtimeSessionId: string
-      rootStreamId: string
-      linkedBy: string
-    }
-  ): Promise<void> {
-    await this.upsertPiRemoteSessionPresenceInTransaction(db, params)
-    await this.setActiveActorInTransaction(db, {
-      workspaceId: params.workspaceId,
-      rootStreamId: params.rootStreamId,
-      actorType: "bot",
-      actorId: params.botId,
-      createdBy: params.linkedBy,
     })
   }
 
@@ -674,12 +669,8 @@ export class BotRuntimeService {
   }
 
   /**
-   * Session-create reattach: a runtime whose scratchpad was archived and then
-   * unarchived re-issues session-create with the same identity; revive its
-   * archive-ended link instead of minting a duplicate scratchpad. Presence and
-   * the active-actor slot are refreshed in the same transaction so the revived
-   * link dispatches turns immediately. `archived_stream` tells the caller the
-   * link exists but its scratchpad is still archived (the handler 409s).
+   * Revive an archive-ended link. Only a root link reclaims the root's active
+   * actor. `archived_stream` means the linked scratchpad remains archived.
    */
   async reattachArchivedRuntimeSession(params: {
     workspaceId: string
@@ -709,13 +700,15 @@ export class BotRuntimeService {
         instanceId: params.instanceId,
         runtimeSessionId: params.runtimeSessionId,
       })
-      await this.setActiveActorInTransaction(db, {
-        workspaceId: params.workspaceId,
-        rootStreamId: link.rootStreamId,
-        actorType: "bot",
-        actorId: params.botId,
-        createdBy: link.linkedBy,
-      })
+      if (link.activeStreamId === link.rootStreamId) {
+        await this.setActiveActorInTransaction(db, {
+          workspaceId: params.workspaceId,
+          rootStreamId: link.rootStreamId,
+          actorType: "bot",
+          actorId: params.botId,
+          createdBy: link.linkedBy,
+        })
+      }
       logger.info(
         { workspaceId: params.workspaceId, botId: params.botId, rootStreamId: link.rootStreamId, linkId: link.id },
         "Reattached archived runtime session link"

@@ -889,6 +889,22 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  async listActiveByStreamForShare(
+    db: Querier,
+    params: { workspaceId: string; rootStreamId: string; activeStreamId: string }
+  ): Promise<BotRuntimeSessionLink[]> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links
+        WHERE workspace_id = ${params.workspaceId}
+          AND root_stream_id = ${params.rootStreamId}
+          AND active_stream_id = ${params.activeStreamId}
+          AND status = 'active'
+        ORDER BY bot_id, id
+        FOR SHARE`
+    )
+    return result.rows.map(mapSessionLink)
+  },
+
   async findActiveByStream(
     db: Querier,
     params: { workspaceId: string; botId: string; rootStreamId: string; activeStreamId: string }

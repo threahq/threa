@@ -13,12 +13,8 @@ import { resolveSealingContext } from "../e2e-streams"
 import { MESSAGE_METADATA_COMMAND_KEY, MessageVersionRepository, type InvocationSourceState } from "../messaging"
 import { BotRepository } from "../public-api"
 import { projectStreamForBot, StreamRepository, type Stream } from "../streams"
-import {
-  BotInvocationRepository,
-  BotRuntimeInstanceRepository,
-  BotRuntimeSessionLinkRepository,
-  StreamActiveActorRepository,
-} from "./repository"
+import { BotInvocationRepository, BotRuntimeInstanceRepository } from "./repository"
+import { resolveLinkedRuntimeRouteTarget } from "./runtime-route-selection"
 import { resolveRuntimeKindConfig } from "./runtime-kind-config"
 
 export interface CanonicalInvocationRoute {
@@ -201,28 +197,19 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
     })
   }
   if (!root || root.type !== StreamTypes.SCRATCHPAD || root.archivedAt) return routes
-  const active = await StreamActiveActorRepository.findByRootStream(db, source.workspaceId, root.id)
-  if (!active || active.actorType !== "bot") return routes
-  const bot = await BotRepository.findById(db, source.workspaceId, active.actorId)
+  const runtimeTarget = await resolveLinkedRuntimeRouteTarget(db, {
+    workspaceId: source.workspaceId,
+    rootStreamId: root.id,
+    activeStreamId: stream.id,
+  })
+  if (!runtimeTarget) return routes
+  const bot = await BotRepository.findById(db, source.workspaceId, runtimeTarget.botId)
   if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return routes
   if (source.authorType === AuthorTypes.BOT && source.authorId === bot.id) return routes
   if (mentionable.some((candidate) => candidate.id === bot.id)) return routes
   if ((mentionable.length > 0 || hasPersona) && !mentionedBotIds.includes(bot.id)) return routes
   if (!(await allows(db, source, stream, bot.id))) return routes
-  let link = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, {
-    workspaceId: source.workspaceId,
-    botId: bot.id,
-    rootStreamId: root.id,
-    activeStreamId: stream.id,
-  })
-  if (!link && stream.id !== root.id) {
-    link = await BotRuntimeSessionLinkRepository.findActiveByStreamForShare(db, {
-      workspaceId: source.workspaceId,
-      botId: bot.id,
-      rootStreamId: root.id,
-      activeStreamId: root.id,
-    })
-  }
+  const link = runtimeTarget.link
   let missingLinkNotice: string | null = null
   if (!link) {
     const instances = await BotRuntimeInstanceRepository.findLatestForBots(db, source.workspaceId, [bot.id])
