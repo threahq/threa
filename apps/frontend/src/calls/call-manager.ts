@@ -397,8 +397,8 @@ export class CallManager implements CallController {
     let callId: string | null = null
     try {
       const started = await this.deps.startCallRest({ ...params, mediaIncarnation })
-      this.assertStartLive(gen)
       callId = started.call.id
+      this.assertStartLive(gen)
       // The server owns the mode: joining an existing call ignores our requested
       // mode, so adopt `started.call.mode` (an audio_only call must stay audio_only
       // even when the launch surface hardcoded "video") — the camera control hides

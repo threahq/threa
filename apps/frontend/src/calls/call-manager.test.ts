@@ -183,18 +183,27 @@ function makeMediaSession(events: string[]): FakeMediaSession {
   return fake
 }
 
+function startResponse({
+  callId = "call_1",
+  workspaceId = "ws_1",
+  streamId = "stream_1",
+  mode = "audio_only",
+}: { callId?: string; workspaceId?: string; streamId?: string; mode?: "audio_only" | "video" } = {}) {
+  return {
+    call: { id: callId, workspaceId, streamId, mode, mediaTransport: "sfu" as const, transportGeneration: 1 },
+    created: true,
+    participant: { id: "p_1" },
+    endpoint: { id: "ep_rest" },
+    chatAnchorId: "event_chat_1",
+    rosterVersion: 0,
+    roster: [],
+  }
+}
+
 function makeDeps(socket: FakeSocket, transport: MediaTransport, mediaSession: CallMediaSession | null = null) {
   let inc = 0
   const deps: CallManagerDeps = {
-    startCallRest: vi.fn(async ({ workspaceId, streamId, mode }) => ({
-      call: { id: "call_1", workspaceId, streamId, mode, mediaTransport: "sfu" as const, transportGeneration: 1 },
-      created: true,
-      participant: { id: "p_1" },
-      endpoint: { id: "ep_rest" },
-      chatAnchorId: "event_chat_1",
-      rosterVersion: 0,
-      roster: [],
-    })),
+    startCallRest: vi.fn(async ({ workspaceId, streamId, mode }) => startResponse({ workspaceId, streamId, mode })),
     leaveCallRest: vi.fn(async () => {}),
     connectSocket: vi.fn(() => socket),
     createTransport: vi.fn(() => transport),
@@ -1183,6 +1192,99 @@ describe("CallManager", () => {
 
     expect(manager.isActive()).toBe(false)
     expect(deps.leaveCallRest).toHaveBeenCalledWith({ workspaceId: "ws_1", callId: "call_1" })
+  })
+
+  it("should self-leave exactly once when leaveCall cancels before a successful REST response", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    let resolveStart: (response: ReturnType<typeof startResponse>) => void = () => {}
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = resolve
+        })
+    )
+    const manager = newManager(deps, null)
+
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    await manager.leaveCall()
+    resolveStart(startResponse({ callId: "call_late_leave" }))
+
+    await expect(start).rejects.toBeInstanceOf(CallStartCancelledError)
+    expect(deps.leaveCallRest).toHaveBeenCalledTimes(1)
+    expect(deps.leaveCallRest).toHaveBeenCalledWith({ workspaceId: "ws_1", callId: "call_late_leave" })
+    expect(deps.connectSocket).not.toHaveBeenCalled()
+    expect(deps.createTransport).not.toHaveBeenCalled()
+    expect(deps.acquireUserMedia).not.toHaveBeenCalled()
+  })
+
+  it("should settle a late admission after an account flush without starting local media", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    let resolveStart: (response: ReturnType<typeof startResponse>) => void = () => {}
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = resolve
+        })
+    )
+    const manager = newManager(deps, null)
+
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    resetCallStoreCache()
+    resolveStart(startResponse({ callId: "call_late_flush" }))
+
+    await expect(start).rejects.toBeInstanceOf(CallStartCancelledError)
+    expect(deps.leaveCallRest).toHaveBeenCalledTimes(1)
+    expect(deps.leaveCallRest).toHaveBeenCalledWith({ workspaceId: "ws_1", callId: "call_late_flush" })
+    expect(deps.connectSocket).not.toHaveBeenCalled()
+    expect(deps.createTransport).not.toHaveBeenCalled()
+    expect(deps.acquireUserMedia).not.toHaveBeenCalled()
+  })
+
+  it("should not admit a replacement until cancelled-start cleanup finishes", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    let resolveStart: (response: ReturnType<typeof startResponse>) => void = () => {}
+    let rejectLeave: (error: Error) => void = () => {}
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = resolve
+        })
+    )
+    ;(deps.leaveCallRest as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectLeave = reject
+        })
+    )
+    const manager = newManager(deps, null)
+
+    const cancelled = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    await manager.leaveCall()
+    resolveStart(startResponse({ callId: "call_cancelled" }))
+    await vi.waitFor(() => expect(deps.leaveCallRest).toHaveBeenCalledTimes(1))
+    expect(deps.leaveCallRest).toHaveBeenCalledWith({ workspaceId: "ws_1", callId: "call_cancelled" })
+
+    expect(() => manager.startCall({ workspaceId: "ws_1", streamId: "stream_2", mode: "audio_only" })).toThrow(
+      "A call is already active"
+    )
+    expect(deps.startCallRest).toHaveBeenCalledTimes(1)
+
+    rejectLeave(new Error("cleanup failed"))
+    await expect(cancelled).rejects.toBeInstanceOf(CallStartCancelledError)
+    ;(deps.startCallRest as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      startResponse({ callId: "call_replacement", streamId: "stream_2" })
+    )
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_2", mode: "audio_only" })
+    expect(manager.isActive()).toBe(true)
+    expect(getCallState()).toMatchObject({ callId: "call_replacement", streamId: "stream_2", phase: "connected" })
+    expect(deps.startCallRest).toHaveBeenCalledTimes(2)
+    expect(deps.leaveCallRest).toHaveBeenCalledTimes(1)
   })
 
   it("F1: a failure BEFORE the REST response does NOT self-leave (no callId, nothing admitted)", async () => {
