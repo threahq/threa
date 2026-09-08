@@ -37,23 +37,24 @@ export function resolveRuntimeBinary(
   return deps.env[runtime.binEnv] || deps.lookup(runtime.binary)
 }
 
-export function requireRuntimeBinary(runtime: SpawnRuntimeDefinition): string {
-  const bin = resolveRuntimeBinary(runtime)
+export function requireRuntimeBinary(runtime: SpawnRuntimeDefinition, deps?: ResolveRuntimeBinaryDeps): string {
+  const bin = resolveRuntimeBinary(runtime, deps)
   if (!bin) die(`${runtime.binary} binary not found; set ${runtime.binEnv} or put ${runtime.binary} on PATH`)
   return bin
 }
 
-export interface InstalledSpawnRuntime {
+export interface SpawnRuntimeOption {
   value: RuntimeKind
   label: string
-  description: string
+  installed: boolean
+  description?: string
 }
 
-export function installedSpawnRuntimes(deps?: ResolveRuntimeBinaryDeps): InstalledSpawnRuntime[] {
-  const installed: InstalledSpawnRuntime[] = []
-  for (const runtime of SPAWN_RUNTIMES) {
+export function spawnRuntimeCatalog(deps?: ResolveRuntimeBinaryDeps): SpawnRuntimeOption[] {
+  return SPAWN_RUNTIMES.map((runtime) => {
     const binary = resolveRuntimeBinary(runtime, deps)
-    if (binary) installed.push({ value: runtime.kind, label: runtime.label, description: binary })
-  }
-  return installed
+    return binary
+      ? { value: runtime.kind, label: runtime.label, installed: true, description: binary }
+      : { value: runtime.kind, label: runtime.label, installed: false }
+  })
 }

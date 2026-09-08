@@ -36,7 +36,7 @@ import { defaultDoneDeps, doneAgent } from "./done"
 import { die } from "./errors"
 import { resolveIdentity } from "./identity"
 import { reconnectRuntime } from "./reconnect"
-import { installedSpawnRuntimes } from "./runtimes"
+import { spawnRuntimeCatalog } from "./runtimes"
 import { defaultAttachedSpawnDeps, runAttachedSpawn } from "./spawn-attached"
 
 async function main(): Promise<void> {
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   if (command === "backfill-identities") return backfillIdentitiesCommand(parseBackfill(args))
   if (command === "tombstone") return tombstoneCommand(parseTombstone(args))
   if (command === "doctor") return doctor()
-  if (command === "runtimes") return console.log(JSON.stringify(installedSpawnRuntimes()))
+  if (command === "runtimes") return console.log(JSON.stringify(spawnRuntimeCatalog()))
   if (command === "do") return inferAndRun(args.join(" "))
   die(`unknown command: ${command}`)
 }
