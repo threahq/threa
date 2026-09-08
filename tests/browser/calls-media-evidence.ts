@@ -389,15 +389,20 @@ export async function hasDecodedMediaOnEveryEdge(page: Page, expectedPeers: numb
 
 export async function expectMediaProgressOnEveryEdge(
   page: Page,
-  before: Awaited<ReturnType<typeof readMediaEdgeEvidence>>
+  before: Awaited<ReturnType<typeof readMediaEdgeEvidence>>,
+  scope: "all-peers" | "baseline-peers" = "all-peers"
 ): Promise<void> {
   await expect
     .poll(
       async () => {
         const after = await readMediaEdgeEvidence(page)
+        const edges =
+          scope === "baseline-peers"
+            ? after.edges.filter((edge) => before.edges.some((previous) => previous.index === edge.index))
+            : after.edges
         return (
-          after.edges.length === before.edges.length &&
-          after.edges.every((edge) => {
+          edges.length === before.edges.length &&
+          edges.every((edge) => {
             const audioId = edge.receivers.find(({ kind }) => kind === "audio")?.id
             const prior = before.edges.find((previous) => previous.receivers.some(({ id }) => id === audioId))
             return (
@@ -412,11 +417,15 @@ export async function expectMediaProgressOnEveryEdge(
     .toBe(true)
 }
 
-export async function expectDecodedMediaOnEveryEdge(page: Page, expectedPeers: number): Promise<void> {
+export async function expectDecodedMediaOnEveryEdge(
+  page: Page,
+  expectedPeers: number,
+  timeout = 30_000
+): Promise<void> {
   try {
     await expect
       .poll(() => hasDecodedMediaOnEveryEdge(page, expectedPeers), {
-        timeout: 30_000,
+        timeout,
         intervals: [1_000, 2_000, 3_000],
       })
       .toBe(true)

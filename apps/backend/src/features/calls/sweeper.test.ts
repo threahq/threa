@@ -12,7 +12,8 @@ function makeServiceSpy() {
       expireStaleRings: mock(async () => ({ expired: 0 })),
       reapLapsedEndpoints: mock(async () => ({ endpoints: 0, participants: 0, calls: 0 })),
       endGraceExpiredCalls: mock(async () => ({ ended: 0 })),
-      sweepTransportTransfers: mock(async () => markSwept()),
+      sweepTransportTransfers: mock(async () => {}),
+      sweepTransportPolicy: mock(async () => markSwept()),
     },
     swept,
   }
@@ -21,7 +22,7 @@ function makeServiceSpy() {
 describe("createCallSweeper", () => {
   afterEach(() => mock.restore())
 
-  it("runs all four sweeps once on start and stops cleanly", async () => {
+  it("runs each sweep once on start and stops cleanly", async () => {
     const { service, swept } = makeServiceSpy()
     const sweeper = createCallSweeper(service as unknown as CallService, { intervalMs: 60_000 })
 
@@ -34,12 +35,38 @@ describe("createCallSweeper", () => {
       reapLapsedEndpoints: service.reapLapsedEndpoints.mock.calls.length,
       endGraceExpiredCalls: service.endGraceExpiredCalls.mock.calls.length,
       sweepTransportTransfers: service.sweepTransportTransfers.mock.calls.length,
+      sweepTransportPolicy: service.sweepTransportPolicy.mock.calls.length,
     }).toEqual({
       expireStaleRings: 1,
       reapLapsedEndpoints: 1,
       endGraceExpiredCalls: 1,
       sweepTransportTransfers: 1,
+      sweepTransportPolicy: 1,
     })
+  })
+
+  it("does not overlap sweeps when one interval runs long", async () => {
+    let releaseReap!: () => void
+    const blockedReap = new Promise<void>((resolve) => {
+      releaseReap = resolve
+    })
+    const service = {
+      reapLapsedEndpoints: mock(async () => {
+        await blockedReap
+        return { endpoints: 0, participants: 0, calls: 0 }
+      }),
+      endGraceExpiredCalls: mock(async () => ({ ended: 0 })),
+      expireStaleRings: mock(async () => ({ expired: 0 })),
+      sweepTransportTransfers: mock(async () => {}),
+      sweepTransportPolicy: mock(async () => {}),
+    }
+    const sweeper = createCallSweeper(service as unknown as CallService, { intervalMs: 1 })
+
+    sweeper.start()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(service.reapLapsedEndpoints.mock.calls.length).toBe(1)
+    releaseReap()
+    sweeper.stop()
   })
 
   it("reaps endpoints and ends graced calls BEFORE expiring rings (S6 — no false missed calls)", async () => {
@@ -63,6 +90,9 @@ describe("createCallSweeper", () => {
       }),
       sweepTransportTransfers: mock(async () => {
         order.push("transfer")
+      }),
+      sweepTransportPolicy: mock(async () => {
+        order.push("policy")
         markSwept()
       }),
     }
@@ -74,6 +104,6 @@ describe("createCallSweeper", () => {
 
     // An abandoned caller's lapsed endpoint cancels its ring on reap/grace-end, so the
     // ring never expires into a missed call one statement before the reap would.
-    expect(order).toEqual(["reap", "grace-end", "expire-rings", "transfer"])
+    expect(order).toEqual(["reap", "grace-end", "expire-rings", "transfer", "policy"])
   })
 })

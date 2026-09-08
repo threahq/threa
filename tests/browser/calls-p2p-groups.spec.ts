@@ -11,16 +11,57 @@ import { CAMERA_PUBLISH_LADDER } from "../../apps/frontend/src/calls/config"
 
 const CALL_TILE = "[data-testid='call-tile']"
 
+async function installCaptureObserver(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    if (!navigator.mediaDevices) return
+    const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+    Object.defineProperty(window, "__testCallCaptureCount", { value: 0, writable: true })
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      const stream = await nativeGetUserMedia(constraints)
+      ;(window as typeof window & { __testCallCaptureCount: number }).__testCallCaptureCount++
+      return stream
+    }
+  })
+}
+
 interface GroupFixture {
   contexts: BrowserContext[]
   pages: Page[]
   memberEmails: string[]
+  workspaceId: string
+  streamId: string
+  testId: string
+}
+
+async function addGroupMember(browser: Browser, fixture: GroupFixture, index: number): Promise<Page> {
+  const email = `calls-group-${fixture.pages.length + 1}-${index}-${fixture.testId}@example.com`
+  const member = await loginInNewContext(browser, email, `Caller ${index}`)
+  await member.context.grantPermissions(["microphone", "camera"])
+  await installPeerConnectionObserver(member.context)
+  await installCaptureObserver(member.context)
+  await installDirectOnlyCredentials(member.context)
+  await member.page.reload()
+  await expectApiOk(
+    await member.page.request.post(`/api/dev/workspaces/${fixture.workspaceId}/join`, { data: { role: "member" } }),
+    `Join caller ${index} to workspace`
+  )
+  await expectApiOk(
+    await member.page.request.post(`/api/dev/workspaces/${fixture.workspaceId}/streams/${fixture.streamId}/join`),
+    `Join caller ${index} to channel`
+  )
+  await member.page.goto(`/w/${fixture.workspaceId}/s/${fixture.streamId}`)
+  await expect(member.page.getByRole("button", { name: "Start a call" })).toBeVisible({ timeout: 40_000 })
+  fixture.contexts.push(member.context)
+  fixture.pages.push(member.page)
+  fixture.memberEmails.push(email)
+  return member.page
 }
 
 async function setUpGroup(browser: Browser, size: number): Promise<GroupFixture> {
   const testId = generateTestId()
   const ownerContext = await browser.newContext({ permissions: ["microphone", "camera"] })
   await installPeerConnectionObserver(ownerContext)
+  await installCaptureObserver(ownerContext)
   await installDirectOnlyCredentials(ownerContext)
   const ownerPage = await ownerContext.newPage()
   await loginAndCreateWorkspace(ownerPage, `calls-group-${size}`)
@@ -54,6 +95,7 @@ async function setUpGroup(browser: Browser, size: number): Promise<GroupFixture>
     await member.context.grantPermissions(["microphone", "camera"])
     if (size === 6 && index === size - 1) await member.page.setViewportSize({ width: 390, height: 844 })
     await installPeerConnectionObserver(member.context)
+    await installCaptureObserver(member.context)
     await installDirectOnlyCredentials(member.context)
     await member.page.reload()
     await expectApiOk(
@@ -69,9 +111,9 @@ async function setUpGroup(browser: Browser, size: number): Promise<GroupFixture>
   }
   for (const page of pages) {
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(page.getByRole("button", { name: "Start a call" })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole("button", { name: "Start a call" })).toBeVisible({ timeout: 40_000 })
   }
-  return { contexts, pages, memberEmails }
+  return { contexts, pages, memberEmails, workspaceId, streamId, testId }
 }
 
 async function expectCameraBudget(pages: Page[]): Promise<void> {
@@ -103,6 +145,87 @@ async function expectCameraBudget(pages: Page[]): Promise<void> {
     )
   )
 }
+
+test("a seventh caller waits without capture while six native P2P sources keep decoding against an unready fake SFU", async ({
+  browser,
+}) => {
+  test.setTimeout(180_000)
+  const fixture = await setUpGroup(browser, 6)
+  const [owner, ...members] = fixture.pages
+  const incumbents = [owner, ...members]
+  await members.at(-1)?.setViewportSize({ width: 1280, height: 720 })
+  try {
+    const startedResponse = owner.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().endsWith("/calls")
+    )
+    await owner.getByRole("button", { name: "Start a call" }).click()
+    await owner.getByRole("menuitem", { name: "Start video call" }).click()
+    const started = await startedResponse
+    await expectApiOk(started, "Start six-person P2P call")
+    const { call } = (await started.json()) as { call: { id: string; workspaceId: string } }
+    for (const page of incumbents.slice(1)) {
+      const join = page.getByRole("button", { name: "Join", exact: true }).first()
+      await expect(join).toBeVisible({ timeout: 20_000 })
+      await join.click()
+      const admittedCount = incumbents.indexOf(page) + 1
+      await expect
+        .poll(
+          async () => {
+            const response = await owner.request.get(`/api/workspaces/${call.workspaceId}/calls/${call.id}`)
+            if (!response.ok()) return -1
+            return ((await response.json()) as { policy?: { admittedCount?: number } }).policy?.admittedCount ?? -1
+          },
+          { timeout: 30_000 }
+        )
+        .toBe(admittedCount)
+    }
+    await Promise.all(incumbents.map((page) => expect(page.locator(CALL_TILE)).toHaveCount(6, { timeout: 30_000 })))
+    await Promise.all(incumbents.slice(1).map((page) => page.getByRole("button", { name: "Turn camera on" }).click()))
+    await Promise.all(incumbents.map((page) => expectDecodedMediaOnEveryEdge(page, 5, 60_000)))
+    const sourcePeers = await Promise.all(incumbents.map(readMediaEdgeEvidence))
+    const entrant = await addGroupMember(browser, fixture, 6)
+    const join = entrant.getByRole("button", { name: "Join", exact: true }).first()
+    await expect(join).toBeVisible({ timeout: 20_000 })
+    const admissionResponse = entrant.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" && response.url().endsWith(`/workspaces/${call.workspaceId}/calls`)
+    )
+    await join.click()
+    const admission = await admissionResponse
+    expect(admission.status()).toBe(409)
+    expect(await admission.json()).toMatchObject({
+      code: "CALL_TRANSPORT_PREPARING",
+      details: { callId: call.id, target: "sfu" },
+    })
+    const before = await Promise.all(incumbents.map(readMediaEdgeEvidence))
+    for (const [index, sample] of before.entries()) {
+      const sourceIndices = sourcePeers[index].edges.map((edge) => edge.index)
+      sample.edges = sample.edges.filter((edge) => sourceIndices.includes(edge.index))
+      expect(sample.edges.map((edge) => edge.index)).toEqual(sourceIndices)
+    }
+    await expect
+      .poll(() =>
+        entrant.evaluate(
+          () => (window as typeof window & { __testCallCaptureCount?: number }).__testCallCaptureCount ?? 0
+        )
+      )
+      .toBe(0)
+    await expect(entrant.locator(CALL_TILE)).toHaveCount(0)
+    await Promise.all(
+      incumbents.map((page, index) => expectMediaProgressOnEveryEdge(page, before[index], "baseline-peers"))
+    )
+
+    const snapshot = await owner.request.get(`/api/workspaces/${call.workspaceId}/calls/${call.id}`)
+    await expectApiOk(snapshot, "Read automatic transfer snapshot")
+    expect(await snapshot.json()).toMatchObject({
+      mediaTransport: "p2p",
+      policy: { admittedCount: 6 },
+      transfer: { phase: "preparing", target: { transport: "sfu" } },
+    })
+  } finally {
+    await Promise.all(fixture.contexts.map((context) => context.close()))
+  }
+})
 
 for (const size of [3, 6]) {
   test(`direct-only ${size}-person P2P mesh keeps decoded media on every edge through group churn`, async ({

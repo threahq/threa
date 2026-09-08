@@ -17,8 +17,9 @@ import * as activityModule from "../activity"
 import * as dbModule from "../../db"
 import * as observabilityModule from "../../lib/observability"
 import { OutboxRepository } from "../../lib/outbox"
-import { CALL_P2P_CAP, CALL_PRODUCT_CAP } from "./config"
+import { CALL_P2P_THRESHOLD, CALL_PRODUCT_CAP } from "./config"
 import { CloudflareRealtimeError } from "./cloudflare"
+import { CallTransportPolicyRepository } from "./policy-repository"
 import { logger } from "../../lib/logger"
 
 const NOW = new Date("2026-07-19T12:00:00.000Z")
@@ -102,12 +103,17 @@ function stubTransaction() {
   // (StreamEventRepository.insert reads back a sequence row that isn't there).
   spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
   spyOn(streamsModule.StreamMemberRepository, "list").mockResolvedValue([])
+  spyOn(CallTransportPolicyRepository, "insert").mockImplementation(async (_client, state) => ({
+    ...state,
+    version: 1,
+  }))
 }
 
 function makeService() {
   return new CallService({
     pool: {} as Pool,
     featureFlagService: { getWorkspaceFlag: async () => "on" } as never,
+    turnIssuer: { issue: async () => ({ iceServers: [], expiresAt: new Date().toISOString() }) },
   })
 }
 
@@ -352,7 +358,7 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
     ).rejects.toMatchObject({ code: "CALL_FULL", status: 409 })
   })
 
-  it("should admit six P2P participants and reject the seventh", async () => {
+  it("should keep the product cap at 50 for P2P calls", async () => {
     stubTransaction()
     spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
       target: { id: "stream_1", type: "channel" },
@@ -360,7 +366,7 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
     spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall({ mediaTransport: "p2p" }) })
     spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall({ mediaTransport: "p2p" }))
     const countJoined = spyOn(CallParticipantRepository, "countJoined")
-    countJoined.mockResolvedValueOnce(CALL_P2P_CAP - 1).mockResolvedValueOnce(CALL_P2P_CAP)
+    countJoined.mockResolvedValueOnce(CALL_P2P_THRESHOLD - 1).mockResolvedValueOnce(CALL_P2P_THRESHOLD)
     spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
     stubCleanEndpointAdmission()
 
@@ -370,6 +376,7 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
         callId: "call_1",
         userId: "usr_6",
         transportCapability: "p2p-v1",
+        transferCapability: "transport-transfer-v1",
       })
     ).resolves.toMatchObject({ endpoint: { id: "callep_1" } })
     await expect(
@@ -378,8 +385,9 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
         callId: "call_1",
         userId: "usr_7",
         transportCapability: "p2p-v1",
+        transferCapability: "transport-transfer-v1",
       })
-    ).rejects.toMatchObject({ code: "CALL_FULL", status: 409 })
+    ).resolves.toMatchObject({ endpoint: { id: "callep_1" } })
   })
 
   it("rejects a removed participant's self-rejoin", async () => {
@@ -1185,6 +1193,7 @@ describe("CallService sweeps", () => {
     stubTransaction()
     const order: string[] = []
     spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue(["call_1"])
+    spyOn(CallEndpointRepository, "findLapsedWorkspaceIds").mockResolvedValue(["ws_1"])
     const lock = spyOn(CallRepository, "lockForUpdateInOrder").mockImplementation(async () => {
       order.push("lock")
     })
@@ -1222,6 +1231,7 @@ describe("CallService sweeps", () => {
   it("reapLapsedEndpoints short-circuits before locking when nothing lapsed", async () => {
     stubTransaction()
     spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue([])
+    spyOn(CallEndpointRepository, "findLapsedWorkspaceIds").mockResolvedValue([])
     const lock = spyOn(CallRepository, "lockForUpdateInOrder").mockResolvedValue(undefined)
     const reap = spyOn(CallEndpointRepository, "reapLapsed").mockResolvedValue([])
     const markLeft = spyOn(CallParticipantRepository, "markLeftWhereNoLiveEndpoint").mockResolvedValue([])
@@ -1286,6 +1296,7 @@ describe("CallService sweeps", () => {
   it("reapLapsedEndpoints closes the CF sessions of reaped endpoints AFTER commit", async () => {
     stubTransaction()
     spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue(["call_1"])
+    spyOn(CallEndpointRepository, "findLapsedWorkspaceIds").mockResolvedValue(["ws_1"])
     spyOn(CallRepository, "lockForUpdateInOrder").mockResolvedValue(undefined)
     spyOn(CallEndpointRepository, "reapLapsed").mockResolvedValue([
       fakeEndpoint({ id: "callep_a", cfSessionId: "sess_a", status: "closed" }),

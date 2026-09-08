@@ -1,7 +1,7 @@
 import type { CallMediaTransport, CallTransportTransfer } from "@threahq/types"
 import { ulid } from "ulid"
 import { io } from "socket.io-client"
-import { api } from "@/api/client"
+import { api, ApiError } from "@/api/client"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { setDictationExternalHold } from "@/contexts/dictation-coordinator-context"
 import { isIosWebKit } from "@/lib/platform"
@@ -436,7 +436,7 @@ export class CallManager implements CallController {
     // nothing server-side, so there is nothing to settle.
     let callId: string | null = null
     try {
-      const started = await this.deps.startCallRest({
+      const started = await this.startAdmissionWithRetry(gen, {
         ...params,
         mediaIncarnation,
         transferCapability: "transport-transfer-v1",
@@ -586,6 +586,48 @@ export class CallManager implements CallController {
       throw err
     } finally {
       this.starting = false
+    }
+  }
+
+  private async startAdmissionWithRetry(
+    gen: number,
+    params: Parameters<CallManagerDeps["startCallRest"]>[0]
+  ): Promise<Awaited<ReturnType<CallManagerDeps["startCallRest"]>>> {
+    const deadline = Date.now() + 35_000
+    let attempts = 0
+    let expectedCallId = params.expectedCallId
+    let lastError: unknown
+    while (true) {
+      this.assertStartLive(gen)
+      if (lastError && (attempts > 80 || Date.now() >= deadline)) throw lastError
+      try {
+        return await this.deps.startCallRest({ ...params, expectedCallId })
+      } catch (error) {
+        const details = ApiError.isApiError(error) ? error.details : undefined
+        const retryable = ApiError.isApiError(error) && error.code === "CALL_TRANSPORT_PREPARING"
+        const observedCallId = typeof details?.callId === "string" ? details.callId : null
+        if (!retryable || !observedCallId || attempts >= 80) throw error
+        if (expectedCallId && expectedCallId !== observedCallId) throw error
+        expectedCallId = observedCallId
+        attempts += 1
+        lastError = error
+        const requestedDelay = typeof details?.retryAfterMs === "number" ? details.retryAfterMs : 250
+        const delay = Math.min(1000, Math.max(50, requestedDelay), Math.max(0, deadline - Date.now()))
+        if (delay === 0) throw error
+        await new Promise<void>((resolve, reject) => {
+          const finish = () => {
+            clearInterval(poll)
+            resolve()
+          }
+          const timer = setTimeout(finish, delay)
+          const poll = setInterval(() => {
+            if (!this.cancelStart && gen === this.sessionGen) return
+            clearTimeout(timer)
+            clearInterval(poll)
+            reject(new CallStartCancelledError())
+          }, 25)
+        })
+      }
     }
   }
 

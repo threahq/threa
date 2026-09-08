@@ -2353,6 +2353,158 @@ describe("CallManager", () => {
       for (const spy of [docAdd, docRemove, winAdd, winRemove]) spy.mockRestore()
     })
   })
+
+  it("should retry admission before capture and pin the observed call id", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    vi.mocked(deps.startCallRest)
+      .mockRejectedValueOnce(
+        new ApiError(409, "CALL_TRANSPORT_PREPARING", "Preparing", {
+          callId: "call_original",
+          target: "sfu",
+          retryAfterMs: 1,
+        })
+      )
+      .mockResolvedValueOnce({
+        ...(await makeDeps(makeSocket(), makeTransport()).startCallRest({
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          mode: "audio_only",
+          mediaIncarnation: "inc-fixture",
+        })),
+        call: {
+          id: "call_original",
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          mode: "audio_only",
+          mediaTransport: "sfu",
+          transportGeneration: 1,
+        },
+      })
+    const manager = newManager(deps, null)
+
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    expect(deps.acquireUserMedia).not.toHaveBeenCalled()
+    await start
+
+    expect(vi.mocked(deps.startCallRest).mock.calls.map(([request]) => request.expectedCallId ?? null)).toEqual([
+      null,
+      "call_original",
+    ])
+    expect(deps.acquireUserMedia).toHaveBeenCalledTimes(1)
+  })
+
+  it("should stop admission retries at 35 seconds without starting one past the deadline", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const preparing = new ApiError(409, "CALL_TRANSPORT_PREPARING", "Preparing", {
+      callId: "call_original",
+      target: "sfu",
+      retryAfterMs: 1000,
+    })
+    vi.mocked(deps.startCallRest).mockRejectedValue(preparing)
+    const manager = newManager(deps, null)
+
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    const rejection = expect(start).rejects.toBe(preparing)
+    await vi.advanceTimersByTimeAsync(35_000)
+    await rejection
+
+    expect(vi.mocked(deps.startCallRest)).toHaveBeenCalledTimes(35)
+    expect(deps.acquireUserMedia).not.toHaveBeenCalled()
+    expect(deps.createTransport).not.toHaveBeenCalled()
+  })
+
+  it("should reject when a retry reports a different call id", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const mismatch = new ApiError(409, "CALL_TRANSPORT_PREPARING", "Preparing", {
+      callId: "call_replacement",
+      target: "sfu",
+      retryAfterMs: 1,
+    })
+    vi.mocked(deps.startCallRest).mockRejectedValue(mismatch)
+    const manager = newManager(deps, null)
+
+    await expect(
+      manager.startCall({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "audio_only",
+        expectedCallId: "call_original",
+      })
+    ).rejects.toBe(mismatch)
+
+    expect(deps.startCallRest).toHaveBeenCalledTimes(1)
+    expect(deps.acquireUserMedia).not.toHaveBeenCalled()
+  })
+
+  it("should roll back a successful admission retry that returns after cancellation", async () => {
+    const deps = makeDeps(makeSocket(), makeTransport())
+    const admitted = await makeDeps(makeSocket(), makeTransport()).startCallRest({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      mode: "audio_only",
+      mediaIncarnation: "inc-fixture",
+    })
+    let completeAdmission!: (value: typeof admitted) => void
+    vi.mocked(deps.startCallRest)
+      .mockRejectedValueOnce(
+        new ApiError(409, "CALL_TRANSPORT_PREPARING", "Preparing", {
+          callId: "call_original",
+          target: "sfu",
+          retryAfterMs: 50,
+        })
+      )
+      .mockImplementationOnce(() => new Promise<typeof admitted>((resolve) => (completeAdmission = resolve)))
+    const manager = newManager(deps, null)
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    const rejection = expect(start).rejects.toBeInstanceOf(CallStartCancelledError)
+    await vi.waitFor(() => expect(deps.startCallRest).toHaveBeenCalledTimes(2))
+
+    await manager.leaveCall()
+    completeAdmission({ ...admitted, call: { ...admitted.call, id: "call_original" } })
+    await rejection
+
+    expect({
+      expectedCallIds: vi.mocked(deps.startCallRest).mock.calls.map(([request]) => request.expectedCallId ?? null),
+      leave: vi.mocked(deps.leaveCallRest).mock.calls,
+      capture: vi.mocked(deps.acquireUserMedia).mock.calls,
+      transport: vi.mocked(deps.createTransport).mock.calls,
+      socket: vi.mocked(deps.connectSocket).mock.calls,
+    }).toEqual({
+      expectedCallIds: [null, "call_original"],
+      leave: [[{ workspaceId: "ws_1", callId: "call_original" }]],
+      capture: [],
+      transport: [],
+      socket: [],
+    })
+  })
+
+  it("should cancel an admission retry without capture", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    vi.mocked(deps.startCallRest).mockRejectedValue(
+      new ApiError(409, "CALL_TRANSPORT_PREPARING", "Preparing", {
+        callId: "call_original",
+        target: "sfu",
+        retryAfterMs: 1000,
+      })
+    )
+    const manager = newManager(deps, null)
+    const start = manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    await vi.waitFor(() => expect(deps.startCallRest).toHaveBeenCalledTimes(1))
+    await manager.leaveCall()
+
+    await expect(start).rejects.toBeInstanceOf(CallStartCancelledError)
+    expect(deps.acquireUserMedia).not.toHaveBeenCalled()
+    expect(deps.createTransport).not.toHaveBeenCalled()
+  })
 })
 
 /** The mic track the manager published — reach it through the publish spy. */
