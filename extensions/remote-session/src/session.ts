@@ -77,6 +77,13 @@ export interface ModelSuggestionInfo {
   description?: string
 }
 
+/** A runtime this session can hand a `/spawn` off to; `description` is the resolved binary path. */
+export interface SpawnRuntimeInfo {
+  value: string
+  label: string
+  description?: string
+}
+
 /** A turn handed to the connector for execution by its runtime. */
 export interface DeliveredTurn {
   invocationId: string
@@ -110,6 +117,8 @@ export interface SessionControlActuator {
   modelSuggestions?: readonly ModelSuggestionInfo[]
   /** Levels for the canonical /thinking command's arg picker. */
   thinkingLevels?: readonly string[]
+  /** Runtimes for the canonical /spawn command's arg picker. */
+  spawnRuntimes?: readonly SpawnRuntimeInfo[]
   /** Interrupt the runtime's current turn. False = control lost (e.g. pane gone). */
   interrupt(): boolean
   /**
@@ -305,6 +314,7 @@ export function runtimeCapabilitiesFor(
           sessionControlCommands: [...actuator.commands],
           ...(actuator.modelSuggestions ? { modelSuggestions: [...actuator.modelSuggestions] } : {}),
           ...(actuator.thinkingLevels ? { thinkingLevels: [...actuator.thinkingLevels] } : {}),
+          ...(actuator.spawnRuntimes ? { spawnRuntimes: [...actuator.spawnRuntimes] } : {}),
         }
       : {}),
   }

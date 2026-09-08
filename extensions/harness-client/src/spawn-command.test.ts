@@ -8,7 +8,7 @@ const USAGE = "Usage: `/spawn [claude|pi] <name>` with the prompt on the followi
 
 describe("parseSpawnCommandArgs", () => {
   it("takes a leading runtime token, the rest of the line as the name and the rest as the prompt", () => {
-    expect(parseSpawnCommandArgs("claude fix sidebar\nDo X\nthen Y")).toEqual({
+    expect(parseSpawnCommandArgs("claude fix sidebar\nDo X\nthen Y", ["claude", "pi"])).toEqual({
       runtime: "claude",
       name: "fix sidebar",
       prompt: "Do X\nthen Y",
@@ -16,7 +16,7 @@ describe("parseSpawnCommandArgs", () => {
   })
 
   it("reads CRLF input the same as LF", () => {
-    expect(parseSpawnCommandArgs("claude fix sidebar\r\nDo X\r\nthen Y")).toEqual({
+    expect(parseSpawnCommandArgs("claude fix sidebar\r\nDo X\r\nthen Y", ["claude", "pi"])).toEqual({
       runtime: "claude",
       name: "fix sidebar",
       prompt: "Do X\nthen Y",
@@ -24,17 +24,27 @@ describe("parseSpawnCommandArgs", () => {
   })
 
   it("leaves the runtime unset when the first token is a name", () => {
-    expect(parseSpawnCommandArgs("fix sidebar")).toEqual({ name: "fix sidebar", prompt: "" })
+    expect(parseSpawnCommandArgs("fix sidebar", ["claude", "pi"])).toEqual({ name: "fix sidebar", prompt: "" })
   })
 
   it("rejects a missing name, runtime token or not", () => {
-    expect(parseSpawnCommandArgs("")).toEqual({ error: USAGE })
-    expect(parseSpawnCommandArgs("pi")).toEqual({ error: USAGE })
-    expect(parseSpawnCommandArgs("  \nDo X")).toEqual({ error: USAGE })
+    expect(parseSpawnCommandArgs("", ["claude", "pi"])).toEqual({ error: USAGE })
+    expect(parseSpawnCommandArgs("pi", ["claude", "pi"])).toEqual({ error: USAGE })
+    expect(parseSpawnCommandArgs("  \nDo X", ["claude", "pi"])).toEqual({ error: USAGE })
   })
 
   it("rejects a name token that would reach harnessd as a flag", () => {
-    expect(parseSpawnCommandArgs("claude --force fix sidebar")).toEqual({ error: USAGE })
+    expect(parseSpawnCommandArgs("claude --force fix sidebar", ["claude", "pi"])).toEqual({ error: USAGE })
+  })
+
+  it("treats the first token as the name when it is not an installed runtime", () => {
+    expect(parseSpawnCommandArgs("claude fix", ["pi"])).toEqual({ name: "claude fix", prompt: "" })
+  })
+
+  it("drops the runtime placeholder from usage when nothing is installed", () => {
+    expect(parseSpawnCommandArgs("", [])).toEqual({
+      error: "Usage: `/spawn <name>` with the prompt on the following lines.",
+    })
   })
 })
 

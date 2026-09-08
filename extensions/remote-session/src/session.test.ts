@@ -261,6 +261,7 @@ describe("capability selection", () => {
     commands: ["stop", "steer", "model"],
     modelSuggestions: [{ value: "opus", label: "Opus" }],
     thinkingLevels: ["low", "high"],
+    spawnRuntimes: [{ value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" }],
     interrupt: () => true,
     runCommand: async () => ({ ok: true, message: "ok" }),
   }
@@ -279,18 +280,22 @@ describe("capability selection", () => {
     expect(claimCapabilitiesFor(true, false)).toEqual([])
   })
 
-  test("publishes the actuator's commands, model suggestions, and thinking levels", () => {
+  test("publishes the actuator's commands, model suggestions, thinking levels, and spawn runtimes", () => {
     const enabled = runtimeCapabilitiesFor("rts_1", actuator)
     expect(enabled.supportsSessionControlCommands).toBe(true)
     expect(enabled.sessionControlCommands).toEqual(["stop", "steer", "model"])
     expect(enabled.modelSuggestions).toEqual([{ value: "opus", label: "Opus" }])
     expect(enabled.thinkingLevels).toEqual(["low", "high"])
+    expect(enabled.spawnRuntimes).toEqual([
+      { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
+    ])
     expect(enabled.runtimeSessionId).toBe("rts_1")
 
     const disabled = runtimeCapabilitiesFor("rts_1", undefined)
     expect(disabled.supportsSessionControlCommands).toBeUndefined()
     expect(disabled.sessionControlCommands).toBeUndefined()
     expect(disabled.thinkingLevels).toBeUndefined()
+    expect(disabled.spawnRuntimes).toBeUndefined()
     expect(disabled.runtimeSessionId).toBe("rts_1")
   })
 })

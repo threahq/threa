@@ -25,11 +25,8 @@ describe("session-control command catalog", () => {
       kind: "bot-runtime",
       scope: "stream",
       args: [
-        {
-          name: "name",
-          required: true,
-          description: "Optional runtime (claude or pi) then the session name; lines after the first are the prompt",
-        },
+        { name: "runtime", description: "Runtime to spawn; defaults to the one this scratchpad is linked to" },
+        { name: "name", required: true, description: "Session name; lines after the first are the prompt" },
       ],
     })
     expect(commands.find((command) => command.name === "done")).toEqual({

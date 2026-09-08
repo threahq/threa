@@ -8,14 +8,14 @@ export interface HarnessKickResult {
   error?: string
 }
 
-interface HarnessSpawnResult {
+export interface HarnessSpawnResult {
   status: number | null
   stdout?: string | Buffer | null
   stderr?: string | Buffer | null
   error?: Error
 }
 
-type HarnessSpawnSync = (executable: string, args: string[], options: { encoding: "utf8" }) => HarnessSpawnResult
+export type HarnessSpawnSync = (executable: string, args: string[], options: { encoding: "utf8" }) => HarnessSpawnResult
 
 interface RunHarnessKickOptions {
   entrypoint?: string

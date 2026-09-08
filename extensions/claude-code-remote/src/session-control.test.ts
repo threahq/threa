@@ -1,7 +1,13 @@
 import { describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
 import type { HarnessSpawnSpec } from "@threahq/harness-client"
+import type { SpawnRuntimeInfo } from "@threahq/remote-session"
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
+
+const SPAWN_RUNTIMES: SpawnRuntimeInfo[] = [
+  { value: "claude", label: "Claude Code" },
+  { value: "pi", label: "Pi" },
+]
 
 function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T): T {
   const saved = {
@@ -125,7 +131,8 @@ describe("createClaudeSessionControl", () => {
         undefined,
         undefined,
         undefined,
-        () => activeStreamId
+        () => activeStreamId,
+        SPAWN_RUNTIMES
       )!.commands.filter((command) => command === "spawn" || command === "done")
 
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
@@ -141,6 +148,42 @@ describe("createClaudeSessionControl", () => {
         desk: [],
         thread: [],
       })
+    })
+  })
+
+  it("drops spawn from the commands and advertises no spawnRuntimes when nothing is installed", () => {
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      const noRuntimes = createClaudeSessionControl(
+        undefined,
+        "runtime",
+        undefined,
+        () => "root",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () => "root",
+        []
+      )!
+      expect(noRuntimes.commands).not.toContain("spawn")
+      expect(noRuntimes.spawnRuntimes).toEqual([])
+
+      const withRuntimes = createClaudeSessionControl(
+        undefined,
+        "runtime",
+        undefined,
+        () => "root",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () => "root",
+        SPAWN_RUNTIMES
+      )!
+      expect(withRuntimes.commands).toContain("spawn")
+      expect(withRuntimes.spawnRuntimes).toEqual(SPAWN_RUNTIMES)
     })
   })
 
@@ -436,7 +479,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         return () => {
           spawnEffects.started += 1
         }
-      }
+      },
+      SPAWN_RUNTIMES
     )
     const brief = specs[0]?.briefFile
     const briefContent = brief ? readFileSync(brief, "utf8") : undefined
@@ -529,7 +573,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
           return () => {
             throw new Error("harnessd missing")
           }
-        }
+        },
+        SPAWN_RUNTIMES
       )
     ).rejects.toThrow("harnessd missing")
     expect({ briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({

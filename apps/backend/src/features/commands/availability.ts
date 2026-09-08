@@ -60,6 +60,8 @@ export interface RuntimeCommandTarget {
   advertisedThinkingLevels: readonly string[]
   /** Model suggestions the runtime advertises for autocomplete. Empty = runtime did not advertise. */
   advertisedModelSuggestions: readonly CommandArgumentSuggestion[]
+  /** Runtimes the linked session can hand `/spawn` off to. Empty = runtime did not advertise. */
+  advertisedSpawnRuntimes: readonly CommandArgumentSuggestion[]
 }
 
 interface RuntimeTargetInternal extends RuntimeCommandTarget {
@@ -254,7 +256,8 @@ async function resolveRuntimeCommandTarget(
       (bot.type === BotTypes.SHARED || bot.ownerUserId === params.userId),
     advertisedCommandNames,
     advertisedThinkingLevels: resolveAdvertisedThinkingLevels(presence),
-    advertisedModelSuggestions: resolveAdvertisedModelSuggestions(presence),
+    advertisedModelSuggestions: resolveAdvertisedSuggestions(presence, "modelSuggestions"),
+    advertisedSpawnRuntimes: resolveAdvertisedSuggestions(presence, "spawnRuntimes"),
     link,
     presence,
   }
@@ -266,8 +269,11 @@ function resolveAdvertisedThinkingLevels(presence: BotRuntimeInstance): readonly
   return raw.filter((value): value is string => typeof value === "string")
 }
 
-function resolveAdvertisedModelSuggestions(presence: BotRuntimeInstance): readonly CommandArgumentSuggestion[] {
-  const raw = presence.capabilities.modelSuggestions
+function resolveAdvertisedSuggestions(
+  presence: BotRuntimeInstance,
+  key: "modelSuggestions" | "spawnRuntimes"
+): readonly CommandArgumentSuggestion[] {
+  const raw = presence.capabilities[key]
   if (!Array.isArray(raw)) return []
   const result: CommandArgumentSuggestion[] = []
   for (const entry of raw) {
@@ -292,6 +298,9 @@ function applyAdvertisedSuggestions(info: CommandInfo, target: RuntimeCommandTar
   }
   if (info.name === "model" && target.advertisedModelSuggestions.length > 0) {
     return withArgSuggestions(info, "model", target.advertisedModelSuggestions)
+  }
+  if (info.name === "spawn" && target.advertisedSpawnRuntimes.length > 0) {
+    return withArgSuggestions(info, "runtime", target.advertisedSpawnRuntimes)
   }
   return info
 }

@@ -21,6 +21,7 @@ export {
   type SessionControlActuator,
   type SessionControlInvocationContext,
   type ShutdownOptions,
+  type SpawnRuntimeInfo,
 } from "./session"
 export {
   ThreaClient,

@@ -5,6 +5,7 @@ import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   discardSpawnBrief,
   harnessReconnectAvailable,
+  listSpawnRuntimes,
   markHarnessLinkWoundDown,
   parseSpawnCommandArgs,
   prepareHarnessClear,
@@ -34,6 +35,7 @@ import {
   type SessionControlActuator,
   type SessionControlInvocationContext,
   type ShutdownOptions,
+  type SpawnRuntimeInfo,
 } from "@threahq/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
@@ -78,6 +80,21 @@ const SESSION_CONTROL_COMMANDS = [
 // whatever the local client's own picker cache discovers (see model-catalog).
 // Resolved once at startup — new models arrive with the next spawned session.
 const MODEL_SUGGESTIONS = modelSuggestions()
+
+// Resolved lazily (not at import) and memoized, so importing this module
+// never shells out to harnessd — only the first spawn-related call does.
+let spawnRuntimesCache: SpawnRuntimeInfo[] | undefined
+function defaultSpawnRuntimes(): SpawnRuntimeInfo[] {
+  if (spawnRuntimesCache) return spawnRuntimesCache
+  const result = listSpawnRuntimes()
+  if (!result.ok) {
+    console.error(`harnessd runtimes: ${result.error}; /spawn disabled`)
+    spawnRuntimesCache = []
+  } else {
+    spawnRuntimesCache = result.runtimes
+  }
+  return spawnRuntimesCache
+}
 
 /** "y abcde" / "yes abcde" / "n abcde" / "no abcde". The id alphabet skips 'l' (Claude Code's convention). */
 export const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -240,7 +257,8 @@ export async function runClaudeCommand(
   keySender: typeof sendAllowedTmuxKey = sendAllowedTmuxKey,
   invocationContext?: SessionControlInvocationContext,
   activeStreamId?: () => string | undefined,
-  spawnLauncher: typeof prepareHarnessSpawn = prepareHarnessSpawn
+  spawnLauncher: typeof prepareHarnessSpawn = prepareHarnessSpawn,
+  spawnRuntimes: readonly SpawnRuntimeInfo[] = defaultSpawnRuntimes()
 ): Promise<{
   ok: boolean
   message?: string
@@ -337,7 +355,10 @@ export async function runClaudeCommand(
       })
     }
     case "spawn": {
-      const parsed = parseSpawnCommandArgs(args)
+      const parsed = parseSpawnCommandArgs(
+        args,
+        spawnRuntimes.map((r) => r.value)
+      )
       if ("error" in parsed) return { ok: false, message: parsed.error }
       const root = rootStreamId?.()
       if (!root || !harnessReconnectAvailable()) {
@@ -482,7 +503,8 @@ export function createClaudeSessionControl(
   restartDelegationsAfterReset?: () => void,
   reconnectTarget?: () => ReconnectTarget,
   reconnectReady?: () => boolean,
-  activeStreamId?: () => string | undefined
+  activeStreamId?: () => string | undefined,
+  spawnRuntimes: readonly SpawnRuntimeInfo[] = defaultSpawnRuntimes()
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
@@ -499,7 +521,8 @@ export function createClaudeSessionControl(
             if (command === "spawn" || command === "done") {
               const active = activeStreamId?.()
               if (!active || !harnessReconnectAvailable()) return false
-              return command === "spawn" ? active === rootStreamId?.() : active !== rootStreamId?.()
+              if (command === "spawn") return active === rootStreamId?.() && spawnRuntimes.length > 0
+              return active !== rootStreamId?.()
             }
             return true
           })
@@ -509,6 +532,7 @@ export function createClaudeSessionControl(
     },
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
+    spawnRuntimes,
     interrupt: () => {
       // A /stop is about to close the held turn — drop the hold (and surface
       // any queued carry-on texts) before the interrupt lands.
@@ -540,7 +564,9 @@ export function createClaudeSessionControl(
         reconnectReady,
         sendAllowedTmuxKey,
         context,
-        activeStreamId
+        activeStreamId,
+        prepareHarnessSpawn,
+        spawnRuntimes
       ),
   }
 }

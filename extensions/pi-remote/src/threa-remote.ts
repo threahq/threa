@@ -4004,7 +4004,7 @@ async function runSpawnCommand(
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
-  const parsed = parseSpawnCommandArgs(args)
+  const parsed = parseSpawnCommandArgs(args, ["claude", "pi"])
   if ("error" in parsed) {
     await deps.complete(invocation, parsed.error, ctx)
     return
