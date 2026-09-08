@@ -55,3 +55,26 @@ export function listSpawnRuntimes(options: ListSpawnRuntimesOptions = {}): ListS
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
 }
+
+/**
+ * Resolved once per process, like model suggestions: a runtime installed later
+ * shows up with the next session. A failed lookup is reported once and stays
+ * empty rather than re-running harnessd on every capability build.
+ */
+export function spawnRuntimesResolver(
+  onError: (error: string) => void,
+  options: ListSpawnRuntimesOptions = {}
+): () => SpawnRuntimeOption[] {
+  let cached: SpawnRuntimeOption[] | undefined
+  return () => {
+    if (cached) return cached
+    const result = listSpawnRuntimes(options)
+    if (result.ok) {
+      cached = result.runtimes
+    } else {
+      onError(result.error)
+      cached = []
+    }
+    return cached
+  }
+}

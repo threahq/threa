@@ -132,7 +132,7 @@ describe("createClaudeSessionControl", () => {
         undefined,
         undefined,
         () => activeStreamId,
-        SPAWN_RUNTIMES
+        () => SPAWN_RUNTIMES
       )!.commands.filter((command) => command === "spawn" || command === "done")
 
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
@@ -164,7 +164,7 @@ describe("createClaudeSessionControl", () => {
         undefined,
         undefined,
         () => "root",
-        []
+        () => []
       )!
       expect(noRuntimes.commands).not.toContain("spawn")
       expect(noRuntimes.spawnRuntimes).toEqual([])
@@ -180,7 +180,7 @@ describe("createClaudeSessionControl", () => {
         undefined,
         undefined,
         () => "root",
-        SPAWN_RUNTIMES
+        () => SPAWN_RUNTIMES
       )!
       expect(withRuntimes.commands).toContain("spawn")
       expect(withRuntimes.spawnRuntimes).toEqual(SPAWN_RUNTIMES)
@@ -480,7 +480,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
           spawnEffects.started += 1
         }
       },
-      SPAWN_RUNTIMES
+      () => SPAWN_RUNTIMES
     )
     const brief = specs[0]?.briefFile
     const briefContent = brief ? readFileSync(brief, "utf8") : undefined
@@ -574,7 +574,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
             throw new Error("harnessd missing")
           }
         },
-        SPAWN_RUNTIMES
+        () => SPAWN_RUNTIMES
       )
     ).rejects.toThrow("harnessd missing")
     expect({ briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({

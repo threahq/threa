@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { listSpawnRuntimes } from "./spawn-runtimes"
+import { listSpawnRuntimes, spawnRuntimesResolver } from "./spawn-runtimes"
 
 describe("listSpawnRuntimes", () => {
   it("returns the runtimes harnessd reports as installed", () => {
@@ -89,6 +89,47 @@ describe("listSpawnRuntimes", () => {
     expect(result).toEqual({
       ok: false,
       error: 'harnessd runtimes returned unexpected output: [{"value":"claude"}]',
+    })
+  })
+})
+
+describe("spawnRuntimesResolver", () => {
+  it("runs harnessd once and keeps the answer, reporting a failure once and staying empty", () => {
+    const runtimes = [{ value: "pi", label: "Pi", description: "/usr/local/bin/pi" }]
+    let spawns = 0
+    const resolve = spawnRuntimesResolver(() => {}, {
+      entrypoint: "/repo/harnessd.ts",
+      exists: () => true,
+      spawnSync: () => {
+        spawns += 1
+        return { status: 0, stdout: JSON.stringify(runtimes), stderr: "" }
+      },
+    })
+    const errors: string[] = []
+    let failures = 0
+    const resolveFailing = spawnRuntimesResolver((error) => errors.push(error), {
+      entrypoint: "/repo/harnessd.ts",
+      exists: () => true,
+      spawnSync: () => {
+        failures += 1
+        return { status: 1, stdout: "", stderr: "harnessd: unknown command: runtimes" }
+      },
+    })
+
+    expect({
+      first: resolve(),
+      second: resolve(),
+      spawns,
+      failing: [resolveFailing(), resolveFailing()],
+      failures,
+      errors,
+    }).toEqual({
+      first: runtimes,
+      second: runtimes,
+      spawns: 1,
+      failing: [[], []],
+      failures: 1,
+      errors: ["harnessd: unknown command: runtimes"],
     })
   })
 })
