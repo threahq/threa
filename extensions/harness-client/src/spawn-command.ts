@@ -12,6 +12,16 @@ interface SpawnCommandArgs {
   thinking?: string
 }
 
+/**
+ * Overrides accept Threa's own slash spelling and the CLI's dashes, so
+ * `/spawn pi /model gpt-5.6-luna /thinking high fix-the-thing` and
+ * `--model`/`--thinking` both land. Either flag left out keeps whatever the
+ * runtime itself last defaulted to.
+ */
+const MODEL_FLAGS = ["/model", "--model"]
+const THINKING_FLAGS = ["/thinking", "--thinking"]
+const OVERRIDE_FLAGS = [...MODEL_FLAGS, ...THINKING_FLAGS]
+
 interface ParseSpawnCommandOptions {
   /** harnessd's catalog: a known runtime that is not installed is refused, never folded into the name. */
   runtimes: readonly SpawnRuntimeOption[]
@@ -36,18 +46,20 @@ export function parseSpawnCommandArgs(
   const rest = leading ? tokens.slice(1) : tokens
   const usage =
     installed.length > 0
-      ? `Usage: \`/spawn [${installed.map((one) => one.value).join("|")}] [--model <model>] [--thinking <level>] <name>\` with the prompt on the following lines.`
-      : "Usage: `/spawn [--model <model>] [--thinking <level>] <name>` with the prompt on the following lines."
+      ? `Usage: \`/spawn [${installed.map((one) => one.value).join("|")}] [/model <model>] [/thinking <level>] <name>\` with the prompt on the following lines.`
+      : "Usage: `/spawn [/model <model>] [/thinking <level>] <name>` with the prompt on the following lines."
   const nameTokens: string[] = []
   let model: string | undefined
   let thinking: string | undefined
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index] as string
-    if (token === "--model" || token === "--thinking") {
+    if (OVERRIDE_FLAGS.includes(token)) {
       const value = rest[index + 1]
-      if (!value || value.startsWith("-")) return { error: `\`${token}\` needs a value. ${usage}` }
+      if (!value || value.startsWith("-") || OVERRIDE_FLAGS.includes(value)) {
+        return { error: `\`${token}\` needs a value. ${usage}` }
+      }
       index += 1
-      if (token === "--model") model = value
+      if (MODEL_FLAGS.includes(token)) model = value
       else thinking = value.toLowerCase()
       continue
     }
@@ -58,7 +70,7 @@ export function parseSpawnCommandArgs(
   if (nameTokens.length === 0) return { error: usage }
   if (thinking && !chosen.thinkingLevels.includes(thinking)) {
     return {
-      error: `\`${runtime}\` takes \`--thinking\` ${chosen.thinkingLevels.join(", ")}; set anything else in the session.`,
+      error: `\`${runtime}\` takes \`/thinking\` ${chosen.thinkingLevels.join(", ")}; set anything else in the session.`,
     }
   }
   return {

@@ -568,7 +568,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         outcome: {
           ok: false,
           message:
-            "Usage: `/spawn [claude|pi] [--model <model>] [--thinking <level>] <name>` with the prompt on the following lines.",
+            "Usage: `/spawn [claude|pi] [/model <model>] [/thinking <level>] <name>` with the prompt on the following lines.",
         },
         specs: [],
         started: 0,
