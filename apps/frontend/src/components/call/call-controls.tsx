@@ -213,6 +213,12 @@ function LifecycleLogSection() {
   )
 }
 
+function formatMediaPath(candidateType: CallDiagnostics["candidateType"]): string {
+  if (candidateType === "relay") return "Relayed"
+  if (candidateType === "host" || candidateType === "srflx") return "Direct"
+  return "Unknown"
+}
+
 export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagnostics }) {
   return (
     <Popover>
@@ -224,6 +230,16 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
       <PopoverContent align="center" className="w-56 text-sm">
         <p className="mb-2 font-medium">Connection</p>
         <dl className="space-y-1">
+          <div className="flex justify-between gap-2">
+            <dt className="text-muted-foreground">Media</dt>
+            <dd>{diagnostics.mediaTransport === "p2p" ? "Peer to peer" : "Cloudflare SFU"}</dd>
+          </div>
+          {diagnostics.mediaTransport === "p2p" ? (
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">Path</dt>
+              <dd>{formatMediaPath(diagnostics.candidateType)}</dd>
+            </div>
+          ) : null}
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Round-trip</dt>
             <dd className="tabular-nums">{formatRtt(diagnostics.rttMs)}</dd>

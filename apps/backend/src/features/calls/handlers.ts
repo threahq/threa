@@ -27,6 +27,7 @@ const startSchema = z.object({
   // "Join on this device": retry after a 409 CALL_ENDPOINT_ACTIVE, displacing the
   // user's own live endpoint on another device instead of being rejected by it.
   takeover: z.boolean().optional(),
+  transportCapability: z.literal("p2p-v1").optional(),
 })
 
 const cfSessionSchema = z.object({
@@ -85,6 +86,7 @@ interface Dependencies {
   featureFlagService: FeatureFlagService
   /** False when the CF media plane is unconfigured — every calls surface 503s. */
   cloudflareEnabled: boolean
+  turnEnabled?: boolean
 }
 
 function parseOrThrow<T>(schema: z.ZodType<T>, body: unknown): T {
@@ -107,7 +109,14 @@ function parseOrThrow<T>(schema: z.ZodType<T>, body: unknown): T {
  * pass-throughs to CF holding the app secret; publish/close additionally update the
  * roster and fan `call:roster` to the `/calls` namespace room.
  */
-export function createCallHandlers({ pool, io, callService, featureFlagService, cloudflareEnabled }: Dependencies) {
+export function createCallHandlers({
+  pool,
+  io,
+  callService,
+  featureFlagService,
+  cloudflareEnabled,
+  turnEnabled,
+}: Dependencies) {
   async function assertAvailable(workspaceId: string): Promise<void> {
     if (!cloudflareEnabled) {
       throw new HttpError("Calls media is not configured", { status: 503, code: "CALLS_UNAVAILABLE" })
@@ -139,6 +148,8 @@ export function createCallHandlers({ pool, io, callService, featureFlagService, 
         mediaIncarnation: body.mediaIncarnation,
         expectedCallId: body.expectedCallId,
         takeover: body.takeover,
+        transportCapability: body.transportCapability,
+        allowP2p: turnEnabled && (await featureFlagService.getWorkspaceFlag(workspaceId, "callsP2p")) === "on",
       })
       const snapshot = await callService.getRosterSnapshot(workspaceId, result.call.id)
       // A takeover displaced another of this user's devices: tell it directly
@@ -155,6 +166,8 @@ export function createCallHandlers({ pool, io, callService, featureFlagService, 
         chatAnchorId: result.chatAnchorId,
         rosterVersion: snapshot.rosterVersion,
         roster: snapshot.roster,
+        mediaTransport: snapshot.mediaTransport,
+        transportGeneration: snapshot.transportGeneration,
       })
     },
 
@@ -213,7 +226,30 @@ export function createCallHandlers({ pool, io, callService, featureFlagService, 
         rosterVersion: snapshot.rosterVersion,
         roster: snapshot.roster,
         self,
+        mediaTransport: snapshot.mediaTransport,
+        transportGeneration: snapshot.transportGeneration,
       })
+    },
+
+    async turnCredentials(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { callId, endpointId } = req.params
+      await assertAvailable(workspaceId)
+      if ((await featureFlagService.getWorkspaceFlag(workspaceId, "callsP2p")) !== "on") {
+        throw new HttpError("P2P calls are not enabled", { status: 404, code: "CALL_P2P_UNAVAILABLE" })
+      }
+      await assertCallAccess(workspaceId, userId, callId)
+      const body = parseOrThrow(cfSessionSchema, req.body)
+      const result = await callService.issueTurnCredentials({
+        workspaceId,
+        callId,
+        userId,
+        endpointId,
+        mediaIncarnation: body.mediaIncarnation,
+      })
+      res.setHeader("Cache-Control", "no-store")
+      res.json(result)
     },
 
     async createCfSession(req: Request, res: Response) {

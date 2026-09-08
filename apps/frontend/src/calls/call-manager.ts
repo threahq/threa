@@ -27,9 +27,12 @@ import {
 import { recordCallLifecycleEvent, type CallLifecycleKind } from "./lifecycle-log"
 import { classifyMediaError } from "./media-permissions"
 import { createCallMediaSession, type CallMediaSession } from "./media-session"
+import { P2pMeshTransport } from "./p2p-mesh-transport"
 import {
   CloudflareSfuTransport,
+  peerTrackRefKey,
   type MediaTransport,
+  type PeerDescriptor,
   type PeerTrackRef,
   type RemoteTrackEvent,
 } from "./media-transport"
@@ -49,7 +52,14 @@ import {
 // ── Wire shapes ────────────────────────────────────────────────────────────────
 
 interface StartCallResponse {
-  call: { id: string; workspaceId: string; streamId: string; mode: CallMode }
+  call: {
+    id: string
+    workspaceId: string
+    streamId: string
+    mode: CallMode
+    mediaTransport: "sfu" | "p2p"
+    transportGeneration: number
+  }
   created: boolean
   participant: { id: string }
   endpoint: { id: string }
@@ -65,6 +75,8 @@ interface JoinAckData {
   rosterVersion: number
   roster: CallRosterParticipant[]
   leaseTtlMs: number
+  mediaTransport: "sfu" | "p2p"
+  transportGeneration: number
 }
 
 type Ack<T> = { ok: boolean; error?: string; code?: string; data?: T }
@@ -111,7 +123,7 @@ export interface CallSocket {
   connected: boolean
   emit(event: string, payload: unknown, ack?: (result: unknown) => void): void
   on(event: string, handler: (...args: unknown[]) => void): void
-  off(event: string): void
+  off(event: string, handler: (...args: unknown[]) => void): void
   disconnect(): void
 }
 
@@ -153,7 +165,13 @@ export interface CallManagerDeps {
    */
   leaveCallRest(args: { workspaceId: string; callId: string }): Promise<void>
   connectSocket(workspaceId: string): CallSocket | null
-  createTransport(args: { workspaceId: string; callId: string }): MediaTransport
+  createTransport(args: {
+    workspaceId: string
+    callId: string
+    socket: CallSocket
+    mediaTransport: "sfu" | "p2p"
+    transportGeneration: number
+  }): MediaTransport
   acquireUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>
   createAudioContext(): AudioContext | null
   enumerateDevices(): Promise<MediaDeviceInfo[]>
@@ -175,10 +193,8 @@ export interface CallManagerDeps {
   singleActiveCapture: boolean
 }
 
-/** One desired peer track: the CF pull ref plus its registry kind. */
 interface PullEntry {
   ref: PeerTrackRef
-  kind: string
 }
 
 interface CallSession {
@@ -193,7 +209,10 @@ interface CallSession {
   leaseTtlMs: number
   rosterVersion: number
   transport: MediaTransport
+  mediaTransport: "sfu" | "p2p"
+  transportGeneration: number
   socket: CallSocket
+  socketHandlers: Array<{ event: string; handler: (...args: unknown[]) => void }>
   micTrack: MediaStreamTrack | null
   cameraTrack: MediaStreamTrack | null
   micStream: MediaStream | null
@@ -206,12 +225,7 @@ interface CallSession {
   pullAttempts: Map<string, number>
   pullRetryTimer: ReturnType<typeof setTimeout> | null
   remoteAudioEls: Map<string, HTMLAudioElement>
-  /**
-   * refKey → owning endpoint id, recorded from the roster in `diffPulls` so an
-   * `onRemoteTrack` (which carries only the CF ref) can be attributed to the
-   * roster participant whose tile renders it.
-   */
-  remoteTrackOwner: Map<string, string>
+  remoteAudioRefs: Map<string, PeerTrackRef>
   /**
    * endpoint id → the video `MediaStream` a tile attaches to its `<video>`. Kept
    * on the session (never the store snapshot — see {@link CallState.mediaEpoch}),
@@ -219,6 +233,7 @@ interface CallSession {
    * peer camera under theirs.
    */
   videoStreams: Map<string, MediaStream>
+  remoteVideoRefs: Map<string, PeerTrackRef>
   cameraLayer: number
   healthySamples: number
   leaseTimer: ReturnType<typeof setInterval> | null
@@ -236,10 +251,6 @@ interface CallSession {
   /** Detaches every page-lifecycle listener installed for this session. */
   onLifecycle: (() => void) | null
   onDeviceChange: (() => void) | null
-}
-
-function refKey(ref: PeerTrackRef): string {
-  return `${ref.sessionId}:${ref.trackName}`
 }
 
 /**
@@ -386,8 +397,8 @@ export class CallManager implements CallController {
     let callId: string | null = null
     try {
       const started = await this.deps.startCallRest({ ...params, mediaIncarnation })
-      this.assertStartLive(gen)
       callId = started.call.id
+      this.assertStartLive(gen)
       // The server owns the mode: joining an existing call ignores our requested
       // mode, so adopt `started.call.mode` (an audio_only call must stay audio_only
       // even when the launch surface hardcoded "video") — the camera control hides
@@ -413,10 +424,17 @@ export class CallManager implements CallController {
         workspaceId: params.workspaceId,
         callId,
         mediaIncarnation,
+        transportCapability: "p2p-v1",
       })
       this.assertStartLive(gen)
 
-      const transport = this.deps.createTransport({ workspaceId: params.workspaceId, callId })
+      const transport = this.deps.createTransport({
+        workspaceId: params.workspaceId,
+        callId,
+        socket,
+        mediaTransport: join.mediaTransport,
+        transportGeneration: join.transportGeneration,
+      })
       const session: CallSession = {
         gen,
         callId,
@@ -429,7 +447,10 @@ export class CallManager implements CallController {
         // -1 so the join's own snapshot (version ≥ 0) is applied by applyRoster.
         rosterVersion: -1,
         transport,
+        mediaTransport: join.mediaTransport,
+        transportGeneration: join.transportGeneration,
         socket,
+        socketHandlers: [],
         micTrack: null,
         cameraTrack: null,
         micStream: null,
@@ -440,8 +461,9 @@ export class CallManager implements CallController {
         pullAttempts: new Map(),
         pullRetryTimer: null,
         remoteAudioEls: new Map(),
-        remoteTrackOwner: new Map(),
+        remoteAudioRefs: new Map(),
         videoStreams: new Map(),
+        remoteVideoRefs: new Map(),
         cameraLayer: 0,
         healthySamples: 0,
         leaseTimer: null,
@@ -461,23 +483,21 @@ export class CallManager implements CallController {
       this.wireTransport(session)
       this.wireSocket(session)
 
-      await transport.connect({ endpointId: join.endpointId, mediaIncarnation })
-      this.assertStartLive(gen)
       // Join is mic-on; the camera comes up only when the launch asked for it
       // ("Start with camera") and the server's mode allows it — `mode: "video"` is
       // a capability, not "camera on now", and an audio_only call never publishes
       // one. A mic-only join keeps the camera dark and lets a camera-less device
       // join a video call; the camera is toggled later via setCameraOn.
       const joinWithCamera = !!params.cameraOn && mode !== "audio_only"
-      // Set cameraOn BEFORE the capture: the transport's own connectionState handler
-      // can flip phase→"connected" while captureAndPublish is still awaiting (mic
-      // publish → ICE connects → camera publish still pending), and the surface's
-      // open-state effect reads local.cameraOn on that transition — so it must
-      // already be true or a camera-join opens to the bar instead of the gallery. A
-      // failed capture rolls back via clearCallState, which resets cameraOn.
       if (joinWithCamera) patchCallLocal({ cameraOn: true })
-      await this.captureAndPublish(session, { camera: joinWithCamera })
+      // Queue startup before connect yields, so later camera/device changes cannot be overwritten by initial capture.
+      await this.serializeCapture(session, async () => {
+        await transport.connect({ endpointId: join.endpointId, mediaIncarnation })
+        this.assertStartLive(gen)
+        await this.doCaptureAndPublish(session, { camera: joinWithCamera })
+      })
       this.assertStartLive(gen)
+      if (joinWithCamera) this.emitState(session, { cameraOn: true })
       // After the capture, not before: the toggles are seeded from `local`, and a
       // camera join sets `cameraOn` on the line above rather than through
       // `setCameraOn` (the only site that mirrors it). Seeding earlier published a
@@ -814,7 +834,7 @@ export class CallManager implements CallController {
 
   private joinOverSocket(
     socket: CallSocket,
-    args: { workspaceId: string; callId: string; mediaIncarnation: string }
+    args: { workspaceId: string; callId: string; mediaIncarnation: string; transportCapability?: "p2p-v1" }
   ): Promise<JoinAckData> {
     return new Promise<JoinAckData>((resolve, reject) => {
       socket.emit("call:join", args, (result: unknown) => {
@@ -827,7 +847,7 @@ export class CallManager implements CallController {
 
   private wireSocket(session: CallSession): void {
     const gen = session.gen
-    session.socket.on("call:roster", (payload: unknown) => {
+    this.onSocket(session, "call:roster", (payload: unknown) => {
       // Session-identity gate: an event already dispatched into the loop before a
       // teardown/flush (or belonging to a superseded call) must not write the
       // prior call's roster into the store.
@@ -841,21 +861,21 @@ export class CallManager implements CallController {
     // endpoint and its CF session, so the media here is already dead. Addressed to
     // this endpoint's own room, so it is always about us — but gate on the ids
     // anyway, since a rebind reuses an endpoint id across sessions.
-    session.socket.on("call:endpoint:closed", (payload: unknown) => {
+    this.onSocket(session, "call:endpoint:closed", (payload: unknown) => {
       const s = this.sessionForGen(gen)
       if (!s) return
       const evt = payload as { callId?: string; endpointId?: string }
       if (evt.callId !== s.callId || evt.endpointId !== s.endpointId) return
       void this.handleTakenOver(s, "taken_over")
     })
-    session.socket.on("disconnect", () => {
+    this.onSocket(session, "disconnect", () => {
       // A socket drop is NOT a call end (the lease holds the slot). Demote to
       // reconnecting; the CF media session survives brief socket loss.
       if (!this.sessionForGen(gen)) return
       recordCallLifecycleEvent({ kind: "socket_disconnect" })
-      setCallPhase("reconnecting")
+      if (!this.starting) setCallPhase("reconnecting")
     })
-    session.socket.on("connect", () => {
+    this.onSocket(session, "connect", () => {
       if (!this.sessionForGen(gen)) return
       recordCallLifecycleEvent({ kind: "socket_connect" })
       // Transient reconnect: rejoin with the SAME incarnation (rebinds the same
@@ -864,6 +884,7 @@ export class CallManager implements CallController {
         workspaceId: session.workspaceId,
         callId: session.callId,
         mediaIncarnation: session.mediaIncarnation,
+        transportCapability: "p2p-v1",
       })
         .then((join) => {
           // Recheck AFTER the awaited rejoin: teardown/leave (or a newer call)
@@ -886,7 +907,11 @@ export class CallManager implements CallController {
           recordCallLifecycleEvent({ kind: "rejoin_same_endpoint" })
           s.endpointId = join.endpointId
           this.applyRoster(s, join.rosterVersion, join.roster)
-          setCallPhase("connected")
+          return s.transport.reconnect?.()
+        })
+        .then(() => {
+          if (!this.sessionForGen(gen)) return
+          if (!this.starting) setCallPhase("connected")
         })
         .catch((err: unknown) => {
           // Same recheck: a stale failed rejoin for the OLD call must not tear
@@ -897,6 +922,11 @@ export class CallManager implements CallController {
           void this.handleTakenOver(s, this.ambiguousDisplacedReason(s))
         })
     })
+  }
+
+  private onSocket(session: CallSession, event: string, handler: (...args: unknown[]) => void): void {
+    session.socketHandlers.push({ event, handler })
+    session.socket.on(event, handler)
   }
 
   /**
@@ -946,25 +976,49 @@ export class CallManager implements CallController {
     if (version <= session.rosterVersion) return
     session.rosterVersion = version
     setCallRoster(roster, version)
+    const peers = this.peerDescriptors(session, roster)
+    void session.transport.syncPeers(peers, session.transportGeneration).catch(() => {})
     this.diffPulls(session, roster)
+  }
+
+  private peerDescriptors(session: CallSession, roster: CallRosterParticipant[]): PeerDescriptor[] {
+    return roster.flatMap((participant) => {
+      if (!participant.endpointId || participant.endpointId === session.endpointId) return []
+      if (participant.connectionStatus !== "connected" && participant.connectionStatus !== "reconnecting") return []
+      if (participant.epoch == null && !participant.cfSessionId) return []
+      return [
+        {
+          endpointId: participant.endpointId,
+          epoch: participant.epoch ?? 0,
+          mediaIncarnation: participant.mediaIncarnation ?? null,
+          publications: participant.publishedTracks.flatMap((track) => {
+            const publicationId =
+              track.publicationId ?? (participant.cfSessionId ? `${participant.cfSessionId}:${track.trackName}` : null)
+            if (
+              !publicationId ||
+              (track.transportGeneration != null && track.transportGeneration !== session.transportGeneration)
+            )
+              return []
+            return [
+              {
+                ref: { endpointId: participant.endpointId!, kind: track.kind, publicationId },
+                providerLocator: participant.cfSessionId
+                  ? { sessionId: participant.cfSessionId, trackName: track.trackName }
+                  : undefined,
+              },
+            ]
+          }),
+        },
+      ]
+    })
   }
 
   /** Diff the roster's track registry against what we pull; pull new, stop gone. */
   private diffPulls(session: CallSession, roster: CallRosterParticipant[]): void {
     const desired = new Map<string, PullEntry>()
-    for (const p of roster) {
-      if (!p.endpointId || p.endpointId === session.endpointId) continue
-      if (p.connectionStatus !== "connected" && p.connectionStatus !== "reconnecting") continue
-      // The publisher's CF session id is required to pull. The 0.2 roster does
-      // not carry it (contract gap) — skip peers we can't address rather than
-      // constructing an unpullable ref.
-      if (!p.cfSessionId) continue
-      for (const track of p.publishedTracks) {
-        const ref: PeerTrackRef = { sessionId: p.cfSessionId, trackName: track.trackName }
-        const key = refKey(ref)
-        desired.set(key, { ref, kind: track.kind })
-        // Attribute the eventual onRemoteTrack (CF ref only) to this participant's tile.
-        session.remoteTrackOwner.set(key, p.endpointId)
+    for (const peer of this.peerDescriptors(session, roster)) {
+      for (const { ref } of peer.publications) {
+        desired.set(peerTrackRefKey(ref), { ref })
       }
     }
     for (const [key, entry] of desired) {
@@ -989,9 +1043,8 @@ export class CallManager implements CallController {
       if (!desired.has(key)) {
         session.pulled.delete(key)
         void session.transport.stopPull(entry.ref).catch(() => {})
-        this.detachRemoteAudio(session, key)
-        this.detachRemoteVideo(session, key)
-        session.remoteTrackOwner.delete(key)
+        this.detachRemoteAudio(session, entry.ref)
+        this.detachRemoteVideo(session, entry.ref)
       }
     }
     // A track the roster stopped advertising forgets its failure history: a peer
@@ -1044,10 +1097,6 @@ export class CallManager implements CallController {
       () => {}
     )
     return run
-  }
-
-  private captureAndPublish(session: CallSession, opts: CaptureOpts): Promise<void> {
-    return this.serializeCapture(session, () => this.doCaptureAndPublish(session, opts))
   }
 
   private buildCaptureConstraints(opts: CaptureOpts): MediaStreamConstraints {
@@ -1282,6 +1331,11 @@ export class CallManager implements CallController {
   private wireTransport(session: CallSession): void {
     session.transport.onRemoteTrack = (event: RemoteTrackEvent) => {
       if (this.session !== session) return
+      const key = peerTrackRefKey(event.ref)
+      const isCurrent = this.peerDescriptors(session, getCallState().roster).some((peer) =>
+        peer.publications.some((publication) => peerTrackRefKey(publication.ref) === key)
+      )
+      if (!isCurrent) return
       // Remote audio renders through a dedicated <audio> element so Chromium's
       // echo canceller stays referenced to the output and setSinkId works. It is
       // NEVER routed through the AudioContext to the speakers (Web Audio taps are
@@ -1290,12 +1344,12 @@ export class CallManager implements CallController {
       else if (event.track.kind === "video") this.attachRemoteVideo(session, event.ref, event.track)
     }
     session.transport.onRemoteTrackEnded = (ref) => {
-      const key = refKey(ref)
-      this.detachRemoteAudio(session, key)
-      this.detachRemoteVideo(session, key)
+      if (this.session !== session) return
+      this.detachRemoteAudio(session, ref)
+      this.detachRemoteVideo(session, ref)
     }
     session.transport.onConnectionStateChange = (state) => {
-      if (this.session !== session) return
+      if (this.session !== session || this.starting) return
       if (state === "reconnecting") setCallPhase("reconnecting")
       else if (state === "connected") setCallPhase("connected")
     }
@@ -1303,8 +1357,14 @@ export class CallManager implements CallController {
 
   private attachRemoteAudio(session: CallSession, ref: PeerTrackRef, track: MediaStreamTrack): void {
     if (typeof document === "undefined") return
-    const key = refKey(ref)
-    this.detachRemoteAudio(session, key)
+    const key = JSON.stringify([ref.endpointId, ref.kind])
+    const current = session.remoteAudioEls.get(key)
+    const currentTrack = (current?.srcObject as MediaStream | null)?.getAudioTracks()[0]
+    if (current && currentTrack === track) {
+      session.remoteAudioRefs.set(key, ref)
+      return
+    }
+    this.detachRemoteAudioByKey(session, key)
     const el = document.createElement("audio")
     el.autoplay = true
     el.srcObject = new MediaStream([track])
@@ -1316,15 +1376,23 @@ export class CallManager implements CallController {
     const container = this.audioContainer ?? document.body
     container.appendChild(el)
     session.remoteAudioEls.set(key, el)
+    session.remoteAudioRefs.set(key, ref)
     void el.play?.().catch(() => {})
   }
 
-  private detachRemoteAudio(session: CallSession, key: string): void {
+  private detachRemoteAudio(session: CallSession, ref: PeerTrackRef): void {
+    const key = JSON.stringify([ref.endpointId, ref.kind])
+    if (session.remoteAudioRefs.get(key)?.publicationId !== ref.publicationId) return
+    this.detachRemoteAudioByKey(session, key)
+  }
+
+  private detachRemoteAudioByKey(session: CallSession, key: string): void {
     const el = session.remoteAudioEls.get(key)
     if (!el) return
     el.srcObject = null
     el.remove()
     session.remoteAudioEls.delete(key)
+    session.remoteAudioRefs.delete(key)
   }
 
   // ── video registry (tiles read this via getVideoStream; never the store) ────
@@ -1336,27 +1404,29 @@ export class CallManager implements CallController {
   }
 
   /** Register/replace an endpoint's video stream and tick the ref-map version. */
-  private setVideoStream(session: CallSession, endpointId: string, track: MediaStreamTrack): void {
+  private setVideoStream(session: CallSession, endpointId: string, track: MediaStreamTrack, ref?: PeerTrackRef): void {
     const stream = this.makeVideoStream(track)
     if (!stream) return
     session.videoStreams.set(endpointId, stream)
+    if (ref) session.remoteVideoRefs.set(endpointId, ref)
+    else session.remoteVideoRefs.delete(endpointId)
     bumpCallMediaEpoch()
   }
 
   /** Drop an endpoint's video stream and tick the version, if one was present. */
   private clearVideoStream(session: CallSession, endpointId: string): void {
+    session.remoteVideoRefs.delete(endpointId)
     if (session.videoStreams.delete(endpointId)) bumpCallMediaEpoch()
   }
 
   private attachRemoteVideo(session: CallSession, ref: PeerTrackRef, track: MediaStreamTrack): void {
-    const endpointId = session.remoteTrackOwner.get(refKey(ref))
-    if (!endpointId) return
-    this.setVideoStream(session, endpointId, track)
+    this.setVideoStream(session, ref.endpointId, track, ref)
   }
 
-  private detachRemoteVideo(session: CallSession, key: string): void {
-    const endpointId = session.remoteTrackOwner.get(key)
-    if (endpointId) this.clearVideoStream(session, endpointId)
+  private detachRemoteVideo(session: CallSession, ref: PeerTrackRef): void {
+    if (session.remoteVideoRefs.get(ref.endpointId)?.publicationId === ref.publicationId) {
+      this.clearVideoStream(session, ref.endpointId)
+    }
   }
 
   /**
@@ -1404,6 +1474,10 @@ export class CallManager implements CallController {
         .then((stats) => {
           if (this.sessionForGen(gen) !== session) return
           setCallDiagnostics({
+            mediaTransport: session.mediaTransport,
+            candidateType: stats.candidateType,
+            bytesSent: stats.bytesSent,
+            bytesReceived: stats.bytesReceived,
             rttMs: stats.rttMs,
             packetLoss: stats.packetLoss,
             qualityLimitation: stats.qualityLimitation,
@@ -1614,7 +1688,7 @@ export class CallManager implements CallController {
     }
     void session.transport.close()
     this.stopLocalCapture(session)
-    for (const key of [...session.remoteAudioEls.keys()]) this.detachRemoteAudio(session, key)
+    for (const key of [...session.remoteAudioEls.keys()]) this.detachRemoteAudioByKey(session, key)
     this.clearTimers(session)
     this.removeSessionListeners(session)
     // Symmetric with teardown: detach the socket handlers so a roster/connect
@@ -1643,7 +1717,7 @@ export class CallManager implements CallController {
     this.removeSocketHandlers(session)
     await session.transport.close().catch(() => {})
     this.stopLocalCapture(session)
-    for (const key of [...session.remoteAudioEls.keys()]) this.detachRemoteAudio(session, key)
+    for (const key of [...session.remoteAudioEls.keys()]) this.detachRemoteAudioByKey(session, key)
     this.removeSessionListeners(session)
     session.releaseLock?.()
     await session.wakeLock?.release().catch(() => {})
@@ -1671,13 +1745,12 @@ export class CallManager implements CallController {
   }
 
   private removeSocketHandlers(session: CallSession): void {
-    try {
-      session.socket.off("call:roster")
-      session.socket.off("call:endpoint:closed")
-      session.socket.off("disconnect")
-      session.socket.off("connect")
-    } catch {
-      // ignore
+    for (const { event, handler } of session.socketHandlers.splice(0)) {
+      try {
+        session.socket.off(event, handler)
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -1731,6 +1804,7 @@ export function defaultCallManagerDeps(): CallManagerDeps {
         mediaIncarnation,
         expectedCallId,
         takeover,
+        transportCapability: "p2p-v1",
       })
     },
     async leaveCallRest({ workspaceId, callId }) {
@@ -1741,8 +1815,10 @@ export function defaultCallManagerDeps(): CallManagerDeps {
       if (!url) return null
       return io(url, { path: "/socket.io/", withCredentials: true, autoConnect: true }) as unknown as CallSocket
     },
-    createTransport({ workspaceId, callId }) {
-      return new CloudflareSfuTransport({ workspaceId, callId })
+    createTransport({ workspaceId, callId, socket, mediaTransport, transportGeneration }) {
+      return mediaTransport === "p2p"
+        ? new P2pMeshTransport({ workspaceId, callId, socket, generation: transportGeneration })
+        : new CloudflareSfuTransport({ workspaceId, callId })
     },
     acquireUserMedia(constraints) {
       return navigator.mediaDevices.getUserMedia(constraints)

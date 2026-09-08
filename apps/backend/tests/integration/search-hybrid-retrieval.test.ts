@@ -4,10 +4,9 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { EventService } from "../../src/features/messaging/event-service"
 import { SearchService, resolveUserAccessibleStreamIds, type SearchPermissions } from "../../src/features/search"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
-import { userId, workspaceId, streamId } from "../../src/lib/id"
+import { messageId, userId, workspaceId, streamId } from "../../src/lib/id"
 import { Visibilities, StreamTypes } from "@threahq/types"
 
 const EMBEDDING_DIMS = 1536
@@ -52,6 +51,7 @@ function makeService(pool: Pool, vector: number[] = unit(0)) {
 
 describe("Message hybrid search retrieval", () => {
   let pool: Pool
+  const nextSequenceByStream = new Map<string, bigint>()
 
   function seedEmbedding(messageId: string, embedding: number[]) {
     return MessageRepository.updateEmbeddings(pool, [
@@ -104,10 +104,12 @@ describe("Message hybrid search retrieval", () => {
   }
 
   async function postMessage(params: { workspaceId: string; streamId: string; authorId: string; text: string }) {
-    const service = new EventService(pool)
-    return service.createMessage({
-      workspaceId: params.workspaceId,
+    const sequence = nextSequenceByStream.get(params.streamId) ?? 1n
+    nextSequenceByStream.set(params.streamId, sequence + 1n)
+    return MessageRepository.insert(pool, {
+      id: messageId(),
       streamId: params.streamId,
+      sequence,
       authorId: params.authorId,
       authorType: "user",
       ...testMessageContent(params.text),

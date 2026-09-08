@@ -35,6 +35,7 @@ function fakeCall(overrides: Partial<Call> = {}): Call {
     chatStreamId: null,
     sharingEndpointId: null,
     rosterVersion: 0,
+    transportGeneration: 1,
     graceDeadline: null,
     endedReason: null,
     startedAt: NOW,
@@ -75,6 +76,8 @@ function fakeEndpoint(overrides: Partial<CallEndpoint> = {}): CallEndpoint {
     status: "connected",
     cfSessionId: null,
     mediaIncarnation: null,
+    transportCapability: null,
+    publicationRevision: 0,
     mediaState: {},
     publishedTracks: [],
     leaseExpiresAt: NOW,
@@ -2062,7 +2065,12 @@ describe("CallService.closeTracks", () => {
       expect.anything(),
       expect.objectContaining({ publishedTracks: [{ kind: "mic", trackName: "mic0" }] })
     )
-    expect(result.snapshot).toEqual({ rosterVersion: 9, roster: [] })
+    expect(result.snapshot).toEqual({
+      rosterVersion: 9,
+      roster: [],
+      mediaTransport: "sfu",
+      transportGeneration: 1,
+    })
   })
 
   it("should still fail loudly when a pull-side close (no unpublishKinds) hits a CF error", async () => {

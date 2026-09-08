@@ -10,9 +10,10 @@ export type CallStatus = (typeof CALL_STATUSES)[number]
 export const CALL_MODES = ["video", "audio_only"] as const
 export type CallMode = (typeof CALL_MODES)[number]
 
-/** v1 media transport. Only 'sfu' is accepted; the Later direct-calls privacy mode (p2p) is deferred. */
-export const CALL_MEDIA_TRANSPORTS = ["sfu"] as const
-export type CallMediaTransport = (typeof CALL_MEDIA_TRANSPORTS)[number]
+export { CALL_MEDIA_TRANSPORTS } from "@threahq/types"
+export type { CallMediaTransport } from "@threahq/types"
+
+export const CALL_P2P_INITIAL_CAP = 2
 
 export const CALL_ENDED_REASONS = ["completed", "reaped"] as const
 export type CallEndedReason = (typeof CALL_ENDED_REASONS)[number]
@@ -46,6 +47,8 @@ export type PublishedTrackKind = (typeof PUBLISHED_TRACK_KINDS)[number]
 export interface PublishedTrack {
   kind: PublishedTrackKind
   trackName: string
+  publicationId?: string
+  transportGeneration?: number
 }
 
 /**

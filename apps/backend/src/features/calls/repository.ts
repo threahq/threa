@@ -25,6 +25,7 @@ interface CallRow {
   chat_stream_id: string | null
   sharing_endpoint_id: string | null
   roster_version: number
+  transport_generation: number
   grace_deadline: Date | null
   ended_reason: string | null
   started_at: Date
@@ -45,6 +46,7 @@ export interface Call {
   chatStreamId: string | null
   sharingEndpointId: string | null
   rosterVersion: number
+  transportGeneration: number
   graceDeadline: Date | null
   endedReason: CallEndedReason | null
   startedAt: Date
@@ -56,7 +58,7 @@ export interface Call {
 
 const CALL_COLUMNS = `
   id, workspace_id, stream_id, started_by, status, mode, media_transport,
-  chat_stream_id, sharing_endpoint_id, roster_version, grace_deadline, ended_reason,
+  chat_stream_id, sharing_endpoint_id, roster_version, transport_generation, grace_deadline, ended_reason,
   started_at, ended_at, status_changed_at, created_at, updated_at
 `
 
@@ -72,6 +74,7 @@ function mapCall(row: CallRow): Call {
     chatStreamId: row.chat_stream_id,
     sharingEndpointId: row.sharing_endpoint_id,
     rosterVersion: row.roster_version,
+    transportGeneration: row.transport_generation,
     graceDeadline: row.grace_deadline,
     endedReason: row.ended_reason as CallEndedReason | null,
     startedAt: row.started_at,
@@ -760,6 +763,9 @@ export const CallParticipantRepository = {
       cf_session_id: string | null
       media_state: MediaState | null
       published_tracks: PublishedTrack[] | null
+      epoch: number | null
+      media_incarnation: string | null
+      transport_capability: string | null
     }>(sql`
       SELECT
         p.user_id,
@@ -768,7 +774,10 @@ export const CallParticipantRepository = {
         e.status AS connection_status,
         e.cf_session_id AS cf_session_id,
         e.media_state,
-        e.published_tracks
+        e.published_tracks,
+        e.epoch,
+        e.media_incarnation,
+        e.transport_capability
       FROM call_participants p
       LEFT JOIN call_endpoints e
         ON e.workspace_id = p.workspace_id AND e.participant_id = p.id
@@ -784,6 +793,9 @@ export const CallParticipantRepository = {
       cfSessionId: row.cf_session_id,
       mediaState: row.media_state ?? {},
       publishedTracks: row.published_tracks ?? [],
+      epoch: row.epoch,
+      mediaIncarnation: row.media_incarnation,
+      transportCapability: row.transport_capability,
     }))
   },
 }
@@ -797,6 +809,9 @@ export interface CallRosterEntry {
   cfSessionId: string | null
   mediaState: MediaState
   publishedTracks: PublishedTrack[]
+  epoch: number | null
+  mediaIncarnation: string | null
+  transportCapability: string | null
 }
 
 // ── call_endpoints ────────────────────────────────────────────────────────────
@@ -811,6 +826,8 @@ interface CallEndpointRow {
   status: string
   cf_session_id: string | null
   media_incarnation: string | null
+  transport_capability: string | null
+  publication_revision: number
   media_state: MediaState
   published_tracks: PublishedTrack[]
   lease_expires_at: Date
@@ -828,6 +845,8 @@ export interface CallEndpoint {
   status: CallEndpointStatus
   cfSessionId: string | null
   mediaIncarnation: string | null
+  transportCapability: string | null
+  publicationRevision: number
   mediaState: MediaState
   publishedTracks: PublishedTrack[]
   leaseExpiresAt: Date
@@ -837,7 +856,7 @@ export interface CallEndpoint {
 
 const ENDPOINT_COLUMNS = `
   id, workspace_id, call_id, participant_id, epoch, connection_seq, status,
-  cf_session_id, media_incarnation, media_state, published_tracks,
+  cf_session_id, media_incarnation, transport_capability, publication_revision, media_state, published_tracks,
   lease_expires_at, created_at, status_changed_at
 `
 
@@ -852,6 +871,8 @@ function mapEndpoint(row: CallEndpointRow): CallEndpoint {
     status: row.status as CallEndpointStatus,
     cfSessionId: row.cf_session_id,
     mediaIncarnation: row.media_incarnation,
+    transportCapability: row.transport_capability,
+    publicationRevision: row.publication_revision,
     mediaState: row.media_state ?? {},
     publishedTracks: row.published_tracks ?? [],
     leaseExpiresAt: row.lease_expires_at,
@@ -870,15 +891,16 @@ export const CallEndpointRepository = {
       participantId: string
       epoch: number
       mediaIncarnation: string | null
+      transportCapability?: string | null
       leaseExpiresAt: Date
     }
   ): Promise<CallEndpoint> {
     const result = await db.query<CallEndpointRow>(sql`
       INSERT INTO call_endpoints (
-        id, workspace_id, call_id, participant_id, epoch, status, media_incarnation, lease_expires_at
+        id, workspace_id, call_id, participant_id, epoch, status, media_incarnation, transport_capability, lease_expires_at
       )
       VALUES (${params.id}, ${params.workspaceId}, ${params.callId}, ${params.participantId},
-              ${params.epoch}, 'connected', ${params.mediaIncarnation}, ${params.leaseExpiresAt})
+              ${params.epoch}, 'connected', ${params.mediaIncarnation}, ${params.transportCapability ?? null}, ${params.leaseExpiresAt})
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
     return mapEndpoint(result.rows[0])
@@ -909,18 +931,28 @@ export const CallEndpointRepository = {
    */
   async rebind(
     db: Querier,
-    params: { workspaceId: string; id: string; mediaIncarnation: string | null; leaseExpiresAt: Date }
+    params: {
+      workspaceId: string
+      id: string
+      mediaIncarnation: string | null
+      transportCapability?: string | null
+      leaseExpiresAt: Date
+    }
   ): Promise<CallEndpoint | null> {
     const result = await db.query<CallEndpointRow>(sql`
       UPDATE call_endpoints SET
         status = 'connected',
         media_incarnation = ${params.mediaIncarnation},
+        transport_capability = ${params.transportCapability ?? null},
         cf_session_id = CASE
           WHEN media_incarnation IS DISTINCT FROM ${params.mediaIncarnation} THEN NULL
           ELSE cf_session_id END,
         published_tracks = CASE
           WHEN media_incarnation IS DISTINCT FROM ${params.mediaIncarnation} THEN '[]'::jsonb
           ELSE published_tracks END,
+        publication_revision = CASE
+          WHEN media_incarnation IS DISTINCT FROM ${params.mediaIncarnation} THEN 0
+          ELSE publication_revision END,
         connection_seq = connection_seq + 1,
         lease_expires_at = ${params.leaseExpiresAt},
         status_changed_at = NOW()
@@ -1002,13 +1034,24 @@ export const CallEndpointRepository = {
    */
   async setPublishedTracks(
     db: Querier,
-    params: { workspaceId: string; id: string; mediaIncarnation: string; publishedTracks: PublishedTrack[] }
+    params: {
+      workspaceId: string
+      id: string
+      mediaIncarnation: string
+      publishedTracks: PublishedTrack[]
+      publicationRevision?: number
+    }
   ): Promise<CallEndpoint | null> {
+    const revision = params.publicationRevision ?? null
     const result = await db.query<CallEndpointRow>(sql`
-      UPDATE call_endpoints SET published_tracks = ${JSON.stringify(params.publishedTracks)}::jsonb, status_changed_at = NOW()
+      UPDATE call_endpoints SET
+        published_tracks = ${JSON.stringify(params.publishedTracks)}::jsonb,
+        publication_revision = COALESCE(${revision}, publication_revision),
+        status_changed_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.id}
         AND media_incarnation = ${params.mediaIncarnation}
         AND status IN ('connected', 'reconnecting')
+        AND (${revision}::integer IS NULL OR publication_revision < ${revision})
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
     return result.rows[0] ? mapEndpoint(result.rows[0]) : null

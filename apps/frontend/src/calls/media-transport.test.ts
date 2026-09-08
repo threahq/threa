@@ -157,7 +157,18 @@ describe("CloudflareSfuTransport", () => {
     transport.onRemoteTrack = (e) => seen.push(e.ref)
     await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
 
-    const ref: PeerTrackRef = { sessionId: "cf-peer", trackName: "peer:mic" }
+    const ref: PeerTrackRef = { endpointId: "ep_peer", kind: "mic", publicationId: "pub_mic" }
+    await transport.syncPeers(
+      [
+        {
+          endpointId: "ep_peer",
+          epoch: 1,
+          mediaIncarnation: "inc_peer",
+          publications: [{ ref, providerLocator: { sessionId: "cf-peer", trackName: "peer:mic" } }],
+        },
+      ],
+      1
+    )
     await transport.pull(ref)
     // Simulate the engine delivering the pulled track on its transceiver.
     pc.ontrack?.({ transceiver: { mid: "remote-0" }, track: makeTrack("audio") })
@@ -166,6 +177,16 @@ describe("CloudflareSfuTransport", () => {
     await transport.stopPull(ref)
     const closeCall = calls.find((c) => c.path.endsWith("/tracks/close"))
     expect(closeCall?.body.mids).toEqual(["remote-0"])
+  })
+
+  it("should reject a pull with no provider locator before calling the proxy", async () => {
+    const { transport, calls } = makeTransport()
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    const ref: PeerTrackRef = { endpointId: "ep_peer", kind: "mic", publicationId: "pub_missing" }
+
+    await expect(transport.pull(ref)).rejects.toThrow("Peer publication has no SFU locator")
+
+    expect(calls.some(({ path }) => path.endsWith("/tracks/pull"))).toBe(false)
   })
 
   it("unpublish applies CF's close answer so the PC leaves have-local-offer and re-publish works", async () => {
@@ -341,14 +362,33 @@ describe("CloudflareSfuTransport", () => {
         throw new DOMException("bad offer", "OperationError")
       }
     }) as typeof pc.setRemoteDescription
-    const { transport } = makeTransport({ pc })
+    const { transport, calls } = makeTransport({ pc })
     const seen: PeerTrackRef[] = []
     transport.onRemoteTrack = (e) => seen.push(e.ref)
     await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
 
-    const ref: PeerTrackRef = { sessionId: "cf-peer", trackName: "peer:camera" }
+    const ref: PeerTrackRef = { endpointId: "ep_peer", kind: "camera", publicationId: "pub_camera" }
+    await transport.syncPeers(
+      [
+        {
+          endpointId: "ep_peer",
+          epoch: 1,
+          mediaIncarnation: "inc_peer",
+          publications: [{ ref, providerLocator: { sessionId: "cf-peer", trackName: "peer:camera" } }],
+        },
+      ],
+      1
+    )
     await expect(transport.pull(ref)).rejects.toThrow(/OperationError: bad offer/)
-    expect(pc.setRemoteDescription).toHaveBeenCalledWith({ type: "rollback" })
+    expect({
+      rollback: pc.setRemoteDescription.mock.calls.some(
+        (call) => (call as unknown as [{ type?: string }])[0]?.type === "rollback"
+      ),
+      closeBody: calls.find((call) => call.path.endsWith("/tracks/close"))?.body,
+    }).toEqual({
+      rollback: true,
+      closeBody: expect.objectContaining({ mids: ["remote-0"] }),
+    })
     // The dead pull's mid attribution is gone: a track landing on it is ignored.
     pc.ontrack?.({ transceiver: { mid: "remote-0" }, track: makeTrack("video") })
     expect(seen).toEqual([])
