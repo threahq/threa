@@ -237,6 +237,22 @@ describe("runtime-scoped production HTTP wiring", () => {
         { authorization: `Bearer ${CLAUDE_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages` },
         { authorization: `Bearer ${PI_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages` },
       ])
+      expect(requests.filter(({ path }) => path.endsWith("/messages"))).toEqual(
+        (["pi", "claude"] as const).flatMap((runtime) => [
+          {
+            authorization: `Bearer ${runtime === "pi" ? PI_KEY : CLAUDE_KEY}`,
+            path: `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages`,
+            body: {
+              content: `**${runtime}-child** is running in \`/repo/child\` (tmux \`child\`). No prompt came with \`/spawn\` — reply here to give it one.`,
+            },
+          },
+          {
+            authorization: `Bearer ${runtime === "pi" ? CLAUDE_KEY : PI_KEY}`,
+            path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages`,
+            body: { content: `harnessd: spawn of \`${runtime}-child\` failed: synthetic spawn failure` },
+          },
+        ])
+      )
       expect(sessions.size).toBe(0)
     } finally {
       rmSync(home, { recursive: true, force: true })

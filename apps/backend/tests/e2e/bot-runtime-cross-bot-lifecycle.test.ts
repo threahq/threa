@@ -205,6 +205,10 @@ describe("cross-bot runtime HTTP lifecycle", () => {
         status: 200,
         data: { data: { linkId: attached.data.data.linkId, activeStreamId: thread, status: "ended" } },
       })
+      const doneNotice = await botApiPost(client, workspace.id, `/streams/${thread}/messages`, parent.apiKey, {
+        content: "Child session ended",
+      })
+      expect(doneNotice.status).toBe(201)
       await proveTurn(parent, rootId, "Parent after child session")
     })
   }
