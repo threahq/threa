@@ -12,6 +12,8 @@ import {
   VIDEO_CAPTURE_CONSTRAINTS,
   PULL_RETRY_DELAY_MS,
   PULL_RETRY_MAX_ATTEMPTS,
+  WATCHDOG_HEALTHY_SAMPLES_TO_UPGRADE,
+  WATCHDOG_SAMPLE_MS,
 } from "./config"
 import { ApiError } from "@/api/client"
 import { getCallState, clearCallState, resetCallStoreCache, type CallRosterParticipant } from "@/stores/call-store"
@@ -1476,6 +1478,113 @@ describe("CallManager", () => {
     await vi.waitFor(() => expect(getCallState().phase).toBe("idle"))
 
     expect(getCallState().displacedCall).toMatchObject({ reason: "taken_over" })
+  })
+
+  it("should preserve the shared SFU bandwidth ladder", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const transport = makeTransport()
+    vi.mocked(transport.getStats).mockResolvedValue({
+      rttMs: 10,
+      packetLoss: 0,
+      qualityLimitation: "bandwidth",
+      encodeTimeMs: 1,
+    })
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: true })
+    vi.mocked(transport.setPublishEncoding).mockClear()
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_SAMPLE_MS)
+
+    expect(transport.setPublishEncoding).toHaveBeenCalledWith("camera", { maxBitrate: 700_000 })
+  })
+
+  it("should recover a shared CPU downgrade while one P2P peer remains bandwidth limited", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    socket.joinAck.mediaTransport = "p2p"
+    const transport = makeTransport()
+    transport.setPeerPublishEncoding = vi.fn(async () => {})
+    const peerStats = (qualityLimitation: "none" | "bandwidth" | "cpu") => ({
+      endpointId: "ep_slow",
+      candidateType: "host" as const,
+      rttMs: 10,
+      packetLoss: 0,
+      qualityLimitation,
+      encodeTimeMs: 1,
+      intervalBytesSent: 1,
+      intervalBytesReceived: 1,
+    })
+    vi.mocked(transport.getStats)
+      .mockResolvedValueOnce({
+        rttMs: 10,
+        packetLoss: 0,
+        qualityLimitation: "cpu",
+        encodeTimeMs: 1,
+        peers: [peerStats("cpu")],
+      })
+      .mockResolvedValue({
+        rttMs: 10,
+        packetLoss: 0,
+        qualityLimitation: "bandwidth",
+        encodeTimeMs: 1,
+        peers: [peerStats("bandwidth")],
+      })
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: true })
+    vi.mocked(transport.setPublishEncoding).mockClear()
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_SAMPLE_MS)
+    expect(transport.setPublishEncoding).toHaveBeenLastCalledWith("camera", { maxBitrate: 700_000 })
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_SAMPLE_MS * WATCHDOG_HEALTHY_SAMPLES_TO_UPGRADE)
+    expect(transport.setPublishEncoding).toHaveBeenLastCalledWith("camera", { maxBitrate: 1_500_000 })
+  })
+
+  it("should adapt only the bandwidth-limited P2P sender and recover it after clean samples", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    socket.joinAck.mediaTransport = "p2p"
+    const transport = makeTransport()
+    transport.setPeerPublishEncoding = vi.fn(async () => {})
+    const peerStats = (endpointId: string, qualityLimitation: "none" | "bandwidth") => ({
+      endpointId,
+      candidateType: "host" as const,
+      rttMs: 10,
+      packetLoss: 0,
+      qualityLimitation,
+      encodeTimeMs: 1,
+      intervalBytesSent: 1,
+      intervalBytesReceived: 1,
+    })
+    vi.mocked(transport.getStats)
+      .mockResolvedValueOnce({
+        rttMs: 10,
+        packetLoss: 0,
+        qualityLimitation: "bandwidth",
+        encodeTimeMs: 1,
+        peers: [peerStats("ep_slow", "bandwidth"), peerStats("ep_healthy", "none")],
+      })
+      .mockResolvedValue({
+        rttMs: 10,
+        packetLoss: 0,
+        qualityLimitation: "none",
+        encodeTimeMs: 1,
+        peers: [peerStats("ep_slow", "none"), peerStats("ep_healthy", "none")],
+      })
+    const manager = newManager(makeDeps(socket, transport), null)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "video", cameraOn: true })
+    vi.mocked(transport.setPublishEncoding).mockClear()
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_SAMPLE_MS)
+    expect(transport.setPeerPublishEncoding).toHaveBeenCalledTimes(1)
+    expect(transport.setPeerPublishEncoding).toHaveBeenLastCalledWith("ep_slow", "camera", { maxBitrate: 700_000 })
+    expect(transport.setPublishEncoding).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_SAMPLE_MS * WATCHDOG_HEALTHY_SAMPLES_TO_UPGRADE)
+    expect(transport.setPeerPublishEncoding).toHaveBeenLastCalledWith("ep_slow", "camera", { maxBitrate: 1_500_000 })
+    expect(transport.setPeerPublishEncoding).toHaveBeenCalledTimes(2)
+    expect(transport.setPublishEncoding).not.toHaveBeenCalled()
   })
 
   // ── F4: a failed camera publish must not leave a live undisclosed camera track ──

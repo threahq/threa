@@ -18,7 +18,8 @@ import type { CallDeviceState, CallDiagnostics } from "@/stores/call-store"
 import { CALL_SURFACE_PROTECTED_ATTR } from "./call-surface-geometry"
 import { useCallManager } from "./call-manager-context"
 import { CameraButton, ChatButton, FlipButton, LeaveButton, MuteButton } from "./call-control-buttons"
-import { useCallDevices, useCallDiagnostics } from "./call-store-hooks"
+import { useCallDevices, useCallDiagnostics, useCallRoster, useCallWorkspaceId } from "./call-store-hooks"
+import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useCallLifecycleEvents, type CallLifecycleEntry } from "@/calls/lifecycle-log"
 
 // setSinkId (output device selection) is unsupported on Safari/Firefox; hide the
@@ -215,11 +216,27 @@ function LifecycleLogSection() {
 
 function formatMediaPath(candidateType: CallDiagnostics["candidateType"]): string {
   if (candidateType === "relay") return "Relayed"
-  if (candidateType === "host" || candidateType === "srflx") return "Direct"
+  if (candidateType === "host" || candidateType === "srflx" || candidateType === "prflx") return "Direct"
   return "Unknown"
 }
 
+function formatMediaTransport(transport: CallDiagnostics["mediaTransport"]): string {
+  if (transport === "p2p") return "Peer to peer"
+  if (transport === "sfu") return "Cloudflare SFU"
+  return "Unknown"
+}
+
+function formatTransferredBytes(sent = 0, received = 0): string {
+  const bytes = sent + received
+  if (bytes < 1_000) return `${bytes} B`
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} KB`
+  return `${(bytes / 1_000_000).toFixed(1)} MB`
+}
+
 export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagnostics }) {
+  const roster = useCallRoster()
+  const workspaceId = useCallWorkspaceId()
+  const users = useWorkspaceUsers(workspaceId ?? undefined)
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -227,18 +244,41 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
           <Signal className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="center" className="w-56 text-sm">
+      <PopoverContent
+        align="center"
+        className="max-h-[var(--radix-popover-content-available-height)] w-64 overflow-y-auto text-sm"
+      >
         <p className="mb-2 font-medium">Connection</p>
         <dl className="space-y-1">
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Media</dt>
-            <dd>{diagnostics.mediaTransport === "p2p" ? "Peer to peer" : "Cloudflare SFU"}</dd>
+            <dd>{formatMediaTransport(diagnostics.mediaTransport)}</dd>
           </div>
           {diagnostics.mediaTransport === "p2p" ? (
-            <div className="flex justify-between gap-2">
-              <dt className="text-muted-foreground">Path</dt>
-              <dd>{formatMediaPath(diagnostics.candidateType)}</dd>
-            </div>
+            <>
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted-foreground">Path</dt>
+                <dd>{formatMediaPath(diagnostics.candidateType)}</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted-foreground">Direct data</dt>
+                <dd className="tabular-nums">
+                  {formatTransferredBytes(diagnostics.directBytesSent, diagnostics.directBytesReceived)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted-foreground">Relayed data</dt>
+                <dd className="tabular-nums">
+                  {formatTransferredBytes(diagnostics.relayBytesSent, diagnostics.relayBytesReceived)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-muted-foreground">Unclassified data</dt>
+                <dd className="tabular-nums">
+                  {formatTransferredBytes(diagnostics.unknownBytesSent, diagnostics.unknownBytesReceived)}
+                </dd>
+              </div>
+            </>
           ) : null}
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">Round-trip</dt>
@@ -253,6 +293,22 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
             <dd>{formatLimitation(diagnostics.qualityLimitation)}</dd>
           </div>
         </dl>
+        {diagnostics.peers && diagnostics.peers.length > 0 && (
+          <ul aria-label="Peer connections" className="mt-3 max-h-40 space-y-2 overflow-y-auto border-t pt-2 text-xs">
+            {diagnostics.peers.map((peer) => {
+              const participant = roster.find(({ endpointId }) => endpointId === peer.endpointId)
+              const user = users.find(({ id }) => id === participant?.userId)
+              return (
+                <li key={peer.endpointId}>
+                  <div className="truncate font-medium">{user?.name ?? user?.slug ?? "Participant"}</div>
+                  <div className="text-muted-foreground">
+                    {formatMediaPath(peer.candidateType)} · {formatRtt(peer.rttMs)} · {formatLoss(peer.packetLoss)} loss
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
         <LifecycleLogSection />
       </PopoverContent>
     </Popover>

@@ -17,7 +17,7 @@ import * as activityModule from "../activity"
 import * as dbModule from "../../db"
 import * as observabilityModule from "../../lib/observability"
 import { OutboxRepository } from "../../lib/outbox"
-import { CALL_PRODUCT_CAP } from "./config"
+import { CALL_P2P_CAP, CALL_PRODUCT_CAP } from "./config"
 import { CloudflareRealtimeError } from "./cloudflare"
 import { logger } from "../../lib/logger"
 
@@ -346,6 +346,36 @@ describe("CallService.joinCall — revive, capacity, membership", () => {
 
     await expect(
       makeService().joinCall({ workspaceId: "ws_1", callId: "call_1", userId: "usr_51" })
+    ).rejects.toMatchObject({ code: "CALL_FULL", status: 409 })
+  })
+
+  it("should admit six P2P participants and reject the seventh", async () => {
+    stubTransaction()
+    spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({
+      target: { id: "stream_1", type: "channel" },
+    } as never)
+    spyOn(accessModule, "checkCallAccess").mockResolvedValue({ call: fakeCall({ mediaTransport: "p2p" }) })
+    spyOn(CallRepository, "findByIdForUpdate").mockResolvedValue(fakeCall({ mediaTransport: "p2p" }))
+    const countJoined = spyOn(CallParticipantRepository, "countJoined")
+    countJoined.mockResolvedValueOnce(CALL_P2P_CAP - 1).mockResolvedValueOnce(CALL_P2P_CAP)
+    spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
+    stubCleanEndpointAdmission()
+
+    await expect(
+      makeService().joinCall({
+        workspaceId: "ws_1",
+        callId: "call_1",
+        userId: "usr_6",
+        transportCapability: "p2p-v1",
+      })
+    ).resolves.toMatchObject({ endpoint: { id: "callep_1" } })
+    await expect(
+      makeService().joinCall({
+        workspaceId: "ws_1",
+        callId: "call_1",
+        userId: "usr_7",
+        transportCapability: "p2p-v1",
+      })
     ).rejects.toMatchObject({ code: "CALL_FULL", status: 409 })
   })
 

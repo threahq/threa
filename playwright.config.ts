@@ -63,6 +63,7 @@ function getOrAllocatePort(envVar: string): number {
 const backendPort = getOrAllocatePort("PLAYWRIGHT_BACKEND_PORT")
 const controlPlanePort = getOrAllocatePort("PLAYWRIGHT_CONTROL_PLANE_PORT")
 const routerPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_PORT")
+const routerInspectorPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_INSPECTOR_PORT")
 const frontendPort = getOrAllocatePort("PLAYWRIGHT_FRONTEND_PORT")
 // Fake CF exercises SFU signaling only; direct P2P tests carry native browser media.
 const fakeCfPort = getOrAllocatePort("FAKE_CF_PORT")
@@ -148,12 +149,12 @@ export default defineConfig({
       name: "chromium",
       // The calls suite needs fake-media launch flags + granted mic/camera, so it
       // runs as its own project below; keep it out of the default project.
-      testIgnore: ["**/calls.spec.ts", "**/p2p-rtc.spec.ts"],
+      testIgnore: ["**/calls.spec.ts", "**/calls-p2p-groups.spec.ts", "**/p2p-rtc.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "calls",
-      testMatch: ["**/calls.spec.ts", "**/p2p-rtc.spec.ts"],
+      testMatch: ["**/calls.spec.ts", "**/calls-p2p-groups.spec.ts", "**/p2p-rtc.spec.ts"],
       use: {
         ...devices["Desktop Chrome"],
         // getUserMedia resolves with a synthetic mic/camera and the permission
@@ -246,7 +247,7 @@ export default defineConfig({
       },
     },
     {
-      command: `bunx wrangler dev --port ${routerPort} --var CONTROL_PLANE_URL:http://localhost:${controlPlanePort} --var INTERNAL_API_KEY:${internalApiKey} --var 'REGIONS:${JSON.stringify({ local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` } })}'`,
+      command: `bunx wrangler dev --port ${routerPort} --inspector-port ${routerInspectorPort} --var CONTROL_PLANE_URL:http://localhost:${controlPlanePort} --var INTERNAL_API_KEY:${internalApiKey} --var 'REGIONS:${JSON.stringify({ local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` } })}'`,
       cwd: "./apps/workspace-router",
       url: `http://localhost:${routerPort}/readyz`,
       reuseExistingServer: !process.env.CI,

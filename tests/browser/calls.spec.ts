@@ -1,5 +1,6 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, loginInNewContext, expectApiOk, createDmDraftId, generateTestId } from "./helpers"
+import { installDirectOnlyCredentials, installPeerConnectionObserver, readInboundMedia } from "./calls-media-evidence"
 
 /**
  * Two-context 1:1 DM call e2e (plan §Rollout M1 exit gate, PR 1.5). Real browser
@@ -46,20 +47,8 @@ async function setUpDmPair(
   const invitee = await loginInNewContext(browser, inviteeEmail, inviteeName)
 
   if (options.p2p) {
-    const observePeerConnections = () => {
-      const NativePeerConnection = window.RTCPeerConnection
-      const peers: RTCPeerConnection[] = []
-      Object.defineProperty(window, "__testCallPeerConnections", { value: peers })
-      window.RTCPeerConnection = new Proxy(NativePeerConnection, {
-        construct(Target, args) {
-          const peer = new Target(...(args as ConstructorParameters<typeof RTCPeerConnection>))
-          peers.push(peer)
-          return peer
-        },
-      })
-    }
-    await ownerContext.addInitScript(observePeerConnections)
-    await invitee.context.addInitScript(observePeerConnections)
+    await installPeerConnectionObserver(ownerContext)
+    await installPeerConnectionObserver(invitee.context)
     if (options.inviteeCaptureDelayMs) {
       await invitee.context.addInitScript((delayMs) => {
         const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
@@ -70,18 +59,8 @@ async function setUpDmPair(
       }, options.inviteeCaptureDelayMs)
     }
     await invitee.page.reload()
-    const directOnlyCredentials = (route: import("@playwright/test").Route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ iceServers: [], expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }),
-      })
-    await ownerContext.route("**/turn-credentials", directOnlyCredentials)
-    await invitee.context.route("**/turn-credentials", async (route) => {
-      if (options.inviteeCredentialsDelayMs)
-        await new Promise((resolve) => setTimeout(resolve, options.inviteeCredentialsDelayMs))
-      await directOnlyCredentials(route)
-    })
+    await installDirectOnlyCredentials(ownerContext)
+    await installDirectOnlyCredentials(invitee.context, options.inviteeCredentialsDelayMs)
   }
 
   const owner = await loginAndCreateWorkspace(ownerPage, "calls-a")
@@ -206,32 +185,7 @@ test.describe("1:1 DM calls", () => {
               return !!stream?.getVideoTracks().some((track) => track.readyState === "live")
             }).length
         )
-      const inboundMedia = (page: Page) =>
-        page.evaluate(async () => {
-          const peers = (
-            (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ??
-            []
-          ).filter((peer) => peer.connectionState !== "closed")
-          let audioBytes = 0
-          let audioEnergy = 0
-          let videoBytes = 0
-          let videoFrames = 0
-          for (const peer of peers) {
-            const stats = await peer.getStats()
-            stats.forEach((report) => {
-              if (report.type !== "inbound-rtp") return
-              if (report.kind === "audio" || report.mediaType === "audio") {
-                audioBytes += report.bytesReceived ?? 0
-                audioEnergy += report.totalAudioEnergy ?? 0
-              }
-              if (report.kind === "video" || report.mediaType === "video") {
-                videoBytes += report.bytesReceived ?? 0
-                videoFrames += report.framesDecoded ?? 0
-              }
-            })
-          }
-          return { audioBytes, audioEnergy, videoBytes, videoFrames }
-        })
+      const inboundMedia = readInboundMedia
       const decodedMediaFlow = (page: Page) =>
         page.evaluate(async () => {
           const peers = (

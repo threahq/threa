@@ -50,7 +50,7 @@ import {
   ENDPOINT_LEASE_TTL_MS,
   INVITATION_TTL_MS,
   CALL_PRODUCT_CAP,
-  CALL_P2P_INITIAL_CAP,
+  CALL_P2P_CAP,
   type CallMode,
   type MediaState,
   type PublishedTrack,
@@ -503,7 +503,7 @@ export class CallService {
     const others = await CallParticipantRepository.countJoined(client, params.workspaceId, params.callId, {
       excludeUserId: params.userId,
     })
-    const capacity = call.mediaTransport === "p2p" ? CALL_P2P_INITIAL_CAP : CALL_PRODUCT_CAP
+    const capacity = call.mediaTransport === "p2p" ? CALL_P2P_CAP : CALL_PRODUCT_CAP
     if (others >= capacity) {
       throw new HttpError("Call is full", { status: 409, code: "CALL_FULL" })
     }

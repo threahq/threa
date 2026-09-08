@@ -13,7 +13,7 @@ export type CallMode = (typeof CALL_MODES)[number]
 export { CALL_MEDIA_TRANSPORTS } from "@threahq/types"
 export type { CallMediaTransport } from "@threahq/types"
 
-export const CALL_P2P_INITIAL_CAP = 2
+export const CALL_P2P_CAP = 6
 
 export const CALL_ENDED_REASONS = ["completed", "reaped"] as const
 export type CallEndedReason = (typeof CALL_ENDED_REASONS)[number]
@@ -105,3 +105,11 @@ export const CALL_PRODUCT_CAP = 50
  */
 export const CALL_SOCKET_RATE_BURST = 40
 export const CALL_SOCKET_RATE_REFILL_PER_SEC = 10
+
+/**
+ * ICE gathering emits several candidates per remote peer. Six-person mesh setup
+ * can therefore burst above the shared control budget. Signaling has its own
+ * bounded bucket so offers and candidates cannot starve leases or call state.
+ */
+export const CALL_P2P_SIGNAL_RATE_BURST = 240
+export const CALL_P2P_SIGNAL_RATE_REFILL_PER_SEC = 60

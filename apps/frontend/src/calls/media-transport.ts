@@ -33,18 +33,38 @@ export interface RemoteTrackEvent {
 
 export type TransportConnectionState = "new" | "connecting" | "connected" | "reconnecting" | "closed" | "failed"
 
-export interface TransportStats {
-  /** Round-trip time in ms from the selected candidate pair, or null when unknown. */
+export interface PeerTransportStats {
+  endpointId: string
+  candidateType: RTCIceCandidateType | null
   rttMs: number | null
-  /** Fractional inbound packet loss [0,1], or null when unknown. */
+  packetLoss: number | null
+  qualityLimitation: "none" | "cpu" | "bandwidth" | "other" | null
+  encodeTimeMs: number | null
+  intervalBytesSent: number
+  intervalBytesReceived: number
+}
+
+export interface TransportStats {
+  /** Highest selected-pair RTT among active peers, or null when unknown. */
+  rttMs: number | null
+  /** Aggregate inbound packet loss for the current sample, or null when unknown. */
   packetLoss: number | null
   /** The worst `qualityLimitationReason` across outbound video, or null. */
   qualityLimitation: "none" | "cpu" | "bandwidth" | "other" | null
-  /** Sum of outbound encode time / frames, a rough encoder-pressure signal (ms), or null. */
+  /** Highest outbound encode time / frame among active peers in ms, or null. */
   encodeTimeMs: number | null
-  candidateType?: "host" | "srflx" | "relay" | null
+  candidateType?: RTCIceCandidateType | null
+  /** Bytes sent/received since the previous sample, summed across active peers. */
   bytesSent?: number
   bytesReceived?: number
+  peers?: PeerTransportStats[]
+  /** First samples and route changes stay unclassified rather than charging an unobserved path. */
+  directBytesSent?: number
+  directBytesReceived?: number
+  relayBytesSent?: number
+  relayBytesReceived?: number
+  unknownBytesSent?: number
+  unknownBytesReceived?: number
 }
 
 /**
@@ -59,6 +79,7 @@ export interface MediaTransport {
   unpublish(kind: PublishedTrackKind, opts?: { reason?: string }): Promise<void>
   /** Cap a published track's encoder (watchdog ladder `maxBitrate`); no-op if unpublished. */
   setPublishEncoding(kind: PublishedTrackKind, params: { maxBitrate?: number }): Promise<void>
+  setPeerPublishEncoding?(endpointId: string, kind: PublishedTrackKind, params: { maxBitrate?: number }): Promise<void>
   pull(ref: PeerTrackRef): Promise<void>
   stopPull(ref: PeerTrackRef): Promise<void>
   syncPeers(peers: PeerDescriptor[], generation: number): Promise<void>

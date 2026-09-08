@@ -10,7 +10,13 @@ import { UserRepository } from "../workspaces"
 import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
 import type { CallService, CallRosterSnapshot } from "./service"
-import { ENDPOINT_LEASE_TTL_MS, CALL_SOCKET_RATE_BURST, CALL_SOCKET_RATE_REFILL_PER_SEC } from "./config"
+import {
+  ENDPOINT_LEASE_TTL_MS,
+  CALL_SOCKET_RATE_BURST,
+  CALL_SOCKET_RATE_REFILL_PER_SEC,
+  CALL_P2P_SIGNAL_RATE_BURST,
+  CALL_P2P_SIGNAL_RATE_REFILL_PER_SEC,
+} from "./config"
 
 export const CALLS_NAMESPACE = "/calls"
 
@@ -104,13 +110,13 @@ interface SocketBinding {
 type Ack = (result: { ok: boolean; error?: string; code?: string; data?: unknown }) => void
 
 /** Continuous-refill token bucket, one per socket (INV — signaling abuse hardening). */
-function createTokenBucket() {
-  let tokens = CALL_SOCKET_RATE_BURST
+function createTokenBucket(burst: number, refillPerSecond: number) {
+  let tokens = burst
   let last = Date.now()
   return {
     take(): boolean {
       const now = Date.now()
-      tokens = Math.min(CALL_SOCKET_RATE_BURST, tokens + ((now - last) / 1000) * CALL_SOCKET_RATE_REFILL_PER_SEC)
+      tokens = Math.min(burst, tokens + ((now - last) / 1000) * refillPerSecond)
       last = now
       if (tokens < 1) return false
       tokens -= 1
@@ -152,9 +158,10 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
     const workosUserId = socket.data.workosUserId as string
     let binding: SocketBinding | null = null
     let publicationQueue = Promise.resolve()
-    const bucket = createTokenBucket()
+    const controlBucket = createTokenBucket(CALL_SOCKET_RATE_BURST, CALL_SOCKET_RATE_REFILL_PER_SEC)
+    const signalBucket = createTokenBucket(CALL_P2P_SIGNAL_RATE_BURST, CALL_P2P_SIGNAL_RATE_REFILL_PER_SEC)
 
-    const rateLimited = (ack?: Ack): boolean => {
+    const rateLimited = (ack?: Ack, bucket = controlBucket): boolean => {
       if (bucket.take()) return false
       ack?.({ ok: false, error: "Too many call events", code: "CALL_RATE_LIMITED" })
       return true
@@ -287,7 +294,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
     })
 
     socket.on("call:p2p:signal", async (payload: unknown, ack?: Ack) => {
-      if (rateLimited(ack)) return
+      if (rateLimited(ack, signalBucket)) return
       if (!binding) {
         ack?.({ ok: false, error: "Not joined", code: "CALL_NOT_JOINED" })
         return
