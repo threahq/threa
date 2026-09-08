@@ -56,6 +56,8 @@ import {
   killOwnWindow,
   markHarnessLinkWoundDown,
   recordHarnessLink,
+  spawnRuntimesResolver,
+  type SpawnRuntimeOption,
 } from "@threahq/harness-client"
 import type {
   ExtensionAPI,
@@ -892,10 +894,16 @@ function currentReconnectLink(
   return link && reconnectAvailable() ? link : undefined
 }
 
+const defaultSpawnRuntimes = spawnRuntimesResolver((error) =>
+  console.error(`Threa remote: harnessd runtimes: ${error}; /spawn disabled`)
+)
+
 function buildRuntimeCapabilities(
   ctx?: ExtensionContext,
-  reconnectAvailable: () => boolean = harnessReconnectAvailable
+  reconnectAvailable: () => boolean = harnessReconnectAvailable,
+  spawnRuntimes: () => SpawnRuntimeOption[] = defaultSpawnRuntimes
 ): Record<string, unknown> {
+  const runtimes = spawnRuntimes()
   return {
     supportsActiveScratchpad: true,
     supportsPersistentSessions: true,
@@ -914,12 +922,13 @@ function buildRuntimeCapabilities(
         // `/spawn` opens a thread under the desk's root; `/done` winds down the
         // thread session it is run from.
         const onDesk = link.activeStreamId === link.rootStreamId
-        return command === "spawn" ? onDesk : !onDesk
+        return command === "spawn" ? onDesk && runtimes.length > 0 : !onDesk
       }
       if (command === "key") return Boolean(ctx && currentSessionControlLink(ctx))
       return true
     }),
     thinkingLevels: [...THINKING_LEVELS],
+    spawnRuntimes: runtimes,
     preferredModels: [...(config?.preferredModels ?? [])],
     ...(ctx?.model && { currentModel: `${ctx.model.provider}/${ctx.model.id}` }),
     ...(ctx && { modelSuggestions: buildModelSuggestions(ctx) }),
@@ -3804,6 +3813,7 @@ interface SpawnCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessSpawn
   complete: typeof completeInvocationWithMarkdown
+  spawnRuntimes: () => SpawnRuntimeOption[]
 }
 
 interface HarnessHandoffSpec {
@@ -4001,16 +4011,14 @@ async function runSpawnCommand(
     available: harnessReconnectAvailable,
     prepare: prepareHarnessSpawn,
     complete: completeInvocationWithMarkdown,
+    spawnRuntimes: defaultSpawnRuntimes,
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
-  const parsed = parseSpawnCommandArgs(args, {
-    runtimes: [
-      { value: "claude", label: "Claude Code", installed: true },
-      { value: "pi", label: "Pi", installed: true },
-    ],
-    defaultRuntime: "pi",
-  })
+  const parsed = parseSpawnCommandArgs(
+    args,
+    deps.spawnRuntimes().map((r) => r.value)
+  )
   if ("error" in parsed) {
     await deps.complete(invocation, parsed.error, ctx)
     return

@@ -13,6 +13,11 @@ process.env.THREA_HARNESS_LINKS_DIR = mkdtempSync(join(tmpdir(), "harness-links-
 // must behave the same inside a supervised pane as in CI.
 delete process.env.THREA_EXPECTED_ROOT_STREAM_ID
 
+const SPAWN_RUNTIMES = [
+  { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
+  { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+]
+
 let testStorageDirectory: string
 let expectedRootStreamId: string | undefined
 
@@ -209,9 +214,21 @@ describe("Pi remote trace safety", () => {
   test("advertises session-control command capabilities", () => {
     // No ctx: nothing is linked yet, so every command needing a live link is
     // withheld. What remains is everything Pi actuates in-process.
-    expect(__testing.buildRuntimeCapabilities()).toMatchObject({
+    expect(__testing.buildRuntimeCapabilities(undefined, undefined, () => SPAWN_RUNTIMES)).toMatchObject({
       supportsSessionControlCommands: true,
       sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
+      spawnRuntimes: SPAWN_RUNTIMES,
+    })
+  })
+
+  test("drops spawn from the commands and advertises no spawnRuntimes when nothing is installed", () => {
+    const capabilities = __testing.buildRuntimeCapabilities(undefined, undefined, () => [])
+    expect({
+      sessionControlCommands: capabilities.sessionControlCommands,
+      spawnRuntimes: capabilities.spawnRuntimes,
+    }).toEqual({
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
+      spawnRuntimes: [],
     })
   })
 
@@ -1318,7 +1335,13 @@ describe("Pi reconnect session control", () => {
       streamUrlPath: "/streams/stream-root-exact",
     }
     const advertised = () =>
-      (__testing.buildRuntimeCapabilities(ctx, () => true).sessionControlCommands as string[]).includes("reconnect")
+      (
+        __testing.buildRuntimeCapabilities(
+          ctx,
+          () => true,
+          () => SPAWN_RUNTIMES
+        ).sessionControlCommands as string[]
+      ).includes("reconnect")
 
     expect(advertised()).toBe(true)
     for (const invalidLink of [
@@ -1347,7 +1370,13 @@ describe("Pi reconnect session control", () => {
     expect(advertised()).toBe(false)
     process.env.TMUX_PANE = "%9"
     expect(
-      (__testing.buildRuntimeCapabilities(ctx, () => false).sessionControlCommands as string[]).includes("reconnect")
+      (
+        __testing.buildRuntimeCapabilities(
+          ctx,
+          () => false,
+          () => SPAWN_RUNTIMES
+        ).sessionControlCommands as string[]
+      ).includes("reconnect")
     ).toBe(false)
   })
 
@@ -1357,7 +1386,11 @@ describe("Pi reconnect session control", () => {
     // is unrunnable without tmux — offering it anyway is a dead button.
     const ctx = context(true)
     const commands = (available: boolean) =>
-      __testing.buildRuntimeCapabilities(ctx, () => available).sessionControlCommands as string[]
+      __testing.buildRuntimeCapabilities(
+        ctx,
+        () => available,
+        () => SPAWN_RUNTIMES
+      ).sessionControlCommands as string[]
 
     expect(commands(true)).toContain("kick")
 
@@ -1373,7 +1406,11 @@ describe("Pi reconnect session control", () => {
   })
 
   test("advertises and sends an allowed key only for the exact link using Pi's PID", async () => {
-    const commands = __testing.buildRuntimeCapabilities(context(true), () => true).sessionControlCommands as string[]
+    const commands = __testing.buildRuntimeCapabilities(
+      context(true),
+      () => true,
+      () => SPAWN_RUNTIMES
+    ).sessionControlCommands as string[]
     expect(commands).toContain("key")
 
     const sent: unknown[][] = []
@@ -1392,7 +1429,11 @@ describe("Pi reconnect session control", () => {
 
     delete process.env.TMUX_PANE
     expect(
-      __testing.buildRuntimeCapabilities(context(true), () => true).sessionControlCommands as string[]
+      __testing.buildRuntimeCapabilities(
+        context(true),
+        () => true,
+        () => SPAWN_RUNTIMES
+      ).sessionControlCommands as string[]
     ).not.toContain("key")
   })
 
@@ -1738,7 +1779,13 @@ describe("Pi clear session control", () => {
   test("advertises clear only for the exact current harness link", () => {
     const ctx = context(true)
     const advertised = (available: boolean) =>
-      (__testing.buildRuntimeCapabilities(ctx, () => available).sessionControlCommands as string[]).includes("clear")
+      (
+        __testing.buildRuntimeCapabilities(
+          ctx,
+          () => available,
+          () => SPAWN_RUNTIMES
+        ).sessionControlCommands as string[]
+      ).includes("clear")
 
     expect(advertised(true)).toBe(true)
     expect(advertised(false)).toBe(false)
@@ -1955,6 +2002,7 @@ describe("Pi spawn and done session control", () => {
         messages.push(message)
         return true
       },
+      spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never)
 
     const briefFile = prepared[0]?.briefFile as string | undefined
@@ -1974,6 +2022,28 @@ describe("Pi spawn and done session control", () => {
     })
   })
 
+  test("treats a leading token as the runtime only when harnessd reports it installed", async () => {
+    const prepared: Array<Record<string, unknown>> = []
+    await __testing.runSpawnCommand(invocation, "claude fix the parser", context(true), {
+      available: () => true,
+      prepare: (spec: Record<string, unknown>) => {
+        prepared.push(spec)
+        return () => undefined
+      },
+      complete: async () => true,
+      spawnRuntimes: () => [{ value: "pi", label: "Pi" }],
+    } as never)
+    expect(prepared).toEqual([
+      {
+        runtime: "pi",
+        name: "claude fix the parser",
+        rootStreamId: "stream-root-exact",
+        anchorId: "msg_slash_spawn",
+        briefFile: undefined,
+      },
+    ])
+  })
+
   test("an unparseable first line launches nothing and returns the usage", async () => {
     const messages: string[] = []
     let prepared = 0
@@ -1988,6 +2058,7 @@ describe("Pi spawn and done session control", () => {
           messages.push(message)
           return true
         },
+        spawnRuntimes: () => SPAWN_RUNTIMES,
       } as never)
     }
     expect({ messages, prepared }).toEqual({
@@ -2009,6 +2080,7 @@ describe("Pi spawn and done session control", () => {
         messages.push(message)
         return true
       },
+      spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never)
     expect({ prepared, messages }).toEqual({
       prepared: [
@@ -2038,6 +2110,7 @@ describe("Pi spawn and done session control", () => {
         messages.push(message)
         return true
       },
+      spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never)
     expect({ messages, prepared }).toEqual({
       messages: ["Spawn is only available on the scratchpad root."],
@@ -2054,6 +2127,7 @@ describe("Pi spawn and done session control", () => {
         return () => undefined
       },
       complete: async () => true,
+      spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never
     const stale = [
       { ...(invocation as object), rootStreamId: "stream-other" },
@@ -2082,6 +2156,7 @@ describe("Pi spawn and done session control", () => {
         messages.push(message)
         return true
       },
+      spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never
 
     await __testing.runSpawnCommand(invocation, "pi tidy up\nfix it", context(true), deps, () => false)
@@ -2115,6 +2190,7 @@ describe("Pi spawn and done session control", () => {
           messages.push(message)
           return true
         },
+        spawnRuntimes: () => SPAWN_RUNTIMES,
       } as never)
     ).rejects.toThrow("Spawn launch failed: harnessd missing")
     expect({ messages, briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({
@@ -2222,9 +2298,13 @@ describe("Pi spawn and done session control", () => {
   test("advertises spawn only on the desk, done only inside a thread, and neither without a link", () => {
     const ctx = context(true)
     const advertised = (available: boolean) =>
-      (__testing.buildRuntimeCapabilities(ctx, () => available).sessionControlCommands as string[]).filter(
-        (name) => name === "spawn" || name === "done"
-      )
+      (
+        __testing.buildRuntimeCapabilities(
+          ctx,
+          () => available,
+          () => SPAWN_RUNTIMES
+        ).sessionControlCommands as string[]
+      ).filter((name) => name === "spawn" || name === "done")
 
     const desk = advertised(true)
     const unavailable = advertised(false)
