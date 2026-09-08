@@ -6,6 +6,7 @@ import type { Pool } from "pg"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
+import { CALLS_NAMESPACE, callRoom } from "../../lib/call-routing"
 import { UserRepository } from "../workspaces"
 import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
@@ -17,13 +18,6 @@ import {
   CALL_P2P_SIGNAL_RATE_BURST,
   CALL_P2P_SIGNAL_RATE_REFILL_PER_SEC,
 } from "./config"
-
-export const CALLS_NAMESPACE = "/calls"
-
-/** Room every call member joins — roster/state fan-out target. */
-export function callRoom(callId: string): string {
-  return `call:${callId}`
-}
 
 /** Per-endpoint room — control events are addressed here, never a user room (one device, one command). */
 export function endpointRoom(callId: string, endpointId: string): string {
@@ -42,13 +36,16 @@ export function endpointIncarnationRoom(callId: string, endpointId: string, medi
  * check, not trusted.
  */
 export function broadcastRoster(io: Server, callId: string, snapshot: CallRosterSnapshot): void {
-  io.of(CALLS_NAMESPACE).to(callRoom(callId)).emit("call:roster", {
-    callId,
-    rosterVersion: snapshot.rosterVersion,
-    roster: snapshot.roster,
-    mediaTransport: snapshot.mediaTransport,
-    transportGeneration: snapshot.transportGeneration,
-  })
+  io.of(CALLS_NAMESPACE)
+    .to(callRoom(callId))
+    .emit("call:roster", {
+      callId,
+      rosterVersion: snapshot.rosterVersion,
+      roster: snapshot.roster,
+      mediaTransport: snapshot.mediaTransport,
+      transportGeneration: snapshot.transportGeneration,
+      transfer: snapshot.transfer ?? null,
+    })
 }
 
 /**
@@ -78,6 +75,7 @@ const joinSchema = z.object({
   mediaIncarnation: z.string().min(1).max(128),
   takeover: z.boolean().optional(),
   transportCapability: z.literal("p2p-v1").optional(),
+  transferCapability: z.literal("transport-transfer-v1").optional(),
 })
 
 const stateSchema = z.object({
@@ -188,7 +186,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
         ack?.({ ok: false, error: "Invalid call:join payload", code: "VALIDATION_ERROR" })
         return
       }
-      const { workspaceId, callId, mediaIncarnation, takeover, transportCapability } = parsed.data
+      const { workspaceId, callId, mediaIncarnation, takeover, transportCapability, transferCapability } = parsed.data
       try {
         await assertWorkspaceCallsEnabled(workspaceId)
         const user = await UserRepository.findByWorkosUserIdInWorkspace(pool, workspaceId, workosUserId)
@@ -203,6 +201,7 @@ export function registerCallGateway(io: Server, deps: Dependencies) {
           takeover,
           mediaIncarnation,
           transportCapability,
+          transferCapability,
         })
 
         // A rebind on a live socket (hostile/custom client) must leave the prior

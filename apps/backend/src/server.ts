@@ -802,7 +802,7 @@ export async function startServer(): Promise<ServerInstance> {
         apiBase: config.cloudflareTurn.apiBase,
       })
     : null
-  const callService = new CallService({ pool, cloudflare: cloudflareRealtime, turnIssuer })
+  const callService = new CallService({ pool, featureFlagService, cloudflare: cloudflareRealtime, turnIssuer })
   const callSweeper = createCallSweeper(callService, {
     intervalMs: Number(process.env.CALL_SWEEP_INTERVAL_MS) || CALL_SWEEP_INTERVAL_MS,
   })

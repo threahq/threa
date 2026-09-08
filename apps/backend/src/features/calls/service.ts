@@ -10,7 +10,15 @@ import {
   type ActiveCall,
   type StreamActiveCall,
   type CallTransportCapability,
+  type CallTransferCapability,
+  type CallTransportTransfer,
+  type CallTransferReadyAck,
+  type CallTransferSwitchedAck,
+  type CallTransferRestoredAck,
+  type CallMediaTransport,
+  type CallExpectedPublication,
 } from "@threahq/types"
+import { ulid } from "ulid"
 import { withTransaction, withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
@@ -31,6 +39,7 @@ import {
   StreamEventRepository,
 } from "../streams"
 import { UserRepository } from "../workspaces"
+import type { FeatureFlagService } from "../feature-flags"
 import { ActivityRepository } from "../activity"
 import { OutboxRepository } from "../../lib/outbox"
 import { checkCallAccess } from "./access"
@@ -46,11 +55,19 @@ import {
   type CallRosterEntry,
 } from "./repository"
 import {
+  CallTransferRepository,
+  CallTransportSessionRepository,
+  CallTransferObligationRepository,
+  type CallTransportTransferRow,
+  type CallTransportSessionRow,
+} from "./transfer-repository"
+import {
   EMPTY_GRACE_MS,
   ENDPOINT_LEASE_TTL_MS,
   INVITATION_TTL_MS,
   CALL_PRODUCT_CAP,
   CALL_P2P_CAP,
+  CALL_TRANSFER_RECOVERY_TIMEOUT_MS,
   type CallMode,
   type MediaState,
   type PublishedTrack,
@@ -110,6 +127,7 @@ export interface CallRosterSnapshot {
   roster: CallRosterEntry[]
   mediaTransport: "sfu" | "p2p"
   transportGeneration: number
+  transfer?: CallTransportTransfer | null
 }
 
 /**
@@ -134,9 +152,16 @@ export class CallService {
   private readonly pool: Pool
   private readonly cloudflare: RealtimeMediaApi | null
   private readonly turnIssuer: TurnCredentialIssuer | null
+  private readonly featureFlagService: FeatureFlagService
 
-  constructor(deps: { pool: Pool; cloudflare?: RealtimeMediaApi | null; turnIssuer?: TurnCredentialIssuer | null }) {
+  constructor(deps: {
+    pool: Pool
+    featureFlagService: FeatureFlagService
+    cloudflare?: RealtimeMediaApi | null
+    turnIssuer?: TurnCredentialIssuer | null
+  }) {
     this.pool = deps.pool
+    this.featureFlagService = deps.featureFlagService
     this.cloudflare = deps.cloudflare ?? null
     this.turnIssuer = deps.turnIssuer ?? null
   }
@@ -159,13 +184,37 @@ export class CallService {
       callId: params.callId,
       userId: params.userId,
     })
-    if (!access || access.call.mediaTransport !== "p2p" || access.call.transportGeneration !== params.generation) {
+    if (!access) {
       throw new HttpError("P2P signaling generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
     }
-    const [sender, recipient] = await Promise.all([
+    const [sender, recipient, senderSession, recipientSession] = await Promise.all([
       CallEndpointRepository.findById(this.pool, params.workspaceId, params.senderEndpointId),
       CallEndpointRepository.findById(this.pool, params.workspaceId, params.recipientEndpointId),
+      CallTransportSessionRepository.find(this.pool, {
+        workspaceId: params.workspaceId,
+        callId: params.callId,
+        endpointId: params.senderEndpointId,
+        generation: params.generation,
+      }),
+      CallTransportSessionRepository.find(this.pool, {
+        workspaceId: params.workspaceId,
+        callId: params.callId,
+        endpointId: params.recipientEndpointId,
+        generation: params.generation,
+      }),
     ])
+    const activeGeneration =
+      access.call.mediaTransport === "p2p" && access.call.transportGeneration === params.generation
+    const recordedGeneration =
+      senderSession?.mediaTransport === "p2p" &&
+      recipientSession?.mediaTransport === "p2p" &&
+      senderSession.endpointEpoch === params.senderEpoch &&
+      senderSession.mediaIncarnation === params.senderIncarnation &&
+      recipientSession.endpointEpoch === params.recipientEpoch &&
+      recipientSession.mediaIncarnation === params.recipientMediaIncarnation
+    if (!activeGeneration && !recordedGeneration) {
+      throw new HttpError("P2P signaling generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    }
     const senderCurrent =
       sender?.callId === params.callId &&
       sender.epoch === params.senderEpoch &&
@@ -203,9 +252,7 @@ export class CallService {
     if (!access) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
     return withTransaction(this.pool, async (client) => {
       const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
-      if (!call || call.mediaTransport !== "p2p" || call.transportGeneration !== params.generation) {
-        throw new HttpError("P2P publication generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
-      }
+      if (!call) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
       const endpoint = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
       if (
         !endpoint ||
@@ -218,10 +265,29 @@ export class CallService {
       ) {
         throw new HttpError("P2P publication endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
       }
-      if (params.revision < endpoint.publicationRevision) {
+      const activeGeneration = call.mediaTransport === "p2p" && call.transportGeneration === params.generation
+      const targetSession = activeGeneration
+        ? null
+        : await CallTransportSessionRepository.find(client, {
+            workspaceId: params.workspaceId,
+            callId: params.callId,
+            endpointId: params.endpointId,
+            generation: params.generation,
+          })
+      if (
+        !activeGeneration &&
+        (targetSession?.mediaTransport !== "p2p" ||
+          targetSession.endpointEpoch !== params.endpointEpoch ||
+          targetSession.mediaIncarnation !== params.mediaIncarnation)
+      ) {
+        throw new HttpError("P2P publication generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+      }
+      const previousTracks = targetSession?.publishedTracks ?? endpoint.publishedTracks
+      const currentRevision = targetSession?.publicationRevision ?? endpoint.publicationRevision
+      if (params.revision < currentRevision) {
         throw new HttpError("P2P publication revision is stale", { status: 409, code: "CALL_STALE_PUBLICATION" })
       }
-      if (params.revision === endpoint.publicationRevision) {
+      if (params.revision === currentRevision) {
         return {
           rosterVersion: call.rosterVersion,
           roster: await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId),
@@ -235,16 +301,27 @@ export class CallService {
         publicationId: publication.publicationId,
         transportGeneration: params.generation,
       }))
-      const updated = await CallEndpointRepository.setPublishedTracks(client, {
-        workspaceId: params.workspaceId,
-        id: params.endpointId,
-        mediaIncarnation: params.mediaIncarnation,
-        publishedTracks,
-        publicationRevision: params.revision,
-      })
+      const updated = targetSession
+        ? await CallTransportSessionRepository.setPublications(client, {
+            workspaceId: params.workspaceId,
+            id: targetSession.id,
+            endpointEpoch: params.endpointEpoch,
+            mediaIncarnation: params.mediaIncarnation,
+            generation: params.generation,
+            revision: params.revision,
+            tracks: publishedTracks,
+          })
+        : await CallEndpointRepository.setPublishedTracks(client, {
+            workspaceId: params.workspaceId,
+            id: params.endpointId,
+            mediaIncarnation: params.mediaIncarnation,
+            publishedTracks,
+            publicationRevision: params.revision,
+          })
       if (!updated)
         throw new HttpError("P2P publication endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      await this.reconcileTransferPublications(client, call, endpoint, previousTracks, publishedTracks, params.revision)
       return {
         rosterVersion: rosterVersion ?? call.rosterVersion,
         roster: await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId),
@@ -260,10 +337,26 @@ export class CallService {
     userId: string
     endpointId: string
     mediaIncarnation: string
+    generation?: number
   }): Promise<TurnCredentials> {
     const { call, endpoint } = await this.fenceEndpoint(params)
+    const generation = params.generation ?? call.transportGeneration
+    const targetSession =
+      call.transportGeneration === generation
+        ? null
+        : await CallTransportSessionRepository.find(this.pool, {
+            workspaceId: params.workspaceId,
+            callId: params.callId,
+            endpointId: params.endpointId,
+            generation,
+          })
+    const authorizedGeneration =
+      (call.mediaTransport === "p2p" && call.transportGeneration === generation) ||
+      (targetSession?.mediaTransport === "p2p" &&
+        targetSession.endpointEpoch === endpoint.epoch &&
+        targetSession.mediaIncarnation === params.mediaIncarnation)
     if (
-      call.mediaTransport !== "p2p" ||
+      !authorizedGeneration ||
       endpoint.transportCapability !== "p2p-v1" ||
       endpoint.leaseExpiresAt.getTime() <= Date.now()
     ) {
@@ -273,6 +366,717 @@ export class CallService {
       throw new HttpError("TURN credentials are not configured", { status: 503, code: "CALL_TURN_UNAVAILABLE" })
     }
     return this.turnIssuer.issue()
+  }
+
+  async requestTransportTransfer(params: {
+    workspaceId: string
+    callId: string
+    userId: string
+    endpointId: string
+    target: CallMediaTransport
+    idempotencyKey: string
+  }): Promise<CallRosterSnapshot> {
+    if (
+      params.target === "p2p" &&
+      (await this.featureFlagService.getWorkspaceFlag(params.workspaceId, "callsP2p")) !== "on"
+    ) {
+      throw new HttpError("P2P calls are not enabled", { status: 404, code: "CALL_P2P_UNAVAILABLE" })
+    }
+    await checkCallAccess(this.pool, params).then((access) => {
+      if (!access) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+    })
+    await withTransaction(this.pool, async (client) => {
+      const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      if (!call || call.status === "ended")
+        throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+      const requester = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+      const requesterParticipant = await CallParticipantRepository.findByUser(
+        client,
+        params.workspaceId,
+        params.callId,
+        params.userId
+      )
+      if (
+        !requester ||
+        !requesterParticipant ||
+        requester.participantId !== requesterParticipant.id ||
+        requester.callId !== call.id ||
+        requester.status !== "connected" ||
+        requester.leaseExpiresAt.getTime() <= Date.now() ||
+        requester.transferCapability !== "transport-transfer-v1"
+      ) {
+        throw new HttpError("Transfer requires a capable live endpoint", {
+          status: 403,
+          code: "CALL_TRANSFER_UNAVAILABLE",
+        })
+      }
+      const duplicate = await CallTransferRepository.findByIdempotencyKey(
+        client,
+        params.workspaceId,
+        call.id,
+        params.idempotencyKey
+      )
+      if (duplicate) return
+      const unsettled = await CallTransferRepository.findUnsettled(client, params.workspaceId, call.id)
+      if (unsettled) {
+        if (unsettled.targetTransport === params.target) return
+        throw new HttpError("Another transport transfer is active", { status: 409, code: "CALL_TRANSFER_CONFLICT" })
+      }
+      if (call.mediaTransport === params.target) {
+        throw new HttpError("Call already uses this transport", { status: 409, code: "CALL_TRANSPORT_ALREADY_ACTIVE" })
+      }
+      const endpoints = await CallEndpointRepository.listLiveByCall(client, params.workspaceId, call.id)
+      if (endpoints.some((endpoint) => endpoint.transferCapability !== "transport-transfer-v1")) {
+        throw new HttpError("A participant must update before transfer", {
+          status: 409,
+          code: "CALL_TRANSFER_CAPABILITY_REQUIRED",
+        })
+      }
+      const generation =
+        (await CallTransferRepository.maxGeneration(client, params.workspaceId, call.id, call.transportGeneration)) + 1
+      const transferId = `callxfer_${ulid()}`
+      const deadline = new Date(Date.now() + 30_000)
+      const row = await CallTransferRepository.insert(client, {
+        id: transferId,
+        workspaceId: params.workspaceId,
+        callId: call.id,
+        generation,
+        sourceGeneration: call.transportGeneration,
+        sourceTransport: call.mediaTransport,
+        targetGeneration: generation,
+        targetTransport: params.target,
+        membershipRevision: call.rosterVersion,
+        phase: "preparing",
+        cause: "explicit",
+        idempotencyKey: params.idempotencyKey,
+        requestedBy: params.userId,
+        prepareDeadline: deadline,
+        recoveryDeadline: null,
+      })
+      for (const endpoint of endpoints) {
+        if (!endpoint.mediaIncarnation) continue
+        const source = await CallTransportSessionRepository.find(client, {
+          workspaceId: params.workspaceId,
+          callId: call.id,
+          endpointId: endpoint.id,
+          generation: call.transportGeneration,
+        })
+        if (!source) {
+          await CallTransportSessionRepository.insert(client, {
+            id: `calltsess_${ulid()}`,
+            workspaceId: params.workspaceId,
+            callId: call.id,
+            endpointId: endpoint.id,
+            endpointEpoch: endpoint.epoch,
+            mediaIncarnation: endpoint.mediaIncarnation,
+            transportGeneration: call.transportGeneration,
+            mediaTransport: call.mediaTransport,
+            status: "active",
+            providerSessionId: endpoint.cfSessionId,
+            publicationRevision: endpoint.publicationRevision,
+            publishedTracks: endpoint.publishedTracks,
+          })
+        }
+        await CallTransportSessionRepository.insert(client, {
+          id: `calltsess_${ulid()}`,
+          workspaceId: params.workspaceId,
+          callId: call.id,
+          endpointId: endpoint.id,
+          endpointEpoch: endpoint.epoch,
+          mediaIncarnation: endpoint.mediaIncarnation,
+          transportGeneration: generation,
+          mediaTransport: params.target,
+          status: "preparing",
+          providerSessionId: null,
+          publicationRevision: 0,
+          publishedTracks: [],
+        })
+        const expected = endpoints.flatMap((publisher) =>
+          publisher.id === endpoint.id || !publisher.mediaIncarnation
+            ? []
+            : publisher.publishedTracks
+                .filter((track) => track.kind === "mic" || track.kind === "camera")
+                .map((track) => ({
+                  endpointId: publisher.id,
+                  endpointEpoch: publisher.epoch,
+                  mediaIncarnation: publisher.mediaIncarnation!,
+                  kind: track.kind as "mic" | "camera",
+                  publicationId: track.publicationId ?? track.trackName,
+                  publicationRevision: publisher.publicationRevision,
+                  ...(track.kind === "mic" ? { muted: publisher.mediaState.muted ?? false } : {}),
+                }))
+        )
+        await CallTransferObligationRepository.insert(client, {
+          id: `callxob_${ulid()}`,
+          workspaceId: params.workspaceId,
+          transferId,
+          callId: call.id,
+          endpointId: endpoint.id,
+          endpointEpoch: endpoint.epoch,
+          mediaIncarnation: endpoint.mediaIncarnation,
+          membershipRevision: call.rosterVersion,
+          trackRevision: endpoint.publicationRevision,
+          expectedPublications: expected,
+        })
+      }
+      await this.emitTransferChanged(client, call.streamId, row)
+    })
+    return this.getRosterSnapshot(params.workspaceId, params.callId)
+  }
+
+  async acknowledgeTransferReady(
+    params: { workspaceId: string; callId: string; userId: string } & CallTransferReadyAck
+  ): Promise<CallRosterSnapshot> {
+    await withTransaction(this.pool, async (client) => {
+      const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
+      if (
+        !call ||
+        !transfer ||
+        transfer.callId !== call.id ||
+        transfer.targetGeneration !== params.generation ||
+        (transfer.phase !== "preparing" && transfer.phase !== "committing")
+      )
+        throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const endpoint = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+      const participant = await CallParticipantRepository.findByUser(
+        client,
+        params.workspaceId,
+        params.callId,
+        params.userId
+      )
+      if (
+        !endpoint ||
+        !participant ||
+        endpoint.participantId !== participant.id ||
+        endpoint.callId !== call.id ||
+        endpoint.epoch !== params.endpointEpoch ||
+        endpoint.mediaIncarnation !== params.mediaIncarnation ||
+        endpoint.status !== "connected" ||
+        endpoint.leaseExpiresAt.getTime() <= Date.now() ||
+        endpoint.transferCapability !== "transport-transfer-v1"
+      )
+        throw new HttpError("Transfer endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+      const targetSession = await CallTransportSessionRepository.find(client, {
+        workspaceId: params.workspaceId,
+        callId: params.callId,
+        endpointId: params.endpointId,
+        generation: params.generation,
+      })
+      const currentObligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
+      const obligation = currentObligations.find((item) => item.endpointId === params.endpointId)
+      if (
+        !targetSession ||
+        targetSession.publicationRevision !== params.trackRevision ||
+        (targetSession.mediaTransport === "sfu" && !targetSession.providerSessionId)
+      ) {
+        throw new HttpError("Target media session is not ready", { status: 409, code: "CALL_TARGET_NOT_READY" })
+      }
+      if (!obligation || !this.publicationsMatch(obligation.expectedPublications, params.readyPublications)) {
+        throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      }
+      const updated = await CallTransferObligationRepository.acknowledgeReady(client, {
+        ...params,
+        readyPublications: params.readyPublications,
+      })
+      if (!updated)
+        throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
+      const allReady = obligations.every(
+        (item) => item.ownPublicationsReady && this.publicationsMatch(item.expectedPublications, item.readyPublications)
+      )
+      if (allReady && transfer.phase === "preparing") {
+        const committing = await CallTransferRepository.transition(client, {
+          workspaceId: params.workspaceId,
+          id: transfer.id,
+          generation: transfer.generation,
+          from: "preparing",
+          version: transfer.version,
+          to: "committing",
+          recoveryDeadline: new Date(Date.now() + CALL_TRANSFER_RECOVERY_TIMEOUT_MS),
+        })
+        if (committing) await this.emitTransferChanged(client, call.streamId, committing)
+      }
+    })
+    return this.getRosterSnapshot(params.workspaceId, params.callId)
+  }
+
+  async acknowledgeTransferSwitched(
+    params: { workspaceId: string; callId: string; userId: string } & CallTransferSwitchedAck
+  ): Promise<CallRosterSnapshot> {
+    const providerSessionIds = await withTransaction(this.pool, async (client) => {
+      const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
+      if (
+        !call ||
+        !transfer ||
+        transfer.callId !== call.id ||
+        transfer.targetGeneration !== params.generation ||
+        !["committing", "draining", "completed"].includes(transfer.phase)
+      )
+        throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const endpoint = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+      const participant = await CallParticipantRepository.findByUser(
+        client,
+        params.workspaceId,
+        params.callId,
+        params.userId
+      )
+      if (
+        !endpoint ||
+        !participant ||
+        endpoint.participantId !== participant.id ||
+        endpoint.callId !== call.id ||
+        endpoint.epoch !== params.endpointEpoch ||
+        endpoint.mediaIncarnation !== params.mediaIncarnation ||
+        endpoint.status !== "connected" ||
+        endpoint.leaseExpiresAt.getTime() <= Date.now() ||
+        endpoint.transferCapability !== "transport-transfer-v1"
+      )
+        throw new HttpError("Transfer endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+      const updated = await CallTransferObligationRepository.acknowledgeSwitched(client, params)
+      if (!updated)
+        throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
+      if (transfer.phase === "committing" && obligations.every((item) => item.switched)) {
+        const committed = await CallRepository.commitTransportGeneration(client, {
+          workspaceId: params.workspaceId,
+          id: call.id,
+          sourceGeneration: transfer.sourceGeneration,
+          targetGeneration: transfer.targetGeneration,
+          targetTransport: transfer.targetTransport,
+        })
+        if (!committed)
+          throw new HttpError("Transfer generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+        await CallTransportSessionRepository.projectGenerationToEndpoints(client, {
+          workspaceId: params.workspaceId,
+          callId: call.id,
+          generation: transfer.targetGeneration,
+        })
+        await CallTransportSessionRepository.setStatusForGeneration(client, {
+          workspaceId: params.workspaceId,
+          callId: call.id,
+          generation: transfer.targetGeneration,
+          from: ["preparing", "ready"],
+          to: "active",
+        })
+        await CallTransportSessionRepository.setStatusForGeneration(client, {
+          workspaceId: params.workspaceId,
+          callId: call.id,
+          generation: transfer.sourceGeneration,
+          from: ["active", "ready"],
+          to: "draining",
+        })
+        const draining = await CallTransferRepository.transition(client, {
+          workspaceId: params.workspaceId,
+          id: transfer.id,
+          generation: transfer.generation,
+          from: "committing",
+          version: transfer.version,
+          to: "draining",
+        })
+        if (draining) {
+          await CallTransferObligationRepository.markAllSourceReleased(client, params.workspaceId, transfer.id)
+          const closed = await CallTransportSessionRepository.closeGeneration(client, {
+            workspaceId: params.workspaceId,
+            callId: call.id,
+            generation: transfer.sourceGeneration,
+          })
+          const completed = await CallTransferRepository.transition(client, {
+            workspaceId: params.workspaceId,
+            id: transfer.id,
+            generation: transfer.generation,
+            from: "draining",
+            version: draining.version,
+            to: "completed",
+          })
+          if (completed) await this.emitTransferChanged(client, call.streamId, completed)
+          return closed.flatMap((session) => (session.providerSessionId ? [session.providerSessionId] : []))
+        }
+      }
+      return [] as string[]
+    })
+    for (const sessionId of new Set(providerSessionIds)) await this.bestEffortCloseSession(sessionId)
+    return this.getRosterSnapshot(params.workspaceId, params.callId)
+  }
+
+  async acknowledgeTransferRestored(
+    params: { workspaceId: string; callId: string; userId: string } & CallTransferRestoredAck
+  ): Promise<CallRosterSnapshot> {
+    const providerSessionIds = await withTransaction(this.pool, async (client) => {
+      const call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+      const transfer = await CallTransferRepository.findById(client, params.workspaceId, params.transferId)
+      if (
+        !call ||
+        !transfer ||
+        transfer.callId !== call.id ||
+        transfer.targetGeneration !== params.generation ||
+        (transfer.phase !== "aborting" && transfer.phase !== "failed")
+      ) {
+        throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      }
+      const endpoint = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+      const participant = await CallParticipantRepository.findByUser(
+        client,
+        params.workspaceId,
+        params.callId,
+        params.userId
+      )
+      if (
+        !endpoint ||
+        !participant ||
+        endpoint.participantId !== participant.id ||
+        endpoint.callId !== call.id ||
+        endpoint.epoch !== params.endpointEpoch ||
+        endpoint.mediaIncarnation !== params.mediaIncarnation ||
+        endpoint.status !== "connected" ||
+        endpoint.leaseExpiresAt.getTime() <= Date.now() ||
+        endpoint.transferCapability !== "transport-transfer-v1"
+      ) {
+        throw new HttpError("Transfer endpoint is stale", { status: 409, code: "CALL_STALE_ENDPOINT" })
+      }
+      const updated = await CallTransferObligationRepository.acknowledgeRestored(client, params)
+      if (!updated)
+        throw new HttpError("Transfer acknowledgement is stale", { status: 409, code: "CALL_STALE_TRANSFER" })
+      const obligations = await CallTransferObligationRepository.list(client, params.workspaceId, transfer.id)
+      const liveEndpoints = await CallEndpointRepository.listLiveByCall(client, params.workspaceId, params.callId)
+      const allCurrentRestored = liveEndpoints.every((current) =>
+        obligations.some(
+          (item) =>
+            item.endpointId === current.id &&
+            item.endpointEpoch === current.epoch &&
+            item.mediaIncarnation === current.mediaIncarnation &&
+            item.restoredToSource
+        )
+      )
+      if (transfer.phase !== "aborting" || !allCurrentRestored) return [] as string[]
+      const closed = await CallTransportSessionRepository.closeGeneration(client, {
+        workspaceId: params.workspaceId,
+        callId: params.callId,
+        generation: transfer.targetGeneration,
+      })
+      const failed = await CallTransferRepository.transition(client, {
+        workspaceId: params.workspaceId,
+        id: transfer.id,
+        generation: transfer.generation,
+        from: "aborting",
+        version: transfer.version,
+        to: "failed",
+      })
+      if (failed) await this.emitTransferChanged(client, call.streamId, failed)
+      return closed.flatMap((session) => (session.providerSessionId ? [session.providerSessionId] : []))
+    })
+    for (const sessionId of new Set(providerSessionIds)) await this.bestEffortCloseSession(sessionId)
+    return this.getRosterSnapshot(params.workspaceId, params.callId)
+  }
+
+  async sweepTransportTransfers(now = new Date()): Promise<void> {
+    const expired = await CallTransferRepository.listExpired(this.pool, now)
+    for (const candidate of expired) {
+      const cleanup = await withTransaction(this.pool, async (client) => {
+        const call = await CallRepository.findByIdForUpdate(client, candidate.workspaceId, candidate.callId)
+        const current = await CallTransferRepository.findById(client, candidate.workspaceId, candidate.id)
+        if (!call || !current || current.version !== candidate.version || current.phase !== candidate.phase)
+          return [] as string[]
+        if (current.phase === "aborting") {
+          const timedOut = await CallTransferRepository.markRecoveryTimedOut(client, {
+            workspaceId: current.workspaceId,
+            id: current.id,
+            generation: current.generation,
+            version: current.version,
+          })
+          if (timedOut) await this.emitTransferChanged(client, call.streamId, timedOut)
+          return [] as string[]
+        }
+        if (current.phase === "committing" || current.phase === "draining") {
+          const aborting = await CallTransferRepository.transition(client, {
+            workspaceId: current.workspaceId,
+            id: current.id,
+            generation: current.generation,
+            from: current.phase,
+            version: current.version,
+            to: "aborting",
+            failureCode: "SWITCH_TIMEOUT",
+            recoveryCode: "SOURCE_RESTORE_REQUIRED",
+            recoveryDeadline: new Date(now.getTime() + CALL_TRANSFER_RECOVERY_TIMEOUT_MS),
+          })
+          if (aborting) await this.emitTransferChanged(client, call.streamId, aborting)
+          return [] as string[]
+        }
+        const aborting = await CallTransferRepository.transition(client, {
+          workspaceId: current.workspaceId,
+          id: current.id,
+          generation: current.generation,
+          from: "preparing",
+          version: current.version,
+          to: "aborting",
+          failureCode: "PREPARE_TIMEOUT",
+          recoveryCode: "SOURCE_RETAINED",
+        })
+        if (!aborting) return [] as string[]
+        const closed = await CallTransportSessionRepository.closeGeneration(client, {
+          workspaceId: current.workspaceId,
+          callId: current.callId,
+          generation: current.targetGeneration,
+        })
+        const failed = await CallTransferRepository.transition(client, {
+          workspaceId: current.workspaceId,
+          id: current.id,
+          generation: current.generation,
+          from: "aborting",
+          version: aborting.version,
+          to: "failed",
+        })
+        if (failed) await this.emitTransferChanged(client, call.streamId, failed)
+        return closed.map((session) => session.providerSessionId).filter((id): id is string => Boolean(id))
+      })
+      for (const sessionId of cleanup) await this.bestEffortCloseSession(sessionId)
+    }
+  }
+
+  private async reconcileTransferPublications(
+    client: PoolClient,
+    call: Call,
+    publisher: CallEndpoint,
+    previous: PublishedTrack[],
+    current: PublishedTrack[],
+    publicationRevision: number
+  ): Promise<void> {
+    const transfer = await CallTransferRepository.findUnsettled(client, call.workspaceId, call.id)
+    if (!transfer || (transfer.phase !== "preparing" && transfer.phase !== "committing") || !publisher.mediaIncarnation)
+      return
+    const changedKinds = (["mic", "camera"] as const).filter(
+      (kind) =>
+        JSON.stringify(previous.filter((track) => track.kind === kind)) !==
+        JSON.stringify(current.filter((track) => track.kind === kind))
+    )
+    if (changedKinds.length === 0) return
+    let revised = transfer
+    if (transfer.phase === "committing") {
+      const preparing = await CallTransferRepository.transition(client, {
+        workspaceId: call.workspaceId,
+        id: transfer.id,
+        generation: transfer.generation,
+        from: "committing",
+        version: transfer.version,
+        to: "preparing",
+      })
+      if (!preparing) return
+      revised = preparing
+    }
+    for (const kind of changedKinds) {
+      const expected = current
+        .filter((track) => track.kind === kind)
+        .map((track) => ({
+          endpointId: publisher.id,
+          endpointEpoch: publisher.epoch,
+          mediaIncarnation: publisher.mediaIncarnation!,
+          kind,
+          publicationId: track.publicationId ?? track.trackName,
+          publicationRevision,
+          ...(kind === "mic" ? { muted: publisher.mediaState.muted ?? false } : {}),
+        }))
+      await CallTransferObligationRepository.revisePublisherKind(client, {
+        workspaceId: call.workspaceId,
+        transferId: revised.id,
+        publisherEndpointId: publisher.id,
+        kind,
+        expected,
+        publisherTrackRevision: publicationRevision,
+      })
+    }
+    const touched = await CallTransferRepository.touch(client, {
+      workspaceId: call.workspaceId,
+      id: revised.id,
+      generation: revised.generation,
+      version: revised.version,
+    })
+    if (touched) await this.emitTransferChanged(client, call.streamId, touched)
+  }
+
+  private async reconcileTransferMute(client: PoolClient, call: Call, publisher: CallEndpoint): Promise<void> {
+    let transfer = await CallTransferRepository.findUnsettled(client, call.workspaceId, call.id)
+    if (!transfer || (transfer.phase !== "preparing" && transfer.phase !== "committing") || !publisher.mediaIncarnation)
+      return
+    if (transfer.phase === "committing") {
+      const preparing = await CallTransferRepository.transition(client, {
+        workspaceId: call.workspaceId,
+        id: transfer.id,
+        generation: transfer.generation,
+        from: "committing",
+        version: transfer.version,
+        to: "preparing",
+      })
+      if (!preparing) return
+      transfer = preparing
+    }
+    const expected = publisher.publishedTracks
+      .filter((track) => track.kind === "mic")
+      .map((track) => ({
+        endpointId: publisher.id,
+        endpointEpoch: publisher.epoch,
+        mediaIncarnation: publisher.mediaIncarnation!,
+        kind: "mic" as const,
+        publicationId: track.publicationId ?? track.trackName,
+        publicationRevision: publisher.publicationRevision,
+        muted: publisher.mediaState.muted ?? false,
+      }))
+    await CallTransferObligationRepository.revisePublisherKind(client, {
+      workspaceId: call.workspaceId,
+      transferId: transfer.id,
+      publisherEndpointId: publisher.id,
+      kind: "mic",
+      expected,
+      publisherTrackRevision: publisher.publicationRevision,
+    })
+    const touched = await CallTransferRepository.touch(client, {
+      workspaceId: call.workspaceId,
+      id: transfer.id,
+      generation: transfer.generation,
+      version: transfer.version,
+    })
+    if (touched) await this.emitTransferChanged(client, call.streamId, touched)
+  }
+
+  private async reconcileTransferMembership(client: PoolClient, call: Call, membershipRevision: number): Promise<void> {
+    let transfer = await CallTransferRepository.findUnsettled(client, call.workspaceId, call.id)
+    if (!transfer || transfer.phase === "aborting") return
+    if (transfer.phase === "committing") {
+      const preparing = await CallTransferRepository.transition(client, {
+        workspaceId: call.workspaceId,
+        id: transfer.id,
+        generation: transfer.generation,
+        from: "committing",
+        version: transfer.version,
+        to: "preparing",
+      })
+      if (!preparing) return
+      transfer = preparing
+    }
+    const revised = await CallTransferRepository.updateMembershipRevision(client, {
+      workspaceId: call.workspaceId,
+      id: transfer.id,
+      generation: transfer.generation,
+      version: transfer.version,
+      membershipRevision,
+    })
+    if (!revised) return
+    const endpoints = await CallEndpointRepository.listLiveByCall(client, call.workspaceId, call.id)
+    const sessions = await CallTransportSessionRepository.listByCall(client, call.workspaceId, call.id)
+    for (const mediaSession of sessions) {
+      const endpoint = endpoints.find((item) => item.id === mediaSession.endpointId)
+      if (!endpoint || endpoint.mediaIncarnation !== mediaSession.mediaIncarnation) {
+        await CallTransportSessionRepository.closeForEndpoint(client, {
+          workspaceId: call.workspaceId,
+          callId: call.id,
+          endpointId: mediaSession.endpointId,
+          exceptIncarnation: endpoint?.mediaIncarnation ?? undefined,
+        })
+      }
+    }
+    for (const endpoint of endpoints) {
+      if (!endpoint.mediaIncarnation) continue
+      const generations = [
+        { generation: revised.sourceGeneration, transport: revised.sourceTransport, status: "active" as const },
+        {
+          generation: revised.targetGeneration,
+          transport: revised.targetTransport,
+          status: revised.phase === "draining" ? ("active" as const) : ("preparing" as const),
+        },
+      ]
+      for (const item of generations) {
+        const existing = await CallTransportSessionRepository.find(client, {
+          workspaceId: call.workspaceId,
+          callId: call.id,
+          endpointId: endpoint.id,
+          generation: item.generation,
+        })
+        if (!existing)
+          await CallTransportSessionRepository.insert(client, {
+            id: `calltsess_${ulid()}`,
+            workspaceId: call.workspaceId,
+            callId: call.id,
+            endpointId: endpoint.id,
+            endpointEpoch: endpoint.epoch,
+            mediaIncarnation: endpoint.mediaIncarnation,
+            transportGeneration: item.generation,
+            mediaTransport: item.transport,
+            status: item.status,
+            providerSessionId: item.generation === call.transportGeneration ? endpoint.cfSessionId : null,
+            publicationRevision: item.generation === call.transportGeneration ? endpoint.publicationRevision : 0,
+            publishedTracks:
+              item.generation === call.transportGeneration
+                ? endpoint.publishedTracks.map((track) => ({ ...track, transportGeneration: item.generation }))
+                : [],
+          })
+      }
+    }
+    await CallTransferObligationRepository.replaceBarrier(client, call.workspaceId, revised.id)
+    if (revised.phase !== "draining") {
+      for (const endpoint of endpoints) {
+        if (!endpoint.mediaIncarnation) continue
+        const expected = endpoints.flatMap((publisher) =>
+          publisher.id === endpoint.id || !publisher.mediaIncarnation
+            ? []
+            : publisher.publishedTracks
+                .filter((track) => track.kind === "mic" || track.kind === "camera")
+                .map((track) => ({
+                  endpointId: publisher.id,
+                  endpointEpoch: publisher.epoch,
+                  mediaIncarnation: publisher.mediaIncarnation!,
+                  kind: track.kind as "mic" | "camera",
+                  publicationId: track.publicationId ?? track.trackName,
+                  publicationRevision: publisher.publicationRevision,
+                  ...(track.kind === "mic" ? { muted: publisher.mediaState.muted ?? false } : {}),
+                }))
+        )
+        await CallTransferObligationRepository.insert(client, {
+          id: `callxob_${ulid()}`,
+          workspaceId: call.workspaceId,
+          transferId: revised.id,
+          callId: call.id,
+          endpointId: endpoint.id,
+          endpointEpoch: endpoint.epoch,
+          mediaIncarnation: endpoint.mediaIncarnation,
+          membershipRevision,
+          trackRevision: endpoint.publicationRevision,
+          expectedPublications: expected,
+        })
+      }
+    }
+    await this.emitTransferChanged(client, call.streamId, revised)
+  }
+
+  private publicationsMatch(expected: CallExpectedPublication[], ready: CallExpectedPublication[]): boolean {
+    if (expected.length !== ready.length) return false
+    const publicationKey = (publication: CallExpectedPublication) =>
+      JSON.stringify([
+        publication.endpointId,
+        publication.endpointEpoch,
+        publication.mediaIncarnation,
+        publication.kind,
+        publication.publicationId,
+        publication.publicationRevision,
+        publication.muted ?? null,
+      ])
+    const keys = new Set(ready.map(publicationKey))
+    return expected.every((item) => keys.has(publicationKey(item)))
+  }
+
+  private async emitTransferChanged(
+    client: PoolClient,
+    streamId: string,
+    transfer: CallTransportTransferRow
+  ): Promise<void> {
+    await OutboxRepository.insert(client, "call:transport_transfer_changed", {
+      workspaceId: transfer.workspaceId,
+      streamId,
+      callId: transfer.callId,
+      transferId: transfer.id,
+      generation: transfer.generation,
+      version: transfer.version,
+      phase: transfer.phase,
+    })
   }
 
   /** Fail loudly (503) when the CF media plane is not configured (INV-11). */
@@ -301,6 +1105,7 @@ export class CallService {
       mediaIncarnation?: string
       expectedCallId?: string
       transportCapability?: CallTransportCapability
+      transferCapability?: CallTransferCapability
       allowP2p?: boolean
       /** Displace this user's other device rather than 409 — see {@link admitEndpoint}. */
       takeover?: boolean
@@ -353,6 +1158,7 @@ export class CallService {
         mediaIncarnation: params.mediaIncarnation,
         takeover: params.takeover,
         transportCapability: params.transportCapability,
+        transferCapability: params.transferCapability,
       })
 
       // A newly created call is a slotted broadcast row on the host stream
@@ -437,6 +1243,7 @@ export class CallService {
       takeover?: boolean
       mediaIncarnation?: string
       transportCapability?: CallTransportCapability
+      transferCapability?: CallTransferCapability
     },
     tx?: PoolClient
   ): Promise<JoinCallResult> {
@@ -480,6 +1287,7 @@ export class CallService {
       takeover?: boolean
       mediaIncarnation?: string
       transportCapability?: CallTransportCapability
+      transferCapability?: CallTransferCapability
     }
   ): Promise<JoinCallResult & { closedSessionIds: string[] }> {
     let call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
@@ -534,7 +1342,8 @@ export class CallService {
     // A join is a membership change: bump the roster version in the same tx as
     // the membership/endpoint writes so the snapshot the gateway reads after
     // commit is strictly newer than what peers hold (INV-66).
-    await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+    const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+    await this.reconcileTransferMembership(client, call, rosterVersion ?? call.rosterVersion + 1)
     await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
     return {
@@ -567,6 +1376,7 @@ export class CallService {
         callId: string
         takeover?: boolean
         transportCapability?: CallTransportCapability
+        transferCapability?: CallTransferCapability
       }
       participant: CallParticipant
       live: CallEndpoint | null
@@ -597,6 +1407,7 @@ export class CallService {
           id: live.id,
           mediaIncarnation: incarnation,
           transportCapability: params.transportCapability ?? null,
+          transferCapability: params.transferCapability ?? null,
           leaseExpiresAt,
         })
         if (rebound) {
@@ -604,7 +1415,15 @@ export class CallService {
           // capture the OLD session from the pre-rebind row (the call-row lock held
           // by the join serializes this read). A same-incarnation reconnect keeps
           // the session, so nothing is torn down.
-          if (live.cfSessionId && live.mediaIncarnation !== incarnation) closedCfSessionId = live.cfSessionId
+          if (live.mediaIncarnation !== incarnation) {
+            if (live.cfSessionId) closedCfSessionId = live.cfSessionId
+            await CallTransportSessionRepository.closeForEndpoint(client, {
+              workspaceId: params.workspaceId,
+              callId: params.callId,
+              endpointId: live.id,
+              exceptIncarnation: incarnation,
+            })
+          }
           return { endpoint: rebound, closedCfSessionId, supersededEndpointId }
         }
         // Lost the row to a concurrent close between read and CAS; fall through to a fresh mint.
@@ -631,6 +1450,7 @@ export class CallService {
       epoch: maxEpoch + 1,
       mediaIncarnation: incarnation,
       transportCapability: params.transportCapability ?? null,
+      transferCapability: params.transferCapability ?? null,
       leaseExpiresAt,
     })
     return { endpoint, closedCfSessionId, supersededEndpointId }
@@ -709,11 +1529,20 @@ export class CallService {
 
       // A leave is a membership change: bump the roster version in the same tx as
       // the endpoint-close/participant-left writes (INV-66).
-      await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      await this.reconcileTransferMembership(client, call, rosterVersion ?? call.rosterVersion + 1)
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
-      return { call: updated, closedSessionIds: closed?.cfSessionId ? [closed.cfSessionId] : [] }
+      const transferSessions =
+        updated.status === "ended"
+          ? await CallTransportSessionRepository.closeAllForCall(client, params.workspaceId, params.callId)
+          : []
+      const closedSessionIds = [
+        closed?.cfSessionId,
+        ...transferSessions.map((session) => session.providerSessionId),
+      ].filter((id): id is string => Boolean(id))
+      return { call: updated, closedSessionIds: [...new Set(closedSessionIds)] }
     })
     // Close the reaped endpoint's CF session after the tx commits (INV-41).
     if (!tx) {
@@ -787,12 +1616,20 @@ export class CallService {
         await this.settleCancelledRings(client, cancelled)
       }
 
-      await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      await this.reconcileTransferMembership(client, call, rosterVersion ?? call.rosterVersion + 1)
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const updated = (await CallRepository.findById(client, params.workspaceId, params.callId)) ?? call
-      const closedSessionIds = closed.map((e) => e.cfSessionId).filter((id): id is string => !!id)
-      return { call: updated, closedSessionIds }
+      const transferSessions =
+        updated.status === "ended"
+          ? await CallTransportSessionRepository.closeAllForCall(client, params.workspaceId, params.callId)
+          : []
+      const closedSessionIds = [
+        ...closed.map((e) => e.cfSessionId),
+        ...transferSessions.map((session) => session.providerSessionId),
+      ].filter((id): id is string => Boolean(id))
+      return { call: updated, closedSessionIds: [...new Set(closedSessionIds)] }
     })
     // Close every reaped endpoint's CF session after the tx commits (INV-41).
     if (!tx) {
@@ -980,11 +1817,56 @@ export class CallService {
         throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
       }
       const roster = await CallParticipantRepository.listRoster(client, workspaceId, targetCallId)
+      const transfer = await CallTransferRepository.findLatest(client, workspaceId, targetCallId)
+      const sessions = transfer
+        ? await CallTransportSessionRepository.listByCall(client, workspaceId, targetCallId)
+        : []
+      const obligations = transfer ? await CallTransferObligationRepository.list(client, workspaceId, transfer.id) : []
       return {
         rosterVersion: call.rosterVersion,
         roster,
         mediaTransport: call.mediaTransport,
         transportGeneration: call.transportGeneration,
+        transfer: transfer
+          ? {
+              id: transfer.id,
+              version: transfer.version,
+              source: { generation: transfer.sourceGeneration, transport: transfer.sourceTransport },
+              target: { generation: transfer.targetGeneration, transport: transfer.targetTransport },
+              membershipRevision: transfer.membershipRevision,
+              phase: transfer.phase,
+              cause: transfer.cause,
+              failureCode: transfer.failureCode,
+              recoveryCode: transfer.recoveryCode,
+              sessions: sessions.map((item) => ({
+                id: item.id,
+                endpointId: item.endpointId,
+                endpointEpoch: item.endpointEpoch,
+                mediaIncarnation: item.mediaIncarnation,
+                generation: item.transportGeneration,
+                transport: item.mediaTransport,
+                status: item.status,
+                providerSessionId: item.providerSessionId,
+                publicationRevision: item.publicationRevision,
+                publishedTracks: item.publishedTracks,
+              })),
+              obligations: obligations.map((item) => ({
+                endpointId: item.endpointId,
+                endpointEpoch: item.endpointEpoch,
+                mediaIncarnation: item.mediaIncarnation,
+                membershipRevision: item.membershipRevision,
+                trackRevision: item.trackRevision,
+                expectedPublications:
+                  item.expectedPublications as CallTransportTransfer["obligations"][number]["expectedPublications"],
+                readyPublications:
+                  item.readyPublications as CallTransportTransfer["obligations"][number]["readyPublications"],
+                ownPublicationsReady: item.ownPublicationsReady,
+                switched: item.switched,
+                sourceReleased: item.sourceReleased,
+                restoredToSource: item.restoredToSource,
+              })),
+            }
+          : null,
       }
     })
   }
@@ -1027,6 +1909,9 @@ export class CallService {
         throw new HttpError("Endpoint is no longer live", { status: 409, code: "CALL_ENDPOINT_NOT_LIVE" })
       }
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      if (endpoint.mediaState.muted !== updated.mediaState.muted) {
+        await this.reconcileTransferMute(client, call, updated)
+      }
       const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId)
       return {
         rosterVersion: rosterVersion ?? call.rosterVersion,
@@ -1051,11 +1936,21 @@ export class CallService {
     userId: string
     endpointId: string
     mediaIncarnation: string
+    generation?: number
+    sessionId?: string | null
   }): Promise<{ cfSessionId: string; sessionDescription?: SessionDescription; idempotent: boolean }> {
     const cf = this.requireCloudflare()
-    const { endpoint } = await this.fenceEndpoint(params)
-    if (endpoint.cfSessionId) {
-      return { cfSessionId: endpoint.cfSessionId, idempotent: true }
+    const { endpoint, call } = await this.fenceEndpoint(params)
+    const transportSession = await this.resolveSfuSession(params, endpoint, call)
+    if (
+      params.sessionId &&
+      transportSession.providerSessionId &&
+      params.sessionId !== transportSession.providerSessionId
+    ) {
+      throw new HttpError("SFU session is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    }
+    if (transportSession.providerSessionId) {
+      return { cfSessionId: transportSession.providerSessionId, idempotent: true }
     }
 
     const sessionStartedAt = Date.now()
@@ -1079,14 +1974,25 @@ export class CallService {
       callTimeToJoinSeconds.observe(Math.max(0, sessionCreatedAt - endpoint.createdAt.getTime()) / 1000)
     }
 
-    let bound: CallEndpoint | null
+    let bound: CallTransportSessionRow | CallEndpoint | null
     try {
-      bound = await CallEndpointRepository.setCfSessionIfUnset(this.pool, {
-        workspaceId: params.workspaceId,
-        id: params.endpointId,
-        mediaIncarnation: params.mediaIncarnation,
-        cfSessionId: created.sessionId,
-      })
+      bound =
+        params.generation == null
+          ? await CallEndpointRepository.setCfSessionIfUnset(this.pool, {
+              workspaceId: params.workspaceId,
+              id: params.endpointId,
+              mediaIncarnation: params.mediaIncarnation,
+              cfSessionId: created.sessionId,
+            })
+          : await CallTransportSessionRepository.bindProviderSession(this.pool, {
+              workspaceId: params.workspaceId,
+              id: transportSession.id,
+              endpointEpoch: endpoint.epoch,
+              mediaIncarnation: params.mediaIncarnation,
+              generation: transportSession.transportGeneration,
+              version: transportSession.version,
+              providerSessionId: created.sessionId,
+            })
     } catch (err) {
       // The CAS write failed (e.g. a transient DB drop) after the CF session was
       // minted — no row captured it, so close it best-effort before rethrowing so
@@ -1102,9 +2008,21 @@ export class CallService {
     // (idempotent winner) or the endpoint/incarnation is no longer live. Either
     // way the session we just minted is orphaned — close it best-effort.
     await this.bestEffortCloseSession(created.sessionId)
-    const current = await CallEndpointRepository.findById(this.pool, params.workspaceId, params.endpointId)
-    if (current && current.cfSessionId && current.mediaIncarnation === params.mediaIncarnation) {
-      return { cfSessionId: current.cfSessionId, idempotent: true }
+    if (params.generation == null) {
+      const current = await CallEndpointRepository.findById(this.pool, params.workspaceId, params.endpointId)
+      if (current?.cfSessionId && current.mediaIncarnation === params.mediaIncarnation) {
+        return { cfSessionId: current.cfSessionId, idempotent: true }
+      }
+    } else {
+      const current = await CallTransportSessionRepository.find(this.pool, {
+        workspaceId: params.workspaceId,
+        callId: params.callId,
+        endpointId: params.endpointId,
+        generation: transportSession.transportGeneration,
+      })
+      if (current?.providerSessionId && current.mediaIncarnation === params.mediaIncarnation) {
+        return { cfSessionId: current.providerSessionId, idempotent: true }
+      }
     }
     throw new HttpError("Endpoint incarnation is stale", { status: 409, code: "CALL_STALE_INCARNATION" })
   }
@@ -1124,6 +2042,8 @@ export class CallService {
     userId: string
     endpointId: string
     mediaIncarnation: string
+    generation?: number
+    sessionId?: string | null
     sdp: SessionDescription
     tracks: Array<{ kind: PublishedTrack["kind"]; mid: string; trackName: string }>
   }): Promise<{ cf: TracksResult; snapshot: CallRosterSnapshot }> {
@@ -1138,7 +2058,10 @@ export class CallService {
         code: "CALL_CAMERA_NOT_ALLOWED",
       })
     }
-    const cfSessionId = this.requireCfSession(endpoint)
+    const transportSession = await this.resolveSfuSession(params, endpoint, call)
+    if (params.sessionId && params.sessionId !== transportSession.providerSessionId)
+      throw new HttpError("SFU session is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    const cfSessionId = this.requireTransportSessionId(transportSession)
 
     const localTracks: LocalTrackRequest[] = params.tracks.map((t) => ({
       location: "local",
@@ -1214,29 +2137,57 @@ export class CallService {
    * writers.
    */
   private async mutateRegistry(
-    params: { workspaceId: string; callId: string; endpointId: string; mediaIncarnation: string },
+    params: { workspaceId: string; callId: string; endpointId: string; mediaIncarnation: string; generation?: number },
     mutate: (current: PublishedTrack[]) => PublishedTrack[]
   ): Promise<CallRosterSnapshot> {
     return withTransaction(this.pool, async (client) => {
       // Lock the call row before the endpoint write (call→endpoint lock order).
       await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
       const current = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
-      const base = current?.mediaIncarnation === params.mediaIncarnation ? current.publishedTracks : []
-      const updated = await CallEndpointRepository.setPublishedTracks(client, {
-        workspaceId: params.workspaceId,
-        id: params.endpointId,
-        mediaIncarnation: params.mediaIncarnation,
-        publishedTracks: mutate(base),
-      })
+      const call = await CallRepository.findById(client, params.workspaceId, params.callId)
+      if (!call) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
+      const generation = params.generation ?? call.transportGeneration
+      const targetSession =
+        generation === call.transportGeneration
+          ? null
+          : await CallTransportSessionRepository.find(client, {
+              workspaceId: params.workspaceId,
+              callId: params.callId,
+              endpointId: params.endpointId,
+              generation,
+            })
+      const base =
+        targetSession?.publishedTracks ??
+        (current?.mediaIncarnation === params.mediaIncarnation ? current.publishedTracks : [])
+      const tracks =
+        params.generation == null
+          ? mutate(base)
+          : mutate(base).map((track) => ({ ...track, transportGeneration: generation }))
+      const updated = targetSession
+        ? await CallTransportSessionRepository.setPublications(client, {
+            workspaceId: params.workspaceId,
+            id: targetSession.id,
+            endpointEpoch: targetSession.endpointEpoch,
+            mediaIncarnation: params.mediaIncarnation,
+            generation,
+            revision: targetSession.publicationRevision + 1,
+            tracks,
+          })
+        : await CallEndpointRepository.setPublishedTracks(client, {
+            workspaceId: params.workspaceId,
+            id: params.endpointId,
+            mediaIncarnation: params.mediaIncarnation,
+            publishedTracks: tracks,
+          })
       if (!updated) {
         // The endpoint was closed (concurrent takeover/reap) between the fence read
         // and this write — don't bump the roster for a registry that wasn't persisted.
         throw new HttpError("Endpoint is no longer live", { status: 409, code: "CALL_ENDPOINT_NOT_LIVE" })
       }
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      if (current)
+        await this.reconcileTransferPublications(client, call, current, base, tracks, updated.publicationRevision)
       const roster = await CallParticipantRepository.listRoster(client, params.workspaceId, params.callId)
-      const call = await CallRepository.findById(client, params.workspaceId, params.callId)
-      if (!call) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
       return {
         rosterVersion: rosterVersion ?? call.rosterVersion,
         roster,
@@ -1253,12 +2204,17 @@ export class CallService {
     userId: string
     endpointId: string
     mediaIncarnation: string
+    generation?: number
+    sessionId?: string | null
     tracks: RemoteTrackRequest[]
   }): Promise<{ cf: TracksResult }> {
     const cf = this.requireCloudflare()
-    const { endpoint } = await this.fenceEndpoint(params)
-    const cfSessionId = this.requireCfSession(endpoint)
-    await this.assertPullableRefs(params.workspaceId, params.callId, endpoint, params.tracks)
+    const { endpoint, call } = await this.fenceEndpoint(params)
+    const transportSession = await this.resolveSfuSession(params, endpoint, call)
+    if (params.sessionId && params.sessionId !== transportSession.providerSessionId)
+      throw new HttpError("SFU session is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    const cfSessionId = this.requireTransportSessionId(transportSession)
+    await this.assertPullableRefs(params.workspaceId, params.callId, endpoint, params.tracks, params.generation)
     const cfResult = await this.cfCall(() => cf.pullRemoteTracks(cfSessionId, { tracks: params.tracks }), "pull_tracks")
     logger.info(
       {
@@ -1285,13 +2241,30 @@ export class CallService {
     workspaceId: string,
     targetCallId: string,
     self: CallEndpoint,
-    tracks: RemoteTrackRequest[]
+    tracks: RemoteTrackRequest[],
+    generation?: number
   ): Promise<void> {
-    const live = await CallEndpointRepository.listLiveByCall(this.pool, workspaceId, targetCallId)
     const allowed = new Set<string>()
-    for (const ep of live) {
-      if (ep.id === self.id || !ep.cfSessionId) continue
-      for (const track of ep.publishedTracks) allowed.add(pullRefKey(ep.cfSessionId, track.trackName))
+    if (generation == null) {
+      const live = await CallEndpointRepository.listLiveByCall(this.pool, workspaceId, targetCallId)
+      for (const endpoint of live) {
+        if (endpoint.id === self.id || !endpoint.cfSessionId) continue
+        for (const track of endpoint.publishedTracks) allowed.add(pullRefKey(endpoint.cfSessionId, track.trackName))
+      }
+    } else {
+      const sessions = await CallTransportSessionRepository.listByCall(this.pool, workspaceId, targetCallId)
+      for (const mediaSession of sessions) {
+        if (
+          mediaSession.endpointId === self.id ||
+          mediaSession.transportGeneration !== generation ||
+          mediaSession.mediaTransport !== "sfu" ||
+          !mediaSession.providerSessionId ||
+          mediaSession.status === "closed"
+        )
+          continue
+        for (const track of mediaSession.publishedTracks)
+          allowed.add(pullRefKey(mediaSession.providerSessionId, track.trackName))
+      }
     }
     for (const ref of tracks) {
       if (!allowed.has(pullRefKey(ref.sessionId, ref.trackName))) {
@@ -1307,11 +2280,16 @@ export class CallService {
     userId: string
     endpointId: string
     mediaIncarnation: string
+    generation?: number
+    sessionId?: string | null
     sdp: SessionDescription
   }): Promise<{ cf: RenegotiateResult }> {
     const cf = this.requireCloudflare()
-    const { endpoint } = await this.fenceEndpoint(params)
-    const cfSessionId = this.requireCfSession(endpoint)
+    const { endpoint, call } = await this.fenceEndpoint(params)
+    const transportSession = await this.resolveSfuSession(params, endpoint, call)
+    if (params.sessionId && params.sessionId !== transportSession.providerSessionId)
+      throw new HttpError("SFU session is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    const cfSessionId = this.requireTransportSessionId(transportSession)
     const cfResult = await this.cfCall(() => cf.renegotiateSession(cfSessionId, params.sdp), "renegotiate")
     return { cf: cfResult }
   }
@@ -1335,14 +2313,19 @@ export class CallService {
     userId: string
     endpointId: string
     mediaIncarnation: string
+    generation?: number
+    sessionId?: string | null
     mids: string[]
     unpublishKinds?: Array<PublishedTrack["kind"]>
     sdp?: SessionDescription
     reason?: string
   }): Promise<{ cf: CloseTracksResult | null; snapshot?: CallRosterSnapshot }> {
     const cf = this.requireCloudflare()
-    const { endpoint } = await this.fenceEndpoint(params)
-    const cfSessionId = this.requireCfSession(endpoint)
+    const { endpoint, call } = await this.fenceEndpoint(params)
+    const transportSession = await this.resolveSfuSession(params, endpoint, call)
+    if (params.sessionId && params.sessionId !== transportSession.providerSessionId)
+      throw new HttpError("SFU session is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    const cfSessionId = this.requireTransportSessionId(transportSession)
     if (params.reason) {
       // The only server-side record of a client-side publish failure (the
       // publish leg returned 200; the browser rejected the answer afterwards).
@@ -1398,11 +2381,92 @@ export class CallService {
     }
   }
 
-  private requireCfSession(endpoint: CallEndpoint): string {
-    if (!endpoint.cfSessionId) {
+  private async resolveSfuSession(
+    params: { workspaceId: string; callId: string; endpointId: string; mediaIncarnation: string; generation?: number },
+    endpoint: CallEndpoint,
+    call: Call
+  ): Promise<CallTransportSessionRow> {
+    const generation = params.generation ?? call.transportGeneration
+    if (params.generation == null) {
+      return {
+        id: `legacy:${endpoint.id}`,
+        workspaceId: params.workspaceId,
+        callId: params.callId,
+        endpointId: endpoint.id,
+        endpointEpoch: endpoint.epoch,
+        mediaIncarnation: params.mediaIncarnation,
+        transportGeneration: generation,
+        mediaTransport: "sfu",
+        status: "active",
+        providerSessionId: endpoint.cfSessionId,
+        publicationRevision: endpoint.publicationRevision,
+        publishedTracks: endpoint.publishedTracks,
+        failureCode: null,
+        version: 1,
+      }
+    }
+    let mediaSession = await CallTransportSessionRepository.find(this.pool, {
+      workspaceId: params.workspaceId,
+      callId: params.callId,
+      endpointId: params.endpointId,
+      generation,
+    })
+    if (!mediaSession && generation === call.transportGeneration && call.mediaTransport === "sfu") {
+      mediaSession = await withTransaction(this.pool, async (client) => {
+        const lockedCall = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
+        const current = await CallEndpointRepository.findById(client, params.workspaceId, params.endpointId)
+        if (
+          !lockedCall ||
+          lockedCall.transportGeneration !== generation ||
+          lockedCall.mediaTransport !== "sfu" ||
+          !current ||
+          current.epoch !== endpoint.epoch ||
+          current.mediaIncarnation !== params.mediaIncarnation
+        ) {
+          return null
+        }
+        const existing = await CallTransportSessionRepository.find(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+          endpointId: params.endpointId,
+          generation,
+        })
+        return (
+          existing ??
+          CallTransportSessionRepository.insert(client, {
+            id: `calltsess_${ulid()}`,
+            workspaceId: params.workspaceId,
+            callId: params.callId,
+            endpointId: params.endpointId,
+            endpointEpoch: current.epoch,
+            mediaIncarnation: params.mediaIncarnation,
+            transportGeneration: generation,
+            mediaTransport: "sfu",
+            status: "active",
+            providerSessionId: current.cfSessionId,
+            publicationRevision: current.publicationRevision,
+            publishedTracks: current.publishedTracks,
+          })
+        )
+      })
+    }
+    if (
+      !mediaSession ||
+      mediaSession.mediaTransport !== "sfu" ||
+      mediaSession.endpointEpoch !== endpoint.epoch ||
+      mediaSession.mediaIncarnation !== params.mediaIncarnation ||
+      mediaSession.status === "closed"
+    ) {
+      throw new HttpError("SFU generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+    }
+    return mediaSession
+  }
+
+  private requireTransportSessionId(mediaSession: CallTransportSessionRow): string {
+    if (!mediaSession.providerSessionId) {
       throw new HttpError("Endpoint has no CF session yet", { status: 409, code: "CALL_NO_CF_SESSION" })
     }
-    return endpoint.cfSessionId
+    return mediaSession.providerSessionId
   }
 
   private async bestEffortCloseSession(sessionId: string): Promise<void> {
@@ -1531,7 +2595,8 @@ export class CallService {
 
       // Removal is a membership change: bump the roster version in the same tx as
       // the participant-removed/endpoint-close writes (INV-66).
-      await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
+      await this.reconcileTransferMembership(client, call, rosterVersion ?? call.rosterVersion + 1)
       await this.emitParticipantsChanged(client, params.workspaceId, call.streamId, params.callId)
 
       const closedSessionIds = closedEndpoints.map((e) => e.cfSessionId).filter((id): id is string => !!id)
@@ -1680,7 +2745,10 @@ export class CallService {
         const wsId = workspaceIdByCall.get(cId)
         if (!wsId) continue
         const touched = await CallRepository.findById(client, wsId, cId)
-        if (touched) await this.emitParticipantsChanged(client, wsId, touched.streamId, cId)
+        if (touched) {
+          await this.reconcileTransferMembership(client, touched, touched.rosterVersion)
+          await this.emitParticipantsChanged(client, wsId, touched.streamId, cId)
+        }
       }
 
       const closedSessionIds = closed.map((e) => e.cfSessionId).filter((id): id is string => !!id)
@@ -1702,7 +2770,7 @@ export class CallService {
    * and this sweep is not ended. Returns the count ended.
    */
   async endGraceExpiredCalls(now: Date = new Date()): Promise<{ ended: number }> {
-    return withTransaction(this.pool, async (client) => {
+    const { endedCount, providerSessionIds } = await withTransaction(this.pool, async (client) => {
       const ended = await CallRepository.endGraceExpired(client, now)
       // Belt for any ring still ringing on a call that reaches `ended` without
       // having been abandoned through leave/reap: cancel and settle it in the
@@ -1719,8 +2787,22 @@ export class CallService {
       // distinguishes them). Same tx as the status write (INV-4/7). The card
       // renders its historical state from this payload with zero fetch.
       await this.appendCallsEnded(client, ended)
-      return { ended: ended.length }
+      const closedSessions = (
+        await Promise.all(
+          ended.map((call) => CallTransportSessionRepository.closeAllForCall(client, call.workspaceId, call.id))
+        )
+      ).flat()
+      return {
+        endedCount: ended.length,
+        providerSessionIds: [
+          ...new Set(
+            closedSessions.flatMap((session) => (session.providerSessionId ? [session.providerSessionId] : []))
+          ),
+        ],
+      }
     })
+    for (const sessionId of providerSessionIds) await this.bestEffortCloseSession(sessionId)
+    return { ended: endedCount }
   }
 
   /**

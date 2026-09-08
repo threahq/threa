@@ -6,6 +6,7 @@ import {
   type CallManagerDeps,
   type CallSocket,
 } from "./call-manager"
+import type { CallTransportTransfer } from "@threahq/types"
 import type { MediaTransport } from "./media-transport"
 import {
   AUDIO_CAPTURE_CONSTRAINTS,
@@ -29,6 +30,7 @@ function makeTrack(kind: "audio" | "video"): MediaStreamTrack {
   return {
     kind,
     enabled: true,
+    readyState: "live",
     stop: vi.fn(() => order.push(`stopTrack:${kind}`)),
     applyConstraints: vi.fn(async () => {}),
     addEventListener: vi.fn(),
@@ -63,6 +65,8 @@ function makeTransport() {
     }),
     setPublishEncoding: vi.fn(async () => {}),
     syncPeers: vi.fn(async () => {}),
+    hasInboundByteProgress: vi.fn(async () => true),
+    hasEstablishedOwnPublications: vi.fn(() => true),
     pull: vi.fn(async (ref) => {
       events.push(`pull:${ref.trackName}`)
     }),
@@ -226,6 +230,71 @@ function makeDeps(socket: FakeSocket, transport: MediaTransport, mediaSession: C
   return deps
 }
 
+function transferSnapshot(phase: CallTransportTransfer["phase"], version: number): CallTransportTransfer {
+  return {
+    id: "callxfer_1",
+    version,
+    source: { generation: 1, transport: "sfu" },
+    target: { generation: 2, transport: "p2p" },
+    membershipRevision: 4,
+    phase,
+    cause: "explicit",
+    failureCode: phase === "failed" ? "TARGET_FAILED" : null,
+    recoveryCode: null,
+    sessions: [
+      {
+        id: "calltsess_self",
+        endpointId: "ep_1",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc-1",
+        generation: 2,
+        transport: "p2p",
+        status: "preparing",
+        providerSessionId: null,
+        publicationRevision: 1,
+        publishedTracks: [],
+      },
+      {
+        id: "calltsess_peer",
+        endpointId: "ep_peer",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc_peer",
+        generation: 2,
+        transport: "p2p",
+        status: "preparing",
+        providerSessionId: null,
+        publicationRevision: 1,
+        publishedTracks: [{ kind: "mic", trackName: "peer:mic", publicationId: "target_mic", transportGeneration: 2 }],
+      },
+    ],
+    obligations: [
+      {
+        endpointId: "ep_1",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc-1",
+        membershipRevision: 4,
+        trackRevision: 1,
+        expectedPublications: [
+          {
+            endpointId: "ep_peer",
+            endpointEpoch: 1,
+            mediaIncarnation: "inc_peer",
+            kind: "mic",
+            publicationId: "target_mic",
+            publicationRevision: 1,
+            muted: false,
+          },
+        ],
+        readyPublications: [],
+        ownPublicationsReady: true,
+        switched: phase !== "preparing",
+        sourceReleased: false,
+        restoredToSource: false,
+      },
+    ],
+  }
+}
+
 function participant(overrides: Partial<CallRosterParticipant>): CallRosterParticipant {
   return {
     userId: "usr_x",
@@ -257,6 +326,7 @@ describe("CallManager", () => {
   })
   afterEach(async () => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
     for (const manager of managers.splice(0)) {
       await manager.leaveCall()
@@ -874,6 +944,314 @@ describe("CallManager", () => {
     expect(order.slice(2)).toContain("stopTrack:audio")
     expect(getCallState().phase).toBe("idle")
     expect(isDictationExternalHeld()).toBe(false)
+  })
+
+  it("should refetch the authoritative transfer snapshot after a durable call prompt", async () => {
+    const socket = makeSocket()
+    const transport = makeTransport()
+    const deps = makeDeps(socket, transport)
+    const transfer = {
+      id: "callxfer_1",
+      version: 2,
+      source: { generation: 1, transport: "sfu" as const },
+      target: { generation: 2, transport: "p2p" as const },
+      membershipRevision: 0,
+      phase: "preparing" as const,
+      cause: "explicit" as const,
+      failureCode: null,
+      recoveryCode: null,
+      sessions: [
+        {
+          id: "calltsess_1",
+          endpointId: "ep_1",
+          endpointEpoch: 1,
+          mediaIncarnation: "inc-1",
+          generation: 2,
+          transport: "p2p" as const,
+          status: "preparing" as const,
+          providerSessionId: null,
+          publicationRevision: 0,
+          publishedTracks: [],
+        },
+      ],
+      obligations: [],
+    }
+    deps.getCallSnapshot = vi.fn(async () => ({
+      call: {
+        id: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "audio_only" as const,
+        mediaTransport: "sfu" as const,
+        transportGeneration: 1,
+      },
+      created: false,
+      participant: { id: "p_1" },
+      endpoint: { id: "ep_1" },
+      chatAnchorId: "event_chat_1",
+      rosterVersion: 0,
+      roster: [],
+      mediaTransport: "sfu" as const,
+      transportGeneration: 1,
+      transfer,
+    }))
+    const manager = newManager(deps, document.body)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+
+    socket.fire("call:transport_transfer_changed", { callId: "call_1", version: 2 })
+    await vi.waitFor(() => {
+      expect(deps.getCallSnapshot).toHaveBeenCalledWith({ workspaceId: "ws_1", callId: "call_1" })
+      expect(deps.createTransport).toHaveBeenCalledTimes(2)
+      expect(transport.connect).toHaveBeenCalledWith(expect.objectContaining({ generation: 2 }))
+    })
+  })
+
+  it("should keep source playback and delay switched acknowledgement until ended target media recovers", async () => {
+    const socket = makeSocket()
+    const source = makeTransport()
+    const target = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport).mockReturnValueOnce(source).mockReturnValueOnce(target)
+    deps.acknowledgeTransferReady = vi.fn(async () => ({}))
+    deps.acknowledgeTransferSwitched = vi.fn(async () => ({}))
+    vi.stubGlobal(
+      "MediaStream",
+      class {
+        constructor(private readonly tracks: MediaStreamTrack[]) {}
+        getAudioTracks() {
+          return this.tracks.filter((track) => track.kind === "audio")
+        }
+      }
+    )
+    const container = document.createElement("div")
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue()
+    const manager = newManager(deps, container)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    const roster = [
+      participant({
+        epoch: 1,
+        mediaIncarnation: "inc_peer",
+        publishedTracks: [{ kind: "mic", trackName: "peer:mic", publicationId: "source_mic", transportGeneration: 1 }],
+      }),
+    ]
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster })
+    const sourceTrack = makeTrack("audio")
+    source.onRemoteTrack?.({
+      ref: { endpointId: "ep_peer", kind: "mic", publicationId: "source_mic" },
+      track: sourceTrack,
+    })
+    const preparing = transferSnapshot("preparing", 1)
+    preparing.obligations[0]!.switched = false
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster, transfer: preparing })
+    await vi.waitFor(() => expect(target.syncPeers).toHaveBeenCalled())
+    const targetRef = { endpointId: "ep_peer", kind: "mic" as const, publicationId: "target_mic" }
+    const endedTargetTrack = makeTrack("audio")
+    target.onRemoteTrack?.({ ref: targetRef, track: endedTargetTrack })
+    await vi.waitFor(() => expect(deps.acknowledgeTransferReady).toHaveBeenCalledTimes(1))
+
+    target.onRemoteTrackEnded?.(targetRef)
+    const committing = transferSnapshot("committing", 2)
+    committing.obligations[0]!.switched = false
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster, transfer: committing })
+    await vi.waitFor(() => expect(target.syncPeers).toHaveBeenCalledTimes(2))
+
+    expect({
+      switchedAcks: vi.mocked(deps.acknowledgeTransferSwitched).mock.calls.length,
+      sourceCloseCalls: vi.mocked(source.close).mock.calls.length,
+      output: (container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks(),
+      audioOutputs: container.querySelectorAll("audio").length,
+    }).toEqual({ switchedAcks: 0, sourceCloseCalls: 0, output: [sourceTrack], audioOutputs: 1 })
+
+    const recoveredTargetTrack = makeTrack("audio")
+    target.onRemoteTrack?.({ ref: targetRef, track: recoveredTargetTrack })
+    await vi.waitFor(() => expect(deps.acknowledgeTransferSwitched).toHaveBeenCalledTimes(1))
+    expect({
+      output: (container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks(),
+      audioOutputs: container.querySelectorAll("audio").length,
+    }).toEqual({ output: [recoveredTargetTrack], audioOutputs: 1 })
+  })
+
+  it("should retry the exact switched acknowledgement after a lost response without a server mutation", async () => {
+    const socket = makeSocket()
+    const source = makeTransport()
+    const target = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport).mockReturnValueOnce(source).mockReturnValueOnce(target)
+    const committing = transferSnapshot("committing", 2)
+    committing.obligations[0]!.switched = false
+    committing.obligations[0]!.expectedPublications = []
+    deps.acknowledgeTransferSwitched = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({})
+    deps.getCallSnapshot = vi.fn(async () => ({
+      call: {
+        id: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "audio_only" as const,
+        mediaTransport: "sfu" as const,
+        transportGeneration: 1,
+      },
+      created: false,
+      participant: { id: "p_1" },
+      endpoint: { id: "ep_1" },
+      chatAnchorId: "event_chat_1",
+      rosterVersion: 0,
+      roster: [],
+      transfer: committing,
+    }))
+    const manager = newManager(deps, document.body)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster: [], transfer: committing })
+    await vi.waitFor(() => expect(deps.acknowledgeTransferSwitched).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(deps.acknowledgeTransferSwitched).toHaveBeenCalledTimes(2), {
+      timeout: PULL_RETRY_DELAY_MS + 1000,
+    })
+
+    expect(vi.mocked(deps.acknowledgeTransferSwitched).mock.calls.map(([call]) => call.body)).toEqual([
+      vi.mocked(deps.acknowledgeTransferSwitched).mock.calls[0]![0].body,
+      vi.mocked(deps.acknowledgeTransferSwitched).mock.calls[0]![0].body,
+    ])
+  })
+
+  it("should rebuild target setup when the authoritative retry has the same version", async () => {
+    vi.useFakeTimers()
+    const socket = makeSocket()
+    const source = makeTransport()
+    const failedTarget = makeTransport()
+    failedTarget.connect = vi.fn().mockRejectedValueOnce(new Error("credentials unavailable"))
+    const repairedTarget = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport)
+      .mockReturnValueOnce(source)
+      .mockReturnValueOnce(failedTarget)
+      .mockReturnValueOnce(repairedTarget)
+    const preparing = transferSnapshot("preparing", 1)
+    deps.getCallSnapshot = vi.fn(async () => ({
+      call: {
+        id: "call_1",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        mode: "audio_only" as const,
+        mediaTransport: "sfu" as const,
+        transportGeneration: 1,
+      },
+      created: false,
+      participant: { id: "p_1" },
+      endpoint: { id: "ep_1" },
+      chatAnchorId: "event_chat_1",
+      rosterVersion: 0,
+      roster: [],
+      transfer: preparing,
+    }))
+    const manager = newManager(deps, document.body)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 0, roster: [], transfer: preparing })
+    await vi.waitFor(() => expect(failedTarget.close).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
+    await vi.waitFor(() => expect(repairedTarget.connect).toHaveBeenCalledTimes(1))
+
+    expect(repairedTarget.publish).toHaveBeenCalledWith("mic", expect.anything())
+  })
+
+  it("should acknowledge source restoration only after usable playback and retain target until failed", async () => {
+    const socket = makeSocket()
+    const source = makeTransport()
+    const target = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport).mockReturnValueOnce(source).mockReturnValueOnce(target)
+    deps.acknowledgeTransferRestored = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({})
+    const container = document.createElement("div")
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue()
+    vi.stubGlobal(
+      "MediaStream",
+      class {
+        constructor(private readonly tracks: MediaStreamTrack[]) {}
+        getAudioTracks() {
+          return this.tracks.filter((track) => track.kind === "audio")
+        }
+      }
+    )
+    const manager = newManager(deps, container)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    const roster = [
+      participant({
+        epoch: 1,
+        mediaIncarnation: "inc_peer",
+        publishedTracks: [{ kind: "mic", trackName: "peer:mic", publicationId: "source_mic", transportGeneration: 1 }],
+      }),
+    ]
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster })
+    const sourceTrack = makeTrack("audio")
+    source.onRemoteTrack?.({
+      ref: { endpointId: "ep_peer", kind: "mic", publicationId: "source_mic" },
+      track: sourceTrack,
+    })
+
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 1,
+      roster,
+      transfer: transferSnapshot("preparing", 1),
+    })
+    await vi.waitFor(() => expect(target.syncPeers).toHaveBeenCalled())
+    const targetTrack = makeTrack("audio")
+    target.onRemoteTrack?.({
+      ref: { endpointId: "ep_peer", kind: "mic", publicationId: "target_mic" },
+      track: targetTrack,
+    })
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 1,
+      roster,
+      transfer: transferSnapshot("committing", 2),
+    })
+    await vi.waitFor(() =>
+      expect((container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks()[0]).toBe(targetTrack)
+    )
+
+    socket.fire("call:roster", {
+      callId: "call_1",
+      rosterVersion: 1,
+      roster,
+      transfer: transferSnapshot("aborting", 3),
+    })
+    await vi.waitFor(() => expect(deps.acknowledgeTransferRestored).toHaveBeenCalledTimes(2))
+    expect({
+      bodies: vi.mocked(deps.acknowledgeTransferRestored).mock.calls.map(([call]) => call.body),
+      restoredTrack: (container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks()[0],
+      targetCloseCalls: vi.mocked(target.close).mock.calls.length,
+    }).toEqual({
+      bodies: [
+        {
+          transferId: "callxfer_1",
+          generation: 2,
+          endpointId: "ep_1",
+          endpointEpoch: 1,
+          mediaIncarnation: "inc-1",
+          membershipRevision: 4,
+          trackRevision: 1,
+        },
+        {
+          transferId: "callxfer_1",
+          generation: 2,
+          endpointId: "ep_1",
+          endpointEpoch: 1,
+          mediaIncarnation: "inc-1",
+          membershipRevision: 4,
+          trackRevision: 1,
+        },
+      ],
+      restoredTrack: sourceTrack,
+      targetCloseCalls: 0,
+    })
+
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster, transfer: transferSnapshot("failed", 4) })
+    await vi.waitFor(() => expect(target.close).toHaveBeenCalledTimes(1))
   })
 
   it("transient socket reconnect rejoins with the SAME incarnation", async () => {

@@ -1787,6 +1787,34 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     calls.bootstrap
   )
   app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/transport-transfers",
+    ...authed,
+    audit("calls.cf_session", "write"),
+    rateLimits.calls,
+    calls.requestTransportTransfer
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/transport-transfers/ready",
+    ...authed,
+    audit("calls.cf_session", "write"),
+    rateLimits.calls,
+    calls.acknowledgeTransferReady
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/transport-transfers/switched",
+    ...authed,
+    audit("calls.cf_session", "write"),
+    rateLimits.calls,
+    calls.acknowledgeTransferSwitched
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/calls/:callId/transport-transfers/restored",
+    ...authed,
+    audit("calls.cf_session", "write"),
+    rateLimits.calls,
+    calls.acknowledgeTransferRestored
+  )
+  app.post(
     "/api/workspaces/:workspaceId/calls/:callId/endpoints/:endpointId/turn-credentials",
     ...authed,
     audit("calls.cf_session", "write"),

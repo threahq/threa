@@ -31,6 +31,7 @@ import type {
   AttachmentUploadStatus,
   PersonaListItem,
   StreamReadFrontierSnapshot,
+  CallTransferPhase,
 } from "@threahq/types"
 
 export type OutboxEventType =
@@ -141,6 +142,7 @@ export type OutboxEventType =
   | "stream:call_started"
   | "stream:call_ended"
   | "call:participants_changed"
+  | "call:transport_transfer_changed"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -171,6 +173,7 @@ export type StreamScopedEventType =
   | "stream:call_started"
   | "stream:call_ended"
   | "call:participants_changed"
+  | "call:transport_transfer_changed"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -1111,6 +1114,14 @@ export interface CallParticipantsChangedOutboxPayload extends StreamScopedPayloa
   participantUserIds: string[]
 }
 
+export interface CallTransportTransferChangedOutboxPayload extends StreamScopedPayload {
+  callId: string
+  transferId: string
+  generation: number
+  version: number
+  phase: CallTransferPhase
+}
+
 // Bot event payloads
 export interface BotCreatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
@@ -1371,6 +1382,7 @@ export interface OutboxEventPayloadMap {
   "stream:call_started": StreamCallStartedOutboxPayload
   "stream:call_ended": StreamCallEndedOutboxPayload
   "call:participants_changed": CallParticipantsChangedOutboxPayload
+  "call:transport_transfer_changed": CallTransportTransferChangedOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]
@@ -1434,6 +1446,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:bot_access_requested",
   "stream:bot_access_status_changed",
   "call:participants_changed",
+  "call:transport_transfer_changed",
   "stream:activity",
   "conversation:created",
   "conversation:updated",

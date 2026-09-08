@@ -1,3 +1,4 @@
+import type { CallMediaTransport, CallTransportTransfer } from "@threahq/types"
 import { ulid } from "ulid"
 import { io } from "socket.io-client"
 import { api } from "@/api/client"
@@ -28,6 +29,7 @@ import { recordCallLifecycleEvent, type CallLifecycleKind } from "./lifecycle-lo
 import { classifyMediaError } from "./media-permissions"
 import { createCallMediaSession, type CallMediaSession } from "./media-session"
 import { P2pMeshTransport } from "./p2p-mesh-transport"
+import { MediaTransportCoordinator } from "./media-transport-coordinator"
 import {
   CloudflareSfuTransport,
   peerTrackRefKey,
@@ -68,6 +70,7 @@ interface StartCallResponse {
   chatAnchorId: string | null
   rosterVersion: number
   roster: CallRosterParticipant[]
+  transfer?: CallTransportTransfer | null
 }
 
 interface JoinAckData {
@@ -78,6 +81,7 @@ interface JoinAckData {
   leaseTtlMs: number
   mediaTransport: "sfu" | "p2p"
   transportGeneration: number
+  transfer?: CallTransportTransfer | null
 }
 
 type Ack<T> = { ok: boolean; error?: string; code?: string; data?: T }
@@ -86,6 +90,7 @@ interface RosterEvent {
   callId: string
   rosterVersion: number
   roster: CallRosterParticipant[]
+  transfer?: CallTransportTransfer | null
 }
 
 /** Thrown by an in-flight `startCall` when `leaveCall` cancels it mid-join. */
@@ -157,6 +162,7 @@ export interface CallManagerDeps {
      * 409 `CALL_ENDPOINT_ACTIVE` — a first attempt must never take over silently.
      */
     takeover?: boolean
+    transferCapability?: "transport-transfer-v1"
   }): Promise<StartCallResponse>
   /**
    * Endpoint-free REST self-leave: closes every live endpoint this user holds on
@@ -165,6 +171,29 @@ export interface CallManagerDeps {
    * DM peer ringing (a false missed call).
    */
   leaveCallRest(args: { workspaceId: string; callId: string }): Promise<void>
+  getCallSnapshot?(args: { workspaceId: string; callId: string }): Promise<StartCallResponse>
+  requestTransportTransfer?(args: {
+    workspaceId: string
+    callId: string
+    endpointId: string
+    target: CallMediaTransport
+    idempotencyKey: string
+  }): Promise<{ transfer?: CallTransportTransfer | null }>
+  acknowledgeTransferReady?(args: {
+    workspaceId: string
+    callId: string
+    body: unknown
+  }): Promise<{ transfer?: CallTransportTransfer | null }>
+  acknowledgeTransferSwitched?(args: {
+    workspaceId: string
+    callId: string
+    body: unknown
+  }): Promise<{ transfer?: CallTransportTransfer | null }>
+  acknowledgeTransferRestored?(args: {
+    workspaceId: string
+    callId: string
+    body: unknown
+  }): Promise<{ transfer?: CallTransportTransfer | null }>
   connectSocket(workspaceId: string): CallSocket | null
   createTransport(args: {
     workspaceId: string
@@ -207,8 +236,14 @@ interface CallSession {
   mode: CallMode
   mediaIncarnation: string
   endpointId: string
+  endpointEpoch: number
   leaseTtlMs: number
   rosterVersion: number
+  transferVersion: number
+  transfer: CallTransportTransfer | null
+  transferChain: Promise<void>
+  transferRetryTimer: ReturnType<typeof setTimeout> | null
+  transferRetryAttempts: number
   transport: MediaTransport
   mediaTransport: "sfu" | "p2p"
   transportGeneration: number
@@ -293,6 +328,7 @@ export interface CallController {
   switchCameraDevice(deviceId: string): Promise<void>
   flipCamera(): Promise<void>
   setOutputDevice(deviceId: string): Promise<void>
+  requestMediaTransport?(target: CallMediaTransport): Promise<void>
   getVideoStream(endpointId: string): MediaStream | null
   /**
    * Push the call's human label (the stream/DM name) at the lock-screen media
@@ -400,7 +436,11 @@ export class CallManager implements CallController {
     // nothing server-side, so there is nothing to settle.
     let callId: string | null = null
     try {
-      const started = await this.deps.startCallRest({ ...params, mediaIncarnation })
+      const started = await this.deps.startCallRest({
+        ...params,
+        mediaIncarnation,
+        transferCapability: "transport-transfer-v1",
+      })
       callId = started.call.id
       this.assertStartLive(gen)
       // The server owns the mode: joining an existing call ignores our requested
@@ -429,16 +469,28 @@ export class CallManager implements CallController {
         callId,
         mediaIncarnation,
         transportCapability: "p2p-v1",
+        transferCapability: "transport-transfer-v1",
       })
       this.assertStartLive(gen)
 
-      const transport = this.deps.createTransport({
+      const sourceTransport = this.deps.createTransport({
         workspaceId: params.workspaceId,
         callId,
         socket,
         mediaTransport: join.mediaTransport,
         transportGeneration: join.transportGeneration,
       })
+      const transport = new MediaTransportCoordinator(
+        { transport: sourceTransport, generation: join.transportGeneration, kind: join.mediaTransport },
+        (mediaTransport, transportGeneration) =>
+          this.deps.createTransport({
+            workspaceId: params.workspaceId,
+            callId: callId!,
+            socket: socket!,
+            mediaTransport,
+            transportGeneration,
+          })
+      )
       const session: CallSession = {
         gen,
         callId,
@@ -447,9 +499,15 @@ export class CallManager implements CallController {
         mode,
         mediaIncarnation,
         endpointId: join.endpointId,
+        endpointEpoch: join.epoch,
         leaseTtlMs: join.leaseTtlMs || ENDPOINT_LEASE_TTL_MS,
         // -1 so the join's own snapshot (version ≥ 0) is applied by applyRoster.
         rosterVersion: -1,
+        transferVersion: -1,
+        transfer: null,
+        transferChain: Promise.resolve(),
+        transferRetryTimer: null,
+        transferRetryAttempts: 0,
         transport,
         mediaTransport: join.mediaTransport,
         transportGeneration: join.transportGeneration,
@@ -512,7 +570,7 @@ export class CallManager implements CallController {
       // lock-screen tap, read as "turn on", would have turned it off.
       this.wireMediaSessionToggles(session)
 
-      this.applyRoster(session, join.rosterVersion, join.roster)
+      this.applyRoster(session, join.rosterVersion, join.roster, join.transfer ?? started.transfer ?? null)
       this.startLeaseTimer(session)
       this.startWatchdog(session)
       await this.acquireWakeLock(session)
@@ -831,6 +889,21 @@ export class CallManager implements CallController {
     })
   }
 
+  async requestMediaTransport(target: CallMediaTransport): Promise<void> {
+    const session = this.session
+    if (!session || target === session.mediaTransport || !this.deps.requestTransportTransfer) return
+    const gen = session.gen
+    const response = await this.deps.requestTransportTransfer({
+      workspaceId: session.workspaceId,
+      callId: session.callId,
+      endpointId: session.endpointId,
+      target,
+      idempotencyKey: `transfer_${ulid()}`,
+    })
+    if (this.sessionForGen(gen) !== session || !response.transfer) return
+    await this.queueTransferSnapshot(session, response.transfer)
+  }
+
   dispose(): void {
     this.unregisterHangup?.()
     this.unregisterHangup = null
@@ -841,7 +914,13 @@ export class CallManager implements CallController {
 
   private joinOverSocket(
     socket: CallSocket,
-    args: { workspaceId: string; callId: string; mediaIncarnation: string; transportCapability?: "p2p-v1" }
+    args: {
+      workspaceId: string
+      callId: string
+      mediaIncarnation: string
+      transportCapability?: "p2p-v1"
+      transferCapability?: "transport-transfer-v1"
+    }
   ): Promise<JoinAckData> {
     return new Promise<JoinAckData>((resolve, reject) => {
       socket.emit("call:join", args, (result: unknown) => {
@@ -862,7 +941,25 @@ export class CallManager implements CallController {
       if (!s) return
       const evt = payload as RosterEvent
       if (evt.callId !== s.callId) return
-      this.applyRoster(s, evt.rosterVersion, evt.roster)
+      this.applyRoster(s, evt.rosterVersion, evt.roster, evt.transfer ?? null)
+    })
+    this.onSocket(session, "call:transport_transfer_changed", (payload: unknown) => {
+      const s = this.sessionForGen(gen)
+      const event = payload as { callId?: string; transferId?: string; version?: number }
+      if (
+        !s ||
+        event.callId !== s.callId ||
+        !this.deps.getCallSnapshot ||
+        (event.transferId === s.transfer?.id && typeof event.version === "number" && event.version <= s.transferVersion)
+      )
+        return
+      void this.deps
+        .getCallSnapshot({ workspaceId: s.workspaceId, callId: s.callId })
+        .then((snapshot) => {
+          if (this.sessionForGen(gen) !== s) return
+          this.applyRoster(s, snapshot.rosterVersion, snapshot.roster, snapshot.transfer ?? null)
+        })
+        .catch(() => {})
     })
     // Another of this user's devices took the call over: the server closed this
     // endpoint and its CF session, so the media here is already dead. Addressed to
@@ -892,6 +989,7 @@ export class CallManager implements CallController {
         callId: session.callId,
         mediaIncarnation: session.mediaIncarnation,
         transportCapability: "p2p-v1",
+        transferCapability: "transport-transfer-v1",
       })
         .then((join) => {
           // Recheck AFTER the awaited rejoin: teardown/leave (or a newer call)
@@ -913,7 +1011,10 @@ export class CallManager implements CallController {
           }
           recordCallLifecycleEvent({ kind: "rejoin_same_endpoint" })
           s.endpointId = join.endpointId
-          this.applyRoster(s, join.rosterVersion, join.roster)
+          s.endpointEpoch = join.epoch
+          s.mediaTransport = join.mediaTransport
+          s.transportGeneration = join.transportGeneration
+          this.applyRoster(s, join.rosterVersion, join.roster, join.transfer ?? null)
           return s.transport.reconnect?.()
         })
         .then(() => {
@@ -976,16 +1077,231 @@ export class CallManager implements CallController {
     return session.suspendedSinceRenew ? "ended_while_away" : "connection_lost"
   }
 
-  private applyRoster(session: CallSession, version: number, roster: CallRosterParticipant[]): void {
-    // Versioned: a reordered/stale delivery is dropped by version check, not
-    // trusted (INV-66 client side). A version we already hold (or older) is a
-    // duplicate/reorder — the bump is monotonic, so equal means no new state.
-    if (version <= session.rosterVersion) return
-    session.rosterVersion = version
-    setCallRoster(roster, version)
-    const peers = this.peerDescriptors(session, roster)
-    void session.transport.syncPeers(peers, session.transportGeneration).catch(() => {})
-    this.diffPulls(session, roster)
+  private applyRoster(
+    session: CallSession,
+    version: number,
+    roster: CallRosterParticipant[],
+    transfer: CallTransportTransfer | null = null
+  ): void {
+    const rosterChanged = version > session.rosterVersion
+    const transferChanged =
+      transfer !== null && (transfer.id !== session.transfer?.id || transfer.version > session.transferVersion)
+    if (!rosterChanged && !transferChanged) return
+    if (rosterChanged) {
+      session.rosterVersion = version
+      setCallRoster(roster, version)
+      const peers = this.peerDescriptors(session, roster)
+      void session.transport.syncPeers(peers, session.transportGeneration).catch(() => {})
+      this.diffPulls(session, roster)
+    }
+    if (transferChanged && session.transport instanceof MediaTransportCoordinator) {
+      void this.queueTransferSnapshot(session, transfer)
+    }
+  }
+
+  private queueTransferSnapshot(session: CallSession, transfer: CallTransportTransfer): Promise<void> {
+    if (transfer.target.generation < session.transportGeneration) return Promise.resolve()
+    if (transfer.id === session.transfer?.id && transfer.version <= session.transferVersion) return Promise.resolve()
+    if (
+      session.transfer &&
+      transfer.id !== session.transfer.id &&
+      transfer.target.generation <= session.transfer.target.generation
+    )
+      return Promise.resolve()
+    session.transfer = transfer
+    const run = session.transferChain.then(async () => {
+      if (this.sessionForGen(session.gen) !== session || session.transfer !== transfer) return
+      const coordinator = session.transport as MediaTransportCoordinator
+      coordinator.onTargetReadinessChange = () =>
+        void this.queueTransferWork(session, () => this.acknowledgeTransferProgress(session))
+      await coordinator.beginTransfer(transfer)
+      if (this.sessionForGen(session.gen) !== session || session.transfer !== transfer) return
+      if (transfer.phase === "preparing") await this.acknowledgeTargetReady(session)
+      else if (transfer.phase === "committing") await this.commitTargetSelection(session)
+      else if (transfer.phase === "aborting") await this.acknowledgeSourceRestored(session)
+      else if (transfer.phase === "draining" || transfer.phase === "completed") {
+        await coordinator.drainSource(transfer.target.generation)
+        session.mediaTransport = transfer.target.transport
+        session.transportGeneration = transfer.target.generation
+      }
+      session.transferVersion = transfer.version
+      session.transferRetryAttempts = 0
+    })
+    session.transferChain = run.catch((error) => this.handleTransferFailure(session, error))
+    return run
+  }
+
+  private queueTransferWork(session: CallSession, work: () => Promise<void>): Promise<void> {
+    const run = session.transferChain.then(async () => {
+      if (this.sessionForGen(session.gen) === session) await work()
+    })
+    session.transferChain = run.catch((error) => this.handleTransferFailure(session, error))
+    return run
+  }
+
+  private handleTransferFailure(session: CallSession, error: unknown): void {
+    if (this.sessionForGen(session.gen) !== session) return
+    recordCallLifecycleEvent({ kind: "pull_failed", detail: `transfer: ${describeError(error)}` })
+    const transfer = session.transfer
+    if (transfer) {
+      setCallDiagnostics({
+        ...getCallState().diagnostics,
+        transfer: {
+          phase: transfer.phase,
+          source: transfer.source.transport,
+          target: transfer.target.transport,
+          failureCode: "client_transfer_failed",
+          recoveryCode: transfer.recoveryCode ?? null,
+        },
+      })
+    }
+    const getCallSnapshot = this.deps.getCallSnapshot
+    if (!getCallSnapshot || session.transferRetryTimer || session.transferRetryAttempts >= 3) return
+    session.transferRetryAttempts++
+    session.transferRetryTimer = setTimeout(() => {
+      session.transferRetryTimer = null
+      if (this.sessionForGen(session.gen) !== session) return
+      void getCallSnapshot({ workspaceId: session.workspaceId, callId: session.callId })
+        .then((snapshot) => {
+          if (this.sessionForGen(session.gen) !== session) return
+          if (snapshot.transfer) void this.queueTransferSnapshot(session, snapshot.transfer)
+          else this.applyRoster(session, snapshot.rosterVersion, snapshot.roster, null)
+        })
+        .catch((retryError) => this.handleTransferFailure(session, retryError))
+    }, PULL_RETRY_DELAY_MS)
+  }
+
+  private acknowledgeTransferProgress(session: CallSession): Promise<void> {
+    if (session.transfer?.phase === "aborting") return this.acknowledgeSourceRestored(session)
+    if (session.transfer?.phase === "committing") return this.commitTargetSelection(session)
+    return this.acknowledgeTargetReady(session)
+  }
+
+  private async acknowledgeTargetReady(session: CallSession): Promise<void> {
+    const transfer = session.transfer
+    if (
+      !transfer ||
+      transfer.phase !== "preparing" ||
+      !this.deps.acknowledgeTransferReady ||
+      !(session.transport instanceof MediaTransportCoordinator)
+    )
+      return
+    const obligation = transfer.obligations.find(
+      (item) =>
+        item.endpointId === session.endpointId &&
+        item.endpointEpoch === session.endpointEpoch &&
+        item.mediaIncarnation === session.mediaIncarnation
+    )
+    if (!obligation) return
+    const transferIdentity = transfer
+    const readiness = await session.transport.targetReadiness(obligation.expectedPublications)
+    if (!readiness.ready || this.sessionForGen(session.gen) !== session || session.transfer !== transferIdentity) return
+    const snapshot = await this.deps.acknowledgeTransferReady({
+      workspaceId: session.workspaceId,
+      callId: session.callId,
+      body: {
+        transferId: transfer.id,
+        generation: transfer.target.generation,
+        endpointId: session.endpointId,
+        endpointEpoch: session.endpointEpoch,
+        mediaIncarnation: session.mediaIncarnation,
+        membershipRevision: obligation.membershipRevision,
+        trackRevision: obligation.trackRevision,
+        ownPublicationsReady: true,
+        readyPublications: readiness.publications,
+      },
+    })
+    if (this.sessionForGen(session.gen) !== session || session.transfer !== transferIdentity) return
+    if (snapshot.transfer) this.applyRoster(session, session.rosterVersion, getCallState().roster, snapshot.transfer)
+  }
+
+  private async commitTargetSelection(session: CallSession): Promise<void> {
+    const transfer = session.transfer
+    if (!transfer || transfer.phase !== "committing" || !(session.transport instanceof MediaTransportCoordinator))
+      return
+    const obligation = transfer.obligations.find(
+      (item) =>
+        item.endpointId === session.endpointId &&
+        item.endpointEpoch === session.endpointEpoch &&
+        item.mediaIncarnation === session.mediaIncarnation
+    )
+    if (!obligation) return
+    const transferIdentity = transfer
+    const readiness = await session.transport.targetReadiness(obligation.expectedPublications)
+    if (
+      !readiness.ready ||
+      this.sessionForGen(session.gen) !== session ||
+      session.transfer !== transferIdentity ||
+      !session.transport.commitSelection(transfer.target.generation, obligation.expectedPublications)
+    )
+      return
+    if (obligation.switched || !this.deps.acknowledgeTransferSwitched) return
+    const snapshot = await this.deps.acknowledgeTransferSwitched({
+      workspaceId: session.workspaceId,
+      callId: session.callId,
+      body: {
+        transferId: transfer.id,
+        generation: transfer.target.generation,
+        endpointId: session.endpointId,
+        endpointEpoch: session.endpointEpoch,
+        mediaIncarnation: session.mediaIncarnation,
+        membershipRevision: obligation.membershipRevision,
+        trackRevision: obligation.trackRevision,
+      },
+    })
+    if (this.sessionForGen(session.gen) !== session || session.transfer !== transferIdentity) return
+    if (snapshot.transfer) this.applyRoster(session, session.rosterVersion, getCallState().roster, snapshot.transfer)
+  }
+
+  private async acknowledgeSourceRestored(session: CallSession): Promise<void> {
+    const transfer = session.transfer
+    if (
+      !transfer ||
+      transfer.phase !== "aborting" ||
+      !this.deps.acknowledgeTransferRestored ||
+      !(session.transport instanceof MediaTransportCoordinator)
+    )
+      return
+    const obligation = transfer.obligations.find(
+      (item) =>
+        item.endpointId === session.endpointId &&
+        item.endpointEpoch === session.endpointEpoch &&
+        item.mediaIncarnation === session.mediaIncarnation
+    )
+    if (!obligation || obligation.restoredToSource) return
+    const transferIdentity = transfer
+    const usable = await session.transport.restoreSourcePlayback(
+      obligation.expectedPublications,
+      transfer.target.generation
+    )
+    if (!usable || this.sessionForGen(session.gen) !== session || session.transfer !== transferIdentity) return
+    const body = {
+      transferId: transfer.id,
+      generation: transfer.target.generation,
+      endpointId: session.endpointId,
+      endpointEpoch: session.endpointEpoch,
+      mediaIncarnation: session.mediaIncarnation,
+      membershipRevision: obligation.membershipRevision,
+      trackRevision: obligation.trackRevision,
+    }
+    let lastError: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const snapshot = await this.deps.acknowledgeTransferRestored({
+          workspaceId: session.workspaceId,
+          callId: session.callId,
+          body,
+        })
+        if (this.sessionForGen(session.gen) !== session || session.transfer !== transferIdentity) return
+        if (snapshot.transfer)
+          this.applyRoster(session, session.rosterVersion, getCallState().roster, snapshot.transfer)
+        return
+      } catch (error) {
+        lastError = error
+        if (this.sessionForGen(session.gen) !== session || session.transfer !== transferIdentity) return
+      }
+    }
+    throw lastError
   }
 
   private peerDescriptors(session: CallSession, roster: CallRosterParticipant[]): PeerDescriptor[] {
@@ -1338,11 +1654,7 @@ export class CallManager implements CallController {
   private wireTransport(session: CallSession): void {
     session.transport.onRemoteTrack = (event: RemoteTrackEvent) => {
       if (this.session !== session) return
-      const key = peerTrackRefKey(event.ref)
-      const isCurrent = this.peerDescriptors(session, getCallState().roster).some((peer) =>
-        peer.publications.some((publication) => peerTrackRefKey(publication.ref) === key)
-      )
-      if (!isCurrent) return
+      if (!this.isCurrentRemoteRef(session, event.ref)) return
       // Remote audio renders through a dedicated <audio> element so Chromium's
       // echo canceller stays referenced to the output and setSinkId works. It is
       // NEVER routed through the AudioContext to the speakers (Web Audio taps are
@@ -1360,6 +1672,32 @@ export class CallManager implements CallController {
       if (state === "reconnecting") setCallPhase("reconnecting")
       else if (state === "connected") setCallPhase("connected")
     }
+  }
+
+  private isCurrentRemoteRef(session: CallSession, ref: PeerTrackRef): boolean {
+    const key = peerTrackRefKey(ref)
+    if (
+      this.peerDescriptors(session, getCallState().roster).some((peer) =>
+        peer.publications.some((publication) => peerTrackRefKey(publication.ref) === key)
+      )
+    )
+      return true
+    return (
+      session.transfer?.sessions.some(
+        (mediaSession) =>
+          mediaSession.endpointId === ref.endpointId &&
+          mediaSession.generation === session.transfer?.target.generation &&
+          mediaSession.status !== "closed" &&
+          mediaSession.status !== "failed" &&
+          mediaSession.publishedTracks.some((published) => {
+            if (published.kind !== ref.kind) return false
+            const publicationId =
+              published.publicationId ??
+              (mediaSession.providerSessionId ? `${mediaSession.providerSessionId}:${published.trackName}` : null)
+            return publicationId === ref.publicationId
+          })
+      ) ?? false
+    )
   }
 
   private attachRemoteAudio(session: CallSession, ref: PeerTrackRef, track: MediaStreamTrack): void {
@@ -1482,6 +1820,15 @@ export class CallManager implements CallController {
           if (this.sessionForGen(gen) !== session) return
           setCallDiagnostics({
             mediaTransport: session.mediaTransport,
+            transfer: session.transfer
+              ? {
+                  phase: session.transfer.phase,
+                  source: session.transfer.source.transport,
+                  target: session.transfer.target.transport,
+                  failureCode: session.transfer.failureCode ?? null,
+                  recoveryCode: session.transfer.recoveryCode ?? null,
+                }
+              : null,
             candidateType: stats.candidateType,
             bytesSent: stats.bytesSent,
             bytesReceived: stats.bytesReceived,
@@ -1770,8 +2117,9 @@ export class CallManager implements CallController {
     this.session = null
     this.clearTimers(session)
     this.removeSocketHandlers(session)
-    await session.transport.close().catch(() => {})
+    const closingTransport = session.transport.close().catch(() => {})
     this.stopLocalCapture(session)
+    await closingTransport
     for (const key of [...session.remoteAudioEls.keys()]) this.detachRemoteAudioByKey(session, key)
     this.removeSessionListeners(session)
     session.releaseLock?.()
@@ -1822,10 +2170,12 @@ export class CallManager implements CallController {
     if (session.leaseTimer) clearInterval(session.leaseTimer)
     if (session.watchdogTimer) clearInterval(session.watchdogTimer)
     if (session.pullRetryTimer) clearTimeout(session.pullRetryTimer)
+    if (session.transferRetryTimer) clearTimeout(session.transferRetryTimer)
     if (session.meterRaf !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(session.meterRaf)
     session.leaseTimer = null
     session.watchdogTimer = null
     session.pullRetryTimer = null
+    session.transferRetryTimer = null
     session.meterRaf = null
   }
 }
@@ -1852,7 +2202,15 @@ function detectSingleActiveCapture(): boolean {
 
 export function defaultCallManagerDeps(): CallManagerDeps {
   return {
-    async startCallRest({ workspaceId, streamId, mode, mediaIncarnation, expectedCallId, takeover }) {
+    async startCallRest({
+      workspaceId,
+      streamId,
+      mode,
+      mediaIncarnation,
+      expectedCallId,
+      takeover,
+      transferCapability,
+    }) {
       return api.post<StartCallResponse>(`/api/workspaces/${workspaceId}/calls`, {
         streamId,
         mode,
@@ -1860,10 +2218,26 @@ export function defaultCallManagerDeps(): CallManagerDeps {
         expectedCallId,
         takeover,
         transportCapability: "p2p-v1",
+        transferCapability,
       })
     },
     async leaveCallRest({ workspaceId, callId }) {
       await api.post(`/api/workspaces/${workspaceId}/calls/${callId}/leave`, {})
+    },
+    getCallSnapshot({ workspaceId, callId }) {
+      return api.get<StartCallResponse>(`/api/workspaces/${workspaceId}/calls/${callId}`)
+    },
+    requestTransportTransfer({ workspaceId, callId, ...body }) {
+      return api.post(`/api/workspaces/${workspaceId}/calls/${callId}/transport-transfers`, body)
+    },
+    acknowledgeTransferReady({ workspaceId, callId, body }) {
+      return api.post(`/api/workspaces/${workspaceId}/calls/${callId}/transport-transfers/ready`, body)
+    },
+    acknowledgeTransferSwitched({ workspaceId, callId, body }) {
+      return api.post(`/api/workspaces/${workspaceId}/calls/${callId}/transport-transfers/switched`, body)
+    },
+    acknowledgeTransferRestored({ workspaceId, callId, body }) {
+      return api.post(`/api/workspaces/${workspaceId}/calls/${callId}/transport-transfers/restored`, body)
     },
     connectSocket(workspaceId) {
       const url = resolveCallsUrl(workspaceId)
@@ -1873,7 +2247,7 @@ export function defaultCallManagerDeps(): CallManagerDeps {
     createTransport({ workspaceId, callId, socket, mediaTransport, transportGeneration }) {
       return mediaTransport === "p2p"
         ? new P2pMeshTransport({ workspaceId, callId, socket, generation: transportGeneration })
-        : new CloudflareSfuTransport({ workspaceId, callId })
+        : new CloudflareSfuTransport({ workspaceId, callId, generation: transportGeneration })
     },
     acquireUserMedia(constraints) {
       return navigator.mediaDevices.getUserMedia(constraints)

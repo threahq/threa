@@ -1,13 +1,14 @@
 import { api } from "@/api/client"
 import type { P2pSignalEnvelope, TurnCredentialsResponse } from "@threahq/types"
-import type {
-  MediaTransport,
-  PeerDescriptor,
-  PeerTrackRef,
-  RemoteTrackEvent,
-  SessionDescriptor,
-  TransportConnectionState,
-  TransportStats,
+import {
+  peerTrackRefKey,
+  type MediaTransport,
+  type PeerDescriptor,
+  type PeerTrackRef,
+  type RemoteTrackEvent,
+  type SessionDescriptor,
+  type TransportConnectionState,
+  type TransportStats,
 } from "./media-transport"
 import type { PublishedTrackKind } from "./config"
 import { P2pTrafficCounter } from "./p2p-traffic-counter"
@@ -75,6 +76,7 @@ export class P2pMeshTransport implements MediaTransport {
   private readonly traffic = new P2pTrafficCounter()
   private readonly finalTrafficSamples = new Set<Promise<void>>()
   private readonly peerRecoveryAttempts = new Map<string, number>()
+  private readonly inboundByteSamples = new Map<string, number>()
 
   onRemoteTrack: ((event: RemoteTrackEvent) => void) | null = null
   onRemoteTrackEnded: ((ref: PeerTrackRef) => void) | null = null
@@ -216,6 +218,28 @@ export class P2pMeshTransport implements MediaTransport {
     )
   }
 
+  async hasInboundByteProgress(ref: PeerTrackRef): Promise<boolean> {
+    const state = this.peers.get(ref.endpointId)
+    const track = state?.remoteTracks.get(ref.kind)
+    if (!state || !track || state.emittedRefs.get(ref.kind)?.publicationId !== ref.publicationId) return false
+    const report = await state.pc.getStats()
+    let bytes: number | null = null
+    report.forEach((value) => {
+      const stat = value as Record<string, unknown> & { type: string }
+      if (stat.type === "inbound-rtp" && stat.trackIdentifier === track.id && typeof stat.bytesReceived === "number")
+        bytes = Math.max(bytes ?? 0, stat.bytesReceived)
+    })
+    if (bytes === null) return false
+    const key = peerTrackRefKey(ref)
+    const previous = this.inboundByteSamples.get(key)
+    this.inboundByteSamples.set(key, bytes)
+    return previous !== undefined && bytes > previous
+  }
+
+  hasEstablishedOwnPublications(): boolean {
+    return this._state === "connected" && this.publicationAckedRevision >= this.publicationRevision
+  }
+
   async getStats(): Promise<TransportStats> {
     await Promise.all(this.finalTrafficSamples)
     const peers = (
@@ -290,6 +314,7 @@ export class P2pMeshTransport implements MediaTransport {
     if (this.publicationTimer) clearTimeout(this.publicationTimer)
     this.deps.socket.off("call:p2p:signal", this.onSignal)
     this.pendingPeerSignals.clear()
+    this.inboundByteSamples.clear()
     for (const state of [...this.peers.values()]) this.removePeer(state)
     await Promise.all(this.finalTrafficSamples)
     this.setState("closed")
@@ -759,7 +784,7 @@ export class P2pMeshTransport implements MediaTransport {
         ? this.deps.fetchCredentials(descriptor.endpointId, descriptor.mediaIncarnation)
         : api.post<TurnCredentialsResponse>(
             `/api/workspaces/${this.deps.workspaceId}/calls/${this.deps.callId}/endpoints/${descriptor.endpointId}/turn-credentials`,
-            { mediaIncarnation: descriptor.mediaIncarnation }
+            { mediaIncarnation: descriptor.mediaIncarnation, generation: this.generation }
           ))
       if (!this.isLive(lifecycle)) return
       this.iceServers = credentials.iceServers

@@ -74,6 +74,13 @@ export interface CallLocalState {
 
 export interface CallDiagnostics {
   mediaTransport?: "sfu" | "p2p"
+  transfer?: {
+    phase: "preparing" | "committing" | "draining" | "aborting" | "failed" | "completed"
+    source: "sfu" | "p2p"
+    target: "sfu" | "p2p"
+    failureCode: string | null
+    recoveryCode: string | null
+  } | null
   candidateType?: RTCIceCandidateType | null
   bytesSent?: number
   bytesReceived?: number

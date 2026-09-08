@@ -5,6 +5,7 @@ import { BroadcastHandler } from "./broadcast-handler"
 import { SyncLogRepository } from "../../features/sync"
 import type { ProcessResult } from "@threahq/backend-common"
 import type { OutboxEvent } from "./repository"
+import { CALLS_NAMESPACE, callRoom } from "../call-routing"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -97,6 +98,30 @@ describe("BroadcastHandler", () => {
 
   afterEach(() => {
     mock.restore()
+  })
+
+  it("should route durable call transfer prompts to the call room on /calls", async () => {
+    const event = makeEvent(1n, "call:transport_transfer_changed", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      callId: "call_1",
+      transferId: "callxfer_1",
+      generation: 2,
+      version: 3,
+      phase: "preparing",
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(emitChains).toContainEqual({
+      room: callRoom("call_1"),
+      namespace: CALLS_NAMESPACE,
+      eventType: "call:transport_transfer_changed",
+      payload: event.payload,
+    })
   })
 
   it("should emit user-scoped event to user room", async () => {

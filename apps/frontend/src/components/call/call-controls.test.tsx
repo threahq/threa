@@ -5,6 +5,7 @@ import { fireEvent, render, screen, userEvent } from "@/test"
 import { StreamTypes } from "@threahq/types"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as workspaceStore from "@/stores/workspace-store"
+import * as featureFlags from "@/hooks/use-feature-flags"
 import * as sonner from "sonner"
 import { clearCallLifecycleLog, recordCallLifecycleEvent } from "@/calls/lifecycle-log"
 import {
@@ -13,6 +14,7 @@ import {
   setCallSession,
   setCallPhase,
   setCallDevices,
+  setCallDiagnostics,
   setCallSurfaceMode,
   setDesktopSurfaceOverride,
   type CallDeviceState,
@@ -92,6 +94,7 @@ beforeEach(() => {
   clearCallState()
   localStorage.clear()
   __resetCallPrefsForTests()
+  vi.spyOn(featureFlags, "useFeatureFlag").mockReturnValue("off")
 })
 
 afterEach(() => {
@@ -322,11 +325,41 @@ describe("ConnectionDiagnostics — lifecycle log", () => {
     clearCallLifecycleLog()
   })
 
-  async function openDiagnostics() {
-    renderControls(makeManager())
+  async function openDiagnostics(manager = makeManager()) {
+    renderControls(manager)
     enterVideoCall()
     await userEvent.click(screen.getByLabelText("Connection diagnostics"))
   }
+
+  it("hides the P2P transfer action when the call workspace is not enrolled", async () => {
+    const useFeatureFlag = vi
+      .spyOn(featureFlags, "useFeatureFlag")
+      .mockImplementation((workspaceId, key) => (workspaceId === "ws_1" && key === "callsP2p" ? "off" : "on"))
+    await openDiagnostics(makeManager({ requestMediaTransport: vi.fn(async () => {}) }))
+
+    expect(screen.queryByRole("button", { name: "Switch to Peer to peer" })).toBeNull()
+    expect(useFeatureFlag).toHaveBeenCalledWith("ws_1", "callsP2p")
+  })
+
+  it("hides the transfer action until the active transport is known", async () => {
+    vi.spyOn(featureFlags, "useFeatureFlag").mockReturnValue("on")
+    await openDiagnostics(makeManager({ requestMediaTransport: vi.fn(async () => {}) }))
+
+    expect(screen.queryByRole("button", { name: /Switch to/ })).toBeNull()
+  })
+
+  it("keeps the P2P to SFU escape action when enrollment is later disabled", async () => {
+    vi.spyOn(featureFlags, "useFeatureFlag").mockReturnValue("off")
+    setCallDiagnostics({
+      rttMs: null,
+      packetLoss: null,
+      qualityLimitation: null,
+      mediaTransport: "p2p",
+    })
+    await openDiagnostics(makeManager({ requestMediaTransport: vi.fn(async () => {}) }))
+
+    expect(screen.getByRole("button", { name: "Switch to Cloudflare SFU" })).toBeInTheDocument()
+  })
 
   it("renders the recorded entries newest-first", async () => {
     act(() => {

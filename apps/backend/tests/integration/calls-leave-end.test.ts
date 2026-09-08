@@ -15,6 +15,7 @@ import { Pool } from "pg"
 import { Visibilities } from "@threahq/types"
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
+import { FeatureFlagService } from "../../src/features/feature-flags"
 import { StreamService } from "../../src/features/streams"
 import { CallService, CallRepository, ENDPOINT_LEASE_TTL_MS } from "../../src/features/calls"
 import { workspaceId as newWorkspaceId } from "../../src/lib/id"
@@ -26,7 +27,7 @@ let calls: CallService
 beforeAll(async () => {
   pool = await setupTestDatabase()
   streams = new StreamService(pool)
-  calls = new CallService({ pool })
+  calls = new CallService({ pool, featureFlagService: new FeatureFlagService(pool) })
 })
 
 afterAll(async () => {

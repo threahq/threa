@@ -105,7 +105,10 @@ function stubTransaction() {
 }
 
 function makeService() {
-  return new CallService({ pool: {} as Pool })
+  return new CallService({
+    pool: {} as Pool,
+    featureFlagService: { getWorkspaceFlag: async () => "on" } as never,
+  })
 }
 
 /** Stub the endpoint-admission reads for a clean first join (no live endpoint, epoch 0). */
@@ -1482,7 +1485,11 @@ function fakeCloudflare(overrides: Record<string, unknown> = {}) {
 }
 
 function makeServiceWithCf(cloudflare: Record<string, unknown>) {
-  return new CallService({ pool: {} as Pool, cloudflare: cloudflare as never })
+  return new CallService({
+    pool: {} as Pool,
+    featureFlagService: { getWorkspaceFlag: async () => "on" } as never,
+    cloudflare: cloudflare as never,
+  })
 }
 
 function stubWithClient() {

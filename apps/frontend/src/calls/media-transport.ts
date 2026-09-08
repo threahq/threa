@@ -7,6 +7,8 @@ export interface SessionDescriptor {
   endpointId: string
   /** Fenced on every proxy call; a stale incarnation is rejected 409 by the backend. */
   mediaIncarnation: string
+  generation?: number
+  sessionId?: string | null
 }
 
 export interface PeerTrackRef {
@@ -84,6 +86,8 @@ export interface MediaTransport {
   stopPull(ref: PeerTrackRef): Promise<void>
   syncPeers(peers: PeerDescriptor[], generation: number): Promise<void>
   reconnect?(): Promise<void>
+  hasInboundByteProgress?(ref: PeerTrackRef): Promise<boolean>
+  hasEstablishedOwnPublications?(): boolean
   getStats(): Promise<TransportStats>
   close(): Promise<void>
   readonly connectionState: TransportConnectionState
@@ -158,24 +162,29 @@ export function createCallProxyClient(args: {
   callId: string
   endpointId: string
   mediaIncarnation: string
+  generation?: number
+  sessionId?: string | null
   post?: PostJson
 }): CallProxyClient {
-  const { workspaceId, callId, endpointId, mediaIncarnation } = args
+  const { workspaceId, callId, endpointId, mediaIncarnation, generation, sessionId } = args
   const post: PostJson = args.post ?? ((path, body) => api.post(path, body))
   const base = `/api/workspaces/${workspaceId}/calls/${callId}/endpoints/${endpointId}/cf`
   return {
-    createSession: () => post(`${base}/session`, { mediaIncarnation }),
-    publishTracks: ({ sdp, tracks }) => post(`${base}/tracks/publish`, { mediaIncarnation, sdp, tracks }),
-    pullTracks: (tracks) => post(`${base}/tracks/pull`, { mediaIncarnation, tracks }),
-    renegotiate: (sdp) => post(`${base}/renegotiate`, { mediaIncarnation, sdp }),
+    createSession: () => post(`${base}/session`, { mediaIncarnation, generation, sessionId }),
+    publishTracks: ({ sdp, tracks }) =>
+      post(`${base}/tracks/publish`, { mediaIncarnation, generation, sessionId, sdp, tracks }),
+    pullTracks: (tracks) => post(`${base}/tracks/pull`, { mediaIncarnation, generation, sessionId, tracks }),
+    renegotiate: (sdp) => post(`${base}/renegotiate`, { mediaIncarnation, generation, sessionId, sdp }),
     closeTracks: ({ mids, unpublishKinds, sdp, reason }) =>
-      post(`${base}/tracks/close`, { mediaIncarnation, mids, unpublishKinds, sdp, reason }),
+      post(`${base}/tracks/close`, { mediaIncarnation, generation, sessionId, mids, unpublishKinds, sdp, reason }),
   }
 }
 
 interface CloudflareSfuTransportDeps {
   workspaceId: string
   callId: string
+  generation?: number
+  sessionId?: string | null
   /** Injectable for tests; production builds a bound proxy from `api.post`. */
   post?: PostJson
   /** Injectable for tests; production uses the browser `RTCPeerConnection`. */
@@ -226,6 +235,8 @@ function pickWorst(reasons: Array<string | undefined>): TransportStats["qualityL
 export class CloudflareSfuTransport implements MediaTransport {
   private readonly workspaceId: string
   private readonly callId: string
+  private readonly generation?: number
+  private readonly sessionId?: string | null
   private readonly post?: PostJson
   private readonly pcFactory: () => RTCPeerConnection
 
@@ -234,11 +245,13 @@ export class CloudflareSfuTransport implements MediaTransport {
   private descriptor: SessionDescriptor | null = null
 
   private readonly publishTransceivers = new Map<PublishedTrackKind, RTCRtpTransceiver>()
+  private readonly publishEncodingSettings = new Map<PublishedTrackKind, { maxBitrate?: number }>()
   /** mid → ref, so an `ontrack` can be attributed to the pull that requested it. */
   private readonly pullByMid = new Map<string, PeerTrackRef>()
   private readonly pulledRefs = new Map<string, PeerTrackRef>()
   private readonly remoteTracks = new Map<string, MediaStreamTrack>()
   private readonly providerLocators = new Map<string, { sessionId: string; trackName: string }>()
+  private readonly inboundByteSamples = new Map<string, number>()
 
   private queue: Promise<unknown> = Promise.resolve()
   private _state: TransportConnectionState = "new"
@@ -251,6 +264,8 @@ export class CloudflareSfuTransport implements MediaTransport {
   constructor(deps: CloudflareSfuTransportDeps) {
     this.workspaceId = deps.workspaceId
     this.callId = deps.callId
+    this.generation = deps.generation
+    this.sessionId = deps.sessionId
     this.post = deps.post
     this.pcFactory = deps.createPeerConnection ?? (() => new RTCPeerConnection())
   }
@@ -284,6 +299,8 @@ export class CloudflareSfuTransport implements MediaTransport {
       callId: this.callId,
       endpointId: descriptor.endpointId,
       mediaIncarnation: descriptor.mediaIncarnation,
+      generation: descriptor.generation ?? this.generation,
+      sessionId: descriptor.sessionId ?? this.sessionId,
       post: this.post,
     })
     const pc = this.pcFactory()
@@ -356,11 +373,13 @@ export class CloudflareSfuTransport implements MediaTransport {
       let transceiver = this.publishTransceivers.get(kind)
       if (transceiver) {
         await transceiver.sender.replaceTrack(track)
+        await this.applyPublishEncoding(transceiver.sender, this.publishEncodingSettings.get(kind))
         // A replaceTrack into an existing sendonly transceiver needs no SDP churn.
         return
       }
       transceiver = pc.addTransceiver(track, { direction: "sendonly" })
       this.publishTransceivers.set(kind, transceiver)
+      await this.applyPublishEncoding(transceiver.sender, this.publishEncodingSettings.get(kind))
       let offerSdp = ""
       let answerSdp: string | undefined
       try {
@@ -391,14 +410,18 @@ export class CloudflareSfuTransport implements MediaTransport {
   }
 
   async setPublishEncoding(kind: PublishedTrackKind, params: { maxBitrate?: number }): Promise<void> {
+    this.publishEncodingSettings.set(kind, params)
     const transceiver = this.publishTransceivers.get(kind)
-    if (!transceiver) return
-    const sender = transceiver.sender
+    if (transceiver) await this.applyPublishEncoding(transceiver.sender, params)
+  }
+
+  private async applyPublishEncoding(sender: RTCRtpSender, params: { maxBitrate?: number } | undefined): Promise<void> {
+    if (!params) return
     const current = sender.getParameters()
     if (!current.encodings || current.encodings.length === 0) current.encodings = [{}]
-    for (const enc of current.encodings) {
-      if (params.maxBitrate != null) enc.maxBitrate = params.maxBitrate
-    }
+    const perEncoding =
+      params.maxBitrate == null ? undefined : Math.floor(params.maxBitrate / Math.max(1, current.encodings.length))
+    for (const enc of current.encodings) enc.maxBitrate = perEncoding
     try {
       await sender.setParameters(current)
     } catch {
@@ -533,6 +556,28 @@ export class CloudflareSfuTransport implements MediaTransport {
     })
   }
 
+  async hasInboundByteProgress(ref: PeerTrackRef): Promise<boolean> {
+    const pc = this.pc
+    const key = peerTrackRefKey(ref)
+    const track = this.remoteTracks.get(key)
+    if (!pc || !track) return false
+    const report = await pc.getStats()
+    let bytes: number | null = null
+    report.forEach((value) => {
+      const stat = value as Record<string, unknown> & { type: string }
+      if (stat.type === "inbound-rtp" && stat.trackIdentifier === track.id && typeof stat.bytesReceived === "number")
+        bytes = Math.max(bytes ?? 0, stat.bytesReceived)
+    })
+    if (bytes === null) return false
+    const previous = this.inboundByteSamples.get(key)
+    this.inboundByteSamples.set(key, bytes)
+    return previous !== undefined && bytes > previous
+  }
+
+  hasEstablishedOwnPublications(): boolean {
+    return this._state === "connected" && this.publishTransceivers.size > 0
+  }
+
   async getStats(): Promise<TransportStats> {
     const pc = this.pc
     if (!pc) return { rttMs: null, packetLoss: null, qualityLimitation: null, encodeTimeMs: null }
@@ -588,6 +633,7 @@ export class CloudflareSfuTransport implements MediaTransport {
     this.pulledRefs.clear()
     this.remoteTracks.clear()
     this.providerLocators.clear()
+    this.inboundByteSamples.clear()
   }
 
   private async applyAnswerAndMaybeRenegotiate(result: CfTracksResult): Promise<void> {
