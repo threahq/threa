@@ -4004,7 +4004,13 @@ async function runSpawnCommand(
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
-  const parsed = parseSpawnCommandArgs(args, ["claude", "pi"])
+  const parsed = parseSpawnCommandArgs(args, {
+    runtimes: [
+      { value: "claude", label: "Claude Code", installed: true },
+      { value: "pi", label: "Pi", installed: true },
+    ],
+    defaultRuntime: "pi",
+  })
   if ("error" in parsed) {
     await deps.complete(invocation, parsed.error, ctx)
     return
@@ -4021,7 +4027,7 @@ async function runSpawnCommand(
   if (invocation.rootStreamId !== link.rootStreamId || invocation.claimedInstanceId !== link.instanceId) {
     throw new Error("Spawn request no longer matches the linked scratchpad.")
   }
-  const runtime = parsed.runtime ?? "pi"
+  const runtime = parsed.runtime
   // A replacement claim reruns this command, so anything past here would start a
   // second session for the one `/spawn` the user typed.
   if (!isCurrent()) return
