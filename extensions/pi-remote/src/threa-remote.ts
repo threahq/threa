@@ -895,6 +895,9 @@ function currentReconnectLink(
   return link && reconnectAvailable() ? link : undefined
 }
 
+/** What a `/spawn` naming no runtime launches: this desk's own. */
+const SPAWN_DEFAULT_RUNTIME = "pi"
+
 const defaultSpawnRuntimes = spawnRuntimesResolver((error) =>
   console.error(`Threa remote: harnessd runtimes: ${error}; /spawn disabled`)
 )
@@ -930,6 +933,7 @@ function buildRuntimeCapabilities(
     }),
     thinkingLevels: [...THINKING_LEVELS],
     spawnRuntimes: runtimes,
+    spawnDefaultRuntime: SPAWN_DEFAULT_RUNTIME,
     preferredModels: [...(config?.preferredModels ?? [])],
     ...(ctx?.model && { currentModel: `${ctx.model.provider}/${ctx.model.id}` }),
     ...(ctx && { modelSuggestions: buildModelSuggestions(ctx) }),
@@ -4016,7 +4020,7 @@ async function runSpawnCommand(
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
-  const parsed = parseSpawnCommandArgs(args, { runtimes: deps.spawnRuntimes(), defaultRuntime: "pi" })
+  const parsed = parseSpawnCommandArgs(args, { runtimes: deps.spawnRuntimes(), defaultRuntime: SPAWN_DEFAULT_RUNTIME })
   if ("error" in parsed) {
     await deps.complete(invocation, parsed.error, ctx)
     return

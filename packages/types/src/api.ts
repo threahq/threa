@@ -1654,6 +1654,11 @@ export interface CommandArgumentSuggestion {
   value: string
   label?: string
   description?: string
+  /**
+   * Arguments this choice itself takes, overriding the command's own where the
+   * names match: `/spawn pi /model …` offers Pi's models, not the desk's.
+   */
+  args?: CommandArgumentInfo[]
 }
 
 export interface CommandArgumentInfo {

@@ -27,6 +27,12 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
 ] as const
 export type SessionControlCommandName = (typeof SESSION_CONTROL_COMMAND_NAMES)[number]
 
+// `/spawn` overrides, spelled the way the composer offers them. The runtime
+// parser also takes `--model`/`--thinking`; these are the names the argument
+// picker matches, and each runtime suggestion carries its own list under them.
+export const SPAWN_MODEL_ARG = "/model"
+export const SPAWN_THINKING_ARG = "/thinking"
+
 export function listServerCommandInfos(commandRegistry: CommandRegistry): CommandInfo[] {
   return commandRegistry.getCommandNames().map((name) => {
     const cmd = commandRegistry.get(name)!
@@ -167,6 +173,11 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       scope: CommandScopes.STREAM,
       args: [
         { name: "runtime", description: "Runtime to spawn; defaults to the one this scratchpad is linked to" },
+        {
+          name: SPAWN_MODEL_ARG,
+          description: "Model for the spawned session; omitted keeps that runtime's own default",
+        },
+        { name: SPAWN_THINKING_ARG, description: "Thinking level for the spawned session" },
         { name: "name", required: true, description: "Session name; lines after the first are the prompt" },
       ],
     },

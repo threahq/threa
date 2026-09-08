@@ -123,6 +123,8 @@ export interface SessionControlActuator {
   thinkingLevels?: readonly string[]
   /** Runtimes for the canonical /spawn command's arg picker. */
   spawnRuntimes?: readonly SpawnRuntimeInfo[]
+  /** Which of them a `/spawn` naming no runtime lands on, so the picker offers its models first. */
+  spawnDefaultRuntime?: string
   /** Interrupt the runtime's current turn. False = control lost (e.g. pane gone). */
   interrupt(): boolean
   /**
@@ -319,6 +321,7 @@ export function runtimeCapabilitiesFor(
           ...(actuator.modelSuggestions ? { modelSuggestions: [...actuator.modelSuggestions] } : {}),
           ...(actuator.thinkingLevels ? { thinkingLevels: [...actuator.thinkingLevels] } : {}),
           ...(actuator.spawnRuntimes ? { spawnRuntimes: [...actuator.spawnRuntimes] } : {}),
+          ...(actuator.spawnDefaultRuntime ? { spawnDefaultRuntime: actuator.spawnDefaultRuntime } : {}),
         }
       : {}),
   }

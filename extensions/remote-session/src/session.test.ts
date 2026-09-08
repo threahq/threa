@@ -270,6 +270,7 @@ describe("capability selection", () => {
         description: "/usr/local/bin/claude",
       },
     ],
+    spawnDefaultRuntime: "claude",
     interrupt: () => true,
     runCommand: async () => ({ ok: true, message: "ok" }),
   }
@@ -303,6 +304,7 @@ describe("capability selection", () => {
         description: "/usr/local/bin/claude",
       },
     ])
+    expect(enabled.spawnDefaultRuntime).toBe("claude")
     expect(enabled.runtimeSessionId).toBe("rts_1")
 
     const disabled = runtimeCapabilitiesFor("rts_1", undefined)
@@ -310,6 +312,7 @@ describe("capability selection", () => {
     expect(disabled.sessionControlCommands).toBeUndefined()
     expect(disabled.thinkingLevels).toBeUndefined()
     expect(disabled.spawnRuntimes).toBeUndefined()
+    expect(disabled.spawnDefaultRuntime).toBeUndefined()
     expect(disabled.runtimeSessionId).toBe("rts_1")
   })
 })

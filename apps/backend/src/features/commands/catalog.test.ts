@@ -26,6 +26,8 @@ describe("session-control command catalog", () => {
       scope: "stream",
       args: [
         { name: "runtime", description: "Runtime to spawn; defaults to the one this scratchpad is linked to" },
+        { name: "/model", description: "Model for the spawned session; omitted keeps that runtime's own default" },
+        { name: "/thinking", description: "Thinking level for the spawned session" },
         { name: "name", required: true, description: "Session name; lines after the first are the prompt" },
       ],
     })
