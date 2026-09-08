@@ -5,9 +5,9 @@ import helmet from "helmet"
 import cookieParser from "cookie-parser"
 import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
-import { INTERNAL_API_KEY_HEADER, THREA_VERSION_HEADER } from "@threahq/types"
+import { THREA_VERSION_HEADER } from "@threahq/types"
 import { logger } from "./lib/logger"
-import { bigIntReplacer, sanitizeRoutePath } from "@threahq/backend-common"
+import { bigIntReplacer, requestLogSerializers, sanitizeRoutePath } from "@threahq/backend-common"
 import { createMetricsMiddleware } from "./middleware/metrics"
 import type { ApiVersionLog } from "./middleware/api-version"
 import { createCorsOriginChecker } from "./lib/cors"
@@ -89,23 +89,7 @@ export function createApp(options: CreateAppOptions): Express {
       // version, its source (header override vs key pin), the key id, and the
       // operationId on res.locals; empty object for every non-public-API request.
       customProps: (_req, res) => (res as { locals?: { apiVersionLog?: ApiVersionLog } }).locals?.apiVersionLog ?? {},
-      redact: {
-        // The default pino-http req serializer logs the full headers object, so
-        // every secret-bearing header must be redacted here or it lands in the
-        // log on any 4xx/5xx. `x-internal-api-key` is the shared internal-auth
-        // secret (enclave/control-plane → backend); Node lowercases header names,
-        // and the path is derived from the constant so it can't drift.
-        paths: [
-          "req.headers.authorization",
-          "req.headers.cookie",
-          // The referer carries the document URL, and `/connect?code=…` puts a
-          // live device-flow user code there.
-          "req.headers.referer",
-          `req.headers["${INTERNAL_API_KEY_HEADER.toLowerCase()}"]`,
-          "res.headers['set-cookie']",
-        ],
-        censor: "[REDACTED]",
-      },
+      serializers: requestLogSerializers,
       // The route template, not the URL: a message carrying prefixed ULIDs is
       // unique per request, so nothing groups downstream and 600 identical 4xx
       // read as 600 unrelated ones. The full URL stays in the `req` attribute.

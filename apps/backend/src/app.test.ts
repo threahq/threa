@@ -3,10 +3,7 @@ import type { AddressInfo } from "node:net"
 import { addLogDestination } from "@threahq/backend-common"
 import { createApp } from "./app"
 
-interface CapturedLog {
-  msg: string
-  req?: { url?: string }
-}
+type CapturedLog = Record<string, unknown>
 
 /**
  * The app logs through the process-wide logger, so the assertion has to come
@@ -31,7 +28,9 @@ function captureLogs(): CapturedLog[] {
 async function get(app: ReturnType<typeof createApp>, path: string): Promise<void> {
   const server = app.listen(0)
   try {
-    await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`)
+    await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`, {
+      headers: { authorization: "Bearer secret-token", cookie: "session=abc" },
+    })
   } finally {
     server.close()
   }
@@ -47,8 +46,21 @@ describe("request logging", () => {
 
     // Ids and the query string would make every message unique, so 600
     // identical denials would group into 600 buckets instead of one.
-    const denial = records.find((record) => record.msg.endsWith("403"))
-    expect(denial?.msg).toBe("GET /api/v1/workspaces/:id/streams/:id 403")
-    expect(denial?.req?.url).toBe("/api/v1/workspaces/ws_01WORKSPACE/streams/stream_01ABCDEF?include=members")
+    const denial = records.find((record) => (record.msg as string)?.endsWith("403"))
+    expect(denial).toEqual({
+      level: 40,
+      time: expect.any(Number),
+      pid: expect.any(Number),
+      hostname: expect.any(String),
+      req: {
+        id: expect.any(String),
+        method: "GET",
+        url: "/api/v1/workspaces/ws_01WORKSPACE/streams/stream_01ABCDEF?include=members",
+        userAgent: expect.any(String),
+      },
+      res: { statusCode: 403 },
+      responseTime: expect.any(Number),
+      msg: "GET /api/v1/workspaces/:id/streams/:id 403",
+    })
   })
 })
