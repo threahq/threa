@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { render, screen } from "@/test"
 import * as authModule from "@/auth"
+import * as featureFlags from "@/hooks/use-feature-flags"
 import * as ringTone from "@/calls/ring-tone"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import {
@@ -249,6 +250,7 @@ beforeEach(() => {
     bots: [],
   })
   vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_self" } as ReturnType<typeof authModule.useUser>)
+  vi.spyOn(featureFlags, "useFeatureFlag").mockReturnValue("off")
   vi.spyOn(ringTone, "installRingAudioWarmup").mockReturnValue(() => {})
   vi.spyOn(ringTone, "startRing").mockReturnValue(true)
   vi.spyOn(ringTone, "stopRing").mockReturnValue(undefined)
