@@ -15,10 +15,11 @@ interface CommandArgPickerProps {
 
 function CommandArgContent({ item }: { item: CommandArgumentSuggestion }) {
   // Prefer the human label as the primary line; fall back to the raw value the
-  // backend resolves on (e.g. `provider/model-id`). Show the value/description
-  // underneath only when it differs from what's already on the primary line.
+  // backend resolves on (e.g. `provider/model-id`). Underneath, the description
+  // when the runtime sent one (a model blurb, a binary path), else the value
+  // when it isn't already the primary line.
   const primary = item.label ?? item.value
-  const secondary = item.label ? item.value : item.description
+  const secondary = item.description ?? (item.label ? item.value : undefined)
   return (
     <>
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary">
