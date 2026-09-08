@@ -25,23 +25,19 @@ function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
   return editor.state.doc.textContent.trim() === `/${query}`
 }
 
-/** The command chip the message opens with — its arguments own every `/` after it. */
-function leadingCommand(items: CommandItem[], editor: Editor | undefined): CommandItem | undefined {
-  const first = editor?.state.doc.firstChild?.firstChild
-  if (first?.type.name !== "slashCommand") return undefined
-  const name = first.attrs.name as string | null
-  return name ? items.find((item) => item.name === name) : undefined
-}
-
 /**
- * Whether the typed `/` is naming one of the open command's own flag arguments
- * rather than a second command: `/spawn pi /model opus` is one dispatch. The
- * option picker offers those, so the palette steps aside — otherwise it opens
- * over the picker with nothing to show, which reads as "/model isn't a command".
+ * Whether the typed `/` names a flag argument of the command chip the message
+ * opens with, rather than a second command: `/spawn pi /model opus` is one
+ * dispatch. The option picker offers those, so the palette steps aside —
+ * otherwise it opens over the picker with nothing to show, which reads back as
+ * "/model isn't a command".
  */
 function namesAFlagArgument(items: CommandItem[], query: string, editor: Editor | undefined): boolean {
-  const flags = leadingCommand(items, editor)?.args?.filter((arg) => arg.name.startsWith("/")) ?? []
-  return flags.some((arg) => arg.name.slice(1).toLowerCase().startsWith(query.toLowerCase()))
+  const chip = editor?.state.doc.firstChild?.firstChild
+  if (chip?.type.name !== "slashCommand") return false
+  const open = items.find((item) => item.name === chip.attrs.name)
+  const typed = query.toLowerCase()
+  return (open?.args ?? []).some((arg) => arg.name.startsWith("/") && arg.name.slice(1).toLowerCase().startsWith(typed))
 }
 
 /**

@@ -48,7 +48,7 @@ function flagArgs(
 }
 
 /** The name of the synthetic argument whose options are the flags themselves. */
-export const FLAG_CHOICE_ARG = "/"
+const FLAG_CHOICE_ARG = "/"
 
 /**
  * The flags not yet used, offered as options in their own right. Picking one
@@ -90,23 +90,28 @@ export function resolveActiveArg(args: readonly CommandArgumentInfo[], text: str
   if (completed.length === 0) return positional ? { arg: positional, query } : null
   const chosen = positional?.suggestions?.find((suggestion) => suggestion.value === completed[0])
   const flags = flagArgs(args, chosen)
-  const named = flags.find((arg) => arg.name === completed[completed.length - 1])
-  if (named) return { arg: named, query }
+  // Walk what's finished: a flag claims the word after it, anything else is the
+  // session name. The first word is the runtime's only when it named one, so
+  // `/spawn /model opus` still reads as an override.
   const used = new Set<string>()
+  let awaitingValue: CommandArgumentInfo | undefined
   let freeText = false
-  // The positional word is consumed only when it named one of its options;
-  // `/spawn /model opus` gives the runtime implicitly and starts at the flag.
-  for (let index = chosen ? 1 : 0; index < completed.length; index += 1) {
-    const token = completed[index] as string
-    if (flags.some((flag) => flag.name === token)) {
-      used.add(token)
-      index += 1
+  for (const token of chosen ? completed.slice(1) : completed) {
+    if (awaitingValue) {
+      awaitingValue = undefined
       continue
     }
-    freeText = true
+    const flag = flags.find((arg) => arg.name === token)
+    if (!flag) {
+      freeText = true
+      continue
+    }
+    used.add(flag.name)
+    awaitingValue = flag
   }
-  if (!query.startsWith("/") && (freeText || query !== "")) return null
-  return flagChoice(flags, used, query)
+  if (awaitingValue) return { arg: awaitingValue, query }
+  const offersFlags = query.startsWith("/") || (!freeText && query === "")
+  return offersFlags ? flagChoice(flags, used, query) : null
 }
 
 /** Rank the option list by the text typed after the command, label first. */
@@ -282,7 +287,7 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
   }, [])
 
   const renderArgPicker = useCallback(() => {
-    if (!state || !active || items.length === 0) return null
+    if (!state || !active) return null
     return createPortal(
       <CommandArgPicker
         ref={listRef}
