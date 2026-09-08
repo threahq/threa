@@ -76,3 +76,17 @@ test("--brief-file with --attach parses into briefFile", () => {
 test("an unknown runtime token dies naming the known kinds", () => {
   expect(() => parseSpawn(["codex", "--name", "a"])).toThrow(/claude or pi/)
 })
+
+test("--model and --thinking parse through, lowercased", () => {
+  const options = parseSpawn(["claude", "--name", "a", "--model", "opus", "--thinking", "HIGH"])
+  expect({ model: options.model, thinking: options.thinking }).toEqual({ model: "opus", thinking: "high" })
+})
+
+test("--thinking is validated against the spawned runtime's own launch flag", () => {
+  expect(parseSpawn(["pi", "--name", "a", "--thinking", "minimal"]).thinking).toBe("minimal")
+  // `minimal` is a pi level and `ultracode` a Claude TUI-only /effort step; neither reaches `claude --effort`.
+  expect(() => parseSpawn(["claude", "--name", "a", "--thinking", "minimal"])).toThrow(
+    "--thinking for claude must be one of: low, medium, high, xhigh, max"
+  )
+  expect(() => parseSpawn(["claude", "--name", "a", "--thinking", "ultracode"])).toThrow("--thinking for claude")
+})

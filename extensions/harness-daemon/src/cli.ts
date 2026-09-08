@@ -3,7 +3,7 @@ import type { AdoptOptions } from "./adopt"
 import type { DoneRequest } from "./done"
 import { die } from "./errors"
 import type { ReconnectOptions } from "./reconnect"
-import { isRuntimeKind, SPAWN_RUNTIMES } from "./runtimes"
+import { isRuntimeKind, runtimeDefinition, SPAWN_RUNTIMES } from "./runtimes"
 import type { ResumeOptions, SpawnOptions } from "./types"
 
 export function usage(): never {
@@ -12,6 +12,7 @@ export function usage(): never {
 Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
       [--cwd <path>] [--profile <name>]   (--cwd uses an existing folder and provisions nothing)
+      [--model <model>] [--thinking <level>]   (what the runtime starts on; revivals reuse both)
       [--attach <root-stream-id> --anchor <anchor-id> [--brief-file <path>]]   (link to a thread under that scratchpad instead of creating one)
   threa-harnessd do <natural language command>
   threa-harnessd list
@@ -44,7 +45,7 @@ Usage:
 
 Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
-  threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar
+  threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar --model opus --thinking high
   threa-harnessd up --dry-run
   threa-harnessd watch-unarchived --tmux threa-agents
   threa-harnessd install-watch
@@ -247,6 +248,9 @@ export function parseSpawn(args: string[]): SpawnOptions {
   if (anchor && !attach) die("--anchor requires --attach <root-stream-id>")
   const briefFile = stringFlag(flags, "brief-file")
   if (briefFile && !attach) die("--brief-file requires --attach")
+  const thinking = stringFlag(flags, "thinking")?.toLowerCase()
+  const levels = runtimeDefinition(runtime).thinkingLevels
+  if (thinking && !levels.includes(thinking)) die(`--thinking for ${runtime} must be one of: ${levels.join(", ")}`)
 
   return {
     runtime,
@@ -255,6 +259,8 @@ export function parseSpawn(args: string[]): SpawnOptions {
     base: stringFlag(flags, "base"),
     ...(cwd !== undefined ? { cwd: resolve(cwd) } : { repo: resolve(stringFlag(flags, "repo") ?? defaultRepo()) }),
     profile: stringFlag(flags, "profile"),
+    model: stringFlag(flags, "model"),
+    ...(thinking ? { thinking } : {}),
     tmux: stringFlag(flags, "tmux"),
     skipSetup: boolFlag(flags, "skip-setup"),
     noRemote: boolFlag(flags, "no-remote"),

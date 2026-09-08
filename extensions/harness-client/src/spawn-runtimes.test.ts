@@ -13,8 +13,20 @@ describe("listSpawnRuntimes", () => {
         return {
           status: 0,
           stdout: JSON.stringify([
-            { value: "claude", label: "Claude Code", installed: true, description: "/usr/local/bin/claude" },
-            { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
+            {
+              value: "claude",
+              label: "Claude Code",
+              thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+              installed: true,
+              description: "/usr/local/bin/claude",
+            },
+            {
+              value: "pi",
+              label: "Pi",
+              thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+              installed: true,
+              description: "/usr/local/bin/pi",
+            },
           ]),
           stderr: "",
         }
@@ -24,8 +36,20 @@ describe("listSpawnRuntimes", () => {
     expect(result).toEqual({
       ok: true,
       runtimes: [
-        { value: "claude", label: "Claude Code", installed: true, description: "/usr/local/bin/claude" },
-        { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
+        {
+          value: "claude",
+          label: "Claude Code",
+          thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+          installed: true,
+          description: "/usr/local/bin/claude",
+        },
+        {
+          value: "pi",
+          label: "Pi",
+          thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+          installed: true,
+          description: "/usr/local/bin/pi",
+        },
       ],
     })
     expect(calls).toEqual([
@@ -97,16 +121,42 @@ describe("installedSpawnRuntimes", () => {
   it("keeps only the installed runtimes and drops the flag from the picker rows", () => {
     expect(
       installedSpawnRuntimes([
-        { value: "claude", label: "Claude Code", installed: false },
-        { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
+        {
+          value: "claude",
+          label: "Claude Code",
+          thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+          installed: false,
+        },
+        {
+          value: "pi",
+          label: "Pi",
+          thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+          installed: true,
+          description: "/usr/local/bin/pi",
+        },
       ])
-    ).toEqual([{ value: "pi", label: "Pi", description: "/usr/local/bin/pi" }])
+    ).toEqual([
+      {
+        value: "pi",
+        label: "Pi",
+        thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        description: "/usr/local/bin/pi",
+      },
+    ])
   })
 })
 
 describe("spawnRuntimesResolver", () => {
   it("runs harnessd once and keeps the answer, reporting a failure once and staying empty", () => {
-    const runtimes = [{ value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" }]
+    const runtimes = [
+      {
+        value: "pi",
+        label: "Pi",
+        thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        installed: true,
+        description: "/usr/local/bin/pi",
+      },
+    ]
     let spawns = 0
     const resolve = spawnRuntimesResolver(() => {}, {
       entrypoint: "/repo/harnessd.ts",

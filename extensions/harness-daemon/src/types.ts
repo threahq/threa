@@ -53,6 +53,12 @@ export interface ManagedAgent {
   clearPendingAt?: string
 }
 
+/** What a runtime starts on, as the spawn named it: `claude --model/--effort`, `pi --model/--thinking`. */
+export interface RuntimeModelChoice {
+  model?: string
+  thinking?: string
+}
+
 export interface SpawnOptions {
   runtime: RuntimeKind
   name: string
@@ -63,6 +69,10 @@ export interface SpawnOptions {
   cwd?: string
   /** Name of a profile in the profiles file; missing names die rather than falling back. */
   profile?: string
+  /** Passed to the runtime at launch: `claude --model`, `pi --model` (a `provider/id` pattern is fine). */
+  model?: string
+  /** Passed to the runtime at launch, actuated as `claude --effort` / `pi --thinking`. */
+  thinking?: string
   tmux?: string
   skipSetup?: boolean
   noRemote?: boolean

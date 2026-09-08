@@ -1,5 +1,5 @@
 import { canonicalOrRaw, defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
-import type { ManagedAgent, ProbeVerdict, ScratchpadStatus } from "./types"
+import type { ManagedAgent, ProbeVerdict, RuntimeModelChoice, ScratchpadStatus } from "./types"
 import { probeVerdictBackoffMs } from "./watch"
 
 export interface ScratchpadRef {
@@ -65,6 +65,20 @@ export function latestAgentsByIdentity(
 
 export function recordedNoYolo(agent: ManagedAgent): boolean {
   return agent.command.includes("--no-yolo")
+}
+
+function recordedFlag(agent: ManagedAgent, flag: string): string | undefined {
+  const index = agent.command.indexOf(flag)
+  if (index === -1) return undefined
+  const value = agent.command[index + 1]
+  return value && !value.startsWith("--") ? value : undefined
+}
+
+/** The model the spawn named, so a revival relaunches on it instead of drifting back to the runtime's local default. */
+export function recordedModelChoice(agent: ManagedAgent): RuntimeModelChoice {
+  const model = recordedFlag(agent, "--model")
+  const thinking = recordedFlag(agent, "--thinking")
+  return { ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) }
 }
 
 /** An unparseable stored instant must not suppress forever, so it reads as due. */

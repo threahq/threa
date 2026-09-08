@@ -4046,7 +4046,15 @@ async function runSpawnCommand(
     return
   }
   try {
-    deps.prepare({ runtime: parsed.runtime, name: parsed.name, rootStreamId: link.rootStreamId, anchorId, briefFile })()
+    deps.prepare({
+      runtime: parsed.runtime,
+      name: parsed.name,
+      rootStreamId: link.rootStreamId,
+      anchorId,
+      briefFile,
+      ...(parsed.model ? { model: parsed.model } : {}),
+      ...(parsed.thinking ? { thinking: parsed.thinking } : {}),
+    })()
   } catch (error) {
     discardSpawnBrief(briefFile)
     throw new Error(`Spawn launch failed: ${summarizeError(error)}`)

@@ -98,6 +98,8 @@ function spawnCommand(options: SpawnOptions): string[] {
   if (options.repo) command.push("--repo", options.repo)
   if (options.cwd) command.push("--cwd", options.cwd)
   if (options.profile) command.push("--profile", options.profile)
+  if (options.model) command.push("--model", options.model)
+  if (options.thinking) command.push("--thinking", options.thinking)
   if (options.tmux) command.push("--tmux", options.tmux)
   if (options.skipSetup) command.push("--skip-setup")
   if (options.noRemote) command.push("--no-remote")

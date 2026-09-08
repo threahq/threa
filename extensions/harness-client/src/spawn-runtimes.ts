@@ -6,13 +6,15 @@ export interface SpawnRuntimeOption {
   value: string
   label: string
   installed: boolean
+  /** Levels this runtime's binary accepts at launch; the spawn picker offers exactly these. */
+  thinkingLevels: string[]
   description?: string
 }
 
 /** The picker rows for the runtimes this machine can launch, without the `installed` flag. */
 export function installedSpawnRuntimes(
   runtimes: readonly SpawnRuntimeOption[]
-): { value: string; label: string; description?: string }[] {
+): { value: string; label: string; thinkingLevels: string[]; description?: string }[] {
   return runtimes.filter((runtime) => runtime.installed).map(({ installed: _, ...option }) => option)
 }
 
@@ -30,6 +32,9 @@ function isSpawnRuntimeOption(value: unknown): value is SpawnRuntimeOption {
   const candidate = value as Record<string, unknown>
   if (typeof candidate.value !== "string" || typeof candidate.label !== "string") return false
   if (typeof candidate.installed !== "boolean") return false
+  if (!Array.isArray(candidate.thinkingLevels) || !candidate.thinkingLevels.every((l) => typeof l === "string")) {
+    return false
+  }
   if (candidate.description !== undefined && typeof candidate.description !== "string") return false
   return true
 }

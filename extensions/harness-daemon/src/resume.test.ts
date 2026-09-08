@@ -9,6 +9,7 @@ import {
   parseScratchpadUrl,
   preflightRuntimeSession,
   probeSuppressed,
+  recordedModelChoice,
   recordedNoYolo,
 } from "./resume"
 import { launchAgentPlist } from "./boot"
@@ -313,6 +314,17 @@ test("rejects the removed unsafe force option", () => {
 test("preserves an explicitly non-yolo launch", () => {
   expect(recordedNoYolo(agent())).toBeFalse()
   expect(recordedNoYolo(agent({ command: ["threa-harnessd", "spawn", "claude", "--no-yolo"] }))).toBeTrue()
+})
+
+test("relaunches a revived session on the model the spawn named", () => {
+  expect(recordedModelChoice(agent())).toEqual({})
+  expect(
+    recordedModelChoice(
+      agent({ command: ["threa-harnessd", "spawn", "claude", "--model", "opus", "--thinking", "high"] })
+    )
+  ).toEqual({ model: "opus", thinking: "high" })
+  // A flag whose value was dropped from the recorded row must not consume the next flag as its value.
+  expect(recordedModelChoice(agent({ command: ["threa-harnessd", "spawn", "pi", "--model", "--no-yolo"] }))).toEqual({})
 })
 
 test("writes a persistent login watcher in a dedicated tmux session", () => {

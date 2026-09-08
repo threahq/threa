@@ -81,6 +81,8 @@ export interface ModelSuggestionInfo {
 export interface SpawnRuntimeInfo {
   value: string
   label: string
+  /** What `--thinking` accepts for THIS runtime, so a Claude desk can offer Pi's levels and back. */
+  thinkingLevels: readonly string[]
   description?: string
 }
 

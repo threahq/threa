@@ -368,7 +368,15 @@ export async function runClaudeCommand(
       // harnessd dies on a blank brief, so an empty prompt gets no file at all.
       const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
       try {
-        spawnLauncher({ runtime: parsed.runtime, name: parsed.name, rootStreamId: root, anchorId, briefFile })()
+        spawnLauncher({
+          runtime: parsed.runtime,
+          name: parsed.name,
+          rootStreamId: root,
+          anchorId,
+          briefFile,
+          ...(parsed.model ? { model: parsed.model } : {}),
+          ...(parsed.thinking ? { thinking: parsed.thinking } : {}),
+        })()
       } catch (error) {
         discardSpawnBrief(briefFile)
         throw error

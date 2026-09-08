@@ -18,7 +18,12 @@ const SPAWN_RUNTIMES: SpawnRuntimeOption[] = [
   { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
 ]
 const PI_ONLY: SpawnRuntimeOption[] = [
-  { value: "claude", label: "Claude Code", installed: false },
+  {
+    value: "claude",
+    label: "Claude Code",
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+    installed: false,
+  },
   { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
 ]
 
@@ -2054,7 +2059,9 @@ describe("Pi spawn and done session control", () => {
       } as never)
     }
     expect({ messages, prepared }).toEqual({
-      messages: Array(3).fill("Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines."),
+      messages: Array(3).fill(
+        "Usage: `/spawn [claude|pi] [--model <model>] [--thinking <level>] <name>` with the prompt on the following lines."
+      ),
       prepared: 0,
     })
   })
