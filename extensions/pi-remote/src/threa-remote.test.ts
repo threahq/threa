@@ -2461,7 +2461,7 @@ describe("claim drain serialization", () => {
 
       expect(presence.at(-1)).toMatchObject({ status: "available", acceptingInvocations: true })
       // Session-control claims have no agent session server-side; a step write
-      // can only bounce (SESSION_CONTROL_TRACE_UNSUPPORTED), so none may leave.
+      // can only bounce (INVOCATION_SESSION_MISSING), so none may leave.
       const stepWrites = fetchSpy.mock.calls.map((call) => String(call[0])).filter((url) => url.includes("/steps"))
       expect(stepWrites).toEqual([])
     } finally {

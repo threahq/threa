@@ -11,13 +11,13 @@ import { AgentSessionRepository } from "../../src/features/agents"
 import { streamId, workspaceId, userId } from "../../src/lib/id"
 
 /**
- * `recordSteps` against a session-control claim, on the real schema. The claim
- * handler skips the `agent_sessions` insert for session-control invocations, so
- * a step write can only die inside `appendStep` ("row not found" → a logged
- * 500, acked INTERNAL_ERROR — the 2026-08-10 log spam). The op must reject
- * up front with a terminal code instead.
+ * `recordSteps` against a claim with no `agent_sessions` row, on the real
+ * schema. Two ways there: session-control claims never insert one, or a
+ * second claim on a stream with a RUNNING session skips the insert on
+ * conflict. Either way `appendStep` would only die on "row not found" — a
+ * logged 500, acked INTERNAL_ERROR — so the op must reject up front instead.
  */
-describe("recordSteps on a session-control claim", () => {
+describe("recordSteps against a claim with no agent session", () => {
   let pool: Pool
   const ws = workspaceId()
   const botId = `bot_${Math.random().toString(36).slice(2, 10)}`
@@ -119,7 +119,7 @@ describe("recordSteps on a session-control claim", () => {
     )
   }
 
-  test("rejects with SESSION_CONTROL_TRACE_UNSUPPORTED before touching agent_sessions", async () => {
+  test("should reject with INVOCATION_SESSION_MISSING when the claim is session-control", async () => {
     await seedClaim("binv_sc_guard", "session-control", "tok_sc_guard")
     const error = await ops()
       .recordSteps({
@@ -135,30 +135,63 @@ describe("recordSteps on a session-control claim", () => {
         (err: unknown) => err
       )
     expect(error).toBeInstanceOf(HttpError)
-    expect((error as HttpError).code).toBe("SESSION_CONTROL_TRACE_UNSUPPORTED")
-    expect((error as HttpError).status).toBe(409)
+    expect({ status: (error as HttpError).status, code: (error as HttpError).code }).toEqual({
+      status: 409,
+      code: "INVOCATION_SESSION_MISSING",
+    })
   })
 
-  test("a regular claim with its agent session still records", async () => {
-    await seedClaim("binv_sc_regular", "active-scratchpad", "tok_sc_regular")
-    await AgentSessionRepository.insertRunningOrSkip(pool, {
-      id: "binv_sc_regular",
+  test("should reject with INVOCATION_SESSION_MISSING when another session was still running on the stream at claim time", async () => {
+    await seedClaim("binv_sc_regular_a", "active-scratchpad", "tok_sc_regular_a")
+    const inserted = await AgentSessionRepository.insertRunningOrSkip(pool, {
+      id: "binv_sc_regular_a",
       streamId: stream,
       personaId: botId,
-      triggerMessageId: "msg_binv_sc_regular",
+      triggerMessageId: "msg_binv_sc_regular_a",
       initialSequence: 0n,
     })
+    expect(inserted).not.toBeNull()
+
+    await seedClaim("binv_sc_regular_b", "active-scratchpad", "tok_sc_regular_b")
+    const skipped = await AgentSessionRepository.insertRunningOrSkip(pool, {
+      id: "binv_sc_regular_b",
+      streamId: stream,
+      personaId: botId,
+      triggerMessageId: "msg_binv_sc_regular_b",
+      initialSequence: 0n,
+    })
+    expect(skipped).toBeNull()
+
+    const error = await ops()
+      .recordSteps({
+        workspaceId: ws,
+        botId,
+        invocationId: "binv_sc_regular_b",
+        instanceId,
+        claimToken: "tok_sc_regular_b",
+        steps: [{ stepType: "thinking", content: "working" }],
+      })
+      .then(
+        () => null,
+        (err: unknown) => err
+      )
+    expect(error).toBeInstanceOf(HttpError)
+    expect({ status: (error as HttpError).status, code: (error as HttpError).code }).toEqual({
+      status: 409,
+      code: "INVOCATION_SESSION_MISSING",
+    })
+
     const result = await ops().recordSteps({
       workspaceId: ws,
       botId,
-      invocationId: "binv_sc_regular",
+      invocationId: "binv_sc_regular_a",
       instanceId,
-      claimToken: "tok_sc_regular",
+      claimToken: "tok_sc_regular_a",
       steps: [{ stepType: "thinking", content: "working" }],
     })
     expect(result.steps).toHaveLength(1)
     const persisted = await pool.query("SELECT step_type, content FROM agent_session_steps WHERE session_id = $1", [
-      "binv_sc_regular",
+      "binv_sc_regular_a",
     ])
     expect(persisted.rows).toEqual([{ step_type: "thinking", content: "working" }])
   })

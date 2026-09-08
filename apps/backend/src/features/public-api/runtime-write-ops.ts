@@ -4,12 +4,7 @@ import type { Server } from "socket.io"
 import { withTransaction } from "../../db"
 import { HttpError } from "@threahq/backend-common"
 import { invocationClaimNotFound } from "./errors"
-import {
-  BotInvocationTriggers,
-  BotRuntimeKinds,
-  type BotInvocationCancellationReason,
-  type InvocationInputUpdateWire,
-} from "@threahq/types"
+import { BotRuntimeKinds, type BotInvocationCancellationReason, type InvocationInputUpdateWire } from "@threahq/types"
 import { resolveDeliveryVerdict, TrustTiers } from "@threahq/agent-runtime"
 import {
   assertManifestAllows,
@@ -356,14 +351,13 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         if (!snapshot || snapshot.status !== "claimed") {
           throw invocationClaimNotFound()
         }
-        // Session-control claims create no agent_sessions row (the claim handler
-        // skips the insert), so appendStep below could only throw "row not found" —
-        // an error-level stack per step, acked to the runtime as INTERNAL_ERROR.
-        // Reject with a terminal code the runtime can treat as definitive instead.
-        if (snapshot.trigger === BotInvocationTriggers.SESSION_CONTROL) {
-          throw new HttpError("Session-control invocations record no trace steps", {
+        // A claim can lack an agent_sessions row two ways: session-control never
+        // inserts one, or a second claim on a stream with a RUNNING session skips it.
+        const session = await AgentSessionRepository.findById(tx, params.invocationId)
+        if (!session || session.streamId !== snapshot.responseStreamId) {
+          throw new HttpError("Invocation has no agent session; steps are not recorded", {
             status: 409,
-            code: "SESSION_CONTROL_TRACE_UNSUPPORTED",
+            code: "INVOCATION_SESSION_MISSING",
           })
         }
         const authority = await assertStreamWritable(tx, {
