@@ -229,7 +229,7 @@ describe("MediaTransportCoordinator", () => {
     await coordinator.markVideoRendered(ref, 2)
     expect(await coordinator.targetReadiness(expected)).toEqual({ ready: true, publications: expected })
     expect(selected).not.toHaveBeenCalled()
-    coordinator.commitSelection(2)
+    coordinator.commitSelection(2, expected)
     expect(selected).toHaveBeenCalledWith({ ref, track: video })
     await coordinator.drainSource(2)
     source.onRemoteTrackEnded?.(ref)
@@ -391,7 +391,17 @@ describe("MediaTransportCoordinator", () => {
     source.onRemoteTrack?.({ ref: sourceRef, track: sourceTrack })
     await coordinator.beginTransfer(snapshot())
     target.onRemoteTrack?.({ ref: targetRef, track: track("audio", "target") })
-    coordinator.commitSelection(2)
+    coordinator.commitSelection(2, [
+      {
+        endpointId: "peer",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc_peer",
+        kind: "mic",
+        publicationId: "mic_target",
+        publicationRevision: 1,
+        muted: false,
+      },
+    ])
 
     const aborting = snapshot("aborting")
     aborting.version = 2
@@ -476,7 +486,17 @@ describe("MediaTransportCoordinator", () => {
     await coordinator.beginTransfer(first)
     const currentRef = { endpointId: "peer", kind: "mic" as const, publicationId: "mic_2" }
     firstTarget.onRemoteTrack?.({ ref: currentRef, track: track("audio", "current") })
-    coordinator.commitSelection(2)
+    coordinator.commitSelection(2, [
+      {
+        endpointId: "peer",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc_peer",
+        kind: "mic",
+        publicationId: "mic_2",
+        publicationRevision: 1,
+        muted: false,
+      },
+    ])
     await coordinator.drainSource(2)
 
     const reverse = snapshot()
@@ -488,7 +508,17 @@ describe("MediaTransportCoordinator", () => {
     await coordinator.beginTransfer(reverse)
     const reverseRef = { endpointId: "peer", kind: "mic" as const, publicationId: "mic_3" }
     reverseTarget.onRemoteTrack?.({ ref: reverseRef, track: track("audio", "reverse") })
-    coordinator.commitSelection(3)
+    coordinator.commitSelection(3, [
+      {
+        endpointId: "peer",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc_peer",
+        kind: "mic",
+        publicationId: "mic_3",
+        publicationRevision: 1,
+        muted: false,
+      },
+    ])
     await coordinator.abortTarget(3)
 
     expect(selected).toHaveBeenLastCalledWith({ ref: currentRef, track: expect.objectContaining({ id: "current" }) })
@@ -578,7 +608,7 @@ describe("MediaTransportCoordinator", () => {
     })
     p2pTarget.inboundProgress = true
     expect(await coordinator.targetReadiness(expected)).toEqual({ ready: true, publications: expected })
-    expect(coordinator.commitSelection(2)).toBe(true)
+    expect(coordinator.commitSelection(2, expected)).toBe(true)
     await coordinator.drainSource(2)
 
     const reverse = snapshot()
@@ -617,7 +647,17 @@ describe("MediaTransportCoordinator", () => {
     const first = { endpointId: "peer", kind: "mic" as const, publicationId: "mic_first" }
     const replacement = { ...first, publicationId: "mic_replacement" }
     target.onRemoteTrack?.({ ref: first, track: track("audio", "first") })
-    coordinator.commitSelection(2)
+    coordinator.commitSelection(2, [
+      {
+        endpointId: "peer",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc_peer",
+        kind: "mic",
+        publicationId: "mic_first",
+        publicationRevision: 1,
+        muted: false,
+      },
+    ])
     target.onRemoteTrack?.({ ref: replacement, track: track("audio", "replacement") })
 
     expect(selected).toHaveBeenLastCalledWith({
@@ -750,7 +790,7 @@ describe("MediaTransportCoordinator", () => {
     const coordinator = createCoordinator({ transport: source, generation: 1, kind: "p2p" }, () => target)
     await coordinator.connect({ endpointId: "self", mediaIncarnation: "inc_self" })
     await coordinator.beginTransfer(snapshot())
-    coordinator.commitSelection(2)
+    coordinator.commitSelection(2, [])
     await coordinator.drainSource(2)
 
     expect(await coordinator.getStats()).toMatchObject({

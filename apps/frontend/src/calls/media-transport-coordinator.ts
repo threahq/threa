@@ -186,18 +186,16 @@ export class MediaTransportCoordinator implements MediaTransport {
     }
   }
 
-  commitSelection(generation: number, expected?: CallExpectedPublication[]): boolean {
+  commitSelection(generation: number, expected: CallExpectedPublication[]): boolean {
     if (!this.target || this.target.generation !== generation) return false
-    const selected = expected
-      ? expected.map((item) => this.staged.get(this.key(item.endpointId, item.kind)))
-      : [...this.staged.values()].filter((staged) => staged.generation === generation)
+    const selected = expected.map((item) => this.staged.get(this.key(item.endpointId, item.kind)))
     if (
       selected.some(
         (staged, index) =>
           !staged ||
           staged.generation !== generation ||
           staged.track.readyState !== "live" ||
-          (expected && staged.ref.publicationId !== expected[index]!.publicationId) ||
+          staged.ref.publicationId !== expected[index]!.publicationId ||
           (staged.ref.kind === "camera" && !staged.rendered)
       )
     )
