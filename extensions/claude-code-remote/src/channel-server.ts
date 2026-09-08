@@ -83,6 +83,9 @@ const SESSION_CONTROL_COMMANDS = [
 // Resolved once at startup — new models arrive with the next spawned session.
 const MODEL_SUGGESTIONS = claudeModelSuggestions()
 
+/** What a `/spawn` naming no runtime launches: this desk's own. */
+const SPAWN_DEFAULT_RUNTIME = "claude"
+
 // Unlike MODEL_SUGGESTIONS this is not resolved at import: it shells out to
 // harnessd, so only the first spawn-related call pays for it.
 const defaultSpawnRuntimes = spawnRuntimesResolver((error) =>
@@ -348,7 +351,7 @@ export async function runClaudeCommand(
       })
     }
     case "spawn": {
-      const parsed = parseSpawnCommandArgs(args, { runtimes: spawnRuntimes(), defaultRuntime: "claude" })
+      const parsed = parseSpawnCommandArgs(args, { runtimes: spawnRuntimes(), defaultRuntime: SPAWN_DEFAULT_RUNTIME })
       if ("error" in parsed) return { ok: false, message: parsed.error }
       const root = rootStreamId?.()
       if (!root || !harnessReconnectAvailable()) {
@@ -533,6 +536,7 @@ export function createClaudeSessionControl(
     get spawnRuntimes() {
       return installedSpawnRuntimes(spawnRuntimes())
     },
+    spawnDefaultRuntime: SPAWN_DEFAULT_RUNTIME,
     interrupt: () => {
       // A /stop is about to close the held turn — drop the hold (and surface
       // any queued carry-on texts) before the interrupt lands.

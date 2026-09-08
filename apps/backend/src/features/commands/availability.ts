@@ -10,6 +10,7 @@ import {
   botHasCapability,
   isAsideHostType,
   type BotRuntimeKind,
+  type CommandArgumentInfo,
   type CommandArgumentSuggestion,
   type CommandInfo,
 } from "@threahq/types"
@@ -30,6 +31,8 @@ import {
   listServerCommandInfos,
   listWorkspaceCommandInfos,
   SESSION_CONTROL_COMMAND_NAMES,
+  SPAWN_MODEL_ARG,
+  SPAWN_THINKING_ARG,
 } from "./catalog"
 
 const READ_ONLY_COMMAND_NAMES = new Set(["invite", "stop", "status"])
@@ -60,8 +63,10 @@ export interface RuntimeCommandTarget {
   advertisedThinkingLevels: readonly string[]
   /** Model suggestions the runtime advertises for autocomplete. Empty = runtime did not advertise. */
   advertisedModelSuggestions: readonly CommandArgumentSuggestion[]
-  /** Runtimes the linked session can hand `/spawn` off to. Empty = runtime did not advertise. */
+  /** Runtimes the linked session can hand `/spawn` off to, each carrying its own models and levels. */
   advertisedSpawnRuntimes: readonly CommandArgumentSuggestion[]
+  /** The runtime a `/spawn` that names none lands on, so its lists are the ones offered up front. */
+  advertisedSpawnDefault: string | null
 }
 
 interface RuntimeTargetInternal extends RuntimeCommandTarget {
@@ -255,37 +260,62 @@ async function resolveRuntimeCommandTarget(
       botHasCapability(bot, BotInvocationCapabilities.MENTIONABLE) &&
       (bot.type === BotTypes.SHARED || bot.ownerUserId === params.userId),
     advertisedCommandNames,
-    advertisedThinkingLevels: resolveAdvertisedThinkingLevels(presence),
-    advertisedModelSuggestions: resolveAdvertisedSuggestions(presence, "modelSuggestions"),
-    advertisedSpawnRuntimes: resolveAdvertisedSuggestions(presence, "spawnRuntimes"),
+    advertisedThinkingLevels: toStrings(presence.capabilities.thinkingLevels),
+    advertisedModelSuggestions: toSuggestions(presence.capabilities.modelSuggestions),
+    advertisedSpawnRuntimes: resolveAdvertisedSpawnRuntimes(presence),
+    advertisedSpawnDefault:
+      typeof presence.capabilities.spawnDefaultRuntime === "string" ? presence.capabilities.spawnDefaultRuntime : null,
     link,
     presence,
   }
 }
 
-function resolveAdvertisedThinkingLevels(presence: BotRuntimeInstance): readonly string[] {
-  const raw = presence.capabilities.thinkingLevels
-  if (!Array.isArray(raw)) return []
-  return raw.filter((value): value is string => typeof value === "string")
+/** A capability array is whatever the runtime sent; anything that isn't a string is dropped. */
+function toStrings(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((value): value is string => typeof value === "string") : []
 }
 
-function resolveAdvertisedSuggestions(
-  presence: BotRuntimeInstance,
-  key: "modelSuggestions" | "spawnRuntimes"
-): readonly CommandArgumentSuggestion[] {
-  const raw = presence.capabilities[key]
+function toSuggestions(raw: unknown): CommandArgumentSuggestion[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map(toSuggestion).filter((one): one is CommandArgumentSuggestion => one !== null)
+}
+
+function toSuggestion(entry: unknown): CommandArgumentSuggestion | null {
+  if (!entry || typeof entry !== "object") return null
+  const candidate = entry as Record<string, unknown>
+  if (typeof candidate.value !== "string") return null
+  const suggestion: CommandArgumentSuggestion = { value: candidate.value }
+  if (typeof candidate.label === "string") suggestion.label = candidate.label
+  if (typeof candidate.description === "string") suggestion.description = candidate.description
+  return suggestion
+}
+
+/**
+ * A spawn runtime carries the models and thinking levels of ITS binary, read on
+ * the runtime's machine — a Claude desk spawning Pi offers Pi's list. They ride
+ * along as the suggestion's own args so the picker can switch lists when the
+ * typed runtime changes.
+ */
+function resolveAdvertisedSpawnRuntimes(presence: BotRuntimeInstance): readonly CommandArgumentSuggestion[] {
+  const raw = presence.capabilities.spawnRuntimes
   if (!Array.isArray(raw)) return []
   const result: CommandArgumentSuggestion[] = []
   for (const entry of raw) {
-    if (!entry || typeof entry !== "object") continue
-    const candidate = entry as Record<string, unknown>
-    if (typeof candidate.value !== "string") continue
-    const suggestion: CommandArgumentSuggestion = { value: candidate.value }
-    if (typeof candidate.label === "string") suggestion.label = candidate.label
-    if (typeof candidate.description === "string") suggestion.description = candidate.description
-    result.push(suggestion)
+    const suggestion = toSuggestion(entry)
+    if (!suggestion) continue
+    const args = spawnOverrideArgs(entry as Record<string, unknown>)
+    result.push(args.length > 0 ? { ...suggestion, args } : suggestion)
   }
   return result
+}
+
+function spawnOverrideArgs(candidate: Record<string, unknown>): CommandArgumentInfo[] {
+  const args: CommandArgumentInfo[] = []
+  const models = toSuggestions(candidate.models)
+  if (models.length > 0) args.push({ name: SPAWN_MODEL_ARG, suggestions: models })
+  const levels = toStrings(candidate.thinkingLevels)
+  if (levels.length > 0) args.push({ name: SPAWN_THINKING_ARG, suggestions: levels.map((value) => ({ value })) })
+  return args
 }
 
 function applyAdvertisedSuggestions(info: CommandInfo, target: RuntimeCommandTarget): CommandInfo {
@@ -300,7 +330,14 @@ function applyAdvertisedSuggestions(info: CommandInfo, target: RuntimeCommandTar
     return withArgSuggestions(info, "model", target.advertisedModelSuggestions)
   }
   if (info.name === "spawn" && target.advertisedSpawnRuntimes.length > 0) {
-    return withArgSuggestions(info, "runtime", target.advertisedSpawnRuntimes)
+    const withRuntimes = withArgSuggestions(info, "runtime", target.advertisedSpawnRuntimes)
+    // The overrides start out on the runtime a bare `/spawn` lands on; naming a
+    // runtime swaps in that suggestion's own args.
+    const fallback = target.advertisedSpawnRuntimes.find((one) => one.value === target.advertisedSpawnDefault)
+    return (fallback?.args ?? []).reduce(
+      (carried, arg) => withArgSuggestions(carried, arg.name, arg.suggestions ?? []),
+      withRuntimes
+    )
   }
   return info
 }

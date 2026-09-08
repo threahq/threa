@@ -197,9 +197,22 @@ async function createLinkedPiSession(
         { value: "openai/gpt-5-high", label: "GPT-5 High" },
       ],
       spawnRuntimes: [
-        { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
-        { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+        {
+          value: "claude",
+          label: "Claude Code",
+          description: "/usr/local/bin/claude",
+          thinkingLevels: ["low", "high"],
+          models: [{ value: "opus", label: "Opus" }],
+        },
+        {
+          value: "pi",
+          label: "Pi",
+          description: "/usr/local/bin/pi",
+          thinkingLevels: ["off", "medium"],
+          models: [{ value: "openai-codex/gpt-5.6-luna", label: "GPT-5.6 Luna" }],
+        },
       ],
+      spawnDefaultRuntime: "pi",
       ...capabilityOverrides,
     },
   })
@@ -250,8 +263,34 @@ describe("Stream-scoped Pi session-control commands", () => {
     const spawnCommand = linkedCommands.find((c) => c.name === "spawn")
     const spawnSuggestions = spawnCommand?.args?.find((a) => a.name === "runtime")?.suggestions
     expect(spawnSuggestions).toEqual([
-      { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
-      { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+      {
+        value: "claude",
+        label: "Claude Code",
+        description: "/usr/local/bin/claude",
+        args: [
+          { name: "/model", suggestions: [{ value: "opus", label: "Opus" }] },
+          { name: "/thinking", suggestions: [{ value: "low" }, { value: "high" }] },
+        ],
+      },
+      {
+        value: "pi",
+        label: "Pi",
+        description: "/usr/local/bin/pi",
+        args: [
+          { name: "/model", suggestions: [{ value: "openai-codex/gpt-5.6-luna", label: "GPT-5.6 Luna" }] },
+          { name: "/thinking", suggestions: [{ value: "off" }, { value: "medium" }] },
+        ],
+      },
+    ])
+
+    // A /spawn naming no runtime lands on the desk's own, so its overrides open
+    // with that runtime's lists — Pi's here, not the Claude row's.
+    expect(spawnCommand?.args?.find((a) => a.name === "/model")?.suggestions).toEqual([
+      { value: "openai-codex/gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    ])
+    expect(spawnCommand?.args?.find((a) => a.name === "/thinking")?.suggestions).toEqual([
+      { value: "off" },
+      { value: "medium" },
     ])
 
     // Claim polling doubles as a lightweight heartbeat with only runtimeSessionId.
@@ -316,6 +355,7 @@ describe("Stream-scoped Pi session-control commands", () => {
     const spawnCommand = commands.find((c) => c.name === "spawn")
     const runtimeArg = spawnCommand?.args?.find((a) => a.name === "runtime")
     expect(runtimeArg?.suggestions).toBeUndefined()
+    expect(spawnCommand?.args?.find((a) => a.name === "/model")?.suggestions).toBeUndefined()
   })
 
   test("runtime command dispatch creates a targeted session-control invocation", async () => {
