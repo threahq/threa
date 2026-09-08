@@ -19,8 +19,11 @@ export interface CallSweeper {
 export function createCallSweeper(callService: CallService, options: { intervalMs?: number } = {}): CallSweeper {
   const { intervalMs = CALL_SWEEP_INTERVAL_MS } = options
   let timer: ReturnType<typeof setInterval> | null = null
+  let sweepInFlight = false
 
   const sweep = async () => {
+    if (sweepInFlight) return
+    sweepInFlight = true
     const now = new Date()
     try {
       // Order matters: reap lapsed endpoints and end graced calls BEFORE
@@ -51,6 +54,8 @@ export function createCallSweeper(callService: CallService, options: { intervalM
       }
     } catch (err) {
       logger.warn({ err }, "Call sweep failed")
+    } finally {
+      sweepInFlight = false
     }
   }
 

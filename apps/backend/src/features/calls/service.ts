@@ -78,6 +78,7 @@ import {
   CALL_P2P_THRESHOLD,
   CALL_TRANSPORT_DOWNSHIFT_MS,
   CALL_ADMISSION_RETRY_AFTER_MS,
+  CALL_POLICY_SWEEP_BATCH_SIZE,
   CALL_TRANSFER_RECOVERY_TIMEOUT_MS,
   type CallMode,
   type MediaState,
@@ -178,6 +179,7 @@ export class CallService {
   private readonly cloudflare: RealtimeMediaApi | null
   private readonly turnIssuer: TurnCredentialIssuer | null
   private readonly featureFlagService: FeatureFlagService
+  private policySweepAfterCallId: string | null = null
 
   constructor(deps: {
     pool: Pool
@@ -1280,6 +1282,7 @@ export class CallService {
         takeover: params.takeover,
         transportCapability: params.transportCapability,
         transferCapability: params.transferCapability,
+        admissionValidated: !created,
       })
       await this.reconcileTransportPolicyLocked(client, admitted.call, eligibility)
 
@@ -1390,7 +1393,7 @@ export class CallService {
       await this.validateLockedAdmission(client, locked, params)
       const admissionError = await this.gateP2pAdmission(client, locked, params, eligibility)
       if (admissionError) return { admissionError }
-      const joined = await this.joinLockedCall(client, params)
+      const joined = await this.joinLockedCall(client, { ...params, admissionValidated: true })
       await this.reconcileTransportPolicyLocked(client, joined.call, eligibility)
       return joined
     })
@@ -1574,8 +1577,13 @@ export class CallService {
   async sweepTransportPolicy(now = new Date()): Promise<void> {
     const [due, safety] = await Promise.all([
       CallTransportPolicyRepository.listDue(this.pool, now),
-      CallTransportPolicyRepository.listPeriodicCandidates(this.pool),
+      CallTransportPolicyRepository.listPeriodicCandidates(
+        this.pool,
+        this.policySweepAfterCallId,
+        CALL_POLICY_SWEEP_BATCH_SIZE
+      ),
     ])
+    this.policySweepAfterCallId = safety.length < CALL_POLICY_SWEEP_BATCH_SIZE ? null : (safety.at(-1)?.callId ?? null)
     const candidates = new Map<string, { workspaceId: string; callId: string; due: CallTransportPolicyState | null }>()
     for (const candidate of safety)
       candidates.set(`${candidate.workspaceId}:${candidate.callId}`, { ...candidate, due: null })
@@ -1622,6 +1630,7 @@ export class CallService {
       mediaIncarnation?: string
       transportCapability?: CallTransportCapability
       transferCapability?: CallTransferCapability
+      admissionValidated?: boolean
     }
   ): Promise<JoinCallResult & { closedSessionIds: string[] }> {
     let call = await CallRepository.findByIdForUpdate(client, params.workspaceId, params.callId)
@@ -1642,7 +1651,7 @@ export class CallService {
       })
     }
 
-    await this.validateLockedAdmission(client, call, params)
+    if (!params.admissionValidated) await this.validateLockedAdmission(client, call, params)
     const participant = await this.admitParticipant(client, { call, userId: params.userId, invitedBy: null })
 
     const incarnation = params.mediaIncarnation ?? null

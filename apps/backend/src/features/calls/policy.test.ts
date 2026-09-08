@@ -64,6 +64,22 @@ describe("decideCallTransportPolicy", () => {
     })
   })
 
+  it("should re-arm an expired deadline when the source transport generation changes", () => {
+    const previous = state({
+      eligibilityDeadline: new Date(now.getTime() - 60_000),
+      eligibilityGeneration: 3,
+      sourceTransportGeneration: 1,
+    })
+    expect(decide(previous, { activeTransport: "sfu", sourceTransportGeneration: 2 })).toMatchObject({
+      request: null,
+      state: {
+        eligibilityDeadline: new Date(now.getTime() + 30_000),
+        eligibilityGeneration: 4,
+        sourceTransportGeneration: 2,
+      },
+    })
+  })
+
   it("should clear a deadline when count returns to seven", () => {
     const previous = state({
       admittedCount: 6,

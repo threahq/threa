@@ -82,7 +82,11 @@ export const CallTransportPolicyRepository = {
     return result.rows.map(map)
   },
 
-  async listPeriodicCandidates(db: Querier): Promise<Array<{ workspaceId: string; callId: string }>> {
+  async listPeriodicCandidates(
+    db: Querier,
+    afterCallId: string | null,
+    limit: number
+  ): Promise<Array<{ workspaceId: string; callId: string }>> {
     const result = await db.query<{ workspace_id: string; call_id: string }>(sql`
       SELECT c.workspace_id, c.id AS call_id
       FROM calls c
@@ -90,7 +94,9 @@ export const CallTransportPolicyRepository = {
         ON p.workspace_id = c.workspace_id AND p.call_id = c.id
       WHERE c.status IN ('active', 'empty_grace')
         AND (c.media_transport = 'p2p' OR p.id IS NULL OR p.eligibility_deadline IS NULL)
+        AND (${afterCallId}::text IS NULL OR c.id > ${afterCallId})
       ORDER BY c.id
+      LIMIT ${limit}
     `)
     return result.rows.map((row) => ({ workspaceId: row.workspace_id, callId: row.call_id }))
   },

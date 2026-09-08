@@ -45,6 +45,30 @@ describe("createCallSweeper", () => {
     })
   })
 
+  it("does not overlap sweeps when one interval runs long", async () => {
+    let releaseReap!: () => void
+    const blockedReap = new Promise<void>((resolve) => {
+      releaseReap = resolve
+    })
+    const service = {
+      reapLapsedEndpoints: mock(async () => {
+        await blockedReap
+        return { endpoints: 0, participants: 0, calls: 0 }
+      }),
+      endGraceExpiredCalls: mock(async () => ({ ended: 0 })),
+      expireStaleRings: mock(async () => ({ expired: 0 })),
+      sweepTransportTransfers: mock(async () => {}),
+      sweepTransportPolicy: mock(async () => {}),
+    }
+    const sweeper = createCallSweeper(service as unknown as CallService, { intervalMs: 1 })
+
+    sweeper.start()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(service.reapLapsedEndpoints.mock.calls.length).toBe(1)
+    releaseReap()
+    sweeper.stop()
+  })
+
   it("reaps endpoints and ends graced calls BEFORE expiring rings (S6 — no false missed calls)", async () => {
     const order: string[] = []
     let markSwept!: () => void

@@ -5,7 +5,7 @@ import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
 import { StreamService } from "../../src/features/streams"
-import { CallService } from "../../src/features/calls"
+import { CallEndpointRepository, CallService } from "../../src/features/calls"
 import { workspaceId as newWorkspaceId } from "../../src/lib/id"
 
 let pool: Pool
@@ -912,22 +912,19 @@ describe("automatic call transport policy on the real schema", () => {
       `UPDATE call_endpoints SET status = 'reconnecting', lease_expires_at = $3 WHERE workspace_id = $1 AND id = $2`,
       [s.workspaceId, started.endpoint.id, expiry]
     )
-    expect(
-      (
-        await pool.query(
-          `SELECT count(*)::int AS count FROM call_endpoints WHERE call_id = $1 AND status IN ('connected','reconnecting') AND lease_expires_at > $2`,
-          [started.call.id, new Date(expiry.getTime() - 1)]
+    expect({
+      justBefore: (
+        await CallEndpointRepository.listLiveByCall(
+          pool,
+          s.workspaceId,
+          started.call.id,
+          new Date(expiry.getTime() - 1)
         )
-      ).rows[0]
-    ).toEqual({ count: 1 })
-    expect(
-      (
-        await pool.query(
-          `SELECT count(*)::int AS count FROM call_endpoints WHERE call_id = $1 AND status IN ('connected','reconnecting') AND lease_expires_at > $2`,
-          [started.call.id, expiry]
-        )
-      ).rows[0]
-    ).toEqual({ count: 0 })
+      ).map((endpoint) => endpoint.id),
+      atExpiry: (await CallEndpointRepository.listLiveByCall(pool, s.workspaceId, started.call.id, expiry)).map(
+        (endpoint) => endpoint.id
+      ),
+    }).toEqual({ justBefore: [started.endpoint.id], atExpiry: [] })
 
     await pool.query(
       `UPDATE call_transport_policy_states SET explicit_hold_target = 'p2p', explicit_hold_admitted_count = 1 WHERE workspace_id = $1 AND call_id = $2`,

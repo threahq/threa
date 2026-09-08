@@ -16,6 +16,7 @@ export type { CallMediaTransport } from "@threahq/types"
 export const CALL_P2P_THRESHOLD = 6
 export const CALL_TRANSPORT_DOWNSHIFT_MS = 30_000
 export const CALL_ADMISSION_RETRY_AFTER_MS = 500
+export const CALL_POLICY_SWEEP_BATCH_SIZE = 100
 export const CALL_TRANSFER_RECOVERY_TIMEOUT_MS = 30_000
 
 export const CALL_ENDED_REASONS = ["completed", "reaped"] as const
