@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Server } from "socket.io"
-import { registerCallGateway } from "./signaling-gateway"
+import { endpointIncarnationRoom, registerCallGateway } from "./signaling-gateway"
 import { HttpError } from "../../lib/errors"
 import * as workspacesModule from "../workspaces"
 import * as accessModule from "./access"
@@ -406,7 +406,7 @@ describe("registerCallGateway P2P signaling", () => {
 
   it("should keep P2P signaling available when the shared control budget is exhausted", async () => {
     spyOn(Date, "now").mockReturnValue(1_000)
-    const { socket, callService, emit } = setup()
+    const { socket, callService, emit, to } = setup()
     await socket.trigger(
       "call:join",
       { ...JOIN, transportCapability: "p2p-v1" },
@@ -433,6 +433,9 @@ describe("registerCallGateway P2P signaling", () => {
 
     expect(callService.validateP2pSignal).toHaveBeenCalledWith(
       expect.objectContaining({ callId: "call_1", recipientEndpointId: "callep_2", generation: 1 })
+    )
+    expect(to).toHaveBeenCalledWith(
+      endpointIncarnationRoom(signal.callId, signal.recipientEndpointId, signal.recipientMediaIncarnation)
     )
     expect(emit).toHaveBeenCalledWith(
       "call:p2p:signal",
