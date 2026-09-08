@@ -1,6 +1,7 @@
 import { spawnSync as nodeSpawnSync } from "node:child_process"
 import { existsSync } from "node:fs"
 import { harnessDaemonEntrypoint, type HarnessSpawnSync } from "./harness-kick"
+import type { ModelSuggestion } from "./model-catalogs"
 
 export interface SpawnRuntimeOption {
   value: string
@@ -8,13 +9,15 @@ export interface SpawnRuntimeOption {
   installed: boolean
   /** Levels this runtime's binary accepts at launch; the spawn picker offers exactly these. */
   thinkingLevels: string[]
+  /** This runtime's own models, read from its config by harnessd — not the models of the runtime asking. */
+  models: ModelSuggestion[]
   description?: string
 }
 
 /** The picker rows for the runtimes this machine can launch, without the `installed` flag. */
 export function installedSpawnRuntimes(
   runtimes: readonly SpawnRuntimeOption[]
-): { value: string; label: string; thinkingLevels: string[]; description?: string }[] {
+): { value: string; label: string; thinkingLevels: string[]; models: ModelSuggestion[]; description?: string }[] {
   return runtimes.filter((runtime) => runtime.installed).map(({ installed: _, ...option }) => option)
 }
 
@@ -27,6 +30,15 @@ interface ListSpawnRuntimesOptions {
 
 export type ListSpawnRuntimesResult = { ok: true; runtimes: SpawnRuntimeOption[] } | { ok: false; error: string }
 
+function isModelSuggestion(value: unknown): value is ModelSuggestion {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Record<string, unknown>
+  if (typeof candidate.value !== "string") return false
+  if (candidate.label !== undefined && typeof candidate.label !== "string") return false
+  if (candidate.description !== undefined && typeof candidate.description !== "string") return false
+  return true
+}
+
 function isSpawnRuntimeOption(value: unknown): value is SpawnRuntimeOption {
   if (!value || typeof value !== "object") return false
   const candidate = value as Record<string, unknown>
@@ -35,6 +47,7 @@ function isSpawnRuntimeOption(value: unknown): value is SpawnRuntimeOption {
   if (!Array.isArray(candidate.thinkingLevels) || !candidate.thinkingLevels.every((l) => typeof l === "string")) {
     return false
   }
+  if (!Array.isArray(candidate.models) || !candidate.models.every(isModelSuggestion)) return false
   if (candidate.description !== undefined && typeof candidate.description !== "string") return false
   return true
 }

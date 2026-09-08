@@ -9,12 +9,12 @@ const USAGE =
 const CLAUDE_LEVELS = ["low", "medium", "high", "xhigh", "max"]
 const PI_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 const BOTH = [
-  { value: "claude", label: "Claude Code", installed: true, thinkingLevels: CLAUDE_LEVELS },
-  { value: "pi", label: "Pi", installed: true, thinkingLevels: PI_LEVELS },
+  { value: "claude", label: "Claude Code", installed: true, thinkingLevels: CLAUDE_LEVELS, models: [] },
+  { value: "pi", label: "Pi", installed: true, thinkingLevels: PI_LEVELS, models: [] },
 ]
 const PI_ONLY = [
-  { value: "claude", label: "Claude Code", installed: false, thinkingLevels: CLAUDE_LEVELS },
-  { value: "pi", label: "Pi", installed: true, thinkingLevels: PI_LEVELS },
+  { value: "claude", label: "Claude Code", installed: false, thinkingLevels: CLAUDE_LEVELS, models: [] },
+  { value: "pi", label: "Pi", installed: true, thinkingLevels: PI_LEVELS, models: [] },
 ]
 const parse = (args: string, runtimes = BOTH, defaultRuntime = "claude") =>
   parseSpawnCommandArgs(args, { runtimes, defaultRuntime })

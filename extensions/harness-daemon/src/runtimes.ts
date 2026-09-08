@@ -1,3 +1,4 @@
+import { claudeModelSuggestions, piModelSuggestions, type ModelSuggestion } from "@threahq/harness-client"
 import { die } from "./errors"
 import { commandPath } from "./shell"
 
@@ -8,6 +9,8 @@ export interface SpawnRuntimeDefinition {
   binEnv: string
   /** Levels the binary accepts at launch: `claude --effort`, `pi --thinking`. */
   thinkingLevels: readonly string[]
+  /** The runtime's own model catalog, read from ITS config so a desk on the other runtime can offer it. */
+  models: () => ModelSuggestion[]
 }
 
 export const SPAWN_RUNTIMES = [
@@ -19,6 +22,7 @@ export const SPAWN_RUNTIMES = [
     // The TUI's `/effort` also offers `ultracode`, which has no launch flag: a
     // spawn naming it would silently boot on the default effort instead.
     thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+    models: claudeModelSuggestions,
   },
   {
     kind: "pi",
@@ -26,6 +30,7 @@ export const SPAWN_RUNTIMES = [
     binary: "pi",
     binEnv: "THREA_HARNESSD_PI_BIN",
     thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    models: piModelSuggestions,
   },
 ] as const satisfies readonly SpawnRuntimeDefinition[]
 
@@ -64,6 +69,8 @@ export interface SpawnRuntimeOption {
   label: string
   installed: boolean
   thinkingLevels: string[]
+  /** Empty until the runtime is installed: an absent binary has no catalog worth offering. */
+  models: ModelSuggestion[]
   description?: string
 }
 
@@ -71,6 +78,8 @@ export function spawnRuntimeCatalog(deps?: ResolveRuntimeBinaryDeps): SpawnRunti
   return SPAWN_RUNTIMES.map((runtime) => {
     const binary = resolveRuntimeBinary(runtime, deps)
     const option = { value: runtime.kind, label: runtime.label, thinkingLevels: [...runtime.thinkingLevels] }
-    return binary ? { ...option, installed: true, description: binary } : { ...option, installed: false }
+    return binary
+      ? { ...option, installed: true, models: runtime.models(), description: binary }
+      : { ...option, installed: false, models: [] }
   })
 }

@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
+  claudeModelSuggestions,
   discardSpawnBrief,
   harnessReconnectAvailable,
   installedSpawnRuntimes,
@@ -40,7 +41,7 @@ import {
 } from "@threahq/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
-import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
+import { THINKING_LEVELS } from "./thinking-levels"
 import { formatClaudeStatusReport } from "./status"
 import { interrupt, steerText, submitLine, submitModelChange, tmuxAvailable } from "./tmux-control"
 import { TranscriptTracer } from "./transcript-trace"
@@ -78,9 +79,9 @@ const SESSION_CONTROL_COMMANDS = [
   "done",
 ] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
-// whatever the local client's own picker cache discovers (see model-catalog).
+// whatever the local client's own picker cache discovers (see model-catalogs).
 // Resolved once at startup — new models arrive with the next spawned session.
-const MODEL_SUGGESTIONS = modelSuggestions()
+const MODEL_SUGGESTIONS = claudeModelSuggestions()
 
 // Unlike MODEL_SUGGESTIONS this is not resolved at import: it shells out to
 // harnessd, so only the first spawn-related call pays for it.

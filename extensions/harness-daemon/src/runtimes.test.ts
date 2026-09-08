@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { claudeModelSuggestions } from "@threahq/harness-client"
 import { requireRuntimeBinary, runtimeDefinition, spawnRuntimeCatalog } from "./runtimes"
 
 test("should list both runtimes as installed with their resolved paths when both binaries are on PATH", () => {
@@ -9,6 +13,7 @@ test("should list both runtimes as installed with their resolved paths when both
       label: "Claude Code",
       thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
       installed: true,
+      models: expect.any(Array),
       description: "/usr/local/bin/claude",
     },
     {
@@ -16,6 +21,7 @@ test("should list both runtimes as installed with their resolved paths when both
       label: "Pi",
       thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
       installed: true,
+      models: expect.any(Array),
       description: "/usr/local/bin/pi",
     },
   ])
@@ -30,6 +36,7 @@ test("should prefer the env override path over PATH lookup when the override is 
       label: "Claude Code",
       thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
       installed: true,
+      models: expect.any(Array),
       description: "/opt/custom/claude",
     },
     {
@@ -37,6 +44,7 @@ test("should prefer the env override path over PATH lookup when the override is 
       label: "Pi",
       thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
       installed: true,
+      models: expect.any(Array),
       description: "/usr/local/bin/pi",
     },
   ])
@@ -50,12 +58,14 @@ test("should keep a runtime whose binary is missing in the catalog as not instal
       label: "Claude Code",
       thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
       installed: false,
+      models: [],
     },
     {
       value: "pi",
       label: "Pi",
       thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
       installed: true,
+      models: expect.any(Array),
       description: "/usr/local/bin/pi",
     },
   ])
@@ -69,12 +79,14 @@ test("should mark every runtime as not installed when nothing is on PATH", () =>
       label: "Claude Code",
       thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
       installed: false,
+      models: [],
     },
     {
       value: "pi",
       label: "Pi",
       thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
       installed: false,
+      models: [],
     },
   ])
 })
@@ -86,9 +98,21 @@ test("should name the env override and the binary when a required runtime is mis
   )
 })
 
-test("should print the catalog as JSON from the runtimes subcommand", () => {
+test("should print the catalog as JSON from the runtimes subcommand, each runtime carrying its own models", () => {
+  const home = mkdtempSync(join(tmpdir(), "runtimes-home-"))
+  writeFileSync(join(home, ".claude.json"), JSON.stringify({}))
+  mkdirSync(join(home, ".pi", "agent"), { recursive: true })
+  writeFileSync(
+    join(home, ".pi", "agent", "models-store.json"),
+    JSON.stringify({ "opencode-go": { models: [{ id: "kimi-k3", name: "Kimi K3", input: ["text", "image"] }] } })
+  )
   const result = Bun.spawnSync(["bun", new URL("./index.ts", import.meta.url).pathname, "runtimes"], {
-    env: { ...process.env, THREA_HARNESSD_CLAUDE_BIN: "/opt/claude", THREA_HARNESSD_PI_BIN: "/opt/pi" },
+    env: {
+      ...process.env,
+      HOME: home,
+      THREA_HARNESSD_CLAUDE_BIN: "/opt/claude",
+      THREA_HARNESSD_PI_BIN: "/opt/pi",
+    },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -99,6 +123,7 @@ test("should print the catalog as JSON from the runtimes subcommand", () => {
       label: "Claude Code",
       thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
       installed: true,
+      models: claudeModelSuggestions(join(home, ".claude.json")),
       description: "/opt/claude",
     },
     {
@@ -106,6 +131,7 @@ test("should print the catalog as JSON from the runtimes subcommand", () => {
       label: "Pi",
       thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
       installed: true,
+      models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
       description: "/opt/pi",
     },
   ])

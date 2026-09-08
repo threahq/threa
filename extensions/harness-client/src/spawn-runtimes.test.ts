@@ -17,6 +17,7 @@ describe("listSpawnRuntimes", () => {
               value: "claude",
               label: "Claude Code",
               thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+              models: [{ value: "opus", label: "Opus" }],
               installed: true,
               description: "/usr/local/bin/claude",
             },
@@ -24,6 +25,7 @@ describe("listSpawnRuntimes", () => {
               value: "pi",
               label: "Pi",
               thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+              models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
               installed: true,
               description: "/usr/local/bin/pi",
             },
@@ -40,6 +42,7 @@ describe("listSpawnRuntimes", () => {
           value: "claude",
           label: "Claude Code",
           thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+          models: [{ value: "opus", label: "Opus" }],
           installed: true,
           description: "/usr/local/bin/claude",
         },
@@ -47,6 +50,7 @@ describe("listSpawnRuntimes", () => {
           value: "pi",
           label: "Pi",
           thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+          models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
           installed: true,
           description: "/usr/local/bin/pi",
         },
@@ -103,6 +107,20 @@ describe("listSpawnRuntimes", () => {
     expect(result).toEqual({ ok: false, error: "harnessd runtimes returned unparseable output: not json" })
   })
 
+  it("fails loudly on a catalog from an older harnessd that names no models", () => {
+    const row = { value: "claude", label: "Claude Code", thinkingLevels: ["max"], installed: true }
+    const result = listSpawnRuntimes({
+      entrypoint: "/repo/index.ts",
+      exists: () => true,
+      spawnSync: () => ({ status: 0, stdout: JSON.stringify([row]), stderr: "" }),
+    })
+
+    expect(result).toEqual({
+      ok: false,
+      error: `harnessd runtimes returned unexpected output: ${JSON.stringify([row])}`,
+    })
+  })
+
   it("fails loudly on wrong-shaped stdout", () => {
     const result = listSpawnRuntimes({
       entrypoint: "/repo/index.ts",
@@ -125,12 +143,14 @@ describe("installedSpawnRuntimes", () => {
           value: "claude",
           label: "Claude Code",
           thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+          models: [{ value: "opus", label: "Opus" }],
           installed: false,
         },
         {
           value: "pi",
           label: "Pi",
           thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+          models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
           installed: true,
           description: "/usr/local/bin/pi",
         },
@@ -140,6 +160,7 @@ describe("installedSpawnRuntimes", () => {
         value: "pi",
         label: "Pi",
         thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
         description: "/usr/local/bin/pi",
       },
     ])
@@ -153,6 +174,7 @@ describe("spawnRuntimesResolver", () => {
         value: "pi",
         label: "Pi",
         thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
         installed: true,
         description: "/usr/local/bin/pi",
       },
