@@ -4,7 +4,7 @@ import helmet from "helmet"
 import cookieParser from "cookie-parser"
 import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
-import { logger, createCorsOriginChecker, requestLogSerializers } from "@threahq/backend-common"
+import { logger, createCorsOriginChecker, requestLogLevel, requestLogSerializers } from "@threahq/backend-common"
 import { GITHUB_WEBHOOK_PATH } from "./features/github-webhooks"
 
 interface CreateAppOptions {
@@ -56,11 +56,7 @@ export function createApp(options: CreateAppOptions): Express {
       autoLogging: {
         ignore: (req) => requestLoggingIgnoredPaths.includes(req.url),
       },
-      customLogLevel: (_req, res, err) => {
-        if (res.statusCode >= 500 || err) return "error"
-        if (res.statusCode >= 400) return "warn"
-        return "silent"
-      },
+      customLogLevel: (_req, res, err) => requestLogLevel(res.statusCode, err),
       genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
       serializers: requestLogSerializers,
     })

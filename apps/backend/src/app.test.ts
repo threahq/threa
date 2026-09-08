@@ -13,7 +13,7 @@ type CapturedLog = Record<string, unknown>
 function captureLogs(): CapturedLog[] {
   const records: CapturedLog[] = []
   addLogDestination({
-    level: "warn",
+    level: "info",
     stream: {
       write(line: string) {
         for (const entry of line.split("\n")) {
@@ -36,6 +36,24 @@ async function get(app: ReturnType<typeof createApp>, path: string): Promise<voi
   }
 }
 
+function expectedRequestLog(statusCode: number, level: number) {
+  return {
+    level,
+    time: expect.any(Number),
+    pid: expect.any(Number),
+    hostname: expect.any(String),
+    req: {
+      id: expect.any(String),
+      method: "GET",
+      url: "/api/v1/workspaces/ws_01WORKSPACE/streams/stream_01ABCDEF?include=members",
+      userAgent: expect.any(String),
+    },
+    res: { statusCode },
+    responseTime: expect.any(Number),
+    msg: `GET /api/v1/workspaces/:id/streams/:id ${statusCode}`,
+  }
+}
+
 describe("request logging", () => {
   it("names the route template in the message and keeps the exact URL on the record", async () => {
     const records = captureLogs()
@@ -47,20 +65,17 @@ describe("request logging", () => {
     // Ids and the query string would make every message unique, so 600
     // identical denials would group into 600 buckets instead of one.
     const denial = records.find((record) => (record.msg as string)?.endsWith("403"))
-    expect(denial).toEqual({
-      level: 40,
-      time: expect.any(Number),
-      pid: expect.any(Number),
-      hostname: expect.any(String),
-      req: {
-        id: expect.any(String),
-        method: "GET",
-        url: "/api/v1/workspaces/ws_01WORKSPACE/streams/stream_01ABCDEF?include=members",
-        userAgent: expect.any(String),
-      },
-      res: { statusCode: 403 },
-      responseTime: expect.any(Number),
-      msg: "GET /api/v1/workspaces/:id/streams/:id 403",
-    })
+    expect(denial).toEqual(expectedRequestLog(403, 30))
+  })
+
+  it("warns on 400, our own contract breaking", async () => {
+    const records = captureLogs()
+    const app = createApp({ corsAllowedOrigins: [], isProduction: false })
+    app.get("/api/v1/workspaces/:workspaceId/streams/:id", (_req, res) => void res.status(400).json({ error: "no" }))
+
+    await get(app, "/api/v1/workspaces/ws_01WORKSPACE/streams/stream_01ABCDEF?include=members")
+
+    const denial = records.find((record) => (record.msg as string)?.endsWith("400"))
+    expect(denial).toEqual(expectedRequestLog(400, 40))
   })
 })
