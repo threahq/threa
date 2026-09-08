@@ -6,7 +6,8 @@ import { acceptClaudeBootPrompts, warnIfBlocked } from "./claude-boot"
 import { defaultClaudeDiskDeps, resumableClaudeTranscript } from "./claude-registry"
 import { die } from "./errors"
 import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
-import { commandExists, commandPath, run, shellQuote } from "./shell"
+import { commandExists, run, shellQuote } from "./shell"
+import { requireRuntimeBinary, runtimeDefinition } from "./runtimes"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
 import type { ManagedAgent, ResumeOptions, RuntimeKind, SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { recordedNoYolo } from "./resume"
@@ -378,8 +379,9 @@ export class RuntimeSpawnError extends Error {
   }
 }
 
-abstract class RuntimeSpawner {
+export abstract class RuntimeSpawner {
   abstract spawn(options: SpawnOptions): Promise<SpawnResult>
+  abstract resume(agent: ManagedAgent, options: ResumeOptions): Promise<SpawnResult>
 
   protected profileFor(options: SpawnOptions): Profile {
     return selectProfile(options)
@@ -395,8 +397,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     if (!commandExists("git")) die("git not found")
     if (!commandExists("tmux")) die("tmux not found")
     if (!commandExists("bun")) die("bun not found")
-    const piBin = process.env.THREA_HARNESSD_PI_BIN || commandPath("pi")
-    if (!piBin) die("pi binary not found; set THREA_HARNESSD_PI_BIN or put pi on PATH")
+    const piBin = requireRuntimeBinary(runtimeDefinition("pi"))
 
     const session = tmuxSession(options)
     ensureTmuxSession(session)
@@ -489,8 +490,7 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     if (!agent.worktree || !existsSync(agent.worktree)) die(`worktree dir missing: ${agent.worktree ?? "<none>"}`)
     if (!agent.runtimeSessionId) die("original Pi session id is not recorded")
     if (!commandExists("tmux")) die("tmux not found")
-    const piBin = process.env.THREA_HARNESSD_PI_BIN || commandPath("pi")
-    if (!piBin) die("pi binary not found; set THREA_HARNESSD_PI_BIN or put pi on PATH")
+    const piBin = requireRuntimeBinary(runtimeDefinition("pi"))
 
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "pi", name: agent.name })
     ensureTmuxSession(session, true)
@@ -553,8 +553,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     if (!commandExists("git")) die("git not found")
     if (!commandExists("tmux")) die("tmux not found")
     if (!commandExists("bun")) die("bun not found")
-    const claudeBin = process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")
-    if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
+    const claudeBin = requireRuntimeBinary(runtimeDefinition("claude"))
 
     const config = readThreaChannelConfig()
     const profile = this.profileFor(options)
@@ -654,8 +653,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
   async resume(agent: ManagedAgent, options: ResumeOptions): Promise<SpawnResult> {
     if (!agent.worktree || !existsSync(agent.worktree)) die(`worktree dir missing: ${agent.worktree ?? "<none>"}`)
     if (!commandExists("tmux")) die("tmux not found")
-    const claudeBin = process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")
-    if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
+    const claudeBin = requireRuntimeBinary(runtimeDefinition("claude"))
 
     const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
     const channelEntry = prepareClaudeChannel()
@@ -777,6 +775,15 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const json = (await response.json()) as { data?: { streamUrlPath?: string } }
     return json.data?.streamUrlPath ? `${baseUrl}${json.data.streamUrlPath}` : undefined
   }
+}
+
+const SPAWNERS: Record<RuntimeKind, RuntimeSpawner> = {
+  pi: new PiRuntimeSpawner(),
+  claude: new ClaudeRuntimeSpawner(),
+}
+
+export function spawnerFor(kind: RuntimeKind): RuntimeSpawner {
+  return SPAWNERS[kind]
 }
 
 function ensurePiDefaultLabel(): void {

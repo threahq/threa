@@ -33,10 +33,9 @@ import {
 } from "./inventory"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
 import { inspectProfiles, DEFAULT_PROFILE } from "./profiles"
-import { commandExists, commandPath, output } from "./shell"
+import { commandExists, output } from "./shell"
+import { resolveRuntimeBinary, SPAWN_RUNTIMES } from "./runtimes"
 import {
-  ClaudeRuntimeSpawner,
-  PiRuntimeSpawner,
   RuntimeSpawnError,
   claudeAgentIdentity,
   configuredThreaBaseUrl,
@@ -45,6 +44,7 @@ import {
   readPiRemoteSession,
   readThreaChannelConfig,
   requireThreadSessionTarget,
+  spawnerFor,
   type PiRemoteConfig,
   type PiRemoteSession,
 } from "./spawners"
@@ -124,7 +124,7 @@ export async function spawnAgent(options: SpawnOptions): Promise<SpawnResult> {
   }
   upsertAgent(agent)
 
-  const spawner = options.runtime === "pi" ? new PiRuntimeSpawner() : new ClaudeRuntimeSpawner()
+  const spawner = spawnerFor(options.runtime)
   try {
     const result = await spawner.spawn(options)
     upsertAgent({
@@ -624,8 +624,7 @@ export function defaultReviveDeps(): ReviveDeps {
     restorableWorktree: restorableWorktreeSource,
     piLink: readPiRemoteSession,
     claudeIdentity: claudeAgentIdentity,
-    resumeRuntime: (agent, options) =>
-      (agent.runtime === "pi" ? new PiRuntimeSpawner() : new ClaudeRuntimeSpawner()).resume(agent, options),
+    resumeRuntime: (agent, options) => spawnerFor(agent.runtime).resume(agent, options),
     persist: upsertAgent,
     killWindow: (windowId) => {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
@@ -1158,8 +1157,11 @@ export function doctor(): void {
     ["git", commandExists("git"), "required"],
     ["tmux", commandExists("tmux"), "required"],
     ["docker", commandExists("docker"), "needed for setup:worktree"],
-    ["pi", Boolean(process.env.THREA_HARNESSD_PI_BIN || commandPath("pi")), "needed for Pi agents"],
-    ["claude", Boolean(process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")), "needed for Claude agents"],
+    ...SPAWN_RUNTIMES.map((def): [string, boolean, string] => [
+      def.binary,
+      Boolean(resolveRuntimeBinary(def)),
+      `needed for ${def.label} agents`,
+    ]),
     [
       "tmux attached session",
       Boolean(attachedTmuxSession()),

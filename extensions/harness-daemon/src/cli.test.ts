@@ -72,3 +72,7 @@ test("--brief-file with --attach parses into briefFile", () => {
   ])
   expect(options.briefFile).toBe("/tmp/brief.md")
 })
+
+test("an unknown runtime token dies naming the known kinds", () => {
+  expect(() => parseSpawn(["codex", "--name", "a"])).toThrow(/claude or pi/)
+})

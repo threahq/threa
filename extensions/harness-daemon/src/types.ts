@@ -1,4 +1,6 @@
-export type RuntimeKind = "pi" | "claude"
+import type { RuntimeKind } from "./runtimes"
+
+export type { RuntimeKind }
 export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"
 /** The two verdicts that outlive a pass, so a row carrying one is backed off rather than re-probed. */
 export type ProbeVerdict = Extract<ScratchpadStatus, "archived" | "inaccessible">
