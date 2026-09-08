@@ -1,13 +1,14 @@
 import { api } from "@/api/client"
 import type { P2pSignalEnvelope, TurnCredentialsResponse } from "@threahq/types"
-import type {
-  MediaTransport,
-  PeerDescriptor,
-  PeerTrackRef,
-  RemoteTrackEvent,
-  SessionDescriptor,
-  TransportConnectionState,
-  TransportStats,
+import {
+  peerTrackRefKey,
+  type MediaTransport,
+  type PeerDescriptor,
+  type PeerTrackRef,
+  type RemoteTrackEvent,
+  type SessionDescriptor,
+  type TransportConnectionState,
+  type TransportStats,
 } from "./media-transport"
 import type { PublishedTrackKind } from "./config"
 import { P2pTrafficCounter } from "./p2p-traffic-counter"
@@ -229,7 +230,7 @@ export class P2pMeshTransport implements MediaTransport {
         bytes = Math.max(bytes ?? 0, stat.bytesReceived)
     })
     if (bytes === null) return false
-    const key = JSON.stringify([ref.endpointId, ref.kind, ref.publicationId])
+    const key = peerTrackRefKey(ref)
     const previous = this.inboundByteSamples.get(key)
     this.inboundByteSamples.set(key, bytes)
     return previous !== undefined && bytes > previous

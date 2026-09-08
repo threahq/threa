@@ -341,6 +341,13 @@ describe("ConnectionDiagnostics — lifecycle log", () => {
     expect(useFeatureFlag).toHaveBeenCalledWith("ws_1", "callsP2p")
   })
 
+  it("hides the transfer action until the active transport is known", async () => {
+    vi.spyOn(featureFlags, "useFeatureFlag").mockReturnValue("on")
+    await openDiagnostics(makeManager({ requestMediaTransport: vi.fn(async () => {}) }))
+
+    expect(screen.queryByRole("button", { name: /Switch to/ })).toBeNull()
+  })
+
   it("keeps the P2P to SFU escape action when enrollment is later disabled", async () => {
     vi.spyOn(featureFlags, "useFeatureFlag").mockReturnValue("off")
     setCallDiagnostics({

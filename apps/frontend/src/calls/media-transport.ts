@@ -421,9 +421,7 @@ export class CloudflareSfuTransport implements MediaTransport {
     if (!current.encodings || current.encodings.length === 0) current.encodings = [{}]
     const perEncoding =
       params.maxBitrate == null ? undefined : Math.floor(params.maxBitrate / Math.max(1, current.encodings.length))
-    for (const enc of current.encodings) {
-      if (perEncoding != null) enc.maxBitrate = perEncoding
-    }
+    for (const enc of current.encodings) enc.maxBitrate = perEncoding
     try {
       await sender.setParameters(current)
     } catch {

@@ -1117,8 +1117,7 @@ export class CallManager implements CallController {
       await coordinator.beginTransfer(transfer)
       if (this.sessionForGen(session.gen) !== session || session.transfer !== transfer) return
       if (transfer.phase === "preparing") await this.acknowledgeTargetReady(session)
-      else if (transfer.phase === "committing" && coordinator.commitSelection(transfer.target.generation))
-        await this.acknowledgeTargetSwitched(session)
+      else if (transfer.phase === "committing") await this.commitTargetSelection(session)
       else if (transfer.phase === "aborting") await this.acknowledgeSourceRestored(session)
       else if (transfer.phase === "draining" || transfer.phase === "completed") {
         await coordinator.drainSource(transfer.target.generation)
@@ -1173,9 +1172,9 @@ export class CallManager implements CallController {
   }
 
   private acknowledgeTransferProgress(session: CallSession): Promise<void> {
-    return session.transfer?.phase === "aborting"
-      ? this.acknowledgeSourceRestored(session)
-      : this.acknowledgeTargetReady(session)
+    if (session.transfer?.phase === "aborting") return this.acknowledgeSourceRestored(session)
+    if (session.transfer?.phase === "committing") return this.commitTargetSelection(session)
+    return this.acknowledgeTargetReady(session)
   }
 
   private async acknowledgeTargetReady(session: CallSession): Promise<void> {
@@ -1216,17 +1215,27 @@ export class CallManager implements CallController {
     if (snapshot.transfer) this.applyRoster(session, session.rosterVersion, getCallState().roster, snapshot.transfer)
   }
 
-  private async acknowledgeTargetSwitched(session: CallSession): Promise<void> {
+  private async commitTargetSelection(session: CallSession): Promise<void> {
     const transfer = session.transfer
-    if (!transfer || transfer.phase !== "committing" || !this.deps.acknowledgeTransferSwitched) return
+    if (!transfer || transfer.phase !== "committing" || !(session.transport instanceof MediaTransportCoordinator))
+      return
     const obligation = transfer.obligations.find(
       (item) =>
         item.endpointId === session.endpointId &&
         item.endpointEpoch === session.endpointEpoch &&
         item.mediaIncarnation === session.mediaIncarnation
     )
-    if (!obligation || obligation.switched) return
+    if (!obligation) return
     const transferIdentity = transfer
+    const readiness = await session.transport.targetReadiness(obligation.expectedPublications)
+    if (
+      !readiness.ready ||
+      this.sessionForGen(session.gen) !== session ||
+      session.transfer !== transferIdentity ||
+      !session.transport.commitSelection(transfer.target.generation, obligation.expectedPublications)
+    )
+      return
+    if (obligation.switched || !this.deps.acknowledgeTransferSwitched) return
     const snapshot = await this.deps.acknowledgeTransferSwitched({
       workspaceId: session.workspaceId,
       callId: session.callId,

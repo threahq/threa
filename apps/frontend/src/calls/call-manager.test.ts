@@ -326,6 +326,7 @@ describe("CallManager", () => {
   })
   afterEach(async () => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
     for (const manager of managers.splice(0)) {
       await manager.leaveCall()
@@ -1005,8 +1006,72 @@ describe("CallManager", () => {
     })
   })
 
+  it("should keep source playback and delay switched acknowledgement until ended target media recovers", async () => {
+    const socket = makeSocket()
+    const source = makeTransport()
+    const target = makeTransport()
+    const deps = makeDeps(socket, source)
+    vi.mocked(deps.createTransport).mockReturnValueOnce(source).mockReturnValueOnce(target)
+    deps.acknowledgeTransferReady = vi.fn(async () => ({}))
+    deps.acknowledgeTransferSwitched = vi.fn(async () => ({}))
+    vi.stubGlobal(
+      "MediaStream",
+      class {
+        constructor(private readonly tracks: MediaStreamTrack[]) {}
+        getAudioTracks() {
+          return this.tracks.filter((track) => track.kind === "audio")
+        }
+      }
+    )
+    const container = document.createElement("div")
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue()
+    const manager = newManager(deps, container)
+    await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
+    const roster = [
+      participant({
+        epoch: 1,
+        mediaIncarnation: "inc_peer",
+        publishedTracks: [{ kind: "mic", trackName: "peer:mic", publicationId: "source_mic", transportGeneration: 1 }],
+      }),
+    ]
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster })
+    const sourceTrack = makeTrack("audio")
+    source.onRemoteTrack?.({
+      ref: { endpointId: "ep_peer", kind: "mic", publicationId: "source_mic" },
+      track: sourceTrack,
+    })
+    const preparing = transferSnapshot("preparing", 1)
+    preparing.obligations[0]!.switched = false
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster, transfer: preparing })
+    await vi.waitFor(() => expect(target.syncPeers).toHaveBeenCalled())
+    const targetRef = { endpointId: "ep_peer", kind: "mic" as const, publicationId: "target_mic" }
+    const endedTargetTrack = makeTrack("audio")
+    target.onRemoteTrack?.({ ref: targetRef, track: endedTargetTrack })
+    await vi.waitFor(() => expect(deps.acknowledgeTransferReady).toHaveBeenCalledTimes(1))
+
+    target.onRemoteTrackEnded?.(targetRef)
+    const committing = transferSnapshot("committing", 2)
+    committing.obligations[0]!.switched = false
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster, transfer: committing })
+    await vi.waitFor(() => expect(target.syncPeers).toHaveBeenCalledTimes(2))
+
+    expect({
+      switchedAcks: vi.mocked(deps.acknowledgeTransferSwitched).mock.calls.length,
+      sourceCloseCalls: vi.mocked(source.close).mock.calls.length,
+      output: (container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks(),
+      audioOutputs: container.querySelectorAll("audio").length,
+    }).toEqual({ switchedAcks: 0, sourceCloseCalls: 0, output: [sourceTrack], audioOutputs: 1 })
+
+    const recoveredTargetTrack = makeTrack("audio")
+    target.onRemoteTrack?.({ ref: targetRef, track: recoveredTargetTrack })
+    await vi.waitFor(() => expect(deps.acknowledgeTransferSwitched).toHaveBeenCalledTimes(1))
+    expect({
+      output: (container.querySelector("audio")?.srcObject as MediaStream).getAudioTracks(),
+      audioOutputs: container.querySelectorAll("audio").length,
+    }).toEqual({ output: [recoveredTargetTrack], audioOutputs: 1 })
+  })
+
   it("should retry the exact switched acknowledgement after a lost response without a server mutation", async () => {
-    vi.useFakeTimers()
     const socket = makeSocket()
     const source = makeTransport()
     const target = makeTransport()
@@ -1014,6 +1079,7 @@ describe("CallManager", () => {
     vi.mocked(deps.createTransport).mockReturnValueOnce(source).mockReturnValueOnce(target)
     const committing = transferSnapshot("committing", 2)
     committing.obligations[0]!.switched = false
+    committing.obligations[0]!.expectedPublications = []
     deps.acknowledgeTransferSwitched = vi
       .fn()
       .mockRejectedValueOnce(new Error("response lost"))
@@ -1037,10 +1103,11 @@ describe("CallManager", () => {
     }))
     const manager = newManager(deps, document.body)
     await manager.startCall({ workspaceId: "ws_1", streamId: "stream_1", mode: "audio_only" })
-    socket.fire("call:roster", { callId: "call_1", rosterVersion: 0, roster: [], transfer: committing })
+    socket.fire("call:roster", { callId: "call_1", rosterVersion: 1, roster: [], transfer: committing })
     await vi.waitFor(() => expect(deps.acknowledgeTransferSwitched).toHaveBeenCalledTimes(1))
-    await vi.advanceTimersByTimeAsync(PULL_RETRY_DELAY_MS)
-    await vi.waitFor(() => expect(deps.acknowledgeTransferSwitched).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(deps.acknowledgeTransferSwitched).toHaveBeenCalledTimes(2), {
+      timeout: PULL_RETRY_DELAY_MS + 1000,
+    })
 
     expect(vi.mocked(deps.acknowledgeTransferSwitched).mock.calls.map(([call]) => call.body)).toEqual([
       vi.mocked(deps.acknowledgeTransferSwitched).mock.calls[0]![0].body,

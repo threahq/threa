@@ -36,6 +36,7 @@ import { UserRepository } from "../../src/features/workspaces/user-repository"
 import { StreamRepository } from "../../src/features/streams/repository"
 import { StreamMemberRepository } from "../../src/features/streams/member-repository"
 import { CallService, CloudflareRealtimeApi } from "../../src/features/calls"
+import { FeatureFlagService } from "../../src/features/feature-flags"
 import { ENDPOINT_LEASE_TTL_MS, EMPTY_GRACE_MS, CALL_SWEEP_INTERVAL_MS } from "../../src/features/calls/config"
 
 // The production sweep cadence, imported (not re-literal'd) so the matrix's timing
@@ -364,7 +365,7 @@ export function makeCallService(pool: Pool, fakeCfBase: string): CallService {
     apiBase: `${fakeCfBase}/v1/apps`,
     enabled: true,
   })
-  return new CallService({ pool, cloudflare: cf })
+  return new CallService({ pool, cloudflare: cf, featureFlagService: new FeatureFlagService(pool) })
 }
 
 // ── fast-forward knobs (simulate the lease TTL / grace window elapsing) ──────

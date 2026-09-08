@@ -6,6 +6,7 @@ import type { Pool } from "pg"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
+import { CALLS_NAMESPACE, callRoom } from "../../lib/call-routing"
 import { UserRepository } from "../workspaces"
 import type { FeatureFlagService } from "../feature-flags"
 import { checkCallAccess } from "./access"
@@ -17,13 +18,6 @@ import {
   CALL_P2P_SIGNAL_RATE_BURST,
   CALL_P2P_SIGNAL_RATE_REFILL_PER_SEC,
 } from "./config"
-
-export const CALLS_NAMESPACE = "/calls"
-
-/** Room every call member joins — roster/state fan-out target. */
-export function callRoom(callId: string): string {
-  return `call:${callId}`
-}
 
 /** Per-endpoint room — control events are addressed here, never a user room (one device, one command). */
 export function endpointRoom(callId: string, endpointId: string): string {

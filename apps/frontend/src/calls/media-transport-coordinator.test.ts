@@ -96,7 +96,6 @@ describe("MediaTransportCoordinator", () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     delete (HTMLVideoElement.prototype as Partial<HTMLVideoElement>).requestVideoFrameCallback
-    document.querySelectorAll('video[aria-hidden="true"]').forEach((video) => video.remove())
   })
 
   test("should publish the same capture objects to source and target", async () => {
@@ -235,6 +234,61 @@ describe("MediaTransportCoordinator", () => {
     await coordinator.drainSource(2)
     source.onRemoteTrackEnded?.(ref)
     expect(ended).not.toHaveBeenCalled()
+  })
+
+  test("should reject commit after a ready target publication ends", async () => {
+    const source = new FakeTransport()
+    const target = new FakeTransport()
+    const selected = vi.fn(() => {})
+    const coordinator = createCoordinator({ transport: source, generation: 1, kind: "sfu" }, () => target)
+    coordinator.onRemoteTrack = selected
+    await coordinator.connect({ endpointId: "self", mediaIncarnation: "inc_self" })
+    await coordinator.beginTransfer(snapshot())
+    const ref = { endpointId: "peer", kind: "mic" as const, publicationId: "mic_2" }
+    const expected = [
+      {
+        endpointId: "peer",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc_peer",
+        kind: "mic" as const,
+        publicationId: "mic_2",
+        publicationRevision: 3,
+        muted: false,
+      },
+    ]
+    target.onRemoteTrack?.({ ref, track: track("audio", "audio_2") })
+    expect(await coordinator.targetReadiness(expected)).toEqual({ ready: true, publications: expected })
+
+    target.onRemoteTrackEnded?.(ref)
+
+    expect(coordinator.commitSelection(2, expected)).toBe(false)
+    expect(selected).not.toHaveBeenCalled()
+  })
+
+  test("should not treat a rendered ended camera track as ready", async () => {
+    const source = new FakeTransport()
+    const target = new FakeTransport()
+    const coordinator = createCoordinator({ transport: source, generation: 1, kind: "sfu" }, () => target)
+    await coordinator.connect({ endpointId: "self", mediaIncarnation: "inc_self" })
+    await coordinator.beginTransfer(snapshot())
+    const ref = { endpointId: "peer", kind: "camera" as const, publicationId: "camera_2" }
+    const video = track("video", "video_2")
+    target.onRemoteTrack?.({ ref, track: video })
+    await coordinator.markVideoRendered(ref, 2)
+    Object.defineProperty(video, "readyState", { value: "ended" })
+    const expected = [
+      {
+        endpointId: "peer",
+        endpointEpoch: 1,
+        mediaIncarnation: "inc_peer",
+        kind: "camera" as const,
+        publicationId: "camera_2",
+        publicationRevision: 3,
+      },
+    ]
+
+    expect(await coordinator.targetReadiness(expected)).toEqual({ ready: false, publications: [] })
+    expect(coordinator.commitSelection(2, expected)).toBe(false)
   })
 
   test("should ignore ended callbacks from replaced publications in the same generation", async () => {
@@ -587,6 +641,11 @@ describe("MediaTransportCoordinator", () => {
     const sourceRef = { endpointId: "peer", kind: "camera" as const, publicationId: "source_camera" }
     source.onRemoteTrack?.({ ref: sourceRef, track: track("video", "source_video") })
     await coordinator.beginTransfer(snapshot())
+    target.onRemoteTrack?.({
+      ref: { ...sourceRef, publicationId: "target_camera" },
+      track: track("video", "target_video"),
+    })
+    expect(document.querySelectorAll('video[aria-hidden="true"]')).toHaveLength(2)
     const expected = [
       {
         endpointId: "peer",
@@ -612,6 +671,11 @@ describe("MediaTransportCoordinator", () => {
     const coordinator = createCoordinator({ transport: source, generation: 1, kind: "sfu" }, () => target)
     await coordinator.connect({ endpointId: "self", mediaIncarnation: "inc_self" })
     await coordinator.publish("mic", track("audio", "mic"))
+    source.onRemoteTrack?.({
+      ref: { endpointId: "peer", kind: "camera", publicationId: "source_camera" },
+      track: track("video", "source_camera"),
+    })
+    expect(document.querySelectorAll('video[aria-hidden="true"]')).toHaveLength(1)
     const setup = coordinator.beginTransfer(snapshot())
     await Promise.resolve()
     const closing = coordinator.close()
@@ -621,6 +685,7 @@ describe("MediaTransportCoordinator", () => {
       targetClosed: 1,
     })
     await closing
+    expect(document.querySelectorAll('video[aria-hidden="true"]')).toHaveLength(0)
     resolveConnect()
     await setup
     expect(target.publish).not.toHaveBeenCalled()

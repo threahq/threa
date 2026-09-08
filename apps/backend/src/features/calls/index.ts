@@ -17,6 +17,7 @@ export type { TurnCredentialIssuer, TurnCredentials } from "./turn"
 export type { RealtimeMediaApi } from "./cloudflare"
 export { createCallHandlers } from "./handlers"
 export { registerCallGateway } from "./signaling-gateway"
+export { CALLS_NAMESPACE, callRoom } from "../../lib/call-routing"
 export {
   CALL_STATUSES,
   CALL_MODES,

@@ -31,6 +31,7 @@ import type {
   AttachmentUploadStatus,
   PersonaListItem,
   StreamReadFrontierSnapshot,
+  CallTransferPhase,
 } from "@threahq/types"
 
 export type OutboxEventType =
@@ -1118,7 +1119,7 @@ export interface CallTransportTransferChangedOutboxPayload extends StreamScopedP
   transferId: string
   generation: number
   version: number
-  phase: "preparing" | "committing" | "draining" | "aborting" | "failed" | "completed"
+  phase: CallTransferPhase
 }
 
 // Bot event payloads

@@ -99,15 +99,7 @@ async function setUpDmPair(
   if (!workspaceId) throw new Error("Could not resolve workspaceId from owner URL")
 
   if (options.p2p === true) {
-    const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
-    if (!backendPort) throw new Error("PLAYWRIGHT_BACKEND_PORT is required for P2P enrollment")
-    const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
-    if (!internalApiKey) throw new Error("PLAYWRIGHT_INTERNAL_API_KEY is required for P2P enrollment")
-    const enrolled = await ownerPage.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
-      headers: { "x-internal-api-key": internalApiKey },
-      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { callsP2p: "on" } },
-    })
-    await expectApiOk(enrolled, "Enroll workspace in callsP2p")
+    await enrollCallsP2p(ownerPage, workspaceId)
     await ownerPage.reload()
   }
 
@@ -133,7 +125,7 @@ async function setUpDmPair(
   if (!inviteeUserId) throw new Error("Invitee user not found in workspace")
 
   await ownerPage.goto(`/w/${workspaceId}/s/${createDmDraftId(inviteeUserId)}`)
-  await ownerPage.locator("[contenteditable='true']").first().click()
+  await ownerPage.getByRole("textbox", { name: "Message input" }).click()
   await ownerPage.keyboard.type(`DM open ${testId}`)
   await ownerPage.getByRole("button", { name: "Send" }).click()
   await expect(ownerPage).toHaveURL(new RegExp(`/w/${workspaceId}/s/stream_`), { timeout: 15000 })
@@ -148,7 +140,7 @@ async function setUpDmPair(
 
   // The call button proves A's bootstrap has calls on; the composer proves B is in.
   await expect(ownerPage.getByRole("button", { name: "Start a call" })).toBeVisible({ timeout: 15000 })
-  await expect(invitee.page.locator("[contenteditable='true']").first()).toBeVisible({ timeout: 15000 })
+  await expect(invitee.page.getByRole("textbox", { name: "Message input" })).toBeVisible({ timeout: 15000 })
 
   return {
     ownerContext,

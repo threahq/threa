@@ -1,4 +1,4 @@
-import type { CallMediaTransport, CallTransferPhase } from "@threahq/types"
+import type { CallExpectedPublication, CallMediaTransport, CallTransferPhase } from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import type { PublishedTrack } from "./config"
@@ -50,8 +50,8 @@ export interface CallTransferObligationRow {
   mediaIncarnation: string
   membershipRevision: number
   trackRevision: number
-  expectedPublications: unknown[]
-  readyPublications: unknown[]
+  expectedPublications: CallExpectedPublication[]
+  readyPublications: CallExpectedPublication[]
   ownPublicationsReady: boolean
   switched: boolean
   sourceReleased: boolean

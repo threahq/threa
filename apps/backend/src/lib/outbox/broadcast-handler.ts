@@ -23,6 +23,7 @@ import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type Process
 import type { OutboxHandler } from "@threahq/backend-common"
 import type { DelegationStatusChangedEventPayload } from "@threahq/types"
 import { invalidatePointersForEvent } from "../../features/messaging/sharing"
+import { CALLS_NAMESPACE, callRoom } from "../call-routing"
 import {
   outboxBatchSize,
   outboxDispatchLagSeconds,
@@ -227,7 +228,7 @@ export class BroadcastHandler implements OutboxHandler {
     emitToGroups(this.io, event, groups, routedEvent?.syncId)
     if (isOutboxEventType(event, "call:transport_transfer_changed")) {
       const payload = event.payload as { callId: string }
-      this.io.of("/calls").to(`call:${payload.callId}`).emit(event.eventType, event.payload)
+      this.io.of(CALLS_NAMESPACE).to(callRoom(payload.callId)).emit(event.eventType, event.payload)
     }
 
     // A new delegation additionally nudges every connected runtime in the

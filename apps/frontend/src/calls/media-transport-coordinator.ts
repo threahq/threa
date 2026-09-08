@@ -34,7 +34,7 @@ export class MediaTransportCoordinator implements MediaTransport {
   private readonly sourceTracks = new Map<string, RemoteTrackEvent>()
   private readonly sourceRendered = new Map<string, string>()
   private readonly staged = new Map<string, StagedTrack>()
-  private readonly stagingVideos = new Map<string, HTMLVideoElement>()
+  private readonly stagingVideos = new Map<string, { video: HTMLVideoElement; generation: number }>()
   private readonly peerCounts = new Map<number, number>()
   private readonly targetPulls = new Map<string, PeerTrackRef>()
   private readonly encodingSettings = new Map<PublishedTrackKind, { maxBitrate?: number }>()
@@ -161,11 +161,11 @@ export class MediaTransportCoordinator implements MediaTransport {
       const staged = this.staged.get(this.key(item.endpointId, item.kind))
       if (!staged || staged.generation !== this.target?.generation || staged.ref.publicationId !== item.publicationId)
         continue
+      if (staged.track.readyState !== "live") continue
       if (item.kind === "camera") {
         if (staged.rendered) ready.push(item)
         continue
       }
-      if (staged.track.readyState !== "live") continue
       if (item.muted || (await this.target?.transport.hasInboundByteProgress?.(staged.ref))) ready.push(item)
     }
     const ownReady =
@@ -183,10 +183,24 @@ export class MediaTransportCoordinator implements MediaTransport {
     }
   }
 
-  commitSelection(generation: number): boolean {
+  commitSelection(generation: number, expected?: CallExpectedPublication[]): boolean {
     if (!this.target || this.target.generation !== generation) return false
-    for (const staged of this.staged.values()) {
-      if (staged.generation !== generation) continue
+    const selected = expected
+      ? expected.map((item) => this.staged.get(this.key(item.endpointId, item.kind)))
+      : [...this.staged.values()].filter((staged) => staged.generation === generation)
+    if (
+      selected.some(
+        (staged, index) =>
+          !staged ||
+          staged.generation !== generation ||
+          staged.track.readyState !== "live" ||
+          (expected && staged.ref.publicationId !== expected[index]!.publicationId) ||
+          (staged.ref.kind === "camera" && !staged.rendered)
+      )
+    )
+      return false
+    for (const staged of selected) {
+      if (!staged) continue
       this.selected.set(this.key(staged.ref.endpointId, staged.ref.kind), generation)
       this.onRemoteTrack?.({ ref: staged.ref, track: staged.track })
     }
@@ -461,6 +475,7 @@ export class MediaTransportCoordinator implements MediaTransport {
   private probeVideo(event: RemoteTrackEvent, generation: number, target: boolean): void {
     if (typeof document === "undefined") return
     const key = this.key(event.ref.endpointId, event.ref.kind)
+    const probeKey = `${generation}:${key}`
     const video = document.createElement("video")
     video.muted = true
     video.playsInline = true
@@ -475,9 +490,14 @@ export class MediaTransportCoordinator implements MediaTransport {
       pointerEvents: "none",
     })
     video.srcObject = new MediaStream([event.track])
-    this.stagingVideos.get(key)?.remove()
+    const previous = this.stagingVideos.get(probeKey)?.video
+    if (previous) {
+      previous.pause()
+      previous.srcObject = null
+      previous.remove()
+    }
     document.body.append(video)
-    this.stagingVideos.set(key, video)
+    this.stagingVideos.set(probeKey, { video, generation })
     const rendered = () => {
       if (target) void this.markVideoRendered(event.ref, generation)
       else if (
@@ -505,13 +525,13 @@ export class MediaTransportCoordinator implements MediaTransport {
     for (const [key, staged] of this.staged) {
       if (generation !== undefined && staged.generation !== generation) continue
       this.staged.delete(key)
-      const video = this.stagingVideos.get(key)
-      if (video) {
-        video.pause()
-        video.srcObject = null
-        video.remove()
-        this.stagingVideos.delete(key)
-      }
+    }
+    for (const [key, probe] of this.stagingVideos) {
+      if (generation !== undefined && probe.generation !== generation) continue
+      probe.video.pause()
+      probe.video.srcObject = null
+      probe.video.remove()
+      this.stagingVideos.delete(key)
     }
   }
 

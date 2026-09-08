@@ -16,6 +16,7 @@ import {
   type CallTransferSwitchedAck,
   type CallTransferRestoredAck,
   type CallMediaTransport,
+  type CallExpectedPublication,
 } from "@threahq/types"
 import { ulid } from "ulid"
 import { withTransaction, withClient } from "../../db"
@@ -1046,11 +1047,10 @@ export class CallService {
     await this.emitTransferChanged(client, call.streamId, revised)
   }
 
-  private publicationsMatch(expected: unknown[], ready: unknown[]): boolean {
+  private publicationsMatch(expected: CallExpectedPublication[], ready: CallExpectedPublication[]): boolean {
     if (expected.length !== ready.length) return false
-    const publicationKey = (item: unknown) => {
-      const publication = item as Record<string, unknown>
-      return JSON.stringify([
+    const publicationKey = (publication: CallExpectedPublication) =>
+      JSON.stringify([
         publication.endpointId,
         publication.endpointEpoch,
         publication.mediaIncarnation,
@@ -1059,7 +1059,6 @@ export class CallService {
         publication.publicationRevision,
         publication.muted ?? null,
       ])
-    }
     const keys = new Set(ready.map(publicationKey))
     return expected.every((item) => keys.has(publicationKey(item)))
   }

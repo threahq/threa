@@ -5,6 +5,7 @@ import { BroadcastHandler } from "./broadcast-handler"
 import { SyncLogRepository } from "../../features/sync"
 import type { ProcessResult } from "@threahq/backend-common"
 import type { OutboxEvent } from "./repository"
+import { CALLS_NAMESPACE, callRoom } from "../call-routing"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -116,8 +117,8 @@ describe("BroadcastHandler", () => {
     await new Promise((resolve) => setTimeout(resolve, 300))
 
     expect(emitChains).toContainEqual({
-      room: "call:call_1",
-      namespace: "/calls",
+      room: callRoom("call_1"),
+      namespace: CALLS_NAMESPACE,
       eventType: "call:transport_transfer_changed",
       payload: event.payload,
     })

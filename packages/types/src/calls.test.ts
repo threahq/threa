@@ -44,35 +44,37 @@ describe("call transfer contracts", () => {
   })
 
   test("should reject acknowledgements without exact generation identity", () => {
-    expect(
-      callTransferReadyAckSchema.safeParse({
-        transferId: "callxfer_1",
-        endpointId: "callep_1",
-        endpointEpoch: 1,
-        mediaIncarnation: "inc_1",
-        membershipRevision: 2,
-        trackRevision: 3,
-        ownPublicationsReady: true,
-        readyPublications: [],
-      }).success
-    ).toBe(false)
+    const result = callTransferReadyAckSchema.safeParse({
+      transferId: "callxfer_1",
+      endpointId: "callep_1",
+      endpointEpoch: 1,
+      mediaIncarnation: "inc_1",
+      membershipRevision: 2,
+      trackRevision: 3,
+      ownPublicationsReady: true,
+      readyPublications: [],
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.error.issues).toEqual([expect.objectContaining({ path: ["generation"] })])
   })
 
   test("should reject malformed transfer phases", () => {
-    expect(
-      callTransportTransferSchema.safeParse({
-        id: "callxfer_1",
-        version: 1,
-        source: { generation: 1, transport: "sfu" },
-        target: { generation: 2, transport: "p2p" },
-        membershipRevision: 1,
-        phase: "switching",
-        cause: "explicit",
-        failureCode: null,
-        recoveryCode: null,
-        sessions: [],
-        obligations: [],
-      }).success
-    ).toBe(false)
+    const result = callTransportTransferSchema.safeParse({
+      id: "callxfer_1",
+      version: 1,
+      source: { generation: 1, transport: "sfu" },
+      target: { generation: 2, transport: "p2p" },
+      membershipRevision: 1,
+      phase: "switching",
+      cause: "explicit",
+      failureCode: null,
+      recoveryCode: null,
+      sessions: [],
+      obligations: [],
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.error.issues).toEqual([expect.objectContaining({ path: ["phase"] })])
   })
 })

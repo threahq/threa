@@ -9,7 +9,11 @@ interface PostCall {
 function makeTransceiver(mid: string) {
   return {
     mid,
-    sender: { replaceTrack: vi.fn(async () => {}) },
+    sender: {
+      replaceTrack: vi.fn(async () => {}),
+      getParameters: vi.fn(() => ({ encodings: [{}] as RTCRtpEncodingParameters[] })),
+      setParameters: vi.fn(async () => {}),
+    },
     stop: vi.fn(),
   }
 }
@@ -110,6 +114,21 @@ describe("CloudflareSfuTransport", () => {
     await transport.publish("mic", makeTrack("audio"))
     expect(calls.length).toBeGreaterThanOrEqual(2)
     for (const c of calls) expect(c.body.mediaIncarnation).toBe(INC)
+  })
+
+  it("should clear a previous encoder cap when the limit is removed", async () => {
+    const { transport, pc } = makeTransport()
+    await transport.connect({ endpointId: "ep_1", mediaIncarnation: INC })
+    await transport.publish("camera", makeTrack("video"))
+    const sender = pc.transceivers[0]!.sender
+
+    await transport.setPublishEncoding("camera", { maxBitrate: 800_000 })
+    await transport.setPublishEncoding("camera", { maxBitrate: undefined })
+
+    expect(sender.setParameters.mock.calls).toEqual([
+      [{ encodings: [{ maxBitrate: 800_000 }] }],
+      [{ encodings: [{ maxBitrate: undefined }] }],
+    ])
   })
 
   it("serializes overlapping renegotiations behind the queue (never interleaves)", async () => {

@@ -238,10 +238,12 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
   const manager = useCallManager()
   const roster = useCallRoster()
   const [requesting, setRequesting] = useState(false)
-  const target = diagnostics.mediaTransport === "p2p" ? "sfu" : "p2p"
+  let target: CallDiagnostics["mediaTransport"]
+  if (diagnostics.mediaTransport === "p2p") target = "sfu"
+  else if (diagnostics.mediaTransport === "sfu") target = "p2p"
   const transferActive = diagnostics.transfer && !["completed", "failed"].includes(diagnostics.transfer.phase)
   const requestTransfer = async () => {
-    if (!manager.requestMediaTransport || requesting || transferActive) return
+    if (!target || !manager.requestMediaTransport || requesting || transferActive) return
     setRequesting(true)
     try {
       await manager.requestMediaTransport(target)
@@ -321,7 +323,7 @@ export function ConnectionDiagnostics({ diagnostics }: { diagnostics: CallDiagno
             ) : null}
           </div>
         ) : null}
-        {!transferActive && (target !== "p2p" || p2pEnabled) ? (
+        {target && !transferActive && (target !== "p2p" || p2pEnabled) ? (
           <div className="mt-3 border-t pt-2">
             {target === "p2p" && roster.length > 6 ? (
               <p className="text-muted-foreground mb-2 text-xs">
