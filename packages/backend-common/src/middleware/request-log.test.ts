@@ -1,5 +1,31 @@
 import { describe, expect, it } from "bun:test"
-import { requestLogSerializers } from "./request-log"
+import { requestLogLevel, requestLogSerializers } from "./request-log"
+
+describe("requestLogLevel", () => {
+  it("should return the matching level when given each statusCode/err combination", () => {
+    const cases: Array<[number, unknown]> = [
+      [200, undefined],
+      [400, undefined],
+      [401, undefined],
+      [403, undefined],
+      [404, undefined],
+      [429, undefined],
+      [500, undefined],
+      [200, new Error("boom")],
+    ]
+
+    expect(cases.map(([statusCode, err]) => requestLogLevel(statusCode, err))).toEqual([
+      "silent",
+      "warn",
+      "info",
+      "info",
+      "info",
+      "warn",
+      "error",
+      "error",
+    ])
+  })
+})
 
 describe("requestLogSerializers.req", () => {
   it("should keep only id, method, url, and userAgent when headers carry secrets", () => {

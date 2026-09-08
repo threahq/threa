@@ -7,7 +7,7 @@ import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
 import { THREA_VERSION_HEADER } from "@threahq/types"
 import { logger } from "./lib/logger"
-import { bigIntReplacer, requestLogSerializers, sanitizeRoutePath } from "@threahq/backend-common"
+import { bigIntReplacer, requestLogLevel, requestLogSerializers, sanitizeRoutePath } from "@threahq/backend-common"
 import { createMetricsMiddleware } from "./middleware/metrics"
 import type { ApiVersionLog } from "./middleware/api-version"
 import { createCorsOriginChecker } from "./lib/cors"
@@ -79,11 +79,7 @@ export function createApp(options: CreateAppOptions): Express {
       autoLogging: {
         ignore: (req) => requestLoggingIgnoredPaths.includes(req.url),
       },
-      customLogLevel: (_req, res, err) => {
-        if (res.statusCode >= 500 || err) return "error"
-        if (res.statusCode >= 400) return "warn"
-        return "silent"
-      },
+      customLogLevel: (_req, res, err) => requestLogLevel(res.statusCode, err),
       genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
       // Public API version telemetry — the api-version gate stashes the requested
       // version, its source (header override vs key pin), the key id, and the
