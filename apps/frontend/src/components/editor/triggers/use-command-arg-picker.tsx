@@ -33,15 +33,53 @@ interface ActiveArg {
 }
 
 /**
+ * The flag arguments in play, with a chosen positional value's own overriding
+ * the command's where the names match — so `/spawn pi /model` offers Pi's
+ * models and `/spawn claude /model` the desk's.
+ */
+function flagArgs(
+  args: readonly CommandArgumentInfo[],
+  chosen: CommandArgumentSuggestion | undefined
+): CommandArgumentInfo[] {
+  const merged = new Map<string, CommandArgumentInfo>()
+  for (const arg of args) if (isFlagArg(arg)) merged.set(arg.name, arg)
+  for (const arg of chosen?.args ?? []) if (isFlagArg(arg)) merged.set(arg.name, arg)
+  return [...merged.values()]
+}
+
+/** The name of the synthetic argument whose options are the flags themselves. */
+const FLAG_CHOICE_ARG = "/"
+
+/**
+ * The flags not yet used, offered as options in their own right. Picking one
+ * types the flag and hands the next word to that flag's own list — the only way
+ * to reach an override by keyboard, since the composer's `/` palette carries
+ * commands, not arguments.
+ */
+function flagChoice(flags: CommandArgumentInfo[], used: ReadonlySet<string>, query: string): ActiveArg | null {
+  const remaining = flags.filter((flag) => !used.has(flag.name))
+  if (remaining.length === 0) return null
+  return {
+    arg: {
+      name: FLAG_CHOICE_ARG,
+      suggestions: remaining.map((flag) => ({
+        value: flag.name,
+        ...(flag.description ? { description: flag.description } : {}),
+      })),
+    },
+    query,
+  }
+}
+
+/**
  * Which argument the caret is filling, given everything typed after the chip.
  *
  * The first word fills the leading positional argument (`/spawn <runtime>`,
- * `/model <model>`); after that, only a word that follows a flag argument's own
- * name does (`/spawn pi /model <model>`). Anything else — the session name, the
- * word right after a chosen value — fills no argument and closes the list.
- *
- * A chosen positional value swaps in its own arguments where the names match,
- * so `/spawn pi /model` offers Pi's models and `/spawn claude /model` Claude's.
+ * `/model <model>`); after it, a word following a flag's own name fills that
+ * flag (`/spawn pi /model <model>`), and a word that starts a flag — or the
+ * empty word while the line is still nothing but runtime and overrides — picks
+ * from the flags themselves. Free text (the session name) fills no argument and
+ * closes the list.
  */
 export function resolveActiveArg(args: readonly CommandArgumentInfo[], text: string): ActiveArg | null {
   const positional = args.find((arg) => !isFlagArg(arg) && (arg.suggestions?.length ?? 0) > 0)
@@ -51,11 +89,29 @@ export function resolveActiveArg(args: readonly CommandArgumentInfo[], text: str
   const completed = (trailingSpace ? words : words.slice(0, -1)).filter(Boolean)
   if (completed.length === 0) return positional ? { arg: positional, query } : null
   const chosen = positional?.suggestions?.find((suggestion) => suggestion.value === completed[0])
-  const preceding = completed[completed.length - 1]
-  const scoped = (chosen?.args ?? []).find((arg) => arg.name === preceding)
-  const declared = args.find((arg) => arg.name === preceding && isFlagArg(arg))
-  const arg = scoped ?? declared
-  return arg ? { arg, query } : null
+  const flags = flagArgs(args, chosen)
+  // Walk what's finished: a flag claims the word after it, anything else is the
+  // session name. The first word is the runtime's only when it named one, so
+  // `/spawn /model opus` still reads as an override.
+  const used = new Set<string>()
+  let awaitingValue: CommandArgumentInfo | undefined
+  let freeText = false
+  for (const token of chosen ? completed.slice(1) : completed) {
+    if (awaitingValue) {
+      awaitingValue = undefined
+      continue
+    }
+    const flag = flags.find((arg) => arg.name === token)
+    if (!flag) {
+      freeText = true
+      continue
+    }
+    used.add(flag.name)
+    awaitingValue = flag
+  }
+  if (awaitingValue) return { arg: awaitingValue, query }
+  const offersFlags = query.startsWith("/") || (!freeText && query === "")
+  return offersFlags ? flagChoice(flags, used, query) : null
 }
 
 /** Rank the option list by the text typed after the command, label first. */
@@ -211,21 +267,24 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
   const activeRef = useRef<ActiveArg | null>(null)
   activeRef.current = active
 
+  const items = useMemo(
+    () => (active ? filterArgSuggestions(active.arg.suggestions ?? [], active.query) : []),
+    [active]
+  )
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+
   const handleArgPickerKeyDown = useCallback((event: KeyboardEvent): boolean => {
     const current = stateRef.current
     const open = activeRef.current
-    if (!current || !open) return false
+    // A filter that matches nothing renders no list, so it owns no keys either.
+    if (!current || !open || itemsRef.current.length === 0) return false
     if (event.key === "Escape") {
       setState({ ...current, dismissed: open.arg.name })
       return true
     }
     return listRef.current?.onKeyDown(event) ?? false
   }, [])
-
-  const items = useMemo(
-    () => (active ? filterArgSuggestions(active.arg.suggestions ?? [], active.query) : []),
-    [active]
-  )
 
   const renderArgPicker = useCallback(() => {
     if (!state || !active) return null

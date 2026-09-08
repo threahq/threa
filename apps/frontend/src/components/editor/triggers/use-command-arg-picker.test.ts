@@ -95,9 +95,29 @@ describe("resolveActiveArg", () => {
     expect(resolveActiveArg(SPAWN_ARGS, "p")).toEqual({ arg: SPAWN_ARGS[0], query: "p" })
   })
 
-  it("closes once the first word is finished, so a session name lists nothing", () => {
-    expect(resolveActiveArg(SPAWN_ARGS, "pi ")).toBeNull()
+  it("offers the overrides themselves once the runtime is chosen", () => {
+    expect(resolveActiveArg(SPAWN_ARGS, "pi ")?.arg.suggestions).toEqual([{ value: "/model" }, { value: "/thinking" }])
+  })
+
+  it("keeps offering them while the typed word is a slash", () => {
+    expect(resolveActiveArg(SPAWN_ARGS, "pi /think")).toEqual({
+      arg: { name: "/", suggestions: [{ value: "/model" }, { value: "/thinking" }] },
+      query: "/think",
+    })
+  })
+
+  it("drops an override already given, and closes once every one is used", () => {
+    expect(resolveActiveArg(SPAWN_ARGS, "pi /model opus ")?.arg.suggestions).toEqual([{ value: "/thinking" }])
+    expect(resolveActiveArg(SPAWN_ARGS, "pi /model opus /thinking high ")).toBeNull()
+  })
+
+  it("still offers the other override when the runtime was left implicit", () => {
+    expect(resolveActiveArg(SPAWN_ARGS, "/model opus ")?.arg.suggestions).toEqual([{ value: "/thinking" }])
+  })
+
+  it("closes once the session name starts, so free text lists nothing", () => {
     expect(resolveActiveArg(SPAWN_ARGS, "pi fix-the-")).toBeNull()
+    expect(resolveActiveArg(SPAWN_ARGS, "pi fix the thing ")).toBeNull()
   })
 
   it("offers the named runtime's own models under /model", () => {

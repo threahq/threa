@@ -22,7 +22,17 @@ const GIPHY: CommandItem = {
   clientActionId: "giphy",
   placement: "inline",
 }
+const SPAWN: CommandItem = {
+  name: "spawn",
+  description: "Spawn a coding session",
+  args: [
+    { name: "runtime", suggestions: [{ value: "pi" }] },
+    { name: "/model", suggestions: [{ value: "opus" }] },
+    { name: "/thinking", suggestions: [{ value: "high" }] },
+  ],
+}
 const ALL = [MEMO, GIPHY, INVITE, DISCUSS]
+const WITH_SPAWN = [...ALL, SPAWN]
 
 const editors: Editor[] = []
 
@@ -43,6 +53,11 @@ afterEach(() => {
 function typeText(editor: Editor, text: string) {
   editor.commands.focus()
   for (const ch of text) editor.view.dispatch(editor.state.tr.insertText(ch))
+}
+
+function openWithCommand(editor: Editor, name: string) {
+  editor.commands.focus()
+  editor.commands.insertContent({ type: "slashCommand", attrs: { name } })
 }
 
 function names(items: CommandItem[]) {
@@ -94,5 +109,35 @@ describe("filterCommands placement gating", () => {
     // Defensive fallback: without an editor we can't tell where the slash is, so
     // we don't hide message-level commands (the prior behavior).
     expect(names(filterCommands(ALL, ""))).toEqual(["aside", "giphy", "invite", "memo"])
+  })
+})
+
+describe("filterCommands argument gating", () => {
+  it("offers no command for a slash that names one of the open command's flags", () => {
+    const editor = makeEditor()
+    openWithCommand(editor, "spawn")
+    typeText(editor, " pi /model")
+    expect(filterCommands(WITH_SPAWN, "model", editor)).toEqual([])
+  })
+
+  it("offers no command for a bare slash inside a command that takes flags", () => {
+    const editor = makeEditor()
+    openWithCommand(editor, "spawn")
+    typeText(editor, " pi /")
+    expect(filterCommands(WITH_SPAWN, "", editor)).toEqual([])
+  })
+
+  it("still offers inline commands for a slash that names no flag", () => {
+    const editor = makeEditor()
+    openWithCommand(editor, "spawn")
+    typeText(editor, " pi /mem")
+    expect(names(filterCommands(WITH_SPAWN, "mem", editor))).toEqual(["memo"])
+  })
+
+  it("leaves a command that declares no flags alone", () => {
+    const editor = makeEditor()
+    openWithCommand(editor, "aside")
+    typeText(editor, " see /mem")
+    expect(names(filterCommands(WITH_SPAWN, "mem", editor))).toEqual(["memo"])
   })
 })
