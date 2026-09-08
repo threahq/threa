@@ -3,25 +3,42 @@ import { unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import type { SpawnRuntimeOption } from "./spawn-runtimes"
+
 interface SpawnCommandArgs {
-  runtime?: string
+  runtime: string
   name: string
   prompt: string
 }
 
-export function parseSpawnCommandArgs(args: string, runtimes: readonly string[]): SpawnCommandArgs | { error: string } {
+interface ParseSpawnCommandOptions {
+  /** harnessd's catalog: a known runtime that is not installed is refused, never folded into the name. */
+  runtimes: readonly SpawnRuntimeOption[]
+  /** Used when the first token is not a runtime; must itself be installed. */
+  defaultRuntime: string
+}
+
+export function parseSpawnCommandArgs(
+  args: string,
+  options: ParseSpawnCommandOptions
+): SpawnCommandArgs | { error: string } {
   const lines = args.split(/\r?\n/)
   const tokens = (lines[0] ?? "").split(/\s+/).filter(Boolean)
-  const runtime = tokens[0] && runtimes.includes(tokens[0]) ? tokens[0] : undefined
-  const nameTokens = runtime ? tokens.slice(1) : tokens
+  const installed = options.runtimes.filter((runtime) => runtime.installed).map((runtime) => runtime.value)
+  const leading = options.runtimes.find((runtime) => runtime.value === tokens[0])
+  const runtime = leading?.value ?? options.defaultRuntime
+  if (!installed.includes(runtime)) {
+    const available = installed.length > 0 ? ` Installed: ${installed.join(", ")}.` : ""
+    return { error: `\`${runtime}\` is not installed on this machine.${available}` }
+  }
+  const nameTokens = leading ? tokens.slice(1) : tokens
   const usage =
-    runtimes.length > 0
-      ? `Usage: \`/spawn [${runtimes.join("|")}] <name>\` with the prompt on the following lines.`
+    installed.length > 0
+      ? `Usage: \`/spawn [${installed.join("|")}] <name>\` with the prompt on the following lines.`
       : "Usage: `/spawn <name>` with the prompt on the following lines."
   // A leading dash would reach harnessd as a flag, which dies with a parser error instead of this usage.
   if (nameTokens.length === 0 || nameTokens.some((token) => token.startsWith("-"))) return { error: usage }
-  const name = nameTokens.join(" ")
-  return { ...(runtime ? { runtime } : {}), name, prompt: lines.slice(1).join("\n").trim() }
+  return { runtime, name: nameTokens.join(" "), prompt: lines.slice(1).join("\n").trim() }
 }
 
 /** harnessd reads the brief once and unlinks it; only a launch that never reached harnessd needs {@link discardSpawnBrief}. */

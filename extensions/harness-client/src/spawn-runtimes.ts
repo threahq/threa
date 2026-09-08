@@ -5,7 +5,15 @@ import { harnessDaemonEntrypoint, type HarnessSpawnSync } from "./harness-kick"
 export interface SpawnRuntimeOption {
   value: string
   label: string
+  installed: boolean
   description?: string
+}
+
+/** The picker rows for the runtimes this machine can launch, without the `installed` flag. */
+export function installedSpawnRuntimes(
+  runtimes: readonly SpawnRuntimeOption[]
+): { value: string; label: string; description?: string }[] {
+  return runtimes.filter((runtime) => runtime.installed).map(({ installed: _, ...option }) => option)
 }
 
 interface ListSpawnRuntimesOptions {
@@ -21,11 +29,12 @@ function isSpawnRuntimeOption(value: unknown): value is SpawnRuntimeOption {
   if (!value || typeof value !== "object") return false
   const candidate = value as Record<string, unknown>
   if (typeof candidate.value !== "string" || typeof candidate.label !== "string") return false
+  if (typeof candidate.installed !== "boolean") return false
   if (candidate.description !== undefined && typeof candidate.description !== "string") return false
   return true
 }
 
-/** Ask harnessd for the spawnable runtimes installed on this machine. No harness = nothing spawnable. */
+/** Ask harnessd which runtimes it knows and which of them this machine has. No harness = nothing spawnable. */
 export function listSpawnRuntimes(options: ListSpawnRuntimesOptions = {}): ListSpawnRuntimesResult {
   const entrypoint = options.entrypoint ?? harnessDaemonEntrypoint()
   if (!(options.exists ?? existsSync)(entrypoint)) return { ok: true, runtimes: [] }

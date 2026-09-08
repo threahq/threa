@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test"
-import { listSpawnRuntimes, spawnRuntimesResolver } from "./spawn-runtimes"
+import { installedSpawnRuntimes, listSpawnRuntimes, spawnRuntimesResolver } from "./spawn-runtimes"
 
 describe("listSpawnRuntimes", () => {
-  it("returns the runtimes harnessd reports as installed", () => {
+  it("returns harnessd's catalog with the installed flag per runtime", () => {
     const calls: unknown[][] = []
     const result = listSpawnRuntimes({
       entrypoint: "/repo/extensions/harness-daemon/src/index.ts",
@@ -13,8 +13,8 @@ describe("listSpawnRuntimes", () => {
         return {
           status: 0,
           stdout: JSON.stringify([
-            { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
-            { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+            { value: "claude", label: "Claude Code", installed: true, description: "/usr/local/bin/claude" },
+            { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
           ]),
           stderr: "",
         }
@@ -24,8 +24,8 @@ describe("listSpawnRuntimes", () => {
     expect(result).toEqual({
       ok: true,
       runtimes: [
-        { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
-        { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+        { value: "claude", label: "Claude Code", installed: true, description: "/usr/local/bin/claude" },
+        { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
       ],
     })
     expect(calls).toEqual([
@@ -83,19 +83,30 @@ describe("listSpawnRuntimes", () => {
     const result = listSpawnRuntimes({
       entrypoint: "/repo/index.ts",
       exists: () => true,
-      spawnSync: () => ({ status: 0, stdout: JSON.stringify([{ value: "claude" }]), stderr: "" }),
+      spawnSync: () => ({ status: 0, stdout: JSON.stringify([{ value: "claude", label: "Claude Code" }]), stderr: "" }),
     })
 
     expect(result).toEqual({
       ok: false,
-      error: 'harnessd runtimes returned unexpected output: [{"value":"claude"}]',
+      error: 'harnessd runtimes returned unexpected output: [{"value":"claude","label":"Claude Code"}]',
     })
+  })
+})
+
+describe("installedSpawnRuntimes", () => {
+  it("keeps only the installed runtimes and drops the flag from the picker rows", () => {
+    expect(
+      installedSpawnRuntimes([
+        { value: "claude", label: "Claude Code", installed: false },
+        { value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" },
+      ])
+    ).toEqual([{ value: "pi", label: "Pi", description: "/usr/local/bin/pi" }])
   })
 })
 
 describe("spawnRuntimesResolver", () => {
   it("runs harnessd once and keeps the answer, reporting a failure once and staying empty", () => {
-    const runtimes = [{ value: "pi", label: "Pi", description: "/usr/local/bin/pi" }]
+    const runtimes = [{ value: "pi", label: "Pi", installed: true, description: "/usr/local/bin/pi" }]
     let spawns = 0
     const resolve = spawnRuntimesResolver(() => {}, {
       entrypoint: "/repo/harnessd.ts",

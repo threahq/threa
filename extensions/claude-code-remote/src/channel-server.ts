@@ -5,7 +5,9 @@ import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   discardSpawnBrief,
   harnessReconnectAvailable,
+  installedSpawnRuntimes,
   spawnRuntimesResolver,
+  type SpawnRuntimeOption,
   markHarnessLinkWoundDown,
   parseSpawnCommandArgs,
   prepareHarnessClear,
@@ -35,7 +37,6 @@ import {
   type SessionControlActuator,
   type SessionControlInvocationContext,
   type ShutdownOptions,
-  type SpawnRuntimeInfo,
 } from "@threahq/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
@@ -249,7 +250,7 @@ export async function runClaudeCommand(
   invocationContext?: SessionControlInvocationContext,
   activeStreamId?: () => string | undefined,
   spawnLauncher: typeof prepareHarnessSpawn = prepareHarnessSpawn,
-  spawnRuntimes: () => readonly SpawnRuntimeInfo[] = defaultSpawnRuntimes
+  spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes
 ): Promise<{
   ok: boolean
   message?: string
@@ -346,10 +347,7 @@ export async function runClaudeCommand(
       })
     }
     case "spawn": {
-      const parsed = parseSpawnCommandArgs(
-        args,
-        spawnRuntimes().map((r) => r.value)
-      )
+      const parsed = parseSpawnCommandArgs(args, { runtimes: spawnRuntimes(), defaultRuntime: "claude" })
       if ("error" in parsed) return { ok: false, message: parsed.error }
       const root = rootStreamId?.()
       if (!root || !harnessReconnectAvailable()) {
@@ -364,14 +362,13 @@ export async function runClaudeCommand(
       if (activeStreamId?.() !== root) {
         throw new Error("Spawn is only available at the scratchpad itself, not inside a thread session.")
       }
-      const runtime = parsed.runtime ?? "claude"
       // The thread hangs off the `/spawn` the user typed, so the agent's first
       // message is a reply to it rather than to a separate "Starting…" post.
       const anchorId = invocationContext.sourceMessageId
       // harnessd dies on a blank brief, so an empty prompt gets no file at all.
       const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
       try {
-        spawnLauncher({ runtime, name: parsed.name, rootStreamId: root, anchorId, briefFile })()
+        spawnLauncher({ runtime: parsed.runtime, name: parsed.name, rootStreamId: root, anchorId, briefFile })()
       } catch (error) {
         discardSpawnBrief(briefFile)
         throw error
@@ -495,7 +492,7 @@ export function createClaudeSessionControl(
   reconnectTarget?: () => ReconnectTarget,
   reconnectReady?: () => boolean,
   activeStreamId?: () => string | undefined,
-  spawnRuntimes: () => readonly SpawnRuntimeInfo[] = defaultSpawnRuntimes
+  spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
@@ -512,7 +509,8 @@ export function createClaudeSessionControl(
             if (command === "spawn" || command === "done") {
               const active = activeStreamId?.()
               if (!active || !harnessReconnectAvailable()) return false
-              if (command === "spawn") return active === rootStreamId?.() && spawnRuntimes().length > 0
+              if (command === "spawn")
+                return active === rootStreamId?.() && installedSpawnRuntimes(spawnRuntimes()).length > 0
               return active !== rootStreamId?.()
             }
             return true
@@ -524,7 +522,7 @@ export function createClaudeSessionControl(
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
     get spawnRuntimes() {
-      return spawnRuntimes()
+      return installedSpawnRuntimes(spawnRuntimes())
     },
     interrupt: () => {
       // A /stop is about to close the held turn — drop the hold (and surface

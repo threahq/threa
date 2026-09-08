@@ -197,8 +197,8 @@ async function createLinkedPiSession(
         { value: "openai/gpt-5-high", label: "GPT-5 High" },
       ],
       spawnRuntimes: [
-        { value: "claude", label: "Claude Code" },
-        { value: "pi", label: "Pi" },
+        { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
+        { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
       ],
       ...capabilityOverrides,
     },
@@ -250,8 +250,8 @@ describe("Stream-scoped Pi session-control commands", () => {
     const spawnCommand = linkedCommands.find((c) => c.name === "spawn")
     const spawnSuggestions = spawnCommand?.args?.find((a) => a.name === "runtime")?.suggestions
     expect(spawnSuggestions).toEqual([
-      { value: "claude", label: "Claude Code" },
-      { value: "pi", label: "Pi" },
+      { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
+      { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
     ])
 
     // Claim polling doubles as a lightweight heartbeat with only runtimeSessionId.

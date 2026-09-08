@@ -5,46 +5,72 @@ import { basename, dirname, join } from "node:path"
 import { parseSpawnCommandArgs, writeSpawnBrief } from "./spawn-command"
 
 const USAGE = "Usage: `/spawn [claude|pi] <name>` with the prompt on the following lines."
+const BOTH = [
+  { value: "claude", label: "Claude Code", installed: true },
+  { value: "pi", label: "Pi", installed: true },
+]
+const PI_ONLY = [
+  { value: "claude", label: "Claude Code", installed: false },
+  { value: "pi", label: "Pi", installed: true },
+]
+const parse = (args: string, runtimes = BOTH, defaultRuntime = "claude") =>
+  parseSpawnCommandArgs(args, { runtimes, defaultRuntime })
 
 describe("parseSpawnCommandArgs", () => {
   it("takes a leading runtime token, the rest of the line as the name and the rest as the prompt", () => {
-    expect(parseSpawnCommandArgs("claude fix sidebar\nDo X\nthen Y", ["claude", "pi"])).toEqual({
-      runtime: "claude",
+    expect(parse("pi fix sidebar\nDo X\nthen Y")).toEqual({
+      runtime: "pi",
       name: "fix sidebar",
       prompt: "Do X\nthen Y",
     })
   })
 
   it("reads CRLF input the same as LF", () => {
-    expect(parseSpawnCommandArgs("claude fix sidebar\r\nDo X\r\nthen Y", ["claude", "pi"])).toEqual({
-      runtime: "claude",
+    expect(parse("pi fix sidebar\r\nDo X\r\nthen Y")).toEqual({
+      runtime: "pi",
       name: "fix sidebar",
       prompt: "Do X\nthen Y",
     })
   })
 
-  it("leaves the runtime unset when the first token is a name", () => {
-    expect(parseSpawnCommandArgs("fix sidebar", ["claude", "pi"])).toEqual({ name: "fix sidebar", prompt: "" })
+  it("falls back to the default runtime when the first token is a name", () => {
+    expect(parse("fix sidebar")).toEqual({ runtime: "claude", name: "fix sidebar", prompt: "" })
   })
 
   it("rejects a missing name, runtime token or not", () => {
-    expect(parseSpawnCommandArgs("", ["claude", "pi"])).toEqual({ error: USAGE })
-    expect(parseSpawnCommandArgs("pi", ["claude", "pi"])).toEqual({ error: USAGE })
-    expect(parseSpawnCommandArgs("  \nDo X", ["claude", "pi"])).toEqual({ error: USAGE })
+    expect(parse("")).toEqual({ error: USAGE })
+    expect(parse("pi")).toEqual({ error: USAGE })
+    expect(parse("  \nDo X")).toEqual({ error: USAGE })
   })
 
   it("rejects a name token that would reach harnessd as a flag", () => {
-    expect(parseSpawnCommandArgs("claude --force fix sidebar", ["claude", "pi"])).toEqual({ error: USAGE })
+    expect(parse("claude --force fix sidebar")).toEqual({ error: USAGE })
   })
 
-  it("treats the first token as the name when it is not an installed runtime", () => {
-    expect(parseSpawnCommandArgs("claude fix", ["pi"])).toEqual({ name: "claude fix", prompt: "" })
-  })
-
-  it("drops the runtime placeholder from usage when nothing is installed", () => {
-    expect(parseSpawnCommandArgs("", [])).toEqual({
-      error: "Usage: `/spawn <name>` with the prompt on the following lines.",
+  it("refuses a runtime harnessd knows but this machine lacks instead of folding it into the name", () => {
+    expect(parse("claude fix", PI_ONLY, "pi")).toEqual({
+      error: "`claude` is not installed on this machine. Installed: pi.",
     })
+  })
+
+  it("refuses the default runtime when it is the one missing", () => {
+    expect(parse("fix sidebar", PI_ONLY, "claude")).toEqual({
+      error: "`claude` is not installed on this machine. Installed: pi.",
+    })
+  })
+
+  it("treats a first token no runtime is called as the name", () => {
+    expect(parse("codex fix", PI_ONLY, "pi")).toEqual({ runtime: "pi", name: "codex fix", prompt: "" })
+  })
+
+  it("lists only the installed runtimes in the usage line", () => {
+    expect(parse("", PI_ONLY, "pi")).toEqual({
+      error: "Usage: `/spawn [pi] <name>` with the prompt on the following lines.",
+    })
+  })
+
+  it("names the missing default without a list when nothing is installed", () => {
+    expect(parse("fix", [], "claude")).toEqual({ error: "`claude` is not installed on this machine." })
   })
 })
 

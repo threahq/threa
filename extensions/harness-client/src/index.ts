@@ -28,7 +28,12 @@ export {
   type PrepareHarnessReconnectOptions,
 } from "./harness-reconnect"
 export { discardSpawnBrief, parseSpawnCommandArgs, writeSpawnBrief } from "./spawn-command"
-export { listSpawnRuntimes, spawnRuntimesResolver, type SpawnRuntimeOption } from "./spawn-runtimes"
+export {
+  installedSpawnRuntimes,
+  listSpawnRuntimes,
+  spawnRuntimesResolver,
+  type SpawnRuntimeOption,
+} from "./spawn-runtimes"
 export {
   BotSupervisorTransport,
   type BotSessionRestoredPayload,
