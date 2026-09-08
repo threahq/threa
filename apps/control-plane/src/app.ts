@@ -4,8 +4,7 @@ import helmet from "helmet"
 import cookieParser from "cookie-parser"
 import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
-import { INTERNAL_API_KEY_HEADER } from "@threahq/types"
-import { logger, createCorsOriginChecker } from "@threahq/backend-common"
+import { logger, createCorsOriginChecker, requestLogSerializers } from "@threahq/backend-common"
 import { GITHUB_WEBHOOK_PATH } from "./features/github-webhooks"
 
 interface CreateAppOptions {
@@ -63,23 +62,7 @@ export function createApp(options: CreateAppOptions): Express {
         return "silent"
       },
       genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
-      redact: {
-        // The default pino-http req serializer logs the full headers object, so
-        // every secret-bearing header must be redacted here or it lands in the
-        // log on any 4xx/5xx. `x-internal-api-key` is the shared internal-auth
-        // secret (backend → control-plane); Node lowercases header names, and the
-        // path is derived from the constant so it can't drift.
-        paths: [
-          "req.headers.authorization",
-          "req.headers.cookie",
-          // The referer carries the document URL, and `/connect?code=…` puts a
-          // live device-flow user code there.
-          "req.headers.referer",
-          `req.headers["${INTERNAL_API_KEY_HEADER.toLowerCase()}"]`,
-          "res.headers['set-cookie']",
-        ],
-        censor: "[REDACTED]",
-      },
+      serializers: requestLogSerializers,
     })
   )
 
