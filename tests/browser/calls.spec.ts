@@ -1,5 +1,15 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, loginInNewContext, expectApiOk, createDmDraftId, generateTestId } from "./helpers"
+import {
+  hasAppliedHeldPeerOffer,
+  simulatePeerConnectionFailure,
+  installDirectOnlyCredentials,
+  installPeerConnectionObserver,
+  preparePoliteRecoveryGlare,
+  readInboundMedia,
+  readPeerRecoverySample,
+  releaseHeldPeerOffer,
+} from "./calls-media-evidence"
 
 /**
  * Two-context 1:1 DM call e2e (plan §Rollout M1 exit gate, PR 1.5). Real browser
@@ -46,20 +56,8 @@ async function setUpDmPair(
   const invitee = await loginInNewContext(browser, inviteeEmail, inviteeName)
 
   if (options.p2p) {
-    const observePeerConnections = () => {
-      const NativePeerConnection = window.RTCPeerConnection
-      const peers: RTCPeerConnection[] = []
-      Object.defineProperty(window, "__testCallPeerConnections", { value: peers })
-      window.RTCPeerConnection = new Proxy(NativePeerConnection, {
-        construct(Target, args) {
-          const peer = new Target(...(args as ConstructorParameters<typeof RTCPeerConnection>))
-          peers.push(peer)
-          return peer
-        },
-      })
-    }
-    await ownerContext.addInitScript(observePeerConnections)
-    await invitee.context.addInitScript(observePeerConnections)
+    await installPeerConnectionObserver(ownerContext)
+    await installPeerConnectionObserver(invitee.context)
     if (options.inviteeCaptureDelayMs) {
       await invitee.context.addInitScript((delayMs) => {
         const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
@@ -70,18 +68,8 @@ async function setUpDmPair(
       }, options.inviteeCaptureDelayMs)
     }
     await invitee.page.reload()
-    const directOnlyCredentials = (route: import("@playwright/test").Route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ iceServers: [], expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }),
-      })
-    await ownerContext.route("**/turn-credentials", directOnlyCredentials)
-    await invitee.context.route("**/turn-credentials", async (route) => {
-      if (options.inviteeCredentialsDelayMs)
-        await new Promise((resolve) => setTimeout(resolve, options.inviteeCredentialsDelayMs))
-      await directOnlyCredentials(route)
-    })
+    await installDirectOnlyCredentials(ownerContext)
+    await installDirectOnlyCredentials(invitee.context, options.inviteeCredentialsDelayMs)
   }
 
   const owner = await loginAndCreateWorkspace(ownerPage, "calls-a")
@@ -166,7 +154,7 @@ test.describe("1:1 DM calls", () => {
   test("direct-only opted-in peers exchange decoded P2P media, controls, reconnect, and hang up", async ({
     browser,
   }) => {
-    test.setTimeout(80000)
+    test.setTimeout(120000)
     const pair = await setUpDmPair(browser, {
       p2p: true,
       inviteeCaptureDelayMs: 1_500,
@@ -183,9 +171,9 @@ test.describe("1:1 DM calls", () => {
       const started = await startedResponse
       await expectApiOk(started, "Start video call")
       const callId = (await started.json()).call.id as string
-      const readSelf = async () => {
-        const response = await b.request.get(
-          new URL(`/api/workspaces/${workspaceId}/calls/${callId}`, b.url()).toString()
+      const readSelf = async (page: Page) => {
+        const response = await page.request.get(
+          new URL(`/api/workspaces/${workspaceId}/calls/${callId}`, page.url()).toString()
         )
         await expectApiOk(response, "Read current call endpoint")
         return (await response.json()).self as { endpointId: string; mediaIncarnation: string }
@@ -206,32 +194,7 @@ test.describe("1:1 DM calls", () => {
               return !!stream?.getVideoTracks().some((track) => track.readyState === "live")
             }).length
         )
-      const inboundMedia = (page: Page) =>
-        page.evaluate(async () => {
-          const peers = (
-            (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ??
-            []
-          ).filter((peer) => peer.connectionState !== "closed")
-          let audioBytes = 0
-          let audioEnergy = 0
-          let videoBytes = 0
-          let videoFrames = 0
-          for (const peer of peers) {
-            const stats = await peer.getStats()
-            stats.forEach((report) => {
-              if (report.type !== "inbound-rtp") return
-              if (report.kind === "audio" || report.mediaType === "audio") {
-                audioBytes += report.bytesReceived ?? 0
-                audioEnergy += report.totalAudioEnergy ?? 0
-              }
-              if (report.kind === "video" || report.mediaType === "video") {
-                videoBytes += report.bytesReceived ?? 0
-                videoFrames += report.framesDecoded ?? 0
-              }
-            })
-          }
-          return { audioBytes, audioEnergy, videoBytes, videoFrames }
-        })
+      const inboundMedia = readInboundMedia
       const decodedMediaFlow = (page: Page) =>
         page.evaluate(async () => {
           const peers = (
@@ -338,6 +301,120 @@ test.describe("1:1 DM calls", () => {
       await expect.poll(() => playableVideos(a), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
       await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBeGreaterThanOrEqual(1)
 
+      const [aSelf, bSelf] = await Promise.all([readSelf(a), readSelf(b)])
+      const polite = aSelf.endpointId.localeCompare(bSelf.endpointId) > 0 ? a : b
+      const established = polite === a ? b : a
+      const recoverySamples: Array<{ endpoint: string; sample: Awaited<ReturnType<typeof readPeerRecoverySample>> }> =
+        []
+      const sampleRecovery = async (label: string) => {
+        const [aSample, bSample] = await Promise.all([
+          readPeerRecoverySample(a, label),
+          readPeerRecoverySample(b, label),
+        ])
+        recoverySamples.push(
+          { endpoint: aSelf.endpointId, sample: aSample },
+          { endpoint: bSelf.endpointId, sample: bSample }
+        )
+      }
+      const peerIdentity = (page: Page) =>
+        page.evaluate(async () => {
+          const all =
+            (window as typeof window & { __testCallPeerConnections?: RTCPeerConnection[] }).__testCallPeerConnections ??
+            []
+          const active = all.filter((peer) => peer.connectionState !== "closed")
+          if (active.length !== 1)
+            return {
+              active: active.length,
+              index: null,
+              mids: [],
+              senderTrackIds: [],
+              senderSlots: [],
+              signalingState: null,
+              dtlsState: null,
+            }
+          const peer = active[0]
+          let dtlsState: string | null = null
+          ;(await peer.getStats()).forEach((report) => {
+            if (report.type === "transport") dtlsState = report.dtlsState ?? null
+          })
+          return {
+            active: 1,
+            index: all.indexOf(peer),
+            mids: peer.getTransceivers().map(({ mid }) => mid),
+            senderTrackIds: peer.getSenders().flatMap(({ track }) => (track ? [track.id] : [])),
+            senderSlots: peer.getTransceivers().map(({ mid, stopped, sender }) => ({
+              mid,
+              stopped,
+              trackId: sender.track?.id ?? null,
+            })),
+            signalingState: peer.signalingState,
+            dtlsState,
+          }
+        })
+      const politeBefore = await peerIdentity(polite)
+      const establishedBefore = await peerIdentity(established)
+      await sampleRecovery("pre-replacement")
+      await preparePoliteRecoveryGlare(polite)
+      await expect.poll(() => hasAppliedHeldPeerOffer(polite), { timeout: 10000 }).toBe(true)
+      await sampleRecovery("replacement-local-offer-applied")
+      await simulatePeerConnectionFailure(established)
+      await expect
+        .poll(() => peerIdentity(established), { timeout: 10000 })
+        .toMatchObject({ mids: establishedBefore.mids, signalingState: "have-local-offer" })
+      await sampleRecovery("ice-restart-local-offer-applied")
+      await releaseHeldPeerOffer(polite)
+      for (let index = 0; index < 16; index++) {
+        await a.waitForTimeout(500)
+        await sampleRecovery(`post-release-${index + 1}`)
+      }
+      await test.info().attach("p2p-recovery-timeseries", {
+        body: JSON.stringify(recoverySamples),
+        contentType: "application/json",
+      })
+      await expect.poll(async () => (await peerIdentity(polite)).index, { timeout: 10000 }).not.toBe(politeBefore.index)
+      await expect
+        .poll(
+          () =>
+            polite.evaluate(
+              () =>
+                (window as typeof window & { __testCallGlare?: { rollbackCount: number } }).__testCallGlare
+                  ?.rollbackCount ?? 0
+            ),
+          { timeout: 10000 }
+        )
+        .toBeGreaterThan(0)
+      await expect.poll(() => decodedMediaFlow(a), { timeout: 20000 }).toEqual(flowingMedia)
+      await expect.poll(() => decodedMediaFlow(b), { timeout: 20000 }).toEqual(flowingMedia)
+      await expect.poll(() => polite.locator("body > audio").count(), { timeout: 10000 }).toBe(1)
+      await expect.poll(() => established.locator("body > audio").count(), { timeout: 10000 }).toBe(1)
+      await expect
+        .poll(() => peerIdentity(polite), { timeout: 10000 })
+        .toMatchObject({
+          active: 1,
+          senderTrackIds: politeBefore.senderTrackIds,
+          senderSlots: [
+            { mid: null, stopped: true, trackId: null },
+            { mid: null, stopped: true, trackId: null },
+            { mid: "0", stopped: false },
+            { mid: "1", stopped: false },
+          ],
+          dtlsState: "connected",
+        })
+      await expect
+        .poll(() => peerIdentity(established), { timeout: 10000 })
+        .toMatchObject({
+          active: 1,
+          index: establishedBefore.index,
+          mids: establishedBefore.mids,
+          dtlsState: "connected",
+        })
+      const beforeQuiet = await Promise.all([a, b].map((page) => readPeerRecoverySample(page, "quiet-before")))
+      await a.waitForTimeout(1500)
+      const afterQuiet = await Promise.all([a, b].map((page) => readPeerRecoverySample(page, "quiet-after")))
+      const sdpOperations = (samples: typeof beforeQuiet) =>
+        samples.map(({ trace }) => trace.filter((event) => (event as { event: string }).event === "operation"))
+      expect(sdpOperations(afterQuiet)).toEqual(sdpOperations(beforeQuiet))
+
       await a.getByRole("button", { name: "Connection diagnostics" }).click()
       await expect(a.getByText("Peer to peer")).toBeVisible()
       await expect(a.getByText("Path").locator("..").getByText("Direct", { exact: true })).toBeVisible({
@@ -348,7 +425,19 @@ test.describe("1:1 DM calls", () => {
       await a.getByRole("button", { name: "Mute", exact: true }).click()
       await expect(a.getByRole("button", { name: "Unmute", exact: true })).toBeVisible()
       await expect(b.getByLabel("Muted")).toBeVisible({ timeout: 10000 })
-      await b.waitForTimeout(1000)
+      let priorMutedEnergy = (await inboundMedia(b)).audioEnergy
+      let stableMutedSamples = 0
+      await expect
+        .poll(
+          async () => {
+            const currentEnergy = (await inboundMedia(b)).audioEnergy
+            stableMutedSamples = currentEnergy - priorMutedEnergy < 0.0001 ? stableMutedSamples + 1 : 0
+            priorMutedEnergy = currentEnergy
+            return stableMutedSamples
+          },
+          { timeout: 10000, intervals: [250] }
+        )
+        .toBeGreaterThanOrEqual(2)
       const mutedAudio = await inboundMedia(b)
       await b.waitForTimeout(1500)
       const stillMutedAudio = await inboundMedia(b)
@@ -367,14 +456,14 @@ test.describe("1:1 DM calls", () => {
         .toBeGreaterThan(cameraOffMedia.videoFrames)
       await expect.poll(() => playableVideos(b), { timeout: 20000 }).toBeGreaterThanOrEqual(2)
 
-      const beforeReload = await readSelf()
+      const beforeReload = await readSelf(b)
       await b.reload()
       await b.goto(`/w/${workspaceId}/s/${dmStreamId}`)
       await expect(b.getByText(/still in this call/i)).toBeVisible({ timeout: 20000 })
       await b.getByRole("button", { name: "Take over", exact: true }).first().click()
       await expect(a.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
-      await expect.poll(async () => (await readSelf()).mediaIncarnation).not.toBe(beforeReload.mediaIncarnation)
-      expect((await readSelf()).endpointId).toBe(beforeReload.endpointId)
+      await expect.poll(async () => (await readSelf(b)).mediaIncarnation).not.toBe(beforeReload.mediaIncarnation)
+      expect((await readSelf(b)).endpointId).toBe(beforeReload.endpointId)
       await expect(b.locator(CALL_TILE)).toHaveCount(2, { timeout: 20000 })
       await b.getByRole("button", { name: "Turn camera on" }).click()
       await expect.poll(() => playableVideos(a), { timeout: 20000 }).toBeGreaterThanOrEqual(1)

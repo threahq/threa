@@ -10,6 +10,7 @@ import type {
   TransportStats,
 } from "./media-transport"
 import type { PublishedTrackKind } from "./config"
+import { P2pTrafficCounter } from "./p2p-traffic-counter"
 
 interface Signaling {
   emit(event: string, payload: unknown, ack?: (result: unknown) => void): void
@@ -58,6 +59,7 @@ export class P2pMeshTransport implements MediaTransport {
   private readonly tracks = new Map<PublishedTrackKind, MediaStreamTrack>()
   private readonly publicationIds = new Map<PublishedTrackKind, string>()
   private readonly encodingSettings = new Map<PublishedTrackKind, { maxBitrate?: number }>()
+  private readonly peerEncodingSettings = new Map<string, Map<PublishedTrackKind, { maxBitrate?: number }>>()
   private iceServers: RTCIceServer[] = []
   private ready = false
   private pendingPeers: PeerDescriptor[] | null = null
@@ -70,6 +72,9 @@ export class P2pMeshTransport implements MediaTransport {
   private publicationRevision = 0
   private publicationAckedRevision = 0
   private publicationTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly traffic = new P2pTrafficCounter()
+  private readonly finalTrafficSamples = new Set<Promise<void>>()
+  private readonly peerRecoveryAttempts = new Map<string, number>()
 
   onRemoteTrack: ((event: RemoteTrackEvent) => void) | null = null
   onRemoteTrackEnded: ((ref: PeerTrackRef) => void) | null = null
@@ -133,7 +138,8 @@ export class P2pMeshTransport implements MediaTransport {
     for (const [id, state] of this.peers) {
       const next = desired.get(id)
       if (!next || next.epoch !== state.identity.epoch || next.mediaIncarnation !== state.identity.mediaIncarnation) {
-        this.removePeer(state)
+        this.removePeer(state, next !== undefined)
+        if (!next) this.peerRecoveryAttempts.delete(id)
       }
     }
     for (const peer of desired.values()) {
@@ -142,6 +148,7 @@ export class P2pMeshTransport implements MediaTransport {
       this.reconcileRemoteTracks(state)
       this.replayPendingSignals(state)
     }
+    await this.applyEncodingToAllPeers("camera")
     this.reconcilePublications()
   }
 
@@ -155,7 +162,7 @@ export class P2pMeshTransport implements MediaTransport {
           const sender = state.senders.get(kind)
           if (!sender) return
           await sender.replaceTrack(track)
-          await this.applyEncoding(sender, this.encodingSettings.get(kind))
+          await this.applyEncoding(sender, this.peerEncoding(state, kind))
         })
       )
     )
@@ -178,7 +185,20 @@ export class P2pMeshTransport implements MediaTransport {
 
   async setPublishEncoding(kind: PublishedTrackKind, params: { maxBitrate?: number }): Promise<void> {
     this.encodingSettings.set(kind, params)
-    await Promise.all([...this.peers.values()].map(({ senders }) => this.applyEncoding(senders.get(kind), params)))
+    await this.applyEncodingToAllPeers(kind)
+  }
+
+  async setPeerPublishEncoding(
+    endpointId: string,
+    kind: PublishedTrackKind,
+    params: { maxBitrate?: number }
+  ): Promise<void> {
+    const settings = this.peerEncodingSettings.get(endpointId) ?? new Map()
+    settings.set(kind, params)
+    this.peerEncodingSettings.set(endpointId, settings)
+    const state = this.peers.get(endpointId)
+    if (!state) return
+    await this.enqueue(state, () => this.applyEncoding(state.senders.get(kind), this.peerEncoding(state, kind)))
   }
 
   async pull(): Promise<void> {}
@@ -197,50 +217,66 @@ export class P2pMeshTransport implements MediaTransport {
   }
 
   async getStats(): Promise<TransportStats> {
-    let rttMs: number | null = null
-    let candidateType: "host" | "srflx" | "relay" | null = null
-    let bytesSent = 0
-    let bytesReceived = 0
-    for (const { pc } of this.peers.values()) {
-      const report = await pc.getStats()
-      let selectedPairId: string | null = null
-      report.forEach((value) => {
-        const stat = value as Record<string, unknown> & { type: string }
-        if (stat.type === "transport" && typeof stat.selectedCandidatePairId === "string")
-          selectedPairId = stat.selectedCandidatePairId
-        if (stat.type === "outbound-rtp" && typeof stat.bytesSent === "number") bytesSent += stat.bytesSent
-        if (stat.type === "inbound-rtp" && typeof stat.bytesReceived === "number") bytesReceived += stat.bytesReceived
-      })
-      const pairs: Array<Record<string, unknown> & { id: string; type: string }> = []
-      report.forEach((value) => {
-        const stat = value as Record<string, unknown> & { id: string; type: string }
-        if (stat.type === "candidate-pair" && stat.state === "succeeded") pairs.push(stat)
-      })
-      const selected =
-        pairs.find((pair) => pair.id === selectedPairId) ??
-        pairs.find((pair) => pair.nominated === true || pair.selected === true) ??
-        (pairs.length === 1 ? pairs[0] : null)
-      if (selected) {
-        if (typeof selected.currentRoundTripTime === "number") rttMs = selected.currentRoundTripTime * 1000
-        const local = report.get(String(selected.localCandidateId)) as
-          | (RTCStats & { candidateType?: string })
-          | undefined
-        const remote = report.get(String(selected.remoteCandidateId)) as
-          | (RTCStats & { candidateType?: string })
-          | undefined
-        if (local?.candidateType === "relay" || remote?.candidateType === "relay") candidateType = "relay"
-        else if (local?.candidateType === "host" || local?.candidateType === "srflx")
-          candidateType = local.candidateType
-      }
-    }
+    await Promise.all(this.finalTrafficSamples)
+    const peers = (
+      await Promise.all(
+        [...this.peers.values()].map(async (state) => {
+          const report = await state.pc.getStats()
+          if (!this.isCurrent(state)) return null
+          let encodeTimeMs: number | null = null
+          const qualityReasons: string[] = []
+          report.forEach((value) => {
+            const stat = value as Record<string, unknown> & { type: string }
+            if (stat.type === "outbound-rtp") {
+              if (stat.kind === "video" || stat.mediaType === "video") {
+                if (typeof stat.qualityLimitationReason === "string") qualityReasons.push(stat.qualityLimitationReason)
+                if (
+                  typeof stat.totalEncodeTime === "number" &&
+                  typeof stat.framesEncoded === "number" &&
+                  stat.framesEncoded > 0
+                )
+                  encodeTimeMs = Math.max(encodeTimeMs ?? 0, (stat.totalEncodeTime / stat.framesEncoded) * 1000)
+              }
+            }
+          })
+          const { candidateType, rttMs, ...path } = selectedTrafficPath(report)
+          const {
+            bytesSent: intervalBytesSent,
+            bytesReceived: intervalBytesReceived,
+            packetsReceived,
+            packetsLost,
+          } = this.traffic.observe(state.token, report, path)
+          return {
+            endpointId: state.identity.endpointId,
+            candidateType,
+            rttMs,
+            packetLoss: packetsReceived + packetsLost > 0 ? packetsLost / (packetsReceived + packetsLost) : null,
+            qualityLimitation: this.pickWorstQuality(qualityReasons),
+            encodeTimeMs,
+            intervalBytesSent,
+            intervalBytesReceived,
+            packetsReceived,
+            packetsLost,
+          }
+        })
+      )
+    ).filter((peer) => peer !== null)
+    const knownRtts = peers.flatMap((peer) => (peer.rttMs == null ? [] : [peer.rttMs]))
+    const receivedPackets = peers.reduce((sum, peer) => sum + peer.packetsReceived, 0)
+    const lostPackets = peers.reduce((sum, peer) => sum + peer.packetsLost, 0)
+    const qualities = peers.flatMap((peer) => (peer.qualityLimitation ? [peer.qualityLimitation] : []))
+    const encodeTimes = peers.flatMap((peer) => (peer.encodeTimeMs == null ? [] : [peer.encodeTimeMs]))
+    const candidateTypes = peers.flatMap((peer) => (peer.candidateType ? [peer.candidateType] : []))
     return {
-      rttMs,
-      packetLoss: null,
-      qualityLimitation: null,
-      encodeTimeMs: null,
-      candidateType,
-      bytesSent,
-      bytesReceived,
+      rttMs: knownRtts.length ? Math.max(...knownRtts) : null,
+      packetLoss: receivedPackets + lostPackets > 0 ? lostPackets / (receivedPackets + lostPackets) : null,
+      qualityLimitation: this.pickWorstQuality(qualities),
+      encodeTimeMs: encodeTimes.length ? Math.max(...encodeTimes) : null,
+      candidateType: candidateTypes.includes("relay") ? "relay" : (candidateTypes[0] ?? null),
+      bytesSent: peers.reduce((sum, peer) => sum + peer.intervalBytesSent, 0),
+      bytesReceived: peers.reduce((sum, peer) => sum + peer.intervalBytesReceived, 0),
+      peers: peers.map(({ packetsReceived: _received, packetsLost: _lost, ...peer }) => peer),
+      ...this.traffic.totals,
     }
   }
 
@@ -255,6 +291,7 @@ export class P2pMeshTransport implements MediaTransport {
     this.deps.socket.off("call:p2p:signal", this.onSignal)
     this.pendingPeerSignals.clear()
     for (const state of [...this.peers.values()]) this.removePeer(state)
+    await Promise.all(this.finalTrafficSamples)
     this.setState("closed")
   }
 
@@ -284,16 +321,7 @@ export class P2pMeshTransport implements MediaTransport {
     }
     this.peers.set(peer.endpointId, state)
     // Preallocating on the answerer creates duplicate m-lines when its first remote offer arrives.
-    if (!state.polite) {
-      for (const [kind, mediaKind] of P2P_TRACK_KINDS) {
-        const track = this.tracks.get(kind)
-        const sender = pc.addTransceiver(track ?? mediaKind, {
-          direction: "sendrecv",
-          sendEncodings: [{ ...this.encodingSettings.get(kind) }],
-        }).sender
-        state.senders.set(kind, sender)
-      }
-    }
+    if (!state.polite) this.initializeSenderSlots(state)
     pc.ontrack = (event) => {
       if (!this.isCurrent(state)) return
       const kind: PublishedTrackKind = event.track.kind === "audio" ? "mic" : "camera"
@@ -330,11 +358,23 @@ export class P2pMeshTransport implements MediaTransport {
       )
     }
     pc.onnegotiationneeded = () => {
-      if (state.senders.size > 0) this.scheduleNegotiation(state, INITIAL_OFFER_DELAY_MS)
+      if (state.pc.localDescription === null && state.senders.size > 0)
+        this.scheduleNegotiation(state, INITIAL_OFFER_DELAY_MS)
     }
     pc.onconnectionstatechange = () => this.handleConnectionState(state)
     if (!state.polite) this.scheduleNegotiation(state, INITIAL_OFFER_DELAY_MS)
     return state
+  }
+
+  private initializeSenderSlots(state: PeerState): void {
+    for (const [kind, mediaKind] of P2P_TRACK_KINDS) {
+      const track = this.tracks.get(kind)
+      const sender = state.pc.addTransceiver(track ?? mediaKind, {
+        direction: "sendrecv",
+        sendEncodings: [{ ...this.peerEncoding(state, kind) }],
+      }).sender
+      state.senders.set(kind, sender)
+    }
   }
 
   private reconcileRemoteTracks(state: PeerState): void {
@@ -366,9 +406,25 @@ export class P2pMeshTransport implements MediaTransport {
     this.onRemoteTrack?.({ ref: publication.ref, track })
   }
 
-  private removePeer(state: PeerState): void {
+  private removePeer(state: PeerState, preservePeerEncoding = false): void {
     if (this.peers.get(state.identity.endpointId) !== state) return
     this.peers.delete(state.identity.endpointId)
+    if (!preservePeerEncoding) this.peerEncodingSettings.delete(state.identity.endpointId)
+    const finalSample = Promise.resolve()
+      .then(() => state.pc.getStats())
+      .then((report) => {
+        this.traffic.observe(state.token, report, selectedTrafficPath(report))
+      })
+      .catch((error) =>
+        console.warn("P2P final traffic sample failed", { endpointId: state.identity.endpointId, error })
+      )
+      .finally(() => {
+        state.pc.close()
+        this.traffic.forget(state.token)
+        this.finalTrafficSamples.delete(finalSample)
+      })
+    this.finalTrafficSamples.add(finalSample)
+    void this.applyEncodingToAllPeers("camera").catch((error) => console.warn("P2P camera budget update failed", error))
     if (state.negotiationTimer) clearTimeout(state.negotiationTimer)
     if (state.offerRetryTimer) clearTimeout(state.offerRetryTimer)
     state.pc.ontrack = null
@@ -378,7 +434,6 @@ export class P2pMeshTransport implements MediaTransport {
     for (const ref of state.emittedRefs.values()) this.onRemoteTrackEnded?.(ref)
     state.emittedRefs.clear()
     state.remoteTracks.clear()
-    state.pc.close()
     if (!this.closed) this.updateAggregateState()
   }
 
@@ -388,6 +443,7 @@ export class P2pMeshTransport implements MediaTransport {
     if (connectionState === "connected") {
       this.clearOfferRetry(state)
       state.restartAttempts = 0
+      this.peerRecoveryAttempts.delete(state.identity.endpointId)
       this.updateAggregateState()
     } else if (connectionState === "disconnected") {
       this.setState("reconnecting")
@@ -479,7 +535,7 @@ export class P2pMeshTransport implements MediaTransport {
       state.remoteNegotiationId = signal.negotiationId
       await state.pc.setRemoteDescription(signal.description)
       if (!this.isCurrent(state)) return
-      if (signal.description.type === "offer" && state.senders.size === 0) await this.bindRemoteOfferSlots(state)
+      const boundRemoteOfferSlots = signal.description.type === "offer" ? await this.bindRemoteOfferSlots(state) : false
       for (const candidate of state.pendingCandidates.get(signal.negotiationId) ?? [])
         await this.addIceCandidate(state, signal.negotiationId, candidate)
       state.pendingCandidates.delete(signal.negotiationId)
@@ -489,7 +545,9 @@ export class P2pMeshTransport implements MediaTransport {
         state.localNegotiationId = signal.negotiationId
         await state.pc.setLocalDescription(await state.pc.createAnswer())
         if (!this.isCurrent(state)) return
-        for (const [kind, sender] of state.senders) await this.applyEncoding(sender, this.encodingSettings.get(kind))
+        if (boundRemoteOfferSlots) {
+          for (const [kind, sender] of state.senders) await this.applyEncoding(sender, this.peerEncoding(state, kind))
+        }
         if (!this.isCurrent(state)) return
         this.rememberLocalUfrag(state, signal.negotiationId)
         this.send(state, "description", { description: this.localDescription(state.pc) }, signal.negotiationId)
@@ -502,14 +560,28 @@ export class P2pMeshTransport implements MediaTransport {
     }
   }
 
-  private async bindRemoteOfferSlots(state: PeerState): Promise<void> {
-    for (const transceiver of state.pc.getTransceivers()) {
+  private async bindRemoteOfferSlots(state: PeerState): Promise<boolean> {
+    const transceivers = state.pc.getTransceivers()
+    const abandonedSenders = new Set(state.senders.values())
+    const hasAbandonedSlot = transceivers.some(
+      (transceiver) => transceiver.mid === null && abandonedSenders.has(transceiver.sender)
+    )
+    if (state.senders.size > 0 && !hasAbandonedSlot) return false
+    for (const transceiver of transceivers) {
+      if (transceiver.mid !== null || !abandonedSenders.has(transceiver.sender)) continue
+      await transceiver.sender.replaceTrack(null)
+      transceiver.stop()
+    }
+    state.senders.clear()
+    for (const transceiver of transceivers) {
+      if (transceiver.mid === null) continue
       const kind = P2P_TRACK_KINDS.find(([, mediaKind]) => mediaKind === transceiver.receiver.track.kind)?.[0]
       if (!kind || state.senders.has(kind)) continue
       transceiver.direction = "sendrecv"
       state.senders.set(kind, transceiver.sender)
       await transceiver.sender.replaceTrack(this.tracks.get(kind) ?? null)
     }
+    return true
   }
 
   private async addIceCandidate(
@@ -625,8 +697,24 @@ export class P2pMeshTransport implements MediaTransport {
       if (!this.isCurrent(state, token)) return
       await operation()
     })
-    state.queue = result.catch(() => {
-      if (this.isCurrent(state, token)) this.setState("failed")
+    state.queue = result.catch((error) => {
+      if (!this.isCurrent(state, token)) return
+      console.warn("P2P peer operation failed", { endpointId: state.identity.endpointId, error })
+      const attempts = this.peerRecoveryAttempts.get(state.identity.endpointId) ?? 0
+      if (attempts >= MAX_RESTART_ATTEMPTS) {
+        this.setState("failed")
+        return
+      }
+      this.peerRecoveryAttempts.set(state.identity.endpointId, attempts + 1)
+      const identity = state.identity
+      this.removePeer(state, true)
+      if (!this.closed) {
+        const replacement = this.createPeer(identity)
+        if (replacement.polite) {
+          this.initializeSenderSlots(replacement)
+          this.scheduleNegotiation(replacement, INITIAL_OFFER_DELAY_MS)
+        }
+      }
     })
     return result
   }
@@ -695,6 +783,29 @@ export class P2pMeshTransport implements MediaTransport {
     }
   }
 
+  private peerEncoding(state: PeerState, kind: PublishedTrackKind): { maxBitrate?: number } | undefined {
+    const aggregate = this.encodingSettings.get(kind)
+    const peer = this.peerEncodingSettings.get(state.identity.endpointId)?.get(kind)
+    if (kind !== "camera" || aggregate?.maxBitrate == null) return peer ?? aggregate
+    const aggregateShare = Math.floor(aggregate.maxBitrate / Math.max(1, this.peers.size))
+    return { maxBitrate: Math.min(aggregateShare, peer?.maxBitrate ?? aggregateShare) }
+  }
+
+  private async applyEncodingToAllPeers(kind: PublishedTrackKind): Promise<void> {
+    await Promise.all(
+      [...this.peers.values()].map((state) =>
+        this.enqueue(state, () => this.applyEncoding(state.senders.get(kind), this.peerEncoding(state, kind)))
+      )
+    )
+  }
+
+  private pickWorstQuality(reasons: string[]): TransportStats["qualityLimitation"] {
+    if (reasons.includes("bandwidth")) return "bandwidth"
+    if (reasons.includes("cpu")) return "cpu"
+    if (reasons.some((reason) => reason !== "none")) return reasons.length ? "other" : null
+    return reasons.includes("none") ? "none" : null
+  }
+
   private async applyEncoding(
     sender: RTCRtpSender | undefined,
     params: { maxBitrate?: number } | undefined
@@ -703,7 +814,7 @@ export class P2pMeshTransport implements MediaTransport {
     const current = sender.getParameters()
     if (!current.encodings?.length) current.encodings = [{}]
     for (const encoding of current.encodings) encoding.maxBitrate = params.maxBitrate
-    await sender.setParameters(current).catch(() => {})
+    await sender.setParameters(current)
   }
 
   private isCurrent(state: PeerState, token = state.token): boolean {
@@ -718,5 +829,40 @@ export class P2pMeshTransport implements MediaTransport {
     if (state === this._state || (this.closed && state !== "closed")) return
     this._state = state
     this.onConnectionStateChange?.(state)
+  }
+}
+
+function selectedTrafficPath(report: RTCStatsReport): {
+  pairId: string | null
+  kind: "direct" | "relay" | null
+  candidateType: RTCIceCandidateType | null
+  rttMs: number | null
+} {
+  let selectedPairId: string | null = null
+  const pairs: Array<RTCIceCandidatePairStats & { selected?: boolean }> = []
+  report.forEach((stat) => {
+    if (stat.type === "transport" && typeof stat.selectedCandidatePairId === "string")
+      selectedPairId = stat.selectedCandidatePairId
+    if (stat.type === "candidate-pair" && stat.state === "succeeded") pairs.push(stat)
+  })
+  const selected =
+    pairs.find((pair) => pair.id === selectedPairId) ??
+    pairs.find((pair) => pair.nominated || pair.selected) ??
+    (pairs.length === 1 ? pairs[0] : null)
+  const local = selected
+    ? (report.get(selected.localCandidateId) as { candidateType?: RTCIceCandidateType } | undefined)
+    : undefined
+  const remote = selected
+    ? (report.get(selected.remoteCandidateId) as { candidateType?: RTCIceCandidateType } | undefined)
+    : undefined
+  let candidateType: RTCIceCandidateType | null = null
+  if (local?.candidateType === "relay" || remote?.candidateType === "relay") candidateType = "relay"
+  else if (local?.candidateType && remote?.candidateType) candidateType = local.candidateType
+  const nonRelayKind = candidateType ? "direct" : null
+  return {
+    pairId: selected?.id ?? null,
+    candidateType,
+    kind: candidateType === "relay" ? "relay" : nonRelayKind,
+    rttMs: typeof selected?.currentRoundTripTime === "number" ? selected.currentRoundTripTime * 1000 : null,
   }
 }

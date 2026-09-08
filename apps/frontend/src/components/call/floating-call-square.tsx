@@ -332,7 +332,10 @@ export function FloatingCallSquare({
 
   const reclamp = useCallback(() => {
     const viewport = { width: window.innerWidth, height: window.innerHeight }
-    setPos((prev) => clampSquareToViewport(prev, getSurfaceSize(), viewport, MARGIN))
+    setPos((prev) => {
+      const next = clampSquareToViewport(prev, getSurfaceSize(), viewport, MARGIN)
+      return next.x === prev.x && next.y === prev.y ? prev : next
+    })
   }, [getSurfaceSize])
 
   useLayoutEffect(() => {
@@ -364,13 +367,19 @@ export function FloatingCallSquare({
     if (!surfaceNode) return
     const mutations = new MutationObserver(publishGeometry)
     mutations.observe(surfaceNode, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] })
-    const resizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(publishGeometry)
+    const resizes =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            reclamp()
+            publishGeometry()
+          })
     resizes?.observe(surfaceNode)
     return () => {
       mutations.disconnect()
       resizes?.disconnect()
     }
-  }, [surfaceNode, publishGeometry])
+  }, [surfaceNode, publishGeometry, reclamp])
 
   // Layout-effect cleanup, not an effect: the ring must lose the obstacle in the
   // same commit the square unmounts, or it paints one frame still translated.

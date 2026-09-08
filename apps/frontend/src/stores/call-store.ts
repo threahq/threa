@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react"
 import type { CallMode, PublishedTrackKind } from "@/calls/config"
 import type { MediaPermissionErrorKind } from "@/calls/media-permissions"
+import type { PeerTransportStats } from "@/calls/media-transport"
 import type { DesktopSurface } from "./call-prefs-store"
 
 // Module store (useSyncExternalStore) for the single active call. The CallManager
@@ -73,9 +74,16 @@ export interface CallLocalState {
 
 export interface CallDiagnostics {
   mediaTransport?: "sfu" | "p2p"
-  candidateType?: "host" | "srflx" | "relay" | null
+  candidateType?: RTCIceCandidateType | null
   bytesSent?: number
   bytesReceived?: number
+  directBytesSent?: number
+  directBytesReceived?: number
+  relayBytesSent?: number
+  relayBytesReceived?: number
+  unknownBytesSent?: number
+  unknownBytesReceived?: number
+  peers?: PeerTransportStats[]
   rttMs: number | null
   packetLoss: number | null
   qualityLimitation: "none" | "cpu" | "bandwidth" | "other" | null

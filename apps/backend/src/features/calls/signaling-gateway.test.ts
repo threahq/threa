@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Server } from "socket.io"
-import { registerCallGateway } from "./signaling-gateway"
+import { endpointIncarnationRoom, registerCallGateway } from "./signaling-gateway"
 import { HttpError } from "../../lib/errors"
 import * as workspacesModule from "../workspaces"
 import * as accessModule from "./access"
@@ -402,6 +402,46 @@ describe("registerCallGateway P2P signaling", () => {
 
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALL_STALE_ENDPOINT" }))
     expect(emit).not.toHaveBeenCalledWith("call:p2p:signal", expect.anything())
+  })
+
+  it("should keep P2P signaling available when the shared control budget is exhausted", async () => {
+    spyOn(Date, "now").mockReturnValue(1_000)
+    const { socket, callService, emit, to } = setup()
+    await socket.trigger(
+      "call:join",
+      { ...JOIN, transportCapability: "p2p-v1" },
+      mock(() => {})
+    )
+    let finalStateAck = mock(() => {})
+    for (let index = 0; index < 40; index++) {
+      finalStateAck = mock(() => {})
+      await socket.trigger("call:state", { muted: index % 2 === 0 }, finalStateAck)
+    }
+    expect(finalStateAck).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: "CALL_RATE_LIMITED" }))
+
+    const signal = {
+      callId: "call_1",
+      recipientEndpointId: "callep_2",
+      recipientEpoch: 3,
+      recipientMediaIncarnation: "inc_2",
+      generation: 1,
+      negotiationId: "neg_after_control_burst",
+      kind: "end-of-candidates",
+    }
+    const ack = mock(() => {})
+    await socket.trigger("call:p2p:signal", signal, ack)
+
+    expect(callService.validateP2pSignal).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: "call_1", recipientEndpointId: "callep_2", generation: 1 })
+    )
+    expect(to).toHaveBeenCalledWith(
+      endpointIncarnationRoom(signal.callId, signal.recipientEndpointId, signal.recipientMediaIncarnation)
+    )
+    expect(emit).toHaveBeenCalledWith(
+      "call:p2p:signal",
+      expect.objectContaining({ negotiationId: "neg_after_control_burst", kind: "end-of-candidates" })
+    )
+    expect(ack).toHaveBeenCalledWith({ ok: true })
   })
 
   it("should persist generation-qualified publications and broadcast the resulting roster", async () => {

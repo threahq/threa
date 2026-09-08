@@ -34,6 +34,7 @@ import {
   type MediaTransport,
   type PeerDescriptor,
   type PeerTrackRef,
+  type PeerTransportStats,
   type RemoteTrackEvent,
 } from "./media-transport"
 import {
@@ -236,8 +237,11 @@ interface CallSession {
   remoteVideoRefs: Map<string, PeerTrackRef>
   cameraLayer: number
   healthySamples: number
+  peerCameraLayers: Map<string, number>
+  peerHealthySamples: Map<string, number>
   leaseTimer: ReturnType<typeof setInterval> | null
   watchdogTimer: ReturnType<typeof setInterval> | null
+  watchdogSample: Promise<void>
   meterRaf: number | null
   wakeLock: WakeLockLike | null
   releaseLock: (() => void) | null
@@ -466,8 +470,11 @@ export class CallManager implements CallController {
         remoteVideoRefs: new Map(),
         cameraLayer: 0,
         healthySamples: 0,
+        peerCameraLayers: new Map(),
+        peerHealthySamples: new Map(),
         leaseTimer: null,
         watchdogTimer: null,
+        watchdogSample: Promise.resolve(),
         meterRaf: null,
         wakeLock: null,
         releaseLock,
@@ -1469,32 +1476,46 @@ export class CallManager implements CallController {
   private startWatchdog(session: CallSession): void {
     const gen = session.gen
     session.watchdogTimer = setInterval(() => {
-      void session.transport
-        .getStats()
-        .then((stats) => {
+      session.watchdogSample = session.watchdogSample
+        .then(async () => {
+          const stats = await session.transport.getStats()
           if (this.sessionForGen(gen) !== session) return
           setCallDiagnostics({
             mediaTransport: session.mediaTransport,
             candidateType: stats.candidateType,
             bytesSent: stats.bytesSent,
             bytesReceived: stats.bytesReceived,
+            directBytesSent: stats.directBytesSent,
+            directBytesReceived: stats.directBytesReceived,
+            relayBytesSent: stats.relayBytesSent,
+            relayBytesReceived: stats.relayBytesReceived,
+            unknownBytesSent: stats.unknownBytesSent,
+            unknownBytesReceived: stats.unknownBytesReceived,
+            peers: stats.peers,
             rttMs: stats.rttMs,
             packetLoss: stats.packetLoss,
             qualityLimitation: stats.qualityLimitation,
           })
-          void this.stepCameraLayer(session, stats.qualityLimitation)
+          await this.stepCameraLayers(session, stats.qualityLimitation, stats.peers ?? [])
         })
-        .catch(() => {})
+        .catch((error) => console.warn("Call watchdog sample failed", error))
     }, WATCHDOG_SAMPLE_MS)
   }
 
-  private async stepCameraLayer(
+  private async stepCameraLayers(
     session: CallSession,
-    limitation: "none" | "cpu" | "bandwidth" | "other" | null
+    limitation: "none" | "cpu" | "bandwidth" | "other" | null,
+    peers: PeerTransportStats[]
   ): Promise<void> {
     if (!session.cameraTrack) return
-    const limited = limitation === "bandwidth" || limitation === "cpu"
-    if (limited) {
+    if (session.mediaTransport === "p2p" && session.transport.setPeerPublishEncoding) {
+      await this.stepPeerCameraLayers(session, peers)
+    }
+    const globallyLimited =
+      limitation === "cpu" ||
+      peers.some((peer) => peer.qualityLimitation === "cpu") ||
+      (session.mediaTransport !== "p2p" && limitation === "bandwidth")
+    if (globallyLimited) {
       session.healthySamples = 0
       if (session.cameraLayer < CAMERA_PUBLISH_LADDER.length - 1) {
         session.cameraLayer += 1
@@ -1508,6 +1529,40 @@ export class CallManager implements CallController {
       session.cameraLayer -= 1
       await this.applyCameraLayer(session)
     }
+  }
+
+  private async stepPeerCameraLayers(session: CallSession, peers: PeerTransportStats[]): Promise<void> {
+    const active = new Set(peers.map((peer) => peer.endpointId))
+    for (const endpointId of session.peerCameraLayers.keys()) {
+      if (!active.has(endpointId)) {
+        session.peerCameraLayers.delete(endpointId)
+        session.peerHealthySamples.delete(endpointId)
+      }
+    }
+    await Promise.all(
+      peers.map(async (peer) => {
+        let layer = session.peerCameraLayers.get(peer.endpointId) ?? 0
+        const previousLayer = layer
+        let healthy = session.peerHealthySamples.get(peer.endpointId) ?? 0
+        if (peer.qualityLimitation === "bandwidth") {
+          healthy = 0
+          layer = Math.min(layer + 1, CAMERA_PUBLISH_LADDER.length - 1)
+        } else {
+          healthy += 1
+          if (healthy >= WATCHDOG_HEALTHY_SAMPLES_TO_UPGRADE && layer > 0) {
+            healthy = 0
+            layer -= 1
+          }
+        }
+        session.peerCameraLayers.set(peer.endpointId, layer)
+        session.peerHealthySamples.set(peer.endpointId, healthy)
+        if (layer !== previousLayer) {
+          await session.transport.setPeerPublishEncoding!(peer.endpointId, "camera", {
+            maxBitrate: CAMERA_PUBLISH_LADDER[layer].maxBitrate,
+          })
+        }
+      })
+    )
   }
 
   private async applyCameraLayer(session: CallSession): Promise<void> {
