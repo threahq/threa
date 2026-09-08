@@ -1,7 +1,16 @@
 import { describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
-import type { HarnessSpawnSpec } from "@threahq/harness-client"
+import type { HarnessSpawnSpec, SpawnRuntimeOption } from "@threahq/harness-client"
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
+
+const SPAWN_RUNTIMES: SpawnRuntimeOption[] = [
+  { value: "claude", label: "Claude Code", installed: true },
+  { value: "pi", label: "Pi", installed: true },
+]
+const CLAUDE_ONLY: SpawnRuntimeOption[] = [
+  { value: "claude", label: "Claude Code", installed: true },
+  { value: "pi", label: "Pi", installed: false },
+]
 
 function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T): T {
   const saved = {
@@ -125,7 +134,8 @@ describe("createClaudeSessionControl", () => {
         undefined,
         undefined,
         undefined,
-        () => activeStreamId
+        () => activeStreamId,
+        () => SPAWN_RUNTIMES
       )!.commands.filter((command) => command === "spawn" || command === "done")
 
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
@@ -140,6 +150,40 @@ describe("createClaudeSessionControl", () => {
       expect({ desk: spawnOrDone("root", "runtime"), thread: spawnOrDone("thread", "runtime") }).toEqual({
         desk: [],
         thread: [],
+      })
+    })
+  })
+
+  it("advertises only the installed runtimes and drops spawn when none of them is", () => {
+    const control = (runtimes: SpawnRuntimeOption[]) =>
+      createClaudeSessionControl(
+        undefined,
+        "runtime",
+        undefined,
+        () => "root",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () => "root",
+        () => runtimes
+      )!
+    withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
+      const noHarness = control([])
+      const nothingInstalled = control(SPAWN_RUNTIMES.map((runtime) => ({ ...runtime, installed: false })))
+      const claudeOnly = control(CLAUDE_ONLY)
+      expect({
+        noHarness: { spawn: noHarness.commands.includes("spawn"), runtimes: noHarness.spawnRuntimes },
+        nothingInstalled: {
+          spawn: nothingInstalled.commands.includes("spawn"),
+          runtimes: nothingInstalled.spawnRuntimes,
+        },
+        claudeOnly: { spawn: claudeOnly.commands.includes("spawn"), runtimes: claudeOnly.spawnRuntimes },
+      }).toEqual({
+        noHarness: { spawn: false, runtimes: [] },
+        nothingInstalled: { spawn: false, runtimes: [] },
+        claudeOnly: { spawn: true, runtimes: [{ value: "claude", label: "Claude Code" }] },
       })
     })
   })
@@ -413,7 +457,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   /** The side effects of the last {@link runSpawn}, readable even when it rejected. */
   const spawnEffects: { specs: HarnessSpawnSpec[]; started: number } = { specs: [], started: 0 }
 
-  const runSpawn = async (args: string, activeStreamId = "root") => {
+  const runSpawn = async (args: string, activeStreamId = "root", runtimes = SPAWN_RUNTIMES) => {
     const specs: HarnessSpawnSpec[] = (spawnEffects.specs = [])
     spawnEffects.started = 0
     const outcome = await runClaudeCommand(
@@ -436,7 +480,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         return () => {
           spawnEffects.started += 1
         }
-      }
+      },
+      () => runtimes
     )
     const brief = specs[0]?.briefFile
     const briefContent = brief ? readFileSync(brief, "utf8") : undefined
@@ -497,6 +542,15 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     }
   })
 
+  it("refuses a runtime this machine lacks without launching or writing a brief", async () => {
+    const { outcome, specs, started } = await runSpawn("pi sidebar fix\nCollapse the sidebar.", "root", CLAUDE_ONLY)
+    expect({ outcome, specs, started }).toEqual({
+      outcome: { ok: false, message: "`pi` is not installed on this machine. Installed: claude." },
+      specs: [],
+      started: 0,
+    })
+  })
+
   it("refuses a /spawn dispatched from inside a thread session", async () => {
     // The command list hides it there, but dispatch reaches every command by
     // name — a thread must not spawn siblings of itself under its own anchor.
@@ -529,7 +583,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
           return () => {
             throw new Error("harnessd missing")
           }
-        }
+        },
+        () => SPAWN_RUNTIMES
       )
     ).rejects.toThrow("harnessd missing")
     expect({ briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({

@@ -166,11 +166,8 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [
-        {
-          name: "name",
-          required: true,
-          description: "Optional runtime (claude or pi) then the session name; lines after the first are the prompt",
-        },
+        { name: "runtime", description: "Runtime to spawn; defaults to the one this scratchpad is linked to" },
+        { name: "name", required: true, description: "Session name; lines after the first are the prompt" },
       ],
     },
     {

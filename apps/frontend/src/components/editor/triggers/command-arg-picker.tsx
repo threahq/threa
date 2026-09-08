@@ -11,14 +11,13 @@ interface CommandArgPickerProps {
   clientRect: (() => DOMRect | null) | null
   command: (item: CommandArgumentSuggestion) => void
   placement?: Placement
+  /** Open with no row armed, so Enter still sends when the typed text is free-form (an optional argument). */
+  deferSelection?: boolean
 }
 
 function CommandArgContent({ item }: { item: CommandArgumentSuggestion }) {
-  // Prefer the human label as the primary line; fall back to the raw value the
-  // backend resolves on (e.g. `provider/model-id`). Show the value/description
-  // underneath only when it differs from what's already on the primary line.
   const primary = item.label ?? item.value
-  const secondary = item.label ? item.value : item.description
+  const secondary = item.description ?? (item.label ? item.value : undefined)
   return (
     <>
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary">
@@ -39,7 +38,7 @@ function CommandArgContent({ item }: { item: CommandArgumentSuggestion }) {
  * `SuggestionList` as the @mention / #channel / /command popovers.
  */
 export const CommandArgPicker = forwardRef<CommandArgPickerRef, CommandArgPickerProps>(function CommandArgPicker(
-  { items, clientRect, command, placement },
+  { items, clientRect, command, placement, deferSelection },
   ref
 ) {
   return (
@@ -53,6 +52,7 @@ export const CommandArgPicker = forwardRef<CommandArgPickerRef, CommandArgPicker
       width="w-[300px]"
       renderItem={(item) => <CommandArgContent item={item} />}
       placement={placement}
+      deferSelection={deferSelection}
     />
   )
 })

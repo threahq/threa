@@ -176,6 +176,7 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
         items={items}
         clientRect={() => posClientRect(editorRef.current, state.anchorPos)}
         command={(suggestion) => select(suggestion.value)}
+        deferSelection={!state.arg.required}
       />,
       document.body
     )

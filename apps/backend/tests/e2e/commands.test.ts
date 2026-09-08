@@ -144,7 +144,8 @@ interface LinkedPiSession {
 async function createLinkedPiSession(
   client: TestClient,
   workspaceId: string,
-  suffix: string
+  suffix: string,
+  capabilityOverrides?: Record<string, unknown>
 ): Promise<LinkedPiSession> {
   const bot = await createBot(client, workspaceId, {
     type: "personal",
@@ -189,12 +190,17 @@ async function createLinkedPiSession(
       supportsActiveScratchpad: true,
       supportsPersistentSessions: true,
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "steer", "stop", "kick"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "steer", "stop", "kick", "spawn"],
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],
       modelSuggestions: [
         { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
         { value: "openai/gpt-5-high", label: "GPT-5 High" },
       ],
+      spawnRuntimes: [
+        { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
+        { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+      ],
+      ...capabilityOverrides,
     },
   })
   if (presence.status !== 200) {
@@ -228,6 +234,7 @@ describe("Stream-scoped Pi session-control commands", () => {
     expect(linkedNames).toContain("steer")
     expect(linkedNames).toContain("stop")
     expect(linkedNames).toContain("kick")
+    expect(linkedNames).toContain("spawn")
 
     // /thinking suggestions reflect the runtime's advertised levels, not a backend-hardcoded list.
     const thinkingCommand = linkedCommands.find((c) => c.name === "thinking")
@@ -238,6 +245,14 @@ describe("Stream-scoped Pi session-control commands", () => {
     const modelCommand = linkedCommands.find((c) => c.name === "model")
     const modelSuggestions = modelCommand?.args?.find((a) => a.name === "model")?.suggestions
     expect(modelSuggestions?.map((s) => s.value)).toEqual(["anthropic/claude-sonnet-4-6", "openai/gpt-5-high"])
+
+    // /spawn suggestions reflect the runtime's advertised spawn runtimes.
+    const spawnCommand = linkedCommands.find((c) => c.name === "spawn")
+    const spawnSuggestions = spawnCommand?.args?.find((a) => a.name === "runtime")?.suggestions
+    expect(spawnSuggestions).toEqual([
+      { value: "claude", label: "Claude Code", description: "/usr/local/bin/claude" },
+      { value: "pi", label: "Pi", description: "/usr/local/bin/pi" },
+    ])
 
     // Claim polling doubles as a lightweight heartbeat with only runtimeSessionId.
     // It must not erase the richer session-control capability advertisement from
@@ -285,6 +300,22 @@ describe("Stream-scoped Pi session-control commands", () => {
     const channelNames = channelBootstrap.commands?.map((c) => c.name) ?? []
     expect(channelNames).toContain("invite")
     expect(channelNames).not.toContain("compact")
+  })
+
+  test("/spawn is listed with no suggestions when the runtime does not advertise spawnRuntimes", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("pi-cmd-spawn-none"), "Pi Command User")
+    const workspace = await createWorkspace(client, `Pi Cmd Spawn None WS ${testRunId}`)
+    const linked = await createLinkedPiSession(client, workspace.id, `spawn-none-${testRunId}`, {
+      spawnRuntimes: undefined,
+    })
+
+    const bootstrap = await getBootstrap(client, workspace.id, linked.streamId)
+    const commands = bootstrap.commands ?? []
+    expect(commands.map((c) => c.name)).toContain("spawn")
+    const spawnCommand = commands.find((c) => c.name === "spawn")
+    const runtimeArg = spawnCommand?.args?.find((a) => a.name === "runtime")
+    expect(runtimeArg?.suggestions).toBeUndefined()
   })
 
   test("runtime command dispatch creates a targeted session-control invocation", async () => {
