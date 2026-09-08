@@ -101,7 +101,10 @@ export class MediaTransportCoordinator implements MediaTransport {
       }
       if (snapshot.phase === "aborting") return
       if (!this.target || this.target.generation !== snapshot.target.generation) {
-        if (this.target) await this.retire(this.target)
+        if (this.target) {
+          this.clearStaging(this.target.generation)
+          await this.retire(this.target)
+        }
         if (this.closed || lifecycle !== this.lifecycle) return
         const ownSession = snapshot.sessions.find(
           (item) => item.endpointId === this.descriptor!.endpointId && item.generation === snapshot.target.generation

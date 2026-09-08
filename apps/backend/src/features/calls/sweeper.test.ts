@@ -21,7 +21,7 @@ function makeServiceSpy() {
 describe("createCallSweeper", () => {
   afterEach(() => mock.restore())
 
-  it("runs all three sweeps once on start and stops cleanly", async () => {
+  it("runs all four sweeps once on start and stops cleanly", async () => {
     const { service, swept } = makeServiceSpy()
     const sweeper = createCallSweeper(service as unknown as CallService, { intervalMs: 60_000 })
 

@@ -15,6 +15,7 @@ import {
   type StreamDelegationCreatedOutboxPayload,
   type StreamDelegationStatusChangedOutboxPayload,
   type StreamBotAccessStatusChangedOutboxPayload,
+  type CallTransportTransferChangedOutboxPayload,
 } from "./repository"
 import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
 import { logger } from "../logger"
@@ -227,7 +228,7 @@ export class BroadcastHandler implements OutboxHandler {
 
     emitToGroups(this.io, event, groups, routedEvent?.syncId)
     if (isOutboxEventType(event, "call:transport_transfer_changed")) {
-      const payload = event.payload as { callId: string }
+      const payload = event.payload as CallTransportTransferChangedOutboxPayload
       this.io.of(CALLS_NAMESPACE).to(callRoom(payload.callId)).emit(event.eventType, event.payload)
     }
 

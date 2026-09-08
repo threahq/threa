@@ -626,6 +626,28 @@ describe("MediaTransportCoordinator", () => {
     })
   })
 
+  test("should release superseded target probes before starting the next generation", async () => {
+    const source = new FakeTransport()
+    const firstTarget = new FakeTransport()
+    const secondTarget = new FakeTransport()
+    const targets = [firstTarget, secondTarget]
+    const coordinator = createCoordinator({ transport: source, generation: 1, kind: "sfu" }, () => targets.shift()!)
+    await coordinator.connect({ endpointId: "self", mediaIncarnation: "inc_self" })
+    await coordinator.beginTransfer(snapshot())
+    firstTarget.onRemoteTrack?.({
+      ref: { endpointId: "peer", kind: "camera", publicationId: "target_camera_2" },
+      track: track("video", "target_video_2"),
+    })
+
+    const replacement = snapshot()
+    replacement.id = "callxfer_2"
+    replacement.target = { generation: 3, transport: "sfu" }
+    replacement.sessions[0] = { ...replacement.sessions[0]!, id: "calltsess_self_3", generation: 3, transport: "sfu" }
+    await coordinator.beginTransfer(replacement)
+
+    expect(document.querySelectorAll('video[aria-hidden="true"]')).toHaveLength(0)
+  })
+
   test("should require decoded source video before acknowledging restoration", async () => {
     const source = new FakeTransport()
     const target = new FakeTransport()
