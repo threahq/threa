@@ -1051,9 +1051,8 @@ async function recordInvocationTraceStep(
 ): Promise<void> {
   if (!config) return
   // Session-control claims have no agent session server-side, so the server
-  // can never persist their steps — it rejects each one with
-  // INVOCATION_SESSION_MISSING. Presence heartbeats carry the "Running /x…"
-  // status instead.
+  // would reject each step with INVOCATION_SESSION_MISSING; skip sending them.
+  // Presence heartbeats carry the "Running /x…" status instead.
   if (invocation.trigger === "session-control") return
   const revision = invocation.sourceRevision
   const sealing = invocation.sealing

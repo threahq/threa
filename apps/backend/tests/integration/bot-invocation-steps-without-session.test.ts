@@ -23,6 +23,7 @@ describe("recordSteps against a claim with no agent session", () => {
   const botId = `bot_${Math.random().toString(36).slice(2, 10)}`
   const instanceId = "steps-guard-test"
   const stream = streamId()
+  const otherStream = streamId()
   const author = userId()
 
   beforeAll(async () => {
@@ -59,7 +60,7 @@ describe("recordSteps against a claim with no agent session", () => {
       "DELETE FROM agent_session_steps WHERE session_id IN (SELECT id FROM agent_sessions WHERE stream_id = $1)",
       [stream]
     )
-    await pool.query("DELETE FROM agent_sessions WHERE stream_id = $1", [stream])
+    await pool.query("DELETE FROM agent_sessions WHERE stream_id = ANY($1)", [[stream, otherStream]])
     await pool.query("DELETE FROM bot_channel_access WHERE workspace_id = $1", [ws])
     await pool.query("DELETE FROM bots WHERE workspace_id = $1", [ws])
     await pool.query("DELETE FROM streams WHERE workspace_id = $1", [ws])
@@ -129,6 +130,37 @@ describe("recordSteps against a claim with no agent session", () => {
         instanceId,
         claimToken: "tok_sc_guard",
         steps: [{ stepType: "context_received", content: "Running /stop" }],
+      })
+      .then(
+        () => null,
+        (err: unknown) => err
+      )
+    expect(error).toBeInstanceOf(HttpError)
+    expect({ status: (error as HttpError).status, code: (error as HttpError).code }).toEqual({
+      status: 409,
+      code: "INVOCATION_SESSION_MISSING",
+    })
+  })
+
+  test("should reject with INVOCATION_SESSION_MISSING when the session under the claim id belongs to another stream", async () => {
+    await seedClaim("binv_sc_other_stream", "active-scratchpad", "tok_sc_other_stream")
+    const inserted = await AgentSessionRepository.insertRunningOrSkip(pool, {
+      id: "binv_sc_other_stream",
+      streamId: otherStream,
+      personaId: botId,
+      triggerMessageId: "msg_binv_sc_other_stream",
+      initialSequence: 0n,
+    })
+    expect(inserted).not.toBeNull()
+
+    const error = await ops()
+      .recordSteps({
+        workspaceId: ws,
+        botId,
+        invocationId: "binv_sc_other_stream",
+        instanceId,
+        claimToken: "tok_sc_other_stream",
+        steps: [{ stepType: "thinking", content: "working" }],
       })
       .then(
         () => null,
