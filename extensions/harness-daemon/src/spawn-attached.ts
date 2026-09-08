@@ -7,7 +7,7 @@ import { failureExcerpt, postThrea } from "./threa-http"
 import type { RuntimeKind, SpawnOptions, SpawnResult } from "./types"
 
 export interface StreamNoticeDeps {
-  postNotice: (streamId: string, content: string) => Promise<void>
+  postNotice: (streamId: string, content: string, runtime?: RuntimeKind) => Promise<void>
   log: (message: string) => void
 }
 
@@ -26,9 +26,9 @@ export interface AttachedSpawnDeps extends StreamNoticeDeps {
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** Best-effort: a failure to report a failure must not mask the original error. */
-export async function notifyStream(streamId: string, content: string, deps: StreamNoticeDeps) {
+export async function notifyStream(streamId: string, content: string, deps: StreamNoticeDeps, runtime?: RuntimeKind) {
   try {
-    await deps.postNotice(streamId, content)
+    await deps.postNotice(streamId, content, runtime)
   } catch (error) {
     deps.log(`harnessd: could not post to stream ${streamId}: ${reason(error)}`)
   }
@@ -83,7 +83,8 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
       await notifyStream(
         result.activeStreamId,
         `**${options.name}** is running in \`${result.worktree}\` (tmux \`${result.tmuxWindow}\`). No prompt came with \`/spawn\` — reply here to give it one.`,
-        deps
+        deps,
+        options.runtime
       )
     }
 
@@ -115,8 +116,12 @@ export function defaultAttachedSpawnDeps(
       )
       if (!response.ok) throw new Error(`harnessd: could not deliver the brief: ${await failureExcerpt(response)}`)
     },
-    postNotice: (streamId, content) =>
-      postScratchpadNotice({ ...threaTarget("post a spawn notice"), streamId, content }),
+    postNotice: (streamId, content, runtime) =>
+      postScratchpadNotice({
+        ...(runtime ? targetForRuntime(runtime, "post a spawn notice") : threaTarget("post a spawn notice")),
+        streamId,
+        content,
+      }),
     log: (message) => console.error(message),
   }
 }

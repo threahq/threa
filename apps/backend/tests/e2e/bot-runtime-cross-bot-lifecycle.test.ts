@@ -170,6 +170,12 @@ describe("cross-bot runtime HTTP lifecycle", () => {
       expect(attached.status).toBe(200)
       const thread = attached.data.data.activeStreamId
       await announce(child)
+      const notice = await botApiPost(client, workspace.id, `/streams/${thread}/messages`, child.apiKey, {
+        content: "Child session is ready for a prompt",
+      })
+      expect(notice.status).toBe(201)
+      await proveTurn(child, thread, "First user brief after the child notice")
+
       const brief = await botApiPost(client, workspace.id, "/bot-runtime/sessions/brief", child.apiKey, {
         instanceId: child.instanceId,
         runtimeSessionId: child.runtimeSessionId,

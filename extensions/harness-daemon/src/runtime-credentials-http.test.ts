@@ -58,6 +58,16 @@ function startBotScopedServer() {
       }
 
       if (
+        url.pathname === `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages` ||
+        url.pathname === `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages`
+      ) {
+        const knownBot = authorization === `Bearer ${PI_KEY}` || authorization === `Bearer ${CLAUDE_KEY}`
+        return knownBot
+          ? Response.json({ data: { id: "msg_notice" } }, { status: 201 })
+          : new Response("wrong bot", { status: 403 })
+      }
+
+      if (
         url.pathname === `/api/v1/workspaces/${WORKSPACE}/bot-runtime/sessions/brief` ||
         url.pathname === `/api/v1/workspaces/${WORKSPACE}/bot-runtime/sessions/end`
       ) {
@@ -146,7 +156,7 @@ describe("runtime-scoped production HTTP wiring", () => {
     })
   }
 
-  test("should use runtime config keys through the default production dependencies despite an ambient parent key", async () => {
+  test("should keep runtime lifecycle and notice credentials scoped through the default dependencies", async () => {
     const { requests, sessions, targetForRuntime } = startBotScopedServer()
     const home = mkdtempSync(join(tmpdir(), "harnessd-runtime-credentials-"))
     try {
@@ -163,9 +173,10 @@ describe("runtime-scoped production HTTP wiring", () => {
       )
       const script = `
         import { defaultDoneDeps } from "./src/done.ts";
-        import { defaultAttachedSpawnDeps } from "./src/spawn-attached.ts";
+        import { defaultAttachedSpawnDeps, runAttachedSpawn } from "./src/spawn-attached.ts";
         import { linkAttachedThread, readPiRemoteConfig, readThreaChannelConfig } from "./src/spawners.ts";
         for (const runtime of ["pi", "claude"]) {
+          process.env.THREA_API_KEY = runtime === "pi" ? "${CLAUDE_KEY}" : "${PI_KEY}";
           const instanceId = runtime + "-default-child";
           const runtimeSessionId = runtime + "-default-session";
           const config = runtime === "pi" ? readPiRemoteConfig() : readThreaChannelConfig();
@@ -180,6 +191,20 @@ describe("runtime-scoped production HTTP wiring", () => {
           });
           await defaultAttachedSpawnDeps().brief({ runtime, instanceId, runtimeSessionId, content: "child brief" });
           await defaultDoneDeps().endSession({ runtime, instanceId, runtimeSessionId });
+
+          const promptless = defaultAttachedSpawnDeps();
+          promptless.spawn = async () => ({
+            worktree: "/repo/child",
+            branch: "child",
+            tmuxSession: "agents",
+            tmuxWindow: "child",
+            activeStreamId: "${THREAD}",
+            output: "",
+          });
+          await runAttachedSpawn({ runtime, name: runtime + "-child", attach: { rootStreamId: "${ROOT}", anchorId: "msg_anchor" } }, promptless);
+          const failed = defaultAttachedSpawnDeps();
+          failed.spawn = async () => { throw new Error("synthetic spawn failure"); };
+          await runAttachedSpawn({ runtime, name: runtime + "-child", attach: { rootStreamId: "${ROOT}", anchorId: "msg_anchor" } }, failed).catch(() => {});
         }
       `
       const child = Bun.spawn([process.execPath, "-e", script], {
@@ -198,13 +223,19 @@ describe("runtime-scoped production HTTP wiring", () => {
       const stderr = await new Response(child.stderr).text()
       expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" })
 
-      expect(requests.map(({ authorization }) => authorization)).toEqual([
-        `Bearer ${PI_KEY}`,
-        `Bearer ${PI_KEY}`,
-        `Bearer ${PI_KEY}`,
-        `Bearer ${CLAUDE_KEY}`,
-        `Bearer ${CLAUDE_KEY}`,
-        `Bearer ${CLAUDE_KEY}`,
+      expect(requests.map(({ authorization, path }) => ({ authorization, path }))).toEqual([
+        ...["sessions", "sessions/brief", "sessions/end"].map((suffix) => ({
+          authorization: `Bearer ${PI_KEY}`,
+          path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/${suffix}`,
+        })),
+        { authorization: `Bearer ${PI_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages` },
+        { authorization: `Bearer ${CLAUDE_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages` },
+        ...["sessions", "sessions/brief", "sessions/end"].map((suffix) => ({
+          authorization: `Bearer ${CLAUDE_KEY}`,
+          path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/${suffix}`,
+        })),
+        { authorization: `Bearer ${CLAUDE_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages` },
+        { authorization: `Bearer ${PI_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages` },
       ])
       expect(sessions.size).toBe(0)
     } finally {
