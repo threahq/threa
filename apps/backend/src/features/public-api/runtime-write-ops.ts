@@ -371,9 +371,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         }
         // INV-E1/INV-E7 at the plaintext step sink: a plaintext trace step must
         // never land in an E2E stream (`agent_session_steps.content` would store
-        // cleartext). Sealed turns use `/sealed-steps`; the only caller that reaches
-        // here on an E2E stream is a session-control invocation, which carries no
-        // sealed context — its steps are best-effort, so a rejection drops cleanly.
+        // cleartext). Sealed turns use `/sealed-steps`.
         if (await E2eStreamsRepository.isE2eStream(tx, params.workspaceId, claim.responseStreamId)) {
           throw new HttpError("Stream is end-to-end encrypted; use the sealed-steps endpoint", {
             status: 400,
