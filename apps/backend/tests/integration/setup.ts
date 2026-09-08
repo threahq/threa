@@ -11,11 +11,24 @@ import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
 import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "../test-database"
 import { BotRuntimeService } from "../../src/features/bot-runtimes"
+import { StreamService } from "../../src/features/streams"
+import { LabelAssignmentService, LabelService } from "../../src/features/labels"
+import { BotChannelService } from "../../src/features/api-keys"
 import { BotRepository } from "../../src/features/public-api/bot-repository"
 import { BotChannelAccessRepository } from "../../src/features/api-keys"
 
 // Re-export production helpers for tests that need to persist data
 export { withClient, withTransaction } from "../../src/db"
+
+/** A `BotRuntimeService` wired the way `server.ts` wires it, for scratchpad session tests. */
+export function botRuntimeServiceFor(pool: Pool): BotRuntimeService {
+  const labelAssignmentService = new LabelAssignmentService({
+    pool,
+    labelService: new LabelService({ pool }),
+    botChannelService: new BotChannelService({ pool }),
+  })
+  return new BotRuntimeService({ pool, streamService: new StreamService(pool), labelAssignmentService })
+}
 
 /**
  * Creates the test database if it doesn't exist.

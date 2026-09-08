@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "./setup"
-import { BotRuntimeService, BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
-import { StreamService } from "../../src/features/streams"
+import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture, botRuntimeServiceFor } from "./setup"
+import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { MessageRepository } from "../../src/features/messaging"
 import { botRuntimeSessionLinkId, messageId, streamId } from "../../src/lib/id"
 
@@ -13,7 +12,7 @@ describe("endRuntimeSession", () => {
   let root: string
   let author: string
   let bot: string
-  const service = () => new BotRuntimeService({ pool, streamService: new StreamService(pool) })
+  const service = () => botRuntimeServiceFor(pool)
 
   beforeAll(async () => {
     fixture = await seedBotRuntimeFixture({ label: "session_end", instanceIds: ["claimed-instance"] })

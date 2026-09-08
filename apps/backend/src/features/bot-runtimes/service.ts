@@ -67,7 +67,7 @@ interface BotRuntimeServiceDeps {
     StreamService,
     "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
   >
-  labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
+  labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction" | "inheritInTransaction">
 }
 
 class ClaimCandidateFenceLost extends Error {}
@@ -100,7 +100,10 @@ export class BotRuntimeService {
     StreamService,
     "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
   >
-  private readonly labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
+  private readonly labelAssignmentService?: Pick<
+    LabelAssignmentService,
+    "assignByNameInTransaction" | "inheritInTransaction"
+  >
 
   constructor(deps: BotRuntimeServiceDeps) {
     this.pool = deps.pool
@@ -389,8 +392,8 @@ export class BotRuntimeService {
     localCwd?: string
     traits: readonly BotTrait[]
   }): Promise<{ link: BotRuntimeSessionLink; stream: Stream }> {
-    const { streamService } = this
-    if (!streamService) {
+    const { streamService, labelAssignmentService } = this
+    if (!streamService || !labelAssignmentService) {
       throw new Error("BotRuntimeService missing scratchpad session dependencies")
     }
 
@@ -445,6 +448,11 @@ export class BotRuntimeService {
           createdByType: "bot",
         }
       )
+      await labelAssignmentService.inheritInTransaction(client, {
+        workspaceId: params.workspaceId,
+        from: { resourceType: LabelableResourceTypes.STREAM, resourceId: params.rootStreamId },
+        to: { resourceType: LabelableResourceTypes.STREAM, resourceId: thread.id },
+      })
 
       const existingLinks = await BotRuntimeSessionLinkRepository.listActiveByStreamForShare(client, {
         workspaceId: params.workspaceId,

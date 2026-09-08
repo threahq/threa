@@ -350,6 +350,38 @@ export const LabelAssignmentRepository = {
   },
 
   /**
+   * Copy every live assignment on one resource onto another, one row per
+   * (label, actor), so each actor's own grouping carries over. Archived labels
+   * are skipped and an assignment the target already has is left untouched
+   * (INV-20). The share lock on the label row makes a concurrent archive wait
+   * for this copy, so its assignment sweep also removes the copied rows.
+   * Returns only the rows this call inserted.
+   */
+  async copyForResource(
+    db: Querier,
+    params: {
+      workspaceId: string
+      from: { resourceType: LabelableResourceType; resourceId: string }
+      to: { resourceType: LabelableResourceType; resourceId: string }
+    }
+  ): Promise<LabelAssignment[]> {
+    const result = await db.query<LabelAssignmentRow>(sql`
+      INSERT INTO label_assignments (label_id, resource_type, resource_id, actor_type, user_id, workspace_id)
+      SELECT a.label_id, ${params.to.resourceType}, ${params.to.resourceId}, a.actor_type, a.user_id, a.workspace_id
+      FROM label_assignments a
+      JOIN labels l ON l.id = a.label_id AND l.workspace_id = a.workspace_id
+      WHERE a.workspace_id = ${params.workspaceId}
+        AND a.resource_type = ${params.from.resourceType}
+        AND a.resource_id = ${params.from.resourceId}
+        AND l.archived_at IS NULL
+      FOR SHARE OF l
+      ON CONFLICT (workspace_id, resource_type, resource_id, label_id, user_id) DO NOTHING
+      RETURNING ${sql.raw(ASSIGNMENT_COLUMNS)}
+    `)
+    return result.rows.map(mapAssignmentRow)
+  },
+
+  /**
    * Drop every assignment of a label across all resources. Callers run this
    * inside the label-archive transaction so no chip outlives its label.
    */

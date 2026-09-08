@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "./setup"
-import { BotRuntimeSessionLinkRepository, BotRuntimeService } from "../../src/features/bot-runtimes"
-import { StreamService } from "../../src/features/streams"
+import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture, botRuntimeServiceFor } from "./setup"
+import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { MessageRepository } from "../../src/features/messaging"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { botRuntimeSessionLinkId, messageId } from "../../src/lib/id"
@@ -14,7 +13,7 @@ describe("briefRuntimeSession", () => {
   let root: string
   let author: string
   let bot: string
-  const service = () => new BotRuntimeService({ pool, streamService: new StreamService(pool) })
+  const service = () => botRuntimeServiceFor(pool)
 
   beforeAll(async () => {
     fixture = await seedBotRuntimeFixture({
@@ -405,10 +404,7 @@ describe("briefRuntimeSession", () => {
         contentJson: testContentJson("anchor"),
         contentMarkdown: "anchor",
       })
-      await new BotRuntimeService({
-        pool: e2ePool,
-        streamService: new StreamService(e2ePool),
-      }).attachRuntimeSessionToThread({
+      await botRuntimeServiceFor(e2ePool).attachRuntimeSessionToThread({
         workspaceId: e2eWorkspace,
         botId: e2eBot,
         ownerUserId: e2eAuthor,
@@ -431,7 +427,7 @@ describe("briefRuntimeSession", () => {
       })
 
       await expect(
-        new BotRuntimeService({ pool: e2ePool, streamService: new StreamService(e2ePool) }).briefRuntimeSession({
+        botRuntimeServiceFor(e2ePool).briefRuntimeSession({
           workspaceId: e2eWorkspace,
           botId: e2eBot,
           ownerUserId: e2eAuthor,
