@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act, fireEvent } from "@testing-library/react"
 import { render, screen } from "@/test"
 import * as authModule from "@/auth"
+import * as featureFlags from "@/hooks/use-feature-flags"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import {
   clearCallState,
@@ -143,6 +144,7 @@ beforeEach(() => {
   document.documentElement.removeAttribute("style")
   seedUsers()
   vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_self" } as ReturnType<typeof authModule.useUser>)
+  vi.spyOn(featureFlags, "useFeatureFlag").mockReturnValue("off")
 })
 
 afterEach(() => {
