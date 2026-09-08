@@ -2060,7 +2060,7 @@ describe("Pi spawn and done session control", () => {
     }
     expect({ messages, prepared }).toEqual({
       messages: Array(3).fill(
-        "Usage: `/spawn [claude|pi] [--model <model>] [--thinking <level>] <name>` with the prompt on the following lines."
+        "Usage: `/spawn [claude|pi] [/model <model>] [/thinking <level>] <name>` with the prompt on the following lines."
       ),
       prepared: 0,
     })
