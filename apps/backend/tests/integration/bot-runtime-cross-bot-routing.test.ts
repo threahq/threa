@@ -10,9 +10,9 @@ import {
 import { CommandAvailabilityService, CommandRegistry } from "../../src/features/commands"
 import { BotRepository } from "../../src/features/public-api"
 import { MessageRepository } from "../../src/features/messaging"
-import { StreamMemberRepository, StreamRepository, StreamService } from "../../src/features/streams"
+import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { botChannelAccessId, messageId, streamId, workspaceId } from "../../src/lib/id"
-import { addTestMember, setupIsolatedTestDatabase, testContentJson } from "./setup"
+import { addTestMember, setupIsolatedTestDatabase, testContentJson, botRuntimeServiceFor } from "./setup"
 
 interface Scenario {
   workspace: string
@@ -88,7 +88,7 @@ describe("cross-bot linked scratchpad routing", () => {
       streamId: root,
       grantedBy: owner,
     })
-    const service = new BotRuntimeService({ pool, streamService: new StreamService(pool) })
+    const service = botRuntimeServiceFor(pool)
     const rootInstance = `root-${crypto.randomUUID()}`
     const rootSession = `root-session-${crypto.randomUUID()}`
     await service.createOrLinkPiRemoteSession({
@@ -150,7 +150,7 @@ describe("cross-bot linked scratchpad routing", () => {
   ] as const) {
     test(`should preserve and route ${rootKind} root with ${childKind} child`, async () => {
       const scenario = await seedScenario(rootKind, childKind)
-      const service = new BotRuntimeService({ pool, streamService: new StreamService(pool) })
+      const service = botRuntimeServiceFor(pool)
 
       expect(await StreamActiveActorRepository.findByRootStream(pool, scenario.workspace, scenario.root)).toMatchObject(
         {
@@ -252,7 +252,7 @@ describe("cross-bot linked scratchpad routing", () => {
     const competitor = await createBot(scenario.workspace, scenario.owner, "Competitor")
 
     await expect(
-      new BotRuntimeService({ pool, streamService: new StreamService(pool) }).attachRuntimeSessionToThread({
+      botRuntimeServiceFor(pool).attachRuntimeSessionToThread({
         workspaceId: scenario.workspace,
         botId: competitor,
         ownerUserId: scenario.owner,
@@ -280,7 +280,7 @@ describe("cross-bot linked scratchpad routing", () => {
     const secondBot = await createBot(workspace, owner, "Second competitor")
     const anchor = await insertMessage(root, owner, "contested anchor")
     const attach = (botId: string) =>
-      new BotRuntimeService({ pool, streamService: new StreamService(pool) }).attachRuntimeSessionToThread({
+      botRuntimeServiceFor(pool).attachRuntimeSessionToThread({
         workspaceId: workspace,
         botId,
         ownerUserId: owner,
@@ -301,7 +301,7 @@ describe("cross-bot linked scratchpad routing", () => {
 
   test("should keep one owner when competing attaches reuse an existing empty thread", async () => {
     const scenario = await seedScenario("claude-code-channel", "pi-local")
-    const service = new BotRuntimeService({ pool, streamService: new StreamService(pool) })
+    const service = botRuntimeServiceFor(pool)
     await service.endRuntimeSession({
       workspaceId: scenario.workspace,
       botId: scenario.childBot,

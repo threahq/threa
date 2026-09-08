@@ -118,6 +118,31 @@ export class LabelAssignmentService {
     return { label, assignment }
   }
 
+  /**
+   * Carry a resource's labels onto a resource derived from it (a `/spawn`
+   * thread under a labeled scratchpad) so it files under the same groups. No
+   * access gate: the target inherits the source's access (INV-62), and every
+   * copied row already passed the gate when it was applied to the source.
+   */
+  async inheritInTransaction(
+    client: PoolClient,
+    params: {
+      workspaceId: string
+      from: { resourceType: LabelableResourceType; resourceId: string }
+      to: { resourceType: LabelableResourceType; resourceId: string }
+    }
+  ): Promise<LabelAssignment[]> {
+    const assignments = await LabelAssignmentRepository.copyForResource(client, params)
+    for (const assignment of assignments) {
+      await OutboxRepository.insert(client, "label:assigned", {
+        workspaceId: params.workspaceId,
+        targetUserId: assignment.userId,
+        assignment,
+      })
+    }
+    return assignments
+  }
+
   private async assignWithin(client: PoolClient, label: Label, params: AssignLabelParams): Promise<LabelAssignment> {
     const assignment = await LabelAssignmentRepository.assign(client, {
       workspaceId: params.workspaceId,

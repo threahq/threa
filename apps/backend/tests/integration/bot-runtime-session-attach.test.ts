@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture } from "./setup"
-import { BotRuntimeService, BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
-import { StreamService } from "../../src/features/streams"
+import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture, botRuntimeServiceFor } from "./setup"
+import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { BotRepository } from "../../src/features/public-api"
 import { BotChannelAccessRepository } from "../../src/features/api-keys"
-import { messageId, streamId, userId } from "../../src/lib/id"
+import { labelId, messageId, streamId, userId } from "../../src/lib/id"
+import { LabelAssignmentRepository, LabelRepository } from "../../src/features/labels"
+import { OutboxRepository } from "../../src/lib/outbox"
 
 describe("attachRuntimeSessionToThread", () => {
   let fixture: BotRuntimeFixture
@@ -16,7 +17,7 @@ describe("attachRuntimeSessionToThread", () => {
   let root: string
   let author: string
   let bot: string
-  const service = () => new BotRuntimeService({ pool, streamService: new StreamService(pool) })
+  const service = () => botRuntimeServiceFor(pool)
 
   beforeAll(async () => {
     fixture = await seedBotRuntimeFixture({ label: "session_attach", instanceIds: [] })
@@ -85,6 +86,81 @@ describe("attachRuntimeSessionToThread", () => {
       activeStreamId: root,
     })
     expect(rootLink).toMatchObject({ id: desk.id })
+  })
+
+  test("files the thread under the scratchpad's live labels and tells the owner", async () => {
+    const live = await LabelRepository.insert(pool, {
+      id: labelId(),
+      workspaceId: workspace,
+      creatorActorType: "user",
+      creatorUserId: author,
+      name: "Threa work",
+      slug: "threa-work",
+      color: "#64748b",
+      emoji: null,
+      description: null,
+    })
+    const retired = await LabelRepository.insert(pool, {
+      id: labelId(),
+      workspaceId: workspace,
+      creatorActorType: "user",
+      creatorUserId: author,
+      name: "Old project",
+      slug: "old-project",
+      color: "#64748b",
+      emoji: null,
+      description: null,
+    })
+    for (const label of [live, retired]) {
+      await LabelAssignmentRepository.assign(pool, {
+        workspaceId: workspace,
+        labelId: label.id,
+        resourceType: "stream",
+        resourceId: root,
+        actorType: "user",
+        userId: author,
+      })
+    }
+    await LabelRepository.archive(pool, workspace, retired.id)
+    const baseline = await pool.query<{ max_id: string }>("SELECT COALESCE(MAX(id), 0) AS max_id FROM outbox")
+
+    const anchor = await anchorMessage()
+    const { stream } = await service().attachRuntimeSessionToThread({
+      workspaceId: workspace,
+      botId: bot,
+      ownerUserId: author,
+      runtimeKind: "pi-local",
+      instanceId: "labeled-instance",
+      runtimeSessionId: "labeled-session",
+      rootStreamId: root,
+      anchorId: anchor.id,
+      displayName: "Labeled work",
+      traits: ["active-scratchpad"],
+    })
+
+    const onThread = (await LabelAssignmentRepository.listForActor(pool, workspace, author)).filter(
+      (assignment) => assignment.resourceId === stream.id
+    )
+    expect(onThread).toEqual([
+      {
+        labelId: live.id,
+        resourceType: "stream",
+        resourceId: stream.id,
+        actorType: "user",
+        userId: author,
+        workspaceId: workspace,
+        assignedAt: expect.any(String),
+      },
+    ])
+
+    const events = await OutboxRepository.fetchAfterId(pool, BigInt(baseline.rows[0]!.max_id))
+    expect(events.filter((event) => event.eventType === "label:assigned").map((event) => event.payload)).toEqual([
+      {
+        workspaceId: workspace,
+        targetUserId: author,
+        assignment: expect.objectContaining({ labelId: live.id, resourceId: stream.id, userId: author }),
+      },
+    ])
   })
 
   test("grants the bot access to the root before creating the thread", async () => {
