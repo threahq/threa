@@ -83,6 +83,8 @@ export interface SpawnRuntimeInfo {
   label: string
   /** What `--thinking` accepts for THIS runtime, so a Claude desk can offer Pi's levels and back. */
   thinkingLevels: readonly string[]
+  /** What `--model` accepts for THIS runtime, read from its own config on this machine. */
+  models: readonly ModelSuggestionInfo[]
   description?: string
 }
 

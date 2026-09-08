@@ -4,20 +4,34 @@ import type { HarnessSpawnSpec, SpawnRuntimeOption } from "@threahq/harness-clie
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
 
 const SPAWN_RUNTIMES: SpawnRuntimeOption[] = [
-  { value: "claude", label: "Claude Code", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], installed: true },
+  {
+    value: "claude",
+    label: "Claude Code",
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+    models: [{ value: "opus", label: "Opus" }],
+    installed: true,
+  },
   {
     value: "pi",
     label: "Pi",
     thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
     installed: true,
   },
 ]
 const CLAUDE_ONLY: SpawnRuntimeOption[] = [
-  { value: "claude", label: "Claude Code", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], installed: true },
+  {
+    value: "claude",
+    label: "Claude Code",
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+    models: [{ value: "opus", label: "Opus" }],
+    installed: true,
+  },
   {
     value: "pi",
     label: "Pi",
     thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    models: [{ value: "opencode-go/kimi-k3", label: "Kimi K3" }],
     installed: false,
   },
 ]
@@ -196,7 +210,12 @@ describe("createClaudeSessionControl", () => {
         claudeOnly: {
           spawn: true,
           runtimes: [
-            { value: "claude", label: "Claude Code", thinkingLevels: ["low", "medium", "high", "xhigh", "max"] },
+            {
+              value: "claude",
+              label: "Claude Code",
+              thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+              models: [{ value: "opus", label: "Opus" }],
+            },
           ],
         },
       })

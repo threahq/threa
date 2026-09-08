@@ -28,6 +28,7 @@ export {
   type PrepareHarnessReconnectOptions,
 } from "./harness-reconnect"
 export { discardSpawnBrief, parseSpawnCommandArgs, writeSpawnBrief } from "./spawn-command"
+export { claudeModelSuggestions, piModelSuggestions, type ModelSuggestion } from "./model-catalogs"
 export {
   installedSpawnRuntimes,
   listSpawnRuntimes,
