@@ -1,6 +1,7 @@
 import { createHash } from "crypto"
 import type { Request, RequestHandler } from "express"
 import { createRateLimit, getClientIp } from "@threahq/backend-common"
+import { BOT_KEY_PREFIX } from "@threahq/types"
 
 export interface RateLimiterSet {
   globalBaseline: RequestHandler
@@ -15,6 +16,7 @@ export interface RateLimiterSet {
   perfCapture: RequestHandler
   publicApiWorkspace: RequestHandler
   publicApiKey: RequestHandler
+  publicApiBotKey: RequestHandler
 }
 
 export interface RateLimiterConfig {
@@ -24,6 +26,23 @@ export interface RateLimiterConfig {
 
 function userScopeKey(req: Request): string {
   return req.workosUserId || getClientIp(req, "unknown")
+}
+
+function bearerToken(req: Request): string | null {
+  const authHeader = req.headers.authorization
+  return authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null
+}
+
+function isBotKey(req: Request): boolean {
+  return bearerToken(req)?.startsWith(BOT_KEY_PREFIX) ?? false
+}
+
+function publicApiKeyScopeKey(req: Request): string {
+  const token = bearerToken(req)
+  if (!token) return getClientIp(req, "unknown")
+  // Hash the token to avoid storing raw credentials in memory
+  const hash = createHash("sha256").update(token).digest("hex").slice(0, 16)
+  return `apikey:${hash}`
 }
 
 export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
@@ -126,15 +145,18 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       name: "public-api-key",
       windowMs: 60_000,
       max: 60,
-      key: (req) => {
-        const authHeader = req.headers.authorization
-        if (authHeader?.startsWith("Bearer ")) {
-          // Hash the token to avoid storing raw credentials in memory
-          const hash = createHash("sha256").update(authHeader.slice(7)).digest("hex").slice(0, 16)
-          return `apikey:${hash}`
-        }
-        return getClientIp(req, "unknown")
-      },
+      key: publicApiKeyScopeKey,
+      skip: isBotKey,
+    }),
+
+    // Agent sessions poll and post on their own clock, not a human's — a
+    // single busy session already burns the shared 60/min budget above.
+    publicApiBotKey: createRateLimit({
+      name: "public-api-bot-key",
+      windowMs: 60_000,
+      max: 300,
+      key: publicApiKeyScopeKey,
+      skip: (req) => !isBotKey(req),
     }),
   }
 }

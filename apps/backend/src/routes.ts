@@ -1958,7 +1958,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Boundary ahead of key auth: a bad/revoked API key 401s inside publicAuth
   // without reaching the route's audit(...) — key-probing attempts must leave
   // a trace (actor unknown, ip recorded).
-  const publicMiddleware = [rateLimits.publicApiWorkspace, rateLimits.publicApiKey, audit.boundary, publicAuth] as const
+  const publicMiddleware = [
+    rateLimits.publicApiWorkspace,
+    rateLimits.publicApiKey,
+    rateLimits.publicApiBotKey,
+    audit.boundary,
+    publicAuth,
+  ] as const
 
   const publicHandlers: Record<OperationId, RequestHandler | RequestHandler[]> = {
     searchMessages: publicApi.searchMessages,

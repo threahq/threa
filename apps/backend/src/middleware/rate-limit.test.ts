@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
 import { createRateLimit } from "@threahq/backend-common"
+import { createRateLimiters } from "./rate-limit"
 
 interface MockResponse {
   headers: Map<string, string>
@@ -112,5 +113,41 @@ describe("createRateLimit", () => {
     expect(run(limiter, createReq({ path: "/api" }), normalRes1).nextCalled).toBe(true)
     expect(run(limiter, createReq({ path: "/api" }), normalRes2).nextCalled).toBe(false)
     expect(normalRes2.statusCode).toBe(429)
+  })
+})
+
+function expectLimitResult(
+  middleware: ReturnType<typeof createRateLimit>,
+  req: Request,
+  expected: { nextCalled: boolean; statusCode: number; limit: string | undefined }
+): void {
+  const res = createRes()
+  const { nextCalled } = run(middleware, req, res)
+  expect({ nextCalled, statusCode: res.statusCode, limit: res.headers.get("RateLimit-Limit") }).toEqual(expected)
+}
+
+describe("createRateLimiters public API key limiters", () => {
+  test("should pass a bot bearer through publicApiKey untouched and count it on publicApiBotKey when the token starts with threa_bk_", () => {
+    const { publicApiKey, publicApiBotKey } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    const req = createReq({ headers: { authorization: "Bearer threa_bk_abc123" } as Request["headers"] })
+
+    expectLimitResult(publicApiKey, req, { nextCalled: true, statusCode: 200, limit: undefined })
+    expectLimitResult(publicApiBotKey, req, { nextCalled: true, statusCode: 200, limit: "300" })
+  })
+
+  test("should count a bearer on publicApiKey with limit 60 and pass it through publicApiBotKey untouched when the token is not a bot key", () => {
+    const { publicApiKey, publicApiBotKey } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    const req = createReq({ headers: { authorization: "Bearer threa_pk_abc123" } as Request["headers"] })
+
+    expectLimitResult(publicApiKey, req, { nextCalled: true, statusCode: 200, limit: "60" })
+    expectLimitResult(publicApiBotKey, req, { nextCalled: true, statusCode: 200, limit: undefined })
+  })
+
+  test("should count the request on publicApiKey via IP fallback and pass it through publicApiBotKey untouched when there is no bearer", () => {
+    const { publicApiKey, publicApiBotKey } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    const req = createReq()
+
+    expectLimitResult(publicApiKey, req, { nextCalled: true, statusCode: 200, limit: "60" })
+    expectLimitResult(publicApiBotKey, req, { nextCalled: true, statusCode: 200, limit: undefined })
   })
 })
