@@ -36,7 +36,13 @@ import {
   type RegionalCreatePayload,
 } from "./features/workspaces"
 import { InvitationShadowService } from "./features/invitation-shadows"
-import { WaitlistService, ResendWaitlistEmailSender, StubWaitlistEmailSender } from "./features/waitlist"
+import {
+  WaitlistService,
+  ResendWaitlistEmailSender,
+  StubWaitlistEmailSender,
+  ThreaWaitlistNotifier,
+  StubWaitlistNotifier,
+} from "./features/waitlist"
 import { BotConnectService } from "./features/bot-connect"
 import { BackofficeService, seedPlatformAdmins } from "./features/backoffice"
 import {
@@ -125,7 +131,14 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   const waitlistEmailSender = config.waitlist.resendApiKey
     ? new ResendWaitlistEmailSender({ apiKey: config.waitlist.resendApiKey, from: config.waitlist.fromEmail })
     : new StubWaitlistEmailSender()
-  const waitlistService = new WaitlistService({ pool, emailSender: waitlistEmailSender })
+  const waitlistNotifier = config.waitlist.notify
+    ? new ThreaWaitlistNotifier(config.waitlist.notify)
+    : new StubWaitlistNotifier()
+  const waitlistService = new WaitlistService({
+    pool,
+    emailSender: waitlistEmailSender,
+    notifier: waitlistNotifier,
+  })
   const botConnectService = new BotConnectService({
     pool,
     membership: workspaceService,
