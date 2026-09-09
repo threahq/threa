@@ -744,6 +744,7 @@ export type {
   CommandDispatchedPayload,
   CommandCompletedPayload,
   CommandFailedPayload,
+  CommandProgressPayload,
   AsideAnchoredEventPayload,
   // AI Usage
   AIUsageSummary,

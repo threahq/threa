@@ -97,6 +97,7 @@ describe("STREAM_ROW_SPEC", () => {
         "command_dispatched",
         "command_completed",
         "command_failed",
+        "command_progress",
         "aside:anchored",
       ])
     )

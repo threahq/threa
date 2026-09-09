@@ -54,6 +54,7 @@ export {
   type CommandDispatchedOutboxPayload,
   type CommandCompletedOutboxPayload,
   type CommandFailedOutboxPayload,
+  type CommandProgressOutboxPayload,
   type AgentSessionStartedOutboxPayload,
   type AgentSessionCompletedOutboxPayload,
   type AgentSessionFailedOutboxPayload,

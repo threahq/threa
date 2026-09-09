@@ -62,6 +62,7 @@ const COMMAND_FIXTURE: CachedEvent[] = [
 
 const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
   command_dispatched: COMMAND_FIXTURE,
+  command_progress: COMMAND_FIXTURE,
   command_completed: COMMAND_FIXTURE,
   command_failed: COMMAND_FIXTURE,
   "agent_session:started": SESSION_FIXTURE,
@@ -173,6 +174,7 @@ describe("BoardEventRowItem renders every spec-declared board row", () => {
       "subagent:created": ["subagent"],
       "aside:anchored": ["aside"],
       command_dispatched: ["command"],
+      command_progress: ["command"],
       command_completed: ["command"],
       command_failed: ["command"],
     })

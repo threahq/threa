@@ -165,8 +165,8 @@ const COMMAND: StreamRowSpec = {
   authorGroupable: false,
   patchesRow: false,
   broadcastSlot: false,
-  // Only `command_dispatched` carries the id; `command_completed`/`command_failed`
-  // are refless and reach their row by `commandId` inside the group.
+  // Only `command_dispatched` carries the id; progress/completed/failed are
+  // refless and reach their row by `commandId` inside the group.
   conversationRef: "source-conversation",
   bumps: false,
   threadable: false,
@@ -223,6 +223,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   },
 
   command_dispatched: COMMAND,
+  command_progress: COMMAND,
   command_completed: COMMAND,
   command_failed: COMMAND,
 

@@ -10,6 +10,7 @@ export {
   parseRuntimeCommandInvocationMetadata,
   insertCommandDispatchedEvent,
   insertCommandCompletedEvent,
+  insertCommandProgressEvent,
   insertCommandFailedEvent,
 } from "./events"
 export type { RuntimeCommandInvocationMetadata } from "./events"

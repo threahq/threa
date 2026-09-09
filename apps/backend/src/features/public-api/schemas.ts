@@ -244,6 +244,7 @@ export const rebindRuntimeSessionSchema = z.object({
 export const endRuntimeSessionSchema = z.object({
   instanceId: z.string().min(1).max(128),
   runtimeSessionId: z.string().min(1).max(256),
+  exceptInvocationId: z.string().min(1).max(128).optional(),
 })
 
 export const briefRuntimeSessionSchema = z.object({
@@ -332,6 +333,12 @@ export const failInvocationSchema = z.object({
   instanceId: z.string().min(1).max(128),
   claimToken: z.string().min(1).max(256),
   errorMessage: z.string().min(1).max(1000),
+})
+
+export const reportInvocationProgressSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  claimToken: z.string().min(1).max(256),
+  step: z.string().min(1).max(200),
 })
 
 // One plaintext message posted into a turn's own response stream: the claim, not

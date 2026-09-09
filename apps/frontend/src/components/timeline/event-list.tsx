@@ -336,6 +336,7 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "reaction_added",
   "reaction_removed",
   "command_dispatched",
+  "command_progress",
   "command_completed",
   "command_failed",
   "agent_session:started",

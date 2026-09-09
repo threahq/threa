@@ -70,6 +70,7 @@ export type OutboxEventType =
   | "command:dispatched"
   | "command:completed"
   | "command:failed"
+  | "command:progress"
   | "stream:aside_anchored"
   | "agent_session:started"
   | "agent_session:completed"
@@ -188,6 +189,7 @@ export type StreamScopedEventType =
   | "command:dispatched"
   | "command:completed"
   | "command:failed"
+  | "command:progress"
 
 /** Events that are scoped to a workspace (no streamId) */
 export type WorkspaceScopedEventType =
@@ -674,6 +676,11 @@ export interface CommandCompletedOutboxPayload extends StreamScopedPayload {
 }
 
 export interface CommandFailedOutboxPayload extends StreamScopedPayload {
+  authorId: string
+  event: StreamEvent
+}
+
+export interface CommandProgressOutboxPayload extends StreamScopedPayload {
   authorId: string
   event: StreamEvent
 }
@@ -1323,6 +1330,7 @@ export interface OutboxEventPayloadMap {
   "command:dispatched": CommandDispatchedOutboxPayload
   "command:completed": CommandCompletedOutboxPayload
   "command:failed": CommandFailedOutboxPayload
+  "command:progress": CommandProgressOutboxPayload
   "stream:aside_anchored": StreamAsideAnchoredOutboxPayload
   "agent_session:started": AgentSessionStartedOutboxPayload
   "agent_session:completed": AgentSessionCompletedOutboxPayload
@@ -1461,6 +1469,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "command:dispatched",
   "command:completed",
   "command:failed",
+  "command:progress",
 ]
 
 /**

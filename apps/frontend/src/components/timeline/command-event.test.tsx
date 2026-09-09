@@ -60,6 +60,30 @@ describe("CommandEvent", () => {
     expect(screen.getByText("/spawn [claude|pi] [/model <model>] [/thinking <level>] <name>").tagName).toBe("CODE")
   })
 
+  it("shows the latest progress step while running and keeps every step once expanded", async () => {
+    render(
+      <MemoryRouter>
+        <CommandEvent
+          events={[
+            event("1", "command_dispatched", { commandId: "cmd_1", name: "done", args: "" }),
+            event("2", "command_progress", { commandId: "cmd_1", step: "Committing and pushing" }),
+            event("3", "command_progress", { commandId: "cmd_1", step: "Removing the worktree" }),
+          ]}
+        />
+      </MemoryRouter>
+    )
+
+    const header = screen.getByRole("button", { name: /done/ })
+    expect(header.textContent).toContain("Removing the worktree...")
+    expect(header.textContent).not.toContain("running...")
+    expect(header.textContent).not.toContain("Committing and pushing")
+
+    await userEvent.click(header)
+
+    expect(screen.getByText("Committing and pushing")).toBeInTheDocument()
+    expect(screen.getByText("Removing the worktree")).toBeInTheDocument()
+  })
+
   it("keeps the header to the first line of a multi-line reason", () => {
     render(
       <MemoryRouter>

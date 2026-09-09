@@ -2022,6 +2022,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     briefBotRuntimeSession: publicApi.briefBotRuntimeSession,
     claimBotInvocation: publicApi.claimBotInvocation,
     renewBotInvocationClaim: publicApi.renewBotInvocationClaim,
+    reportBotInvocationProgress: publicApi.reportBotInvocationProgress,
     recordBotInvocationStep: publicApi.recordBotInvocationStep,
     startBotInvocationSealedStep: publicApi.startBotInvocationSealedStep,
     recordBotInvocationSealedStep: publicApi.recordBotInvocationSealedStep,
