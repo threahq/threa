@@ -72,12 +72,7 @@ export interface ControlPlaneConfig {
     resendApiKey: string | null
     /** From address for the confirmation (a verified Resend sender/domain). */
     fromEmail: string
-    /**
-     * Where a new signup is announced, as a bot message through the public API.
-     * Null leaves signups unannounced (a stub notifier that logs). The four
-     * values are set together or not at all; a partial group throws at boot
-     * rather than half-configuring the announcement (INV-11).
-     */
+    /** Announcement target, or null to leave signups unannounced. See {@link loadWaitlistNotify}. */
     notify: {
       apiBaseUrl: string
       apiKey: string

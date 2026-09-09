@@ -8,8 +8,8 @@ export interface WaitlistSignup {
 
 /**
  * Announces a new signup so a human finds out. Behind an interface for the same
- * reason as {@link WaitlistEmailSender}: production posts into Threa, dev and
- * tests log instead of calling out.
+ * reason as `WaitlistEmailSender`: production posts into Threa, dev and tests
+ * log instead of calling out.
  */
 export interface WaitlistNotifier {
   notifySignup(signup: WaitlistSignup): Promise<void>
@@ -18,9 +18,9 @@ export interface WaitlistNotifier {
 const REQUEST_TIMEOUT_MS = 10_000
 
 function buildContent(signup: WaitlistSignup): string {
-  // The address goes in a code span so an `@` in it can never be read as mention
-  // input by the ingestion-time resolver (INV-64).
   const from = signup.source ? ` · from \`${signup.source}\`` : ""
+  // The address is a code span so an `@` in it can never be read as mention
+  // input by the ingestion-time resolver (INV-64).
   return `**New waitlist signup**\n\n\`${signup.email}\`${from}`
 }
 
