@@ -401,7 +401,7 @@ describe("setBoardRootArchived", () => {
     ])
     await seedBoardPosts("ws_2", [scopedPost("conv_ws2", "chan_1", "chan_1")])
 
-    await setBoardRootArchived(WORKSPACE_ID, "chan_1", true)
+    await setBoardRootArchived(WORKSPACE_ID, ["chan_1"], true)
 
     expect(await db.conversations.get("conv_root")).toMatchObject({ rootArchived: true })
     expect(await db.conversations.get("conv_anchor")).toMatchObject({ rootArchived: true })
@@ -411,8 +411,8 @@ describe("setBoardRootArchived", () => {
 
   it("clears the flag on unarchive", async () => {
     await seedBoardPosts(WORKSPACE_ID, [scopedPost("conv_root", "thread_1", "chan_1")])
-    await setBoardRootArchived(WORKSPACE_ID, "chan_1", true)
-    await setBoardRootArchived(WORKSPACE_ID, "chan_1", false)
+    await setBoardRootArchived(WORKSPACE_ID, ["chan_1"], true)
+    await setBoardRootArchived(WORKSPACE_ID, ["chan_1"], false)
     expect(await db.conversations.get("conv_root")).toMatchObject({ rootArchived: false })
   })
 })

@@ -211,9 +211,9 @@ export function BoardCard({
   // Archived cards are reachable under `?archived=true` — read-only (INV-62).
   const cardStream = useStreamFromStore(streamId)
   const archived = useEffectiveArchived({
+    workspaceId,
     stream: cardStream,
-    rootStreamId: cardStream?.rootStreamId ?? null,
-    fallbackRootArchived: post.rootArchived === true,
+    fallbackArchived: post.rootArchived === true,
   })
   const archivedReason = conversationArchivedReason(archived)
   const inlineComposer = useInlineBranchComposer({

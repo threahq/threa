@@ -241,3 +241,59 @@ export function streamChipSlug(stream: { type: string; slug?: string | null; dis
     .replace(/^-+|-+$/g, "")
   return folded || streamFallbackLabel(stream.type as StreamType, "noun")
 }
+
+/** Same bound as the backend's `effectivelyArchivedSql` recursive CTE. */
+export const MAX_STREAM_CHAIN_DEPTH = 32
+
+export interface ArchivalChainStream {
+  id: string
+  archivedAt?: string | null
+  parentStreamId?: string | null
+  rootStreamId?: string | null
+}
+
+/**
+ * `resolved: false` means a link of the parent chain is missing from the cache,
+ * so no verdict can be given locally and the caller's cold-load fallback
+ * applies. `resolved: true, sealedBy: null` is a real "nothing archived above"
+ * and must beat a stale fallback (the unarchive-flicker bug).
+ */
+export type ArchivedAncestor<T> = { resolved: true; sealedBy: T | null } | { resolved: false; sealedBy: null }
+
+/**
+ * The nearest archived stream above `stream` along `parentStreamId`, mirroring
+ * the backend's inheritance rule: a thread under an archived thread (at any
+ * depth), or an aside under an archived host, is sealed. When the chain has a
+ * hole, the root row still answers if it is archived (everything under it is
+ * sealed); otherwise the walk is unresolved.
+ */
+export function findArchivedAncestor<T extends ArchivalChainStream>(
+  stream: ArchivalChainStream,
+  lookup: (id: string) => T | undefined
+): ArchivedAncestor<T> {
+  let parentId = stream.parentStreamId ?? null
+  for (let depth = 0; parentId && depth < MAX_STREAM_CHAIN_DEPTH; depth++) {
+    const parent = lookup(parentId)
+    if (!parent) break
+    if (parent.archivedAt) return { resolved: true, sealedBy: parent }
+    parentId = parent.parentStreamId ?? null
+  }
+  if (!parentId) return { resolved: true, sealedBy: null }
+  const root = stream.rootStreamId ? lookup(stream.rootStreamId) : undefined
+  if (root?.archivedAt) return { resolved: true, sealedBy: root }
+  return { resolved: false, sealedBy: null }
+}
+
+/**
+ * Ids of every cached stream that is archived itself or has an archived
+ * ancestor resolvable from the same rows. An unresolvable chain counts as not
+ * sealed so listings never hide a stream on missing data.
+ */
+export function collectSealedStreamIds(streams: readonly ArchivalChainStream[]): Set<string> {
+  const byId = new Map(streams.map((stream) => [stream.id, stream]))
+  const sealed = new Set<string>()
+  for (const stream of streams) {
+    if (stream.archivedAt || findArchivedAncestor(stream, (id) => byId.get(id)).sealedBy) sealed.add(stream.id)
+  }
+  return sealed
+}

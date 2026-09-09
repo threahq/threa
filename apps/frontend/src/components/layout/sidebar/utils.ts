@@ -77,21 +77,19 @@ interface SidebarVisibilityStream {
 
 /**
  * Whether a stream should appear in the sidebar. A stream is hidden when its
- * type never lists (`isHiddenStreamType`), when it is archived, or when it is a
- * thread whose root stream is archived — archiving marks only the root row, so
- * without the root check every nested thread under an archived
- * scratchpad/channel would still surface. Non-public streams are otherwise
- * always visible (bootstrap only includes them when the viewer has access);
- * public ones require explicit membership.
+ * type never lists (`isHiddenStreamType`), when it is archived, or when it is
+ * sealed by an archived ancestor (`sealedStreamIds`, from
+ * `collectSealedStreamIds`). Non-public streams are otherwise always visible
+ * (bootstrap only includes them when the viewer has access); public ones
+ * require explicit membership.
  */
 export function isSidebarStreamVisible(
   stream: SidebarVisibilityStream,
   memberStreamIds: ReadonlySet<string>,
-  archivedStreamIds: ReadonlySet<string>
+  sealedStreamIds: ReadonlySet<string>
 ): boolean {
   if (isHiddenStreamType(stream)) return false
-  if (stream.archivedAt) return false
-  if (stream.rootStreamId && archivedStreamIds.has(stream.rootStreamId)) return false
+  if (stream.archivedAt || sealedStreamIds.has(stream.id)) return false
   if (stream.visibility !== Visibilities.PUBLIC) return true
   return memberStreamIds.has(stream.id)
 }

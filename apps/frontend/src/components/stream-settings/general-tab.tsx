@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -21,6 +22,8 @@ import { DescriptionSection } from "./description-section"
 import { getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import { useRenameStream } from "@/hooks/use-rename-stream"
+import { useEffectiveArchived } from "@/hooks/use-effective-archived"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { isProtectedRegenerableTitle, useRegenerateTitle } from "@/hooks/use-regenerate-title"
 import {
   StreamTypes,
@@ -137,6 +140,7 @@ export function GeneralTab({
         key="archive"
         workspaceId={workspaceId}
         stream={stream}
+        rootStream={rootStream ?? null}
         currentUserId={currentUserId}
         streamTypeLabel={archiveLabel}
       />
@@ -474,21 +478,25 @@ function SystemDisclaimerSection() {
 function ArchiveSection({
   workspaceId,
   stream,
+  rootStream,
   currentUserId,
   streamTypeLabel,
 }: {
   workspaceId: string
   stream: Stream
+  rootStream: Stream | null
   currentUserId: string
   streamTypeLabel: string
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const archiveMutation = useArchiveStream(workspaceId)
   const unarchiveMutation = useUnarchiveStream(workspaceId)
-  const isCreator = stream.createdBy === currentUserId
+  const canArchive = stream.createdBy === currentUserId || rootStream?.createdBy === currentUserId
   const isArchived = stream.archivedAt !== null
+  const { ancestorArchived, sealedById } = useEffectiveArchived({ workspaceId, stream, fallbackArchived: null })
+  const sealingAncestorName = useStreamName(workspaceId, sealedById ?? "", "generic")
 
-  if (!isCreator) return null
+  if (!canArchive) return null
 
   const handleAction = () => {
     if (isArchived) {
@@ -519,6 +527,15 @@ function ArchiveSection({
                 ? `Restore this ${streamTypeLabel} to the sidebar for all members.`
                 : `Hide this ${streamTypeLabel} from the sidebar. You can unarchive it later.`}
             </p>
+            {ancestorArchived && sealedById && (
+              <p className="text-xs text-muted-foreground mt-1" data-testid="sealed-by-ancestor">
+                Sealed by{" "}
+                <Link to={`/w/${workspaceId}/s/${sealedById}`} className="underline underline-offset-2">
+                  {sealingAncestorName ?? "an archived parent"}
+                </Link>
+                . It stays read-only and out of the sidebar until that is unarchived.
+              </p>
+            )}
           </div>
           <Button
             variant="outline"
