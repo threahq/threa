@@ -71,6 +71,7 @@ import { parseMarkdown } from "@threahq/prosemirror"
 import { MessageActionDrawer } from "./message-action-drawer"
 import { isAgentTraceActor } from "./message-actions"
 import { ThreadSlot } from "./thread-slot"
+import { useHostArchived } from "./host-archived-context"
 import { useThreadAnchor } from "./use-thread-anchor"
 import { DeleteMessageDialog } from "./delete-message-dialog"
 import { MessageEditForm } from "./message-edit-form"
@@ -1085,6 +1086,7 @@ function SentMessageEvent({
   // grow-in on first appearance and a grid-rows extension when the card
   // takes over. Suppressed when this message IS the thread parent (avoids
   // recursion on the thread panel's top-pinned parent).
+  const hostArchived = useHostArchived()
   const threadSlot = !isThreadParentProp ? (
     <ThreadSlot
       anchorId={payload.messageId}
@@ -1096,6 +1098,7 @@ function SentMessageEvent({
       workspaceId={workspaceId}
       draft={threadDraft}
       draftHref={replyUrl}
+      hostArchived={hostArchived}
     />
   ) : null
 
@@ -1191,9 +1194,8 @@ function SentMessageEvent({
   // an E2E stream — there is no plaintext to snapshot. Fire-and-forget: the
   // hook toasts on failure.
   const openAside = useOpenAside(workspaceId)
-  // Archived hosts (directly or through the root) cannot open one — the aside
-  // would inherit the archive and the create path refuses it.
-  const hostArchived = !!currentStream?.archivedAt || !!rootStream?.archivedAt
+  // Archived hosts (directly or through any ancestor) cannot open one — the
+  // aside would inherit the archive and the create path refuses it.
   const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived
   const handleOpenAside = useCallback(() => {
     void openAside({ kind: "stream", hostStreamId: streamId, anchorId: payload.messageId }).catch(() => {

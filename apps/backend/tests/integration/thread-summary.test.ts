@@ -403,6 +403,72 @@ describe("Thread Summary", () => {
     })
   })
 
+  describe("archived threads", () => {
+    async function outboxAfter(baselineId: bigint) {
+      return OutboxRepository.fetchAfterId(pool, baselineId)
+    }
+    async function outboxBaseline(): Promise<bigint> {
+      const result = await pool.query("SELECT COALESCE(MAX(id), 0) AS max_id FROM outbox")
+      return BigInt(result.rows[0].max_id)
+    }
+
+    test("a live thread's summary carries archivedAt null from both queries", async () => {
+      const f = await seedThread(1, 1)
+      const batch = (await StreamRepository.findThreadSummaries(pool, f.channelId)).get(f.parentMessageId)
+      const single = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      expect(batch?.archivedAt).toBeNull()
+      expect(batch).toEqual(single)
+    })
+
+    test("archiving the thread re-publishes its summary to the parent room with archivedAt set and no replyCount", async () => {
+      const f = await seedThread(2, 1)
+      const baselineId = await outboxBaseline()
+
+      const archived = await streamService.archiveStream(f.threadId, f.wsId, f.ownerId)
+
+      const threadUpdated = (await outboxAfter(baselineId)).find((event) => event.eventType === "thread:updated")
+      expect(threadUpdated).toBeDefined()
+      const payload = threadUpdated!.payload as ThreadUpdatedOutboxPayload
+      expect(payload).toEqual({
+        workspaceId: f.wsId,
+        streamId: f.channelId,
+        parentStreamId: f.channelId,
+        anchorId: f.parentMessageId,
+        threadId: f.threadId,
+        threadSummary: expect.objectContaining({ archivedAt: archived!.archivedAt!.toISOString() }),
+      })
+      expect(payload.threadSummary!.participants).toHaveLength(2)
+
+      const batch = (await StreamRepository.findThreadSummaries(pool, f.channelId)).get(f.parentMessageId)
+      const single = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      expect(batch).toEqual(single)
+      expect(single?.archivedAt).toBe(archived!.archivedAt!.toISOString())
+    })
+
+    test("unarchiving the thread re-publishes a summary with archivedAt cleared", async () => {
+      const f = await seedThread(1, 1)
+      await streamService.archiveStream(f.threadId, f.wsId, f.ownerId)
+      const baselineId = await outboxBaseline()
+
+      await streamService.unarchiveStream(f.threadId, f.wsId, f.ownerId)
+
+      const threadUpdated = (await outboxAfter(baselineId)).find((event) => event.eventType === "thread:updated")
+      const payload = threadUpdated!.payload as ThreadUpdatedOutboxPayload
+      expect(payload.replyCount).toBeUndefined()
+      expect(payload.threadSummary).toMatchObject({ archivedAt: null })
+    })
+
+    test("archiving a thread with no replies publishes a null summary rather than none", async () => {
+      const f = await seedThread(0, 0)
+      const baselineId = await outboxBaseline()
+
+      await streamService.archiveStream(f.threadId, f.wsId, f.ownerId)
+
+      const threadUpdated = (await outboxAfter(baselineId)).find((event) => event.eventType === "thread:updated")
+      expect(threadUpdated!.payload).toMatchObject({ threadId: f.threadId, threadSummary: null })
+    })
+  })
+
   describe("drift parity between batch and single-parent queries", () => {
     // The two entry points share a row shape (`ThreadSummaryRow`) and a mapper
     // (`threadSummaryFromRow`), but their SQL bodies are independent. These

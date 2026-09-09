@@ -38,6 +38,9 @@ export type { StreamWritePrincipal, LockedStreamAuthority } from "./write-author
 
 export { prependThreadNamingAnchor, renderNamingEventAnchor } from "./naming-context"
 
+export { publishThreadUpdated } from "./thread-updated"
+export type { ThreadUpdatedSource } from "./thread-updated"
+
 export { NOTIFICATION_CONFIG, isAllowedLevel, getDefaultLevel, getEffectiveLevel } from "./notification-config"
 
 export { resolveNotificationLevelsForStream } from "./notification-resolver"

@@ -91,6 +91,7 @@ import {
 import { isAllowedLevel } from "./notification-config"
 import { StreamPoliciesRepository } from "./policy-repository"
 import { normalizeStreamDescription } from "./description"
+import { publishThreadUpdated } from "./thread-updated"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
@@ -1277,7 +1278,18 @@ export class StreamService {
       event,
       threadStreamIds: await StreamRepository.listArchivalCascadeIds(client, stream.workspaceId, stream.id),
     })
+    await this.refreshThreadCard(client, stream)
     return stream
+  }
+
+  /**
+   * A thread's card in the parent timeline carries the thread's `archivedAt`
+   * through its summary, so an archive flip re-publishes that summary to the
+   * parent room. Summary only: the reply count did not change (INV-20).
+   */
+  private async refreshThreadCard(client: Querier, stream: Stream): Promise<void> {
+    if (stream.type !== StreamTypes.THREAD) return
+    await publishThreadUpdated(client, stream, { includeReplyCount: false })
   }
 
   /**

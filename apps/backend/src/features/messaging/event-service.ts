@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
-import { StreamRepository, type Stream } from "../streams"
+import { StreamRepository, publishThreadUpdated, type Stream, type ThreadUpdatedSource } from "../streams"
 import { StreamMemberRepository, SparseReadRepository, ReadStateRepository } from "../streams"
 import {
   assertStreamWritable,
@@ -480,19 +480,6 @@ export interface ConversationAssigner {
 }
 
 /**
- * Minimal thread stream shape `emitThreadUpdate` needs — accepts both the
- * repository's row-mapped `Stream` (dates) and the wire `Stream` (strings),
- * since only these anchor/identity/count fields are read.
- */
-interface ThreadStreamStats {
-  id: string
-  workspaceId: string
-  parentStreamId: string | null
-  parentAnchorId?: string | null
-  replyCount?: number
-}
-
-/**
  * Resolves the workspace's `composeTraces` rollout value. Injected rather than
  * read from a service locator so `EventService` stays constructed once with its
  * collaborators (INV-13) and the messaging feature never imports the
@@ -533,28 +520,11 @@ export class EventService {
    */
   private async emitThreadUpdate(
     client: PoolClient,
-    threadStream: ThreadStreamStats | null,
+    threadStream: ThreadUpdatedSource | null,
     options: { includeReplyCount?: boolean } = {}
   ): Promise<void> {
-    if (!threadStream?.parentStreamId) return
-    const anchorId = threadStream.parentAnchorId
-    if (!anchorId) return
-    const includeReplyCount = options.includeReplyCount ?? true
-
-    const threadSummary = await StreamRepository.findThreadSummaryByParentMessage(
-      client,
-      threadStream.parentStreamId,
-      anchorId
-    )
-    await OutboxRepository.insert(client, "thread:updated", {
-      workspaceId: threadStream.workspaceId,
-      streamId: threadStream.parentStreamId,
-      parentStreamId: threadStream.parentStreamId,
-      anchorId,
-      threadId: threadStream.id,
-      ...(includeReplyCount ? { replyCount: threadStream.replyCount ?? 0 } : {}),
-      threadSummary,
-    })
+    if (!threadStream) return
+    await publishThreadUpdated(client, threadStream, options)
   }
 
   private async resolveActorType(

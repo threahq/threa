@@ -11,6 +11,7 @@ import { useCallOnAnotherDevice } from "@/components/call/use-call-on-another-de
 import { buildStreamLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
+import { useHostArchived } from "./host-archived-context"
 import {
   TimelineCardActionDrawer,
   TimelineCardContextMenu,
@@ -126,6 +127,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
   // The viewer's unsent reply on this card's thread — shown on the slot before
   // the thread stream exists too (keyed on the anchor until promotion).
   const threadDraft = useThreadDraft(workspaceId, event.id, effectiveThreadId)
+  const hostArchived = useHostArchived()
   // Known before the click, so the affordance says what will actually happen
   // instead of a Join that 409s and then asks.
   const onAnotherDevice = useCallOnAnotherDevice(workspaceId, payload?.callId)
@@ -284,6 +286,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
           workspaceId={workspaceId}
           draft={threadDraft}
           draftHref={replyUrl}
+          hostArchived={hostArchived}
         />
       )}
       <TimelineCardQuickActions actions={actions} />

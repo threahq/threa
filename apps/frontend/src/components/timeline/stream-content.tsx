@@ -124,6 +124,7 @@ import { EditLastMessageContext } from "./edit-last-message-context"
 import { QuoteReplyProvider } from "./quote-reply-context"
 import { ConversationReplyProvider } from "./conversation-reply-context"
 import { SlotsProvider } from "@/components/slots/context"
+import { HostArchivedProvider } from "./host-archived-context"
 import { useStreamSlots } from "@/hooks/use-stream-slots"
 import { TextSelectionQuote } from "./text-selection-quote"
 import { StreamSearchBar } from "./stream-search-bar"
@@ -2904,7 +2905,7 @@ export function StreamContent({
 
   const unreadBannerVisible = unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen
 
-  return (
+  const timeline = (
     <ReadFrontierContext.Provider value={readFrontier}>
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
         <QuoteReplyProvider>
@@ -3255,6 +3256,7 @@ export function StreamContent({
       </EditLastMessageContext.Provider>
     </ReadFrontierContext.Provider>
   )
+  return <HostArchivedProvider value={isArchived}>{timeline}</HostArchivedProvider>
 }
 
 /** Virtuoso-powered message list for streams, channels, and scratchpads */
