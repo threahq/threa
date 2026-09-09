@@ -128,8 +128,8 @@ export default defineConfig({
   // tripping on contention (slow assertions, clicks that never settle) and only
   // passing on the in-run retry. 2 workers leaves a spare core and the suite is
   // sharded ×4, so wall-clock stays well under the 25-min job budget.
-  // Local: auto (half CPU cores).
-  workers: process.env.CI ? 2 : undefined,
+  // Local: 2, this box also hosts other worktrees' agents.
+  workers: 2,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
   // 30s locally for fast feedback. CI gets 60s: the shared 4-vCPU runner makes
   // setup + interaction-heavy flows (send-then-edit, hover-reveal menus) take

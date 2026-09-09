@@ -1,4 +1,1 @@
 bunx lint-staged
-bun run lint
-bun run typecheck
-bun run generate:api-docs:check

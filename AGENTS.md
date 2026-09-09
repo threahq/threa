@@ -39,7 +39,7 @@ Publish HTML previews on Seer. Use it liberally — plans, diagrams, mockups, da
 
 ## Workflow
 
-Test-first when practical; else run the nearest suite and verify manually. Never ship unexecuted tests: `bun run test`, `bun run test:e2e`. Failing tests get fixed, never dismissed as pre-existing (INV-22).
+Test-first when practical; else run the nearest suite and verify manually. Never ship unexecuted tests — locally that means a targeted run: pass the paths you touched (`bun run test:unit src/features/streams`, `bun run typecheck apps/backend`). CI runs the full suites on push; `--all` runs everything locally, serialized across worktrees by a shared lock. Failing tests get fixed, never dismissed as pre-existing (INV-22).
 
 **Stacked PRs: always `gh stack`** (GitHub-native Stacks; extension installed — verify `gh extension list | grep stack`, never assume absence). Hand-rolling stacks with plain branches + `gh pr create --base` is the recurring failure — don't.
 

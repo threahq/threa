@@ -183,6 +183,7 @@ export default defineConfig({
     sourcemap: "hidden",
   },
   test: {
+    maxWorkers: process.env.CI ? undefined : 2,
     // Two projects so the Node build-script tests under scripts/ don't drag in
     // the jsdom UI bootstrap (./src/test/setup.ts → @/db, localStorage, DOM
     // polyfills) that has nothing to do with a filesystem script.
@@ -218,10 +219,8 @@ export default defineConfig({
     allowedHosts,
     hmr: isE2ETest ? false : undefined,
     proxy: buildProxyConfig(),
-    watch: {
-      usePolling: true,
-      interval: 100,
-    },
+    // Native inotify by default; polling is opt-in for filesystems without inotify.
+    watch: process.env.VITE_USE_POLLING === "true" ? { usePolling: true, interval: 100 } : undefined,
   },
   // E2E runs against a production build served by `vite preview` (see
   // playwright.config.ts). The preview server needs the same proxy as the dev
