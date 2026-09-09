@@ -1,9 +1,15 @@
 import { useState } from "react"
-import type { StreamEvent, CommandDispatchedPayload, CommandCompletedPayload, CommandFailedPayload } from "@threahq/types"
+import type {
+  StreamEvent,
+  CommandDispatchedPayload,
+  CommandCompletedPayload,
+  CommandFailedPayload,
+} from "@threahq/types"
 import { Loader2, CheckCircle, XCircle, ChevronRight, X } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useFormattedDate } from "@/hooks"
 import { stripMarkdownToInline } from "@/lib/markdown"
+import { MarkdownContent } from "@/components/ui/markdown-content"
 import { useCommandDispatchCancellation } from "@/hooks/use-command-dispatch-queue"
 
 interface CommandEventProps {
@@ -103,7 +109,7 @@ function StatusLabel({ status, failedPayload }: { status: CommandStatus; failedP
     case "completed":
       return <span className="text-green-600 ml-2">completed</span>
     case "failed":
-      return <span className="text-destructive ml-2">failed: {failedPayload?.error ?? "unknown error"}</span>
+      return <span className="text-destructive ml-2">failed: {failureSummary(failedPayload?.error)}</span>
   }
 }
 
@@ -139,9 +145,12 @@ function TimelineEntry({ event, formatTime }: { event: StreamEvent; formatTime: 
     case "command_failed": {
       const p = event.payload as CommandFailedPayload
       return (
-        <div className="flex items-center gap-2 text-xs text-destructive">
-          <span className="w-12 text-muted-foreground/50">{time}</span>
-          <span>Failed: {p.error}</span>
+        <div className="flex items-start gap-2 text-xs text-destructive">
+          <span className="w-12 shrink-0 text-muted-foreground/50">{time}</span>
+          <div className="min-w-0 flex-1">
+            <span>Failed</span>
+            <MarkdownContent content={p.error} className="text-xs text-destructive" />
+          </div>
         </div>
       )
     }
@@ -157,6 +166,13 @@ function truncateArgs(args: string, maxLength = 50): string {
   const inline = stripMarkdownToInline(args)
   if (inline.length <= maxLength) return inline
   return inline.slice(0, maxLength) + "..."
+}
+
+// The header keeps one line; the expanded entry renders the whole reason.
+function failureSummary(error: string | undefined, maxLength = 120): string {
+  const firstLine = stripMarkdownToInline(error?.split("\n")[0] ?? "").trim()
+  if (!firstLine) return "unknown error"
+  return firstLine.length <= maxLength ? firstLine : firstLine.slice(0, maxLength) + "..."
 }
 
 function formatResult(result: unknown): string {
