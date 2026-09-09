@@ -4689,12 +4689,13 @@ function trailingModelError(messages: unknown): string | undefined {
   return undefined
 }
 
+/** Empty when the turn produced no text — the caller closes that as `noResponse`. */
 function textFromAgentMessages(messages: unknown): string {
-  if (!Array.isArray(messages)) return "Done."
+  if (!Array.isArray(messages)) return ""
   const captured = messages
     .map(captureMessageText)
     .filter((item): item is { role: string; text: string } => item !== null)
-  if (captured.length === 0) return "Done."
+  if (captured.length === 0) return ""
   const assistant = captured
     .filter((item) => item.role === "assistant")
     // Same rationale as `resolveFinalText`: the final assistant message is the
@@ -4703,12 +4704,10 @@ function textFromAgentMessages(messages: unknown): string {
     .at(-1)
     ?.text.trim()
   if (assistant) return assistant
-  return (
-    captured
-      .map((item) => item.text)
-      .join("\n\n")
-      .trim() || "Done."
-  )
+  return captured
+    .map((item) => item.text)
+    .join("\n\n")
+    .trim()
 }
 
 function readHeader(headers: unknown, name: string): string | undefined {
@@ -4830,9 +4829,8 @@ function resolveFinalText(
 ): string {
   // Captured at `message_end` when the errored message streamed through, with
   // a scan of the turn's messages as backup for paths that bypass the pending
-  // state. Either way, a turn that ended in a model error must say so — the
-  // old behavior fell through to the "Done." fallback and posted a confident
-  // no-op while every model call was failing.
+  // state. Either way, a turn that ended in a model error must say so, rather
+  // than closing quietly while every model call was failing.
   const modelError = state.modelError ?? trailingModelError((event as { messages?: unknown } | undefined)?.messages)
   if (state.assistantTexts.length > 0) {
     const answer = state.assistantTexts[state.assistantTexts.length - 1]
@@ -4967,15 +4965,14 @@ async function prepareFinalMarkdown(
       ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
       : ""
   return {
-    finalMarkdown:
-      [
-        extracted.markdown || "Done.",
-        attachmentLinks.length > 0 ? "Attachments:" : "",
-        ...attachmentLinks,
-        uploadFailureNote,
-      ]
-        .filter(Boolean)
-        .join("\n\n") || "Done.",
+    finalMarkdown: [
+      extracted.markdown,
+      attachmentLinks.length > 0 ? "Attachments:" : "",
+      ...attachmentLinks,
+      uploadFailureNote,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     uploadedAttachments,
   }
 }
@@ -5203,7 +5200,7 @@ async function completeSealedWithMarkdown(
     failedUploads.length > 0
       ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
       : ""
-  const finalMarkdown = [extracted.markdown || "Done.", uploadFailureNote].filter(Boolean).join("\n\n")
+  const finalMarkdown = [extracted.markdown, uploadFailureNote].filter(Boolean).join("\n\n")
   const reply = await sealReply(sealing, finalMarkdown, refs.length > 0 ? { attachmentRefs: refs } : undefined)
   if (cancelledInvocations.has(invocation) || invocation.sourceRevision !== revision || invocation.sealing !== sealing)
     return
@@ -5267,7 +5264,7 @@ async function completePending(
         (expected && promptEpoch !== expected.epoch)
       )
         return
-      const noResponse = finalMarkdown === NO_RESPONSE_MARKER
+      const noResponse = finalMarkdown === NO_RESPONSE_MARKER || finalMarkdown.length === 0
       await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
         method: "POST",
         body: JSON.stringify({

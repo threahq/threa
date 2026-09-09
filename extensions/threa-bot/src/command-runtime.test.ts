@@ -20,6 +20,15 @@ describe("CommandRuntime", () => {
     expect(describeOutcome(outcome, ["sh"])).toBe("`sh` exited with code 3.\n\n```\nboom\n```")
   })
 
+  test("a command that succeeded without output describes itself as nothing to post", async () => {
+    const runtime = new CommandRuntime({ command: ["sh", "-c", "exit 0"] })
+    const outcome = await runtime.run("x")
+    expect({ outcome, described: describeOutcome(outcome, ["sh"]) }).toEqual({
+      outcome: { ok: true, stdout: "", truncated: false },
+      described: "",
+    })
+  })
+
   test("interrupt kills the running command and the outcome carries no reply", async () => {
     const runtime = new CommandRuntime({ command: ["sh", "-c", "sleep 30; echo late"] })
     const pending = runtime.run("x")

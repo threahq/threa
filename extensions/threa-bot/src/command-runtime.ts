@@ -171,11 +171,15 @@ export class CommandRuntime {
   }
 }
 
-/** The reply text for a finished command: its output, or a plain account of why there is none. */
+/**
+ * The reply text for a finished command: its output, or a plain account of why
+ * there is none. Empty when the command succeeded silently — the caller closes
+ * that turn as `noResponse` rather than posting a stand-in.
+ */
 export function describeOutcome(outcome: CommandOutcome, command: readonly string[]): string | undefined {
   const name = command[0] ?? "command"
   if (outcome.ok) {
-    const body = outcome.stdout.trim() || "(no output)"
+    const body = outcome.stdout.trim()
     return outcome.truncated ? `${body}\n\n_Output truncated at ${MAX_OUTPUT_CHARS} characters._` : body
   }
   switch (outcome.reason) {

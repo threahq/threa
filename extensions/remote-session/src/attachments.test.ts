@@ -183,6 +183,16 @@ describe("uploadReplyAttachments", () => {
     const result = await uploadReplyAttachments(client, "plain reply", "/tmp")
     expect(result).toEqual({ markdown: "plain reply", uploaded: [], failed: [] })
   })
+
+  test("leaves the markdown empty when there was nothing to say and nothing to attach", async () => {
+    const client = {
+      async uploadAttachment(): Promise<AttachmentSummary> {
+        throw new Error("should not be called")
+      },
+    }
+    const result = await uploadReplyAttachments(client, "", "/tmp")
+    expect(result).toEqual({ markdown: "", uploaded: [], failed: [] })
+  })
 })
 
 describe("uploadSealedReplyAttachments", () => {

@@ -212,7 +212,7 @@ export async function uploadReplyAttachments(
     }
   }
   const section = buildReplyAttachmentSection(uploaded, failed)
-  const finalMarkdown = [stripped, section].filter(Boolean).join("\n\n") || "Done."
+  const finalMarkdown = [stripped, section].filter(Boolean).join("\n\n")
   return { markdown: finalMarkdown, uploaded, failed }
 }
 
