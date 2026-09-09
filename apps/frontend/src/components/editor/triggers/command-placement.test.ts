@@ -105,6 +105,16 @@ describe("filterCommands placement gating", () => {
     expect(items.map((i) => i.name)).toEqual(["invite", "shout"])
   })
 
+  it("keeps whole-message commands when the slash opens a message already carrying a prompt", () => {
+    // The prompt is typed first, then the command in front of it — the dispatch
+    // reads the leading command either way, so the palette must too.
+    const editor = makeEditor()
+    typeText(editor, "write me a haiku")
+    editor.commands.setTextSelection(1)
+    typeText(editor, "/")
+    expect(names(filterCommands(ALL, "", editor))).toEqual(["aside", "giphy", "invite", "memo"])
+  })
+
   it("returns whole-message commands when no editor context is available", () => {
     // Defensive fallback: without an editor we can't tell where the slash is, so
     // we don't hide message-level commands (the prior behavior).

@@ -10,6 +10,8 @@ import { Loader2, CheckCircle, XCircle, ChevronRight, X } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useFormattedDate } from "@/hooks"
 import { stripMarkdownToInline } from "@/lib/markdown"
+import { commandChipStyle } from "@/lib/markdown/chip-styles"
+import { cn } from "@/lib/utils"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { useCommandDispatchCancellation } from "@/hooks/use-command-dispatch-queue"
 
@@ -62,9 +64,7 @@ export function CommandEvent({ events }: CommandEventProps) {
             <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
             <StatusIcon status={status} />
             <span className="min-w-0 flex-1 text-left">
-              <code className="font-mono text-xs bg-muted text-primary font-bold px-1 py-0.5 rounded">
-                /{dispatchedPayload.name}
-              </code>
+              <code className={cn(commandChipStyle, "text-xs px-1 py-0.5 rounded")}>/{dispatchedPayload.name}</code>
               {dispatchedPayload.args && (
                 <span className="text-muted-foreground/70 ml-1">{truncateArgs(dispatchedPayload.args)}</span>
               )}
@@ -140,8 +140,7 @@ function TimelineEntry({ event, formatTime }: { event: StreamEvent; formatTime: 
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="w-12 text-muted-foreground/50">{time}</span>
           <span>
-            Command dispatched:{" "}
-            <code className="font-mono bg-muted text-primary font-bold px-1 rounded">/{p.name}</code>
+            Command dispatched: <code className={cn(commandChipStyle, "px-1 rounded")}>/{p.name}</code>
             {p.args && <span className="text-muted-foreground/70"> {stripMarkdownToInline(p.args)}</span>}
           </span>
         </div>

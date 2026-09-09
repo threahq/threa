@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom"
 import { StreamTypes } from "@threahq/types"
 import { renderMentions, processChildrenForMentions } from "./mention-renderer"
 import { ChannelLinkProvider } from "./channel-link-context"
+import { commandChipStyle, commandFlagChipStyle, commandValueStyle } from "./chip-styles"
 
 // No-op emoji lookup for mention tests (not testing emoji rendering here)
 const noEmoji = () => null
@@ -315,6 +316,11 @@ describe("mention-renderer", () => {
 
   describe("slash command rendering", () => {
     const isKnown = (name: string) => name === "invite" || name === "help"
+    const isKnown2 = (name: string) => name === "spawn"
+    const spawnArgs = (name: string) =>
+      name === "spawn"
+        ? { flags: new Set(["model", "thinking"]), values: new Set(["claude", "pi"]) }
+        : { flags: new Set<string>(), values: new Set<string>() }
 
     it("renders a known command as a styled chip", () => {
       const result = renderMentions("/invite @alice", noEmoji, isKnown)
@@ -339,6 +345,47 @@ describe("mention-renderer", () => {
       const result = renderMentions("see /help for more", noEmoji, isKnown)
 
       expect(result).toEqual(["see /help for more"])
+    })
+
+    it("renders the command in the same gold as the command event", () => {
+      render(<>{renderMentions("/invite alice", noEmoji, isKnown)}</>)
+
+      expect(screen.getByText("/invite").className).toContain(commandChipStyle)
+    })
+
+    it("chips a declared argument and its value as one block in two colors", () => {
+      render(<>{renderMentions("/spawn claude /model opus /thinking high", noEmoji, isKnown2, spawnArgs)}</>)
+
+      const blocks = [
+        ["/spawn", "claude", commandChipStyle],
+        ["/model", "opus", commandFlagChipStyle],
+        ["/thinking", "high", commandFlagChipStyle],
+      ] as const
+      for (const [name, value, chipStyle] of blocks) {
+        const valueSpan = screen.getByText(value)
+        expect(valueSpan.className).toContain(commandValueStyle)
+        const chip = valueSpan.parentElement
+        expect(chip?.textContent).toBe(`${name} ${value}`)
+        expect(chip?.className).toContain(chipStyle)
+      }
+    })
+
+    it("leaves the command's free text as prose", () => {
+      const result = renderMentions("/spawn claude fix the archive gap", noEmoji, isKnown2, spawnArgs)
+
+      expect(result[result.length - 1]).toBe(" fix the archive gap")
+    })
+
+    it("leaves a slash the command declares no argument for as prose", () => {
+      const result = renderMentions("/spawn claude /nonsense", noEmoji, isKnown2, spawnArgs)
+
+      expect(result[result.length - 1]).toBe(" /nonsense")
+    })
+
+    it("chips no argument when the message does not open with a command", () => {
+      const result = renderMentions("just talking about /model opus here", noEmoji, isKnown2, spawnArgs)
+
+      expect(result).toEqual(["just talking about /model opus here"])
     })
   })
 })

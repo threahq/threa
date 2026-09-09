@@ -1,4 +1,5 @@
 import { PluginKey } from "@tiptap/pm/state"
+import { commandChipStyle } from "@/lib/markdown/chip-styles"
 import { createTriggerExtension, type TriggerExtensionOptions } from "./create-trigger-extension"
 import type { CommandItem } from "./types"
 
@@ -72,7 +73,7 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
     name: { dataAttr: "data-name" },
     clientActionId: { dataAttr: "data-client-action-id", default: null },
   },
-  getClassName: () => "font-mono font-bold bg-muted text-primary text-sm",
+  getClassName: () => `${commandChipStyle} text-sm`,
   getText: (attrs) => `/${attrs.name}`,
   mapPropsToAttrs: (c) => ({
     name: c.name,

@@ -12,8 +12,9 @@ interface WorkspaceCommandListProviderProps {
 }
 
 /**
- * Provides the registered slash command names for rendering, so "/foo" in
- * message text is only styled as a command chip when `foo` is a real command.
+ * Provides the registered slash commands for rendering, so "/foo" in message
+ * text is only styled as a command chip when `foo` is a real command, and a
+ * command's own flags (`/model`) render as its arguments.
  */
 export function WorkspaceCommandListProvider({ workspaceId, children }: WorkspaceCommandListProviderProps) {
   const metadata = useWorkspaceMetadata(workspaceId)
@@ -28,10 +29,10 @@ export function WorkspaceCommandListProvider({ workspaceId, children }: Workspac
     staleTime: Infinity,
   })
 
-  const commandNames = useMemo(() => {
-    const effective = streamBootstrap?.commands ?? metadata?.commands ?? []
-    return effective.map((command) => command.name)
-  }, [metadata?.commands, streamBootstrap?.commands])
+  const commands = useMemo(
+    () => streamBootstrap?.commands ?? metadata?.commands ?? [],
+    [metadata?.commands, streamBootstrap?.commands]
+  )
 
-  return <CommandListProvider commandNames={commandNames}>{children}</CommandListProvider>
+  return <CommandListProvider commands={commands}>{children}</CommandListProvider>
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import type { Editor } from "@tiptap/react"
 import type { CommandArgumentInfo, CommandArgumentSuggestion } from "@threahq/types"
@@ -129,20 +129,48 @@ export function filterArgSuggestions(
   }))
 }
 
-interface ArgPickerState {
-  /** Every argument the command takes, so a flag typed later reopens the list for it. */
+/** The argument region of the command a message opens with. */
+interface ArgSession {
+  /** Every argument the command takes, so a flag typed later opens the list for it. */
   args: readonly CommandArgumentInfo[]
-  /** Doc position right after the inserted `/command ` chip+space — the start of the argument text. */
+  /** Doc position right after the leading `/command` chip — the start of the argument text. */
   anchorPos: number
-  /** Everything typed between `anchorPos` and the caret. */
+  /** Everything between `anchorPos` and the caret. */
   text: string
-  /** Name of the argument whose list was escaped; it stays shut until another argument takes over. */
-  dismissed: string | null
+}
+
+/**
+ * Read the argument region out of the doc, or null when the caret isn't in one.
+ *
+ * Derived on every change rather than captured when the command was picked: an
+ * argument the user comes back to — `/model` corrected after the whole prompt is
+ * typed — must open its list again, and a session captured at pick time can only
+ * ever close. The command a message opens with is the one it dispatches
+ * (`extractCommandNode`), so that leading chip is the only one with arguments.
+ */
+export function resolveArgSession(
+  editor: Editor | null,
+  pickableArgsFor: (name: string) => readonly CommandArgumentInfo[] | null
+): ArgSession | null {
+  // Focus-gated because the session is derived, not opened: a restored draft
+  // that starts with a command would otherwise float its option list over an
+  // editor nobody is typing in.
+  if (!editor || editor.isDestroyed || !editor.isFocused) return null
+  const block = editor.state.doc.firstChild
+  const chip = block?.firstChild
+  if (!block || !chip || chip.type.name !== "slashCommand") return null
+  const args = pickableArgsFor(String(chip.attrs.name ?? ""))
+  if (!args) return null
+  const anchorPos = 1 + chip.nodeSize
+  const { $from, from } = editor.state.selection
+  if ($from.index(0) !== 0 || from < anchorPos) return null
+  const text = editor.state.doc.textBetween(anchorPos, from, "\n", "")
+  return text.includes("\n") ? null : { args, anchorPos, text }
 }
 
 /**
  * Rect of a fixed doc position. The picker anchors to `anchorPos` (the start of
- * the argument, just after the `/command ` chip) rather than the live caret, so
+ * the argument, just after the `/command` chip) rather than the live caret, so
  * it stays put as the user types the filter — matching the trigger-anchored
  * @mention / /command popovers instead of marching right per keystroke (INV-21).
  * Measured live, so it still follows scroll.
@@ -158,8 +186,6 @@ function posClientRect(editor: Editor | null, pos: number): DOMRect | null {
 }
 
 export interface UseCommandArgPickerResult {
-  /** Start an argument session for a command; call right after the chip is inserted. */
-  openArgPicker: (args: readonly CommandArgumentInfo[]) => void
   /** Render the picker portal — call in the editor's JSX. */
   renderArgPicker: () => React.ReactNode
   /**
@@ -174,102 +200,78 @@ export interface UseCommandArgPickerResult {
 /**
  * Drives the command-argument option picker (see {@link CommandArgPicker}).
  *
- * The picker is not a TipTap trigger — it opens programmatically once a command
- * is picked, so there's no trigger character to anchor a suggestion plugin to.
- * Instead it lives in React state, tracks the argument text by reading the doc
- * between a captured anchor and the caret, and routes keys through
- * `handleArgPickerKeyDown` which the host wires into `editorProps.handleKeyDown`
- * (which runs before the editor's keymaps).
+ * The picker is not a TipTap trigger — the arguments follow a command chip
+ * rather than a trigger character, so there's no suggestion plugin to anchor to.
+ * It reads the argument region out of the doc on every editor change
+ * ({@link resolveArgSession}) and routes keys through `handleArgPickerKeyDown`,
+ * which the host wires into `editorProps.handleKeyDown` (running before the
+ * editor's own keymaps).
  */
-export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCommandArgPickerResult {
-  const [state, setState] = useState<ArgPickerState | null>(null)
-  const stateRef = useRef<ArgPickerState | null>(null)
-  stateRef.current = state
+export function useCommandArgPicker(
+  editorRef: RefObject<Editor | null>,
+  pickableArgsFor: (name: string) => readonly CommandArgumentInfo[] | null
+): UseCommandArgPickerResult {
+  const [, bump] = useReducer((tick: number) => tick + 1, 0)
+  // The argument whose list was escaped; it stays shut until the caret fills
+  // another one.
+  const [dismissed, setDismissed] = useState<string | null>(null)
   const listRef = useRef<SuggestionListRef>(null)
-  const isOpen = state !== null
+  const editor = editorRef.current
 
-  const openArgPicker = useCallback(
-    (args: readonly CommandArgumentInfo[]) => {
-      const editor = editorRef.current
-      if (!editor || editor.isDestroyed) return
-      setState({ args, anchorPos: editor.state.selection.from, text: "", dismissed: null })
-    },
-    [editorRef]
-  )
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.on("update", bump)
+    editor.on("selectionUpdate", bump)
+    editor.on("focus", bump)
+    editor.on("blur", bump)
+    return () => {
+      editor.off("update", bump)
+      editor.off("selectionUpdate", bump)
+      editor.off("focus", bump)
+      editor.off("blur", bump)
+    }
+  }, [editor])
+
+  const session = resolveArgSession(editor, pickableArgsFor)
+  const sessionRef = useRef<ArgSession | null>(null)
+  sessionRef.current = session
+  const resolved = session ? resolveActiveArg(session.args, session.text) : null
+  const active = resolved && resolved.arg.name !== dismissed ? resolved : null
+  const activeRef = useRef<ActiveArg | null>(null)
+  activeRef.current = active
+
+  useEffect(() => {
+    if (dismissed !== null && resolved?.arg.name !== dismissed) setDismissed(null)
+  }, [dismissed, resolved?.arg.name])
 
   const select = useCallback(
     (value: string, query: string) => {
-      const editor = editorRef.current
-      const current = stateRef.current
-      if (!editor || editor.isDestroyed || !current) return
-      const caret = editor.state.selection.from
+      const ed = editorRef.current
+      const current = sessionRef.current
+      if (!ed || ed.isDestroyed || !current) return
+      const caret = ed.state.selection.from
       // Replace only the word being typed for this argument — the rest of the
       // line is another argument's — and follow the value with a space, which
       // both ends the option list and starts whatever comes next.
       const from = Math.max(current.anchorPos, caret - query.length)
-      editor.chain().focus().deleteRange({ from, to: caret }).insertContent(`${value} `).run()
+      ed.chain().focus().deleteRange({ from, to: caret }).insertContent(`${value} `).run()
     },
     [editorRef]
   )
-
-  // Keep the query in sync with the text after the command, and close when the
-  // caret leaves the argument region (deleted back past the command, moved to a
-  // new line). Subscribes once per open via the boolean dep; reads live state
-  // from the ref so it isn't torn down on every keystroke.
-  useEffect(() => {
-    const editor = editorRef.current
-    if (!editor || editor.isDestroyed || !isOpen) return
-    const sync = () => {
-      const ed = editorRef.current
-      const current = stateRef.current
-      if (!ed || ed.isDestroyed || !current) return
-      const caret = ed.state.selection.from
-      if (caret < current.anchorPos || caret > ed.state.doc.content.size) {
-        setState(null)
-        return
-      }
-      const text = ed.state.doc.textBetween(current.anchorPos, caret, "\n", "")
-      if (text.includes("\n")) {
-        setState(null)
-        return
-      }
-      if (text === current.text) return
-      // A dismissal only covers the argument it was made on; moving to another
-      // one (typing `/model` after escaping the runtime list) re-arms the list.
-      const dismissed = resolveActiveArg(current.args, text)?.arg.name === current.dismissed ? current.dismissed : null
-      setState({ ...current, text, dismissed })
-    }
-    editor.on("update", sync)
-    editor.on("selectionUpdate", sync)
-    return () => {
-      editor.off("update", sync)
-      editor.off("selectionUpdate", sync)
-    }
-  }, [isOpen, editorRef])
 
   // A pointer down anywhere outside the option list closes the picker. Capture
   // phase so clicking into the editor closes before the caret moves; clicks on
   // an option land inside the listbox and pass through to its button handler.
   useEffect(() => {
-    if (!isOpen) return
+    if (!active) return
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
       if (target?.closest('[role="listbox"]')) return
-      setState(null)
+      setDismissed(activeRef.current?.arg.name ?? null)
     }
     document.addEventListener("pointerdown", onPointerDown, true)
     return () => document.removeEventListener("pointerdown", onPointerDown, true)
-  }, [isOpen])
-
-  // The argument the list is currently for, or null while the caret sits between
-  // arguments (typing the session name) or after the list was escaped.
-  const active = useMemo(() => {
-    if (!state) return null
-    const resolved = resolveActiveArg(state.args, state.text)
-    return resolved && resolved.arg.name !== state.dismissed ? resolved : null
-  }, [state])
-  const activeRef = useRef<ActiveArg | null>(null)
-  activeRef.current = active
+  }, [active])
 
   const items = useMemo(
     () => (active ? filterArgSuggestions(active.arg.suggestions ?? [], active.query) : []),
@@ -279,30 +281,29 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
   itemsRef.current = items
 
   const handleArgPickerKeyDown = useCallback((event: KeyboardEvent): boolean => {
-    const current = stateRef.current
     const open = activeRef.current
     // A filter that matches nothing renders no list, so it owns no keys either.
-    if (!current || !open || itemsRef.current.length === 0) return false
+    if (!open || itemsRef.current.length === 0) return false
     if (event.key === "Escape") {
-      setState({ ...current, dismissed: open.arg.name })
+      setDismissed(open.arg.name)
       return true
     }
     return listRef.current?.onKeyDown(event) ?? false
   }, [])
 
   const renderArgPicker = useCallback(() => {
-    if (!state || !active) return null
+    if (!session || !active) return null
     return createPortal(
       <CommandArgPicker
         ref={listRef}
         items={items}
-        clientRect={() => posClientRect(editorRef.current, state.anchorPos)}
+        clientRect={() => posClientRect(editorRef.current, session.anchorPos)}
         command={(suggestion) => select(suggestion.value, active.query)}
         deferSelection={!active.arg.required}
       />,
       document.body
     )
-  }, [state, active, items, select, editorRef])
+  }, [session, active, items, select, editorRef])
 
-  return { openArgPicker, renderArgPicker, handleArgPickerKeyDown }
+  return { renderArgPicker, handleArgPickerKeyDown }
 }
