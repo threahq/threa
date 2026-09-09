@@ -2162,6 +2162,12 @@ export interface CommandDispatchedPayload {
 export interface CommandCompletedPayload {
   commandId: string
   result?: unknown
+  /**
+   * What the runtime did, for a command that completes without a reply ("Model
+   * set to opus"). Runtime-authored prose, like `error` on the failed payload;
+   * the chip renders it in place of a bare "completed".
+   */
+  summary?: string
 }
 
 export interface CommandFailedPayload {

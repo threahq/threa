@@ -304,6 +304,12 @@ export const completeInvocationSchema = z
     sourceRevision: z.number().int().min(0).optional(),
     finalMessageMarkdown: z.string().min(1).max(50_000).optional(),
     noResponse: z.boolean().optional(),
+    // What the invocation did, for a slash command that finishes without a
+    // reply: it lands on the command's own timeline chip instead of a message
+    // ("Interrupted the running turn"). Plaintext on an E2E stream by design,
+    // like the command's `args` in the dispatched event, so it states what
+    // happened and never quotes stream content.
+    summary: z.string().min(1).max(500).optional(),
     sources: z.array(sourceItemSchema).max(50).optional(),
     metadata: messageMetadataSchema.optional(),
     // Sealed variant of `finalMessageMarkdown`, for a session-control ack on an
@@ -320,10 +326,17 @@ export const completeInvocationSchema = z
       })
       .optional(),
   })
-  .refine((value) => value.noResponse === true || value.finalMessageMarkdown != null || value.sealedReply != null, {
-    message: "Either finalMessageMarkdown, sealedReply, or noResponse is required",
-    path: ["finalMessageMarkdown"],
-  })
+  .refine(
+    (value) =>
+      value.noResponse === true ||
+      value.summary != null ||
+      value.finalMessageMarkdown != null ||
+      value.sealedReply != null,
+    {
+      message: "Either finalMessageMarkdown, sealedReply, summary, or noResponse is required",
+      path: ["finalMessageMarkdown"],
+    }
+  )
   .refine((value) => !(value.finalMessageMarkdown != null && value.sealedReply != null), {
     message: "Provide finalMessageMarkdown or sealedReply, not both",
     path: ["sealedReply"],

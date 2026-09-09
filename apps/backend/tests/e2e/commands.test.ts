@@ -22,6 +22,7 @@ import {
   createBot,
   createBotKey,
   botApiPost,
+  sendMessage,
 } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
@@ -139,6 +140,26 @@ interface LinkedPiSession {
   streamId: string
   runtimeSessionId: string
   instanceId: string
+}
+
+async function claimInvocation(
+  client: TestClient,
+  workspaceId: string,
+  apiKey: string,
+  body: Record<string, unknown>
+): Promise<{ id: string; claimToken: string }> {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const res = await botApiPost<{ data: { id: string; claimToken: string } | null }>(
+      client,
+      workspaceId,
+      "/bot-invocations/claim",
+      apiKey,
+      body
+    )
+    if (res.status === 200 && res.data.data) return res.data.data
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  throw new Error("no invocation claimed within the poll window")
 }
 
 async function createLinkedPiSession(
@@ -492,5 +513,86 @@ describe("Stream-scoped Pi session-control commands", () => {
       .filter((event) => event.eventType === "command_progress")
       .map((event) => event.payload as { commandId?: string; step?: string })
     expect(steps).toEqual([{ commandId: dispatch.commandId, step: "Committing and pushing" }])
+  })
+
+  test("a session-control invocation closes with a summary on its command and no message", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("pi-cmd-summary"), "Pi Command User")
+    const workspace = await createWorkspace(client, `Pi Cmd Summary WS ${testRunId}`)
+    const linked = await createLinkedPiSession(client, workspace.id, `summary-${testRunId}`)
+
+    const dispatch = await dispatchCommand(client, workspace.id, linked.streamId, "/thinking high")
+
+    const claim = await botApiPost<{ data: { id: string; claimToken: string } | null }>(
+      client,
+      workspace.id,
+      "/bot-invocations/claim",
+      linked.apiKey,
+      {
+        runtimeKind: "pi-local",
+        instanceId: linked.instanceId,
+        runtimeSessionId: linked.runtimeSessionId,
+        supportedCapabilities: [BotInvocationCapabilities.SESSION_CONTROL],
+        claimTtlSeconds: 120,
+      }
+    )
+    const invocation = claim.data.data
+    if (!invocation) throw new Error("Expected to claim the dispatched invocation")
+
+    const complete = await botApiPost(
+      client,
+      workspace.id,
+      `/bot-invocations/${invocation.id}/complete`,
+      linked.apiKey,
+      {
+        instanceId: linked.instanceId,
+        claimToken: invocation.claimToken,
+        summary: "Thinking level set to high",
+      }
+    )
+    expect(complete.status).toBe(200)
+
+    const events = await listEvents(client, workspace.id, linked.streamId)
+    const completed = events
+      .filter((event) => event.eventType === "command_completed")
+      .map((event) => event.payload as { commandId?: string; result?: unknown; summary?: string })
+    expect(completed).toEqual([
+      { commandId: dispatch.commandId, result: { invocationId: invocation.id }, summary: "Thinking level set to high" },
+    ])
+    expect(events.filter((event) => event.eventType === "message_created")).toEqual([])
+  })
+
+  test("a summary on an invocation with no command is rejected", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("pi-summary-nocmd"), "Pi Command User")
+    const workspace = await createWorkspace(client, `Pi Summary NoCmd WS ${testRunId}`)
+    const suffix = `nocmd-${testRunId}`
+    const linked = await createLinkedPiSession(client, workspace.id, suffix)
+
+    await sendMessage(client, workspace.id, linked.streamId, `[@pi-${suffix}](bot:${linked.bot.id}) ping`)
+
+    const invocation = await claimInvocation(client, workspace.id, linked.apiKey, {
+      runtimeKind: "pi-local",
+      instanceId: linked.instanceId,
+      runtimeSessionId: linked.runtimeSessionId,
+      supportedCapabilities: [BotInvocationCapabilities.ACTIVE_SCRATCHPAD, BotInvocationCapabilities.MENTIONABLE],
+      claimTtlSeconds: 120,
+    })
+
+    const complete = await botApiPost<{ code?: string }>(
+      client,
+      workspace.id,
+      `/bot-invocations/${invocation.id}/complete`,
+      linked.apiKey,
+      {
+        instanceId: linked.instanceId,
+        claimToken: invocation.claimToken,
+        summary: "Answered the ping",
+      }
+    )
+    expect({ status: complete.status, code: complete.data.code }).toEqual({
+      status: 400,
+      code: "SUMMARY_WITHOUT_COMMAND",
+    })
   })
 })

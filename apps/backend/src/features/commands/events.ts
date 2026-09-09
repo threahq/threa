@@ -98,13 +98,25 @@ export async function insertCommandDispatchedEvent(
 
 export async function insertCommandCompletedEvent(
   db: Querier,
-  params: { workspaceId: string; streamId: string; userId: string; commandId: string; result?: unknown }
+  params: {
+    workspaceId: string
+    streamId: string
+    userId: string
+    commandId: string
+    result?: unknown
+    /** The runtime's own account of what the command did, when it sent one. */
+    summary?: string
+  }
 ): Promise<StreamEvent> {
   const evt = await StreamEventRepository.insert(db, {
     id: eventId(),
     streamId: params.streamId,
     eventType: "command_completed",
-    payload: { commandId: params.commandId, result: params.result } satisfies CommandCompletedPayload,
+    payload: {
+      commandId: params.commandId,
+      result: params.result,
+      ...(params.summary && { summary: params.summary }),
+    } satisfies CommandCompletedPayload,
     actorId: params.userId,
     actorType: AuthorTypes.USER,
   })
