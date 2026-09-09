@@ -28,7 +28,7 @@ describe("requestLogLevel", () => {
 })
 
 describe("requestLogSerializers.req", () => {
-  it("should keep only id, method, url, and userAgent when headers carry secrets", () => {
+  it("should keep only id, method, url, userAgent, and origin when headers carry secrets", () => {
     const stdSerializedRequest = {
       id: "req-1",
       method: "GET",
@@ -38,6 +38,7 @@ describe("requestLogSerializers.req", () => {
         cookie: "session=abc",
         "x-internal-api-key": "internal-secret",
         "user-agent": "curl/8.0",
+        origin: "https://www.example.com",
       },
       query: { include: "members" },
       params: { id: "ws_01WORKSPACE" },
@@ -52,6 +53,7 @@ describe("requestLogSerializers.req", () => {
       method: "GET",
       url: "/api/v1/workspaces/ws_01WORKSPACE/streams?include=members",
       userAgent: "curl/8.0",
+      origin: "https://www.example.com",
     })
   })
 })

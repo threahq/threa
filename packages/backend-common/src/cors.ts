@@ -1,3 +1,5 @@
+import { HttpError } from "./errors"
+
 type CorsOriginCallback = (err: Error | null, origin?: boolean) => void
 type CorsOriginChecker = (origin: string | undefined, callback: CorsOriginCallback) => void
 
@@ -16,6 +18,6 @@ export function createCorsOriginChecker(allowedOrigins: string[]): CorsOriginChe
       return
     }
 
-    callback(new Error("CORS origin not allowed"), false)
+    callback(new HttpError("CORS origin not allowed", { status: 403, code: "CORS_ORIGIN_NOT_ALLOWED" }), false)
   }
 }
