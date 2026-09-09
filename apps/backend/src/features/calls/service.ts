@@ -2499,7 +2499,7 @@ export class CallService {
       if (!call) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
       const generation = params.generation ?? call.transportGeneration
       const targetSession =
-        generation === call.transportGeneration
+        params.generation == null
           ? null
           : await CallTransportSessionRepository.find(client, {
               workspaceId: params.workspaceId,
@@ -2507,6 +2507,9 @@ export class CallService {
               endpointId: params.endpointId,
               generation,
             })
+      if (params.generation != null && !targetSession) {
+        throw new HttpError("SFU generation is stale", { status: 409, code: "CALL_STALE_GENERATION" })
+      }
       const base =
         targetSession?.publishedTracks ??
         (current?.mediaIncarnation === params.mediaIncarnation ? current.publishedTracks : [])
@@ -2534,6 +2537,13 @@ export class CallService {
         // The endpoint was closed (concurrent takeover/reap) between the fence read
         // and this write — don't bump the roster for a registry that wasn't persisted.
         throw new HttpError("Endpoint is no longer live", { status: 409, code: "CALL_ENDPOINT_NOT_LIVE" })
+      }
+      if (targetSession && generation === call.transportGeneration) {
+        await CallTransportSessionRepository.projectGenerationToEndpoints(client, {
+          workspaceId: params.workspaceId,
+          callId: params.callId,
+          generation,
+        })
       }
       const rosterVersion = await CallRepository.bumpRosterVersion(client, params.workspaceId, params.callId)
       if (current)
