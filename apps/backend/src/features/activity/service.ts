@@ -583,15 +583,15 @@ export class ActivityService {
 
     if (event.actorType === "bot") return []
 
-    const addedBy =
-      typeof event.payload === "object" && event.payload !== null && "addedBy" in event.payload
-        ? (event.payload as Record<string, unknown>).addedBy
-        : null
-
+    const payload =
+      typeof event.payload === "object" && event.payload !== null ? (event.payload as Record<string, unknown>) : {}
+    const addedBy = payload.addedBy
     if (typeof addedBy !== "string") {
       logger.warn({ eventId: event.id }, "processMemberAdded: missing addedBy, skipping")
       return []
     }
+    // Events written before the adder's type was recorded were all user-added.
+    const addedByType = payload.addedByType === AuthorTypes.BOT ? AuthorTypes.BOT : AuthorTypes.USER
 
     return withClient(this.pool, async (client) => {
       const stream = await StreamRepository.findById(client, streamId)
@@ -599,7 +599,7 @@ export class ActivityService {
 
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
       const streamContext = resolveStreamContext(stream, rootStream)
-      const actorName = await this.resolveAuthorName(client, workspaceId, addedBy, AuthorTypes.USER)
+      const actorName = await this.resolveAuthorName(client, workspaceId, addedBy, addedByType)
 
       const rows = await ActivityRepository.insertBatch(client, {
         workspaceId,
@@ -608,7 +608,7 @@ export class ActivityService {
         streamId,
         messageId: event.id,
         actorId: addedBy,
-        actorType: AuthorTypes.USER,
+        actorType: addedByType,
         context: { authorName: actorName, ...streamContext },
       })
 
