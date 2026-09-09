@@ -3,8 +3,8 @@ import type { CommandArgumentInfo, CommandInfo } from "@threahq/types"
 
 /** What a command answers to, for rendering its arguments in a posted message. */
 export interface CommandArgNames {
-  /** Flag names without the leading `/`: `model`, `thinking`. */
-  flags: ReadonlySet<string>
+  /** Flag names without the leading `/`, each with the values it advertises. */
+  flags: ReadonlyMap<string, ReadonlySet<string>>
   /** The values its leading positional argument advertises: `claude`, `pi`. */
   values: ReadonlySet<string>
 }
@@ -16,7 +16,7 @@ interface CommandListContextValue {
 
 const CommandListContext = createContext<CommandListContextValue | null>(null)
 
-export const NO_ARGS: CommandArgNames = { flags: new Set(), values: new Set() }
+export const NO_ARGS: CommandArgNames = { flags: new Map(), values: new Set() }
 
 interface CommandListProviderProps {
   commands: readonly CommandInfo[]
@@ -30,14 +30,22 @@ interface CommandListProviderProps {
  * command's free text (a session name, a steer) is prose, not an argument.
  */
 function argNames(args: readonly CommandArgumentInfo[] | undefined): CommandArgNames {
-  const flags = new Set<string>()
+  const flags = new Map<string, Set<string>>()
   const values = new Set<string>()
   const collect = (list: readonly CommandArgumentInfo[] | undefined) => {
     for (const arg of list ?? []) {
       const isFlag = arg.name.startsWith("/")
-      if (isFlag) flags.add(arg.name.slice(1).toLowerCase())
+      // The same flag under two runtimes (`/spawn claude` and `/spawn pi` each
+      // declare `/model`) unions their lists: the renderer draws the text, it
+      // doesn't resolve which runtime a message picked.
+      const key = arg.name.slice(1).toLowerCase()
+      let taken = isFlag ? flags.get(key) : undefined
+      if (isFlag && !taken) {
+        taken = new Set<string>()
+        flags.set(key, taken)
+      }
       for (const suggestion of arg.suggestions ?? []) {
-        if (!isFlag) values.add(suggestion.value.toLowerCase())
+        ;(taken ?? values).add(suggestion.value.toLowerCase())
         collect(suggestion.args)
       }
     }

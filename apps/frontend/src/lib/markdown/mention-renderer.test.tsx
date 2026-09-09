@@ -319,8 +319,14 @@ describe("mention-renderer", () => {
     const isKnown2 = (name: string) => name === "spawn"
     const spawnArgs = (name: string) =>
       name === "spawn"
-        ? { flags: new Set(["model", "thinking"]), values: new Set(["claude", "pi"]) }
-        : { flags: new Set<string>(), values: new Set<string>() }
+        ? {
+            flags: new Map([
+              ["model", new Set(["opus", "sonnet"])],
+              ["thinking", new Set(["low", "high"])],
+            ]),
+            values: new Set(["claude", "pi"]),
+          }
+        : { flags: new Map<string, Set<string>>(), values: new Set<string>() }
 
     it("renders a known command as a styled chip", () => {
       const result = renderMentions("/invite @alice", noEmoji, isKnown)
@@ -380,6 +386,14 @@ describe("mention-renderer", () => {
       const result = renderMentions("/spawn claude /nonsense", noEmoji, isKnown2, spawnArgs)
 
       expect(result[result.length - 1]).toBe(" /nonsense")
+    })
+
+    it("leaves a token the flag does not advertise as prose", () => {
+      const result = renderMentions("/spawn claude /thinking fix the bug", noEmoji, isKnown2, spawnArgs)
+
+      render(<>{result}</>)
+      expect(screen.getByText("/thinking").textContent).toBe("/thinking")
+      expect(result[result.length - 1]).toBe(" fix the bug")
     })
 
     it("chips no argument when the message does not open with a command", () => {

@@ -228,11 +228,16 @@ export function renderMentions(
     const flagPattern = new RegExp(COMMAND_FLAG_PATTERN.source, COMMAND_FLAG_PATTERN.flags)
     let flagMatch
     while ((flagMatch = flagPattern.exec(processText)) !== null) {
-      const [whole, space, name, , value] = flagMatch
-      if (!args.flags.has(name.toLowerCase())) continue
+      const [whole, space, name, , taken] = flagMatch
+      const advertised = args.flags.get(name.toLowerCase())
+      if (!advertised) continue
+      // Same rule as the leading command: only a value the flag advertises joins
+      // its chip, so `/spawn claude /thinking fix the bug` chips `/thinking`
+      // alone and leaves the session name prose.
+      const value = taken && advertised.has(taken.toLowerCase()) ? taken : undefined
       triggers.push({
         index: flagMatch.index + space.length,
-        length: whole.length - space.length,
+        length: value ? whole.length - space.length : name.length + 1,
         type: "command-flag",
         slug: name,
         value,
