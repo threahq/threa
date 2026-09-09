@@ -2,6 +2,8 @@ import { spawn } from "child_process"
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import * as path from "path"
+import { runUnderHeavyLock } from "./lib/heavy-lock"
+import { sweepOrphanedWebServers } from "./lib/orphan-sweep"
 
 type Runner = "bun" | "vitest" | "playwright"
 type Mode = "backend-unit" | "backend-integration" | "backend-e2e" | "frontend" | "browser"
@@ -155,8 +157,9 @@ const booleanOptionsByRunner: Record<Runner, Set<string>> = {
 function usage(): number {
   console.error(
     "Usage: bun scripts/test-silent.ts <backend-unit|backend-integration|backend-e2e|frontend|browser> [args...]\n" +
-      "  Add --verbose to bypass silent mode and stream all test logs.\n" +
-      "  CI runs are automatically verbose."
+      "  Pass file paths or patterns to target your change; --all runs the whole suite\n" +
+      "  under a cross-worktree lock. Add --verbose to bypass silent mode and stream all\n" +
+      "  test logs. CI runs are automatically verbose."
   )
   return 1
 }
@@ -648,15 +651,53 @@ async function probePlaywrightTarget(
   }
 }
 
+export type RunPlan = { action: "refuse"; message: string } | { action: "run"; args: string[]; lock: boolean }
+
+export function resolveRunPlan(mode: Mode, rawArgs: string[], env: NodeJS.ProcessEnv = process.env): RunPlan {
+  const runAll = rawArgs.includes("--all")
+  const verboseAliases = new Set(["--verbose", "--show-all-logs", "--show-all-output"])
+  const args = rawArgs.filter((arg) => arg !== "--all")
+  const patternCandidates = args.filter((arg) => !verboseAliases.has(arg))
+  const hasPatterns = splitArgs(patternCandidates, modeConfigs[mode].runner).patternArgs.length > 0
+
+  if (!hasPatterns && !runAll && !env.CI) {
+    return {
+      action: "refuse",
+      message: `Refusing to run the full ${mode} suite locally. Pass file paths or patterns to target your change, or --all to run everything. CI runs the full suite on push.`,
+    }
+  }
+
+  return { action: "run", args, lock: !env.CI && (mode === "browser" || !hasPatterns) }
+}
+
 async function main(): Promise<number> {
   const mode = process.argv[2] as Mode | undefined
   if (!mode || !modeConfigs[mode]) return usage()
 
   const config = modeConfigs[mode]
-  const extraArgs = process.argv.slice(3)
+  const rawArgs = process.argv.slice(3)
+  const plan = resolveRunPlan(mode, rawArgs)
+  if (plan.action === "refuse") {
+    console.error(plan.message)
+    return 1
+  }
+
+  const extraArgs = plan.args
   const verboseAliases = new Set(["--verbose", "--show-all-logs", "--show-all-output"])
   const forceVerbose = extraArgs.some((arg) => verboseAliases.has(arg)) || !!process.env.CI
   const filteredArgs = extraArgs.filter((arg) => !verboseAliases.has(arg))
+
+  if (plan.lock && !process.env.THREA_HEAVY_LOCK_HELD) {
+    return await runUnderHeavyLock(["bun", import.meta.path, ...process.argv.slice(2)], {
+      cwd: rootDir,
+      env: { THREA_HEAVY_LOCK_HELD: "1" },
+      label: `test ${mode}`,
+    })
+  }
+
+  if (config.runner === "playwright" && !process.env.CI) {
+    await sweepOrphanedWebServers()
+  }
 
   if (forceVerbose) {
     const split = splitArgs(filteredArgs, config.runner)
@@ -811,12 +852,14 @@ async function main(): Promise<number> {
   }
 }
 
-void main()
-  .then((code) => {
-    process.exitCode = code
-  })
-  .catch((error) => {
-    console.error("Silent test runner failed:")
-    console.error(error)
-    process.exitCode = 1
-  })
+if (import.meta.main) {
+  void main()
+    .then((code) => {
+      process.exitCode = code
+    })
+    .catch((error) => {
+      console.error("Silent test runner failed:")
+      console.error(error)
+      process.exitCode = 1
+    })
+}

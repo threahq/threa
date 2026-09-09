@@ -502,6 +502,9 @@ async function main() {
       INTERNAL_API_KEY: internalApiKey,
       ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
       CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
+      DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX ?? "8",
+      DATABASE_LISTEN_POOL_MAX: process.env.DATABASE_LISTEN_POOL_MAX ?? "4",
+      DATABASE_REALTIME_POOL_MAX: process.env.DATABASE_REALTIME_POOL_MAX ?? "4",
       REGION: "local",
     },
   })
