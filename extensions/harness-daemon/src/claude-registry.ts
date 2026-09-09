@@ -12,6 +12,8 @@ export interface ClaudeNativeSession {
   procStart: string
   name?: string
   status: string
+  /** Epoch ms the runtime last wrote `status`; absent on entries a runtime wrote before it recorded one. */
+  statusUpdatedAt?: number
 }
 
 export interface ClaudeRegistryDeps {
@@ -158,6 +160,7 @@ export function findLiveClaudeSessions(cwd: string, deps: ClaudeDiskDeps): Claud
       procStart: row.procStart,
       name: typeof row.name === "string" ? row.name : undefined,
       status: row.status,
+      statusUpdatedAt: typeof row.statusUpdatedAt === "number" ? row.statusUpdatedAt : undefined,
     })
   }
   return live
@@ -286,5 +289,6 @@ export function resolveClaudeNativeSession(
     procStart: row.procStart,
     name: typeof row.name === "string" ? row.name : undefined,
     status: row.status,
+    statusUpdatedAt: typeof row.statusUpdatedAt === "number" ? row.statusUpdatedAt : undefined,
   }
 }
