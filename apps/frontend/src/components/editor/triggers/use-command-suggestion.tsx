@@ -13,16 +13,20 @@ import {
 import { rankMatches } from "@/lib/match-score"
 import { useStreamCommands } from "@/hooks/use-stream-commands"
 import { useSuggestion } from "./use-suggestion"
+import { pickableArgs } from "./use-command-arg-picker"
 
 /**
- * True when the `/` that opened the palette is the only content of the message
- * (ignoring surrounding whitespace) — i.e. the user typed `/<query>` and nothing
- * else. Whole-message commands (`/invite`, `/aside`) are gated on this so they
- * don't surface when the slash is used mid-sentence.
+ * True when the `/` that opened the palette starts the message — the first
+ * block, first character. Whole-message commands (`/invite`, `/aside`) are gated
+ * on this so they don't surface mid-sentence, and on POSITION rather than on an
+ * empty composer: the command a message opens with is the one it dispatches
+ * (`extractCommandNode`) no matter how much prompt is already typed after it.
  */
 function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
   if (!editor) return true
-  return editor.state.doc.textContent.trim() === `/${query}`
+  const { $from } = editor.state.selection
+  // The palette's `/` sits one char before the query the caret trails.
+  return $from.index(0) === 0 && $from.parentOffset === query.length + 1
 }
 
 /**
@@ -122,7 +126,6 @@ export function useCommandSuggestion({
   onOpenGiphy,
   onOpenSnippet,
   onOpenAttachment,
-  onCommandPicked,
   commandStreamId,
   includeStreamCommands = true,
 }: {
@@ -133,12 +136,6 @@ export function useCommandSuggestion({
   onOpenGiphy?: () => void
   onOpenSnippet?: () => void
   onOpenAttachment?: () => void
-  /**
-   * Fired after a command is inserted into the composer (post chip insertion).
-   * The host uses it to open the argument option picker for commands that
-   * advertise `args[].suggestions` (e.g. `/model`).
-   */
-  onCommandPicked?: (item: CommandItem) => void
   /**
    * Scopes the palette to a stream the route can't name — the conversation panel
    * is a `?panel=conv:` overlay, so its commands come from the conversation's own
@@ -165,8 +162,6 @@ export function useCommandSuggestion({
   onOpenSnippetRef.current = onOpenSnippet
   const onOpenAttachmentRef = useRef(onOpenAttachment)
   onOpenAttachmentRef.current = onOpenAttachment
-  const onCommandPickedRef = useRef(onCommandPicked)
-  onCommandPickedRef.current = onCommandPicked
   const streamCommands = useStreamCommands(workspaceId, streamId)
   const effectiveCommands = includeStreamCommands ? streamCommands : []
 
@@ -211,7 +206,6 @@ export function useCommandSuggestion({
         if (item.clientActionId === GIPHY_SLASH_ACTION) onOpenGiphyRef.current?.()
         if (item.clientActionId === SNIPPET_SLASH_ACTION) onOpenSnippetRef.current?.()
         if (item.clientActionId === ATTACHMENT_SLASH_ACTION) onOpenAttachmentRef.current?.()
-        onCommandPickedRef.current?.(item)
       }
       return <CommandList ref={props.ref} items={props.items} clientRect={props.clientRect} command={command} />
     },
@@ -235,10 +229,21 @@ export function useCommandSuggestion({
     [commands]
   )
 
+  // The arguments a command chip in the composer offers options for, for the
+  // argument picker — which resolves its session from the doc, so it needs the
+  // same command set the palette inserted the chip from.
+  const commandsRef = useRef(commands)
+  commandsRef.current = commands
+  const pickableArgsFor = useCallback((name: string) => {
+    const item = commandsRef.current.find((cmd) => cmd.name === name)
+    return item ? pickableArgs(item) : null
+  }, [])
+
   return {
     suggestionConfig,
     renderCommandList: renderSuggestionList,
     isActive,
     isKnownCommand,
+    pickableArgsFor,
   }
 }

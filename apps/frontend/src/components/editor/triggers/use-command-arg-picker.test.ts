@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest"
+import { afterEach, describe, it, expect } from "vitest"
+import { Editor } from "@tiptap/core"
 import type { CommandArgumentInfo, CommandArgumentSuggestion } from "@threahq/types"
-import { pickableArgs, resolveActiveArg, filterArgSuggestions } from "./use-command-arg-picker"
+import { createEditorExtensions } from "../editor-extensions"
+import { pickableArgs, resolveActiveArg, resolveArgSession, filterArgSuggestions } from "./use-command-arg-picker"
 import type { CommandItem } from "./types"
 
 const MODEL_SUGGESTIONS: CommandArgumentSuggestion[] = [
@@ -200,5 +202,66 @@ describe("filterArgSuggestions", () => {
 
   it("drops options that match nothing", () => {
     expect(filterArgSuggestions(MODEL_SUGGESTIONS, "zzz")).toEqual([])
+  })
+})
+
+describe("resolveArgSession", () => {
+  const SPAWN_ARGS: CommandArgumentInfo[] = [
+    { name: "runtime", suggestions: [{ value: "claude" }] },
+    { name: "/model", suggestions: [{ value: "opus" }] },
+  ]
+  const argsFor = (name: string) => (name === "spawn" ? SPAWN_ARGS : null)
+
+  const editors: Editor[] = []
+
+  afterEach(() => {
+    while (editors.length) editors.pop()?.destroy()
+  })
+
+  function openWith(command: string | null, text = "") {
+    const el = document.createElement("div")
+    document.body.appendChild(el)
+    const editor = new Editor({ element: el, extensions: createEditorExtensions({ placeholder: "x" }), content: "" })
+    editor.on("destroy", () => el.remove())
+    editors.push(editor)
+    editor.view.dom.focus()
+    editor.commands.focus()
+    if (command) editor.commands.insertContent({ type: "slashCommand", attrs: { name: command } })
+    for (const ch of text) editor.view.dispatch(editor.state.tr.insertText(ch))
+    return editor
+  }
+
+  it("reads the text after the leading command chip", () => {
+    const editor = openWith("spawn", " claude /model ")
+    expect(resolveArgSession(editor, argsFor)?.text).toBe(" claude /model ")
+  })
+
+  it("reopens for a flag the caret returns to after a prompt is typed", () => {
+    const editor = openWith("spawn", " claude /model opus write me a haiku")
+    // Back to the end of the model already chosen, to correct it.
+    editor.commands.setTextSelection(
+      editor.state.doc.firstChild!.firstChild!.nodeSize + 1 + " claude /model opus".length
+    )
+    const session = resolveArgSession(editor, argsFor)
+    expect(session && resolveActiveArg(session.args, session.text)).toEqual({
+      arg: SPAWN_ARGS[1],
+      query: "opus",
+    })
+  })
+
+  it("has no session when the message opens with something other than a command", () => {
+    const editor = openWith(null, "hello")
+    expect(resolveArgSession(editor, argsFor)).toBeNull()
+  })
+
+  it("has no session for a command that offers no argument options", () => {
+    const editor = openWith("invite", " someone")
+    expect(resolveArgSession(editor, argsFor)).toBeNull()
+  })
+
+  it("has no session once the caret leaves the command's block", () => {
+    const editor = openWith("spawn", " claude")
+    editor.commands.enter()
+    expect(resolveArgSession(editor, argsFor)).toBeNull()
   })
 })

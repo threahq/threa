@@ -175,6 +175,10 @@ function SuggestionListInner<T>(
                   "hover:bg-muted",
                   index === selectedIndex && "bg-muted"
                 )}
+                // Keep focus in the editor: the arg picker's session is
+                // focus-gated, so a button that took focus on mousedown would
+                // unmount the list before the click landed.
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => command(item)}
                 onMouseEnter={() => setSelectedKey(getKey(item))}
               >

@@ -1,6 +1,6 @@
 import { createRef } from "react"
 import { describe, it, expect, afterEach } from "vitest"
-import { act, cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { CommandArgPicker, type CommandArgPickerRef } from "./command-arg-picker"
 
 afterEach(cleanup)
@@ -48,5 +48,22 @@ describe("CommandArgPicker", () => {
       before: { armed: ["false", "false"], consumed: false },
       after: { armed: ["true", "false"], consumed: true, picked: ["claude"] },
     })
+  })
+
+  it("should leave focus in the editor on mousedown, so the click still reaches the option", () => {
+    const picked: string[] = []
+    render(
+      <CommandArgPicker
+        items={[{ value: "pi", label: "Pi" }]}
+        clientRect={() => new DOMRect()}
+        command={(item) => picked.push(item.value)}
+      />
+    )
+    // The picker's session is focus-gated on the editor: an option that took
+    // focus on mousedown would unmount the list before the click landed.
+    const option = screen.getByRole("option")
+    const focusMoved = fireEvent.mouseDown(option)
+    fireEvent.click(option)
+    expect({ focusMoved, picked }).toEqual({ focusMoved: false, picked: ["pi"] })
   })
 })

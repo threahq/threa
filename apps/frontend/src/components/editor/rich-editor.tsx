@@ -31,9 +31,7 @@ import {
   useMemoSuggestion,
   useCommandArgPicker,
   useAttachmentPicker,
-  pickableArgs,
 } from "./triggers"
-import type { CommandItem } from "./triggers/types"
 import { parseMemoUrl } from "@/lib/memo-url"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { classifyDraftLink } from "@/lib/in-app-links"
@@ -407,12 +405,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const openAttachmentPickerRef = useRef<() => void>(() => {})
   const openAttachmentPicker = useCallback(() => openAttachmentPickerRef.current(), [])
 
-  // Stable bridge to the command-argument picker: held in a ref because the
-  // picker (which owns `openArgPicker`) is set up after the editor exists,
-  // while the command suggestion that fires it is wired up here.
-  const onCommandPickedRef = useRef<(item: CommandItem) => void>(() => {})
-  const notifyCommandPicked = useCallback((item: CommandItem) => onCommandPickedRef.current(item), [])
-
   // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
   // Filtered for autocomplete dropdown only
@@ -422,6 +414,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     suggestionConfig: commandConfig,
     renderCommandList,
     isKnownCommand: isKnownSlashCommand,
+    pickableArgsFor,
   } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
     includeGiphy: giphyEnabled,
@@ -430,7 +423,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     onOpenGiphy: () => setGiphyOpen(true),
     onOpenSnippet: openSnippetEditor,
     onOpenAttachment: openAttachmentPicker,
-    onCommandPicked: notifyCommandPicked,
     commandStreamId,
     includeStreamCommands,
   })
@@ -514,17 +506,13 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const onFocusRef = useRef(onFocusProp)
 
   // Argument option picker (e.g. `/model` → choose a model, `/spawn pi /model`
-  // → choose one of Pi's). Opens after a command with advertised
-  // `args[].suggestions` is inserted and follows the arguments the user types;
-  // its keys are routed through editorProps.handleKeyDown below so it preempts
-  // send/blur.
-  const { openArgPicker, renderArgPicker, handleArgPickerKeyDown } = useCommandArgPicker(editorRef)
+  // → choose one of Pi's). It reads the argument region out of the doc, so it
+  // follows the arguments wherever the caret goes — including back into a
+  // `/model` already typed ahead of a long prompt. Its keys are routed through
+  // editorProps.handleKeyDown below so it preempts send/blur.
+  const { renderArgPicker, handleArgPickerKeyDown } = useCommandArgPicker(editorRef, pickableArgsFor)
   const argPickerKeyDownRef = useRef(handleArgPickerKeyDown)
   argPickerKeyDownRef.current = handleArgPickerKeyDown
-  onCommandPickedRef.current = (item: CommandItem) => {
-    const args = pickableArgs(item)
-    if (args) openArgPicker(args)
-  }
 
   // The `/attachment` picker: same programmatic shape, plus a hand-off to the
   // host's file input for its "Upload a file…" entry.
