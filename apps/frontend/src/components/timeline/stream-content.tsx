@@ -700,7 +700,7 @@ export function StreamContent({
     stream,
     rootStreamId,
     rootStream: rootFromCache,
-    fallbackRootArchived: bootstrap?.rootArchivedAt,
+    fallbackRootArchived: bootstrap?.archivedAncestor?.archivedAt,
   })
 
   // Conversation overlay (channels/DMs): URL-derived so a refresh or shared

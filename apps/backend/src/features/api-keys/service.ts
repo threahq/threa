@@ -60,14 +60,14 @@ export class BotChannelService {
    * The read-as-owner arm: everything the delegating owner can read (the
    * canonical INV-62 predicate, threads included), minus E2E-rooted streams —
    * read-as-owner never shortcuts the grant + key-wrap path an E2E stream
-   * requires — and minus streams whose effective root is archived (a thread
-   * stays unarchived when its root archives, and the owner-set filter only
-   * sees the target's own `archived_at`). Evaluated per call, so the owner
-   * losing access revokes the bot's in the same moment.
+   * requires — and minus streams archived anywhere up their parent chain (a
+   * thread's own `archived_at` stays null when an ancestor archives, and the
+   * owner-set filter only sees that own flag). Evaluated per call, so the
+   * owner losing access revokes the bot's in the same moment.
    */
   private async getOwnerReadableStreamIds(workspaceId: string, ownerUserId: string): Promise<string[]> {
     const ownerIds = await resolveUserAccessibleStreamIds(this.pool, workspaceId, ownerUserId, {})
-    const liveRooted = await StreamRepository.filterIdsWithActiveRoot(this.pool, workspaceId, ownerIds)
+    const liveRooted = await StreamRepository.filterEffectivelyActiveIds(this.pool, workspaceId, ownerIds)
     return E2eStreamsRepository.excludeE2eRootedStreamIds(
       this.pool,
       liveRooted.map((streamId) => ({ workspaceId, streamId }))
@@ -82,7 +82,10 @@ export class BotChannelService {
   ): Promise<boolean> {
     const stream = await StreamRepository.findByIdForWorkspace(this.pool, streamId, workspaceId)
     if (!stream) return false
-    if (stream.archivedAt && !options.allowArchived) return false
+    if (!options.allowArchived) {
+      const sealed = await StreamRepository.filterEffectivelyArchivedIds(this.pool, workspaceId, [stream.id])
+      if (sealed.length > 0) return false
+    }
 
     // Publicness is the ROOT's visibility (INV-62) — a thread's own row can
     // hold a stale copied "public" long after its root went private. A

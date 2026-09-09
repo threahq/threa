@@ -253,16 +253,16 @@ describe("BotRuntimeSessionLinkRepository.rebindInstance", () => {
   })
 })
 
-describe("BotRuntimeSessionLinkRepository.archiveActiveByRootStream", () => {
+describe("BotRuntimeSessionLinkRepository.archiveActiveByStreams", () => {
   afterEach(() => mock.restore())
 
   it("flips only active links to 'archived' in one set-based UPDATE (INV-20/56)", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [makeSessionLinkRow({ status: "archived" })])
 
-    const result = await BotRuntimeSessionLinkRepository.archiveActiveByRootStream(db, {
+    const result = await BotRuntimeSessionLinkRepository.archiveActiveByStreams(db, {
       workspaceId: "ws_1",
-      rootStreamId: "stream_root",
+      streamIds: ["stream_root", "stream_thread"],
     })
 
     expect(captured.text).toContain("UPDATE bot_runtime_session_links")
@@ -271,21 +271,21 @@ describe("BotRuntimeSessionLinkRepository.archiveActiveByRootStream", () => {
     expect(captured.text).toContain("SET status = 'archived'")
     expect(captured.text).toContain("status = 'active'")
     expect(captured.text).toContain("RETURNING")
-    expect(captured.values).toEqual(expect.arrayContaining(["ws_1", "stream_root"]))
+    expect(captured.values).toEqual(expect.arrayContaining(["ws_1", ["stream_root", "stream_thread"]]))
     expect(result[0]?.status).toBe("archived")
   })
 })
 
-describe("BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream", () => {
+describe("BotRuntimeSessionLinkRepository.reactivateArchivedByStreams", () => {
   afterEach(() => mock.restore())
 
   it("revives only archive-ended links — shutdown-ended rows stay dead", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [makeSessionLinkRow({ status: "active" })])
 
-    const result = await BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream(db, {
+    const result = await BotRuntimeSessionLinkRepository.reactivateArchivedByStreams(db, {
       workspaceId: "ws_1",
-      rootStreamId: "stream_root",
+      streamIds: ["stream_root", "stream_thread"],
     })
 
     expect(captured.text).toContain("UPDATE bot_runtime_session_links")
@@ -293,7 +293,7 @@ describe("BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream", () =>
     expect(captured.text).toContain("status = 'archived'")
     expect(captured.text).not.toContain("'ended'")
     expect(captured.text).toContain("RETURNING")
-    expect(captured.values).toEqual(expect.arrayContaining(["ws_1", "stream_root"]))
+    expect(captured.values).toEqual(expect.arrayContaining(["ws_1", ["stream_root", "stream_thread"]]))
     expect(result[0]?.status).toBe("active")
   })
 })
@@ -314,13 +314,13 @@ describe("BotRuntimeSessionLinkRepository.reactivateArchivedByRuntimeSession", (
     })
 
     // CTE picks one row race-safely (INV-20), newest first, and the stream
-    // guard keeps a still-archived scratchpad's link dead. The stream row is
-    // share-locked in the same select — an unlocked EXISTS would be TOCTOU
-    // against a concurrent re-archive.
+    // guard keeps a link dead while its stream is sealed anywhere up the
+    // chain. The stream row is share-locked in the same select — an unlocked
+    // EXISTS would be TOCTOU against a concurrent re-archive.
     expect(captured.text).toContain("SET status = 'active'")
     expect(captured.text).toContain("status = 'archived'")
     expect(captured.text).toContain("JOIN streams s")
-    expect(captured.text).toContain("archived_at IS NULL")
+    expect(captured.text).toContain("NOT EXISTS")
     expect(captured.text).toContain("FOR UPDATE OF l SKIP LOCKED")
     expect(captured.text).toContain("FOR SHARE OF s")
     expect(captured.text).toContain("LIMIT 1")
@@ -349,7 +349,7 @@ describe("BotRuntimeSessionLinkRepository.retireArchivedByRuntimeSession", () =>
     })
 
     // Same race-safe CTE shape as reactivate, with the INVERSE stream guard:
-    // only retire while the scratchpad IS archived, so a concurrent unarchive
+    // only retire while the stream IS sealed, so a concurrent unarchive
     // serializes against the share lock instead of racing the row.
     expect(captured.text).toContain("SET status = 'ended'")
     expect(captured.text).toContain("runtime_session_id = l.runtime_session_id || ':retired:' || l.id")

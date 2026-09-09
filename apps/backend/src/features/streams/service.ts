@@ -34,6 +34,7 @@ import {
   assertViewerStreamWritable,
   deriveStreamViewerState,
   lockEffectiveStreams,
+  type LockedStreamFacts,
   type StreamWritePrincipal,
 } from "./write-authority"
 import { UserRepository } from "../workspaces"
@@ -269,11 +270,23 @@ async function lockLifecycleStreams(
   client: Querier,
   workspaceId: string,
   streamId: string
-): Promise<{ target: Stream; root: Stream }> {
-  const snapshot = await StreamRepository.findById(client, streamId)
-  if (!snapshot || snapshot.workspaceId !== workspaceId) throw new StreamNotFoundError()
-  const [facts] = await lockEffectiveStreams(client, workspaceId, [streamId], [snapshot])
+): Promise<LockedStreamFacts> {
+  const [facts] = await lockEffectiveStreams(client, workspaceId, [streamId])
+  if (!facts) throw new StreamNotFoundError()
   return facts
+}
+
+/**
+ * Archive and unarchive are allowed to the stream's creator and to the creator
+ * of its access root: the root owner runs the space, so a thread a bot or
+ * another member opened there is theirs to close as well.
+ */
+function assertCanArchive(target: Stream, root: Stream, actorId: string): void {
+  if (target.createdBy === actorId || root.createdBy === actorId) return
+  throw new HttpError("Only the creator of this stream or of its root can archive it", {
+    status: 403,
+    code: "FORBIDDEN",
+  })
 }
 
 async function lockActorAccess(
@@ -378,8 +391,19 @@ export class StreamService {
    * Archived root streams visible to the viewer — slim `Stream` rows for the
    * bootstrap `archivedStreams` index. Single query, so pass `pool` (INV-30).
    */
-  async listArchivedRoots(workspaceId: string, userId: string): Promise<Stream[]> {
-    return StreamRepository.listArchivedRoots(this.pool, workspaceId, userId)
+  async listArchivedStreams(workspaceId: string, userId: string): Promise<Stream[]> {
+    return StreamRepository.listArchivedStreams(this.pool, workspaceId, userId)
+  }
+
+  /**
+   * The nearest archived ancestor of a stream, or null. Lets a client that
+   * opens a sealed stream cold say which ancestor sealed it.
+   */
+  async findArchivedAncestor(
+    workspaceId: string,
+    streamId: string
+  ): Promise<{ streamId: string; archivedAt: Date } | null> {
+    return StreamRepository.findNearestArchivedAncestor(this.pool, workspaceId, streamId)
   }
 
   /**
@@ -434,7 +458,9 @@ export class StreamService {
         throw new StreamNotFoundError()
       }
 
-      assertViewerStreamWritable(deriveStreamViewerState({ target: stream, root: stream, participates: true }))
+      assertViewerStreamWritable(
+        deriveStreamViewerState({ target: stream, ancestorArchived: false, participates: true })
+      )
       return stream
     }
 
@@ -444,7 +470,9 @@ export class StreamService {
     if (!root || root.workspaceId !== params.workspaceId) throw new StreamNotFoundError()
     const participates = await this.isMember(root.id, params.userId)
     if (root.visibility !== Visibilities.PUBLIC && !participates) throw new StreamNotFoundError()
-    assertViewerStreamWritable(deriveStreamViewerState({ target: stream, root, participates }))
+    const ancestorArchived =
+      (await StreamRepository.findNearestArchivedAncestor(this.pool, params.workspaceId, stream.id)) !== null
+    assertViewerStreamWritable(deriveStreamViewerState({ target: stream, ancestorArchived, participates }))
     return stream
   }
 
@@ -702,8 +730,8 @@ export class StreamService {
         })
       }
 
-      // An aside inherits its host's archive state (lockEffectiveStreams), so an
-      // aside opened on an archived host would be born read-only.
+      // An aside inherits its host's archive state through the parent chain,
+      // so an aside opened on an archived host would be born read-only.
       await assertStreamWritable(client, {
         workspaceId: params.workspaceId,
         streamId: params.parentStreamId,
@@ -1207,9 +1235,7 @@ export class StreamService {
     return withTransaction(this.pool, async (client) => {
       const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
       await lockActorAccess(client, root, archivedBy)
-      if (target.createdBy !== archivedBy) {
-        throw new HttpError("Only the creator can archive this stream", { status: 403, code: "FORBIDDEN" })
-      }
+      assertCanArchive(target, root, archivedBy)
       const stream = await StreamRepository.update(client, streamId, { archivedAt: new Date() })
       if (stream) {
         const evtId = eventId()
@@ -1224,18 +1250,14 @@ export class StreamService {
           actorType: "user",
         })
 
-        // Route to the root's room AND its descendant thread rooms: a thread
-        // viewer only joins the thread's room, so without the thread ids in
-        // the payload it would never learn the root was archived and the
-        // composer would stay live until a refresh. Threads inherit access
-        // from the root (INV-62), so their rooms reach the same audience.
-        // The event row ships in the payload so clients append it as a
-        // first-class timeline row (broadcast slot, live append) — not just
-        // a stream-cache mutation that only surfaces on the next bootstrap.
-        const threadStreamIds =
-          stream.type === StreamTypes.THREAD
-            ? []
-            : await StreamRepository.listThreadIdsByRoot(client, stream.workspaceId, stream.id)
+        // Route to this stream's room AND every descendant whose state flips
+        // with it: a thread viewer only joins the thread's room, so without
+        // those ids in the payload it would never learn an ancestor was
+        // archived and the composer would stay live until a refresh.
+        // Descendants inherit access from the same root (INV-62), so their
+        // rooms reach the same audience. The event row ships in the payload
+        // so clients append it as a first-class timeline row.
+        const threadStreamIds = await StreamRepository.listArchivalCascadeIds(client, stream.workspaceId, stream.id)
 
         await OutboxRepository.insert(client, "stream:archived", {
           workspaceId: stream.workspaceId,
@@ -1253,9 +1275,7 @@ export class StreamService {
     return withTransaction(this.pool, async (client) => {
       const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
       await lockActorAccess(client, root, unarchivedBy)
-      if (target.createdBy !== unarchivedBy) {
-        throw new HttpError("Only the creator can unarchive this stream", { status: 403, code: "FORBIDDEN" })
-      }
+      assertCanArchive(target, root, unarchivedBy)
       const stream = await StreamRepository.update(client, streamId, { archivedAt: null })
       if (stream) {
         const evtId = eventId()
@@ -1273,10 +1293,7 @@ export class StreamService {
           streamId: stream.id,
           stream,
           event,
-          threadStreamIds:
-            stream.type === StreamTypes.THREAD
-              ? []
-              : await StreamRepository.listThreadIdsByRoot(client, stream.workspaceId, stream.id),
+          threadStreamIds: await StreamRepository.listArchivalCascadeIds(client, stream.workspaceId, stream.id),
         })
       }
       return stream
@@ -2112,11 +2129,15 @@ export class StreamService {
     actorId: string,
     personalOwnerId?: string
   ): Promise<void> {
-    const { target, root: grantStream } = await lockLifecycleStreams(client, workspaceId, targetStreamId)
+    const {
+      target,
+      root: grantStream,
+      ancestorArchived,
+    } = await lockLifecycleStreams(client, workspaceId, targetStreamId)
     if (target.workspaceId !== workspaceId) {
       throw new HttpError("Stream does not belong to this workspace", { status: 403, code: "WRONG_WORKSPACE" })
     }
-    if (target.archivedAt || grantStream.archivedAt) throw new StreamNotFoundError()
+    if (target.archivedAt || ancestorArchived) throw new StreamNotFoundError()
     const bot = await BotRepository.findByIdForUpdate(client, workspaceId, botId)
     if (!bot || bot.archivedAt) {
       throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })

@@ -211,7 +211,7 @@ export function createWorkspaceHandlers({
         // Archived roots are pruned from `streams`; the client persists these
         // slim rows so archival survives reloads (drafts filters, saved/activity
         // name resolution).
-        streamService.listArchivedRoots(workspaceId, userId),
+        streamService.listArchivedStreams(workspaceId, userId),
       ])
 
       if (!workspace) {

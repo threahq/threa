@@ -19,7 +19,7 @@ export interface EffectiveArchivedInput {
   rootStream?: { archivedAt?: string | null } | null
   /**
    * Cold-load verdict for the root, used only when the root row is absent from
-   * the local stream cache: the per-stream bootstrap's `rootArchivedAt` for the
+   * the local stream cache: the per-stream bootstrap's `archivedAncestor` for the
    * timeline, the board post's `rootArchived` for the conversation surfaces.
    */
   fallbackRootArchived: string | boolean | null | undefined

@@ -29,17 +29,11 @@ interface AuthorityStream {
 
 export function deriveStreamViewerState(params: {
   target: Pick<AuthorityStream, "type" | "archivedAt">
-  root: Pick<AuthorityStream, "archivedAt">
+  /** Whether any stream up the target's `parent_stream_id` chain is archived. */
+  ancestorArchived: boolean
   participates: boolean
-  /**
-   * Whether the host (parent) of the effective aside root is archived. An aside
-   * is a root of its own, so root-archival never covers the host — the aside,
-   * and every thread rooted in it, reads read-only while the host it annotates
-   * is archived.
-   */
-  parentEffectivelyArchived?: boolean
 }): StreamViewerState {
-  if (params.target.archivedAt || params.root.archivedAt || params.parentEffectivelyArchived) {
+  if (params.target.archivedAt || params.ancestorArchived) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED }
   }
   if (params.target.type === StreamTypes.SYSTEM) {
@@ -89,7 +83,10 @@ export async function projectStreamForPrincipal<T extends AuthorityStream>(
   const participates = await principalParticipates(db, workspaceId, effective.id, principal)
   if (effective.visibility !== Visibilities.PUBLIC && !participates) return null
 
-  return { ...stream, ...deriveStreamViewerState({ target: stream, root: effective, participates }) }
+  const ancestorArchived = stream.archivedAt
+    ? false
+    : (await StreamRepository.filterEffectivelyArchivedIds(db, workspaceId, [stream.id])).length > 0
+  return { ...stream, ...deriveStreamViewerState({ target: stream, ancestorArchived, participates }) }
 }
 
 export async function projectStreamsForPrincipal<T extends AuthorityStream>(
@@ -110,11 +107,21 @@ export async function projectStreamsForPrincipal<T extends AuthorityStream>(
         )
       : await BotChannelAccessRepository.filterGrantedStreamIds(db, workspaceId, principal.botId, validRootIds)
 
+  const sealedIds = new Set(
+    await StreamRepository.filterEffectivelyArchivedIds(
+      db,
+      workspaceId,
+      streams.filter((stream) => !stream.archivedAt).map((stream) => stream.id)
+    )
+  )
   const projected: Array<T & StreamViewerState> = []
   for (const { target, root } of facts) {
     const participates = participatingRootIds.has(root.id)
     if (root.visibility !== Visibilities.PUBLIC && !participates) continue
-    projected.push({ ...target, ...deriveStreamViewerState({ target, root, participates }) })
+    projected.push({
+      ...target,
+      ...deriveStreamViewerState({ target, ancestorArchived: sealedIds.has(target.id), participates }),
+    })
   }
   return projected
 }
@@ -125,62 +132,48 @@ export interface LockedStreamAuthority {
   state: StreamViewerState
 }
 
+export interface LockedStreamFacts {
+  target: Stream
+  root: Stream
+  /** Whether any locked ancestor up `parent_stream_id` is archived. */
+  ancestorArchived: boolean
+}
+
+/**
+ * Locks each target, every ancestor up its `parent_stream_id` chain, and its
+ * access root, in one id-ordered statement. The archived state a write must
+ * respect lives anywhere on that chain (a thread under an archived thread, an
+ * aside under an archived host), so the whole chain is locked, not just the
+ * root. The chain is read unlocked first: parent and root ids never change
+ * after insert, so the id set cannot go stale before the lock lands.
+ */
 export async function lockEffectiveStreams(
   db: Querier,
   workspaceId: string,
-  streamIds: readonly string[],
-  suppliedSnapshots?: readonly Stream[]
-): Promise<Array<{ target: Stream; root: Stream; parentEffectivelyArchived: boolean }>> {
+  streamIds: readonly string[]
+): Promise<LockedStreamFacts[]> {
   const targetIds = [...new Set(streamIds)].sort()
   if (targetIds.length === 0) return []
-  const snapshots = suppliedSnapshots ?? (await StreamRepository.findByIdsInWorkspace(db, workspaceId, targetIds))
-  const snapshotById = new Map(snapshots.map((stream) => [stream.id, stream]))
-  const lockIds = new Set<string>()
-  for (const targetId of targetIds) {
-    const target = snapshotById.get(targetId)
-    if (!target || target.workspaceId !== workspaceId) throw inaccessibleStream()
-    lockIds.add(target.id)
-    lockIds.add(target.rootStreamId ?? target.id)
-  }
-  const locked = await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, [...lockIds])
+  const chainIds = await StreamRepository.listAncestorChainIds(db, workspaceId, targetIds)
+  const locked = await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, chainIds)
   const lockedById = new Map(locked.map((stream) => [stream.id, stream]))
-  // An aside's effective archive state includes its host (parent) chain — for
-  // the aside itself and for every thread rooted in it. The root row is only
-  // known once locked, so the host and the host's root join in a second round;
-  // only the aside's creator and its companion ever write here, and both lock
-  // in this same order, so the two rounds cannot form a cycle.
-  const hostIds = new Set<string>()
-  for (const stream of lockedById.values()) {
-    if (stream.type === StreamTypes.ASIDE && stream.parentStreamId && !lockedById.has(stream.parentStreamId)) {
-      hostIds.add(stream.parentStreamId)
-    }
-  }
-  if (hostIds.size > 0) {
-    const hosts = await StreamRepository.findByIdsInWorkspace(db, workspaceId, [...hostIds])
-    if (hosts.length !== hostIds.size) throw inaccessibleStream()
-    const hostLockIds = new Set<string>()
-    for (const host of hosts) {
-      hostLockIds.add(host.id)
-      hostLockIds.add(host.rootStreamId ?? host.id)
-    }
-    for (const stream of await StreamRepository.findByIdsForUpdateBlocking(db, workspaceId, [...hostLockIds])) {
-      lockedById.set(stream.id, stream)
-    }
-  }
   return targetIds.map((targetId) => {
     const target = lockedById.get(targetId)
     const root = target && lockedById.get(target.rootStreamId ?? target.id)
     if (!target || !root || target.workspaceId !== workspaceId || root.workspaceId !== workspaceId) {
       throw inaccessibleStream()
     }
-    let parentEffectivelyArchived = false
-    if (root.type === StreamTypes.ASIDE && root.parentStreamId) {
-      const host = lockedById.get(root.parentStreamId)
-      const hostRoot = host && lockedById.get(host.rootStreamId ?? host.id)
-      if (!host || !hostRoot) throw inaccessibleStream()
-      parentEffectivelyArchived = Boolean(host.archivedAt || hostRoot.archivedAt)
+    let ancestorArchived = false
+    for (let parentId = target.parentStreamId; parentId; ) {
+      const parent = lockedById.get(parentId)
+      if (!parent || parent.workspaceId !== workspaceId) throw inaccessibleStream()
+      if (parent.archivedAt) {
+        ancestorArchived = true
+        break
+      }
+      parentId = parent.parentStreamId
     }
-    return { target, root, parentEffectivelyArchived }
+    return { target, root, ancestorArchived }
   })
 }
 
@@ -207,7 +200,7 @@ export async function resolveLockedStreamAuthorities(
       : await BotChannelAccessRepository.lockGrants(db, params.workspaceId, principal.botId, rootIds)
 
   const authorities: LockedStreamAuthority[] = []
-  for (const { target, root, parentEffectivelyArchived } of facts) {
+  for (const { target, root, ancestorArchived } of facts) {
     const participates = participatingRootIds.has(root.id)
     if (root.visibility !== Visibilities.PUBLIC && !participates) {
       // A bot that already reads this stream through its owner
@@ -223,7 +216,7 @@ export async function resolveLockedStreamAuthorities(
     authorities.push({
       target,
       root,
-      state: deriveStreamViewerState({ target, root, participates, parentEffectivelyArchived }),
+      state: deriveStreamViewerState({ target, ancestorArchived, participates }),
     })
   }
   return authorities

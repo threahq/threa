@@ -18,6 +18,7 @@ import {
 } from "@threahq/types"
 import type { Pool, QueryConfig } from "pg"
 import { composeSql, sql, withTransaction, type Querier } from "../../db"
+import { effectivelyArchivedSql } from "../../lib/sql-filters"
 
 export type RuntimeSessionLinkStatus = BotRuntimeSessionLinkStatus
 
@@ -692,37 +693,44 @@ export const BotRuntimeSessionLinkRepository = {
   },
 
   /**
-   * End every active link rooted at a stream (its scratchpad was archived) and
-   * return the ended rows so the caller can notify each runtime. Writes the
-   * recoverable 'archived' status — not terminal 'ended' — so a later
-   * stream:unarchived can revive exactly these links. One set-based
-   * UPDATE … RETURNING so concurrent archive/consumer retries can't double-end
-   * or race a link back to life (INV-20, INV-56).
+   * End every active link attached to one of `streamIds` (the stream they
+   * work in was archived, or an ancestor of it) and return the ended rows so
+   * the caller can notify each runtime. Writes the recoverable 'archived'
+   * status — not terminal 'ended' — so a later stream:unarchived can revive
+   * exactly these links. One set-based UPDATE … RETURNING so concurrent
+   * archive/consumer retries can't double-end or race a link back to life
+   * (INV-20, INV-56).
    */
-  async archiveActiveByRootStream(
+  async archiveActiveByStreams(
     db: Querier,
-    params: { workspaceId: string; rootStreamId: string }
+    params: { workspaceId: string; streamIds: readonly string[] }
   ): Promise<BotRuntimeSessionLink[]> {
+    if (params.streamIds.length === 0) return []
     const result = await db.query<BotRuntimeSessionLinkRow>(
       sql`UPDATE bot_runtime_session_links SET status = 'archived', updated_at = NOW()
-      WHERE workspace_id = ${params.workspaceId} AND root_stream_id = ${params.rootStreamId} AND status = 'active'
+      WHERE workspace_id = ${params.workspaceId}
+        AND active_stream_id = ANY(${params.streamIds as string[]})
+        AND status = 'active'
       RETURNING *`
     )
     return result.rows.map(mapSessionLink)
   },
 
   /**
-   * Revive every archive-ended link rooted at a stream (its scratchpad was
-   * unarchived). Scoped to status = 'archived' so links a runtime ended by
-   * shutting down normally stay dead (INV-20, INV-56).
+   * Revive every archive-ended link attached to one of `streamIds`. Scoped to
+   * status = 'archived' so links a runtime ended by shutting down normally
+   * stay dead (INV-20, INV-56).
    */
-  async reactivateArchivedByRootStream(
+  async reactivateArchivedByStreams(
     db: Querier,
-    params: { workspaceId: string; rootStreamId: string }
+    params: { workspaceId: string; streamIds: readonly string[] }
   ): Promise<BotRuntimeSessionLink[]> {
+    if (params.streamIds.length === 0) return []
     const result = await db.query<BotRuntimeSessionLinkRow>(
       sql`UPDATE bot_runtime_session_links SET status = 'active', last_seen_at = NOW(), updated_at = NOW()
-      WHERE workspace_id = ${params.workspaceId} AND root_stream_id = ${params.rootStreamId} AND status = 'archived'
+      WHERE workspace_id = ${params.workspaceId}
+        AND active_stream_id = ANY(${params.streamIds as string[]})
+        AND status = 'archived'
       RETURNING *`
     )
     return result.rows.map(mapSessionLink)
@@ -756,7 +764,7 @@ export const BotRuntimeSessionLinkRepository = {
     const result = await db.query<BotRuntimeSessionLinkRow>(sql`WITH candidate AS (
         SELECT l.id FROM bot_runtime_session_links l
         JOIN streams s
-          ON s.workspace_id = l.workspace_id AND s.id = l.root_stream_id AND s.archived_at IS NULL
+          ON s.workspace_id = l.workspace_id AND s.id = l.active_stream_id AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
         WHERE l.workspace_id = ${params.workspaceId}
           AND l.bot_id = ${params.botId}
           AND l.runtime_kind = ${params.runtimeKind}
@@ -803,7 +811,7 @@ export const BotRuntimeSessionLinkRepository = {
     const result = await db.query<BotRuntimeSessionLinkRow>(sql`WITH candidate AS (
         SELECT l.id FROM bot_runtime_session_links l
         JOIN streams s
-          ON s.workspace_id = l.workspace_id AND s.id = l.root_stream_id AND s.archived_at IS NOT NULL
+          ON s.workspace_id = l.workspace_id AND s.id = l.active_stream_id AND ${sql.raw(effectivelyArchivedSql("s"))}
         WHERE l.workspace_id = ${params.workspaceId}
           AND l.bot_id = ${params.botId}
           AND l.runtime_kind = ${params.runtimeKind}

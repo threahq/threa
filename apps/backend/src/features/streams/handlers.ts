@@ -1028,12 +1028,7 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
-
-      if (stream.createdBy !== userId) {
-        return res.status(403).json({ error: "Only the creator can archive this stream" })
-      }
-
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
       const archived = await streamService.archiveStream(streamId, workspaceId, userId)
       res.json({ stream: archived })
     },
@@ -1043,12 +1038,7 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
-
-      if (stream.createdBy !== userId) {
-        return res.status(403).json({ error: "Only the creator can unarchive this stream" })
-      }
-
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
       const unarchived = await streamService.unarchiveStream(streamId, workspaceId, userId)
       res.json({ stream: unarchived })
     },
@@ -1094,7 +1084,7 @@ export function createStreamHandlers({
       // value. See `writeBootstrapEventsAndStream` in stream-sync.ts.
       const snapshotAt = new Date().toISOString()
 
-      const [members, botMemberIds, membership, viewerReadState, latestSequence, activityCounts, rootStream] =
+      const [members, botMemberIds, membership, viewerReadState, latestSequence, activityCounts, archivedAncestor] =
         await Promise.all([
           streamService.getMembers(streamId),
           streamService.getBotMemberIds(workspaceId, streamId),
@@ -1102,14 +1092,9 @@ export function createStreamHandlers({
           streamService.getViewerReadState(streamId, userId),
           eventService.getLatestSequence(streamId),
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
-          // For a thread, fetch the root so the bootstrap can surface
-          // `rootArchivedAt` — archiving marks only the root row, so the thread's
-          // own `archivedAt` can't tell the client it is sealed. No-op (null) for
-          // non-threads and threads whose root is missing (dangling root_stream_id
-          // is possible under INV-1's FK-less schema).
-          stream.type === StreamTypes.THREAD && stream.rootStreamId
-            ? streamService.getStreamById(stream.rootStreamId)
-            : Promise.resolve(null),
+          // Archiving writes only the target row, so a stream's own
+          // `archivedAt` cannot tell the client it is sealed by an ancestor.
+          stream.parentStreamId ? streamService.findArchivedAncestor(workspaceId, streamId) : Promise.resolve(null),
         ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
@@ -1232,7 +1217,9 @@ export function createStreamHandlers({
 
       sendBootstrapJson(res, "stream", startedAt, {
         stream,
-        rootArchivedAt: rootStream?.archivedAt ?? null,
+        archivedAncestor: archivedAncestor
+          ? { streamId: archivedAncestor.streamId, archivedAt: archivedAncestor.archivedAt.toISOString() }
+          : null,
         events: eventsWithLinkPreviews,
         slots,
         sharedMessages,

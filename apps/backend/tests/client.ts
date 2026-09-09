@@ -578,8 +578,8 @@ export async function createThread(
 
 export interface BootstrapData {
   stream: Stream
-  /** The root's archivedAt for a thread under an archived root; null/absent otherwise. */
-  rootArchivedAt?: string | null
+  /** The nearest archived ancestor of a sealed stream; null/absent otherwise. */
+  archivedAncestor?: { streamId: string; archivedAt: string } | null
   events: StreamEvent[]
   members: StreamMember[]
   membership: { streamId: string; memberId: string; notificationLevel: string | null } | null

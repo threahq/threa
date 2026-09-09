@@ -133,67 +133,19 @@ describe("purpose marker (sidebar exclusion)", () => {
     expect(db._query.mock.calls[0]![0] as string).toContain("purpose IS NULL")
   })
 
-  test("listByIds hides archived streams AND live threads under an archived root by default", async () => {
+  test("listArchivedStreams excludes system-purpose streams", async () => {
     const db = makeDb([])
-    await StreamRepository.listByIds(db, "ws_1", ["stream_a"])
-    const text = db._query.mock.calls[0]![0] as string
-    expect(text).toContain("archived_at IS NULL")
-    expect(text).toContain("root.archived_at IS NOT NULL")
-  })
-
-  test("listByIds with includeArchived drops both archived filters", async () => {
-    const db = makeDb([])
-    await StreamRepository.listByIds(db, "ws_1", ["stream_a"], { includeArchived: true })
-    const text = db._query.mock.calls[0]![0] as string
-    expect(text).not.toContain("archived_at IS NULL")
-    expect(text).not.toContain("root.archived_at IS NOT NULL")
-  })
-
-  test("listArchivedRoots excludes system-purpose streams", async () => {
-    const db = makeDb([])
-    await StreamRepository.listArchivedRoots(db, "ws_1", "usr_1")
+    await StreamRepository.listArchivedStreams(db, "ws_1", "usr_1")
     expect(queryText(db)).toContain("s.purpose IS NULL")
   })
 })
 
-// No DB-backed harness exists in the backend feature tests — every sibling repo
-// test (see `listWithPreviews` above) drives a stubbed Querier and asserts the
-// SQL text + bound params, so the access-semantics cases from the brief
-// (member-included / public-non-member-included / private-non-member-excluded /
-// own-archived-scratchpad-included / other-workspace-excluded / threads-never)
-// are enforced structurally through the predicates the query emits and the
-// params it binds, not by executing rows.
-describe("StreamRepository.listArchivedRoots", () => {
-  test("filters to archived roots, excludes threads, and workspace/user scopes (INV-8)", async () => {
+// Archive filtering, chain inheritance, and access are executed against a real
+// schema in tests/integration/thread-archival-chain.test.ts (INV-68).
+describe("StreamRepository.listArchivedStreams", () => {
+  test("query shape ships E2E fields so a cold-loaded archived E2E scratchpad keeps its sealed name", async () => {
     const db = makeDb([])
-    await StreamRepository.listArchivedRoots(db, "ws_1", "usr_1")
-
-    const { text, values } = db._query.mock.calls[0]![0] as { text: string; values: unknown[] }
-    // Only archived rows.
-    expect(text).toContain("s.archived_at IS NOT NULL")
-    // Threads never returned even if somehow carrying archived_at.
-    expect(text).toContain("s.type != ")
-    // Workspace scoping (INV-8) and viewer scoping bound as params, not inlined.
-    expect(values).toContain("ws_1")
-    expect(values).toContain("usr_1")
-    expect(text).toContain("s.workspace_id = ")
-  })
-
-  test("access predicate: public streams OR streams the viewer is a member of", async () => {
-    const db = makeDb([])
-    await StreamRepository.listArchivedRoots(db, "ws_1", "usr_1")
-    const text = queryText(db)
-    // Public non-member channels are included (public grants read); private
-    // non-member channels are excluded because they satisfy neither branch.
-    expect(text).toContain("s.visibility = 'public'")
-    expect(text).toContain("FROM stream_members m")
-    expect(text).toContain("m.stream_id = s.id")
-    expect(text).toContain("m.member_id = ")
-  })
-
-  test("ships E2E fields so a cold-loaded archived E2E scratchpad keeps its sealed name", async () => {
-    const db = makeDb([])
-    await StreamRepository.listArchivedRoots(db, "ws_1", "usr_1")
+    await StreamRepository.listArchivedStreams(db, "ws_1", "usr_1")
     const text = queryText(db)
     expect(text).toContain("LEFT JOIN e2e_streams e")
     expect(text).toContain("e2e_name_ciphertext")
@@ -204,7 +156,7 @@ describe("StreamRepository.listArchivedRoots", () => {
     const db = makeDb([
       streamRow({ id: "stream_arch", type: "channel", visibility: "public", archived_at: archivedAt }),
     ])
-    const result = await StreamRepository.listArchivedRoots(db, "ws_1", "usr_1")
+    const result = await StreamRepository.listArchivedStreams(db, "ws_1", "usr_1")
     expect(result).toHaveLength(1)
     expect(result[0]!.id).toBe("stream_arch")
     expect(result[0]!.archivedAt).toEqual(archivedAt)
