@@ -1,5 +1,11 @@
 import type { Socket } from "socket.io-client"
 import { debugBootstrap } from "./bootstrap-debug"
+import {
+  beginConnectivityObservation,
+  categorizeRoom,
+  getSocketDiagnosticContext,
+  type ConnectivityObservation,
+} from "./connectivity-diagnostics/facade"
 
 interface JoinAckResult {
   ok: boolean
@@ -23,7 +29,13 @@ function getPendingJoins(socket: Socket): Map<string, Promise<void>> {
   return next
 }
 
-function waitForConnection(socket: Socket, room: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+function waitForConnection(
+  socket: Socket,
+  room: string,
+  timeoutMs: number,
+  observation: ConnectivityObservation,
+  signal?: AbortSignal
+): Promise<void> {
   if (socket.connected) {
     debugBootstrap("Socket already connected before join", { room })
     return Promise.resolve()
@@ -33,6 +45,7 @@ function waitForConnection(socket: Socket, room: string, timeoutMs: number, sign
     return Promise.reject(new Error(`Join aborted for room "${room}"`))
   }
 
+  observation.record("room_join_connection_wait")
   return new Promise((resolve, reject) => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null
     let lastConnectError: string | null = null
@@ -171,10 +184,28 @@ export async function joinRoomWithAck(socket: Socket, room: string, options?: Jo
   }
 
   debugBootstrap("Starting joinRoomWithAck", { room, timeoutMs })
+  const socketContext = getSocketDiagnosticContext(socket)
+  const observation = beginConnectivityObservation({
+    room: categorizeRoom(room),
+    connectionId: socketContext?.connectionId,
+    generation: socketContext?.generation,
+  })
+  observation.record("room_join_start")
   const joinPromise = (async () => {
-    await waitForConnection(socket, room, timeoutMs, signal)
-    if (signal?.aborted) throw new Error(`Join aborted for room "${room}"`)
-    await emitJoinWithAck(socket, room, timeoutMs)
+    try {
+      await waitForConnection(socket, room, timeoutMs, observation, signal)
+      if (signal?.aborted) throw new Error(`Join aborted for room "${room}"`)
+      await emitJoinWithAck(socket, room, timeoutMs)
+      observation.record("room_join_ack")
+    } catch (error) {
+      const aborted = signal?.aborted === true
+      const timedOut = error instanceof Error && error.message.includes("Timed out")
+      let reason: "abort" | "timeout" | "unknown" = "unknown"
+      if (aborted) reason = "abort"
+      else if (timedOut) reason = "timeout"
+      observation.record(aborted ? "room_join_abort" : "room_join_failure", { reason })
+      throw error
+    }
   })()
 
   // Cancellable joins skip the dedup map — aborting a shared promise would reject

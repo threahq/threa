@@ -2,11 +2,23 @@ import { createContext, useContext, useEffect, useState, useRef, type ReactNode 
 import { io, Socket } from "socket.io-client"
 import { HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
 import { api } from "@/api/client"
+import { useAccountScopeOptional } from "@/auth/account-scope"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { setPreviewVisibilityEmitter } from "@/lib/preview-visibility"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { usePageInteraction } from "@/hooks/use-page-interaction"
 import { useSwPresence } from "@/hooks/use-sw-presence"
+import {
+  createDiagnosticId,
+  flushConnectivityDiagnostics,
+  recordConnectivityEvent,
+  setSocketDiagnosticContext,
+} from "@/lib/connectivity-diagnostics/facade"
+import {
+  restoreConnectivityDiagnostics,
+  runConnectivityDiagnosticsMaintenance,
+  suspendConnectivityDiagnostics,
+} from "@/lib/connectivity-diagnostics"
 
 /** Periodic heartbeat tick for session liveness — must be < ACTIVE_SESSION_WINDOW_MS on the backend (60s). */
 const PERIODIC_HEARTBEAT_INTERVAL_MS = 30_000
@@ -53,11 +65,16 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
   const [reconnectCount, setReconnectCount] = useState(0)
   const pageActivity = usePageActivity()
   const pageInteraction = usePageInteraction()
+  const accountId = useAccountScopeOptional()?.activeWorkosUserId ?? null
 
   // Track if we've ever been connected (to distinguish initial connect from reconnect)
   const hasEverConnectedRef = useRef(false)
 
   useEffect(() => {
+    runConnectivityDiagnosticsMaintenance()
+    if (accountId) restoreConnectivityDiagnostics(accountId, workspaceId)
+    else suspendConnectivityDiagnostics()
+
     let cancelled = false
     let activeSocket: Socket | null = null
     // Raw (pre-dev-rewrite) wsUrl the active socket was built from, so a
@@ -70,6 +87,8 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       // from a different host (e.g. phone over WiFi). Rewrite to match the actual host.
       const wsUrl = import.meta.env.DEV ? config.wsUrl.replace("localhost", window.location.hostname) : config.wsUrl
 
+      const connectionId = createDiagnosticId()
+      let connectionGeneration = 0
       const s = io(wsUrl, {
         path: "/socket.io/",
         // Prefer a direct WebSocket so the socket skips Engine.IO's HTTP
@@ -83,6 +102,8 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
         autoConnect: true,
       })
 
+      setSocketDiagnosticContext(s, { connectionId, generation: connectionGeneration })
+
       // Only the socket that is still the active instance may drive provider
       // state. A socket that was superseded (wsUrl moved → start() built a
       // replacement) or torn down (workspace change) still emits a
@@ -95,6 +116,10 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
         const wasReconnecting = hasEverConnectedRef.current
         hasEverConnectedRef.current = true
         setStatus("connected")
+        connectionGeneration++
+        setSocketDiagnosticContext(s, { connectionId, generation: connectionGeneration })
+        recordConnectivityEvent("socket_connect", { connectionId, generation: connectionGeneration })
+        void flushConnectivityDiagnostics()
 
         if (wasReconnecting) {
           setReconnectCount((c) => c + 1)
@@ -106,6 +131,15 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
 
       s.on("disconnect", (reason) => {
         if (isStale()) return
+        let diagnosticReason: "timeout" | "abort" | "server" | "transport" = "transport"
+        if (reason === "ping timeout") diagnosticReason = "timeout"
+        else if (reason === "io client disconnect") diagnosticReason = "abort"
+        else if (reason === "io server disconnect") diagnosticReason = "server"
+        recordConnectivityEvent("socket_disconnect", {
+          connectionId,
+          generation: connectionGeneration,
+          reason: diagnosticReason,
+        })
         if (hasEverConnectedRef.current) {
           setStatus("reconnecting")
           console.log("[Socket] Disconnected:", reason)
@@ -116,23 +150,44 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
 
       s.on("error", (error: { message: string }) => {
         if (isStale()) return
+        recordConnectivityEvent("socket_error", { connectionId, generation: connectionGeneration, reason: "transport" })
         console.error("[Socket] Error:", error.message)
+      })
+
+      s.on("connect_error", () => {
+        if (isStale()) return
+        recordConnectivityEvent("socket_error", { connectionId, generation: connectionGeneration, reason: "transport" })
       })
 
       // Socket.io manager events for reconnection tracking
       s.io.on("reconnect_attempt", (socketAttempt) => {
         if (isStale()) return
         setStatus("reconnecting")
+        recordConnectivityEvent("socket_reconnect_start", {
+          connectionId,
+          generation: connectionGeneration,
+          attempt: socketAttempt,
+        })
         console.log(`[Socket] Reconnect attempt ${socketAttempt}`)
       })
 
       s.io.on("reconnect_error", (error) => {
         if (isStale()) return
+        recordConnectivityEvent("socket_reconnect_error", {
+          connectionId,
+          generation: connectionGeneration,
+          reason: "transport",
+        })
         console.error("[Socket] Reconnect error:", error.message)
       })
 
       s.io.on("reconnect_failed", () => {
         if (isStale()) return
+        recordConnectivityEvent("socket_reconnect_exhausted", {
+          connectionId,
+          generation: connectionGeneration,
+          reason: "transport",
+        })
         console.error("[Socket] Reconnect failed - giving up")
         setStatus("disconnected")
       })
@@ -204,8 +259,9 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       setSocket(null)
       setStatus("connecting")
       setReconnectCount(0)
+      suspendConnectivityDiagnostics()
     }
-  }, [workspaceId])
+  }, [workspaceId, accountId])
 
   // Heartbeat for push notification session tracking. Sends { focused, interacted }
   // so the backend can pick the device the user is actually on (focused window

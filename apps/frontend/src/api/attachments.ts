@@ -1,4 +1,4 @@
-import { api, API_BASE, ApiError, parseApiError } from "./client"
+import { api, API_BASE, ApiError, requestMultipart } from "./client"
 import type { Attachment, AttachmentCategory } from "@threahq/types"
 
 export interface AttachmentSearchExtractionExcerpt {
@@ -117,18 +117,11 @@ export const attachmentsApi = {
     // filename/mime (the real metadata rides in the message's attachmentRefs).
     if (options?.e2e) formData.append("e2e", "true")
 
-    const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/attachments`, {
-      method: "POST",
-      body: formData,
-      credentials: "include",
-      // No Content-Type header — browser sets it with the multipart boundary.
-    })
-
-    if (!response.ok) {
-      throw await parseApiError(response, { code: "UPLOAD_ERROR", message: "Upload failed" })
-    }
-
-    const body = await response.json()
+    const body = await requestMultipart<{ attachment?: Attachment }>(
+      `/api/workspaces/${workspaceId}/attachments`,
+      formData,
+      { code: "UPLOAD_ERROR", message: "Upload failed" }
+    )
     if (!body.attachment) {
       throw new ApiError(500, "INVALID_RESPONSE", "Server returned invalid response")
     }

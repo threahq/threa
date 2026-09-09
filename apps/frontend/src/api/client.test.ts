@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { api, ApiError, parseApiError } from "./client"
+import { api, ApiError, parseApiError, postMultipartFile } from "./client"
+import * as diagnostics from "@/lib/connectivity-diagnostics/facade"
 
 const originalFetch = globalThis.fetch
 
@@ -103,7 +104,67 @@ describe("apiFetch request timeout", () => {
   })
 })
 
-describe("parseApiError — for raw fetch callers (multipart uploads)", () => {
+describe("HTTP connectivity phases", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = originalFetch
+  })
+
+  it("should distinguish a response-body stall from waiting for headers", async () => {
+    const events: diagnostics.ConnectivityEvent[] = []
+    vi.spyOn(diagnostics, "beginConnectivityObservation").mockImplementation(() => ({
+      id: "op_test",
+      record: (event) => {
+        events.push(event)
+      },
+      stall: () => {
+        const timer = setTimeout(() => events.push("http_stalled"), 10)
+        return () => clearTimeout(timer)
+      },
+    }))
+    let finishBody: ((value: unknown) => void) | undefined
+    const response = new Response("{}", { status: 200 })
+    response.json = () =>
+      new Promise((resolve) => {
+        finishBody = resolve
+      })
+    globalThis.fetch = vi.fn().mockResolvedValue(response) as unknown as typeof fetch
+
+    const request = api.get("/api/workspaces/ws/streams")
+    await vi.advanceTimersByTimeAsync(10)
+    finishBody?.({ ok: true })
+
+    await expect(request).resolves.toEqual({ ok: true })
+    expect(events).toEqual(["http_start", "http_headers", "http_stalled", "http_body_complete"])
+  })
+
+  it("should instrument multipart fetch without adding a request timeout", async () => {
+    const events: diagnostics.ConnectivityEvent[] = []
+    vi.spyOn(diagnostics, "beginConnectivityObservation").mockImplementation(() => ({
+      id: "op_test",
+      record: (event) => {
+        events.push(event)
+      },
+      stall: () => () => {},
+    }))
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown as typeof fetch
+
+    await expect(
+      postMultipartFile("/api/workspaces/ws/profile/avatar", new File(["x"], "x.png"), "avatar")
+    ).resolves.toEqual({ ok: true })
+    expect(events).toEqual(["http_start", "http_headers", "http_body_complete"])
+    expect(vi.mocked(globalThis.fetch).mock.calls[0]![1]).not.toHaveProperty("signal")
+  })
+})
+
+describe("parseApiError for raw fetch callers", () => {
   it("uses the supplied fallback when the body is empty", async () => {
     const response = new Response("", { status: 500, headers: { "Content-Type": "application/json" } })
     const err = await parseApiError(response, { code: "UPLOAD_ERROR", message: "Upload failed" })

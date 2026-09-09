@@ -100,11 +100,11 @@ describe("DiagnosticsSettings", () => {
     }).toEqual({ samples: 0, written: [["performanceDiagnosticsOptIn", false]] })
   })
 
-  it("disables Send with an empty buffer", () => {
+  it("allows Send with no performance samples so buffered connectivity events can flush", () => {
     setPerfConsentArmed(true)
     mountSettings(true)
 
-    expect(screen.getByRole("button", { name: /send diagnostics/i })).toBeDisabled()
+    expect(screen.getByRole("button", { name: /send diagnostics/i })).toBeEnabled()
   })
 
   it("swaps the button to a checkmark on a successful send and fires no toast", async () => {

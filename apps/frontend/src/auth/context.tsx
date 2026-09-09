@@ -189,6 +189,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const logout = useCallback(async (opts?: { scope?: "current" | "all" }) => {
     const scope = opts?.scope ?? "all"
+    void import("@/lib/connectivity-diagnostics")
+      .then(({ suspendConnectivityDiagnostics }) => {
+        suspendConnectivityDiagnostics()
+      })
+      .catch(() => {})
     // Clean up push subscriptions on logout:
     // 1. Tell backend to remove all records for this browser's endpoint (cross-workspace)
     // 2. Unsubscribe from the browser push service to prevent post-logout notifications

@@ -29,6 +29,7 @@ import type {
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
+import { recordConnectivityEvent } from "@/lib/connectivity-diagnostics/facade"
 
 const REFERENCE_FAILURE_CODES: ReadonlySet<string> = new Set(Object.values(MessageReferenceErrorCodes))
 
@@ -212,7 +213,18 @@ export function useMessageQueue(): void {
   const isProcessing = useRef(false)
   const hasPendingWork = useRef(false)
   const isConnectedRef = useRef(isConnected)
+  const wasSocketBlockedRef = useRef(!isConnected)
+  const wasInFlightBlockedRef = useRef(false)
+  const wasLockBlockedRef = useRef(false)
   isConnectedRef.current = isConnected
+
+  useEffect(() => {
+    if (wasSocketBlockedRef.current === !isConnected) return
+    wasSocketBlockedRef.current = !isConnected
+    recordConnectivityEvent(isConnected ? "message_queue_unblocked" : "message_queue_blocked", {
+      blockedBy: "socket",
+    })
+  }, [isConnected])
 
   const drainQueue = useCallback(async () => {
     const now = Date.now()
@@ -425,6 +437,10 @@ export function useMessageQueue(): void {
 
   const processQueue = useCallback(async () => {
     if (isProcessing.current) {
+      if (!wasInFlightBlockedRef.current) {
+        wasInFlightBlockedRef.current = true
+        recordConnectivityEvent("message_queue_blocked", { blockedBy: "in_flight" })
+      }
       hasPendingWork.current = true
       return
     }
@@ -437,7 +453,17 @@ export function useMessageQueue(): void {
       // If another tab holds the lock, we skip — it's already processing.
       if (navigator.locks) {
         await navigator.locks.request("threa-outbox", { ifAvailable: true }, async (lock) => {
-          if (!lock) return // Another tab is processing
+          if (!lock) {
+            if (!wasLockBlockedRef.current) {
+              wasLockBlockedRef.current = true
+              recordConnectivityEvent("message_queue_blocked", { blockedBy: "lock" })
+            }
+            return
+          }
+          if (wasLockBlockedRef.current) {
+            wasLockBlockedRef.current = false
+            recordConnectivityEvent("message_queue_unblocked", { blockedBy: "lock" })
+          }
           await drainQueue()
         })
       } else {
@@ -446,6 +472,10 @@ export function useMessageQueue(): void {
       }
     } finally {
       isProcessing.current = false
+      if (wasInFlightBlockedRef.current) {
+        wasInFlightBlockedRef.current = false
+        recordConnectivityEvent("message_queue_unblocked", { blockedBy: "in_flight" })
+      }
 
       if (hasPendingWork.current) {
         hasPendingWork.current = false

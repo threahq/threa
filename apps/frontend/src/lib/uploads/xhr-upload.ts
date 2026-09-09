@@ -1,3 +1,9 @@
+import {
+  beginConnectivityObservation,
+  categorizeRoute,
+  flushConnectivityDiagnostics,
+} from "@/lib/connectivity-diagnostics/facade"
+
 /**
  * Multipart upload over XMLHttpRequest. `fetch` still has no upload-progress
  * events, so the upload manager's progress reporting rides XHR's
@@ -47,6 +53,11 @@ export function xhrUpload({
     for (const [name, value] of Object.entries(fields ?? {})) formData.append(name, value)
     formData.append("file", blob, filename)
 
+    const observation = beginConnectivityObservation({ method: "POST", route: categorizeRoute(url), transport: "xhr" })
+    observation.record("http_start")
+    const stopStallTimer = observation.stall()
+    let uploadComplete = false
+
     const xhr = new XMLHttpRequest()
     xhr.open("POST", url)
     xhr.withCredentials = true
@@ -54,10 +65,30 @@ export function xhrUpload({
 
     const onAbort = () => xhr.abort()
     signal?.addEventListener("abort", onAbort, { once: true })
-    const cleanup = () => signal?.removeEventListener("abort", onAbort)
+    const cleanup = () => {
+      stopStallTimer()
+      signal?.removeEventListener("abort", onAbort)
+    }
+    const markUploadComplete = () => {
+      if (uploadComplete) return
+      uploadComplete = true
+      observation.record("http_upload_complete")
+    }
 
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && event.total > 0) onProgress?.(event.loaded / event.total)
+      if (event.lengthComputable && event.total > 0) {
+        onProgress?.(event.loaded / event.total)
+        if (event.loaded >= event.total) markUploadComplete()
+      }
+    }
+    xhr.upload.onload = markUploadComplete
+    let responseFields: { status: number; correlationId?: string } = { status: 0 }
+    let headersRecorded = false
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState !== XMLHttpRequest.HEADERS_RECEIVED || headersRecorded) return
+      headersRecorded = true
+      responseFields = { status: xhr.status, correlationId: xhr.getResponseHeader("x-railway-request-id") ?? undefined }
+      observation.record("http_headers", responseFields)
     }
     xhr.onload = () => {
       cleanup()
@@ -67,14 +98,22 @@ export function xhrUpload({
       } catch {
         // Non-JSON body (proxy error page) — status alone drives handling.
       }
+      observation.record("http_body_complete", responseFields)
+      if (xhr.status < 200 || xhr.status >= 300) {
+        observation.record("http_failure", { ...responseFields, reason: "server" })
+        void flushConnectivityDiagnostics()
+      }
       resolve({ status: xhr.status, body })
     }
     xhr.onerror = () => {
       cleanup()
+      observation.record("http_failure", { reason: "network" })
+      void flushConnectivityDiagnostics()
       reject(new XhrNetworkError())
     }
     xhr.onabort = () => {
       cleanup()
+      observation.record("http_abort", { reason: "abort" })
       reject(new DOMException("Aborted", "AbortError"))
     }
 

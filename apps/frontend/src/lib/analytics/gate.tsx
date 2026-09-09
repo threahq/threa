@@ -1,27 +1,36 @@
 import { useEffect } from "react"
+import { coerceLayers, resolveFeatureFlags } from "@threahq/types"
 import { usePreferencesOptional } from "@/contexts"
+import { useAccountScopeOptional } from "@/auth/account-scope"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { useWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { setSessionReplay, startAnalytics, stopAnalytics } from "./posthog"
+import {
+  authorizeConnectivityDiagnostics,
+  revokeConnectivityDiagnostics,
+  suspendConnectivityDiagnostics,
+} from "@/lib/connectivity-diagnostics"
 
 export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
   const { data } = useWorkspaceBootstrap(workspaceId)
   const analytics = data?.analytics
-  const preferences = usePreferencesOptional()?.preferences
+  const preferencesContext = usePreferencesOptional()
+  const preferences = preferencesContext?.preferences
+  const preferencesPending = preferencesContext?.isLoading === true
   const consent = preferences?.analyticsConsent
   const replayOptIn = preferences?.sessionReplayOptIn === true
-  // The workspace-scoped `usr_` id (INV-50), not the global WorkOS id: consent
-  // is granted per workspace, and the backend reports this workspace's product
-  // events under the same id, so both sides describe one person.
   const distinctId = useCurrentWorkspaceUserId(workspaceId)
+  const diagnosticFlag = data
+    ? resolveFeatureFlags(coerceLayers(data.featureFlags ?? null) ?? { workspace: {}, user: {} }).perfDiagnostics
+    : null
+  const diagnosticsOptIn = preferences?.performanceDiagnosticsOptIn
+  const diagnosticsDecisionVersion = preferences?.updatedAt
+  const accountId = useAccountScopeOptional()?.activeWorkosUserId ?? null
 
-  // No unmount cleanup: a route error replaces the layout (and this gate)
-  // before the error boundary's effect runs, so stopping here would drop the
-  // crash we most want. Consent changes and workspace switches re-run the effect.
+  // A route error unmounts this gate before the error boundary reports the crash.
+  // Keep analytics active for that report; diagnostics have their own cleanup.
   useEffect(() => {
     if (consent === "granted" && analytics && distinctId) {
-      // Replay is applied once the SDK is up. A withdrawal that lands first
-      // leaves nothing active, and `setSessionReplay` is a no-op then.
       void startAnalytics({
         token: analytics.posthogToken,
         host: analytics.posthogHost,
@@ -32,6 +41,43 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
     }
     stopAnalytics()
   }, [analytics?.posthogToken, analytics?.posthogHost, consent, replayOptIn, distinctId, workspaceId])
+
+  useEffect(() => {
+    if (analytics && distinctId && accountId && diagnosticsDecisionVersion) {
+      const scope = {
+        token: analytics.posthogToken,
+        host: analytics.posthogHost,
+        userId: distinctId,
+        workspaceId,
+        region: analytics.posthogHost,
+      }
+      if (consent === "granted" && diagnosticsOptIn === true && diagnosticFlag === "available" && !preferencesPending) {
+        authorizeConnectivityDiagnostics(accountId, scope, diagnosticsDecisionVersion)
+      } else if (
+        consent === "denied" ||
+        diagnosticsOptIn === false ||
+        (diagnosticFlag !== null && diagnosticFlag !== "available")
+      ) {
+        revokeConnectivityDiagnostics({ ...scope, accountId, decisionVersion: diagnosticsDecisionVersion })
+      } else {
+        suspendConnectivityDiagnostics()
+      }
+    } else {
+      suspendConnectivityDiagnostics()
+    }
+    return () => suspendConnectivityDiagnostics()
+  }, [
+    analytics?.posthogToken,
+    analytics?.posthogHost,
+    consent,
+    diagnosticsOptIn,
+    diagnosticFlag,
+    diagnosticsDecisionVersion,
+    preferencesPending,
+    distinctId,
+    workspaceId,
+    accountId,
+  ])
 
   return null
 }
