@@ -3091,6 +3091,55 @@ function normalizeThinkingLevel(input: string): ThinkingLevel | null {
 }
 
 /**
+ * The heartbeat every session-control close ends with: the pane can have gone
+ * busy while the command ran, so the state Threa shows is re-derived here.
+ */
+async function settleAfterSessionControl(ctx?: ExtensionContext): Promise<void> {
+  lastBusyHeartbeatAt = 0
+  const busy = reconnectPending || pending !== undefined || (ctx !== undefined && !ctx.isIdle())
+  await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
+}
+
+/**
+ * Close a session-control invocation with its own account of what it did. The
+ * summary lands on the command's entry, so a control command says what it
+ * changed without posting a message into the stream.
+ */
+async function completeInvocationWithSummary(
+  invocation: ClaimedInvocation,
+  summary: string,
+  ctx?: ExtensionContext
+): Promise<boolean> {
+  if (!config) return false
+  const instanceId = getInvocationInstanceId(invocation)
+  const revision = invocation.sourceRevision
+  const observed = observedInvocations.get(invocation) ?? null
+  if (!isInvocationWriteCurrent(invocation, revision, observed)) return false
+  try {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        sourceRevision: revision,
+        summary,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+        },
+      }),
+    })
+    return true
+  } catch {
+    return false
+  } finally {
+    releaseObservation(invocation)
+    await settleAfterSessionControl(ctx)
+  }
+}
+
+/**
  * Close a session-control invocation. `finalMessageMarkdown` undefined posts
  * nothing at all, for a command whose visible outcome lands elsewhere
  * (`/spawn`'s thread) — the same shape the E2E fallback below already uses.
@@ -3198,9 +3247,7 @@ async function completeInvocationWithMarkdown(
     releaseObservation(invocation)
     return true
   } finally {
-    lastBusyHeartbeatAt = 0
-    const busy = reconnectPending || pending !== undefined || (ctx !== undefined && !ctx.isIdle())
-    await heartbeat(busy ? "busy" : "available", busy ? "Busy in Pi…" : undefined, ctx).catch(() => undefined)
+    await settleAfterSessionControl(ctx)
   }
 }
 
@@ -3463,7 +3510,7 @@ async function runCompactCommand(
   if (!isCurrent()) return
   await compactSession(ctx, args)
   if (!isCurrent()) return
-  await completeInvocationWithMarkdown(invocation, "Compacted the linked Pi session.", ctx)
+  await completeInvocationWithSummary(invocation, "Compacted the linked Pi session.", ctx)
 }
 
 async function runModelCommand(
@@ -3493,7 +3540,7 @@ async function runModelCommand(
   const ok = await pi.setModel(resolved.match.model)
   if (!isCurrent()) return
   if (!ok) throw new Error(`No API key configured for ${resolved.match.value}`)
-  await completeInvocationWithMarkdown(invocation, `Model changed: \`${current}\` → \`${resolved.match.value}\``, ctx)
+  await completeInvocationWithSummary(invocation, `Model changed: \`${current}\` → \`${resolved.match.value}\``, ctx)
 }
 
 async function runThinkingCommand(
@@ -3505,13 +3552,13 @@ async function runThinkingCommand(
 ): Promise<void> {
   const level = normalizeThinkingLevel(args)
   if (!level) {
-    await completeInvocationWithMarkdown(invocation, `Usage: \`/thinking ${THINKING_LEVELS.join("|")}\``, ctx)
+    await failInvocation(invocation, `Usage: \`/thinking ${THINKING_LEVELS.join("|")}\``)
     return
   }
   const before = pi.getThinkingLevel()
   pi.setThinkingLevel(level)
   const after = pi.getThinkingLevel()
-  await completeInvocationWithMarkdown(invocation, `Thinking level changed: \`${before}\` → \`${after}\``, ctx)
+  await completeInvocationWithSummary(invocation, `Thinking level changed: \`${before}\` → \`${after}\``, ctx)
 }
 
 async function runReloadCommand(
@@ -3522,7 +3569,7 @@ async function runReloadCommand(
 ): Promise<void> {
   reloadPending = true
   try {
-    const completed = await completeInvocationWithMarkdown(
+    const completed = await completeInvocationWithSummary(
       invocation,
       "Reloading Pi extensions, skills, prompts, and themes…",
       ctx
@@ -3690,7 +3737,7 @@ async function runShellCommand(
 ): Promise<void> {
   const command = args.trim()
   if (command.length === 0) {
-    await completeInvocationWithMarkdown(invocation, SHELL_USAGE, ctx)
+    await failInvocation(invocation, SHELL_USAGE)
     return
   }
   await recordInvocationTraceStep(invocation, "tool_call", `$ ${command}`, `Running shell…`)
@@ -3750,23 +3797,22 @@ async function runCarryOnCommand(
 ): Promise<void> {
   const text = args.trim()
   if (!isWaitingForRetry) {
-    await completeInvocationWithMarkdown(
+    await failInvocation(
       invocation,
       text
         ? "No rate-limit wait is active — send this as a normal message and the session will pick it up."
-        : "No rate-limit wait is active; nothing to carry on from.",
-      ctx
+        : "No rate-limit wait is active; nothing to carry on from."
     )
     return
   }
   const retryAt = pendingRetry ? ` around ${formatLocalTime(new Date(pendingRetry.retryAt))}` : " soon"
   if (!text) {
     const queuedNote = carryOnTexts.length > 0 ? ` ${carryOnTexts.length} message(s) queued.` : ""
-    await completeInvocationWithMarkdown(invocation, `Rate limited — retrying${retryAt}.${queuedNote}`, ctx)
+    await completeInvocationWithSummary(invocation, `Rate limited — retrying${retryAt}.${queuedNote}`, ctx)
     return
   }
   carryOnTexts.push(text)
-  await completeInvocationWithMarkdown(invocation, `Queued — the retry${retryAt} folds it in.`, ctx)
+  await completeInvocationWithSummary(invocation, `Queued — the retry${retryAt} folds it in.`, ctx)
 }
 
 async function runKickCommand(
@@ -3776,7 +3822,7 @@ async function runKickCommand(
 ): Promise<void> {
   const result = runHarnessKick(getRuntimeSessionId(ctx))
   if (!result.ok) throw new Error(result.error ?? "Harness daemon kick failed.")
-  await completeInvocationWithMarkdown(invocation, "Kicked the linked Pi session.", ctx)
+  await completeInvocationWithSummary(invocation, "Kicked the linked Pi session.", ctx)
 }
 
 async function runKeyCommand(
@@ -3785,9 +3831,9 @@ async function runKeyCommand(
   ctx: ExtensionContext,
   deps: {
     send: typeof sendAllowedTmuxKey
-    complete: typeof completeInvocationWithMarkdown
+    complete: typeof completeInvocationWithSummary
     fail: typeof failInvocation
-  } = { send: sendAllowedTmuxKey, complete: completeInvocationWithMarkdown, fail: failInvocation },
+  } = { send: sendAllowedTmuxKey, complete: completeInvocationWithSummary, fail: failInvocation },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
   const key = parseAllowedTmuxKey(args)
@@ -3806,21 +3852,21 @@ async function runKeyCommand(
 interface ReconnectCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessReconnect
-  complete: typeof completeInvocationWithMarkdown
+  complete: typeof completeInvocationWithSummary
   heartbeat?: typeof heartbeat
 }
 
 interface ClearCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessClear
-  complete: typeof completeInvocationWithMarkdown
+  complete: typeof completeInvocationWithSummary
   heartbeat?: typeof heartbeat
 }
 
 interface SpawnCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessSpawn
-  complete: typeof completeInvocationWithMarkdown
+  complete: typeof completeInvocationWithSummary
   fail: typeof failInvocation
   spawnRuntimes: () => SpawnRuntimeOption[]
 }
@@ -3831,18 +3877,18 @@ interface HarnessHandoffSpec {
   busyMessage: string
   unavailableMessage: string
   /**
-   * Posted as the command's completion before the harness takes over. Absent,
-   * the command stays open and is handed to harnessd with its claim, which
-   * drives the steps and closes it; nothing is posted from here.
+   * Closes the command with this account of the handoff before the harness
+   * takes over. Absent, the command stays open and is handed to harnessd with
+   * its claim, which drives the steps and closes it.
    */
-  ackMessage?: string
+  ackSummary?: string
   heartbeatText: string
   prepare: (facts: { runtimeSessionId: string; rootStreamId: string; force: boolean; claimFile?: string }) => () => void
 }
 
 interface HarnessHandoffDeps {
   available: () => boolean
-  complete: typeof completeInvocationWithMarkdown
+  complete: typeof completeInvocationWithSummary
   fail: typeof failInvocation
   heartbeat?: typeof heartbeat
 }
@@ -3911,7 +3957,7 @@ async function runHarnessHandoffCommand(
   }
   if (!config) throw new Error("Threa remote config not loaded")
   const claimFile =
-    spec.ackMessage === undefined
+    spec.ackSummary === undefined
       ? writeCommandClaim({
           runtime: "pi",
           workspaceId: config.workspaceId,
@@ -3943,7 +3989,7 @@ async function runHarnessHandoffCommand(
     return
   }
   try {
-    const acknowledged = spec.ackMessage === undefined ? true : await deps.complete(invocation, spec.ackMessage, ctx)
+    const acknowledged = spec.ackSummary === undefined ? true : await deps.complete(invocation, spec.ackSummary, ctx)
     const currentLink = currentReconnectLink(ctx, deps.available)
     const lifecycleChanged =
       sessionTearingDown ||
@@ -3984,7 +4030,7 @@ async function runReconnectCommand(
   deps: ReconnectCommandDeps = {
     available: harnessReconnectAvailable,
     prepare: prepareHarnessReconnect,
-    complete: completeInvocationWithMarkdown,
+    complete: completeInvocationWithSummary,
     fail: failInvocation,
     heartbeat,
   },
@@ -4000,7 +4046,7 @@ async function runReconnectCommand(
       pendingMessage: "A Threa invocation is still running; use `/stop` before reconnecting.",
       busyMessage: "Pi is busy; retry when idle or use `/reconnect --force`.",
       unavailableMessage: "Harness reconnect is unavailable for this session.",
-      ackMessage: "Reconnect request accepted; attempting to resume the linked Pi session.",
+      ackSummary: "Reconnect accepted; resuming the linked Pi session.",
       heartbeatText: "Reconnect handoff…",
       prepare: ({ runtimeSessionId, rootStreamId, force }) => deps.prepare(runtimeSessionId, rootStreamId, { force }),
     },
@@ -4015,7 +4061,7 @@ async function runClearCommand(
   deps: ClearCommandDeps = {
     available: harnessReconnectAvailable,
     prepare: prepareHarnessClear,
-    complete: completeInvocationWithMarkdown,
+    complete: completeInvocationWithSummary,
     fail: failInvocation,
     heartbeat,
   },
@@ -4031,7 +4077,7 @@ async function runClearCommand(
       pendingMessage: "A Threa invocation is still running; use `/stop` before clearing.",
       busyMessage: "Pi is busy; retry when idle or use `/clear --force`.",
       unavailableMessage: "Harness clear is unavailable for this session.",
-      ackMessage: "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
+      ackSummary: "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
       heartbeatText: "Clear handoff…",
       prepare: ({ runtimeSessionId }) => deps.prepare(runtimeSessionId),
     },
@@ -4046,7 +4092,7 @@ async function runSpawnCommand(
   deps: SpawnCommandDeps = {
     available: harnessReconnectAvailable,
     prepare: prepareHarnessSpawn,
-    complete: completeInvocationWithMarkdown,
+    complete: completeInvocationWithSummary,
     fail: failInvocation,
     spawnRuntimes: defaultSpawnRuntimes,
   },
@@ -4108,7 +4154,7 @@ async function runDoneCommand(
   deps: HarnessHandoffDeps & { prepare: typeof prepareHarnessDone } = {
     available: harnessReconnectAvailable,
     prepare: prepareHarnessDone,
-    complete: completeInvocationWithMarkdown,
+    complete: completeInvocationWithSummary,
     fail: failInvocation,
     heartbeat,
   },
@@ -4158,7 +4204,7 @@ async function runStopCommand(
     : "Stopped the current Pi turn."
   const carryOnNote =
     droppedCarryOns > 0 ? ` Dropped ${droppedCarryOns} queued carry-on message(s); resend if still wanted.` : ""
-  await completeInvocationWithMarkdown(
+  await completeInvocationWithSummary(
     invocation,
     wasBusy || hadPendingRemoteInvocation ? `${stoppedNote}${carryOnNote}` : "No Pi turn is running.",
     ctx
@@ -4241,10 +4287,9 @@ async function handleSessionControlInvocation(
         // /skill starts a fresh pending turn (beginPendingInvocation) — during
         // a rate-limit wait that would clobber the waiting invocation.
         if (isWaitingForRetry) {
-          await completeInvocationWithMarkdown(
+          await failInvocation(
             invocation,
-            "Session is waiting out a rate limit — run /skill again after the retry, or /stop first.",
-            ctx
+            "Session is waiting out a rate limit — run /skill again after the retry, or /stop first."
           )
           return
         }
@@ -5509,6 +5554,7 @@ export const __testing = {
   NO_SOCKET_POLL_CAP_MS,
   nextQuietPollMs,
   completeInvocationWithMarkdown,
+  completeInvocationWithSummary,
   claimNextInvocation,
   claimIfIdle,
   runReconnectCommand,
