@@ -1,11 +1,19 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
-import { BotInvocationCapabilities, BotTraits, WORKSPACE_PERMISSION_SCOPES, type BotRuntimeKind } from "@threahq/types"
+import {
+  BotInvocationCapabilities,
+  BotTraits,
+  StreamErrorCodes,
+  StreamReadOnlyReasons,
+  WORKSPACE_PERMISSION_SCOPES,
+  type BotRuntimeKind,
+} from "@threahq/types"
 import {
   botApiPost,
   createBot,
   createBotKey,
   createWorkspace,
   dispatchCommand,
+  getStream,
   loginAs,
   sendMessage,
   TestClient,
@@ -205,10 +213,17 @@ describe("cross-bot runtime HTTP lifecycle", () => {
         status: 200,
         data: { data: { linkId: attached.data.data.linkId, activeStreamId: thread, status: "ended" } },
       })
+      expect(await getStream(client, workspace.id, thread)).toMatchObject({
+        id: thread,
+        archivedAt: expect.any(String),
+      })
       const doneNotice = await botApiPost(client, workspace.id, `/streams/${thread}/messages`, parent.apiKey, {
         content: "Child session ended",
       })
-      expect(doneNotice.status).toBe(201)
+      expect(doneNotice).toMatchObject({
+        status: 403,
+        data: { code: StreamErrorCodes.READ_ONLY, details: { reason: StreamReadOnlyReasons.ARCHIVED } },
+      })
       await proveTurn(parent, rootId, "Parent after child session")
     })
   }
