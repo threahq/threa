@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -381,6 +381,41 @@ describe("prepareHarnessDone", () => {
     expect(() => start()).toThrow("already started")
   })
 
+  it("passes the command claim file through and discards it when the launch itself fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-done-claim-"))
+    const claimFile = join(dir, "claim.json")
+    writeFileSync(claimFile, "{}")
+    const events: unknown[] = []
+    let emitError: ((error: Error & { code?: unknown }) => void) | undefined
+    const start = prepareHarnessDone("runtime_exact", "stream_root", {
+      claimFile,
+      entrypoint: "/repo/harnessd.ts",
+      bunExecutable: "/bun",
+      logPath: "/private/harnessd/done.log",
+      exists: () => true,
+      fs: filesystem(events),
+      spawn: ((_executable: string, args: string[]) => {
+        events.push(["spawn", args])
+        return {
+          on: (_event: "error", listener: typeof emitError) => {
+            emitError = listener
+          },
+          unref: () => undefined,
+        }
+      }) as never,
+    })
+
+    start()
+    expect(events).toContainEqual([
+      "spawn",
+      ["/repo/harnessd.ts", "done", "runtime_exact", "--root-stream-id", "stream_root", "--claim-file", claimFile],
+    ])
+    expect(existsSync(claimFile)).toBe(true)
+    queueMicrotask(() => emitError?.(Object.assign(new Error("boom"), { code: "ENOENT" })))
+    await Promise.resolve()
+    expect(existsSync(claimFile)).toBe(false)
+  })
+
   it("logs a sanitized asynchronous spawn error without crashing after acknowledgement", async () => {
     const events: unknown[] = []
     let emitError: ((error: Error & { code?: unknown }) => void) | undefined
@@ -445,7 +480,11 @@ describe("prepareHarnessDone", () => {
       "Root stream id"
     )
     expect(() =>
-      prepareHarnessDone("runtime", "stream_root", { entrypoint: "/missing", exists: () => false, spawn: spawn as never })
+      prepareHarnessDone("runtime", "stream_root", {
+        entrypoint: "/missing",
+        exists: () => false,
+        spawn: spawn as never,
+      })
     ).toThrow("entrypoint not found")
     expect(spawn).not.toHaveBeenCalled()
   })

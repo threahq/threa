@@ -136,7 +136,7 @@ describe("runtime-scoped production HTTP wiring", () => {
           instanceId: direction.instanceId,
           runtimeSessionId: direction.runtimeSessionId,
         })
-      ).resolves.toEqual({ status: "ended", activeStreamId: THREAD })
+      ).resolves.toBeUndefined()
 
       expect(requests.map(({ authorization, path }) => ({ authorization, path }))).toEqual([
         {
@@ -275,7 +275,6 @@ describe("runtime-scoped production HTTP wiring", () => {
     const wrongIdentity: RuntimeTargetResolver = () => requireThreadSessionTarget(configs.claude, "wrong identity")
     const wrongDeps = defaultDoneDeps(wrongIdentity, targetForRuntime("pi", "test supervisor"))
     const persisted: ManagedAgent[] = []
-    const notices: string[] = []
     const agent: ManagedAgent = {
       id: "pi-child",
       name: "pi-child",
@@ -318,7 +317,8 @@ describe("runtime-scoped production HTTP wiring", () => {
       forgetIdentities: () => [],
       lock: async () => () => {},
       persist: (next: ManagedAgent) => persisted.push(next),
-      postNotice: async (streamId: string, content: string) => void notices.push(`${streamId}:${content}`),
+      readClaim: wrongDeps.readClaim,
+      commandReporter: wrongDeps.commandReporter,
     }
 
     await expect(doneAgent({ ref: agent.id, rootStreamId: ROOT }, deps)).rejects.toThrow(
@@ -331,12 +331,9 @@ describe("runtime-scoped production HTTP wiring", () => {
         updatedAt: persisted[0]?.updatedAt,
       },
     ])
-    expect(notices).toEqual([
-      `${ROOT}:harnessd: \`/done\` for \`pi-child\` failed: harnessd: remote cleanup unresolved: could not end runtime session: 404 session not found for bot`,
-    ])
     expect(sessions.has(`Bearer ${PI_KEY}:${identity.instanceId}:${identity.runtimeSessionId}`)).toBe(true)
 
     const retryDeps = defaultDoneDeps(targetForRuntime, targetForRuntime("pi", "test supervisor"))
-    await expect(retryDeps.endSession(identity)).resolves.toEqual({ status: "ended", activeStreamId: THREAD })
+    await expect(retryDeps.endSession(identity)).resolves.toBeUndefined()
   })
 })

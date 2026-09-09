@@ -145,8 +145,22 @@ export interface SessionControlActuator {
     /** Ack markdown to post. Omitted closes the command with no post at all, for one whose visible outcome lands elsewhere (`/spawn`'s thread). */
     message?: string
     afterAck?: () => unknown | Promise<unknown>
+    /**
+     * Hand the still-open command to another process, which drives its steps
+     * and closes it with this claim. Nothing is posted and the SDK stops
+     * observing the command once the handoff returns; a throw fails it here.
+     */
+    handoff?: (claim: HandedOffCommandClaim) => unknown | Promise<unknown>
     onHandoffReset?: () => unknown | Promise<unknown>
   }>
+}
+
+/** What another process needs to report on, renew and close a claimed command. */
+export interface HandedOffCommandClaim {
+  workspaceId: string
+  invocationId: string
+  instanceId: string
+  claimToken: string
 }
 
 /**
@@ -1426,6 +1440,30 @@ export class RemoteSession {
           if (this.isClaimCancelled(invocation)) return
           if (!outcome.ok) {
             await this.failInvocation(invocation, outcome.message ?? "Command rejected.")
+            return
+          }
+          if (outcome.handoff) {
+            this.reconnectHandoff = true
+            this.onHandoffReset = outcome.onHandoffReset
+            await this.syncPresence()
+            if (this.stopped || !this.link || this.archive.detached || this.isClaimCancelled(invocation)) {
+              this.resetReconnectHandoff()
+              await this.failInvocation(invocation, "Remote session changed before the command was handed off.")
+              return
+            }
+            try {
+              await outcome.handoff({
+                workspaceId: invocation.workspaceId,
+                invocationId: invocation.id,
+                instanceId: this.config.instanceId,
+                claimToken: invocation.claimToken,
+              })
+            } catch (error) {
+              this.resetReconnectHandoff()
+              throw error
+            }
+            this.releaseObservation(invocation.id)
+            this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), RECONNECT_HANDOFF_FALLBACK_MS)
             return
           }
           const ack = (): Promise<boolean> =>

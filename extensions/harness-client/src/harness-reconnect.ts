@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync }
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { harnessDaemonEntrypoint } from "./harness-kick"
+import { discardCommandClaim } from "./command-claim"
 import { discardSpawnBrief } from "./spawn-command"
 
 type DetachedChild = { on(event: "error", listener: (error: Error & { code?: unknown }) => void): void; unref(): void }
@@ -139,13 +140,23 @@ export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarn
   return prepareDetachedHarnessCommand("spawn", args, options, () => discardSpawnBrief(spec.briefFile))
 }
 
+export interface PrepareHarnessDoneOptions extends PrepareHarnessClearOptions {
+  /** The `/done` command's own claim (see `writeCommandClaim`), for harnessd to drive to completion. */
+  claimFile?: string
+}
+
 export function prepareHarnessDone(
   runtimeSessionId: string,
   rootStreamId: string,
-  options: PrepareHarnessClearOptions = {}
+  options: PrepareHarnessDoneOptions = {}
 ): () => void {
   const session = requireId(runtimeSessionId, "Runtime session id")
   const rootStream = requireId(rootStreamId, "Root stream id")
   const entrypoint = requireHarnessEntrypoint(options)
-  return prepareDetachedHarnessCommand("done", [entrypoint, "done", session, "--root-stream-id", rootStream], options)
+  const args = [entrypoint, "done", session, "--root-stream-id", rootStream]
+  if (options.claimFile) args.push("--claim-file", options.claimFile)
+  // Same as the spawn brief: a launch that fails after `spawn` returns is only
+  // reported through the child's async "error" event, and harnessd, which
+  // unlinks the claim, never ran.
+  return prepareDetachedHarnessCommand("done", args, options, () => discardCommandClaim(options.claimFile))
 }

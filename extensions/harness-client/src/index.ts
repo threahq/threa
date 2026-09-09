@@ -25,8 +25,10 @@ export {
   prepareHarnessSpawn,
   type HarnessSpawnSpec,
   type PrepareHarnessClearOptions,
+  type PrepareHarnessDoneOptions,
   type PrepareHarnessReconnectOptions,
 } from "./harness-reconnect"
+export { discardCommandClaim, readCommandClaim, writeCommandClaim, type CommandClaim } from "./command-claim"
 export { discardSpawnBrief, parseSpawnCommandArgs, writeSpawnBrief } from "./spawn-command"
 export { claudeModelSuggestions, piModelSuggestions, type ModelSuggestion } from "./model-catalogs"
 export {

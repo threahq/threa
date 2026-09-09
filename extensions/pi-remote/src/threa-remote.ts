@@ -45,6 +45,7 @@ import {
   discardSpawnBrief,
   harnessReconnectAvailable,
   installedSpawnRuntimes,
+  discardCommandClaim,
   parseSpawnCommandArgs,
   prepareHarnessClear,
   prepareHarnessDone,
@@ -58,6 +59,7 @@ import {
   markHarnessLinkWoundDown,
   recordHarnessLink,
   spawnRuntimesResolver,
+  writeCommandClaim,
   type SpawnRuntimeOption,
 } from "@threahq/harness-client"
 import type {
@@ -3828,9 +3830,14 @@ interface HarnessHandoffSpec {
   pendingMessage: string
   busyMessage: string
   unavailableMessage: string
-  ackMessage: string
+  /**
+   * Posted as the command's completion before the harness takes over. Absent,
+   * the command stays open and is handed to harnessd with its claim, which
+   * drives the steps and closes it; nothing is posted from here.
+   */
+  ackMessage?: string
   heartbeatText: string
-  prepare: (facts: { runtimeSessionId: string; rootStreamId: string; force: boolean }) => () => void
+  prepare: (facts: { runtimeSessionId: string; rootStreamId: string; force: boolean; claimFile?: string }) => () => void
 }
 
 interface HarnessHandoffDeps {
@@ -3902,21 +3909,41 @@ async function runHarnessHandoffCommand(
     runtimeSessionId: link.runtimeSessionId,
     rootStreamId: link.rootStreamId,
   }
+  if (!config) throw new Error("Threa remote config not loaded")
+  const claimFile =
+    spec.ackMessage === undefined
+      ? writeCommandClaim({
+          runtime: "pi",
+          workspaceId: config.workspaceId,
+          invocationId: invocation.id,
+          instanceId: getInvocationInstanceId(invocation),
+          claimToken: invocation.claimToken,
+        })
+      : undefined
   const start = spec.prepare({
     runtimeSessionId,
     rootStreamId: linkFacts.rootStreamId,
     force: args === "--force",
+    ...(claimFile ? { claimFile } : {}),
   })
   // The latch means "harness restart imminent — stay busy, accept no claims",
   // which is exactly what both handoffs are about to cause.
   reconnectPending = true
   await sendHeartbeat("busy", spec.heartbeatText, ctx).catch(() => undefined)
+  const restoreHeartbeat = async () => {
+    reconnectPending = false
+    const enabled = isEnabled(ctx)
+    await sendHeartbeat(enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline", undefined, ctx).catch(
+      () => undefined
+    )
+  }
   if (!isCurrent()) {
+    discardCommandClaim(claimFile)
     reconnectPending = false
     return
   }
   try {
-    const acknowledged = await deps.complete(invocation, spec.ackMessage, ctx)
+    const acknowledged = spec.ackMessage === undefined ? true : await deps.complete(invocation, spec.ackMessage, ctx)
     const currentLink = currentReconnectLink(ctx, deps.available)
     const lifecycleChanged =
       sessionTearingDown ||
@@ -3930,23 +3957,22 @@ async function runHarnessHandoffCommand(
       invocation.rootStreamId !== invocationFacts.rootStreamId ||
       invocation.claimedInstanceId !== invocationFacts.claimedInstanceId
     if (!acknowledged || lifecycleChanged) {
-      reconnectPending = false
-      const enabled = isEnabled(ctx)
-      await sendHeartbeat(
-        enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline",
-        undefined,
-        ctx
-      ).catch(() => undefined)
+      discardCommandClaim(claimFile)
+      await restoreHeartbeat()
+      if (claimFile && lifecycleChanged) await deps.fail(invocation, spec.unavailableMessage)
       return
     }
-    start()
+    try {
+      start()
+    } catch (error) {
+      discardCommandClaim(claimFile)
+      throw error
+    }
+    // harnessd owns the command from here; this pane's teardown must not fail it.
+    if (claimFile) releaseObservation(invocation)
     armHandoffFallback(lifecycleGeneration, ctx, sendHeartbeat)
   } catch (error) {
-    reconnectPending = false
-    const enabled = isEnabled(ctx)
-    await sendHeartbeat(enabled ? (ctx.isIdle() && !pending ? "available" : "busy") : "offline", undefined, ctx).catch(
-      () => undefined
-    )
+    await restoreHeartbeat()
     throw error
   }
 }
@@ -4103,9 +4129,9 @@ async function runDoneCommand(
       pendingMessage: "A Threa invocation is still running; use `/stop` before finishing.",
       busyMessage: "Pi is busy; retry when idle or use `/done --force`.",
       unavailableMessage: "Harness done is unavailable for this session.",
-      ackMessage: "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
       heartbeatText: "Done handoff…",
-      prepare: ({ runtimeSessionId, rootStreamId }) => deps.prepare(runtimeSessionId, rootStreamId),
+      prepare: ({ runtimeSessionId, rootStreamId, claimFile }) =>
+        deps.prepare(runtimeSessionId, rootStreamId, { claimFile }),
     },
     isCurrent
   )

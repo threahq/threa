@@ -31,8 +31,8 @@ Usage:
   threa-harnessd kick <agent-id-or-name-or-runtime-session-id>
   threa-harnessd clear <agent-id-or-name-or-runtime-session-id>
       (kill the pane and start a FRESH conversation on the same scratchpad; opt-in only, never automatic)
-  threa-harnessd done <agent-id-or-name-or-runtime-session-id> --root-stream-id <stream-id>
-      (commit, push, remove the worktree and end the Threa link; opt-in only)
+  threa-harnessd done <agent-id-or-name-or-runtime-session-id> --root-stream-id <stream-id> [--claim-file <path>]
+      (commit, push, remove the worktree and end the Threa link; opt-in only; the claim file is the /done command to drive)
   threa-harnessd interrupt <agent-id-or-name>
   threa-harnessd steer <agent-id-or-name> [follow-up text]
   threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>
@@ -157,11 +157,13 @@ export function parseDone(args: string[]): DoneRequest {
   if (!ref || ref.startsWith("--")) die("done requires an agent id, name, or runtime session id")
   const flags = parseFlags(args)
   for (const key of Object.keys(flags)) {
-    if (key !== "root-stream-id") die(`unexpected done argument: --${key}`)
+    if (key !== "root-stream-id" && key !== "claim-file") die(`unexpected done argument: --${key}`)
   }
+  const claimFile = stringFlag(flags, "claim-file")
   return {
     ref,
     rootStreamId: stringFlag(flags, "root-stream-id") ?? die("done requires --root-stream-id <stream-id>"),
+    ...(claimFile ? { claimFile } : {}),
   }
 }
 

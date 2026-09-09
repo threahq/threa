@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test"
-import type { HarnessLink } from "@threahq/harness-client"
+import type { CommandClaim, HarnessLink } from "@threahq/harness-client"
 import { parseDone } from "./cli"
-import { doneAgent, type DoneDeps, type SessionEnd } from "./done"
+import { doneAgent, type DoneDeps } from "./done"
 import type { LocalTmuxPane } from "./discovery"
 import { DEFAULT_PROFILE } from "./profiles"
 import type { ManagedAgent } from "./types"
@@ -19,8 +19,17 @@ const AGENT: ManagedAgent = {
   updatedAt: "2026-08-10T00:00:00.000Z",
 }
 
-/** The thread the linked session lives in — where `/done` reports its outcome. */
-const THREAD = "stream_thread"
+/** The `/done` command the pane claimed before harnessd took it over. */
+const CLAIM: CommandClaim = {
+  runtime: "claude",
+  workspaceId: "ws_1",
+  invocationId: "binv_done",
+  instanceId: "cc-sidebar",
+  claimToken: "claim-secret",
+}
+
+/** The command chip as harnessd drove it: every step, then completed or failed with the reason. */
+const DONE_REQUEST = { ref: "fix-sidebar", rootStreamId: "stream_root", claimFile: "/tmp/claim.json" }
 
 const LINK: HarnessLink = {
   runtimeKind: "claude-code-channel",
@@ -57,7 +66,6 @@ function makeDoneDeps(
     worktreeExists?: boolean
     teardown?: { ok: boolean; reason?: string }
     windDownResult?: { pushed: boolean; removed: boolean; reason?: string }
-    endSessionResult?: SessionEnd
     endSessionError?: Error
   } = {}
 ): { deps: DoneDeps; recorded: Recorded } {
@@ -65,7 +73,6 @@ function makeDoneDeps(
   const panes = options.panes ?? [PANE]
   const teardownResult = options.teardown ?? { ok: true }
   const windDownResult = options.windDownResult ?? { pushed: true, removed: true }
-  const endSessionResult = options.endSessionResult ?? { status: "ended" as const, activeStreamId: THREAD }
   const deps: DoneDeps = {
     findAgent: () => AGENT,
     links: () => [LINK],
@@ -99,34 +106,50 @@ function makeDoneDeps(
       recorded.calls.push(`persist:${agent.status}`)
       recorded.persisted.push(agent)
     },
-    endSession: async () => {
-      recorded.calls.push("endSession")
+    endSession: async (identity) => {
+      recorded.calls.push(`endSession:except=${identity.exceptInvocationId}`)
       if (options.endSessionError) throw options.endSessionError
-      return endSessionResult
     },
-    postNotice: async (streamId, content) => void recorded.calls.push(`postNotice:${streamId}:${content}`),
+    readClaim: (path) => {
+      recorded.calls.push(`readClaim:${path}`)
+      return CLAIM
+    },
+    commandReporter: (claim) => {
+      recorded.calls.push(`reporter:${claim.invocationId}`)
+      return {
+        progress: async (step) => void recorded.calls.push(`progress:${step}`),
+        complete: async () => void recorded.calls.push("complete"),
+        fail: async (message) => void recorded.calls.push(`fail:${message}`),
+        stop: () => void recorded.calls.push("stop"),
+      }
+    },
   }
   return { deps, recorded }
 }
 
 describe("doneAgent", () => {
-  test("kills the pane, waits for exit, winds down, forgets the link, retires identities, ends the session, persists stopped, and reports in the thread", async () => {
+  test("drives the handed-over /done command: steps at each stage, the session ended around it, then completed", async () => {
     const { deps, recorded } = makeDoneDeps()
 
-    await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
+    await doneAgent(DONE_REQUEST, deps)
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
+      "progress:Committing, pushing and removing the worktree",
       "teardown:/repo/fix-sidebar",
       "kill:@7",
       "awaitExit:4242",
       "windDown:/repo/fix-sidebar",
       "forgetLink:ccs-sidebar",
       "forgetIdentities:/repo/fix-sidebar",
-      "endSession",
+      "progress:Ending the session link",
+      "endSession:except=binv_done",
       "persist:stopped",
-      "postNotice:stream_thread:harnessd: done — worktree removed, link ended.",
+      "complete",
       "release",
+      "stop",
     ])
     expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])
   })
@@ -134,34 +157,70 @@ describe("doneAgent", () => {
   test("no live pane skips the kill but still winds down and ends the link", async () => {
     const { deps, recorded } = makeDoneDeps({ panes: [] })
 
-    await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
+    await doneAgent(DONE_REQUEST, deps)
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
+      "progress:Committing, pushing and removing the worktree",
       "teardown:/repo/fix-sidebar",
       "windDown:/repo/fix-sidebar",
       "forgetLink:ccs-sidebar",
       "forgetIdentities:/repo/fix-sidebar",
-      "endSession",
+      "progress:Ending the session link",
+      "endSession:except=binv_done",
       "persist:stopped",
-      "postNotice:stream_thread:harnessd: done — worktree removed, link ended.",
+      "complete",
       "release",
+      "stop",
     ])
   })
 
-  test("refuses a worktree where a paneless Claude is still running, and says so in the root stream", async () => {
+  test("a done typed at the terminal has no command to drive and ends the session with nothing spared", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {})
+    try {
+      const { deps, recorded } = makeDoneDeps({ panes: [] })
+
+      await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
+
+      expect(recorded.calls).toEqual([
+        "lock",
+        "teardown:/repo/fix-sidebar",
+        "windDown:/repo/fix-sidebar",
+        "forgetLink:ccs-sidebar",
+        "forgetIdentities:/repo/fix-sidebar",
+        "endSession:except=undefined",
+        "persist:stopped",
+        "release",
+      ])
+      expect(log.mock.calls.map((call) => call[0])).toEqual([
+        "done\tCommitting, pushing and removing the worktree",
+        "done\tEnding the session link",
+        "done\tfix-sidebar\tWorktree removed\tlink ended",
+      ])
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  test("refuses a worktree where a paneless Claude is still running, and fails the command with that reason", async () => {
     // The reaper's veto: what `done` force-removes is a directory, and a live
     // Claude in it is fatal whichever record asked for the wind-down.
     const { deps, recorded } = makeDoneDeps({ panes: [], claudePids: [9911] })
 
-    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
+    await expect(doneAgent(DONE_REQUEST, deps)).rejects.toThrow(
       "fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)"
     )
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
+      "progress:Committing, pushing and removing the worktree",
       "release",
-      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)",
+      "fail:fix-sidebar: Claude is still running in /repo/fix-sidebar with no pane (pid 9911)",
+      "stop",
     ])
     expect(recorded.persisted).toEqual([])
   })
@@ -169,60 +228,76 @@ describe("doneAgent", () => {
   test("a worktree removed by hand still kills the window, clears the records, and ends the session", async () => {
     const { deps, recorded } = makeDoneDeps({ worktreeExists: false })
 
-    await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
+    await doneAgent(DONE_REQUEST, deps)
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
+      "progress:Committing, pushing and removing the worktree",
       "kill:@7",
       "awaitExit:4242",
       "forgetLink:ccs-sidebar",
       "forgetIdentities:/repo/fix-sidebar",
-      "endSession",
+      "progress:Worktree already gone",
+      "progress:Ending the session link",
+      "endSession:except=binv_done",
       "persist:stopped",
-      "postNotice:stream_thread:harnessd: done — worktree already gone, link ended.",
+      "complete",
       "release",
+      "stop",
     ])
   })
 
   test("a teardown failure dies with nothing killed, nothing ended, and the row unchanged", async () => {
     const { deps, recorded } = makeDoneDeps({ teardown: { ok: false, reason: "lint failed" } })
 
-    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
+    await expect(doneAgent(DONE_REQUEST, deps)).rejects.toThrow(
       "fix-sidebar: teardown failed, nothing removed: lint failed"
     )
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
+      "progress:Committing, pushing and removing the worktree",
       "teardown:/repo/fix-sidebar",
       "release",
-      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: teardown failed, nothing removed: lint failed",
+      "fail:fix-sidebar: teardown failed, nothing removed: lint failed",
+      "stop",
     ])
     expect(recorded.persisted).toEqual([])
   })
 
-  test("a refused wind-down does not retire identities, still ends the session, still persists stopped, and reports the worktree left", async () => {
+  test("a refused wind-down does not retire identities, still ends the session, still persists stopped, and reports the worktree left as a step", async () => {
     const log = spyOn(console, "log").mockImplementation(() => {})
     try {
       const { deps, recorded } = makeDoneDeps({
         windDownResult: { pushed: false, removed: false, reason: "branch protected" },
       })
 
-      await doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)
+      await doneAgent(DONE_REQUEST, deps)
 
       expect(recorded.calls).toEqual([
+        "readClaim:/tmp/claim.json",
+        "reporter:binv_done",
         "lock",
+        "progress:Committing, pushing and removing the worktree",
         "teardown:/repo/fix-sidebar",
         "kill:@7",
         "awaitExit:4242",
         "windDown:/repo/fix-sidebar",
         "forgetLink:ccs-sidebar",
-        "endSession",
+        "progress:Worktree left: branch protected",
+        "progress:Ending the session link",
+        "endSession:except=binv_done",
         "persist:stopped",
-        "postNotice:stream_thread:harnessd: done — worktree left: branch protected, link ended.",
+        "complete",
         "release",
+        "stop",
       ])
       expect(recorded.persisted).toEqual([{ ...AGENT, status: "stopped", updatedAt: recorded.persisted[0]?.updatedAt }])
-      expect(log.mock.calls.at(-1)?.[0]).toBe("done\tfix-sidebar\tworktree left: branch protected\tlink ended")
+      expect(log.mock.calls.at(-1)?.[0]).toBe("done\tfix-sidebar\tWorktree left: branch protected\tlink ended")
     } finally {
       log.mockRestore()
     }
@@ -233,22 +308,25 @@ describe("doneAgent", () => {
       endSessionError: new Error("harnessd: remote cleanup unresolved: could not end runtime session: 404 not found"),
     })
 
-    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
-      "remote cleanup unresolved"
-    )
+    await expect(doneAgent(DONE_REQUEST, deps)).rejects.toThrow("remote cleanup unresolved")
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
+      "progress:Committing, pushing and removing the worktree",
       "teardown:/repo/fix-sidebar",
       "kill:@7",
       "awaitExit:4242",
       "windDown:/repo/fix-sidebar",
       "forgetLink:ccs-sidebar",
       "forgetIdentities:/repo/fix-sidebar",
-      "endSession",
+      "progress:Ending the session link",
+      "endSession:except=binv_done",
       "persist:stopped",
       "release",
-      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: harnessd: remote cleanup unresolved: could not end runtime session: 404 not found",
+      "fail:harnessd: remote cleanup unresolved: could not end runtime session: 404 not found",
+      "stop",
     ])
     expect(recorded.persisted).toEqual([
       {
@@ -271,48 +349,65 @@ describe("doneAgent", () => {
       },
     ]
 
-    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
-      "identity evidence for /repo/fix-sidebar disagrees"
-    )
+    await expect(doneAgent(DONE_REQUEST, deps)).rejects.toThrow("identity evidence for /repo/fix-sidebar disagrees")
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
+      "progress:Committing, pushing and removing the worktree",
       "release",
-      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: identity evidence for /repo/fix-sidebar disagrees: ccs-sidebar, ccs-other",
+      "fail:fix-sidebar: identity evidence for /repo/fix-sidebar disagrees: ccs-sidebar, ccs-other",
+      "stop",
     ])
     expect(recorded.persisted).toEqual([])
   })
 
-  test("refuses a session linked to another scratchpad, and reports it where /done was typed", async () => {
+  test("refuses a session linked to another scratchpad, failing the command that asked", async () => {
     // Nothing stops the link from moving while `done` waits on the lock; the
     // wind-down belongs to whoever is sitting in the scratchpad now.
     const { deps, recorded } = makeDoneDeps()
 
-    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_other" }, deps)).rejects.toThrow(
+    await expect(doneAgent({ ...DONE_REQUEST, rootStreamId: "stream_other" }, deps)).rejects.toThrow(
       "fix-sidebar: linked to stream_root, not stream_other"
     )
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
       "lock",
       "release",
-      "postNotice:stream_other:harnessd: `/done` for `fix-sidebar` failed: fix-sidebar: linked to stream_root, not stream_other",
+      "fail:fix-sidebar: linked to stream_root, not stream_other",
+      "stop",
     ])
     expect(recorded.persisted).toEqual([])
   })
 
-  test("an unlinked agent is reported to the root, not only to the daemon log", async () => {
+  test("an unlinked agent fails the command, not only the daemon log", async () => {
     // harnessd runs detached with its output in a log file nobody is reading, so
-    // a failure this early has to reach the scratchpad or it reaches no one.
+    // a failure this early has to reach the command chip or it reaches no one.
     const { deps, recorded } = makeDoneDeps()
     deps.findAgent = () => ({ ...AGENT, worktree: undefined })
 
-    await expect(doneAgent({ ref: "fix-sidebar", rootStreamId: "stream_root" }, deps)).rejects.toThrow(
-      "done needs a linked managed session"
-    )
+    await expect(doneAgent(DONE_REQUEST, deps)).rejects.toThrow("done needs a linked managed session")
 
     expect(recorded.calls).toEqual([
-      "postNotice:stream_root:harnessd: `/done` for `fix-sidebar` failed: done needs a linked managed session",
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_done",
+      "fail:done needs a linked managed session",
+      "stop",
     ])
+  })
+
+  test("an unreadable claim file drives nothing: the wind-down never starts", async () => {
+    const { deps, recorded } = makeDoneDeps()
+    deps.readClaim = (path) => {
+      throw new Error(`claim file ${path} is missing claimToken`)
+    }
+
+    await expect(doneAgent(DONE_REQUEST, deps)).rejects.toThrow("missing claimToken")
+
+    expect(recorded.calls).toEqual([])
   })
 })
 
@@ -321,6 +416,11 @@ describe("parseDone", () => {
     expect(parseDone(["fix-sidebar", "--root-stream-id", "stream_one"])).toEqual({
       ref: "fix-sidebar",
       rootStreamId: "stream_one",
+    })
+    expect(parseDone(["fix-sidebar", "--root-stream-id", "stream_one", "--claim-file", "/tmp/claim.json"])).toEqual({
+      ref: "fix-sidebar",
+      rootStreamId: "stream_one",
+      claimFile: "/tmp/claim.json",
     })
     expect(() => parseDone(["fix-sidebar"])).toThrow("requires --root-stream-id")
     expect(() => parseDone(["--root-stream-id", "stream_one"])).toThrow("requires an agent id")

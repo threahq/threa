@@ -2510,6 +2510,85 @@ describe("session control via the actuator", () => {
     await session.shutdown()
   })
 
+  test("hands a command off with its claim: no ack, no fail, the observation released, intake held", async () => {
+    const command = makeInvocation({
+      id: "binv_handoff",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      claimToken: "tok_handoff",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_done", name: "done", args: "" } },
+    })
+    const claims: unknown[] = []
+    const { session, fake, calls } = makeObservedControlSession([command], {
+      sessionControl: {
+        commands: ["done"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: true, handoff: (claim) => void claims.push(claim) }),
+      },
+    })
+    ;(session as any).link = { rootStreamId: "stream_root" }
+
+    await (session as any).claimDrain()
+
+    expect({
+      claims,
+      complete: calls.complete,
+      fail: calls.fail,
+      released: fake.observations.get("binv_handoff")?.unregistered,
+      presence: fake.presence.at(-1),
+    }).toEqual({
+      claims: [{ workspaceId: "ws_1", invocationId: "binv_handoff", instanceId: "rt-test", claimToken: "tok_handoff" }],
+      complete: [],
+      fail: [],
+      released: true,
+      presence: expect.objectContaining({ status: "busy", acceptingInvocations: false }),
+    })
+    await session.shutdown()
+  })
+
+  test("a handoff that throws fails the command here and restores intake", async () => {
+    const command = makeInvocation({
+      id: "binv_handoff_failed",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_done", name: "done", args: "" } },
+    })
+    const order: string[] = []
+    const { session, fake, calls } = makeObservedControlSession([command], {
+      sessionControl: {
+        commands: ["done"],
+        interrupt: () => true,
+        runCommand: async () => ({
+          ok: true,
+          handoff: () => {
+            order.push("handoff")
+            throw new Error("harnessd is not installed")
+          },
+          onHandoffReset: () => order.push("reset"),
+        }),
+      },
+    })
+    ;(session as any).link = { rootStreamId: "stream_root" }
+
+    await (session as any).claimDrain()
+    await Bun.sleep(0)
+
+    expect({
+      order,
+      complete: calls.complete,
+      fail: calls.fail.map(({ id, body }) => ({ id, error: body.errorMessage })),
+      released: fake.observations.get("binv_handoff_failed")?.unregistered,
+      presence: fake.presence.at(-1)?.status,
+    }).toEqual({
+      order: ["handoff", "reset"],
+      complete: [],
+      fail: [{ id: "binv_handoff_failed", error: "harnessd is not installed" }],
+      released: true,
+      presence: "available",
+    })
+    await session.shutdown()
+  })
+
   test("a restart while the actuator is awaited suppresses acknowledgement and post-ack work", async () => {
     const command = makeInvocation({
       id: "binv_restart_command",
