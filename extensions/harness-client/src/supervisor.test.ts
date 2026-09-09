@@ -123,3 +123,32 @@ test("supervisor drops malformed restored payloads", async () => {
   expect(restored).not.toHaveBeenCalled()
   transport.disconnect()
 })
+
+test("supervisor routes a session-targeted invocation and drops an untargeted one", async () => {
+  global.fetch = mock(
+    async () => new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }))
+  ) as unknown as typeof fetch
+  const socket = makeFakeSocket()
+  spyOn(socketIoClient, "io").mockReturnValue(socket as unknown as ReturnType<typeof socketIoClient.io>)
+  const available: unknown[] = []
+  const transport = new BotSupervisorTransport({
+    baseUrl: "https://app.example.test",
+    workspaceId: "ws_1",
+    apiKey: "threa_bk_test",
+    onReady: () => {},
+    onSessionRestored: () => {},
+    onInvocationAvailable: (payload) => available.push(payload),
+  })
+
+  await transport.connect()
+  socket.handlers["bot_invocation:available"]!({
+    botId: "bot_1",
+    invocationId: "binv_1",
+    targetRuntimeSessionId: "sess_1",
+    targetInstanceId: "inst_1",
+  })
+  socket.handlers["bot_invocation:available"]!({ botId: "bot_1", invocationId: "binv_2" })
+
+  expect(available).toEqual([{ botId: "bot_1", invocationId: "binv_1", runtimeSessionId: "sess_1" }])
+  transport.disconnect()
+})

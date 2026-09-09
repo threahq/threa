@@ -12,12 +12,29 @@ export interface BotSessionRestoredPayload {
   rootStreamId: string
 }
 
+/**
+ * Work queued for one runtime session, as the supervisor sees it. Ids only —
+ * the invocation's content never reaches this socket, and a supervisor has no
+ * business reading it.
+ */
+export interface BotInvocationAvailablePayload {
+  botId: string
+  invocationId: string
+  runtimeSessionId: string
+}
+
 export interface BotSupervisorTransportOptions {
   baseUrl: string
   workspaceId: string
   apiKey: string
   onReady: () => void
   onSessionRestored: (payload: BotSessionRestoredPayload) => void
+  /**
+   * A turn is waiting for a session this supervisor may have suspended. Only
+   * session-targeted invocations arrive here; an untargeted one names nothing
+   * local to revive.
+   */
+  onInvocationAvailable?: (payload: BotInvocationAvailablePayload) => void
   log?: (message: string) => void
   fetchTimeoutMs?: number
   reconnectionDelayMaxMs?: number
@@ -101,6 +118,10 @@ export class BotSupervisorTransport {
       const restored = parseRestoredPayload(payload)
       if (restored) this.opts.onSessionRestored(restored)
     })
+    socket.on("bot_invocation:available", (payload: unknown) => {
+      const available = parseInvocationAvailablePayload(payload)
+      if (available) this.opts.onInvocationAvailable?.(available)
+    })
   }
 
   private dropSocket(socket: Socket): void {
@@ -138,6 +159,15 @@ function parseRestoredPayload(payload: unknown): BotSessionRestoredPayload | und
     return undefined
   }
   return { botId, instanceId, runtimeSessionId, rootStreamId } as BotSessionRestoredPayload
+}
+
+function parseInvocationAvailablePayload(payload: unknown): BotInvocationAvailablePayload | undefined {
+  if (!isObject(payload)) return undefined
+  const { botId, invocationId, targetRuntimeSessionId } = payload
+  if ([botId, invocationId, targetRuntimeSessionId].some((value) => typeof value !== "string" || !value)) {
+    return undefined
+  }
+  return { botId, invocationId, runtimeSessionId: targetRuntimeSessionId } as BotInvocationAvailablePayload
 }
 
 function summarize(error: unknown): string {
