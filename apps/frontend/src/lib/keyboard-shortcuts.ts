@@ -176,8 +176,10 @@ export function detectConflicts(customBindings: Record<string, string> = {}): Ma
   for (const action of SHORTCUT_ACTIONS) {
     const key = getEffectiveKeyBinding(action.id, customBindings)
     if (!key) continue
-    const existing = keyToActions.get(key) || []
-    keyToActions.set(key, [...existing, action.id])
+    for (const occupied of occupiedBindings(action.id, key)) {
+      const existing = keyToActions.get(occupied) || []
+      keyToActions.set(occupied, [...existing, action.id])
+    }
   }
 
   const conflicts = new Map<string, string[]>()
@@ -382,6 +384,14 @@ export const QUICK_JUMP_ACTION_ID = "sidebarQuickJump"
 
 /** Sidebar rows the quick jump can reach. */
 export const QUICK_JUMP_SLOT_COUNT = 9
+
+/** Every binding an action answers to. Quick jump stores slot 1 and owns nine,
+ *  so conflict detection has to see all of them. */
+export function occupiedBindings(actionId: string, binding: string): string[] {
+  if (actionId !== QUICK_JUMP_ACTION_ID) return [binding]
+  const prefix = binding.slice(0, binding.lastIndexOf("+") + 1)
+  return Array.from({ length: QUICK_JUMP_SLOT_COUNT }, (_, index) => `${prefix}${index + 1}`)
+}
 
 /** True for a keydown/keyup of a modifier key itself, which carries no binding. */
 export function isModifierKey(key: string): boolean {

@@ -17,6 +17,7 @@ import {
   formatActionBinding,
   formatKeyBindingText,
   detectConflicts,
+  occupiedBindings,
   captureBindingForAction,
   resolveShortcutBindingUpdate,
   type ShortcutAction,
@@ -82,7 +83,9 @@ function ShortcutRow({
     (captured: string) => {
       const testBindings = { ...customBindings, [action.id]: captured }
       const conflicts = detectConflicts(testBindings)
-      const conflicting = conflicts.get(captured)?.filter((id) => id !== action.id) ?? []
+      const conflicting = occupiedBindings(action.id, captured)
+        .flatMap((occupied) => conflicts.get(occupied) ?? [])
+        .filter((id) => id !== action.id)
 
       if (conflicting.length > 0) {
         setPendingBinding(captured)
@@ -189,7 +192,7 @@ function ShortcutRow({
                           className="mr-1 font-mono"
                           title={formatKeyBindingText(conflictInfo.binding)}
                         >
-                          {formatKeyBinding(conflictInfo.binding)}
+                          {formatActionBinding(action.id, conflictInfo.binding)}
                         </Badge>
                         is currently used by {conflictOwnersLabel}.
                       </div>

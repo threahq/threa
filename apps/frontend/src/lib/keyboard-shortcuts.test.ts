@@ -13,6 +13,7 @@ import {
   formatKeyBinding,
   formatKeyBindingText,
   QUICK_JUMP_ACTION_ID,
+  occupiedBindings,
   captureBindingForAction,
   formatActionBinding,
   quickJumpSlotFromEvent,
@@ -265,6 +266,31 @@ describe("sidebarQuickJump shortcut", () => {
 
   it("does not collide with any other default binding", () => {
     expect(detectConflicts()).toEqual(new Map())
+  })
+
+  it("conflicts on any slot in the range, not just the stored one", () => {
+    expect(detectConflicts({ toggleSidebar: "mod+2" })).toEqual(
+      new Map([["mod+2", [QUICK_JUMP_ACTION_ID, "toggleSidebar"]]])
+    )
+    // The range follows a rebound modifier.
+    expect(detectConflicts({ [QUICK_JUMP_ACTION_ID]: "alt+1", toggleSidebar: "alt+9" })).toEqual(
+      new Map([["alt+9", [QUICK_JUMP_ACTION_ID, "toggleSidebar"]]])
+    )
+  })
+
+  it("expands only quick jump into a range of occupied bindings", () => {
+    expect(occupiedBindings(QUICK_JUMP_ACTION_ID, "mod+alt+1")).toEqual([
+      "mod+alt+1",
+      "mod+alt+2",
+      "mod+alt+3",
+      "mod+alt+4",
+      "mod+alt+5",
+      "mod+alt+6",
+      "mod+alt+7",
+      "mod+alt+8",
+      "mod+alt+9",
+    ])
+    expect(occupiedBindings("toggleSidebar", "mod+b")).toEqual(["mod+b"])
   })
 
   it("resolves a slot from any digit under the bound modifiers", () => {
