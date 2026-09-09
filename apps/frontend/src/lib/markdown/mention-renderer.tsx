@@ -7,7 +7,7 @@ import { chipBase, commandValueStyle, triggerStyles } from "./chip-styles"
 import { useMentionType, useMentionClick, useIsMentionOnlyBot } from "./mention-context"
 import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
-import { useIsKnownCommand, useCommandArgs, type CommandArgNames } from "./command-list-context"
+import { useIsKnownCommand, useCommandArgs, NO_ARGS, type CommandArgNames } from "./command-list-context"
 import { StreamChip } from "./stream-chip"
 import { MENTION_PATTERN, isValidSlug } from "@threahq/types"
 
@@ -157,24 +157,21 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
   )
 }
 
-// `(?=\s|$)` keeps the command name a whole token, so a path segment like the
-// `/model` in `/model/checkpoints` isn't rendered as a `/model` command chip.
-const COMMAND_PATTERN = /^(\s*)(\/)([\w-]+)(?=\s|$)/
+// A `/name` and the value it takes (`/thinking high`), the grammar both the
+// leading command and its flag arguments follow. `(?=\s|$)` keeps the name a
+// whole token, so the `/model` in `/model/checkpoints` is a path segment, not a
+// command; a value never starts with `/`, so the next flag is never eaten as
+// this one's value.
+const COMMAND_TOKEN = /\/([\w-]+)(?:(\s+)([^\s/]\S*))?(?=\s|$)/.source
+
+// Both anchor the same token, so their groups line up: 1 the leading
+// whitespace, 2 the name, 3 the separator, 4 the value.
+const COMMAND_PATTERN = new RegExp(`^(\\s*)${COMMAND_TOKEN}`)
+const COMMAND_FLAG_PATTERN = new RegExp(`(^|\\s)${COMMAND_TOKEN}`, "g")
 
 const CHANNEL_PATTERN = /(?<![a-z0-9])#([a-z][a-z0-9-]*[a-z0-9]|[a-z])(?![a-z0-9_.-])/g
 
 const EMOJI_PATTERN = /:([a-z0-9_+-]+):/g
-
-// A flag argument of the command the text opens with, with the value it takes:
-// `/spawn claude /model opus /thinking high`. Same whole-token boundary as the
-// command itself, and the leading separator keeps `a/b` out. A value never
-// starts with `/`, so the next flag is never eaten as this one's value.
-const COMMAND_FLAG_PATTERN = /(^|\s)\/([\w-]+)(?:(\s+)([^\s/]\S*))?(?=\s|$)/g
-
-// The value the leading positional argument takes, before any flag.
-const COMMAND_VALUE_PATTERN = /^(\s+)([^\s/]\S*)(?=\s|$)/
-
-const NO_ARGS: CommandArgNames = { flags: new Set(), values: new Set() }
 
 type ToEmoji = (shortcode: string) => string | null
 type IsKnownCommand = (name: string) => boolean
@@ -203,20 +200,17 @@ export function renderMentions(
 
   let args: CommandArgNames = NO_ARGS
   const commandMatch = processText.match(COMMAND_PATTERN)
-  if (commandMatch && isKnownCommand(commandMatch[3])) {
-    if (commandMatch[1]) {
-      result.push(commandMatch[1])
+  if (commandMatch && isKnownCommand(commandMatch[2])) {
+    const [whole, space, name, , taken] = commandMatch
+    if (space) {
+      result.push(space)
     }
-    processText = processText.slice(commandMatch[0].length)
-    args = commandArgs(commandMatch[3])
-    // The value the leading positional argument takes joins the command's own
-    // chip: `/spawn claude` is one block.
-    const valueMatch = processText.match(COMMAND_VALUE_PATTERN)
-    const value = valueMatch && args.values.has(valueMatch[2].toLowerCase()) ? valueMatch[2] : undefined
-    result.push(<TriggerChip key={`cmd-${keyIndex++}`} type="command" text={commandMatch[3]} value={value} />)
-    if (valueMatch && value) {
-      processText = processText.slice(valueMatch[0].length)
-    }
+    args = commandArgs(name)
+    // The value joins the command's own chip (`/spawn claude` is one block) only
+    // when the command advertises it; anything else after the command is prose.
+    const value = taken && args.values.has(taken.toLowerCase()) ? taken : undefined
+    result.push(<TriggerChip key={`cmd-${keyIndex++}`} type="command" text={name} value={value} />)
+    processText = processText.slice(value ? whole.length : space.length + 1 + name.length)
   }
 
   type TriggerMatch =
@@ -234,13 +228,13 @@ export function renderMentions(
     const flagPattern = new RegExp(COMMAND_FLAG_PATTERN.source, COMMAND_FLAG_PATTERN.flags)
     let flagMatch
     while ((flagMatch = flagPattern.exec(processText)) !== null) {
-      if (!args.flags.has(flagMatch[2].toLowerCase())) continue
-      const value = flagMatch[4]
+      const [whole, space, name, , value] = flagMatch
+      if (!args.flags.has(name.toLowerCase())) continue
       triggers.push({
-        index: flagMatch.index + flagMatch[1].length,
-        length: flagMatch[2].length + 1 + (value ? flagMatch[3].length + value.length : 0),
+        index: flagMatch.index + space.length,
+        length: whole.length - space.length,
         type: "command-flag",
-        slug: flagMatch[2],
+        slug: name,
         value,
       })
     }

@@ -16,7 +16,7 @@ interface CommandListContextValue {
 
 const CommandListContext = createContext<CommandListContextValue | null>(null)
 
-const NO_ARGS: CommandArgNames = { flags: new Set(), values: new Set() }
+export const NO_ARGS: CommandArgNames = { flags: new Set(), values: new Set() }
 
 interface CommandListProviderProps {
   commands: readonly CommandInfo[]

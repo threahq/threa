@@ -233,27 +233,22 @@ export function useCommandArgPicker(
   }, [editor])
 
   const session = resolveArgSession(editor, pickableArgsFor)
-  const sessionRef = useRef<ArgSession | null>(null)
-  sessionRef.current = session
   const resolved = session ? resolveActiveArg(session.args, session.text) : null
   const active = resolved && resolved.arg.name !== dismissed ? resolved : null
-  const activeRef = useRef<ActiveArg | null>(null)
-  activeRef.current = active
 
   useEffect(() => {
     if (dismissed !== null && resolved?.arg.name !== dismissed) setDismissed(null)
   }, [dismissed, resolved?.arg.name])
 
   const select = useCallback(
-    (value: string, query: string) => {
+    (value: string, query: string, anchorPos: number) => {
       const ed = editorRef.current
-      const current = sessionRef.current
-      if (!ed || ed.isDestroyed || !current) return
+      if (!ed || ed.isDestroyed) return
       const caret = ed.state.selection.from
       // Replace only the word being typed for this argument — the rest of the
       // line is another argument's — and follow the value with a space, which
       // both ends the option list and starts whatever comes next.
-      const from = Math.max(current.anchorPos, caret - query.length)
+      const from = Math.max(anchorPos, caret - query.length)
       ed.chain().focus().deleteRange({ from, to: caret }).insertContent(`${value} `).run()
     },
     [editorRef]
@@ -267,7 +262,7 @@ export function useCommandArgPicker(
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
       if (target?.closest('[role="listbox"]')) return
-      setDismissed(activeRef.current?.arg.name ?? null)
+      setDismissed(active.arg.name)
     }
     document.addEventListener("pointerdown", onPointerDown, true)
     return () => document.removeEventListener("pointerdown", onPointerDown, true)
@@ -277,19 +272,18 @@ export function useCommandArgPicker(
     () => (active ? filterArgSuggestions(active.arg.suggestions ?? [], active.query) : []),
     [active]
   )
-  const itemsRef = useRef(items)
-  itemsRef.current = items
 
-  const handleArgPickerKeyDown = useCallback((event: KeyboardEvent): boolean => {
-    const open = activeRef.current
+  // Re-created per render rather than kept stable: the host reads it through a
+  // ref it reassigns on every render, so identity buys nothing.
+  const handleArgPickerKeyDown = (event: KeyboardEvent): boolean => {
     // A filter that matches nothing renders no list, so it owns no keys either.
-    if (!open || itemsRef.current.length === 0) return false
+    if (!active || items.length === 0) return false
     if (event.key === "Escape") {
-      setDismissed(open.arg.name)
+      setDismissed(active.arg.name)
       return true
     }
     return listRef.current?.onKeyDown(event) ?? false
-  }, [])
+  }
 
   const renderArgPicker = useCallback(() => {
     if (!session || !active) return null
@@ -298,7 +292,7 @@ export function useCommandArgPicker(
         ref={listRef}
         items={items}
         clientRect={() => posClientRect(editorRef.current, session.anchorPos)}
-        command={(suggestion) => select(suggestion.value, active.query)}
+        command={(suggestion) => select(suggestion.value, active.query, session.anchorPos)}
         deferSelection={!active.arg.required}
       />,
       document.body
