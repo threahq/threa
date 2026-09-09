@@ -33,9 +33,16 @@ function jsonResponse(data: unknown): Response {
  * prefetchWorkspaceBootstrap returns before touching the Cache API (jsdom has
  * no CacheStorage); its cache-write path is unchanged by this refactor.
  */
-function mockFetch(routes: Record<string, unknown>): ReturnType<typeof vi.fn> {
+function mockFetch(routes: Record<string, unknown>, authAs?: string | null): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
+    // The worker fetches with the browser's active session cookie, so every
+    // prefetch first asks who that is. Tests declare it explicitly.
+    if (url.includes("/api/auth/me")) {
+      return authAs
+        ? new Response(JSON.stringify({ id: authAs }), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response(null, { status: 401 })
+    }
     for (const [fragment, data] of Object.entries(routes)) {
       if (url.includes(fragment)) return jsonResponse(data)
     }
@@ -53,15 +60,18 @@ describe("runBootstrapSync account routing", () => {
   it("writes stream bootstrap events into the account's database, not the default one", async () => {
     const workosUserId = "user_acct_route"
     const streamId = "stream_route1"
-    mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [
-          makeEvent({ id: "evt_1", streamId, sequence: "1" }),
-          makeEvent({ id: "evt_2", streamId, sequence: "2" }),
-        ],
+    mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [
+            makeEvent({ id: "evt_1", streamId, sequence: "1" }),
+            makeEvent({ id: "evt_2", streamId, sequence: "2" }),
+          ],
+        },
       },
-    })
+      workosUserId
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
@@ -80,15 +90,18 @@ describe("runBootstrapSync account routing", () => {
   it("writes events-around results for the pushed message into the account's database", async () => {
     const workosUserId = "user_acct_around"
     const streamId = "stream_around1"
-    mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [makeEvent({ id: "evt_old", streamId, sequence: "1" })],
+    mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [makeEvent({ id: "evt_old", streamId, sequence: "1" })],
+        },
+        "/events/around": {
+          events: [makeEvent({ id: "evt_pushed", streamId, sequence: "9" })],
+        },
       },
-      "/events/around": {
-        events: [makeEvent({ id: "evt_pushed", streamId, sequence: "9" })],
-      },
-    })
+      workosUserId
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_pushed", workosUserId })
 
@@ -110,12 +123,15 @@ describe("runBootstrapSync account routing", () => {
       _cachedAt: 1,
     } as never)
 
-    mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [makeEvent({ id: "evt_m1", streamId, sequence: "3" })],
+    mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [makeEvent({ id: "evt_m1", streamId, sequence: "3" })],
+        },
       },
-    })
+      workosUserId
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
@@ -129,26 +145,29 @@ describe("runBootstrapSync account routing", () => {
     const streamId = "stream_preview1"
     const accountDb = new ThreaDatabase(accountDbName(workosUserId))
 
-    mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [
-          makeEvent({
-            id: "evt_p1",
-            streamId,
-            sequence: "3",
-            payload: {
-              messageId: "evt_p1",
-              contentMarkdown: "hello there",
-              contentJson: {
-                type: "doc",
-                content: [{ type: "paragraph", content: [{ type: "text", text: "hello there" }] }],
+    mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [
+            makeEvent({
+              id: "evt_p1",
+              streamId,
+              sequence: "3",
+              payload: {
+                messageId: "evt_p1",
+                contentMarkdown: "hello there",
+                contentJson: {
+                  type: "doc",
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "hello there" }] }],
+                },
               },
-            },
-          } as never),
-        ],
+            } as never),
+          ],
+        },
       },
-    })
+      workosUserId
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
@@ -159,35 +178,65 @@ describe("runBootstrapSync account routing", () => {
     })
   })
 
-  it("skips all IndexedDB writes when the target carries no account id", async () => {
-    const streamId = "stream_noacct1"
-    const fetchMock = mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [makeEvent({ id: "evt_n1", streamId, sequence: "1" })],
+  it("prefetches nothing when the browser is signed in as a different account", async () => {
+    // The worker fetches with whatever session cookie the browser holds. If the
+    // viewer has since switched, that response is the *active* account's view of
+    // the workspace — writing it into the push recipient's database would hand
+    // one account the other's messages.
+    const workosUserId = "user_push_recipient"
+    const streamId = "stream_wrong_cred"
+    const fetchMock = mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [makeEvent({ id: "evt_leak", streamId, sequence: "1" })],
+        },
       },
-    })
+      "user_currently_active"
+    )
+
+    await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
+
+    const accountDb = new ThreaDatabase(accountDbName(workosUserId))
+    expect(await accountDb.events.where("streamId").equals(streamId).toArray()).toEqual([])
+    // Only the identity probe ran; no workspace or stream data was fetched.
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["/api/auth/me"])
+  })
+
+  it("prefetches nothing when the target carries no account id", async () => {
+    const streamId = "stream_noacct1"
+    const fetchMock = mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [makeEvent({ id: "evt_n1", streamId, sequence: "1" })],
+        },
+      },
+      "user_someone"
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_n1", workosUserId: null })
 
     const defaultEvents = await db.events.where("streamId").equals(streamId).toArray()
     expect(defaultEvents).toEqual([])
-    // The stream endpoints are never even fetched; only the (account-agnostic)
-    // workspace bootstrap warm-up runs.
-    const fetchedUrls = fetchMock.mock.calls.map((c) => String(c[0]))
-    expect(fetchedUrls).toEqual(["/api/workspaces/ws_1/bootstrap"])
+    // Nothing is fetched at all: an unattributed target has no owner to write
+    // under, and the workspace snapshot is as viewer-specific as the stream one.
+    expect(fetchMock.mock.calls).toEqual([])
   })
 
   it("persists the bootstrap's canonical slot carrier into the account database", async () => {
     const workosUserId = "user_acct_slots"
     const streamId = "stream_slots1"
-    mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [makeEvent({ id: "evt_s1", streamId, sequence: "1" })],
-        slots: { [sharedMessageSlotKey("msg_src")]: missingSlot("msg_src") },
+    mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [makeEvent({ id: "evt_s1", streamId, sequence: "1" })],
+          slots: { [sharedMessageSlotKey("msg_src")]: missingSlot("msg_src") },
+        },
       },
-    })
+      workosUserId
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
@@ -200,17 +249,20 @@ describe("runBootstrapSync account routing", () => {
   it("rekeys a legacy-only bootstrap carrier and merges events-around slots", async () => {
     const workosUserId = "user_acct_slots_legacy"
     const streamId = "stream_slots2"
-    mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [makeEvent({ id: "evt_old", streamId, sequence: "1" })],
-        sharedMessages: { msg_bootstrap: missingSlot("msg_bootstrap") },
+    mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [makeEvent({ id: "evt_old", streamId, sequence: "1" })],
+          sharedMessages: { msg_bootstrap: missingSlot("msg_bootstrap") },
+        },
+        "/events/around": {
+          events: [makeEvent({ id: "evt_pushed", streamId, sequence: "9" })],
+          slots: { [sharedMessageSlotKey("msg_around")]: missingSlot("msg_around") },
+        },
       },
-      "/events/around": {
-        events: [makeEvent({ id: "evt_pushed", streamId, sequence: "9" })],
-        slots: { [sharedMessageSlotKey("msg_around")]: missingSlot("msg_around") },
-      },
-    })
+      workosUserId
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_pushed", workosUserId })
 
@@ -237,26 +289,29 @@ describe("runBootstrapSync account routing", () => {
       _cachedAt: 1,
     })
 
-    mockFetch({
-      [`/streams/${streamId}/bootstrap`]: {
-        stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
-        events: [
-          makeEvent({
-            id: "evt_s3",
-            streamId,
-            sequence: "1",
-            payload: {
-              messageId: "evt_s3",
-              contentJson: {
-                type: "doc",
-                content: [{ type: "sharedMessage", attrs: { messageId: "msg_window", streamId: "stream_src" } }],
+    mockFetch(
+      {
+        [`/streams/${streamId}/bootstrap`]: {
+          stream: { id: streamId, workspaceId: "ws_1", type: "channel", slug: "general" },
+          events: [
+            makeEvent({
+              id: "evt_s3",
+              streamId,
+              sequence: "1",
+              payload: {
+                messageId: "evt_s3",
+                contentJson: {
+                  type: "doc",
+                  content: [{ type: "sharedMessage", attrs: { messageId: "msg_window", streamId: "stream_src" } }],
+                },
               },
-            },
-          }),
-        ],
-        slots: { [sharedMessageSlotKey("msg_window")]: missingSlot("msg_window") },
+            }),
+          ],
+          slots: { [sharedMessageSlotKey("msg_window")]: missingSlot("msg_window") },
+        },
       },
-    })
+      workosUserId
+    )
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
@@ -292,12 +347,14 @@ describe("parsePersistedSyncTarget", () => {
 })
 
 describe("respondToBootstrapRequest", () => {
-  const URL_ = "https://app.threa.io/api/workspaces/ws_1/bootstrap"
+  const PATH = "https://app.threa.io/api/workspaces/ws_1/bootstrap"
+  const keyFor = (workosUserId: string) => `${PATH}?account=${workosUserId}`
+  const requestAs = (workosUserId: string, init?: RequestInit & { extraParams?: string }) =>
+    new Request(`${PATH}?account=${workosUserId}${init?.extraParams ?? ""}`, init)
 
   /** Minimal Cache stand-in — jsdom has no CacheStorage. */
-  function fakeCache(seed?: Response) {
-    const store = new Map<string, Response>()
-    if (seed) store.set(URL_, seed)
+  function fakeCache(seed?: Record<string, Response>) {
+    const store = new Map<string, Response>(Object.entries(seed ?? {}))
     return {
       store,
       match: vi.fn(async (key: string) => store.get(key)),
@@ -306,36 +363,64 @@ describe("respondToBootstrapRequest", () => {
   }
 
   it("serves the pre-fetched copy once, then drops it", async () => {
-    const cache = fakeCache(new Response("cached"))
+    const cache = fakeCache({ [keyFor("user_a")]: new Response("cached") })
     const fetchImpl = vi.fn(async () => new Response("network"))
 
-    const res = await respondToBootstrapRequest(new Request(URL_), cache, fetchImpl)
+    const res = await respondToBootstrapRequest(requestAs("user_a"), cache, fetchImpl)
 
     expect(await res.text()).toBe("cached")
     expect(fetchImpl).not.toHaveBeenCalled()
-    expect(cache.delete).toHaveBeenCalledWith(URL_)
+    expect(cache.delete).toHaveBeenCalledWith(keyFor("user_a"))
+  })
+
+  it("never answers one account from another account's pre-fetched snapshot", async () => {
+    // A workspace snapshot is viewer-specific — stream membership, read state,
+    // DM names. Two accounts on this browser can both be members of the same
+    // workspace, so a URL-only key handed the second one the first one's view
+    // of it, private scratchpads included.
+    const cache = fakeCache({
+      [keyFor("user_a")]: new Response(JSON.stringify({ streams: [{ id: "stream_a_private" }] })),
+    })
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ streams: [] })))
+
+    const res = await respondToBootstrapRequest(requestAs("user_b"), cache, fetchImpl)
+
+    expect(await res.json()).toEqual({ streams: [] })
+    expect(fetchImpl).toHaveBeenCalled()
+    // A's copy is still A's: isolation, not deletion.
+    expect(cache.store.has(keyFor("user_a"))).toBe(true)
+  })
+
+  it("goes to the network when the request names no account (a page from before the flag)", async () => {
+    const cache = fakeCache({ [keyFor("user_a")]: new Response("cached") })
+    const fetchImpl = vi.fn(async () => new Response("network"))
+
+    const res = await respondToBootstrapRequest(new Request(PATH), cache, fetchImpl)
+
+    expect(await res.text()).toBe("network")
+    expect(cache.store.has(keyFor("user_a"))).toBe(true)
   })
 
   it("goes to the network when nothing is pre-fetched", async () => {
     const cache = fakeCache()
     const fetchImpl = vi.fn(async () => new Response("network"))
 
-    expect(await (await respondToBootstrapRequest(new Request(URL_), cache, fetchImpl)).text()).toBe("network")
+    expect(await (await respondToBootstrapRequest(requestAs("user_a"), cache, fetchImpl)).text()).toBe("network")
     expect(fetchImpl).toHaveBeenCalled()
   })
 
   it("refuses the pre-fetched copy for a fresh-flagged request, matching the unflagged cache key", async () => {
     // The flag rides in the URL because `Request.cache` fidelity inside a
     // service worker varies by engine, and the uncertain engines are phones —
-    // the devices this protects. The entry is stored under the plain URL, so
-    // the lookup must strip the flag before deleting.
-    const cache = fakeCache(new Response("cached"))
+    // the devices this protects. The entry is stored without the flag, so the
+    // lookup must strip it before deleting.
+    const cache = fakeCache({ [keyFor("user_a")]: new Response("cached") })
     const fetchImpl = vi.fn(async () => new Response("network"))
 
-    const res = await respondToBootstrapRequest(new Request(`${URL_}?fresh=1`), cache, fetchImpl)
+    const res = await respondToBootstrapRequest(requestAs("user_a", { extraParams: "&fresh=1" }), cache, fetchImpl)
 
     expect(await res.text()).toBe("network")
-    expect(cache.store.has(URL_)).toBe(false)
+    expect(cache.store.has(keyFor("user_a"))).toBe(false)
   })
 
   it("refuses the pre-fetched copy for a no-store request and discards it", async () => {
@@ -343,12 +428,12 @@ describe("respondToBootstrapRequest", () => {
     // copy captured when the tab last hid would strand every entry since. It
     // must also be deleted, not merely skipped — otherwise the next request
     // with the same expectation is handed the same stale copy.
-    const cache = fakeCache(new Response("cached"))
+    const cache = fakeCache({ [keyFor("user_a")]: new Response("cached") })
     const fetchImpl = vi.fn(async () => new Response("network"))
 
-    const res = await respondToBootstrapRequest(new Request(URL_, { cache: "no-store" }), cache, fetchImpl)
+    const res = await respondToBootstrapRequest(requestAs("user_a", { cache: "no-store" }), cache, fetchImpl)
 
     expect(await res.text()).toBe("network")
-    expect(cache.store.has(URL_)).toBe(false)
+    expect(cache.store.has(keyFor("user_a"))).toBe(false)
   })
 })

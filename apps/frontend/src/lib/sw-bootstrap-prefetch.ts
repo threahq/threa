@@ -34,10 +34,25 @@ export const WORKSPACE_BOOTSTRAP_PATH_RE = /^\/api\/workspaces\/[^/]+\/bootstrap
  */
 export const BOOTSTRAP_FRESH_PARAM = "fresh"
 
-/** The cache is keyed on the plain URL; strip the flag before looking up. */
-function bootstrapCacheKey(url: string): string {
+/**
+ * Query flag naming the account a bootstrap request is made as. A workspace
+ * snapshot is viewer-specific — stream membership, read state, DM names — so
+ * the cache is keyed by owner as well as URL and a request only ever reads the
+ * entry belonging to the account making it. Carried in the URL for the same
+ * reason as {@link BOOTSTRAP_FRESH_PARAM}: it reaches the service worker's
+ * fetch handler on every engine, and it cannot be normalised away.
+ */
+export const BOOTSTRAP_ACCOUNT_PARAM = "account"
+
+/**
+ * The cache key: the plain URL, minus the freshness flag, plus the owning
+ * account. Entries written before the key carried an owner (a previous SW
+ * version) are unreachable under it and are never served.
+ */
+function bootstrapCacheKey(url: string, workosUserId: string): string {
   const parsed = new URL(url)
   parsed.searchParams.delete(BOOTSTRAP_FRESH_PARAM)
+  parsed.searchParams.set(BOOTSTRAP_ACCOUNT_PARAM, workosUserId)
   return parsed.toString()
 }
 
@@ -57,7 +72,14 @@ export async function respondToBootstrapRequest(
   cache: Cache,
   fetchImpl: (request: Request) => Promise<Response>
 ): Promise<Response> {
-  const key = bootstrapCacheKey(request.url)
+  const owner = new URL(request.url).searchParams.get(BOOTSTRAP_ACCOUNT_PARAM)
+  // A request that doesn't name its account can't be shown a snapshot: the
+  // entry was captured for one specific viewer, and the session cookie the
+  // request carries may now belong to another. A page from before this
+  // parameter existed keeps working — it just goes to the network.
+  if (!owner) return fetchImpl(request)
+
+  const key = bootstrapCacheKey(request.url, owner)
   if (request.cache === "no-store" || new URL(request.url).searchParams.has(BOOTSTRAP_FRESH_PARAM)) {
     await cache.delete(key)
     return fetchImpl(request)
@@ -251,12 +273,33 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
  * apply pipeline is large and lives in workspace-sync; running it from the SW
  * would duplicate that surface.
  */
-async function prefetchWorkspaceBootstrap(workspaceId: string): Promise<void> {
+async function prefetchWorkspaceBootstrap(workosUserId: string, workspaceId: string): Promise<void> {
   const url = `/api/workspaces/${workspaceId}/bootstrap`
   const response = await fetch(url, { credentials: "include" })
   if (!response.ok) return
   const cache = await caches.open(PUSH_BOOTSTRAP_CACHE)
-  await cache.put(url, response)
+  await cache.put(bootstrapCacheKey(new URL(url, self.location.origin).toString(), workosUserId), response)
+}
+
+/**
+ * The account the worker's session cookie currently authenticates as, or null
+ * when that can't be established.
+ *
+ * The worker fetches with whatever cookie the browser holds, which is the
+ * *active* account — not necessarily the account a push was addressed to. Every
+ * prefetch is therefore gated on the two being the same: otherwise the response
+ * is the active account's view of the workspace and writing it under the
+ * recipient's database or cache key would hand one account the other's data.
+ */
+async function resolveCredentialOwner(): Promise<string | null> {
+  try {
+    const response = await fetch("/api/auth/me", { credentials: "include" })
+    if (!response.ok) return null
+    const user = (await response.json()) as { id?: unknown }
+    return typeof user?.id === "string" ? user.id : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -268,18 +311,23 @@ async function prefetchWorkspaceBootstrap(workspaceId: string): Promise<void> {
  * freshness pass that can land slightly later without affecting the open-stream
  * experience.
  *
- * The IDB half requires `workosUserId` (see BootstrapSyncTarget); without it
- * only the workspace Cache API warm-up runs — that entry is keyed by URL and
- * fetched with the session cookie, so it needs no account routing.
+ * Both halves require `workosUserId` (see BootstrapSyncTarget) and a session
+ * cookie that authenticates as that same account.
  */
 export async function runBootstrapSync(target: BootstrapSyncTarget): Promise<void> {
-  if (target.streamId && target.workosUserId) {
+  // No named recipient (a target persisted by an older SW version), or the
+  // browser is currently signed in as somebody else: skip rather than warm one
+  // account's storage with another's data. The tap path then loads normally.
+  if (!target.workosUserId) return
+  if ((await resolveCredentialOwner()) !== target.workosUserId) return
+
+  if (target.streamId) {
     await prefetchStreamBootstrap(target.workosUserId, target.workspaceId, target.streamId)
     if (target.messageId) {
       await prefetchEventsAround(target.workosUserId, target.workspaceId, target.streamId, target.messageId)
     }
   }
-  await prefetchWorkspaceBootstrap(target.workspaceId)
+  await prefetchWorkspaceBootstrap(target.workosUserId, target.workspaceId)
 }
 
 /**

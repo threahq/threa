@@ -4,20 +4,17 @@ import { toast } from "sonner"
 import { ArrowLeft, Mail } from "lucide-react"
 import { MAGIC_CODE_LENGTH, type SocialProvider } from "@threahq/types"
 import { API_BASE, ApiError, api } from "@/api/client"
-import { useAuth } from "@/auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { Label } from "@/components/ui/label"
 import { ThreaLogo } from "@/components/threa-logo"
-import { clearLastWorkspaceId } from "@/lib/last-workspace"
 
 type Step = "picker" | "email" | "verify"
 
 export function AddAccountPage() {
   const [search] = useSearchParams()
   const navigate = useNavigate()
-  const { refetch } = useAuth()
   const [step, setStep] = useState<Step>("picker")
   const [email, setEmail] = useState("")
   const [code, setCode] = useState("")
@@ -84,22 +81,16 @@ export function AddAccountPage() {
       setBusy(false)
     }
 
-    // Server-side success — the cookie is set and the magic code has been
-    // consumed. From here on we must not surface an error: retrying would
-    // 401, because the code is single-use. A transient refetch failure is
-    // recoverable on the next route load.
+    // Server-side success — the cookie now names the added account and the
+    // magic code has been consumed. From here on we must not surface an error:
+    // retrying would 401, because the code is single-use.
     //
-    // The stale last-workspace pointer would route us back into the
-    // *previous* account. Same dance the OAuth callback / AuthProvider
-    // mount-effect does on accountAdded=1.
-    clearLastWorkspaceId()
-    try {
-      await refetch()
-    } catch {
-      // Refetch will retry on next navigation; don't block the redirect.
-    }
-    navigate(result.redirectPath, { replace: true })
-  }, [code, email, navigate, refetch])
+    // Leave through a document navigation, exactly like the OAuth callback: the
+    // added account is a different viewer, and a fresh context is what
+    // guarantees none of the previous account's in-memory state (module store
+    // caches, sockets, sync engines) is still standing when it renders.
+    window.location.assign(result.redirectPath)
+  }, [code, email])
 
   return (
     <AddAccountShell>

@@ -7,7 +7,8 @@ import { attachOverlayHistoryRouter } from "@/components/ui/history-back-close"
 import { ApiError, delegationsApi } from "@/api"
 import { useSidebar } from "@/contexts"
 import { useLastLocation } from "@/hooks"
-import { getLastWorkspaceId } from "@/lib/last-workspace"
+import { useAccountScope } from "@/auth"
+import { accountHomePath } from "@/lib/last-workspace"
 
 // Route-level code splitting: each page lazy-loads its own chunk so heavy
 // dependencies (tiptap/prosemirror, recharts, limax/pinyin-pro, etc.) ride
@@ -190,11 +191,11 @@ attachOverlayHistoryRouter(router)
 // hint: WorkspaceLayout still enforces auth/membership and a stale/unknown id
 // falls back to the normal bootstrap path. No cached id ⇒ unchanged behavior.
 export function RootRedirect() {
-  const lastWorkspaceId = getLastWorkspaceId()
-  if (lastWorkspaceId) {
-    return <Navigate to={`/w/${lastWorkspaceId}`} replace />
-  }
-  return <Navigate to="/workspaces" replace />
+  const { activeWorkosUserId } = useAccountScope()
+  // Pre-auth (or an account this browser has never seen a workspace for) the
+  // list route is the only honest destination — another account's pointer is
+  // not a hint about this one.
+  return <Navigate to={activeWorkosUserId ? accountHomePath(activeWorkosUserId) : "/workspaces"} replace />
 }
 
 /**

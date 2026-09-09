@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, waitFor } from "@/test"
-import { AuthProvider } from "@/auth"
+import { AuthProvider, useAuth } from "@/auth"
 import { AccountScopeProvider, useAccountScope, type AccountScopeValue } from "@/auth/account-scope"
+import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { hasSeededWorkspaceCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { addIncomingCall, getIncomingCalls } from "@/stores/incoming-call-store"
 import { getFloatingSurfaceGeometry, publishFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
@@ -51,20 +52,51 @@ function installFetchStub() {
   vi.stubGlobal("fetch", fetchMock)
 }
 
+/**
+ * `/api/auth/me` that hangs until released, with `/api/accounts/switch` still
+ * answering — the window between a switch committing server-side and identity
+ * revalidation returning.
+ */
+function stallRevalidation() {
+  let settle!: (value: Response) => void
+  const pending = new Promise<Response>((resolve) => {
+    settle = resolve
+  })
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString()
+    if (url.endsWith("/api/auth/me")) return pending
+    const body = JSON.parse(String(init?.body ?? "{}")) as { targetUserId: string }
+    return { status: 200, ok: true, json: async () => ({ activeUserId: body.targetUserId }) } as unknown as Response
+  })
+  return {
+    fetchMock,
+    release: async (id: string) => {
+      settle(meResponse(id))
+      await pending
+    },
+  }
+}
+
+// Landing paths requested by the provider, in order. The real router is not
+// mounted here, so the injected navigation records instead of navigating.
+const landings: string[] = []
+
 function mountScopeTree() {
   const handle: { current: AccountScopeValue | null } = { current: null }
+  const identity: { current: { id: string; email: string; name: string } | null | undefined } = { current: undefined }
   function Probe() {
     handle.current = useAccountScope()
+    identity.current = useAuth().user
     return null
   }
   const utils = render(
     <AuthProvider>
-      <AccountScopeProvider>
+      <AccountScopeProvider landAt={(path) => void landings.push(path)}>
         <Probe />
       </AccountScopeProvider>
     </AuthProvider>
   )
-  return { handle, utils }
+  return { handle, identity, utils }
 }
 
 async function waitForActive(handle: { current: AccountScopeValue | null }, id: string) {
@@ -79,6 +111,9 @@ describe("AccountScope", () => {
   let hrefValues: string[]
 
   beforeEach(() => {
+    localStorage.clear()
+    landings.length = 0
+    window.__eagerAuthPromise = undefined
     installFetchStub()
     reloadSpy = vi.fn()
     hrefValues = []
@@ -100,6 +135,7 @@ describe("AccountScope", () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals()
+    localStorage.clear()
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
     // Await deletion so a not-yet-dropped DB never bleeds into the next test.
     await Promise.all(
@@ -213,6 +249,95 @@ describe("AccountScope", () => {
     expect(getFloatingSurfaceGeometry()).toBeNull()
   })
 
+  it("moves the display identity with the scope, before the cookie catches up", async () => {
+    // The switcher already holds the destination's identity from
+    // `/api/accounts`, so the flip publishes it immediately. Without a single
+    // identity owner the scope moved to B while `useAuth()` kept serving A —
+    // every consumer keyed on the viewer (message authorship, per-user storage,
+    // "you" badges) attributed B's session to A.
+    const { handle, identity } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+    expect(identity.current?.id).toBe("workos_A")
+
+    // Revalidation stalls, so what the UI shows is the switcher's identity —
+    // not a value the flip happened to race a round trip for.
+    const { fetchMock, release } = stallRevalidation()
+    vi.stubGlobal("fetch", fetchMock)
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B", {
+        identity: { id: "workos_B", email: "b@example.com", name: "Bea" },
+      })
+    })
+    await waitForActive(handle, "workos_B")
+
+    expect(identity.current).toEqual({ id: "workos_B", email: "b@example.com", name: "Bea" })
+
+    await act(async () => {
+      await release("workos_B")
+    })
+    await waitFor(() => expect(identity.current?.email).toBe("workos_B@example.com"))
+  })
+
+  it("leaves the identity unresolved rather than showing the outgoing account", async () => {
+    // A cross-tab flip carries no identity hint and this browser has never
+    // cached B's. Unresolved (and so `loading`, which gates sending) is the only
+    // honest answer; A's name is not a placeholder for B.
+    const { handle, identity } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+
+    const { fetchMock, release } = stallRevalidation()
+    vi.stubGlobal("fetch", fetchMock)
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B")
+    })
+    await waitForActive(handle, "workos_B")
+    expect(identity.current).toBeNull()
+
+    await act(async () => {
+      await release("workos_B")
+    })
+    await waitFor(() => expect(identity.current?.id).toBe("workos_B"))
+  })
+
+  it("lands an explicit switch on the destination's own workspace, never the outgoing account's", async () => {
+    setLastWorkspaceId("workos_B", "ws_b")
+    const { handle } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B")
+    })
+    await waitForActive(handle, "workos_B")
+
+    expect(landings).toEqual(["/w/ws_b"])
+  })
+
+  it("lands on the workspace list when the destination has no workspace on this browser", async () => {
+    const { handle } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B")
+    })
+    await waitForActive(handle, "workos_B")
+
+    expect(landings).toEqual(["/workspaces"])
+  })
+
+  it("keeps the location for a deep link the destination account was sent to", async () => {
+    const { handle } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B", { landing: "keep-location" })
+    })
+    await waitForActive(handle, "workos_B")
+
+    expect(landings).toEqual([])
+  })
+
   it("flips a second tab over BroadcastChannel and serves no cross-account data", async () => {
     const tab1 = mountScopeTree()
     const tab2 = mountScopeTree()
@@ -231,6 +356,9 @@ describe("AccountScope", () => {
 
     // Tab 2 receives the broadcast and flips without its own switch call.
     await waitForActive(tab2.handle, "workos_B")
+    // Including its display identity: a tab that missed the switch must not go
+    // on rendering the outgoing account as the viewer.
+    await waitFor(() => expect(tab2.identity.current?.id).toBe("workos_B"))
     const tab2B = tab2.handle.current!
     expect(await tab2B.getDb().workspaces.count()).toBe(0)
     expect(tab2B.getQueryClient().getQueryData(QUERY_KEY)).toBeUndefined()

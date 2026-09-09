@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useSocket, useWorkspaceService } from "@/contexts"
-import { useUser } from "@/auth"
+import { useAccountScope, useUser } from "@/auth"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { getQueryLoadState, isTerminalBootstrapError } from "@/lib/query-load-state"
 import { db } from "@/db"
@@ -83,6 +83,7 @@ export function useWorkspaceBootstrap(workspaceId: string) {
   const socket = useSocket()
   const workspaceService = useWorkspaceService()
   const queryClient = useQueryClient()
+  const { activeWorkosUserId } = useAccountScope()
 
   // Check if this query has already errored - don't re-enable if so
   // This prevents continuous refetching when the server is down
@@ -102,7 +103,11 @@ export function useWorkspaceBootstrap(workspaceId: string) {
       // will have _cachedAt > fetchStartedAt and survive stale cleanup.
       const fetchStartedAt = Date.now()
 
-      const bootstrap = await workspaceService.bootstrap(workspaceId)
+      // The one bootstrap request the service worker's snapshot can answer (the
+      // SyncEngine's always asks fresh), and that snapshot is keyed by owner: an
+      // unnamed account goes to the network instead, stranding the prefetch and
+      // handing a cold open a second, later source of truth to paint.
+      const bootstrap = await workspaceService.bootstrap(workspaceId, { accountId: activeWorkosUserId })
       debugBootstrap("Workspace bootstrap fetch success", {
         workspaceId,
         streamCount: bootstrap.streams.length,

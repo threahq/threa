@@ -9,6 +9,7 @@ import {
 import {
   clickReplyInThread,
   expectApiOk,
+  hasCachedBootstrapForAccount,
   loginAndCreateWorkspace,
   sendPanelReply,
   waitForRealThreadPanel,
@@ -275,14 +276,10 @@ async function cacheSnapshotInServiceWorker(page: Page, workspaceId: string): Pr
     document.dispatchEvent(new Event("visibilitychange"))
   })
   await expect
-    .poll(
-      () =>
-        page.evaluate(async (wid) => {
-          const cache = await caches.open("push-bootstrap")
-          return !!(await cache.match(`/api/workspaces/${wid}/bootstrap`))
-        }, workspaceId),
-      { timeout: 15000, message: "SW never cached the bootstrap on hide" }
-    )
+    .poll(() => hasCachedBootstrapForAccount(page, workspaceId), {
+      timeout: 15000,
+      message: "SW never cached the bootstrap on hide",
+    })
     .toBe(true)
   return true
 }

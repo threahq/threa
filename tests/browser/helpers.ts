@@ -19,15 +19,34 @@ export async function expectApiOk(response: APIResponse, action: string): Promis
   throw new Error(`${action} failed: ${response.status()} ${response.statusText()} - ${body}`)
 }
 
+/** The stub auth user, as `/api/dev/login` returns it. */
+export interface DevLoginUser {
+  id: string
+  email: string
+  name: string
+}
+
 /**
  * Login using the test-only stub auth API route.
  * Faster and less flaky than driving the UI login form for every test.
+ *
+ * `intent: "add"` runs the control plane's real add-account sequence: the
+ * current session is parked into an alt slot and this one becomes active, so a
+ * test can hold two accounts in one browser context without hand-rolling
+ * cookies. It is the same `AccountsService.addAndParkActive` call the OAuth
+ * callback and the stub login form make.
  */
-async function devLogin(page: Page, email: string, name: string): Promise<void> {
+export async function devLogin(
+  page: Page,
+  email: string,
+  name: string,
+  options?: { intent?: "add" }
+): Promise<DevLoginUser> {
   const loginResponse = await page.request.post("/api/dev/login", {
-    data: { email, name },
+    data: options?.intent ? { email, name, intent: options.intent } : { email, name },
   })
-  await expectApiOk(loginResponse, "Stub auth login")
+  await expectApiOk(loginResponse, options?.intent === "add" ? "Stub auth add-account" : "Stub auth login")
+  return ((await loginResponse.json()) as { user: DevLoginUser }).user
 }
 
 /**
@@ -497,4 +516,32 @@ export async function selectAllEditorContent(editor: Locator): Promise<void> {
     selection.removeAllRanges()
     selection.addRange(range)
   })
+}
+
+/** The account the browser is signed in as. */
+export async function currentAccount(page: Page): Promise<DevLoginUser> {
+  const response = await page.request.get("/api/auth/me")
+  await expectApiOk(response, "Read the signed-in account")
+  return (await response.json()) as DevLoginUser
+}
+
+/**
+ * Whether the service worker holds a bootstrap snapshot **for the signed-in
+ * account**. The push-bootstrap cache is keyed by owner as well as URL, so a
+ * bare-URL lookup finds nothing and a match on any entry would pass even when
+ * the snapshot belongs to somebody else.
+ */
+export async function hasCachedBootstrapForAccount(page: Page, workspaceId: string): Promise<boolean> {
+  const accountId = (await currentAccount(page)).id
+  return page.evaluate(
+    async ({ wid, accountId }) => {
+      const cache = await caches.open("push-bootstrap")
+      const keys = await cache.keys()
+      return keys.some((request) => {
+        const url = new URL(request.url)
+        return url.pathname === `/api/workspaces/${wid}/bootstrap` && url.searchParams.get("account") === accountId
+      })
+    },
+    { wid: workspaceId, accountId }
+  )
 }

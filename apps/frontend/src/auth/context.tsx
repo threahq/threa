@@ -1,9 +1,16 @@
-import { createContext, useCallback, useEffect, useState, type ReactNode } from "react"
+import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { API_BASE } from "@/api/client"
 import { clearAllCachedData } from "@/db"
-import { getCachedUser, setCachedUser, clearCachedUser } from "@/lib/cached-user"
-import { clearLastWorkspaceId } from "@/lib/last-workspace"
+import {
+  clearAllCachedIdentities,
+  clearCachedIdentity,
+  getActiveAccountId,
+  getCachedIdentity,
+  setActiveAccountId,
+  setCachedIdentity,
+} from "@/lib/cached-user"
+import { clearAllLastWorkspaceIds, clearLastWorkspaceId } from "@/lib/last-workspace"
 import { PUSH_BOOTSTRAP_CACHE } from "@/lib/sw-bootstrap-prefetch"
 import { suspendConnectivityDiagnostics } from "@/lib/connectivity-diagnostics/facade"
 import type { AuthState, User } from "./types"
@@ -15,6 +22,13 @@ declare global {
 }
 
 interface AuthContextValue extends AuthState {
+  /**
+   * The account this browser is signed in as right now — authoritative from
+   * the moment a switch commits, before its identity record has resolved.
+   * `user` is that account's display identity, or null while it is still
+   * unknown here; it is never a different account's.
+   */
+  activeWorkosUserId: string | null
   login: (redirectTo?: string, opts?: { intent?: "add" }) => void
   /**
    * Log out of one or all accounts on this browser. `scope: "current"` revokes
@@ -24,6 +38,15 @@ interface AuthContextValue extends AuthState {
    * intact server-side — explicit revoke is the `/api/accounts/remove` path).
    */
   logout: (opts?: { scope?: "current" | "all" }) => void
+  /**
+   * Adopt a different account as the active one. The caller has already made
+   * it active server-side (`/api/accounts/switch`) or observed another tab do
+   * so. `identity` is the destination's display identity when the caller
+   * already holds it (the switcher's account list), so the first paint after
+   * the flip is already the destination's; without it the account renders
+   * unresolved until `/api/auth/me` answers, never as the outgoing account.
+   */
+  activateAccount: (workosUserId: string, identity?: User | null) => void
   refetch: () => Promise<void>
 }
 
@@ -33,8 +56,10 @@ const ACCOUNT_ERROR_PARAM = "accountError"
 const MAX_ACCOUNTS_REACHED = "MAX_ACCOUNTS_REACHED"
 
 // A successful add-account redirect carries this (control plane sends the
-// browser to /workspaces?accountAdded=1 so the app drops its stale
-// last-workspace pointer instead of routing back into the old account).
+// browser to /workspaces?accountAdded=1). The pointer it used to invalidate is
+// now per-account, so nothing needs clearing — it marks the one boot where the
+// last-active pointer must not be trusted (see `isAccountAddedReturn`), and is
+// then stripped so a refresh doesn't keep it in the URL.
 const ACCOUNT_ADDED_PARAM = "accountAdded"
 
 // Best-effort push cleanup must never delay the logout redirect for long.
@@ -49,39 +74,89 @@ const PUSH_CLEANUP_TIMEOUT_MS = 2000
 // 15000 (it can't import this constant) — keep the two in sync.
 const AUTH_REVALIDATE_TIMEOUT_MS = 15000
 
+function isAccountAddedReturn(): boolean {
+  return new URLSearchParams(window.location.search).get(ACCOUNT_ADDED_PARAM) === "1"
+}
+
 export const AuthContext = createContext<AuthContextValue | null>(null)
 
 interface AuthProviderProps {
   children: ReactNode
 }
 
+interface AccountSession extends AuthState {
+  activeWorkosUserId: string | null
+}
+
 export function AuthProvider({ children }: AuthProviderProps) {
-  // Render instantly from the cached display identity (the httpOnly cookie is
-  // still the credential — this is display-only). `loading` stays true only
-  // for a genuinely cold first visit so the app doesn't gate on the network.
-  const [state, setState] = useState<AuthState>(() => {
-    const cachedUser = getCachedUser()
-    return { user: cachedUser, loading: !cachedUser, error: null }
+  // Render instantly from the active account's cached display identity (the
+  // httpOnly cookie is still the credential — this is display-only).
+  // `loading` stays true while the active account has no identity yet, so a
+  // genuinely cold first visit and an account whose identity this browser has
+  // never seen both wait rather than showing someone else.
+  const [state, setState] = useState<AccountSession>(() => {
+    // The add-account return is the one entry where the credential is known to
+    // have changed out of band, so this browser's last-active pointer is stale
+    // by construction. Start unresolved and let `/api/auth/me` name the
+    // account, rather than mounting the outgoing account's storage scope under
+    // the account that was just added.
+    if (isAccountAddedReturn()) {
+      return { activeWorkosUserId: null, user: null, loading: true, error: null }
+    }
+    const activeWorkosUserId = getActiveAccountId()
+    const user = activeWorkosUserId ? getCachedIdentity(activeWorkosUserId) : null
+    return { activeWorkosUserId, user, loading: !user, error: null }
   })
 
+  // Revalidation is only ever allowed to publish the account it was issued
+  // for. `generation` retires every in-flight `/api/auth/me` the moment the
+  // active account changes (a response from before a switch would otherwise
+  // reinstate the outgoing account); `expectedId` additionally refuses a
+  // response naming an account we did not activate, so a cookie that has not
+  // caught up leaves the destination unresolved instead of rolling back.
+  const generationRef = useRef(0)
+  const expectedIdRef = useRef<string | null>(null)
+  const activeIdRef = useRef<string | null>(state.activeWorkosUserId)
+  activeIdRef.current = state.activeWorkosUserId
+
   const fetchUser = useCallback(async () => {
-    // A 401 is the only authoritative "you are signed out" signal: clear the
-    // cached identity and drop to the login redirect.
+    const generation = generationRef.current
+
+    // A 401 is the only authoritative "you are signed out" signal: forget the
+    // active account's cached identity and drop to the login redirect. Other
+    // accounts parked on this browser keep theirs.
     const onUnauthenticated = () => {
-      clearCachedUser()
-      setState({ user: null, loading: false, error: null })
+      const active = activeIdRef.current
+      if (active) clearCachedIdentity(active)
+      expectedIdRef.current = null
+      setState({ activeWorkosUserId: null, user: null, loading: false, error: null })
     }
     // Network failure / timeout / 5xx during background revalidation must not
     // sign a returning user out — keep the cached identity so the app stays
-    // usable offline. Only a cold visit with no cache falls through to login.
+    // usable offline. Only a visit with no cached identity for the active
+    // account falls through to login.
     const onRevalidateFailure = (message: string) => {
-      const cachedUser = getCachedUser()
+      const active = activeIdRef.current
+      const user = active ? getCachedIdentity(active) : null
       setState({
-        user: cachedUser,
+        activeWorkosUserId: active,
+        user,
         loading: false,
-        error: cachedUser ? null : message,
+        error: user ? null : message,
       })
     }
+    const onResolved = (user: User) => {
+      setCachedIdentity(user)
+      // Server named an account we did not activate: keep the destination
+      // unresolved rather than publishing an identity the local scope does not
+      // belong to. The fetch `activateAccount` issues after the switch is the
+      // one that resolves it.
+      if (expectedIdRef.current && expectedIdRef.current !== user.id) return
+      expectedIdRef.current = null
+      setActiveAccountId(user.id)
+      setState({ activeWorkosUserId: user.id, user, loading: false, error: null })
+    }
+    const isStale = () => generationRef.current !== generation
 
     try {
       // Consume the eager auth promise started in index.html before the bundle
@@ -92,9 +167,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         window.__eagerAuthPromise = undefined
         try {
           const user = await eagerPromise
+          if (isStale()) return
           if (user) {
-            setCachedUser(user)
-            setState({ user, loading: false, error: null })
+            onResolved(user)
           } else {
             onUnauthenticated()
           }
@@ -116,6 +191,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         clearTimeout(timeout)
       }
 
+      if (isStale()) return
+
       if (res.status === 401) {
         onUnauthenticated()
         return
@@ -126,9 +203,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       const user: User = await res.json()
-      setCachedUser(user)
-      setState({ user, loading: false, error: null })
+      if (isStale()) return
+      onResolved(user)
     } catch (err) {
+      if (isStale()) return
       onRevalidateFailure(err instanceof Error ? err.message : "Unknown error")
     }
   }, [])
@@ -136,6 +214,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     fetchUser()
   }, [fetchUser])
+
+  const activateAccount = useCallback(
+    (workosUserId: string, identity?: User | null) => {
+      generationRef.current += 1
+      expectedIdRef.current = workosUserId
+      const hint = identity && identity.id === workosUserId ? identity : null
+      const known = hint ?? getCachedIdentity(workosUserId)
+      if (hint) setCachedIdentity(hint)
+      setActiveAccountId(workosUserId)
+      setState({ activeWorkosUserId: workosUserId, user: known, loading: !known, error: null })
+      void fetchUser()
+    },
+    [fetchUser]
+  )
 
   // AuthProvider sits above the router, so the add-account callback outcome
   // can't be read via useSearchParams. Handle it once on mount and strip the
@@ -150,12 +242,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       changed = true
     }
 
-    // A successful add makes the just-added account the active session. The
-    // last-workspace pointer still names the *previous* account's workspace;
-    // clearing it stops RootRedirect from routing into a workspace the new
-    // account can't see (which 403s and bounces back to the old account).
     if (params.get(ACCOUNT_ADDED_PARAM) === "1") {
-      clearLastWorkspaceId()
       params.delete(ACCOUNT_ADDED_PARAM)
       changed = true
     }
@@ -220,15 +307,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
       pushCleanup,
       new Promise<void>((resolve) => setTimeout(resolve, PUSH_CLEANUP_TIMEOUT_MS)),
     ]).catch(() => {})
-    clearCachedUser()
-    clearLastWorkspaceId()
+    const active = activeIdRef.current
+    if (scope === "current") {
+      if (active) {
+        clearCachedIdentity(active)
+        clearLastWorkspaceId(active)
+      }
+    } else {
+      clearAllCachedIdentities()
+      clearAllLastWorkspaceIds()
+    }
     // `clearAllCachedData` uses the active-account `db` proxy, so it drops
     // exactly the current account's IDB. Promoted-account IDB (a separate
     // named handle) is untouched, which is what scope=current wants.
     await clearAllCachedData().catch(() => {})
-    // The service worker's pre-fetched workspace snapshot is keyed by URL, not
-    // account. With IDB empty the next sign-in has no local state, so it would
-    // accept that copy as fresh and paint this account's data for the next one.
+    // The service worker's pre-fetched workspace snapshots are per account, so
+    // with this account's IDB empty the next sign-in has no local state and
+    // would accept its own leftover copy as fresh. Drop the whole cache: the
+    // entries are a warm-start optimization, refetched on demand.
     if (typeof caches !== "undefined") await caches.delete(PUSH_BOOTSTRAP_CACHE).catch(() => {})
     window.location.href =
       scope === "current" ? `${API_BASE}/api/auth/logout?scope=current` : `${API_BASE}/api/auth/logout`
@@ -238,6 +334,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     ...state,
     login,
     logout,
+    activateAccount,
     refetch: fetchUser,
   }
 
