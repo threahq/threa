@@ -34,6 +34,18 @@ export function createApp(options: CreateAppOptions): Express {
     })
   )
 
+  app.use(
+    pinoHttp({
+      logger,
+      autoLogging: {
+        ignore: (req) => requestLoggingIgnoredPaths.includes(req.url),
+      },
+      customLogLevel: (_req, res, err) => requestLogLevel(res.statusCode, err),
+      genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
+      serializers: requestLogSerializers,
+    })
+  )
+
   app.use(cors({ origin: createCorsOriginChecker(options.corsAllowedOrigins), credentials: true }))
   app.use(cookieParser())
   // The GitHub webhook route needs the raw request bytes for HMAC verification,
@@ -49,18 +61,6 @@ export function createApp(options: CreateAppOptions): Express {
     return jsonParser(req, res, next)
   })
   app.use(express.urlencoded({ extended: false }))
-
-  app.use(
-    pinoHttp({
-      logger,
-      autoLogging: {
-        ignore: (req) => requestLoggingIgnoredPaths.includes(req.url),
-      },
-      customLogLevel: (_req, res, err) => requestLogLevel(res.statusCode, err),
-      genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
-      serializers: requestLogSerializers,
-    })
-  )
 
   app.get("/health", (_, res) => res.json({ status: "ok" }))
 

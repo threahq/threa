@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { HttpError } from "@threahq/backend-common"
 import { createCorsOriginChecker } from "./cors"
 
 describe("createCorsOriginChecker", () => {
@@ -29,11 +30,17 @@ describe("createCorsOriginChecker", () => {
   test("rejects non-allowlisted origins", () => {
     const checker = createCorsOriginChecker(["https://app.example.com"])
 
-    let errorMessage = ""
+    let rejection: unknown
     checker("https://evil.example.com", (err) => {
-      errorMessage = err instanceof Error ? err.message : ""
+      rejection = err
     })
 
-    expect(errorMessage).toBe("CORS origin not allowed")
+    expect(rejection).toBeInstanceOf(HttpError)
+    const { message, status, code } = rejection as HttpError
+    expect({ message, status, code }).toEqual({
+      message: "CORS origin not allowed",
+      status: 403,
+      code: "CORS_ORIGIN_NOT_ALLOWED",
+    })
   })
 })

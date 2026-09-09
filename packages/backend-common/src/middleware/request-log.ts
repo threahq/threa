@@ -20,6 +20,7 @@ export const requestLogSerializers = {
       method: req.method,
       url: req.url,
       userAgent: req.headers["user-agent"],
+      origin: req.headers["origin"],
     }
   },
   res(res: { statusCode: number }) {

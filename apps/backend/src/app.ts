@@ -61,19 +61,6 @@ export function createApp(options: CreateAppOptions): Express {
   )
 
   app.use(
-    cors({
-      origin: createCorsOriginChecker(options.corsAllowedOrigins),
-      credentials: true,
-      // Cross-origin callers (developer playground) must be able to read the
-      // resolved public API version the gate echoes back.
-      exposedHeaders: [THREA_VERSION_HEADER],
-    })
-  )
-  app.use(cookieParser())
-  app.use(express.json({ limit: "10mb" }))
-  app.use(express.urlencoded({ extended: true, limit: "10mb" }))
-
-  app.use(
     pinoHttp({
       logger,
       autoLogging: {
@@ -97,6 +84,19 @@ export function createApp(options: CreateAppOptions): Express {
       },
     })
   )
+
+  app.use(
+    cors({
+      origin: createCorsOriginChecker(options.corsAllowedOrigins),
+      credentials: true,
+      // Cross-origin callers (developer playground) must be able to read the
+      // resolved public API version the gate echoes back.
+      exposedHeaders: [THREA_VERSION_HEADER],
+    })
+  )
+  app.use(cookieParser())
+  app.use(express.json({ limit: "10mb" }))
+  app.use(express.urlencoded({ extended: true, limit: "10mb" }))
 
   app.get("/health", (_, res) => res.json({ status: "ok" }))
 
