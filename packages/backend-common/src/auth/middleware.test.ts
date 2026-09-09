@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Request, Response } from "express"
+import { ACCOUNT_ASSERTION_HEADER, AuthErrorCodes } from "@threahq/types"
 import { SessionCookies } from "../cookies"
 import { createAuthMiddleware } from "./middleware"
 import type { AuthResult, AuthService } from "./auth-service"
@@ -33,6 +34,7 @@ interface CapturingRes {
   statusCode: number
   body: unknown
   clearedCookies: string[]
+  setCookies: string[]
 }
 
 function makeRes(): Response & CapturingRes {
@@ -40,6 +42,7 @@ function makeRes(): Response & CapturingRes {
     statusCode: 0,
     body: undefined as unknown,
     clearedCookies: [] as string[],
+    setCookies: [] as string[],
     status(code: number) {
       this.statusCode = code
       return this
@@ -52,7 +55,8 @@ function makeRes(): Response & CapturingRes {
       this.clearedCookies.push(name)
       return this
     },
-    cookie() {
+    cookie(name: string) {
+      this.setCookies.push(name)
       return this
     },
   }
@@ -82,7 +86,7 @@ describe("createAuthMiddleware", () => {
       }),
     })
 
-    const req = { cookies: { [sessionCookieName]: "session" } } as unknown as Request
+    const req = { cookies: { [sessionCookieName]: "session" }, headers: {} } as unknown as Request
     let nextCalled = false
     await middleware(req, makeRes(), () => {
       nextCalled = true
@@ -111,7 +115,7 @@ describe("createAuthMiddleware", () => {
       }),
     })
 
-    const req = { cookies: { [sessionCookieName]: "session" } } as unknown as Request
+    const req = { cookies: { [sessionCookieName]: "session" }, headers: {} } as unknown as Request
     await middleware(req, makeRes(), () => {})
 
     expect(req.authUser?.permissions).toEqual([])
@@ -133,7 +137,7 @@ describe("createAuthMiddleware", () => {
       }),
     })
 
-    const req = { cookies: { [sessionCookieName]: "session" } } as unknown as Request
+    const req = { cookies: { [sessionCookieName]: "session" }, headers: {} } as unknown as Request
     await middleware(req, makeRes(), () => {})
 
     expect(req.authUser?.permissions).toBeNull()
@@ -145,12 +149,147 @@ describe("createAuthMiddleware", () => {
       authService: new FakeAuthService({ success: false, refreshed: false, reason: "invalid_grant", terminal: false }),
     })
 
-    const req = { cookies: { [sessionCookieName]: "session" } } as unknown as Request
+    const req = { cookies: { [sessionCookieName]: "session" }, headers: {} } as unknown as Request
     const res = makeRes()
     await middleware(req, res, () => {})
 
     expect(res.statusCode).toBe(401)
     expect(res.clearedCookies).toEqual([])
+  })
+
+  function authenticatedMiddleware(userId: string, refreshed = false) {
+    return createAuthMiddleware({
+      sessionCookies,
+      authService: new FakeAuthService({
+        success: true,
+        refreshed,
+        ...(refreshed && { sealedSession: "rotated-sealed" }),
+        user: { id: userId, email: "u@example.com", firstName: null, lastName: null, permissions: null },
+      }),
+    })
+  }
+
+  test("refuses a request formed for a different signed-in account", async () => {
+    const middleware = authenticatedMiddleware("user_b")
+    const req = {
+      cookies: { [sessionCookieName]: "session" },
+      headers: { [ACCOUNT_ASSERTION_HEADER.toLowerCase()]: "user_a" },
+    } as unknown as Request
+    const res = makeRes()
+    let nextCalled = false
+    await middleware(req, res, () => {
+      nextCalled = true
+    })
+
+    expect({ status: res.statusCode, body: res.body, nextCalled, workosUserId: req.workosUserId }).toEqual({
+      status: 409,
+      body: {
+        error: "This browser is signed in as a different account",
+        code: AuthErrorCodes.ACCOUNT_MISMATCH,
+      },
+      nextCalled: false,
+      workosUserId: undefined,
+    })
+  })
+
+  test("refuses a duplicated assertion header instead of reading past it", async () => {
+    // Express hands a repeated header over as an array. A `typeof === "string"`
+    // guard skips it, so a client that sends the header twice would sail past
+    // the very check the header exists to enforce.
+    const middleware = authenticatedMiddleware("user_b")
+    const req = {
+      cookies: { [sessionCookieName]: "session" },
+      headers: { [ACCOUNT_ASSERTION_HEADER.toLowerCase()]: ["user_a", "user_b"] },
+    } as unknown as Request
+    const res = makeRes()
+    let nextCalled = false
+    await middleware(req, res, () => {
+      nextCalled = true
+    })
+
+    expect({ status: res.statusCode, body: res.body, nextCalled, workosUserId: req.workosUserId }).toEqual({
+      status: 400,
+      body: { error: "Malformed account assertion", code: AuthErrorCodes.INVALID_ACCOUNT_ASSERTION },
+      nextCalled: false,
+      workosUserId: undefined,
+    })
+  })
+
+  test("refuses an empty assertion header", async () => {
+    const middleware = authenticatedMiddleware("user_b")
+    const req = {
+      cookies: { [sessionCookieName]: "session" },
+      headers: { [ACCOUNT_ASSERTION_HEADER.toLowerCase()]: "  " },
+    } as unknown as Request
+    const res = makeRes()
+    await middleware(req, res, () => {})
+
+    expect({ status: res.statusCode, workosUserId: req.workosUserId }).toEqual({
+      status: 400,
+      workosUserId: undefined,
+    })
+  })
+
+  test("accepts a matching assertion and an absent one alike", async () => {
+    // Absent is an older client or an API-key/OAuth caller: normal rollout
+    // means they keep working, so only a supplied claim is ever judged.
+    const middleware = authenticatedMiddleware("user_b")
+    const outcomes: Array<{ nextCalled: boolean; workosUserId?: string }> = []
+    for (const headers of [{ [ACCOUNT_ASSERTION_HEADER.toLowerCase()]: "user_b" }, {}]) {
+      const req = { cookies: { [sessionCookieName]: "session" }, headers } as unknown as Request
+      let nextCalled = false
+      await middleware(req, makeRes(), () => {
+        nextCalled = true
+      })
+      outcomes.push({ nextCalled, workosUserId: req.workosUserId })
+    }
+
+    expect(outcomes).toEqual([
+      { nextCalled: true, workosUserId: "user_b" },
+      { nextCalled: true, workosUserId: "user_b" },
+    ])
+  })
+
+  test("keeps a rotated session cookie even when it refuses the assertion", async () => {
+    // The refresh already happened at WorkOS: dropping the rotated sealed
+    // session here would revoke a perfectly good session over a mismatch.
+    const middleware = authenticatedMiddleware("user_b", true)
+    const req = {
+      cookies: { [sessionCookieName]: "session" },
+      headers: { [ACCOUNT_ASSERTION_HEADER.toLowerCase()]: "user_a" },
+    } as unknown as Request
+    const res = makeRes()
+    await middleware(req, res, () => {})
+
+    expect({ status: res.statusCode, setCookies: res.setCookies }).toEqual({
+      status: 409,
+      setCookies: [sessionCookieName],
+    })
+  })
+
+  test("passes a request whose assertion matches the session's account", async () => {
+    const middleware = authenticatedMiddleware("user_a")
+    const req = {
+      cookies: { [sessionCookieName]: "session" },
+      headers: { [ACCOUNT_ASSERTION_HEADER.toLowerCase()]: "user_a" },
+    } as unknown as Request
+    let nextCalled = false
+    await middleware(req, makeRes(), () => {
+      nextCalled = true
+    })
+
+    expect({ nextCalled, workosUserId: req.workosUserId }).toEqual({ nextCalled: true, workosUserId: "user_a" })
+  })
+
+  test("passes a request that asserts nothing, so older clients keep working", async () => {
+    const middleware = authenticatedMiddleware("user_a")
+    const req = { cookies: { [sessionCookieName]: "session" }, headers: {} } as unknown as Request
+    let nextCalled = false
+    await middleware(req, makeRes(), () => {
+      nextCalled = true
+    })
+
+    expect({ nextCalled, workosUserId: req.workosUserId }).toEqual({ nextCalled: true, workosUserId: "user_a" })
   })
 
   test("terminal auth failure clears the session cookie", async () => {
@@ -164,7 +303,7 @@ describe("createAuthMiddleware", () => {
       }),
     })
 
-    const req = { cookies: { [sessionCookieName]: "session" } } as unknown as Request
+    const req = { cookies: { [sessionCookieName]: "session" }, headers: {} } as unknown as Request
     const res = makeRes()
     await middleware(req, res, () => {})
 

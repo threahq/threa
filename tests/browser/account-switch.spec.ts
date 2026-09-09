@@ -115,6 +115,11 @@ async function setUpSharedWorkspace(page: Page): Promise<SharedWorkspace> {
   )
 
   const userB = await devLogin(page, emailB, `B WorkOS ${testId}`, { intent: "add" })
+  // The stub add swaps the browser's active account through the API, behind the
+  // open page. The real callback returns the browser to this URL, so follow it
+  // here: a page left running on the parked account keeps forming requests for
+  // it, and the server now refuses those (409 ACCOUNT_MISMATCH).
+  await page.goto("/workspaces?accountAdded=1")
   await acceptInvitation(page, workspaceId)
   // The WorkOS name and the workspace profile name differ on purpose: the
   // picker must label each row from the *workspace* roster, matched on
@@ -131,10 +136,6 @@ async function setUpSharedWorkspace(page: Page): Promise<SharedWorkspace> {
   const messageB = `B only ${testId}`
   await postMessage(page, workspaceId, scratchpadB, messageB)
 
-  // The add-account return the control plane actually sends the browser to.
-  // The last-active pointer in this browser still names A, so this boot is the
-  // one that must resolve its account from the credential instead.
-  await page.goto("/workspaces?accountAdded=1")
   await page.goto(`/w/${workspaceId}`)
   await switchToAllView(page)
 
@@ -183,19 +184,38 @@ async function ensureSidebarOpen(page: Page): Promise<void> {
   await expect(collapse).toBeVisible({ timeout: 15_000 })
 }
 
-/** Open the account picker from the sidebar footer (dropdown on mouse, drawer on touch). */
+/**
+ * Open the account picker from the sidebar footer (dropdown on mouse, drawer on
+ * touch), with the dialog's own accounts list loaded.
+ *
+ * The accounts query does not retry (`makeQueryClient` sets `retry: false`), so
+ * a fetch the page aborted mid-navigation leaves the dialog on its "Close and
+ * try again" state. Do exactly that rather than reading a transient abort as a
+ * missing account.
+ */
 async function openAccountPicker(page: Page, currentProfileName: string): Promise<void> {
   const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
-  const accountButton = sidebar.getByRole("button").filter({ hasText: currentProfileName }).first()
-  await expect(accountButton).toBeVisible({ timeout: 20_000 })
-  await accountButton.click()
+  const dialog = page.getByRole("dialog").filter({ has: page.getByText("Switch account") })
+  const loadFailed = dialog.getByText(/Couldn.t load your accounts/)
 
-  const switchEntry = page
-    .getByRole("menuitem", { name: "Switch account" })
-    .or(page.getByRole("button", { name: "Switch account" }))
-    .first()
-  await expect(switchEntry).toBeVisible({ timeout: 10_000 })
-  await switchEntry.click()
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const accountButton = sidebar.getByRole("button").filter({ hasText: currentProfileName }).first()
+    await expect(accountButton).toBeVisible({ timeout: 20_000 })
+    await accountButton.click()
+
+    const switchEntry = page
+      .getByRole("menuitem", { name: "Switch account" })
+      .or(page.getByRole("button", { name: "Switch account" }))
+      .first()
+    await expect(switchEntry).toBeVisible({ timeout: 10_000 })
+    await switchEntry.click()
+    await expect(dialog).toBeVisible({ timeout: 15_000 })
+
+    if (!(await loadFailed.isVisible().catch(() => false))) return
+    await page.keyboard.press("Escape")
+    await expect(dialog).toHaveCount(0, { timeout: 10_000 })
+  }
+  throw new Error("The account picker never loaded this browser's accounts")
 }
 
 /** Click the picker row for `email` and wait for the picker to close. */
@@ -297,6 +317,122 @@ test.describe("Account switch — two accounts sharing a workspace", () => {
     await expectAccountOwnsWorkspace(page, b, a)
     await expect(page.getByText(optimisticText)).toHaveCount(0)
     await openScratchpad(page, b)
+  })
+
+  test("a send still in flight when the account switches stays with the account that composed it", async ({ page }) => {
+    const { workspaceId, a, b } = await setUpSharedWorkspace(page)
+
+    await expectAccountOwnsWorkspace(page, b, a)
+
+    // A channel both accounts belong to. A send A leaves in flight would be a
+    // real publication under B here — in A's private scratchpad the server
+    // refuses B on access alone, so the assertion would prove nothing.
+    const channelSlug = `shared-${Date.now().toString(36)}`
+    const created = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+      data: { type: "channel", slug: channelSlug, visibility: "public" },
+    })
+    await expectApiOk(created, "Create shared channel")
+    const channelId = ((await created.json()) as { stream: { id: string } }).stream.id
+    const seedText = `shared seed ${channelSlug}`
+    await postMessage(page, workspaceId, channelId, seedText)
+
+    await openAccountPicker(page, b.profileName)
+    await pickAccount(page, a.user.email)
+    await expectAccountOwnsWorkspace(page, a, b)
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/streams/${channelId}/join`),
+      "Join the shared channel as A"
+    )
+
+    const openChannel = async (): Promise<void> => {
+      await page.goto(`/w/${workspaceId}/s/${channelId}`)
+      await expect(page.getByText(seedText).first()).toBeVisible({ timeout: 30_000 })
+    }
+    await openChannel()
+    // The picker lists this browser's accounts from a workspace-scoped query,
+    // so it is empty until the reload above has its bootstrap. Settle here
+    // rather than racing the dialog.
+    await expectAccountOwnsWorkspace(page, a, b)
+
+    // Hold A's send open past the switch. The retire budget is bounded, so the
+    // request is still on the wire when the cookie starts naming B — exactly
+    // the race the account assertion and the queue's fence checks exist for.
+    // The route stays installed for the rest of the test: unrouting while the
+    // handler is still awaiting the gate cancels the request under test. Once
+    // the gate resolves it passes every later send straight through.
+    let releaseSend = () => {}
+    const sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve
+    })
+    await page.route("**/api/workspaces/*/messages", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue()
+        return
+      }
+      await sendGate
+      await route.continue()
+    })
+
+    const strandedText = `stranded send from A ${channelSlug}`
+    const composer = page.locator("[data-editor-zone='main'] [contenteditable='true']").last()
+    await expect(composer).toBeVisible({ timeout: 20_000 })
+    await composer.click()
+    await page.keyboard.type(strandedText)
+    await page.keyboard.press("Enter")
+    await expect(page.locator("[data-author-name]").filter({ hasText: strandedText }).first()).toBeVisible({
+      timeout: 20_000,
+    })
+
+    await openAccountPicker(page, a.profileName)
+    await pickAccount(page, b.user.email)
+    await expectAccountOwnsWorkspace(page, b, a)
+
+    // The send lands now, as B holds the cookie. B can read this channel, so
+    // an accepted send would land right here, authored by B — the server has
+    // to refuse it on the account the client formed it for.
+    const refused = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes("/messages"),
+      { timeout: 30_000 }
+    )
+    releaseSend()
+    expect((await refused).status()).toBe(409)
+
+    await openChannel()
+    // Long enough for the refused send to be mishandled — deleted from the
+    // outbox, or retried as B — before the switch back reads the outcome.
+    await page.waitForTimeout(3_000)
+    await expect(page.getByText(strandedText)).toHaveCount(0)
+
+    // ─── Back on A: the message A composed is still A's, and it delivers ───
+    await openAccountPicker(page, b.profileName)
+    await pickAccount(page, a.user.email)
+    await expectAccountOwnsWorkspace(page, a, b)
+    await openChannel()
+    await expect(page.locator("[data-author-name]").filter({ hasText: strandedText }).first()).toHaveAttribute(
+      "data-author-name",
+      a.profileName,
+      { timeout: 30_000 }
+    )
+
+    // Exactly one copy on the server: the queued row really delivers on return
+    // (the row on screen above is still optimistic until it does), the fence
+    // must not have let a retry double-send it, and the refusal must not have
+    // been read as delivery.
+    const strandedCopies = async (): Promise<number> => {
+      const response = await page.request.get(`/api/workspaces/${workspaceId}/streams/${channelId}/events?limit=100`)
+      if (!response.ok()) return -1
+      const body = (await response.json()) as { events: Array<{ payload?: { contentMarkdown?: string } }> }
+      return body.events.filter((event) => event.payload?.contentMarkdown?.includes(strandedText)).length
+    }
+    await expect
+      .poll(strandedCopies, {
+        message: "The send A composed never reached the server after switching back",
+        timeout: 30_000,
+        intervals: [200, 500, 1000],
+      })
+      .toBe(1)
+    await page.waitForTimeout(2_000)
+    expect(await strandedCopies()).toBe(1)
   })
 
   test.describe("phone", () => {

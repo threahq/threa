@@ -8,7 +8,7 @@ import { useSyncEngine, useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useBatchedValue } from "@/stores/apply-window"
-import { db, getActiveDb, type CachedScheduledMessage, type AccountWriteContext } from "@/db"
+import { db, getActiveDb, type ThreaDatabase, type CachedScheduledMessage, type AccountWriteContext } from "@/db"
 import { getAccountGeneration } from "@/db/event-writes"
 import { enqueueOperation } from "@/sync/operation-queue"
 import { isPermanentApiError } from "@/api"
@@ -106,13 +106,19 @@ function fromCached(row: CachedScheduledMessage): ScheduledMessageView {
  * authoritative rows into IDB so the next render — online or offline — reads
  * from the live Dexie query.
  */
-export async function persistScheduledRows(rows: ScheduledMessageView[]): Promise<void> {
+export async function persistScheduledRows(
+  rows: ScheduledMessageView[],
+  /** Replay paths pass the handle they claimed the work under: their round-trip
+   * can outlive the account that queued it, and `db` points at the replacement
+   * by then. */
+  database: ThreaDatabase = getActiveDb()
+): Promise<void> {
   if (rows.length === 0) return
-  await db.scheduledMessages.bulkPut(rows.map((row) => toCached(row)))
+  await database.scheduledMessages.bulkPut(rows.map((row) => toCached(row)))
 }
 
-export async function removeScheduledRow(id: string): Promise<void> {
-  await db.scheduledMessages.delete(id)
+export async function removeScheduledRow(id: string, database: ThreaDatabase = getActiveDb()): Promise<void> {
+  await database.scheduledMessages.delete(id)
 }
 
 /**
@@ -122,11 +128,12 @@ export async function removeScheduledRow(id: string): Promise<void> {
  */
 export async function replaceLocalScheduledRow(
   placeholderId: string,
-  authoritative: ScheduledMessageView
+  authoritative: ScheduledMessageView,
+  database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
-  await db.transaction("rw", db.scheduledMessages, async () => {
-    await db.scheduledMessages.delete(placeholderId)
-    await db.scheduledMessages.put(toCached(authoritative))
+  await database.transaction("rw", database.scheduledMessages, async () => {
+    await database.scheduledMessages.delete(placeholderId)
+    await database.scheduledMessages.put(toCached(authoritative))
   })
 }
 

@@ -1,6 +1,6 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
-import { db, type CachedBoardPost } from "@/db"
+import { db, getActiveDb, type CachedBoardPost, type ThreaDatabase } from "@/db"
 import { deleteConversationMessages, pruneConversationMessagesToMembership } from "./conversation-messages-store"
 import type { AttachmentSummary, BoardPost, BoardScopeStreamType, ConversationWithStaleness } from "@threahq/types"
 import { mergeConversationByTitleRevision } from "@/lib/title-merge"
@@ -197,17 +197,21 @@ export async function putOptimisticBoardPost(workspaceId: string, input: Optimis
  */
 export async function reconcileOptimisticBoardPost(
   workspaceId: string,
-  input: OptimisticBoardPostInput
+  input: OptimisticBoardPostInput,
+  /** The handle the send was claimed under: the drain calls this after a
+   * round-trip that can outlive the account that composed the post, and `db`
+   * would then rewrite the replacement account's cards. */
+  database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
   const post = buildOptimisticPost(workspaceId, input)
-  await db.transaction("rw", db.conversations, async () => {
-    const existing = await db.conversations.get(input.conversationId)
+  await database.transaction("rw", database.conversations, async () => {
+    const existing = await database.conversations.get(input.conversationId)
     if (!existing) return
     if (existing._status === "pending") {
-      await db.conversations.put(toCached(workspaceId, post, "pending"))
+      await database.conversations.put(toCached(workspaceId, post, "pending"))
       return
     }
-    await db.conversations.put({
+    await database.conversations.put({
       ...existing,
       openingMessage: post.openingMessage,
       rootStreamId: input.rootStreamId,

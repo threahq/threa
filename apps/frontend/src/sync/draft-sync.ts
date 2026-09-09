@@ -1,5 +1,6 @@
 import Dexie from "dexie"
 import { db, generateLocalDraftId, type CachedDraft, type PendingOperation } from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import {
   deleteDraftFromCache,
@@ -871,7 +872,14 @@ export async function executeDraftUpsert(
     stashedAt: row.stashedAt ? new Date(row.stashedAt).toISOString() : null,
   }
 
+  // Every write below lands through the shared `db` proxy, which a switch
+  // repoints: a round-trip that outlives its account must not confirm, migrate
+  // or re-enqueue into the account that replaced it. The op stays queued for
+  // its own account, and a replay that splits server-side is this module's
+  // documented, recoverable outcome — rows in the wrong account are not.
+  const account = getAccountGeneration()
   const res = await service.upsert(workspaceId, draftId, input)
+  if (getAccountGeneration() !== account) return
 
   if (res.split) {
     // The server kept the existing row (the other device's content) under

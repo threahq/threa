@@ -12,6 +12,8 @@ import * as streamSyncModule from "@/sync/stream-sync"
 import * as e2eSessionModule from "@/stores/e2e-session-store"
 import * as streamKeyCacheModule from "@/lib/crypto/stream-key-cache"
 import * as messageEnvelopeModule from "@/lib/crypto/message-envelope"
+import * as boardCardMessagesModule from "@/hooks/use-board-card-messages"
+import { bumpAccountGeneration } from "@/db/event-writes"
 
 const WORKSPACE_ID = "ws_1"
 const WORKOS_USER_ID = "workos_1"
@@ -231,5 +233,60 @@ describe("useQueueDraftMessage", () => {
     ).rejects.toThrow(/Unlock encrypted scratchpads/)
 
     expect(mockPendingAdd).not.toHaveBeenCalled()
+  })
+
+  it("refuses to queue a send whose account switched while the body was sealing", async () => {
+    mockUnlockedSession()
+    // The switch lands mid-seal: `db` now points at the arriving account, so
+    // everything after this await would be written into their database.
+    vi.spyOn(streamKeyCacheModule, "resolveCurrentStreamKey").mockImplementation(async () => {
+      bumpAccountGeneration()
+      return { key: new Uint8Array(32), keyGeneration: 3 }
+    })
+    const publishSpy = vi.spyOn(boardCardMessagesModule, "publishOptimisticRailEvent")
+
+    const { result } = setup()
+    await expect(
+      result.current.queueDraftMessage(
+        { contentJson: CONTENT },
+        {
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          streamCreation: threadCreation,
+          draftId: PANEL_ID,
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: true },
+        }
+      )
+    ).rejects.toThrow(/no longer active/)
+
+    // Nothing persisted, nothing on screen, nothing dispatched under the new account.
+    expect(mockPendingAdd).not.toHaveBeenCalled()
+    expect(mockEventsAdd).not.toHaveBeenCalled()
+    expect(mockMarkPending).not.toHaveBeenCalled()
+    expect(mockNotifyQueue).not.toHaveBeenCalled()
+    expect(publishSpy).not.toHaveBeenCalled()
+    expect(streamSyncModule.optimisticReplyCountUpdate).not.toHaveBeenCalled()
+  })
+
+  it("still queues a send whose account did not move", async () => {
+    mockUnlockedSession()
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.queueDraftMessage(
+        { contentJson: CONTENT },
+        {
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          streamCreation: threadCreation,
+          draftId: PANEL_ID,
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: false },
+        }
+      )
+    })
+
+    expect(mockPendingAdd).toHaveBeenCalledTimes(1)
+    expect(mockEventsAdd).toHaveBeenCalledTimes(1)
+    expect(mockNotifyQueue).toHaveBeenCalledTimes(1)
   })
 })

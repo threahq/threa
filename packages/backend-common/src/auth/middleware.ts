@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express"
+import { ACCOUNT_ASSERTION_HEADER, AuthErrorCodes } from "@threahq/types"
 import type { AuthService } from "./auth-service"
 import { pickSealed } from "./auth-service"
 import type { SessionCookies } from "../cookies"
@@ -61,6 +62,33 @@ export function createAuthMiddleware({ authService, sessionCookies }: Dependenci
 
     if (result.refreshed && result.sealedSession) {
       sessionCookies.set(res, result.sealedSession)
+    }
+
+    // The client states which signed-in account it formed this request for.
+    // Refuse before any handler runs when the cookie names a different one:
+    // work queued under an account that switched away must not execute as the
+    // account that replaced it. An absent header is an older client or a
+    // non-browser caller and keeps the previous behaviour.
+    const asserted = req.headers[ACCOUNT_ASSERTION_HEADER.toLowerCase()]
+    if (asserted !== undefined) {
+      // Present but unreadable — a duplicated header arrives as an array, an
+      // empty one states nothing. Treating either as absent is the bypass the
+      // assertion exists to prevent, so a supplied claim we cannot read is
+      // refused rather than waved through. Absent stays absent (older clients,
+      // API-key and OAuth callers).
+      const claim = typeof asserted === "string" ? asserted.trim() : ""
+      if (!claim) {
+        return res.status(400).json({
+          error: "Malformed account assertion",
+          code: AuthErrorCodes.INVALID_ACCOUNT_ASSERTION,
+        })
+      }
+      if (claim !== result.user.id) {
+        return res.status(409).json({
+          error: "This browser is signed in as a different account",
+          code: AuthErrorCodes.ACCOUNT_MISMATCH,
+        })
+      }
     }
 
     req.workosUserId = result.user.id

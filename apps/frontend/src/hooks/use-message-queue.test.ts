@@ -15,6 +15,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MessageErrorCodes, MessageReferenceErrorCodes } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
+import { retireAccountWork } from "@/sync/account-fence"
 import { createElement, type ReactNode } from "react"
 
 const useMessageQueue = (workspaceId = "ws_1") => useMessageQueueHook(workspaceId)
@@ -822,6 +823,8 @@ describe("useMessageQueue", () => {
 
     // The card reconciles to the real conversation + stream + message ids the
     // moment the scratchpad materializes.
+    // …into the database the drain captured, not whatever the `db` proxy points
+    // at by the time the send's round-trip returns.
     expect(reconcile).toHaveBeenCalledWith(
       "ws_1",
       expect.objectContaining({
@@ -832,7 +835,8 @@ describe("useMessageQueue", () => {
         contentMarkdown: "first note",
         rootStreamId: "stream_real",
         rootStreamType: "scratchpad",
-      })
+      }),
+      dbModule.getActiveDb()
     )
   })
 
@@ -857,5 +861,55 @@ describe("useMessageQueue", () => {
     })
 
     expect(reconcile).not.toHaveBeenCalled()
+  })
+
+  it("should leave a send that lands after its account switched away queued for that account", async () => {
+    let settleSend: (value: { id: string }) => void = () => {}
+    mockCreate.mockImplementation(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          settleSend = resolve
+        })
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_switch",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Composed by A",
+        contentFormat: "markdown",
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Composed by A" }] }],
+        },
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+
+    // The user switches accounts while the send is on the wire.
+    await act(async () => {
+      const retired = retireAccountWork(1000)
+      settleSend({ id: "msg_late" })
+      await retired
+    })
+
+    // The row and its optimistic event belong to the account that composed
+    // them: nothing was settled, failed or retried under the account that
+    // replaced it, so the outbox is intact for the switch back.
+    expect(mockDelete).not.toHaveBeenCalled()
+    expect(mockMarkSent).not.toHaveBeenCalled()
+    expect(mockMarkFailed).not.toHaveBeenCalled()
+    expect(mockEventsUpdate).not.toHaveBeenCalledWith(
+      "temp_switch",
+      expect.objectContaining({ _sentAt: expect.any(Number) })
+    )
+    expect(mockPendingMessages).toHaveLength(1)
   })
 })

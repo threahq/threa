@@ -3,6 +3,8 @@ import { act, render, waitFor } from "@/test"
 import { AuthProvider, useAuth } from "@/auth"
 import { AccountScopeProvider, useAccountScope, type AccountScopeValue } from "@/auth/account-scope"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
+import { runAccountOwnedWork } from "@/sync/account-fence"
+import { reportAccountMismatch } from "@/api/account-assertion"
 import { hasSeededWorkspaceCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { addIncomingCall, getIncomingCalls } from "@/stores/incoming-call-store"
 import { getFloatingSurfaceGeometry, publishFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
@@ -364,6 +366,91 @@ describe("AccountScope", () => {
     expect(tab2B.getQueryClient().getQueryData(QUERY_KEY)).toBeUndefined()
     expect(tab2B.getQueryClient()).not.toBe(tab2QcA)
     // The now-stale client had its in-flight queries cancelled.
+    expect(cancelSpy).toHaveBeenCalled()
+  })
+
+  it("should let the outgoing account's queued work settle before its credential moves", async () => {
+    const { handle } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+
+    const steps: string[] = []
+    let releaseSend: () => void = () => {}
+    const queued = runAccountOwnedWork(async (fence) => {
+      await new Promise<void>((resolve) => {
+        releaseSend = resolve
+      })
+      steps.push(fence.isRetired() ? "queued work stopped" : "queued work continued")
+    })
+
+    let switched = false
+    const switching = handle.current!.switchAccount("workos_B").then(() => {
+      switched = true
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // The credential has not moved yet: the outgoing account's send is still
+    // on the wire and the switch is waiting for it.
+    const switchCalls = () =>
+      vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => String(url).endsWith("/api/accounts/switch")).length
+    expect({ switchCalls: switchCalls(), switched }).toEqual({ switchCalls: 0, switched: false })
+
+    await act(async () => {
+      releaseSend()
+      await queued
+      await switching
+    })
+
+    expect(steps).toEqual(["queued work stopped"])
+    expect(switchCalls()).toBe(1)
+    await waitForActive(handle, "workos_B")
+  })
+
+  it("should retire the outgoing account when a revalidation reveals the browser moved on without this tab", async () => {
+    // A tab suspended through another tab's switch: no broadcast reached it,
+    // and it only learns from a refused request. The lifecycle must be the
+    // same one an explicit switch runs — not a bare identity swap that leaves
+    // the previous account's module snapshots in place.
+    let activeId = "workos_A"
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.endsWith("/api/auth/me")) return meResponse(activeId)
+        return { status: 404, ok: false, json: async () => ({}) } as unknown as Response
+      })
+    )
+
+    const { handle } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+
+    const qcA = handle.current!.getQueryClient()
+    const cancelSpy = vi.spyOn(qcA, "cancelQueries")
+    qcA.setQueryData(QUERY_KEY, { hello: "from-A" })
+    await handle.current!.getDb().workspaces.put(WORKSPACE)
+    addIncomingCall({
+      attemptId: "callinv_A",
+      callId: "call_A",
+      workspaceId: "workspace_A",
+      streamId: "stream_A",
+      inviterId: "user_A",
+      inviterName: "A",
+      mode: "video",
+      expiresAtMs: Date.now() + 60_000,
+    })
+
+    activeId = "workos_B"
+    await act(async () => {
+      reportAccountMismatch()
+      await Promise.resolve()
+    })
+    await waitForActive(handle, "workos_B")
+
+    const scopeB = handle.current!
+    expect(await scopeB.getDb().workspaces.count()).toBe(0)
+    expect(scopeB.getQueryClient().getQueryData(QUERY_KEY)).toBeUndefined()
+    expect(getIncomingCalls()).toHaveLength(0)
     expect(cancelSpy).toHaveBeenCalled()
   })
 })

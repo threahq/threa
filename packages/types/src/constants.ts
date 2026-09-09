@@ -1297,6 +1297,35 @@ export const THREA_CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 // it's a documented public header, named like Stripe-Version.
 export const THREA_VERSION_HEADER = "Threa-Version"
 
+// Which signed-in account a session-cookie request was formed for. One browser
+// holds one session cookie across several signed-in accounts, so a request
+// formed under account A and sent after a switch authenticates as account B —
+// the cookie alone cannot tell them apart. The server refuses (409
+// ACCOUNT_MISMATCH) when its cookie names someone else. The assertion only ever
+// narrows the cookie's identity, never grants authority, and an absent header
+// keeps the pre-header behaviour for older clients and API-key/OAuth callers.
+export const ACCOUNT_ASSERTION_HEADER = "X-Threa-Account"
+
+/** The same assertion on the Socket.io handshake (`io(url, { auth: { … } })`). */
+export const ACCOUNT_ASSERTION_SOCKET_FIELD = "assertedAccount"
+
+/**
+ * Wire-format error codes for session authentication. The frontend's queues and
+ * upload manager match on `ACCOUNT_MISMATCH` — "this browser's active account
+ * moved" — and keep the pending work for its own account instead of reconciling
+ * it away as a permanent rejection.
+ */
+export const AuthErrorCodes = {
+  ACCOUNT_MISMATCH: "ACCOUNT_MISMATCH",
+  /**
+   * The assertion header was supplied but unreadable (duplicated, so Express
+   * hands it over as an array, or empty). Distinct from a mismatch: there is no
+   * account to pause for, so it is a 400 the caller must fix, not a 409 to
+   * revalidate through.
+   */
+  INVALID_ACCOUNT_ASSERTION: "INVALID_ACCOUNT_ASSERTION",
+} as const
+
 // Original client-facing host (e.g. `admin.threa.io`)
 // carried from the Cloudflare routers to the control-plane.
 //

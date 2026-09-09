@@ -31,6 +31,8 @@ import { clearCallLifecycleLog } from "@/calls/lifecycle-log"
 import { resetIncomingCallStoreCache } from "@/stores/incoming-call-store"
 import { resetFloatingSurfaceGeometryStoreCache } from "@/stores/floating-surface-geometry-store"
 import { resetRevealGate } from "@/sync/reveal-gate"
+import { resetUploadManager } from "@/lib/uploads/upload-manager"
+import { retireAccountWork } from "@/sync/account-fence"
 import { resetRowConfirmations } from "@/sync/bootstrap-diff"
 import { useAuth } from "./hooks"
 import type { User } from "./types"
@@ -135,6 +137,9 @@ function flushModuleStoreCaches(): void {
   resetIncomingCallStoreCache()
   resetFloatingSurfaceGeometryStoreCache()
   resetRevealGate()
+  // Aborts live transfers and drops the in-memory jobs; the persisted bytes
+  // stay in the outgoing account's database and resume when it returns.
+  resetUploadManager()
 }
 
 interface AccountScopeProviderProps {
@@ -183,6 +188,24 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
     return qc
   }, [])
 
+  // One retirement point for every way the active account can change — this
+  // tab's switch, another tab's broadcast, and a revalidation that discovers
+  // the browser moved on without it. Whoever changed it, the outgoing account's
+  // queries and module snapshots drop here, before the new subtree mounts.
+  const retiredIdRef = useRef(effectiveId)
+  if (effectiveId !== retiredIdRef.current) {
+    const outgoing = retiredIdRef.current
+    retiredIdRef.current = effectiveId
+    if (outgoing) {
+      // Abort in-flight queries on the now-stale client so a late response
+      // can never land in the orphaned cache. Storage isolation (distinct DB
+      // name + distinct QueryClient) makes correctness independent of timing;
+      // this is purely to stop wasted work.
+      qcRegistry.current.get(outgoing)?.cancelQueries()
+      flushModuleStoreCaches()
+    }
+  }
+
   // Redirect the shared `db` proxy at the active account *before* the keyed
   // subtree (and its useLiveQuery / SyncEngine) renders. Idempotent registry
   // lookup + pointer move; intentionally render-time so the swap is atomic
@@ -204,15 +227,6 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
    */
   const adoptAccount = useCallback(
     (targetUserId: string, identity: User | null, landing: "account-home" | "keep-location") => {
-      const outgoing = effectiveIdRef.current
-      if (outgoing) {
-        // Abort in-flight queries on the now-stale client so a late response
-        // can never land in the orphaned cache. Storage isolation (distinct DB
-        // name + distinct QueryClient) makes correctness independent of timing;
-        // this is purely to stop wasted work.
-        qcRegistry.current.get(outgoing)?.cancelQueries()
-      }
-      flushModuleStoreCaches()
       activateAccount(targetUserId, identity)
       if (landing === "account-home") setPendingLanding(accountHomePath(targetUserId))
     },
@@ -255,6 +269,11 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
 
   const switchAccount = useCallback(
     async (targetUserId: string, opts?: SwitchAccountOptions): Promise<void> => {
+      // Retire the outgoing account's queued sends, replays and transfers
+      // BEFORE its credential moves: a message on the wire settles under the
+      // account that composed it and nothing new starts. Bounded, so a stalled
+      // request cannot hold the switch (see sync/account-fence).
+      await retireAccountWork()
       const res = await fetch(`${API_BASE}/api/accounts/switch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

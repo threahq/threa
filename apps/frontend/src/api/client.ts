@@ -4,6 +4,8 @@ import {
   flushConnectivityDiagnostics,
   SLOW_REQUEST_MS,
 } from "@/lib/connectivity-diagnostics/facade"
+import { AuthErrorCodes } from "@threahq/types"
+import { accountAssertionHeaders, reportAccountMismatch } from "./account-assertion"
 
 export class ApiError extends Error {
   constructor(
@@ -34,8 +36,20 @@ export function isPermanentApiError(error: unknown): error is ApiError {
     error.status >= 400 &&
     error.status < 500 &&
     error.status !== 408 &&
-    error.status !== 429
+    error.status !== 429 &&
+    // A moved account is not a verdict on the payload: it replays successfully
+    // under its own account, so it must never be reconciled away.
+    !isAccountMismatchError(error)
   )
+}
+
+/**
+ * The request stated one account and the session cookie named another. The
+ * work belongs to the account that formed it: pause, revalidate identity, keep
+ * the payload.
+ */
+export function isAccountMismatchError(error: unknown): error is ApiError {
+  return ApiError.isApiError(error) && error.status === 409 && error.code === AuthErrorCodes.ACCOUNT_MISMATCH
 }
 
 // Canonical error shape emitted by the backend's `errorHandler` middleware
@@ -61,7 +75,11 @@ export async function parseApiError(
   const body = (await response.json().catch(() => ({}))) as ErrorResponse
   const code = body.code || fallback.code || "UNKNOWN_ERROR"
   const message = body.error || fallback.message || `Request failed with status ${response.status}`
-  return new ApiError(response.status, code, message, body.details)
+  const error = new ApiError(response.status, code, message, body.details)
+  // Every response shape funnels through here, so a moved account reaches the
+  // identity owner once, wherever the refusal surfaced.
+  if (isAccountMismatchError(error)) reportAccountMismatch()
+  return error
 }
 
 /**
@@ -76,7 +94,11 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ""
  * `FormData` body — so this posts the form directly and returns the parsed JSON
  * for the caller to project onto its own response shape. `fieldName` is the
  * multer field the endpoint reads (`avatar` for avatars, `file` for persona
- * knowledge attachments).
+ * knowledge attachments); `fields` are extra scalar form parts.
+ *
+ * Every credentialed upload goes through here so it states its account like any
+ * other request (INV-35): a transfer formed under one account and sent after a
+ * switch is refused instead of landing as the account that replaced it.
  */
 export async function requestMultipart<T>(
   path: string,
@@ -95,6 +117,9 @@ export async function requestMultipart<T>(
     const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
       credentials: "include",
+      // A transfer formed under one account and sent after a switch is refused
+      // (409) instead of landing as the account that replaced it (INV-35).
+      headers: accountAssertionHeaders(),
       body: formData,
     })
     const correlationId = response.headers.get("x-railway-request-id") ?? undefined
@@ -128,10 +153,12 @@ export function postMultipartFile<T>(
   path: string,
   file: File,
   fieldName: string,
-  fallback: { code?: string; message?: string } = {}
+  fallback: { code?: string; message?: string } = {},
+  fields: Record<string, string> = {}
 ): Promise<T> {
   const formData = new FormData()
   formData.append(fieldName, file)
+  for (const [name, value] of Object.entries(fields)) formData.append(name, value)
   return requestMultipart<T>(path, formData, fallback)
 }
 
@@ -183,6 +210,7 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
+        ...accountAssertionHeaders(),
         ...init.headers,
       },
     })

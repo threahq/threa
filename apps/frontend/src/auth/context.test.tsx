@@ -4,6 +4,7 @@ import { act, render, screen, spyOnExport, waitFor } from "@/test"
 import { AuthProvider, useAuth } from "@/auth"
 import * as dbModule from "@/db"
 import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
+import { getAssertedAccount, reportAccountMismatch, setAssertedAccount } from "@/api/account-assertion"
 
 let triggerLogout: () => void
 let captureLogin: ReturnType<typeof useAuth>["login"]
@@ -18,8 +19,11 @@ function LogoutProbe() {
   return null
 }
 
+let captureActivateAccount: ReturnType<typeof useAuth>["activateAccount"]
+
 function SessionProbe() {
-  const { activeWorkosUserId, user } = useAuth()
+  const { activeWorkosUserId, user, activateAccount } = useAuth()
+  captureActivateAccount = activateAccount
   return (
     <>
       <span data-testid="active">{activeWorkosUserId ?? "unresolved"}</span>
@@ -272,5 +276,219 @@ describe("AuthProvider add-account return", () => {
       expect(screen.getByTestId("active")).toHaveTextContent("workos_added")
     })
     expect(screen.getByTestId("identity")).toHaveTextContent("Added Account")
+  })
+})
+
+describe("AuthProvider account assertion", () => {
+  beforeEach(() => {
+    localStorage.setItem("threa-active-account", "workos_a")
+    localStorage.setItem(
+      "threa-account-identity:workos_a",
+      JSON.stringify({ id: "workos_a", email: "a@example.com", name: "Account A" })
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    setAssertedAccount(null)
+    localStorage.clear()
+  })
+
+  it("should state the cached account on requests made by the very first render", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ status: 200, ok: true, json: async () => ({ id: "workos_a" }) }) as unknown as Response)
+    )
+
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>
+    )
+
+    expect(getAssertedAccount()).toBe("workos_a")
+  })
+
+  it("should adopt the account the server names when a refused request reveals this tab is behind", async () => {
+    // This tab resolved as A. While it was suspended another tab switched the
+    // browser to B, so its next request is refused and it must catch up.
+    const identities = [
+      { id: "workos_a", email: "a@example.com", name: "Account A" },
+      { id: "workos_b", email: "b@example.com", name: "Account B" },
+    ]
+    let answered = 0
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const body = identities[Math.min(answered, identities.length - 1)]
+        answered += 1
+        return { status: 200, ok: true, json: async () => body } as unknown as Response
+      })
+    )
+
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("workos_a"))
+
+    await act(async () => {
+      reportAccountMismatch()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("workos_b"))
+    expect(screen.getByTestId("identity")).toHaveTextContent("Account B")
+    expect(getAssertedAccount()).toBe("workos_b")
+  })
+
+  it("should adopt the account the server names when a switch this tab started lost the race", async () => {
+    // Two tabs switched at once and this one lost: the cookie names B, not the
+    // C this tab activated. Without the refusal outranking the pending
+    // expectation the tab would keep asserting C, be refused again, and spin.
+    let answered = 0
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        answered += 1
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({ id: "workos_b", email: "b@example.com", name: "Account B" }),
+        } as unknown as Response
+      })
+    )
+
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("workos_b"))
+
+    await act(async () => {
+      captureActivateAccount("workos_c")
+      await Promise.resolve()
+    })
+    // The expectation is pending and the server keeps naming B, so the switch
+    // itself does not resolve — the tab still asserts C and gets refused.
+    await waitFor(() => expect(getAssertedAccount()).toBe("workos_c"))
+
+    const beforeRevalidation = answered
+    await act(async () => {
+      reportAccountMismatch()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("workos_b"))
+    expect({ asserted: getAssertedAccount(), extraFetches: answered - beforeRevalidation }).toEqual({
+      asserted: "workos_b",
+      extraFetches: 1,
+    })
+  })
+
+  it("should resolve a switch the cookie never confirms, with no further request to prompt it", async () => {
+    // The destination never becomes the cookie's account (the switch call
+    // failed after this tab activated, or another tab won the race). Nothing
+    // else in the app is guaranteed to issue a request that gets refused, so
+    // without a bounded resolution here the account stays unresolved forever.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            json: async () => ({ id: "workos_a", email: "a@example.com", name: "Account A" }),
+          }) as unknown as Response
+      )
+    )
+    const toastError = vi.spyOn(toast, "error").mockImplementation(() => "id")
+
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("workos_a"))
+
+    await act(async () => {
+      captureActivateAccount("workos_c")
+      await Promise.resolve()
+    })
+    expect(getAssertedAccount()).toBe("workos_c")
+
+    // No 409, no user gesture, no other request: only the provider's own
+    // bounded retries move this forward.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId("active")).toHaveTextContent("workos_a")
+      },
+      { timeout: 4000 }
+    )
+    expect({ asserted: getAssertedAccount(), told: toastError.mock.calls.length > 0 }).toEqual({
+      asserted: "workos_a",
+      told: true,
+    })
+  })
+
+  it("should not let a stale retry publish over an account activated during the wait", async () => {
+    // Two switches in quick succession. The first expectation's retry must not
+    // outlive it and resolve on behalf of the second.
+    const answers: Record<string, { id: string; email: string; name: string }> = {
+      first: { id: "workos_a", email: "a@example.com", name: "Account A" },
+      second: { id: "workos_d", email: "d@example.com", name: "Account D" },
+    }
+    let phase: "first" | "second" = "first"
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ status: 200, ok: true, json: async () => answers[phase] }) as unknown as Response)
+    )
+    vi.spyOn(toast, "error").mockImplementation(() => "id")
+
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("workos_a"))
+
+    await act(async () => {
+      captureActivateAccount("workos_c")
+      await Promise.resolve()
+    })
+    phase = "second"
+    await act(async () => {
+      captureActivateAccount("workos_d", { id: "workos_d", email: "d@example.com", name: "Account D" })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByTestId("identity")).toHaveTextContent("Account D"))
+    // Long enough for the first expectation's retries to have fired had they
+    // survived it — the second switch owns the account now.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1600))
+    })
+    expect({ active: screen.getByTestId("active").textContent, asserted: getAssertedAccount() }).toEqual({
+      active: "workos_d",
+      asserted: "workos_d",
+    })
+  })
+
+  it("should stop asserting an account once the session is gone", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ status: 401, ok: false, json: async () => ({}) }) as unknown as Response)
+    )
+
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>
+    )
+
+    await waitFor(() => expect(getAssertedAccount()).toBeNull())
   })
 })

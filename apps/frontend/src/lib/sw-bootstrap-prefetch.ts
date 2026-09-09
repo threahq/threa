@@ -1,4 +1,4 @@
-import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threahq/types"
+import { ACCOUNT_ASSERTION_HEADER, AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threahq/types"
 import type { CachedEvent, ThreaDatabase } from "../db/database"
 import { putEventsBounded } from "../db/event-writes"
 import { writeSlotCarrier } from "../stores/slot-store"
@@ -146,6 +146,16 @@ function buildPreviewFromEvent(event: StreamEvent): LastMessagePreview {
 }
 
 /**
+ * Fetch options for a prefetch made on behalf of `workosUserId`. The owner check
+ * reads the cookie once and the account can move before these requests land;
+ * stating the recipient makes the server refuse rather than answer as whoever
+ * the cookie names now, so no response is written under the wrong account's key.
+ */
+function prefetchInit(workosUserId: string): RequestInit {
+  return { credentials: "include", headers: { [ACCOUNT_ASSERTION_HEADER]: workosUserId } }
+}
+
+/**
  * Pre-fetch events around a specific message so it's available in IDB
  * when the user taps the push notification. Best-effort.
  */
@@ -157,7 +167,7 @@ async function prefetchEventsAround(
 ): Promise<void> {
   try {
     const url = `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?messageId=${messageId}&limit=30`
-    const response = await fetch(url, { credentials: "include" })
+    const response = await fetch(url, prefetchInit(workosUserId))
     if (!response.ok) return
 
     const body = await response.json()
@@ -187,7 +197,7 @@ async function prefetchEventsAround(
 
 async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string, streamId: string): Promise<void> {
   const url = `/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap`
-  const response = await fetch(url, { credentials: "include" })
+  const response = await fetch(url, prefetchInit(workosUserId))
   if (!response.ok) return
 
   // Warm IndexedDB so useLiveQuery renders the stream instantly when the user
@@ -275,7 +285,7 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
  */
 async function prefetchWorkspaceBootstrap(workosUserId: string, workspaceId: string): Promise<void> {
   const url = `/api/workspaces/${workspaceId}/bootstrap`
-  const response = await fetch(url, { credentials: "include" })
+  const response = await fetch(url, prefetchInit(workosUserId))
   if (!response.ok) return
   const cache = await caches.open(PUSH_BOOTSTRAP_CACHE)
   await cache.put(bootstrapCacheKey(new URL(url, self.location.origin).toString(), workosUserId), response)

@@ -2,7 +2,8 @@ import { useEffect, useRef, useCallback } from "react"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useSocketConnected, useMessageService, useStreamService, usePendingMessages } from "@/contexts"
 import { useSyncEngine } from "@/sync/sync-engine"
-import { db, sequenceToNum } from "@/db"
+import { getActiveDb, sequenceToNum, type ThreaDatabase } from "@/db"
+import { runAccountOwnedWork, type AccountWorkFence } from "@/sync/account-fence"
 import { parseMarkdown } from "@threahq/prosemirror"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { setParentThreadId } from "@/sync/stream-sync"
@@ -66,7 +67,8 @@ async function promoteDraft(
   next: PendingMessage,
   streamService: { create: (workspaceId: string, data: CreateStreamInput) => Promise<Stream> },
   syncEngine: { subscribeStream: (id: string) => Promise<void>; kickOperationQueue: () => void },
-  queryClient: QueryClient
+  queryClient: QueryClient,
+  database: ThreaDatabase
 ): Promise<string> {
   const creation = next.streamCreation!
   const draftStreamId = next.streamId
@@ -100,12 +102,12 @@ async function promoteDraft(
     // after this point fails, the next attempt will find promotedStreamId
     // and skip stream creation.
     type PromoteFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-    await (db.pendingMessages.update as unknown as PromoteFn)(next.clientId, {
+    await (database.pendingMessages.update as unknown as PromoteFn)(next.clientId, {
       promotedStreamId: realStreamId,
     })
 
     // Write the new stream to IDB so the sidebar picks it up immediately
-    await db.streams.put({
+    await database.streams.put({
       ...newStream,
       lastMessagePreview: null,
       _cachedAt: Date.now(),
@@ -128,17 +130,17 @@ async function promoteDraft(
   }
 
   type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-  await (db.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
+  await (database.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
     streamId: realStreamId,
     streamCreation: undefined,
   })
 
   // Move the optimistic event from draft streamId to real streamId
-  const optimisticEvent = await db.events.get(next.clientId)
+  const optimisticEvent = await database.events.get(next.clientId)
   const movedEvent = optimisticEvent
     ? { ...optimisticEvent, streamId: realStreamId, _sequenceNum: sequenceToNum(optimisticEvent.sequence) }
     : undefined
-  if (movedEvent) await db.events.put(movedEvent)
+  if (movedEvent) await database.events.put(movedEvent)
 
   // Subscribe to the real stream's socket room before sending so we catch
   // the message:created event for the optimistic swap
@@ -166,10 +168,10 @@ async function promoteDraft(
   // Also delete the optimistic scratchpad stream entry that was created at
   // queue time — the real stream now replaces it in the sidebar.
   if (next.draftId) {
-    await db.transaction("rw", db.draftScratchpads, db.streams, async () => {
-      await db.draftScratchpads.delete(next.draftId!)
+    await database.transaction("rw", database.draftScratchpads, database.streams, async () => {
+      await database.draftScratchpads.delete(next.draftId!)
       if (draftStreamId !== realStreamId) {
-        await db.streams.delete(draftStreamId)
+        await database.streams.delete(draftStreamId)
       }
     })
     deleteDraftScratchpadFromCache(next.workspaceId, next.draftId)
@@ -253,214 +255,233 @@ export function useMessageQueue(workspaceId: string): void {
     )
   }, [isConnected, recordQueueTransition, workspaceGeneration])
 
-  const drainQueue = useCallback(async () => {
-    const now = Date.now()
-    // Track messages that failed in this drain cycle so we skip past them
-    // and deliver newer messages instead of blocking at the head of the queue.
-    const skippedIds = new Set<string>()
+  const drainQueue = useCallback(
+    async (fence: AccountWorkFence, database: ThreaDatabase) => {
+      const now = Date.now()
+      // Track messages that failed in this drain cycle so we skip past them
+      // and deliver newer messages instead of blocking at the head of the queue.
+      const skippedIds = new Set<string>()
 
-    while (true) {
-      if (!isConnectedRef.current) break
+      while (true) {
+        if (!isConnectedRef.current) break
+        // Switching away: stop before claiming another message. The outbox
+        // stays in its own database and drains when that account returns.
+        if (fence.isRetired()) break
 
-      const candidates = await db.pendingMessages.orderBy("createdAt").toArray()
-      const next = candidates.find(
-        (m) =>
-          !skippedIds.has(m.clientId) &&
-          m.status !== "editing" &&
-          // Privacy-blocked sends wait for the user to click "Share anyway"
-          // (which clears the status); the drain loop must skip them so they
-          // don't churn through retries the user hasn't authorized yet.
-          m.status !== "blocked-privacy" &&
-          m.terminalFailure !== true &&
-          (m.retryAfter ?? 0) <= now
-      )
-      if (!next) break
+        const candidates = await database.pendingMessages.orderBy("createdAt").toArray()
+        const next = candidates.find(
+          (m) =>
+            !skippedIds.has(m.clientId) &&
+            m.status !== "editing" &&
+            // Privacy-blocked sends wait for the user to click "Share anyway"
+            // (which clears the status); the drain loop must skip them so they
+            // don't churn through retries the user hasn't authorized yet.
+            m.status !== "blocked-privacy" &&
+            m.terminalFailure !== true &&
+            (m.retryAfter ?? 0) <= now
+        )
+        if (!next) break
 
-      // Re-check status from IDB to close the TOCTOU window: the user may
-      // have clicked Edit between the snapshot read above and now.
-      const fresh = await db.pendingMessages.get(next.clientId)
-      if (!fresh || fresh.status === "editing") {
-        skippedIds.add(next.clientId)
-        continue
-      }
-
-      markPending(next.clientId)
-      await db.events.update(next.clientId, { _status: "pending" })
-
-      try {
-        // If this message needs a stream created first, promote the draft
-        if (next.streamCreation) {
-          const realStreamId = await promoteDraft(next, streamService, syncEngine, queryClient)
-          // Re-read the message after promotion (streamId was updated)
-          next.streamId = realStreamId
-          next.streamCreation = undefined
+        // Re-check status from IDB to close the TOCTOU window: the user may
+        // have clicked Edit between the snapshot read above and now.
+        const fresh = await database.pendingMessages.get(next.clientId)
+        if (!fresh || fresh.status === "editing") {
+          skippedIds.add(next.clientId)
+          continue
         }
 
-        if (next.ciphertext && next.envelope && next.e2eVersion) {
-          // E2E branch — encryption already happened at queue time so the
-          // drain stays identity-agnostic. The backend's INV-E1 gate
-          // rejects this variant on plaintext streams loudly. Attachment ids
-          // bind the (opaque) ciphertext rows to this message; their
-          // per-file keys already ride sealed inside `ciphertext`.
-          await messageService.create(next.workspaceId, next.streamId, {
-            streamId: next.streamId,
-            ciphertext: next.ciphertext,
-            envelope: next.envelope,
-            e2eVersion: next.e2eVersion,
-            attachmentIds: next.attachmentIds,
-            clientMessageId: next.clientId,
-            composeTrace: next.composeTrace,
-            ...(next.steer && { steer: true }),
-          })
-        } else {
-          const contentJson = next.contentJson ?? parseMarkdown(next.content)
-          const { message, conversationId } = await messageService.create(next.workspaceId, next.streamId, {
-            streamId: next.streamId,
-            contentJson,
-            attachmentIds: next.attachmentIds,
-            clientMessageId: next.clientId,
-            confirmedPrivacyWarning: next.confirmedPrivacyWarning,
-            composeTrace: next.composeTrace,
-            ...(next.steer && { steer: true }),
-            // A board reply declares its conversation so the send attaches it
-            // synchronously (in the message's transaction) instead of waiting on
-            // the async extractor; omitted on ordinary sends.
-            conversation: next.conversation,
-          })
+        markPending(next.clientId)
+        await database.events.update(next.clientId, { _status: "pending" })
 
-          // A board post to a NEW scratchpad minted a fresh conversation on send
-          // (`intent: "new"`). The card is already on screen — the composer-clear
-          // stub `useCreateBoardPost` seeded, keyed by the SAME client-minted id,
-          // under the draft stream id. Now that promotion returned the real stream +
-          // message, reconcile the stub to those real ids (and server-resolved
-          // markdown) so it deep-links correctly and doesn't render twice. Lands in
-          // any echo↔drain ordering, and no-ops if the user cancelled the post mid-
-          // send (its card is gone — don't resurrect it). Best-effort: the send
-          // already succeeded, so a local IDB failure must not drop the iteration
-          // into the retry/failed path for a delivered message.
-          if (conversationId && next.conversation?.intent === "new") {
-            try {
-              const stream = await db.streams.get(next.streamId)
-              if (stream) {
-                // The optimistic event carries the attachment summaries (the send
-                // response doesn't), so the card renders thumbnails immediately.
-                const optimisticEvent = await db.events.get(next.clientId)
-                const attachments = (optimisticEvent?.payload as { attachments?: AttachmentSummary[] } | undefined)
-                  ?.attachments
-                await reconcileOptimisticBoardPost(next.workspaceId, {
-                  conversationId,
-                  messageId: message.id,
-                  streamId: next.streamId,
-                  authorId: message.authorId,
-                  contentMarkdown: message.contentMarkdown,
-                  rootStreamId: stream.rootStreamId ?? stream.id,
-                  rootStreamType: stream.type as BoardScopeStreamType,
-                  createdAt: message.createdAt,
-                  attachments,
-                })
+        try {
+          // If this message needs a stream created first, promote the draft
+          if (next.streamCreation) {
+            const realStreamId = await promoteDraft(next, streamService, syncEngine, queryClient, database)
+            // Re-read the message after promotion (streamId was updated)
+            next.streamId = realStreamId
+            next.streamCreation = undefined
+          }
+
+          if (next.ciphertext && next.envelope && next.e2eVersion) {
+            // E2E branch — encryption already happened at queue time so the
+            // drain stays identity-agnostic. The backend's INV-E1 gate
+            // rejects this variant on plaintext streams loudly. Attachment ids
+            // bind the (opaque) ciphertext rows to this message; their
+            // per-file keys already ride sealed inside `ciphertext`.
+            await messageService.create(next.workspaceId, next.streamId, {
+              streamId: next.streamId,
+              ciphertext: next.ciphertext,
+              envelope: next.envelope,
+              e2eVersion: next.e2eVersion,
+              attachmentIds: next.attachmentIds,
+              clientMessageId: next.clientId,
+              composeTrace: next.composeTrace,
+              ...(next.steer && { steer: true }),
+            })
+          } else {
+            const contentJson = next.contentJson ?? parseMarkdown(next.content)
+            const { message, conversationId } = await messageService.create(next.workspaceId, next.streamId, {
+              streamId: next.streamId,
+              contentJson,
+              attachmentIds: next.attachmentIds,
+              clientMessageId: next.clientId,
+              confirmedPrivacyWarning: next.confirmedPrivacyWarning,
+              composeTrace: next.composeTrace,
+              ...(next.steer && { steer: true }),
+              // A board reply declares its conversation so the send attaches it
+              // synchronously (in the message's transaction) instead of waiting on
+              // the async extractor; omitted on ordinary sends.
+              conversation: next.conversation,
+            })
+
+            // A board post to a NEW scratchpad minted a fresh conversation on send
+            // (`intent: "new"`). The card is already on screen — the composer-clear
+            // stub `useCreateBoardPost` seeded, keyed by the SAME client-minted id,
+            // under the draft stream id. Now that promotion returned the real stream +
+            // message, reconcile the stub to those real ids (and server-resolved
+            // markdown) so it deep-links correctly and doesn't render twice. Lands in
+            // any echo↔drain ordering, and no-ops if the user cancelled the post mid-
+            // send (its card is gone — don't resurrect it). Best-effort: the send
+            // already succeeded, so a local IDB failure must not drop the iteration
+            // into the retry/failed path for a delivered message.
+            if (conversationId && next.conversation?.intent === "new") {
+              try {
+                const stream = await database.streams.get(next.streamId)
+                if (stream) {
+                  // The optimistic event carries the attachment summaries (the send
+                  // response doesn't), so the card renders thumbnails immediately.
+                  const optimisticEvent = await database.events.get(next.clientId)
+                  const attachments = (optimisticEvent?.payload as { attachments?: AttachmentSummary[] } | undefined)
+                    ?.attachments
+                  await reconcileOptimisticBoardPost(
+                    next.workspaceId,
+                    {
+                      conversationId,
+                      messageId: message.id,
+                      streamId: next.streamId,
+                      authorId: message.authorId,
+                      contentMarkdown: message.contentMarkdown,
+                      rootStreamId: stream.rootStreamId ?? stream.id,
+                      rootStreamType: stream.type as BoardScopeStreamType,
+                      createdAt: message.createdAt,
+                      attachments,
+                    },
+                    database
+                  )
+                }
+              } catch (err) {
+                console.error("Failed to reconcile optimistic board post from queue drain", err)
               }
-            } catch (err) {
-              console.error("Failed to reconcile optimistic board post from queue drain", err)
             }
           }
-        }
 
-        // Marked before the queue row goes: a bootstrap applied between the two
-        // writes would otherwise read the optimistic row as stale and drop it
-        // ahead of the socket echo.
-        await db.events.update(next.clientId, { _sentAt: Date.now() })
-        await db.pendingMessages.delete(next.clientId)
+          // The send outran the retire budget: leave the row exactly as it is
+          // rather than settling it against whichever account is active now.
+          // Re-sending on return is safe — the server keys by `clientMessageId`.
+          if (fence.isRetired()) return
 
-        // Do NOT delete the optimistic event from db.events here.
-        // The socket handler (handleMessageCreated in stream-sync.ts) atomically
-        // swaps the optimistic event for the real server event in a single
-        // Dexie transaction.
-        markSent(next.clientId)
-      } catch (err) {
-        // Privacy boundary block: the user authored a share that would
-        // expose its source to people outside the source stream. Don't
-        // auto-retry — surface a toast offering "Share anyway" / "Cancel"
-        // so the user explicitly confirms or aborts. INV-32: the API
-        // contract surfaces this as 409 + a stable error code.
-        if (
-          ApiError.isApiError(err) &&
-          err.status === 409 &&
-          err.code === ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED
-        ) {
+          // Marked before the queue row goes: a bootstrap applied between the two
+          // writes would otherwise read the optimistic row as stale and drop it
+          // ahead of the socket echo.
+          await database.events.update(next.clientId, { _sentAt: Date.now() })
+          await database.pendingMessages.delete(next.clientId)
+
+          // Do NOT delete the optimistic event from db.events here.
+          // The socket handler (handleMessageCreated in stream-sync.ts) atomically
+          // swaps the optimistic event for the real server event in a single
+          // Dexie transaction.
+          markSent(next.clientId)
+        } catch (err) {
+          // Same for a failure landing after the account moved: the retry
+          // bookkeeping belongs to the account that queued the message.
+          if (fence.isRetired()) return
+
+          // Privacy boundary block: the user authored a share that would
+          // expose its source to people outside the source stream. Don't
+          // auto-retry — surface a toast offering "Share anyway" / "Cancel"
+          // so the user explicitly confirms or aborts. INV-32: the API
+          // contract surfaces this as 409 + a stable error code.
+          if (
+            ApiError.isApiError(err) &&
+            err.status === 409 &&
+            err.code === ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED
+          ) {
+            // Dexie's deep KeyPaths inference hits a circular type on JSONContent.
+            type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
+            await Promise.all([
+              (database.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
+                status: "blocked-privacy",
+                retryAfter: undefined,
+              }),
+              database.events.update(next.clientId, { _status: "failed" }),
+            ])
+            markFailed(next.clientId)
+            surfacePrivacyBlockToast(next.clientId, { retryMessage, deleteMessage })
+            skippedIds.add(next.clientId)
+            continue
+          }
+
+          // A reference the server can't pin: the source is gone, the pinned
+          // revision doesn't exist, or the span doesn't resolve. A blind retry
+          // re-sends the same unresolvable reference, so the row stops retrying
+          // and waits for the author to edit or drop it — same shape as an
+          // unavailable steer target.
+          const referenceFailed = ApiError.isApiError(err) && REFERENCE_FAILURE_CODES.has(err.code ?? "")
+
+          if (referenceFailed || (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE)) {
+            if (referenceFailed) {
+              toast.error(
+                hasNodeOfType(next.contentJson ?? parseMarkdown(next.content), "sharedMessage")
+                  ? "Couldn't share that message — it may have changed or been removed."
+                  : "Couldn't quote that message — it may have changed or been removed.",
+                { id: `message-reference-${next.clientId}` }
+              )
+            }
+            type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
+            await Promise.all([
+              (database.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
+                terminalFailure: true,
+                retryAfter: undefined,
+              }),
+              database.events.update(next.clientId, { _status: "failed" }),
+            ])
+            markFailed(next.clientId)
+            skippedIds.add(next.clientId)
+            continue
+          }
+
+          // Increment retry count and set backoff delay.
+          // Only genuine send failures (while connected) reach here —
+          // the offline check at the top of the loop prevents transient
+          // connectivity issues from consuming backoff slots.
+          const retryCount = next.retryCount + 1
+          const delay = getRetryDelay(retryCount)
           // Dexie's deep KeyPaths inference hits a circular type on JSONContent.
           type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-          await Promise.all([
-            (db.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
-              status: "blocked-privacy",
-              retryAfter: undefined,
-            }),
-            db.events.update(next.clientId, { _status: "failed" }),
-          ])
+          await (database.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
+            retryCount,
+            retryAfter: Date.now() + delay,
+          })
+          await database.events.update(next.clientId, { _status: "failed" })
           markFailed(next.clientId)
-          surfacePrivacyBlockToast(next.clientId, { retryMessage, deleteMessage })
+          // Skip this message for the rest of this drain cycle so newer
+          // messages are not blocked behind it.
           skippedIds.add(next.clientId)
-          continue
         }
-
-        // A reference the server can't pin: the source is gone, the pinned
-        // revision doesn't exist, or the span doesn't resolve. A blind retry
-        // re-sends the same unresolvable reference, so the row stops retrying
-        // and waits for the author to edit or drop it — same shape as an
-        // unavailable steer target.
-        const referenceFailed = ApiError.isApiError(err) && REFERENCE_FAILURE_CODES.has(err.code ?? "")
-
-        if (referenceFailed || (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE)) {
-          if (referenceFailed) {
-            toast.error(
-              hasNodeOfType(next.contentJson ?? parseMarkdown(next.content), "sharedMessage")
-                ? "Couldn't share that message — it may have changed or been removed."
-                : "Couldn't quote that message — it may have changed or been removed.",
-              { id: `message-reference-${next.clientId}` }
-            )
-          }
-          type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-          await Promise.all([
-            (db.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
-              terminalFailure: true,
-              retryAfter: undefined,
-            }),
-            db.events.update(next.clientId, { _status: "failed" }),
-          ])
-          markFailed(next.clientId)
-          skippedIds.add(next.clientId)
-          continue
-        }
-
-        // Increment retry count and set backoff delay.
-        // Only genuine send failures (while connected) reach here —
-        // the offline check at the top of the loop prevents transient
-        // connectivity issues from consuming backoff slots.
-        const retryCount = next.retryCount + 1
-        const delay = getRetryDelay(retryCount)
-        // Dexie's deep KeyPaths inference hits a circular type on JSONContent.
-        type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-        await (db.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
-          retryCount,
-          retryAfter: Date.now() + delay,
-        })
-        await db.events.update(next.clientId, { _status: "failed" })
-        markFailed(next.clientId)
-        // Skip this message for the rest of this drain cycle so newer
-        // messages are not blocked behind it.
-        skippedIds.add(next.clientId)
       }
-    }
-  }, [
-    messageService,
-    streamService,
-    syncEngine,
-    queryClient,
-    markPending,
-    markFailed,
-    markSent,
-    retryMessage,
-    deleteMessage,
-  ])
+    },
+    [
+      messageService,
+      streamService,
+      syncEngine,
+      queryClient,
+      markPending,
+      markFailed,
+      markSent,
+      retryMessage,
+      deleteMessage,
+    ]
+  )
 
   const processQueue = useCallback(async () => {
     if (workspaceGenerationRef.current !== workspaceGeneration) return
@@ -477,28 +498,35 @@ export function useMessageQueue(workspaceId: string): void {
     pendingWorkGenerationRef.current = null
 
     try {
-      // Cross-tab safety: only one tab processes the outbox at a time.
-      // If another tab holds the lock, we skip — it's already processing.
-      if (navigator.locks) {
-        await navigator.locks.request("threa-outbox", { ifAvailable: true }, async (lock) => {
-          if (workspaceGenerationRef.current !== workspaceGeneration) return
-          if (!lock) {
-            if (!wasLockBlockedRef.current) {
-              wasLockBlockedRef.current = true
-              recordQueueTransition(workspaceGeneration, "message_queue_blocked", "lock")
+      // Account-owned work: a switch retires the drain and waits for the
+      // current message to settle before the credential and the active database
+      // move. The database is captured with the fence, so every write belongs
+      // to the account that queued the message (see sync/account-fence).
+      await runAccountOwnedWork(async (fence) => {
+        const database = getActiveDb()
+        // Cross-tab safety: only one tab processes the outbox at a time.
+        // If another tab holds the lock, we skip — it's already processing.
+        if (navigator.locks) {
+          await navigator.locks.request("threa-outbox", { ifAvailable: true }, async (lock) => {
+            if (workspaceGenerationRef.current !== workspaceGeneration) return
+            if (!lock) {
+              if (!wasLockBlockedRef.current) {
+                wasLockBlockedRef.current = true
+                recordQueueTransition(workspaceGeneration, "message_queue_blocked", "lock")
+              }
+              return
             }
-            return
-          }
-          if (wasLockBlockedRef.current) {
-            wasLockBlockedRef.current = false
-            recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "lock")
-          }
-          await drainQueue()
-        })
-      } else {
-        // Fallback for browsers without Web Locks API
-        await drainQueue()
-      }
+            if (wasLockBlockedRef.current) {
+              wasLockBlockedRef.current = false
+              recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "lock")
+            }
+            await drainQueue(fence, database)
+          })
+        } else {
+          // Fallback for browsers without Web Locks API
+          await drainQueue(fence, database)
+        }
+      })
     } finally {
       const ownsProcess = isProcessingGenerationRef.current === workspaceGeneration
       if (ownsProcess) isProcessingGenerationRef.current = null

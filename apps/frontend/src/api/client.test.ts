@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { api, ApiError, parseApiError, postMultipartFile } from "./client"
+import { ACCOUNT_ASSERTION_HEADER, AuthErrorCodes } from "@threahq/types"
+import { api, ApiError, isAccountMismatchError, isPermanentApiError, parseApiError, postMultipartFile } from "./client"
+import { setAssertedAccount, subscribeAccountMismatch } from "./account-assertion"
 import * as diagnostics from "@/lib/connectivity-diagnostics/facade"
 
 const originalFetch = globalThis.fetch
@@ -256,5 +258,80 @@ describe("parseApiError for raw fetch callers", () => {
     })
     const err = await parseApiError(response, { code: "UPLOAD_ERROR", message: "Upload failed" })
     expect(err).toMatchObject({ status: 413, code: "FILE_TOO_LARGE", message: "File too large" })
+  })
+})
+
+describe("account assertion", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn() as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    setAssertedAccount(null)
+    globalThis.fetch = originalFetch
+  })
+
+  it("should state the account a request was formed for when one is active", async () => {
+    setAssertedAccount("usr_a")
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(mockResponse(200, { ok: true }))
+
+    await api.get("/anything")
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1] as RequestInit
+    expect((init.headers as Record<string, string>)[ACCOUNT_ASSERTION_HEADER]).toBe("usr_a")
+  })
+
+  it("should send no assertion before an account resolves", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(mockResponse(200, { ok: true }))
+
+    await api.get("/anything")
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1] as RequestInit
+    expect(init.headers as Record<string, string>).not.toHaveProperty(ACCOUNT_ASSERTION_HEADER)
+  })
+
+  it("should assert the account on a multipart upload too", async () => {
+    setAssertedAccount("usr_a")
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(mockResponse(200, { ok: true }))
+
+    await postMultipartFile("/upload", new File(["x"], "x.txt"), "file")
+
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1] as RequestInit
+    expect((init.headers as Record<string, string>)[ACCOUNT_ASSERTION_HEADER]).toBe("usr_a")
+  })
+
+  it("should treat a refused account as pausable, not as a permanent verdict on the payload", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      mockResponse(409, {
+        error: "This browser is signed in as a different account",
+        code: AuthErrorCodes.ACCOUNT_MISMATCH,
+      })
+    )
+
+    const err = (await api.post("/messages", {}).catch((e) => e)) as ApiError
+    expect(isAccountMismatchError(err)).toBe(true)
+    // Queues reconcile permanent rejections away — a mismatch must survive.
+    expect(isPermanentApiError(err)).toBe(false)
+  })
+
+  it("should keep an ordinary 409 permanent so queues still reconcile it", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(mockResponse(409, { error: "Conflict", code: "STALE_VERSION" }))
+
+    const err = (await api.post("/messages", {}).catch((e) => e)) as ApiError
+    expect(isAccountMismatchError(err)).toBe(false)
+    expect(isPermanentApiError(err)).toBe(true)
+  })
+
+  it("should tell the identity owner to revalidate when the server names another account", async () => {
+    const seen: string[] = []
+    const unsubscribe = subscribeAccountMismatch(() => seen.push("mismatch"))
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      mockResponse(409, { error: "nope", code: AuthErrorCodes.ACCOUNT_MISMATCH })
+    )
+
+    await api.get("/anything").catch(() => {})
+    unsubscribe()
+
+    expect(seen).toEqual(["mismatch"])
   })
 })
