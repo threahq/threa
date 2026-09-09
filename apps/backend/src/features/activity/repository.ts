@@ -112,6 +112,16 @@ function mapRowToActivity(row: ActivityRow): Activity {
 }
 
 /**
+ * Rows whose stream is sealed (archived itself or under an archived ancestor)
+ * leave the feed and the badge counts while the seal holds, and come back
+ * when it lifts: archival writes nothing to `user_activity`. Rows with no
+ * stream (standalone saved reminders) always pass.
+ */
+const STREAM_NOT_SEALED = sql.raw(`(user_activity.stream_id IS NULL OR NOT EXISTS (
+  SELECT 1 FROM streams s WHERE s.id = user_activity.stream_id AND ${effectivelyArchivedSql("s")}
+))`)
+
+/**
  * Pick the ON CONFLICT target for the given activity type. Reactions dedup by
  * (user, message, actor, emoji); most other types dedup by (user, message,
  * type, actor). Both are partial unique indexes — the WHERE clause is required
@@ -123,16 +133,6 @@ function mapRowToActivity(row: ActivityRow): Activity {
  * lifecycle should produce a distinct feed row. For that type we emit a plain
  * INSERT with no ON CONFLICT clause.
  */
-/**
- * Rows whose stream is sealed (archived itself or under an archived ancestor)
- * leave the feed and the badge counts while the seal holds, and come back
- * when it lifts: archival writes nothing to `user_activity`. Rows with no
- * stream (standalone saved reminders) always pass.
- */
-const STREAM_NOT_SEALED = sql.raw(`(user_activity.stream_id IS NULL OR NOT EXISTS (
-  SELECT 1 FROM streams s WHERE s.id = user_activity.stream_id AND ${effectivelyArchivedSql("s")}
-))`)
-
 function conflictClauseFor(activityType: string) {
   if (activityType === ActivityTypes.REACTION) {
     return sql.raw(
