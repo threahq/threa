@@ -112,10 +112,10 @@ describe("connectivity diagnostics persistence", () => {
       releaseStorage = resolve
     })
     const transaction = vi.spyOn(database, "transaction")
-    transaction.mockImplementationOnce(async (...args: Parameters<typeof database.transaction>) => {
+    transaction.mockImplementationOnce((async (...args: Parameters<typeof database.transaction>) => {
       await blocked
       return originalTransaction(...args)
-    })
+    }) as unknown as typeof database.transaction)
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }))
 
     configureConnectivityDiagnostics(scope)
@@ -464,12 +464,14 @@ describe("connectivity diagnostics persistence", () => {
     const consentRead = new Promise<void>((resolve) => {
       markConsentRead = resolve
     })
-    vi.spyOn(database.consent, "get").mockImplementationOnce(async (key) => {
+    vi.spyOn(database.consent, "get").mockImplementationOnce((async (
+      key: Parameters<typeof database.consent.get>[0]
+    ) => {
       const value = await originalGet(key)
       markConsentRead()
       await blocked
       return value
-    })
+    }) as unknown as typeof database.consent.get)
     const send = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }))
 
     const delivery = flushConnectivityDiagnostics()
