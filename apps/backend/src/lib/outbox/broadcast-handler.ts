@@ -293,6 +293,7 @@ export class BroadcastHandler implements OutboxHandler {
    *   bot:{workspaceId}:bot:{botId}                              — every instance of one bot
    *   bot:{workspaceId}:bot:{botId}:instance:{instanceId}        — one instance
    *   bot:{workspaceId}:bot:{botId}:session:{runtimeSessionId}   — one Pi-local session
+   *   bot:{workspaceId}:bot:{botId}:supervisor                   — read-only local supervisors
    */
   private dispatchBotEvent(event: OutboxEvent): void {
     const { workspaceId } = event.payload
@@ -301,8 +302,14 @@ export class BroadcastHandler implements OutboxHandler {
     if (isOutboxEventType(event, "bot_invocation:available")) {
       const payload = event.payload as BotInvocationAvailableOutboxPayload
       if (payload.targetRuntimeSessionId) {
+        // The supervisor room too: a local supervisor that suspended this
+        // session while it idled has no other signal that work arrived for it,
+        // and the session it would revive is exactly the one that cannot hear
+        // this event. Session-targeted only — an untargeted invocation names no
+        // session for a supervisor to act on.
         botNs
           .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.targetRuntimeSessionId}`)
+          .to(`bot:${workspaceId}:bot:${payload.botId}:supervisor`)
           .emit(event.eventType, payload)
       } else if (payload.targetInstanceId) {
         botNs
