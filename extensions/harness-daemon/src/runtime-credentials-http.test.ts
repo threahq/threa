@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { CLAIM_TTL_SECONDS } from "./command-reporter"
 import { defaultDoneDeps, doneAgent, type DoneDeps } from "./done"
 import { DEFAULT_PROFILE } from "./profiles"
 import { defaultAttachedSpawnDeps } from "./spawn-attached"
@@ -65,6 +66,11 @@ function startBotScopedServer() {
         return knownBot
           ? Response.json({ data: { id: "msg_notice" } }, { status: 201 })
           : new Response("wrong bot", { status: 403 })
+      }
+
+      if (url.pathname.startsWith(`/api/v1/workspaces/${WORKSPACE}/bot-invocations/`)) {
+        const knownBot = authorization === `Bearer ${PI_KEY}` || authorization === `Bearer ${CLAUDE_KEY}`
+        return knownBot ? Response.json({ data: {} }) : new Response("wrong bot", { status: 403 })
       }
 
       if (
@@ -156,7 +162,7 @@ describe("runtime-scoped production HTTP wiring", () => {
     })
   }
 
-  test("should keep runtime lifecycle and notice credentials scoped through the default dependencies", async () => {
+  test("should keep runtime lifecycle and command-claim credentials scoped through the default dependencies", async () => {
     const { requests, sessions, targetForRuntime } = startBotScopedServer()
     const home = mkdtempSync(join(tmpdir(), "harnessd-runtime-credentials-"))
     try {
@@ -172,6 +178,7 @@ describe("runtime-scoped production HTTP wiring", () => {
         JSON.stringify({ baseUrl, workspaceId: WORKSPACE, apiKey: PI_KEY })
       )
       const script = `
+        import { writeCommandClaim } from "@threahq/harness-client";
         import { defaultDoneDeps } from "./src/done.ts";
         import { defaultAttachedSpawnDeps, runAttachedSpawn } from "./src/spawn-attached.ts";
         import { linkAttachedThread, readPiRemoteConfig, readThreaChannelConfig } from "./src/spawners.ts";
@@ -206,7 +213,14 @@ describe("runtime-scoped production HTTP wiring", () => {
           await defaultDoneDeps().endSession({ runtime, instanceId, runtimeSessionId });
           const failed = defaultAttachedSpawnDeps();
           failed.spawn = async () => { throw new Error("synthetic spawn failure"); };
-          await runAttachedSpawn({ runtime, name: runtime + "-child", attach: { rootStreamId: "${ROOT}", anchorId: "msg_anchor" } }, failed).catch(() => {});
+          const claimFile = writeCommandClaim({
+            runtime,
+            workspaceId: "${WORKSPACE}",
+            invocationId: "binv_" + runtime,
+            instanceId,
+            claimToken: "claim-" + runtime,
+          });
+          await runAttachedSpawn({ runtime, name: runtime + "-child", claimFile, attach: { rootStreamId: "${ROOT}", anchorId: "msg_anchor" } }, failed).catch(() => {});
         }
       `
       const child = Bun.spawn([process.execPath, "-e", script], {
@@ -225,24 +239,45 @@ describe("runtime-scoped production HTTP wiring", () => {
       const stderr = await new Response(child.stderr).text()
       expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" })
 
-      expect(requests.map(({ authorization, path }) => ({ authorization, path }))).toEqual([
-        ...["sessions", "sessions/brief", "sessions/brief", "sessions/end"].map((suffix) => ({
-          authorization: `Bearer ${PI_KEY}`,
-          path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/${suffix}`,
-        })),
-        { authorization: `Bearer ${CLAUDE_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages` },
-        ...["sessions", "sessions/brief", "sessions/brief", "sessions/end"].map((suffix) => ({
-          authorization: `Bearer ${CLAUDE_KEY}`,
-          path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/${suffix}`,
-        })),
-        { authorization: `Bearer ${PI_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages` },
-      ])
-      expect(requests.filter(({ path }) => path.endsWith("/messages"))).toEqual(
-        (["pi", "claude"] as const).map((runtime) => ({
-          authorization: `Bearer ${runtime === "pi" ? CLAUDE_KEY : PI_KEY}`,
-          path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages`,
-          body: { content: `harnessd: spawn of \`${runtime}-child\` failed: synthetic spawn failure` },
-        }))
+      const keyFor = (runtime: "pi" | "claude") => `Bearer ${runtime === "pi" ? PI_KEY : CLAUDE_KEY}`
+      expect(
+        requests
+          .filter(({ path }) => path.includes("/bot-runtime/"))
+          .map(({ authorization, path }) => ({ authorization, path }))
+      ).toEqual(
+        (["pi", "claude"] as const).flatMap((runtime) =>
+          ["sessions", "sessions/brief", "sessions/brief", "sessions/end"].map((suffix) => ({
+            authorization: keyFor(runtime),
+            path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/${suffix}`,
+          }))
+        )
+      )
+      // The claim names whose credentials it was made under, and the ambient
+      // THREA_API_KEY in this child is deliberately the OTHER runtime's: a
+      // launch report that fell back to it would authenticate as the wrong bot.
+      expect(
+        requests.filter(({ path }) => path.includes("/bot-invocations/")).sort((a, b) => a.path.localeCompare(b.path))
+      ).toEqual(
+        (["claude", "pi"] as const).flatMap((runtime) => {
+          const fenced = { instanceId: `${runtime}-default-child`, claimToken: `claim-${runtime}` }
+          return [
+            {
+              authorization: keyFor(runtime),
+              path: `/api/v1/workspaces/${WORKSPACE}/bot-invocations/binv_${runtime}/fail`,
+              body: { ...fenced, errorMessage: `spawn of \`${runtime}-child\` failed: synthetic spawn failure` },
+            },
+            {
+              authorization: keyFor(runtime),
+              path: `/api/v1/workspaces/${WORKSPACE}/bot-invocations/binv_${runtime}/progress`,
+              body: { ...fenced, step: `Provisioning a worktree for \`${runtime}-child\`` },
+            },
+            {
+              authorization: keyFor(runtime),
+              path: `/api/v1/workspaces/${WORKSPACE}/bot-invocations/binv_${runtime}/renew`,
+              body: { ...fenced, claimTtlSeconds: CLAIM_TTL_SECONDS },
+            },
+          ]
+        })
       )
       expect(sessions.size).toBe(0)
     } finally {

@@ -21,6 +21,7 @@ export const CLAIM_TTL_SECONDS = 120
 export function claimCommandReporter(
   target: ThreaTarget,
   claim: CommandClaim,
+  command: string,
   post: typeof postThrea = postThrea
 ): CommandReporter {
   const base = `/bot-invocations/${claim.invocationId}`
@@ -35,27 +36,27 @@ export function claimCommandReporter(
     }
     return false
   }
-  const renew = () => void report("/renew", { claimTtlSeconds: CLAIM_TTL_SECONDS }, "renew the /done claim")
+  const renew = () => void report("/renew", { claimTtlSeconds: CLAIM_TTL_SECONDS }, `renew the /${command} claim`)
   renew()
   const timer = setInterval(renew, CLAIM_RENEW_EVERY_MS)
   timer.unref()
   return {
     progress: async (step) => void (await report("/progress", { step }, `report "${step}"`)),
     complete: async () => {
-      if (!(await report("/complete", { noResponse: true }, "close the /done command"))) {
-        throw new Error("harnessd: /done finished but its command could not be closed")
+      if (!(await report("/complete", { noResponse: true }, `close the /${command} command`))) {
+        throw new Error(`harnessd: /${command} finished but its command could not be closed`)
       }
     },
     fail: async (message) =>
-      void (await report("/fail", { errorMessage: message.slice(0, 1000) }, "fail the /done command")),
+      void (await report("/fail", { errorMessage: message.slice(0, 1000) }, `fail the /${command} command`)),
     stop: () => clearInterval(timer),
   }
 }
 
-/** A `done` typed at the terminal has no command to drive; its steps go to stdout. */
-export function consoleCommandReporter(): CommandReporter {
+/** A command typed at the terminal has no Threa command to drive; its steps go to stdout. */
+export function consoleCommandReporter(command: string): CommandReporter {
   return {
-    progress: async (step) => console.log(`done\t${step}`),
+    progress: async (step) => console.log(`${command}\t${step}`),
     complete: async () => undefined,
     fail: async () => undefined,
     stop: () => undefined,

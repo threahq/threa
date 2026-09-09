@@ -13,7 +13,7 @@ Usage:
   threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
       [--cwd <path>] [--profile <name>]   (--cwd uses an existing folder and provisions nothing)
       [--model <model>] [--thinking <level>]   (what the runtime starts on; revivals reuse both)
-      [--attach <root-stream-id> --anchor <anchor-id> [--brief-file <path>]]   (link to a thread under that scratchpad instead of creating one)
+      [--attach <root-stream-id> --anchor <anchor-id> [--brief-file <path>] [--claim-file <path>]]   (link to a thread under that scratchpad instead of creating one)
   threa-harnessd do <natural language command>
   threa-harnessd list
   threa-harnessd up [--tmux <session>] [--dry-run] [--recreate-worktree]
@@ -250,6 +250,8 @@ export function parseSpawn(args: string[]): SpawnOptions {
   if (anchor && !attach) die("--anchor requires --attach <root-stream-id>")
   const briefFile = stringFlag(flags, "brief-file")
   if (briefFile && !attach) die("--brief-file requires --attach")
+  const claimFile = stringFlag(flags, "claim-file")
+  if (claimFile && !attach) die("--claim-file requires --attach")
   const thinking = stringFlag(flags, "thinking")?.toLowerCase()
   const levels = runtimeDefinition(runtime).thinkingLevels
   if (thinking && !levels.includes(thinking)) die(`--thinking for ${runtime} must be one of: ${levels.join(", ")}`)
@@ -271,5 +273,6 @@ export function parseSpawn(args: string[]): SpawnOptions {
     noYolo: boolFlag(flags, "no-yolo"),
     ...(attach && anchor ? { attach: { rootStreamId: attach, anchorId: anchor } } : {}),
     ...(briefFile ? { briefFile } : {}),
+    ...(claimFile ? { claimFile } : {}),
   }
 }

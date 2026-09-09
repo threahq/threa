@@ -28,7 +28,7 @@ function fakePost(respond: (path: string) => Response = () => Response.json({ da
 describe("claimCommandReporter", () => {
   test("renews on creation, fences every report with the claim, and closes the command silently", async () => {
     const { posted, post } = fakePost()
-    const reporter = claimCommandReporter(TARGET, CLAIM, post)
+    const reporter = claimCommandReporter(TARGET, CLAIM, "done", post)
     try {
       await reporter.progress("Committing, pushing and removing the worktree")
       await reporter.complete()
@@ -52,7 +52,7 @@ describe("claimCommandReporter", () => {
     const setInterval = spyOn(globalThis, "setInterval")
     const clearInterval = spyOn(globalThis, "clearInterval")
     try {
-      const reporter = claimCommandReporter(TARGET, CLAIM, post)
+      const reporter = claimCommandReporter(TARGET, CLAIM, "done", post)
       const [renew, every] = setInterval.mock.calls[0] as [() => void, number]
       expect(every).toBe(CLAIM_RENEW_EVERY_MS)
       renew()
@@ -74,7 +74,7 @@ describe("claimCommandReporter", () => {
       path.endsWith("/renew") ? Response.json({ data: {} }) : new Response("claim lost", { status: 404 })
     )
     const error = spyOn(console, "error").mockImplementation(() => {})
-    const reporter = claimCommandReporter(TARGET, CLAIM, post)
+    const reporter = claimCommandReporter(TARGET, CLAIM, "done", post)
     let logged: unknown[] = []
     try {
       await reporter.progress("Ending the session link")

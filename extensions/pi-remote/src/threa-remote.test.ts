@@ -2031,21 +2031,18 @@ describe("Pi spawn and done session control", () => {
     __testing.setConfigForTesting(undefined)
   })
 
-  test("anchors the spawn on the /spawn message, briefs harnessd with the prompt, and posts nothing", async () => {
+  test("anchors the spawn on the /spawn message, briefs harnessd with the prompt, and hands over its claim", async () => {
     const prepared: Array<Record<string, unknown>> = []
-    const messages: Array<string | undefined> = []
+    let claim: unknown
     let started = false
     await __testing.runSpawnCommand(invocation, "claude fix the parser\nLook at parser.ts\nand fix it", context(true), {
       available: () => true,
       prepare: (spec: Record<string, unknown>) => {
         prepared.push(spec)
+        claim = readCommandClaim(spec.claimFile as string)
         return () => {
           started = true
         }
-      },
-      complete: async (_invocation: unknown, message: string | undefined) => {
-        messages.push(message)
-        return true
       },
       spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never)
@@ -2053,17 +2050,24 @@ describe("Pi spawn and done session control", () => {
     const briefFile = prepared[0]?.briefFile as string | undefined
     const brief = briefFile ? readFileSync(briefFile, "utf8") : undefined
     if (briefFile) unlinkSync(briefFile)
-    expect({ spec: { ...prepared[0], briefFile: undefined }, brief, started, messages }).toEqual({
+    expect({ spec: { ...prepared[0], briefFile: undefined, claimFile: undefined }, brief, claim, started }).toEqual({
       spec: {
         runtime: "claude",
         name: "fix the parser",
         rootStreamId: "stream-root-exact",
         anchorId: "msg_slash_spawn",
         briefFile: undefined,
+        claimFile: undefined,
       },
       brief: "Look at parser.ts\nand fix it",
+      claim: {
+        runtime: "pi",
+        workspaceId: "ws_123",
+        invocationId: "binv_spawn",
+        instanceId: "pi-instance",
+        claimToken: "claim",
+      },
       started: true,
-      messages: [undefined],
     })
   })
 
@@ -2113,20 +2117,17 @@ describe("Pi spawn and done session control", () => {
 
   test("defaults the runtime to pi and writes no brief without a prompt", async () => {
     const prepared: Array<Record<string, unknown>> = []
-    const messages: Array<string | undefined> = []
+    let claim: unknown
     await __testing.runSpawnCommand(invocation, "tidy up", context(true), {
       available: () => true,
       prepare: (spec: Record<string, unknown>) => {
         prepared.push(spec)
+        claim = readCommandClaim(spec.claimFile as string)
         return () => undefined
-      },
-      complete: async (_invocation: unknown, message: string | undefined) => {
-        messages.push(message)
-        return true
       },
       spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never)
-    expect({ prepared, messages }).toEqual({
+    expect({ prepared: prepared.map((spec) => ({ ...spec, claimFile: undefined })), claim }).toEqual({
       prepared: [
         {
           runtime: "pi",
@@ -2134,9 +2135,16 @@ describe("Pi spawn and done session control", () => {
           rootStreamId: "stream-root-exact",
           anchorId: "msg_slash_spawn",
           briefFile: undefined,
+          claimFile: undefined,
         },
       ],
-      messages: [undefined],
+      claim: {
+        runtime: "pi",
+        workspaceId: "ws_123",
+        invocationId: "binv_spawn",
+        instanceId: "pi-instance",
+        claimToken: "claim",
+      },
     })
   })
 
@@ -2169,7 +2177,6 @@ describe("Pi spawn and done session control", () => {
         prepared++
         return () => undefined
       },
-      complete: async () => true,
       spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never
     const stale = [
@@ -2184,20 +2191,16 @@ describe("Pi spawn and done session control", () => {
     expect(prepared).toBe(0)
   })
 
-  test("a replaced claim launches nothing, and one replaced mid-flight leaves no brief behind", async () => {
-    const messages: string[] = []
+  test("a replaced claim launches nothing, and one replaced mid-flight leaves no brief or claim behind", async () => {
     let prepared = 0
-    const briefs = () => readdirSync(tmpdir()).filter((entry) => entry.startsWith("threa-spawn-"))
-    const before = briefs()
+    const scratch = () =>
+      readdirSync(tmpdir()).filter((entry) => entry.startsWith("threa-spawn-") || entry.startsWith("threa-claim-"))
+    const before = scratch()
     const deps = {
       available: () => true,
       prepare: () => {
         prepared++
         return () => undefined
-      },
-      complete: async (_invocation: unknown, message: string | undefined) => {
-        messages.push(message)
-        return true
       },
       spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never
@@ -2210,36 +2213,34 @@ describe("Pi spawn and done session control", () => {
       return wasCurrent
     })
 
-    expect({ messages, prepared, leaked: briefs().filter((brief) => !before.includes(brief)) }).toEqual({
-      messages: [],
+    expect({ prepared, leaked: scratch().filter((entry) => !before.includes(entry)) }).toEqual({
       prepared: 0,
       leaked: [],
     })
   })
 
-  test("a launch failure acks nothing and removes the brief it wrote", async () => {
-    const messages: string[] = []
+  test("a launch failure throws and removes the brief and claim it wrote", async () => {
     let briefFile: string | undefined
+    let claimFile: string | undefined
     await expect(
       __testing.runSpawnCommand(invocation, "pi broken\nfix the thing", context(true), {
         available: () => true,
         prepare: (spec: Record<string, unknown>) => {
           briefFile = spec.briefFile as string
+          claimFile = spec.claimFile as string
           return () => {
             throw new Error("harnessd missing")
           }
         },
-        complete: async (_invocation: unknown, message: string) => {
-          messages.push(message)
-          return true
-        },
         spawnRuntimes: () => SPAWN_RUNTIMES,
       } as never)
     ).rejects.toThrow("Spawn launch failed: harnessd missing")
-    expect({ messages, briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({
-      messages: [],
-      briefWritten: true,
-      briefLeft: false,
+    expect({
+      wrote: { brief: Boolean(briefFile), claim: Boolean(claimFile) },
+      left: { brief: existsSync(briefFile ?? ""), claim: existsSync(claimFile ?? "") },
+    }).toEqual({
+      wrote: { brief: true, claim: true },
+      left: { brief: false, claim: false },
     })
   })
 

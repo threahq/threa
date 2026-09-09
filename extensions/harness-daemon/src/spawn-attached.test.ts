@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type { CommandClaim } from "@threahq/harness-client"
 import { runAttachedSpawn, type AttachedSpawnDeps } from "./spawn-attached"
 import type { SpawnOptions, SpawnResult } from "./types"
 
@@ -8,6 +9,16 @@ const BASE_OPTIONS: SpawnOptions = {
   runtime: "claude",
   name: "fix-sidebar",
   attach: ATTACH,
+}
+
+const CLAIMED: SpawnOptions = { ...BASE_OPTIONS, claimFile: "/tmp/claim.json" }
+
+const CLAIM: CommandClaim = {
+  runtime: "claude",
+  workspaceId: "ws_1",
+  invocationId: "binv_spawn",
+  instanceId: "cc-desk",
+  claimToken: "claim-secret",
 }
 
 const RESULT: SpawnResult = {
@@ -23,6 +34,12 @@ const RESULT: SpawnResult = {
   output: "",
 }
 
+const GREETING = [
+  "You were just started as `fix-sidebar` and nobody has asked you for anything yet.",
+  "You are working in `/repo/fix-sidebar` on branch `fix/sidebar` (tmux window `fix-sidebar`).",
+  "Say hello in a sentence or two, name where you are, and ask what they want done. Do not start any work yet.",
+].join("\n\n")
+
 interface Recorded {
   calls: string[]
 }
@@ -31,7 +48,6 @@ function makeDeps(
   options: {
     spawnResult?: SpawnResult | Error
     briefResult?: undefined | Error
-    postNoticeResult?: undefined | Error
     readBriefResult?: string | Error
   } = {}
 ): { deps: AttachedSpawnDeps; recorded: Recorded } {
@@ -54,9 +70,26 @@ function makeDeps(
     unlinkBrief: (path) => {
       recorded.calls.push(`unlinkBrief:${path}`)
     },
-    postNotice: async (streamId, content) => {
-      recorded.calls.push(`postNotice:${streamId}:${content}`)
-      if (options.postNoticeResult instanceof Error) throw options.postNoticeResult
+    readClaim: (path) => {
+      recorded.calls.push(`readClaim:${path}`)
+      return CLAIM
+    },
+    commandReporter: (claim) => {
+      recorded.calls.push(`reporter:${claim.invocationId}`)
+      return {
+        progress: async (step) => {
+          recorded.calls.push(`progress:${step}`)
+        },
+        complete: async () => {
+          recorded.calls.push("complete")
+        },
+        fail: async (message) => {
+          recorded.calls.push(`fail:${message}`)
+        },
+        stop: () => {
+          recorded.calls.push("stop")
+        },
+      }
     },
     log: (message) => {
       recorded.calls.push(`log:${message}`)
@@ -66,49 +99,64 @@ function makeDeps(
 }
 
 describe("runAttachedSpawn", () => {
-  test("happy path: reads the brief, spawns, delivers the brief, then removes the file", async () => {
+  test("happy path: reports each stage into the /spawn command and closes it, posting nothing", async () => {
     const { deps, recorded } = makeDeps()
 
-    const result = await runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/brief.md" }, deps)
+    const result = await runAttachedSpawn({ ...CLAIMED, briefFile: "/tmp/brief.md" }, deps)
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_spawn",
       "readBrief:/tmp/brief.md",
+      "progress:Provisioning a worktree for `fix-sidebar`",
       "spawn:fix-sidebar",
+      "progress:Briefing `fix-sidebar`",
       "brief:claude:cc-sidebar:ccs-sidebar:please fix the sidebar",
+      "complete",
+      "stop",
       "unlinkBrief:/tmp/brief.md",
     ])
     expect(result).toBe(RESULT)
   })
 
-  test("a spawn failure posts the failure to the root stream and rethrows without briefing", async () => {
+  test("a spawn failure fails the command and rethrows without briefing", async () => {
     const failure = new Error("worktree provisioning failed")
     const { deps, recorded } = makeDeps({ spawnResult: failure })
 
-    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
+    await expect(runAttachedSpawn({ ...CLAIMED, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
       "worktree provisioning failed"
     )
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_spawn",
       "readBrief:/tmp/brief.md",
+      "progress:Provisioning a worktree for `fix-sidebar`",
       "spawn:fix-sidebar",
-      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
+      "fail:spawn of `fix-sidebar` failed: worktree provisioning failed",
+      "stop",
       "unlinkBrief:/tmp/brief.md",
     ])
   })
 
-  test("a brief failure posts the started-but-not-briefed message naming the thread and rethrows", async () => {
+  test("a brief failure fails the command naming the thread that was started", async () => {
     const failure = new Error("brief endpoint 500")
     const { deps, recorded } = makeDeps({ briefResult: failure })
 
-    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
+    await expect(runAttachedSpawn({ ...CLAIMED, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
       "brief endpoint 500"
     )
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_spawn",
       "readBrief:/tmp/brief.md",
+      "progress:Provisioning a worktree for `fix-sidebar`",
       "spawn:fix-sidebar",
+      "progress:Briefing `fix-sidebar`",
       "brief:claude:cc-sidebar:ccs-sidebar:please fix the sidebar",
-      "postNotice:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: brief endpoint 500",
+      "fail:`fix-sidebar` started in thread stream_thread but the brief was not delivered: brief endpoint 500",
+      "stop",
       "unlinkBrief:/tmp/brief.md",
     ])
   })
@@ -116,102 +164,95 @@ describe("runAttachedSpawn", () => {
   test("no brief file briefs the agent to greet the user, and reads or unlinks nothing", async () => {
     const { deps, recorded } = makeDeps()
 
-    const result = await runAttachedSpawn(BASE_OPTIONS, deps)
+    const result = await runAttachedSpawn(CLAIMED, deps)
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_spawn",
+      "progress:Provisioning a worktree for `fix-sidebar`",
       "spawn:fix-sidebar",
-      [
-        "brief:claude:cc-sidebar:ccs-sidebar:You were just started as `fix-sidebar` and nobody has asked you for anything yet.",
-        "You are working in `/repo/fix-sidebar` on branch `fix/sidebar` (tmux window `fix-sidebar`).",
-        "Say hello in a sentence or two, name where you are, and ask what they want done. Do not start any work yet.",
-      ].join("\n\n"),
+      "progress:Briefing `fix-sidebar`",
+      `brief:claude:cc-sidebar:ccs-sidebar:${GREETING}`,
+      "complete",
+      "stop",
     ])
     expect(result).toBe(RESULT)
   })
 
-  test("a prompt-less spawn whose thread never materialised posts nothing", async () => {
-    const { activeStreamId: _activeStreamId, ...withoutThread } = RESULT
-    const { deps, recorded } = makeDeps({ spawnResult: withoutThread })
+  test("a `spawn` typed at the terminal drives no command and reads no claim", async () => {
+    const { deps, recorded } = makeDeps()
 
     await runAttachedSpawn(BASE_OPTIONS, deps)
 
-    expect(recorded.calls).toEqual(["spawn:fix-sidebar"])
+    expect(recorded.calls).toEqual(["spawn:fix-sidebar", `brief:claude:cc-sidebar:ccs-sidebar:${GREETING}`])
   })
 
-  test("an unreadable brief file reports, removes the file, and dies before spawn runs", async () => {
+  test("a prompt-less spawn whose thread never materialised briefs nobody", async () => {
+    const { activeStreamId: _activeStreamId, ...withoutThread } = RESULT
+    const { deps, recorded } = makeDeps({ spawnResult: withoutThread })
+
+    await runAttachedSpawn(CLAIMED, deps)
+
+    expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_spawn",
+      "progress:Provisioning a worktree for `fix-sidebar`",
+      "spawn:fix-sidebar",
+      "complete",
+      "stop",
+    ])
+  })
+
+  test("an unreadable brief file fails the command, removes the file, and dies before spawn runs", async () => {
     const failure = new Error("ENOENT: no such file")
     const { deps, recorded } = makeDeps({ readBriefResult: failure })
 
-    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/missing.md" }, deps)).rejects.toThrow(
+    await expect(runAttachedSpawn({ ...CLAIMED, briefFile: "/tmp/missing.md" }, deps)).rejects.toThrow(
       "ENOENT: no such file"
     )
 
     expect(recorded.calls).toEqual([
+      "readClaim:/tmp/claim.json",
+      "reporter:binv_spawn",
       "readBrief:/tmp/missing.md",
-      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: ENOENT: no such file",
+      "fail:spawn of `fix-sidebar` failed: ENOENT: no such file",
+      "stop",
       "unlinkBrief:/tmp/missing.md",
     ])
   })
 
-  test("a spawn result with no identity reports the undelivered brief instead of dying silently", async () => {
+  test("a spawn result with no identity fails the command instead of dying silently", async () => {
     const { instanceId: _instanceId, ...withoutIdentity } = RESULT
     const { deps, recorded } = makeDeps({ spawnResult: withoutIdentity })
 
-    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
+    await expect(runAttachedSpawn({ ...CLAIMED, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
       "spawned agent has no instanceId to brief"
     )
 
-    expect(recorded.calls).toEqual([
-      "readBrief:/tmp/brief.md",
-      "spawn:fix-sidebar",
-      "postNotice:stream_root:harnessd: `fix-sidebar` started in thread stream_thread but the brief was not delivered: spawned agent has no instanceId to brief",
-      "unlinkBrief:/tmp/brief.md",
-    ])
+    expect(recorded.calls.at(-3)).toBe(
+      "fail:`fix-sidebar` started in thread stream_thread but the brief was not delivered: spawned agent has no instanceId to brief"
+    )
   })
 
-  test("an empty brief file reports, removes the file, and dies before spawn runs", async () => {
-    const { deps, recorded } = makeDeps({ readBriefResult: "" })
+  test("an empty or whitespace-only brief file fails the command before spawn runs", async () => {
+    for (const [content, path] of [
+      ["", "/tmp/empty.md"],
+      ["   \n\t  ", "/tmp/blank.md"],
+    ] as const) {
+      const { deps, recorded } = makeDeps({ readBriefResult: content })
 
-    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/empty.md" }, deps)).rejects.toThrow(
-      "--brief-file /tmp/empty.md is empty"
-    )
+      await expect(runAttachedSpawn({ ...CLAIMED, briefFile: path }, deps)).rejects.toThrow(
+        `--brief-file ${path} is empty`
+      )
 
-    expect(recorded.calls).toEqual([
-      "readBrief:/tmp/empty.md",
-      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/empty.md is empty",
-      "unlinkBrief:/tmp/empty.md",
-    ])
-  })
-
-  test("a whitespace-only brief file reports, removes the file, and dies before spawn runs", async () => {
-    const { deps, recorded } = makeDeps({ readBriefResult: "   \n\t  " })
-
-    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/blank.md" }, deps)).rejects.toThrow(
-      "--brief-file /tmp/blank.md is empty"
-    )
-
-    expect(recorded.calls).toEqual([
-      "readBrief:/tmp/blank.md",
-      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: --brief-file /tmp/blank.md is empty",
-      "unlinkBrief:/tmp/blank.md",
-    ])
-  })
-
-  test("a failure to post to the root is only logged, and the original error still rethrows", async () => {
-    const spawnFailure = new Error("worktree provisioning failed")
-    const postFailure = new Error("network down")
-    const { deps, recorded } = makeDeps({ spawnResult: spawnFailure, postNoticeResult: postFailure })
-
-    await expect(runAttachedSpawn({ ...BASE_OPTIONS, briefFile: "/tmp/brief.md" }, deps)).rejects.toThrow(
-      "worktree provisioning failed"
-    )
-
-    expect(recorded.calls).toEqual([
-      "readBrief:/tmp/brief.md",
-      "spawn:fix-sidebar",
-      "postNotice:stream_root:harnessd: spawn of `fix-sidebar` failed: worktree provisioning failed",
-      "log:harnessd: could not post to stream stream_root: network down",
-      "unlinkBrief:/tmp/brief.md",
-    ])
+      expect(recorded.calls).toEqual([
+        "readClaim:/tmp/claim.json",
+        "reporter:binv_spawn",
+        `readBrief:${path}`,
+        `fail:spawn of \`fix-sidebar\` failed: --brief-file ${path} is empty`,
+        "stop",
+        `unlinkBrief:${path}`,
+      ])
+    }
   })
 })

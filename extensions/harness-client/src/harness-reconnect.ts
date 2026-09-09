@@ -121,6 +121,8 @@ export interface HarnessSpawnSpec {
   rootStreamId: string
   anchorId: string
   briefFile?: string
+  /** The `/spawn` command's own claim (see `writeCommandClaim`), for harnessd to report the launch into and close. */
+  claimFile?: string
   model?: string
   thinking?: string
 }
@@ -134,10 +136,14 @@ export function prepareHarnessSpawn(spec: HarnessSpawnSpec, options: PrepareHarn
   if (spec.model) args.push("--model", requireId(spec.model, "Model"))
   if (spec.thinking) args.push("--thinking", requireId(spec.thinking, "Thinking level"))
   if (spec.briefFile) args.push("--brief-file", spec.briefFile)
+  if (spec.claimFile) args.push("--claim-file", spec.claimFile)
   // A launch that fails after `spawn` returns reports through the child's async
   // "error" event, out of reach of the caller's own catch — and harnessd, which
-  // unlinks the brief, never ran. Nobody else can clean the prompt up.
-  return prepareDetachedHarnessCommand("spawn", args, options, () => discardSpawnBrief(spec.briefFile))
+  // unlinks both files, never ran. Nobody else can clean them up.
+  return prepareDetachedHarnessCommand("spawn", args, options, () => {
+    discardSpawnBrief(spec.briefFile)
+    discardCommandClaim(spec.claimFile)
+  })
 }
 
 export interface PrepareHarnessDoneOptions extends PrepareHarnessClearOptions {
