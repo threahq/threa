@@ -64,6 +64,27 @@ const SPAWN_COMMAND = {
   ],
 }
 
+/**
+ * What production sends while the linked runtime process predates the
+ * per-runtime capability: the overrides exist as arguments (the runtime parser
+ * takes them) but nothing advertised a list for either one.
+ */
+const BARE_SPAWN_COMMAND = {
+  ...SPAWN_COMMAND,
+  args: [
+    {
+      name: "runtime",
+      suggestions: [
+        { value: "claude", label: "Claude Code" },
+        { value: "pi", label: "Pi" },
+      ],
+    },
+    { name: "/model", description: "Model for the spawned session" },
+    { name: "/thinking", description: "Thinking level for the spawned session" },
+    { name: "name", required: true, description: "Session name" },
+  ],
+}
+
 function injectCommands(...commands: { name: string }[]) {
   return async (route: Route) => {
     const response = await route.fetch()
@@ -186,6 +207,52 @@ test.describe("Command argument option picker", () => {
       await ctx.page.keyboard.type("custom-model")
       await expect(editor).toContainText("/model")
       await expect(editor).toContainText("custom-model")
+    } finally {
+      await ctx.context.close()
+    }
+  })
+
+  test("offers no override when the linked runtime advertised no lists for it", async ({ browser }) => {
+    test.setTimeout(60000)
+    const ctx = await loginInNewContext(browser, `argpicker-bare-${Date.now()}@example.com`, "ArgPickerBare")
+
+    try {
+      const testId = generateTestId()
+      const wsRes = await ctx.page.request.post("/api/workspaces", { data: { name: `ArgPicker WS ${testId}` } })
+      await expectApiOk(wsRes, "Workspace creation")
+      const { workspace } = (await wsRes.json()) as { workspace: { id: string } }
+      const workspaceId = workspace.id
+      await waitForWorkspaceProvisioned(ctx.page, workspaceId)
+
+      const channelSlug = `argpick-bare-${testId}`
+      const streamRes = await ctx.page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+        data: { type: "channel", slug: channelSlug, visibility: "public" },
+      })
+      await expectApiOk(streamRes, "Create public channel")
+      const { stream } = (await streamRes.json()) as { stream: { id: string } }
+
+      await ctx.page.route("**/bootstrap*", injectCommands(BARE_SPAWN_COMMAND))
+
+      await ctx.page.goto(`/w/${workspaceId}/s/${stream.id}`)
+      await expect(ctx.page.getByRole("heading", { name: `#${channelSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+
+      const editor = ctx.page.locator("[contenteditable='true']")
+      await editor.click()
+      await ctx.page.keyboard.type("/spawn")
+      const commandPopup = ctx.page.locator("[aria-label='Slash command suggestions']")
+      await expect(commandPopup).toBeVisible({ timeout: 5000 })
+      await commandPopup.getByRole("option", { name: /spawn/ }).first().click()
+
+      // The runtime list still opens — that one has options.
+      const argPopup = ctx.page.locator("[aria-label='Command option suggestions']")
+      await expect(argPopup).toBeVisible({ timeout: 5000 })
+      await argPopup.getByRole("option", { name: /^Pi/ }).click()
+
+      // The overrides carry nothing to pick, so they are not offered at all
+      // rather than opening an empty popover the user can't get out of.
+      await expect(argPopup).not.toBeVisible()
+      await ctx.page.keyboard.type("fix the thing")
+      await expect(editor).toContainText("/spawn pi fix the thing")
     } finally {
       await ctx.context.close()
     }
