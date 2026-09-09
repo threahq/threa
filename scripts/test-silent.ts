@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "os"
 import * as path from "path"
 import { runUnderHeavyLock } from "./lib/heavy-lock"
+import { sweepOrphanedWebServers } from "./lib/orphan-sweep"
 
 type Runner = "bun" | "vitest" | "playwright"
 type Mode = "backend-unit" | "backend-integration" | "backend-e2e" | "frontend" | "browser"
@@ -692,6 +693,10 @@ async function main(): Promise<number> {
       env: { THREA_HEAVY_LOCK_HELD: "1" },
       label: `test ${mode}`,
     })
+  }
+
+  if (config.runner === "playwright" && !process.env.CI) {
+    await sweepOrphanedWebServers()
   }
 
   if (forceVerbose) {

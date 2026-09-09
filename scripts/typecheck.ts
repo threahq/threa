@@ -56,7 +56,7 @@ async function main(): Promise<number> {
 
   if (packages.length === 0 && !all && !process.env.CI) {
     console.error(
-      "Refusing to run the full typecheck locally. Pass file paths or patterns to target your change, or --all to run everything. CI runs the full suite on push."
+      "Refusing to run the full typecheck locally. Pass the packages you touched (bun run typecheck apps/backend), or --all to run everything. CI runs the full chain on push."
     )
     return 1
   }
