@@ -1,10 +1,10 @@
-import { readHarnessLinks, type HarnessLink } from "@threahq/harness-client"
+import { readCommandClaim, readHarnessLinks, type CommandClaim, type HarnessLink } from "@threahq/harness-client"
 import { threaTarget } from "./commands"
 import { now } from "./cli"
+import { claimCommandReporter, consoleCommandReporter, type CommandReporter } from "./command-reporter"
 import { die } from "./errors"
 import { findAgent, upsertAgent } from "./inventory"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
-import { postScratchpadNotice } from "./oom"
 import {
   decideWindow,
   defaultReapDeps,
@@ -15,39 +15,36 @@ import {
   type WindowDecisionDeps,
 } from "./reap"
 import { parseScratchpadUrl } from "./resume"
-import { notifyStream, type StreamNoticeDeps } from "./spawn-attached"
 import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { failureExcerpt, postThrea, type ThreaTarget } from "./threa-http"
 import type { ManagedAgent, RuntimeKind } from "./types"
 
-export interface DoneDeps
-  extends WindDownDeps, WindowDecisionDeps, StreamNoticeDeps, Pick<ReapDeps, "panes" | "pathExists"> {
+export interface DoneDeps extends WindDownDeps, WindowDecisionDeps, Pick<ReapDeps, "panes" | "pathExists"> {
   findAgent: (ref: string) => ManagedAgent
   /** Same lock as `clear`, so the watcher cannot revive mid-wind-down. */
   lock: () => Promise<() => void>
   persist: (agent: ManagedAgent) => void
-  endSession: (identity: { runtime: RuntimeKind; instanceId: string; runtimeSessionId: string }) => Promise<SessionEnd>
+  endSession: (identity: {
+    runtime: RuntimeKind
+    instanceId: string
+    runtimeSessionId: string
+    /** The `/done` command itself, which ending the session must not cancel: it reports the outcome. */
+    exceptInvocationId?: string
+  }) => Promise<void>
+  readClaim: (path: string) => CommandClaim
+  commandReporter: (claim: CommandClaim) => CommandReporter
 }
-
-/** The thread the ended session was living in, so the outcome can be reported where the work happened. */
-export type SessionEnd = { status: "ended"; activeStreamId: string }
 
 async function endRuntimeSession(
   target: ThreaTarget,
-  identity: { instanceId: string; runtimeSessionId: string }
-): Promise<SessionEnd> {
+  identity: { instanceId: string; runtimeSessionId: string; exceptInvocationId?: string }
+): Promise<void> {
   const response = await postThrea(target, "/bot-runtime/sessions/end", identity)
   if (!response.ok) {
     throw new Error(
       `harnessd: remote cleanup unresolved: could not end runtime session: ${await failureExcerpt(response)}`
     )
   }
-  const body = (await response.json()) as { data?: { activeStreamId?: unknown } }
-  const activeStreamId = body.data?.activeStreamId
-  if (typeof activeStreamId !== "string") {
-    throw new Error("harnessd: sessions/end returned no activeStreamId")
-  }
-  return { status: "ended", activeStreamId }
 }
 
 export function defaultDoneDeps(
@@ -75,8 +72,8 @@ export function defaultDoneDeps(
     persist: upsertAgent,
     endSession: ({ runtime, ...identity }) =>
       endRuntimeSession(targetForRuntime(runtime, "end a runtime session"), identity),
-    postNotice: (streamId, content) =>
-      postScratchpadNotice({ ...threaTarget("report a done outcome"), streamId, content }),
+    readClaim: readCommandClaim,
+    commandReporter: (claim) => claimCommandReporter(targetForRuntime(claim.runtime, "drive /done"), claim),
   }
 }
 
@@ -117,18 +114,20 @@ async function windDownForDone(agent: LinkedAgent, link: HarnessLink, deps: Done
     }
     deps.forgetLink(link.runtimeSessionId)
     retireIdentities(link.worktree, deps)
-    return "worktree already gone"
+    return "Worktree already gone"
   }
 
   const outcome = await windDownLinkedWorktree(link, window, panes, deps)
   if (outcome.refused !== undefined) die(`${agent.name}: teardown failed, nothing removed: ${outcome.refused}`)
-  return outcome.removed ? "worktree removed" : `worktree left: ${outcome.reason ?? "unknown reason"}`
+  return outcome.removed ? "Worktree removed" : `Worktree left: ${outcome.reason ?? "unknown reason"}`
 }
 
 export interface DoneRequest {
   ref: string
   /** The scratchpad `/done` was typed in; the wind-down refuses any other root. */
   rootStreamId: string
+  /** The `/done` command's own claim, when Threa typed it; absent for a `done` typed at the terminal. */
+  claimFile?: string
 }
 
 /**
@@ -137,20 +136,18 @@ export interface DoneRequest {
  * The opt-in counterpart to the archive-driven reaper, sharing its vetoes via
  * {@link decideWindow} and its wind-down sequence via {@link windDownLinkedWorktree}.
  *
- * `/done` is typed in Threa and the pane it kills is the one that would have
- * reported back, so both the outcome and any failure are posted to the
- * scratchpad root — otherwise the user's session simply stops answering. The
- * root comes from the caller rather than the link, so a failure before the link
- * is resolved still has somewhere to report.
+ * The pane it kills is the one that claimed `/done`, so that command is handed
+ * to this process instead: it is renewed across the lock wait, each stage is
+ * reported into it, and it closes completed or failed — no message is posted.
  */
 export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<void> {
-  let label = request.ref
+  const claim = request.claimFile ? deps.readClaim(request.claimFile) : undefined
+  const reporter = claim ? deps.commandReporter(claim) : consoleCommandReporter()
   try {
     const found = deps.findAgent(request.ref)
     const { worktree, instanceId, runtimeSessionId } = found
     if (!worktree || !instanceId || !runtimeSessionId) die("done needs a linked managed session")
     const agent: LinkedAgent = { ...found, worktree, instanceId, runtimeSessionId }
-    label = agent.name
 
     const release = await deps.lock()
     try {
@@ -160,27 +157,33 @@ export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<v
       if (link.rootStreamId !== request.rootStreamId) {
         die(`${agent.name}: linked to ${link.rootStreamId}, not ${request.rootStreamId}`)
       }
+      await reporter.progress("Committing, pushing and removing the worktree")
       const worktreeOutcome = await windDownForDone(agent, link, deps)
+      if (worktreeOutcome !== "Worktree removed") await reporter.progress(worktreeOutcome)
 
-      let ended: SessionEnd
+      await reporter.progress("Ending the session link")
       try {
-        ended = await deps.endSession({ runtime: agent.runtime, instanceId, runtimeSessionId })
+        await deps.endSession({
+          runtime: agent.runtime,
+          instanceId,
+          runtimeSessionId,
+          ...(claim ? { exceptInvocationId: claim.invocationId } : {}),
+        })
       } finally {
         // Persisted whichever way endSession lands: the pane is already gone by
         // this point, so a throw from an unexpected status must still leave the
         // row reflecting the session that just ended, not the one before it.
         deps.persist({ ...agent, status: "stopped", updatedAt: now() })
       }
-      const linkOutcome = "link ended"
-
-      await notifyStream(ended.activeStreamId, `harnessd: done — ${worktreeOutcome}, ${linkOutcome}.`, deps)
-      console.log(`done\t${agent.name}\t${worktreeOutcome}\t${linkOutcome}`)
+      await reporter.complete()
+      console.log(`done\t${agent.name}\t${worktreeOutcome}\tlink ended`)
     } finally {
       release()
     }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    await notifyStream(request.rootStreamId, `harnessd: \`/done\` for \`${label}\` failed: ${reason}`, deps)
+    await reporter.fail(error instanceof Error ? error.message : String(error))
     throw error
+  } finally {
+    reporter.stop()
   }
 }

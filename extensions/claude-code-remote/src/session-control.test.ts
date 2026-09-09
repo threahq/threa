@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
-import type { HarnessSpawnSpec, SpawnRuntimeOption } from "@threahq/harness-client"
+import { readCommandClaim, type HarnessSpawnSpec, type SpawnRuntimeOption } from "@threahq/harness-client"
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
 
 const SPAWN_RUNTIMES: SpawnRuntimeOption[] = [
@@ -628,11 +628,14 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     })
   })
 
+  const CLAIM = { workspaceId: "ws_1", invocationId: "binv_done", instanceId: "cc-1", claimToken: "tok" }
+
   const runDone = (
     args: string,
     activeStreamId: string,
     reconnectBusy?: () => boolean,
-    invocationRootStreamId = "root"
+    invocationRootStreamId = "root",
+    launches: unknown[] = []
   ) =>
     runClaudeCommand(
       "done",
@@ -648,17 +651,27 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       undefined,
       undefined,
       { rootStreamId: invocationRootStreamId, sourceMessageId: "msg_slash" },
-      () => activeStreamId
+      () => activeStreamId,
+      undefined,
+      undefined,
+      (runtimeSessionId, rootStreamId, options) => () => {
+        launches.push({ runtimeSessionId, rootStreamId, claim: readCommandClaim(options?.claimFile ?? "") })
+      }
     )
 
-  it("hands /done off through harnessd only from a thread session", async () => {
+  it("hands /done off through harnessd with the command's claim, only from a thread session", async () => {
     for (const args of ["", "--force"]) {
-      const outcome = await runDone(args, "thread")
-      expect({ ok: outcome.ok, message: outcome.message, afterAck: typeof outcome.afterAck }).toEqual({
+      const launches: unknown[] = []
+      const outcome = await runDone(args, "thread", undefined, "root", launches)
+      expect({ ok: outcome.ok, message: outcome.message, handoff: typeof outcome.handoff }).toEqual({
         ok: true,
-        message: "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
-        afterAck: "function",
+        message: undefined,
+        handoff: "function",
       })
+      await outcome.handoff?.(CLAIM)
+      expect(launches).toEqual([
+        { runtimeSessionId: "runtime", rootStreamId: "root", claim: { runtime: "claude", ...CLAIM } },
+      ])
     }
     for (const args of ["--FORCE", "force", "--force=true", "--force --force", "extra"]) {
       expect(await runDone(args, "thread")).toEqual({ ok: false, message: "Usage: `/done [--force]`." })
@@ -680,6 +693,49 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       message: "Claude is busy; retry when idle or use `/done --force`.",
     })
     expect((await runDone("--force", "thread", () => true)).ok).toBe(true)
+  })
+
+  it("a /done whose Claude turned busy before the handoff throws without writing a claim", async () => {
+    let busy = false
+    const launches: unknown[] = []
+    const outcome = await runDone("", "thread", () => busy, "root", launches)
+    busy = true
+    await expect(outcome.handoff?.(CLAIM)).rejects.toThrow(
+      "Claude became busy after done acknowledgement; retry when idle or use `/done --force`."
+    )
+    expect(launches).toEqual([])
+  })
+
+  it("a /done launch failure leaves no claim file behind", async () => {
+    let claimFile: string | undefined
+    const outcome = await runClaudeCommand(
+      "done",
+      "",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { rootStreamId: "root", sourceMessageId: "msg_slash" },
+      () => "thread",
+      undefined,
+      undefined,
+      (_runtimeSessionId, _rootStreamId, options) => () => {
+        expect(existsSync(options?.claimFile ?? "")).toBe(true)
+        claimFile = options?.claimFile
+        throw new Error("harnessd is not installed")
+      }
+    )
+    await expect(outcome.handoff?.(CLAIM)).rejects.toThrow("harnessd is not installed")
+    expect({ claimFile: typeof claimFile, left: existsSync(claimFile ?? "") }).toEqual({
+      claimFile: "string",
+      left: false,
+    })
   })
 
   it("sends one exact allowed key using Claude's parent PID", async () => {

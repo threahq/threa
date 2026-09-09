@@ -12,6 +12,7 @@ export {
   STEER_SETTLE_MS,
   COMPLETED_TURN_MEMORY,
   type DeliveredTurn,
+  type HandedOffCommandClaim,
   type ModelSuggestionInfo,
   type RemoteSessionDelegate,
   type RemoteSessionOptions,

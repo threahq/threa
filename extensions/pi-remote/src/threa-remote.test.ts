@@ -1,4 +1,4 @@
-import { readHarnessLinks, type SpawnRuntimeOption } from "@threahq/harness-client"
+import { readCommandClaim, readHarnessLinks, type SpawnRuntimeOption } from "@threahq/harness-client"
 import { encryptAttachmentBytes } from "@threahq/bot-runtime-client"
 import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
@@ -2199,16 +2199,16 @@ describe("Pi spawn and done session control", () => {
     })
   })
 
-  test("winds a thread session down through harnessd and refuses on the desk", async () => {
+  test("winds a thread session down through harnessd with the command's claim, and refuses on the desk", async () => {
     __testing.setConfigForTesting(linkedConfig(threadLink) as never)
-    const prepared: unknown[][] = []
+    const prepared: unknown[] = []
     const order: string[] = []
     const messages: string[] = []
     const deps = (record: string[]) =>
       ({
         available: () => true,
-        prepare: (...args: unknown[]) => {
-          prepared.push(args)
+        prepare: (runtimeSessionId: string, rootStreamId: string, options: { claimFile?: string }) => {
+          prepared.push({ runtimeSessionId, rootStreamId, claim: readCommandClaim(options.claimFile ?? "") })
           return () => order.push("start")
         },
         complete: async (_invocation: unknown, message: string) => {
@@ -2229,13 +2229,52 @@ describe("Pi spawn and done session control", () => {
     await __testing.runDoneCommand(invocation, "", context(true), deps(messages))
 
     expect({ prepared, order, messages }).toEqual({
-      prepared: [["runtime-exact", "stream-root-exact"]],
-      order: ["complete", "start", "fail", "fail"],
-      messages: [
-        "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
-        "Usage: `/done [--force]`.",
-        "Done is only available inside a thread session.",
+      prepared: [
+        {
+          runtimeSessionId: "runtime-exact",
+          rootStreamId: "stream-root-exact",
+          claim: {
+            runtime: "pi",
+            workspaceId: "ws_123",
+            invocationId: invocation.id,
+            instanceId: "pi-instance",
+            claimToken: "claim",
+          },
+        },
       ],
+      order: ["start", "fail", "fail"],
+      messages: ["Usage: `/done [--force]`.", "Done is only available inside a thread session."],
+    })
+  })
+
+  test("a done launch failure throws, posts nothing, and leaves no claim file behind", async () => {
+    __testing.setConfigForTesting(linkedConfig(threadLink) as never)
+    let claimFile: string | undefined
+    const messages: string[] = []
+    const deps = {
+      available: () => true,
+      prepare: (_runtimeSessionId: string, _rootStreamId: string, options: { claimFile?: string }) => {
+        claimFile = options.claimFile
+        return () => {
+          throw new Error("harnessd missing")
+        }
+      },
+      complete: async () => true,
+      fail: async (_invocation: unknown, message: string) => void messages.push(message),
+      heartbeat: async () => undefined,
+    } as never
+    await expect(__testing.runDoneCommand(invocation, "", context(true), deps)).rejects.toThrow("harnessd missing")
+
+    expect({
+      messages,
+      written: Boolean(claimFile),
+      left: existsSync(claimFile ?? ""),
+      latched: __testing.reconnectPending(),
+    }).toEqual({
+      messages: [],
+      written: true,
+      left: false,
+      latched: false,
     })
   })
 
@@ -2245,8 +2284,9 @@ describe("Pi spawn and done session control", () => {
     let prepared = 0
     const deps = {
       available: () => true,
-      prepare: () => {
+      prepare: (_runtimeSessionId: string, _rootStreamId: string, options: { claimFile?: string }) => {
         prepared++
+        readCommandClaim(options.claimFile ?? "")
         return () => {}
       },
       complete: async (_invocation: unknown, message: string | undefined) => {
@@ -2267,7 +2307,6 @@ describe("Pi spawn and done session control", () => {
     expect({ messages, prepared }).toEqual({
       messages: [
         "failed: Pi is busy; retry when idle or use `/done --force`.",
-        "completed: Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
         "failed: A Threa invocation is still running; use `/stop` before finishing.",
       ],
       prepared: 1,
@@ -2282,7 +2321,10 @@ describe("Pi spawn and done session control", () => {
     const heartbeats: string[] = []
     const deps = {
       available: () => true,
-      prepare: () => () => {},
+      prepare: (_runtimeSessionId: string, _rootStreamId: string, options: { claimFile?: string }) => {
+        readCommandClaim(options.claimFile ?? "")
+        return () => {}
+      },
       complete: async () => true,
       heartbeat: async (status: string) => void heartbeats.push(status),
     } as never

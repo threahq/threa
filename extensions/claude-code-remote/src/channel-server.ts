@@ -4,6 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   claudeModelSuggestions,
+  discardCommandClaim,
   discardSpawnBrief,
   harnessReconnectAvailable,
   installedSpawnRuntimes,
@@ -20,6 +21,7 @@ import {
   killOwnWindow,
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
+  writeCommandClaim,
   writeSpawnBrief,
 } from "@threahq/harness-client"
 import {
@@ -32,6 +34,7 @@ import {
   type ClaimedInvocation,
   type DelegationExecutorContext,
   type DeliveredTurn,
+  type HandedOffCommandClaim,
   type RemoteSessionConfig,
   type RemoteSessionStatusSnapshot,
   type SendResult,
@@ -254,13 +257,42 @@ export async function runClaudeCommand(
   invocationContext?: SessionControlInvocationContext,
   activeStreamId?: () => string | undefined,
   spawnLauncher: typeof prepareHarnessSpawn = prepareHarnessSpawn,
-  spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes
+  spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes,
+  doneLauncher: typeof prepareHarnessDone = prepareHarnessDone
 ): Promise<{
   ok: boolean
   message?: string
   afterAck?: () => void | Promise<void>
+  handoff?: (claim: HandedOffCommandClaim) => void | Promise<void>
   onHandoffReset?: () => void
 }> {
+  /** Between the SDK holding intake and harnessd taking the pane: Claude must still be idle and the link unchanged. */
+  const awaitHarnessHandoffWindow = async (spec: {
+    commandLabel: string
+    root: string
+    target: ReconnectTarget | undefined
+    force: boolean
+  }) => {
+    if (!spec.force && reconnectBusy?.()) {
+      throw new Error(
+        `Claude became busy after ${spec.commandLabel} acknowledgement; retry when idle or use \`/${spec.commandLabel} --force\`.`
+      )
+    }
+    await stopDelegationsForReconnect?.(spec.force)
+    const current = reconnectTarget?.()
+    if (
+      reconnectReady?.() === false ||
+      (current &&
+        (current.stopped ||
+          current.linkState !== "linked" ||
+          current.rootStreamId !== spec.root ||
+          current.linkGeneration !== spec.target?.linkGeneration))
+    ) {
+      throw new Error(
+        `Remote session changed while delegation intake was quiescing; ${spec.commandLabel} was not started.`
+      )
+    }
+  }
   const harnessHandoffResult = (spec: {
     commandLabel: string
     ackMessage: string
@@ -272,25 +304,7 @@ export async function runClaudeCommand(
     ok: true,
     message: spec.ackMessage,
     afterAck: async () => {
-      if (!spec.force && reconnectBusy?.()) {
-        throw new Error(
-          `Claude became busy after ${spec.commandLabel} acknowledgement; retry when idle or use \`/${spec.commandLabel} --force\`.`
-        )
-      }
-      await stopDelegationsForReconnect?.(spec.force)
-      const current = reconnectTarget?.()
-      if (
-        reconnectReady?.() === false ||
-        (current &&
-          (current.stopped ||
-            current.linkState !== "linked" ||
-            current.rootStreamId !== spec.root ||
-            current.linkGeneration !== spec.target?.linkGeneration))
-      ) {
-        throw new Error(
-          `Remote session changed while delegation intake was quiescing; ${spec.commandLabel} was not started.`
-        )
-      }
+      await awaitHarnessHandoffWindow(spec)
       spec.start()
     },
     onHandoffReset: restartDelegationsAfterReset,
@@ -409,14 +423,23 @@ export async function runClaudeCommand(
       if (args !== "--force" && reconnectBusy?.()) {
         return { ok: false, message: "Claude is busy; retry when idle or use `/done --force`." }
       }
-      return harnessHandoffResult({
-        commandLabel: "done",
-        ackMessage: "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
-        root,
-        target,
-        force: args === "--force",
-        start: prepareHarnessDone(runtimeSessionId, root),
-      })
+      // harnessd drives the command from here: its steps, and completion or
+      // failure, come from the wind-down itself, not from a message posted first.
+      const force = args === "--force"
+      return {
+        ok: true,
+        handoff: async (claim) => {
+          await awaitHarnessHandoffWindow({ commandLabel: "done", root, target, force })
+          const claimFile = writeCommandClaim({ runtime: "claude", ...claim })
+          try {
+            doneLauncher(runtimeSessionId, root, { claimFile })()
+          } catch (error) {
+            discardCommandClaim(claimFile)
+            throw error
+          }
+        },
+        onHandoffReset: restartDelegationsAfterReset,
+      }
     }
     case "carry-on": {
       if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
@@ -570,7 +593,8 @@ export function createClaudeSessionControl(
         context,
         activeStreamId,
         prepareHarnessSpawn,
-        spawnRuntimes
+        spawnRuntimes,
+        prepareHarnessDone
       ),
   }
 }
