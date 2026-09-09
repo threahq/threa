@@ -35,9 +35,23 @@ export async function notifyStream(streamId: string, content: string, deps: Stre
 }
 
 /**
- * Spawns an attached agent and, when a brief file is given, hands it the caller's prompt
- * through the Threa brief endpoint. Every failure is reported into the scratchpad root
- * stream (best-effort) before rethrowing, so a spawn that dies is never silent.
+ * The brief that stands in for a missing `/spawn` prompt. Its reply is the
+ * thread's first message, so the card opens on the agent introducing itself
+ * rather than on a notice written about it.
+ */
+function greetingBrief(options: SpawnOptions, result: SpawnResult): string {
+  return [
+    `You were just started as \`${options.name}\` and nobody has asked you for anything yet.`,
+    `You are working in \`${result.worktree}\` on branch \`${result.branch}\` (tmux window \`${result.tmuxWindow}\`).`,
+    "Say hello in a sentence or two, name where you are, and ask what they want done. Do not start any work yet.",
+  ].join("\n\n")
+}
+
+/**
+ * Spawns an attached agent and hands it a brief through the Threa brief endpoint:
+ * the caller's prompt when `--brief-file` carried one, a greeting otherwise. Every
+ * failure is reported into the scratchpad root stream (best-effort) before
+ * rethrowing, so a spawn that dies is never silent.
  */
 export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpawnDeps): Promise<SpawnResult> {
   if (!options.attach) die("runAttachedSpawn requires options.attach")
@@ -63,11 +77,15 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
       throw error
     }
 
-    if (content !== undefined) {
+    // The brief is what writes the thread's first message, and a thread with no
+    // messages renders no card in the timeline. A prompt-less spawn gets a
+    // greeting brief so the card opens on the agent's own words.
+    const brief = content ?? (result.activeStreamId ? greetingBrief(options, result) : undefined)
+    if (brief !== undefined) {
       try {
         const instanceId = result.instanceId ?? die("spawned agent has no instanceId to brief")
         const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
-        await deps.brief({ runtime: options.runtime, instanceId, runtimeSessionId, content })
+        await deps.brief({ runtime: options.runtime, instanceId, runtimeSessionId, content: brief })
       } catch (error) {
         await notifyStream(
           rootStreamId,
@@ -76,16 +94,6 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
         )
         throw error
       }
-    } else if (result.activeStreamId) {
-      // The brief is what normally writes the thread's first message, and a thread with
-      // no messages renders no card in the timeline. Without this a prompt-less spawn is
-      // invisible and there is nowhere to type at it.
-      await notifyStream(
-        result.activeStreamId,
-        `**${options.name}** is running in \`${result.worktree}\` (tmux \`${result.tmuxWindow}\`). No prompt came with \`/spawn\` — reply here to give it one.`,
-        deps,
-        options.runtime
-      )
     }
 
     return result
