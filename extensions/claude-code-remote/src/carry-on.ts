@@ -148,8 +148,8 @@ export class CarryOnController {
     return `Session is blocked on provider quota — queued the steer for the resume ~${formatLocalTime(this.hold.resumeAt)}.`
   }
 
-  /** The /carry-on command. Returns the user-facing ack. */
-  enqueue(text: string): { ok: boolean; message: string } {
+  /** The /carry-on command. `summary` is the account of what it did; `message` the reason when it is rejected. */
+  enqueue(text: string): { ok: boolean; summary?: string; message?: string } {
     const trimmed = text.trim()
     if (!this.hold) {
       return {
@@ -162,10 +162,10 @@ export class CarryOnController {
     const eta = `~${formatLocalTime(this.hold.resumeAt)} (in ~${formatDuration(this.hold.resumeAt - this.now())})`
     if (!trimmed) {
       const queuedNote = this.queue.length > 0 ? ` ${this.queue.length} message(s) queued.` : ""
-      return { ok: true, message: `Waiting for the provider quota — resuming ${eta}.${queuedNote}` }
+      return { ok: true, summary: `Waiting for the provider quota — resuming ${eta}.${queuedNote}` }
     }
     this.queue.push(trimmed)
-    return { ok: true, message: `Queued — the session folds it in when it resumes ${eta}.` }
+    return { ok: true, summary: `Queued — the session folds it in when it resumes ${eta}.` }
   }
 
   /** A synthetic API-error line landed for an in-flight turn. */

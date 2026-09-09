@@ -261,6 +261,7 @@ export async function runClaudeCommand(
   doneLauncher: typeof prepareHarnessDone = prepareHarnessDone
 ): Promise<{
   ok: boolean
+  summary?: string
   message?: string
   afterAck?: () => void | Promise<void>
   handoff?: (claim: HandedOffCommandClaim) => void | Promise<void>
@@ -295,14 +296,14 @@ export async function runClaudeCommand(
   }
   const harnessHandoffResult = (spec: {
     commandLabel: string
-    ackMessage: string
+    ackSummary: string
     root: string
     target: ReconnectTarget | undefined
     force: boolean
     start: () => void
   }) => ({
     ok: true,
-    message: spec.ackMessage,
+    summary: spec.ackSummary,
     afterAck: async () => {
       await awaitHarnessHandoffWindow(spec)
       spec.start()
@@ -320,7 +321,7 @@ export async function runClaudeCommand(
         throw new Error("Key control request no longer matches the linked scratchpad.")
       }
       keySender(key, process.ppid)
-      return { ok: true, message: `Sent \`${key}\` to the linked Claude session.` }
+      return { ok: true, summary: `Sent \`${key}\` to the linked Claude session.` }
     }
     case "reconnect": {
       if (args !== "" && args !== "--force") {
@@ -336,7 +337,7 @@ export async function runClaudeCommand(
       const startReconnect = prepareHarnessReconnect(runtimeSessionId, root, { force })
       return harnessHandoffResult({
         commandLabel: "reconnect",
-        ackMessage: "Reconnect request accepted; attempting to resume the linked Claude session.",
+        ackSummary: "Reconnect accepted; resuming the linked Claude session.",
         root,
         target,
         force,
@@ -357,7 +358,7 @@ export async function runClaudeCommand(
       const start = prepareHarnessClear(runtimeSessionId)
       return harnessHandoffResult({
         commandLabel: "clear",
-        ackMessage: "Clear accepted — killing this session and starting a fresh conversation on the same scratchpad.",
+        ackSummary: "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
         root,
         target,
         force,
@@ -449,7 +450,7 @@ export async function runClaudeCommand(
       if (!runtimeSessionId) throw new Error("Harness kick is unavailable for this session.")
       const result = runHarnessKick(runtimeSessionId)
       if (!result.ok) throw new Error(`Could not kick the session: ${result.error}`)
-      return { ok: true, message: "Kicked the linked Claude Code session." }
+      return { ok: true, summary: "Kicked the linked Claude Code session." }
     }
     case "status": {
       if (!statusReport) return { ok: false, message: "Session status is unavailable." }
@@ -470,7 +471,7 @@ export async function runClaudeCommand(
       if (!result.ok) return { ok: false, message: "Could not send /model (no tmux control)." }
       return {
         ok: true,
-        message: result.confirmed
+        summary: result.confirmed
           ? `Set Claude Code model to \`${alias}\` and confirmed the switch dialog.`
           : `Set Claude Code model to \`${alias}\`.`,
       }
@@ -484,10 +485,8 @@ export async function runClaudeCommand(
         return { ok: false, message: `Usage: \`/thinking <level>\` — one of ${THINKING_LEVELS.join(", ")}.` }
       }
       const ok = await submitLine(`/effort ${level}`)
-      return {
-        ok,
-        message: ok ? `Set Claude Code effort to \`${level}\`.` : "Could not send /effort (no tmux control).",
-      }
+      if (!ok) return { ok: false, message: "Could not send /effort (no tmux control)." }
+      return { ok: true, summary: `Set Claude Code effort to \`${level}\`.` }
     }
     case "compact":
       return runSlash(args.trim() ? `/compact ${args.trim()}` : "/compact")
@@ -506,9 +505,10 @@ export async function runClaudeCommand(
   }
 }
 
-async function runSlash(slash: string): Promise<{ ok: boolean; message: string }> {
+async function runSlash(slash: string): Promise<{ ok: boolean; summary?: string; message?: string }> {
   const ok = await submitLine(slash)
-  return { ok, message: ok ? `Ran \`${slash}\` in Claude Code.` : `Could not send \`${slash}\` (no tmux control).` }
+  if (!ok) return { ok: false, message: `Could not send \`${slash}\` (no tmux control).` }
+  return { ok: true, summary: `Ran \`${slash}\` in Claude Code.` }
 }
 
 /**
