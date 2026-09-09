@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { ActiveAgentSession, ThreadSummary } from "@threahq/types"
 import type { ScopeDraftPreview } from "@/hooks"
@@ -135,32 +135,37 @@ export function ThreadSlot({
         )}
       </span>
 
-      {/* Two independent rows — thinking and card — each 1fr when it has content
-          and 0fr when it does not, so a session working on a thread that already
-          has replies still shows as working, above the card. `grid-template-rows`
-          animates in Chrome 111+, Firefox 120+, Safari 17+; older browsers snap
-          to the final rows without transition. */}
-      <div
-        className="grid transition-[grid-template-rows] duration-[450ms] ease-out"
-        style={{
-          gridTemplateRows: `${hasActivity ? "1fr" : "0fr"} ${showCard ? "1fr" : "0fr"}`,
-        }}
-      >
-        <div className="overflow-hidden">{activity ? <ThinkingRow activity={activity} /> : null}</div>
-        <div className="overflow-hidden">
-          {showCard && cardHref ? (
-            <ThreadCard
-              replyCount={hasThread ? replyCount : 0}
-              href={cardHref}
-              workspaceId={workspaceId}
-              summary={summary}
-              draft={draft}
-              isActive={hasActivity}
-              ownsLeftLine={false}
-            />
-          ) : null}
-        </div>
-      </div>
+      {/* Thinking and card each sit in their own one-row grid, 1fr with content
+          and 0fr without, so a session working on a thread that already has
+          replies still shows as working, above the card. Sharing one grid would
+          make the two tracks equal height and stretch the one-line thinking row
+          to the card's height. `grid-template-rows` animates in Chrome 111+,
+          Firefox 120+, Safari 17+; older browsers snap without transition. */}
+      <CollapsibleRow open={hasActivity}>{activity ? <ThinkingRow activity={activity} /> : null}</CollapsibleRow>
+      <CollapsibleRow open={showCard}>
+        {showCard && cardHref ? (
+          <ThreadCard
+            replyCount={hasThread ? replyCount : 0}
+            href={cardHref}
+            workspaceId={workspaceId}
+            summary={summary}
+            draft={draft}
+            isActive={hasActivity}
+            ownsLeftLine={false}
+          />
+        ) : null}
+      </CollapsibleRow>
+    </div>
+  )
+}
+
+function CollapsibleRow({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div
+      className="grid transition-[grid-template-rows] duration-[450ms] ease-out"
+      style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+    >
+      <div className="overflow-hidden">{children}</div>
     </div>
   )
 }

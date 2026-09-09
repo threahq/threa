@@ -93,8 +93,10 @@ describe("ThreadSlot reads the anchor store", () => {
     expect(screen.getByText("2 replies")).toBeInTheDocument()
     // Both rows open. Presence in the DOM is not enough — the grid collapsing
     // the thinking row to `0fr` is exactly how the indicator used to vanish
-    // once the card appeared.
-    expect(container.querySelector<HTMLElement>("div.grid")?.style.gridTemplateRows).toBe("1fr 1fr")
+    // once the card appeared. Each row owns its grid: one shared grid gave the
+    // two tracks equal height and stretched the thinking row to the card's.
+    const rows = [...container.querySelectorAll<HTMLElement>("div.grid")].map((row) => row.style.gridTemplateRows)
+    expect(rows).toEqual(["1fr", "1fr"])
   })
 
   it("leaves a session running in the anchor's own stream to its session card", () => {
