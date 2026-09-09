@@ -1482,9 +1482,8 @@ describe("Pi reconnect session control", () => {
         send: () => {
           sends++
         },
-        complete: async (_invocation: unknown, message: string) => {
+        fail: async (_invocation: unknown, message: string) => {
           messages.push(message)
-          return true
         },
       } as never)
     }
@@ -1525,9 +1524,8 @@ describe("Pi reconnect session control", () => {
           prepared++
           return () => undefined
         },
-        complete: async (_invocation: unknown, message: string) => {
+        fail: async (_invocation: unknown, message: string) => {
           messages.push(message)
-          return true
         },
       } as never)
     }
@@ -1687,8 +1685,11 @@ describe("Pi reconnect session control", () => {
         return () => {}
       },
       complete: async (_invocation: unknown, message: string | undefined) => {
-        messages.push(message)
+        messages.push(`completed: ${message}`)
         return true
+      },
+      fail: async (_invocation: unknown, message: string) => {
+        messages.push(`failed: ${message}`)
       },
       heartbeat: async () => undefined,
     } as never
@@ -1699,9 +1700,9 @@ describe("Pi reconnect session control", () => {
     await __testing.runReconnectCommand(invocation, "--force", context(false), deps)
     expect({ messages, prepared }).toEqual({
       messages: [
-        "Pi is busy; retry when idle or use `/reconnect --force`.",
-        "Reconnect request accepted; attempting to resume the linked Pi session.",
-        "A Threa invocation is still running; use `/stop` before reconnecting.",
+        "failed: Pi is busy; retry when idle or use `/reconnect --force`.",
+        "completed: Reconnect request accepted; attempting to resume the linked Pi session.",
+        "failed: A Threa invocation is still running; use `/stop` before reconnecting.",
       ],
       prepared: 1,
     })
@@ -1830,9 +1831,8 @@ describe("Pi clear session control", () => {
           prepared++
           return () => undefined
         },
-        complete: async (_invocation: unknown, message: string) => {
+        fail: async (_invocation: unknown, message: string) => {
           messages.push(message)
-          return true
         },
       } as never)
     }
@@ -1922,8 +1922,11 @@ describe("Pi clear session control", () => {
         return () => {}
       },
       complete: async (_invocation: unknown, message: string | undefined) => {
-        messages.push(message)
+        messages.push(`completed: ${message}`)
         return true
+      },
+      fail: async (_invocation: unknown, message: string) => {
+        messages.push(`failed: ${message}`)
       },
       heartbeat: async () => undefined,
     } as never
@@ -1934,9 +1937,9 @@ describe("Pi clear session control", () => {
     await __testing.runClearCommand(invocation, "--force", context(false), deps)
     expect({ messages, prepared }).toEqual({
       messages: [
-        "Pi is busy; retry when idle or use `/clear --force`.",
-        "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
-        "A Threa invocation is still running; use `/stop` before clearing.",
+        "failed: Pi is busy; retry when idle or use `/clear --force`.",
+        "completed: Clear accepted; killing this session and starting a fresh conversation on the same scratchpad.",
+        "failed: A Threa invocation is still running; use `/stop` before clearing.",
       ],
       prepared: 1,
     })
@@ -2029,9 +2032,8 @@ describe("Pi spawn and done session control", () => {
         prepared++
         return () => undefined
       },
-      complete: async (_invocation: unknown, message: string) => {
+      fail: async (_invocation: unknown, message: string) => {
         messages.push(message)
-        return true
       },
       spawnRuntimes: () => PI_ONLY,
     } as never)
@@ -2051,9 +2053,8 @@ describe("Pi spawn and done session control", () => {
           prepared++
           return () => undefined
         },
-        complete: async (_invocation: unknown, message: string) => {
+        fail: async (_invocation: unknown, message: string) => {
           messages.push(message)
-          return true
         },
         spawnRuntimes: () => SPAWN_RUNTIMES,
       } as never)
@@ -2105,9 +2106,8 @@ describe("Pi spawn and done session control", () => {
         prepared++
         return () => undefined
       },
-      complete: async (_invocation: unknown, message: string | undefined) => {
+      fail: async (_invocation: unknown, message: string) => {
         messages.push(message)
-        return true
       },
       spawnRuntimes: () => SPAWN_RUNTIMES,
     } as never)
@@ -2216,6 +2216,10 @@ describe("Pi spawn and done session control", () => {
           record.push(message)
           return true
         },
+        fail: async (_invocation: unknown, message: string) => {
+          order.push("fail")
+          record.push(message)
+        },
         heartbeat: async () => undefined,
       }) as never
     await __testing.runDoneCommand(invocation, "", context(true), deps(messages))
@@ -2226,7 +2230,7 @@ describe("Pi spawn and done session control", () => {
 
     expect({ prepared, order, messages }).toEqual({
       prepared: [["runtime-exact", "stream-root-exact"]],
-      order: ["complete", "start", "complete", "complete"],
+      order: ["complete", "start", "fail", "fail"],
       messages: [
         "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
         "Usage: `/done [--force]`.",
@@ -2246,8 +2250,11 @@ describe("Pi spawn and done session control", () => {
         return () => {}
       },
       complete: async (_invocation: unknown, message: string | undefined) => {
-        messages.push(message)
+        messages.push(`completed: ${message}`)
         return true
+      },
+      fail: async (_invocation: unknown, message: string) => {
+        messages.push(`failed: ${message}`)
       },
       heartbeat: async () => undefined,
     } as never
@@ -2259,9 +2266,9 @@ describe("Pi spawn and done session control", () => {
 
     expect({ messages, prepared }).toEqual({
       messages: [
-        "Pi is busy; retry when idle or use `/done --force`.",
-        "Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
-        "A Threa invocation is still running; use `/stop` before finishing.",
+        "failed: Pi is busy; retry when idle or use `/done --force`.",
+        "completed: Wrapping up: committing, pushing, removing the worktree and ending this thread's session.",
+        "failed: A Threa invocation is still running; use `/stop` before finishing.",
       ],
       prepared: 1,
     })

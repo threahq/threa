@@ -140,6 +140,7 @@ export interface SessionControlActuator {
     args: string,
     context: SessionControlInvocationContext
   ): Promise<{
+    /** False rejects the command: it closes as failed with `message` as the reason and nothing is posted. */
     ok: boolean
     /** Ack markdown to post. Omitted closes the command with no post at all, for one whose visible outcome lands elsewhere (`/spawn`'s thread). */
     message?: string
@@ -1423,6 +1424,10 @@ export class RemoteSession {
             sourceMessageId: invocation.sourceMessageId,
           })
           if (this.isClaimCancelled(invocation)) return
+          if (!outcome.ok) {
+            await this.failInvocation(invocation, outcome.message ?? "Command rejected.")
+            return
+          }
           const ack = (): Promise<boolean> =>
             outcome.message === undefined
               ? this.completeSilentAck(invocation)

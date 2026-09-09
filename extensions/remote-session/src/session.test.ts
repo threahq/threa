@@ -2128,6 +2128,36 @@ describe("session control via the actuator", () => {
     })
   })
 
+  test("fails a rejected command with its reason and posts nothing", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer", "spawn"],
+        interrupt: () => true,
+        runCommand: async () => ({ ok: false, message: "Usage: `/spawn <name>`." }),
+      },
+    })
+    const invocation = makeInvocation({
+      id: "binv_spawn_rejected",
+      trigger: "session-control",
+      promptMarkdown: "/spawn",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_3", name: "spawn", args: "" } },
+    })
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(invocation)
+
+    expect({
+      completes: calls.complete,
+      fails: calls.fail.map(({ id, body }) => ({ id, error: body.errorMessage })),
+    }).toEqual({
+      completes: [],
+      fails: [{ id: "binv_spawn_rejected", error: "Usage: `/spawn <name>`." }],
+    })
+  })
+
   test("refreshes hello with the current nonaccepting handoff state", () => {
     const { client } = makeFakeClient()
     const { transport } = makeFakeTransport()

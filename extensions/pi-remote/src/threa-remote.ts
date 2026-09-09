@@ -3784,12 +3784,13 @@ async function runKeyCommand(
   deps: {
     send: typeof sendAllowedTmuxKey
     complete: typeof completeInvocationWithMarkdown
-  } = { send: sendAllowedTmuxKey, complete: completeInvocationWithMarkdown },
+    fail: typeof failInvocation
+  } = { send: sendAllowedTmuxKey, complete: completeInvocationWithMarkdown, fail: failInvocation },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
   const key = parseAllowedTmuxKey(args)
   if (!key) {
-    await deps.complete(invocation, "Usage: `/key <name>`.", ctx)
+    await deps.fail(invocation, "Usage: `/key <name>`.")
     return
   }
   const link = currentSessionControlLink(ctx)
@@ -3818,6 +3819,7 @@ interface SpawnCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessSpawn
   complete: typeof completeInvocationWithMarkdown
+  fail: typeof failInvocation
   spawnRuntimes: () => SpawnRuntimeOption[]
 }
 
@@ -3834,6 +3836,7 @@ interface HarnessHandoffSpec {
 interface HarnessHandoffDeps {
   available: () => boolean
   complete: typeof completeInvocationWithMarkdown
+  fail: typeof failInvocation
   heartbeat?: typeof heartbeat
 }
 
@@ -3867,15 +3870,15 @@ async function runHarnessHandoffCommand(
 ): Promise<void> {
   const sendHeartbeat = deps.heartbeat ?? heartbeat
   if (args !== "" && args !== "--force") {
-    await deps.complete(invocation, spec.usage, ctx)
+    await deps.fail(invocation, spec.usage)
     return
   }
   if (pending) {
-    await deps.complete(invocation, spec.pendingMessage, ctx)
+    await deps.fail(invocation, spec.pendingMessage)
     return
   }
   if (args !== "--force" && !ctx.isIdle()) {
-    await deps.complete(invocation, spec.busyMessage, ctx)
+    await deps.fail(invocation, spec.busyMessage)
     return
   }
   const link = currentReconnectLink(ctx, deps.available)
@@ -3956,6 +3959,7 @@ async function runReconnectCommand(
     available: harnessReconnectAvailable,
     prepare: prepareHarnessReconnect,
     complete: completeInvocationWithMarkdown,
+    fail: failInvocation,
     heartbeat,
   },
   isCurrent: InvocationGuard = () => true
@@ -3986,6 +3990,7 @@ async function runClearCommand(
     available: harnessReconnectAvailable,
     prepare: prepareHarnessClear,
     complete: completeInvocationWithMarkdown,
+    fail: failInvocation,
     heartbeat,
   },
   isCurrent: InvocationGuard = () => true
@@ -4016,22 +4021,23 @@ async function runSpawnCommand(
     available: harnessReconnectAvailable,
     prepare: prepareHarnessSpawn,
     complete: completeInvocationWithMarkdown,
+    fail: failInvocation,
     spawnRuntimes: defaultSpawnRuntimes,
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
   const parsed = parseSpawnCommandArgs(args, { runtimes: deps.spawnRuntimes(), defaultRuntime: SPAWN_DEFAULT_RUNTIME })
   if ("error" in parsed) {
-    await deps.complete(invocation, parsed.error, ctx)
+    await deps.fail(invocation, parsed.error)
     return
   }
   const link = currentReconnectLink(ctx, deps.available)
   if (!link) {
-    await deps.complete(invocation, "Spawn is unavailable for this session.", ctx)
+    await deps.fail(invocation, "Spawn is unavailable for this session.")
     return
   }
   if (link.activeStreamId !== link.rootStreamId) {
-    await deps.complete(invocation, "Spawn is only available on the scratchpad root.", ctx)
+    await deps.fail(invocation, "Spawn is only available on the scratchpad root.")
     return
   }
   if (invocation.rootStreamId !== link.rootStreamId || invocation.claimedInstanceId !== link.instanceId) {
@@ -4077,13 +4083,14 @@ async function runDoneCommand(
     available: harnessReconnectAvailable,
     prepare: prepareHarnessDone,
     complete: completeInvocationWithMarkdown,
+    fail: failInvocation,
     heartbeat,
   },
   isCurrent: InvocationGuard = () => true
 ): Promise<void> {
   const link = currentReconnectLink(ctx, deps.available)
   if (link && link.activeStreamId === link.rootStreamId) {
-    await deps.complete(invocation, "Done is only available inside a thread session.", ctx)
+    await deps.fail(invocation, "Done is only available inside a thread session.")
     return
   }
   await runHarnessHandoffCommand(
@@ -5035,7 +5042,7 @@ async function failInvocation(invocation: ClaimedInvocation, error: unknown): Pr
   // error's class name (the enclave's failure path is the same shape).
   const errorMessage = invocation.sealing
     ? `Sealed turn failed: ${scrubSealedError(error)}`
-    : String(error).slice(0, 1000)
+    : (error instanceof Error ? error.message : String(error)).slice(0, 1000)
   try {
     await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
       method: "POST",
