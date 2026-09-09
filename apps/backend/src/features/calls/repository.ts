@@ -793,17 +793,24 @@ export const CallParticipantRepository = {
         p.status AS participant_status,
         e.id AS endpoint_id,
         e.status AS connection_status,
-        e.cf_session_id AS cf_session_id,
+        COALESCE(s.provider_session_id, e.cf_session_id) AS cf_session_id,
         e.media_state,
-        e.published_tracks,
+        COALESCE(s.published_tracks, e.published_tracks) AS published_tracks,
         e.epoch,
         e.media_incarnation,
         e.transport_capability,
         e.transfer_capability
       FROM call_participants p
+      JOIN calls c
+        ON c.workspace_id = p.workspace_id AND c.id = p.call_id
       LEFT JOIN call_endpoints e
         ON e.workspace_id = p.workspace_id AND e.participant_id = p.id
         AND e.status IN ('connected', 'reconnecting')
+      LEFT JOIN call_transport_sessions s
+        ON s.workspace_id = e.workspace_id AND s.call_id = e.call_id AND s.endpoint_id = e.id
+        AND s.endpoint_epoch = e.epoch AND s.media_incarnation = e.media_incarnation
+        AND s.transport_generation = c.transport_generation AND s.media_transport = 'sfu'
+        AND s.status IN ('preparing', 'ready', 'active', 'draining')
       WHERE p.workspace_id = ${workspaceId} AND p.call_id = ${callId} AND p.status = 'joined'
       ORDER BY p.joined_at ASC
     `)

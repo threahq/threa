@@ -774,6 +774,100 @@ describe("calls P2P schema and negotiation state", () => {
     expect(open.rows).toEqual([])
   })
 
+  test("should expose generation-qualified SFU publications on the roster and allow a peer pull", async () => {
+    const scenario = await seedScenario()
+    const pulled: Array<{ sessionId: string; tracks: Array<{ sessionId: string; trackName: string }> }> = []
+    let sessionNumber = 0
+    const service = new CallService({
+      pool,
+      featureFlagService: featureFlags,
+      cloudflare: {
+        createSession: async () => ({ sessionId: `cf_sfu_${++sessionNumber}` }),
+        addLocalTracks: async (_sessionId: string, request: { tracks: Array<{ trackName: string }> }) => ({
+          requiresImmediateRenegotiation: false,
+          tracks: request.tracks.map(({ trackName }) => ({ trackName })),
+        }),
+        pullRemoteTracks: async (
+          sessionId: string,
+          request: { tracks: Array<{ sessionId: string; trackName: string }> }
+        ) => {
+          pulled.push({ sessionId, tracks: request.tracks })
+          return { requiresImmediateRenegotiation: false, tracks: request.tracks }
+        },
+      } as never,
+    })
+    const started = await service.startCall({
+      ...scenario,
+      userId: scenario.aUserId,
+      mode: "video",
+      mediaIncarnation: "inc_publisher",
+    })
+    const joined = await service.joinCall({
+      workspaceId: scenario.workspaceId,
+      callId: started.call.id,
+      userId: scenario.bUserId,
+      mediaIncarnation: "inc_receiver",
+    })
+    const publisherSession = await service.createEndpointCfSession({
+      workspaceId: scenario.workspaceId,
+      callId: started.call.id,
+      userId: scenario.aUserId,
+      endpointId: started.endpoint.id,
+      mediaIncarnation: "inc_publisher",
+      generation: 1,
+    })
+    const receiverSession = await service.createEndpointCfSession({
+      workspaceId: scenario.workspaceId,
+      callId: started.call.id,
+      userId: scenario.bUserId,
+      endpointId: joined.endpoint.id,
+      mediaIncarnation: "inc_receiver",
+      generation: 1,
+    })
+    const published = await service.publishTracks({
+      workspaceId: scenario.workspaceId,
+      callId: started.call.id,
+      userId: scenario.aUserId,
+      endpointId: started.endpoint.id,
+      mediaIncarnation: "inc_publisher",
+      generation: 1,
+      sessionId: publisherSession.cfSessionId,
+      sdp: { type: "offer", sdp: "v=0" },
+      tracks: [
+        { kind: "mic", mid: "0", trackName: "publisher-mic" },
+        { kind: "camera", mid: "1", trackName: "publisher-camera" },
+      ],
+    })
+    const rosterPublisher = published.snapshot.roster.find((entry) => entry.endpointId === started.endpoint.id)
+    const remoteTracks = rosterPublisher!.publishedTracks.map((track) => ({
+      location: "remote" as const,
+      sessionId: rosterPublisher!.cfSessionId!,
+      trackName: track.trackName,
+    }))
+
+    await service.pullTracks({
+      workspaceId: scenario.workspaceId,
+      callId: started.call.id,
+      userId: scenario.bUserId,
+      endpointId: joined.endpoint.id,
+      mediaIncarnation: "inc_receiver",
+      generation: 1,
+      sessionId: receiverSession.cfSessionId,
+      tracks: remoteTracks,
+    })
+
+    expect({ rosterPublisher, pulled }).toEqual({
+      rosterPublisher: expect.objectContaining({
+        cfSessionId: publisherSession.cfSessionId,
+        publishedTracks: [
+          { kind: "mic", trackName: "publisher-mic", transportGeneration: 1 },
+          { kind: "camera", trackName: "publisher-camera", transportGeneration: 1 },
+        ],
+      }),
+      pulled: [{ sessionId: receiverSession.cfSessionId, tracks: remoteTracks }],
+    })
+  })
+
   test("should preserve publication revision when the SFU registry mutates without one", async () => {
     const scenario = await seedScenario()
     const service = new CallService({

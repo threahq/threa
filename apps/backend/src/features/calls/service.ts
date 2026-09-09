@@ -2499,7 +2499,7 @@ export class CallService {
       if (!call) throw new HttpError("Call not found", { status: 404, code: "CALL_NOT_FOUND" })
       const generation = params.generation ?? call.transportGeneration
       const targetSession =
-        generation === call.transportGeneration
+        params.generation == null
           ? null
           : await CallTransportSessionRepository.find(client, {
               workspaceId: params.workspaceId,
