@@ -1249,8 +1249,9 @@ export const BotInvocationRepository = {
    */
   async cancelActiveByTargetRuntimeSession(
     db: Querier,
-    params: { workspaceId: string; botId: string; runtimeSessionId: string }
+    params: { workspaceId: string; botId: string; runtimeSessionId: string; exceptInvocationId?: string }
   ): Promise<BotInvocation[]> {
+    const exceptInvocationId = params.exceptInvocationId ?? null
     const result = await db.query<BotInvocationRow>(sql`
       UPDATE bot_invocations
       SET status = 'cancelled', cancellation_reason = 'routing_changed', updated_at = NOW()
@@ -1258,6 +1259,7 @@ export const BotInvocationRepository = {
         AND actor_type = 'bot' AND actor_id = ${params.botId}
         AND status IN ('pending', 'claimed')
         AND target_runtime_session_id = ${params.runtimeSessionId}
+        AND (${exceptInvocationId}::text IS NULL OR id <> ${exceptInvocationId}::text)
       RETURNING *
     `)
     return result.rows.map(mapInvocation)

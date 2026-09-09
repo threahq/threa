@@ -80,6 +80,7 @@ import {
 import {
   insertCommandCompletedEvent,
   insertCommandFailedEvent,
+  insertCommandProgressEvent,
   parseRuntimeCommandInvocationMetadata,
 } from "../commands"
 import { HttpError, isUniqueViolation } from "@threahq/backend-common"
@@ -157,6 +158,7 @@ import {
   renewInvocationClaimSchema,
   completeInvocationSchema,
   failInvocationSchema,
+  reportInvocationProgressSchema,
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
@@ -1470,6 +1472,7 @@ export function createPublicApiHandlers({
         botId: req.botApiKey.botId,
         instanceId: data.instanceId,
         runtimeSessionId: data.runtimeSessionId,
+        exceptInvocationId: data.exceptInvocationId,
       })
       if (!ended) {
         throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
@@ -1691,6 +1694,34 @@ export function createPublicApiHandlers({
         restartRequiredRevision: data.restartRequiredRevision,
       })
       res.json({ data: renewed })
+    },
+
+    async reportBotInvocationProgress(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(reportInvocationProgressSchema, req.body)
+      const claim = await withTransaction(pool, async (client) => {
+        const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
+          workspaceId: req.workspaceId!,
+          botId: req.botApiKey!.botId,
+          invocationId: req.params.invocationId,
+          instanceId: data.instanceId,
+          claimToken: data.claimToken,
+        })
+        if (!claim) throw invocationClaimNotFound()
+        const runtimeCommand = parseRuntimeCommandInvocationMetadata(claim.metadata)
+        if (!runtimeCommand) {
+          throw new HttpError("Invocation is not a slash command", { status: 409, code: "INVOCATION_NOT_COMMAND" })
+        }
+        await insertCommandProgressEvent(client, {
+          workspaceId: req.workspaceId!,
+          streamId: claim.responseStreamId,
+          userId: claim.authorUserId,
+          commandId: runtimeCommand.id,
+          step: data.step,
+        })
+        return claim
+      })
+      res.json({ data: { invocationId: claim.id, status: claim.status } })
     },
 
     async recordBotInvocationStep(req: Request, res: Response) {

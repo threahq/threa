@@ -4,6 +4,7 @@ import {
   type CommandDispatchedPayload,
   type CommandEventType,
   type CommandFailedPayload,
+  type CommandProgressPayload,
   type StreamEvent,
 } from "@threahq/types"
 
@@ -21,7 +22,11 @@ export function isCommandEvent(event: Pick<StreamEvent, "eventType">): boolean {
 
 export function getCommandId(event: Pick<StreamEvent, "eventType" | "payload">): string | null {
   if (!isCommandEvent(event)) return null
-  const payload = event.payload as CommandDispatchedPayload | CommandCompletedPayload | CommandFailedPayload
+  const payload = event.payload as
+    | CommandDispatchedPayload
+    | CommandProgressPayload
+    | CommandCompletedPayload
+    | CommandFailedPayload
   return payload.commandId ?? null
 }
 

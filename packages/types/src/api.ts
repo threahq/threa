@@ -2169,6 +2169,11 @@ export interface CommandFailedPayload {
   error: string
 }
 
+export interface CommandProgressPayload {
+  commandId: string
+  step: string
+}
+
 /**
  * Payload for `aside:anchored` timeline events: the creator-only row an aside
  * leaves in its host stream, appended in the aside-creation transaction

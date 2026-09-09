@@ -4,6 +4,7 @@ import type {
   CommandDispatchedPayload,
   CommandCompletedPayload,
   CommandFailedPayload,
+  CommandProgressPayload,
 } from "@threahq/types"
 import { Loader2, CheckCircle, XCircle, ChevronRight, X } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -31,6 +32,10 @@ export function CommandEvent({ events }: CommandEventProps) {
   const dispatchedEvent = events.find((e) => e.eventType === "command_dispatched")
   const completedEvent = events.find((e) => e.eventType === "command_completed")
   const failedEvent = events.find((e) => e.eventType === "command_failed")
+  const latestStep = events.reduce<string | undefined>(
+    (step, e) => (e.eventType === "command_progress" ? (e.payload as CommandProgressPayload).step : step),
+    undefined
+  )
   const localStatus = (dispatchedEvent as (StreamEvent & { _status?: string }) | undefined)?._status
   const cancellation = useCommandDispatchCancellation(
     (dispatchedEvent as (StreamEvent & { workspaceId?: string }) | undefined)?.workspaceId ?? "",
@@ -63,7 +68,11 @@ export function CommandEvent({ events }: CommandEventProps) {
               {dispatchedPayload.args && (
                 <span className="text-muted-foreground/70 ml-1">{truncateArgs(dispatchedPayload.args)}</span>
               )}
-              <StatusLabel status={status} failedPayload={failedEvent?.payload as CommandFailedPayload | undefined} />
+              <StatusLabel
+                status={status}
+                step={latestStep}
+                failedPayload={failedEvent?.payload as CommandFailedPayload | undefined}
+              />
             </span>
             <span className="text-xs text-muted-foreground/50">{formatTime(new Date(dispatchedEvent.createdAt))}</span>
           </button>
@@ -102,10 +111,18 @@ function StatusIcon({ status }: { status: CommandStatus }) {
   }
 }
 
-function StatusLabel({ status, failedPayload }: { status: CommandStatus; failedPayload?: CommandFailedPayload }) {
+function StatusLabel({
+  status,
+  step,
+  failedPayload,
+}: {
+  status: CommandStatus
+  step?: string
+  failedPayload?: CommandFailedPayload
+}) {
   switch (status) {
     case "running":
-      return <span className="text-muted-foreground/70 ml-2">running...</span>
+      return <span className="text-muted-foreground/70 ml-2">{step ? stripMarkdownToInline(step) : "running"}...</span>
     case "completed":
       return <span className="text-green-600 ml-2">completed</span>
     case "failed":
@@ -127,6 +144,16 @@ function TimelineEntry({ event, formatTime }: { event: StreamEvent; formatTime: 
             <code className="font-mono bg-muted text-primary font-bold px-1 rounded">/{p.name}</code>
             {p.args && <span className="text-muted-foreground/70"> {stripMarkdownToInline(p.args)}</span>}
           </span>
+        </div>
+      )
+    }
+
+    case "command_progress": {
+      const p = event.payload as CommandProgressPayload
+      return (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="w-12 text-muted-foreground/50">{time}</span>
+          <span>{stripMarkdownToInline(p.step)}</span>
         </div>
       )
     }

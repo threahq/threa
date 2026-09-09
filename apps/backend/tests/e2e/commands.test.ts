@@ -439,4 +439,58 @@ describe("Stream-scoped Pi session-control commands", () => {
     expect(completed).toBeDefined()
     expect((completed?.payload as { commandId?: string } | undefined)?.commandId).toBe(dispatch.commandId)
   })
+
+  test("a claimed session-control invocation reports progress steps onto its command", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("pi-cmd-progress"), "Pi Command User")
+    const workspace = await createWorkspace(client, `Pi Cmd Progress WS ${testRunId}`)
+    const linked = await createLinkedPiSession(client, workspace.id, `progress-${testRunId}`)
+
+    const dispatch = await dispatchCommand(client, workspace.id, linked.streamId, "/thinking high")
+
+    const claim = await botApiPost<{ data: { id: string; claimToken: string } | null }>(
+      client,
+      workspace.id,
+      "/bot-invocations/claim",
+      linked.apiKey,
+      {
+        runtimeKind: "pi-local",
+        instanceId: linked.instanceId,
+        runtimeSessionId: linked.runtimeSessionId,
+        supportedCapabilities: [BotInvocationCapabilities.SESSION_CONTROL],
+        claimTtlSeconds: 120,
+      }
+    )
+    const invocation = claim.data.data
+    if (!invocation) throw new Error("Expected to claim the dispatched invocation")
+
+    const progress = await botApiPost<{ data: { invocationId: string; status: string } }>(
+      client,
+      workspace.id,
+      `/bot-invocations/${invocation.id}/progress`,
+      linked.apiKey,
+      { instanceId: linked.instanceId, claimToken: invocation.claimToken, step: "Committing and pushing" }
+    )
+    expect(progress.status).toBe(200)
+    expect(progress.data.data).toEqual({ invocationId: invocation.id, status: "claimed" })
+
+    const wrongClaim = await botApiPost(
+      client,
+      workspace.id,
+      `/bot-invocations/${invocation.id}/progress`,
+      linked.apiKey,
+      {
+        instanceId: linked.instanceId,
+        claimToken: "not-the-claim",
+        step: "Removing the worktree",
+      }
+    )
+    expect(wrongClaim.status).toBe(404)
+
+    const events = await listEvents(client, workspace.id, linked.streamId)
+    const steps = events
+      .filter((event) => event.eventType === "command_progress")
+      .map((event) => event.payload as { commandId?: string; step?: string })
+    expect(steps).toEqual([{ commandId: dispatch.commandId, step: "Committing and pushing" }])
+  })
 })

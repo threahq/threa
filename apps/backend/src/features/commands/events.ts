@@ -5,6 +5,7 @@ import {
   type CommandCompletedPayload,
   type CommandDispatchedPayload,
   type CommandFailedPayload,
+  type CommandProgressPayload,
 } from "@threahq/types"
 import type { Querier } from "../../db"
 import { eventId } from "../../lib/id"
@@ -109,6 +110,29 @@ export async function insertCommandCompletedEvent(
   })
 
   await OutboxRepository.insert(db, "command:completed", {
+    workspaceId: params.workspaceId,
+    streamId: params.streamId,
+    authorId: params.userId,
+    event: serializeBigInt(evt),
+  })
+
+  return evt
+}
+
+export async function insertCommandProgressEvent(
+  db: Querier,
+  params: { workspaceId: string; streamId: string; userId: string; commandId: string; step: string }
+): Promise<StreamEvent> {
+  const evt = await StreamEventRepository.insert(db, {
+    id: eventId(),
+    streamId: params.streamId,
+    eventType: "command_progress",
+    payload: { commandId: params.commandId, step: params.step } satisfies CommandProgressPayload,
+    actorId: params.userId,
+    actorType: AuthorTypes.USER,
+  })
+
+  await OutboxRepository.insert(db, "command:progress", {
     workspaceId: params.workspaceId,
     streamId: params.streamId,
     authorId: params.userId,

@@ -56,6 +56,7 @@ import {
   briefRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
+  reportInvocationProgressSchema,
   completeInvocationSchema,
   failInvocationSchema,
   recordInvocationStepSchema,
@@ -824,6 +825,7 @@ export type OperationId =
   | "briefBotRuntimeSession"
   | "claimBotInvocation"
   | "renewBotInvocationClaim"
+  | "reportBotInvocationProgress"
   | "recordBotInvocationStep"
   | "startBotInvocationSealedStep"
   | "recordBotInvocationSealedStep"
@@ -1075,7 +1077,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "endBotRuntimeSession",
     summary: "End the runtime session link on purpose",
     description:
-      "Ends the link without archiving its scratchpad and frees the runtime identity for reuse. Cancels any pending invocation still routed at this runtime session.",
+      "Ends the link without archiving its scratchpad and frees the runtime identity for reuse. Cancels any pending invocation still routed at this runtime session, except the one named by `exceptInvocationId` so the command that ends the link can finish reporting on it.",
     tags: ["Bot runtimes"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
     parameters: [workspaceIdParam],
@@ -1126,6 +1128,25 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: renewInvocationClaimSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(renewedInvocationSchema),
+    canReturn404: true,
+    canReturn409: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/progress",
+    operationId: "reportBotInvocationProgress",
+    summary: "Report a step of a claimed slash command",
+    description:
+      "Appends a progress step to the slash command the claimed invocation carries. The step renders inside the command's timeline entry while it runs; it is not a message. Refused with 409 when the invocation is not a slash command.",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+    ],
+    requestSchema: reportInvocationProgressSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(invocationStatusSchema),
     canReturn404: true,
     canReturn409: true,
   },

@@ -180,6 +180,7 @@ export const EVENT_TYPES = [
   "command_dispatched",
   "command_completed",
   "command_failed",
+  "command_progress",
   "agent_session:started",
   "agent_session:completed",
   "agent_session:failed",
@@ -203,7 +204,12 @@ export const EVENT_TYPES = [
 export type EventType = (typeof EVENT_TYPES)[number]
 
 // Command event types (subset of EVENT_TYPES for command lifecycle)
-export const COMMAND_EVENT_TYPES = ["command_dispatched", "command_completed", "command_failed"] as const
+export const COMMAND_EVENT_TYPES = [
+  "command_dispatched",
+  "command_progress",
+  "command_completed",
+  "command_failed",
+] as const
 export type CommandEventType = (typeof COMMAND_EVENT_TYPES)[number]
 
 /**

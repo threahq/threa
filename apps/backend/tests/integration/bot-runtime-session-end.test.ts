@@ -272,6 +272,52 @@ describe("endRuntimeSession", () => {
     expect(row.rows[0]).toEqual({ status: "cancelled", cancellation_reason: "routing_changed" })
   })
 
+  test("spares the invocation that is ending the link so it can still report its outcome", async () => {
+    await BotRuntimeSessionLinkRepository.upsert(pool, {
+      id: botRuntimeSessionLinkId(),
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "openclaw",
+      instanceId: "claimed-instance",
+      runtimeSessionId: "done-session",
+      rootStreamId: root,
+      activeStreamId: root,
+      linkedBy: author,
+    })
+    const doneSource = await anchorMessage("done command")
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: doneSource.id })
+    const done = await service().claimNextInvocation({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: "claimed-instance",
+      runtimeSessionId: "done-session",
+      runtimeKind: "openclaw",
+      claimToken: "done-claim",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+    })
+    expect(done).toMatchObject({ status: "claimed", targetRuntimeSessionId: "done-session" })
+    const queued = await anchorMessage("queued behind done")
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: queued.id })
+
+    await service().endRuntimeSession({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: "claimed-instance",
+      runtimeSessionId: "done-session",
+      exceptInvocationId: done!.id,
+    })
+
+    const rows = await pool.query<{ source_message_id: string; status: string }>(
+      "SELECT source_message_id, status FROM bot_invocations WHERE source_message_id = ANY($1) ORDER BY source_message_id",
+      [[doneSource.id, queued.id]]
+    )
+    expect(Object.fromEntries(rows.rows.map((row) => [row.source_message_id, row.status]))).toEqual({
+      [doneSource.id]: "claimed",
+      [queued.id]: "cancelled",
+    })
+  })
+
   test("route resolution's link read blocks a concurrent end of that link", async () => {
     const link = await BotRuntimeSessionLinkRepository.upsert(pool, {
       id: botRuntimeSessionLinkId(),

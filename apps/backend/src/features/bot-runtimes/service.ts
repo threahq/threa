@@ -757,20 +757,31 @@ export class BotRuntimeService {
     })
   }
 
-  /** Ends the link and cancels the invocations still routed at it, in one transaction (INV-4/6/7). */
+  /**
+   * Ends the link and cancels the invocations still routed at it, in one
+   * transaction (INV-4/6/7). `exceptInvocationId` spares the command that is
+   * ending the link, so it can still complete or fail after the link is gone.
+   */
   async endRuntimeSession(params: {
     workspaceId: string
     botId: string
     instanceId: string
     runtimeSessionId: string
+    exceptInvocationId?: string
   }): Promise<BotRuntimeSessionLink | null> {
     return withTransaction(this.pool, async (db) => {
-      const ended = await BotRuntimeSessionLinkRepository.endActiveByRuntimeSession(db, params)
+      const ended = await BotRuntimeSessionLinkRepository.endActiveByRuntimeSession(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        instanceId: params.instanceId,
+        runtimeSessionId: params.runtimeSessionId,
+      })
       if (!ended) return null
       const cancelled = await BotInvocationRepository.cancelActiveByTargetRuntimeSession(db, {
         workspaceId: params.workspaceId,
         botId: params.botId,
         runtimeSessionId: params.runtimeSessionId,
+        exceptInvocationId: params.exceptInvocationId,
       })
       await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
       await this.emitCancellationHints(db, cancelled)

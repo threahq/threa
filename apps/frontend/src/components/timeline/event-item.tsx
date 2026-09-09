@@ -324,6 +324,7 @@ export function EventItem({
       return null
 
     case "command_dispatched":
+    case "command_progress":
     case "command_completed":
     case "command_failed":
       // Command events are grouped and rendered in EventList, not here
