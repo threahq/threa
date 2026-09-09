@@ -2,19 +2,23 @@ import type { Pool } from "pg"
 import { waitlistId, logger } from "@threahq/backend-common"
 import { WaitlistRepository } from "./repository"
 import type { WaitlistEmailSender } from "./email"
+import type { WaitlistNotifier } from "./notifier"
 
 interface Dependencies {
   pool: Pool
   emailSender: WaitlistEmailSender
+  notifier: WaitlistNotifier
 }
 
 export class WaitlistService {
   private pool: Pool
   private emailSender: WaitlistEmailSender
+  private notifier: WaitlistNotifier
 
   constructor(deps: Dependencies) {
     this.pool = deps.pool
     this.emailSender = deps.emailSender
+    this.notifier = deps.notifier
   }
 
   /**
@@ -25,8 +29,9 @@ export class WaitlistService {
    */
   async signUp(input: { email: string; source: string | null }): Promise<void> {
     const email = input.email.trim().toLowerCase()
+    const id = waitlistId()
     const created = await WaitlistRepository.insert(this.pool, {
-      id: waitlistId(),
+      id,
       email,
       source: input.source,
     })
@@ -34,12 +39,19 @@ export class WaitlistService {
 
     logger.info({ source: input.source }, "Waitlist signup")
 
-    // Confirmation is best-effort: a send failure must not fail the signup,
-    // which is already persisted. Log and move on.
+    // Both side effects are best-effort: a failure must not fail the signup,
+    // which is already persisted.
     try {
       await this.emailSender.sendConfirmation(email)
     } catch (err) {
       logger.error({ err }, "Waitlist confirmation email failed to send")
     }
+
+    // Announcing is deliberately not awaited: nothing in the response depends on
+    // it, and an unreachable Threa API would otherwise hold the signup response
+    // open for the notifier's request timeout.
+    void this.notifier.notifySignup({ id, email, source: input.source }).catch((err) => {
+      logger.error({ err }, "Waitlist signup notification failed to post")
+    })
   }
 }

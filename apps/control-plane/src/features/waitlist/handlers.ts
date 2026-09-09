@@ -8,10 +8,20 @@ const signUpSchema = z.object({
   // passes; the service lowercases for the UNIQUE dedupe.
   email: z.string().trim().pipe(z.email()),
   // Where the signup came from (e.g. "home", "about"). Optional metadata, capped
-  // so a crafted payload can't bloat the row. Never gates the signup: an empty,
-  // oversized, or non-string source is caught and dropped (-> undefined) rather
-  // than failing the parse and rejecting a valid email.
-  source: z.string().trim().max(40).optional().catch(undefined),
+  // so a crafted payload can't bloat the row. The charset is a page identifier
+  // our own forms set, and it is narrow on purpose: the value is rendered inside
+  // a markdown code span when the signup is announced, and a backtick or newline
+  // would close that span early and let the rest be parsed as a mention (INV-64).
+  // Never gates the signup: an empty, oversized, non-string, or off-charset
+  // source is caught and dropped (-> undefined) rather than failing the parse
+  // and rejecting a valid email.
+  source: z
+    .string()
+    .trim()
+    .max(40)
+    .regex(/^[\w./-]*$/)
+    .optional()
+    .catch(undefined),
   // Honeypot: a hidden field real users never fill. Bots that auto-complete
   // every input trip it, and we silently drop the submission.
   hp: z.string().optional(),

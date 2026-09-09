@@ -72,6 +72,13 @@ export interface ControlPlaneConfig {
     resendApiKey: string | null
     /** From address for the confirmation (a verified Resend sender/domain). */
     fromEmail: string
+    /** Announcement target, or null to leave signups unannounced. See {@link loadWaitlistNotify}. */
+    notify: {
+      apiBaseUrl: string
+      apiKey: string
+      workspaceId: string
+      streamId: string
+    } | null
   }
   /**
    * Shared secret for verifying inbound GitHub App webhooks
@@ -80,6 +87,42 @@ export interface ControlPlaneConfig {
    */
   githubWebhookSecret: string | null
   posthog: PostHogConfig | null
+}
+
+/**
+ * Reads the waitlist announcement target. All four values or none: a partially
+ * set group is a deployment mistake, and failing at boot surfaces it while the
+ * previous deployment is still serving, rather than at the first signup where
+ * the error is swallowed to keep the signup alive.
+ */
+export function loadWaitlistNotify(): ControlPlaneConfig["waitlist"]["notify"] {
+  const vars = {
+    WAITLIST_NOTIFY_API_BASE_URL: process.env.WAITLIST_NOTIFY_API_BASE_URL?.trim() || "",
+    WAITLIST_NOTIFY_API_KEY: process.env.WAITLIST_NOTIFY_API_KEY?.trim() || "",
+    WAITLIST_NOTIFY_WORKSPACE_ID: process.env.WAITLIST_NOTIFY_WORKSPACE_ID?.trim() || "",
+    WAITLIST_NOTIFY_STREAM_ID: process.env.WAITLIST_NOTIFY_STREAM_ID?.trim() || "",
+  }
+
+  const names = Object.keys(vars) as Array<keyof typeof vars>
+  const missing = names.filter((name) => vars[name].length === 0)
+
+  if (missing.length === names.length) return null
+  if (missing.length > 0) {
+    throw new Error(`Waitlist notification is partially configured; missing ${missing.join(", ")}`)
+  }
+
+  const notify = {
+    apiBaseUrl: vars.WAITLIST_NOTIFY_API_BASE_URL,
+    apiKey: vars.WAITLIST_NOTIFY_API_KEY,
+    workspaceId: vars.WAITLIST_NOTIFY_WORKSPACE_ID,
+    streamId: vars.WAITLIST_NOTIFY_STREAM_ID,
+  }
+
+  if (!notify.workspaceId.startsWith("ws_") || !notify.streamId.startsWith("stream_")) {
+    throw new Error("WAITLIST_NOTIFY_WORKSPACE_ID must be a ws_ id and WAITLIST_NOTIFY_STREAM_ID a stream_ id")
+  }
+
+  return notify
 }
 
 export function loadControlPlaneConfig(): ControlPlaneConfig {
@@ -180,6 +223,7 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
     waitlist: {
       resendApiKey: process.env.RESEND_API_KEY?.trim() || null,
       fromEmail: process.env.WAITLIST_FROM_EMAIL?.trim() || "Threa <hello@threa.io>",
+      notify: loadWaitlistNotify(),
     },
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || null,
     posthog: loadPostHogConfig(
@@ -202,6 +246,10 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
 
   if (isProduction && !config.waitlist.resendApiKey) {
     logger.warn("Control plane: RESEND_API_KEY unset — waitlist confirmation emails will not send")
+  }
+
+  if (isProduction && !config.waitlist.notify) {
+    logger.warn("Control plane: WAITLIST_NOTIFY_* unset — waitlist signups will not be announced in Threa")
   }
 
   // Send failures are swallowed post-signup, so an unverified from-address

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { TestClient } from "../client"
+import { createTestPool } from "../integration/setup"
 
 describe("Waitlist", () => {
   test("POST /api/waitlist accepts a valid email", async () => {
@@ -55,6 +56,25 @@ describe("Waitlist", () => {
     })
     expect(nonString.status).toBe(200)
     expect(nonString.data.ok).toBe(true)
+  })
+
+  test("POST /api/waitlist drops a source carrying markdown that would escape a code span", async () => {
+    const client = new TestClient()
+    const email = "backtick-source@example.com"
+    const res = await client.post<{ ok: boolean }>("/api/waitlist", { email, source: "home` @here `x" })
+    expect(res.status).toBe(200)
+    expect(res.data.ok).toBe(true)
+
+    // The announcement renders `source` inside a code span, so a backtick in it
+    // would close the span and turn the rest into a mention (INV-64). The row
+    // keeps the signup and drops the source.
+    const pool = createTestPool()
+    try {
+      const rows = await pool.query<{ source: string | null }>("SELECT source FROM waitlist WHERE email = $1", [email])
+      expect(rows.rows).toEqual([{ source: null }])
+    } finally {
+      await pool.end()
+    }
   })
 
   test("POST /api/waitlist rejects an invalid email", async () => {

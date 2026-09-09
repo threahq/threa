@@ -96,6 +96,7 @@ export async function startTestServer(): Promise<TestServer> {
   process.env.CORS_ALLOWED_ORIGINS = `http://localhost:${port}`
   process.env.GLOBAL_RATE_LIMIT_MAX = "10000"
   process.env.AUTH_RATE_LIMIT_MAX = "10000"
+  process.env.WAITLIST_RATE_LIMIT_MAX = "10000"
   process.env.WORKSPACE_CREATION_SKIP_INVITE = "true"
   // Exercise the per-host redirectUri override code path in e2e tests.
   process.env.WORKOS_DEDICATED_REDIRECT_HOSTS = "admin.threa.io"
