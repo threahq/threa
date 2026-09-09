@@ -12,6 +12,11 @@ import {
   resolveShortcutBindingUpdate,
   formatKeyBinding,
   formatKeyBindingText,
+  QUICK_JUMP_ACTION_ID,
+  occupiedBindings,
+  captureBindingForAction,
+  formatActionBinding,
+  quickJumpSlotFromEvent,
 } from "./keyboard-shortcuts"
 
 describe("toggleSidebar shortcut", () => {
@@ -249,5 +254,74 @@ describe("resolveShortcutBindingUpdate", () => {
       formatBold: "none",
       toggleSidebar: "mod+b",
     })
+  })
+})
+
+describe("sidebarQuickJump shortcut", () => {
+  it("is registered once as a global navigation action defaulting to mod+1", () => {
+    const action = getShortcutAction(QUICK_JUMP_ACTION_ID)
+    expect(action).toMatchObject({ defaultKey: "mod+1", category: "navigation", global: true })
+    expect(SHORTCUT_ACTIONS.filter((a) => a.id === QUICK_JUMP_ACTION_ID)).toHaveLength(1)
+  })
+
+  it("does not collide with any other default binding", () => {
+    expect(detectConflicts()).toEqual(new Map())
+  })
+
+  it("conflicts on any slot in the range, not just the stored one", () => {
+    expect(detectConflicts({ toggleSidebar: "mod+2" })).toEqual(
+      new Map([["mod+2", [QUICK_JUMP_ACTION_ID, "toggleSidebar"]]])
+    )
+    // The range follows a rebound modifier.
+    expect(detectConflicts({ [QUICK_JUMP_ACTION_ID]: "alt+1", toggleSidebar: "alt+9" })).toEqual(
+      new Map([["alt+9", [QUICK_JUMP_ACTION_ID, "toggleSidebar"]]])
+    )
+  })
+
+  it("expands only quick jump into a range of occupied bindings", () => {
+    expect(occupiedBindings(QUICK_JUMP_ACTION_ID, "mod+alt+1")).toEqual([
+      "mod+alt+1",
+      "mod+alt+2",
+      "mod+alt+3",
+      "mod+alt+4",
+      "mod+alt+5",
+      "mod+alt+6",
+      "mod+alt+7",
+      "mod+alt+8",
+      "mod+alt+9",
+    ])
+    expect(occupiedBindings("toggleSidebar", "mod+b")).toEqual(["mod+b"])
+  })
+
+  it("resolves a slot from any digit under the bound modifiers", () => {
+    const event = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init)
+    expect(quickJumpSlotFromEvent(event({ key: "1", metaKey: true }), "mod+1")).toBe(1)
+    expect(quickJumpSlotFromEvent(event({ key: "7", ctrlKey: true }), "mod+1")).toBe(7)
+    // Alt rewrites the character on macOS; the physical key still decides.
+    expect(quickJumpSlotFromEvent(event({ key: "™", code: "Digit2", altKey: true }), "alt+1")).toBe(2)
+    expect(quickJumpSlotFromEvent(event({ key: "1" }), "mod+1")).toBeNull()
+    expect(quickJumpSlotFromEvent(event({ key: "1", metaKey: true, shiftKey: true }), "mod+1")).toBeNull()
+    expect(quickJumpSlotFromEvent(event({ key: "0", metaKey: true }), "mod+1")).toBeNull()
+  })
+
+  it("captures any digit as the whole 1-9 range and refuses everything else", () => {
+    const capture = (init: KeyboardEventInit) =>
+      captureBindingForAction(QUICK_JUMP_ACTION_ID, new KeyboardEvent("keydown", init))
+    expect(capture({ key: "4", metaKey: true, altKey: true })).toBe("mod+alt+1")
+    expect(capture({ key: "2", altKey: true })).toBe("alt+1")
+    expect(capture({ key: "Meta", metaKey: true })).toBeNull()
+    expect(capture({ key: "k", metaKey: true })).toBeNull()
+    // A bare digit would hijack typing.
+    expect(capture({ key: "1" })).toBeNull()
+  })
+
+  it("captures other actions unchanged", () => {
+    const event = new KeyboardEvent("keydown", { key: "k", metaKey: true })
+    expect(captureBindingForAction("toggleSidebar", event)).toBe(keyEventToBinding(event))
+  })
+
+  it("labels the binding as a range only for quick jump", () => {
+    expect(formatActionBinding(QUICK_JUMP_ACTION_ID, "mod+1")).toBe(`${formatKeyBinding("mod+1")}–9`)
+    expect(formatActionBinding("toggleSidebar", "mod+b")).toBe(formatKeyBinding("mod+b"))
   })
 })

@@ -14,9 +14,11 @@ import {
   getShortcutsByCategory,
   getEffectiveKeyBinding,
   formatKeyBinding,
+  formatActionBinding,
   formatKeyBindingText,
   detectConflicts,
-  keyEventToBinding,
+  occupiedBindings,
+  captureBindingForAction,
   resolveShortcutBindingUpdate,
   type ShortcutAction,
 } from "@/lib/keyboard-shortcuts"
@@ -34,14 +36,15 @@ const SEND_MODE_CONFIG: Record<MessageSendMode, { label: string; description: st
 }
 
 function getBadgeLabel(
+  actionId: string,
   isCapturing: boolean,
   conflictInfo: { binding: string } | null,
   binding: string | undefined
 ): string {
   if (isCapturing) {
-    return conflictInfo ? formatKeyBinding(conflictInfo.binding) : "Press keys..."
+    return conflictInfo ? formatActionBinding(actionId, conflictInfo.binding) : "Press keys..."
   }
-  return binding ? formatKeyBinding(binding) : "—"
+  return binding ? formatActionBinding(actionId, binding) : "—"
 }
 
 interface ShortcutRowProps {
@@ -80,7 +83,9 @@ function ShortcutRow({
     (captured: string) => {
       const testBindings = { ...customBindings, [action.id]: captured }
       const conflicts = detectConflicts(testBindings)
-      const conflicting = conflicts.get(captured)?.filter((id) => id !== action.id) ?? []
+      const conflicting = occupiedBindings(action.id, captured)
+        .flatMap((occupied) => conflicts.get(occupied) ?? [])
+        .filter((id) => id !== action.id)
 
       if (conflicting.length > 0) {
         setPendingBinding(captured)
@@ -109,7 +114,7 @@ function ShortcutRow({
         return
       }
 
-      const captured = keyEventToBinding(e)
+      const captured = captureBindingForAction(action.id, e)
       if (!captured) return
 
       handleCapturedBinding(captured)
@@ -117,7 +122,7 @@ function ShortcutRow({
 
     window.addEventListener("keydown", handleKeyDown, { capture: true })
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true })
-  }, [isCapturing, onCancelCapture, handleCapturedBinding])
+  }, [action.id, isCapturing, onCancelCapture, handleCapturedBinding])
 
   useEffect(() => {
     if (isCapturing) {
@@ -171,7 +176,7 @@ function ShortcutRow({
                     : "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-mono font-semibold border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                 }
               >
-                {getBadgeLabel(isCapturing, conflictInfo, binding)}
+                {getBadgeLabel(action.id, isCapturing, conflictInfo, binding)}
               </button>
             </PopoverAnchor>
 
@@ -187,7 +192,7 @@ function ShortcutRow({
                           className="mr-1 font-mono"
                           title={formatKeyBindingText(conflictInfo.binding)}
                         >
-                          {formatKeyBinding(conflictInfo.binding)}
+                          {formatActionBinding(action.id, conflictInfo.binding)}
                         </Badge>
                         is currently used by {conflictOwnersLabel}.
                       </div>

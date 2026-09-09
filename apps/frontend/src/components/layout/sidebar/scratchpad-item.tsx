@@ -51,6 +51,7 @@ import {
 } from "./stream-item"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { StreamLabelDots } from "./sidebar-labels"
+import { QuickJumpCap, useQuickJumpSlot } from "./quick-jump"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { truncateContent } from "./utils"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
@@ -250,6 +251,9 @@ export function ScratchpadItem({
   const isTouchInput = useInputMode() === "touch"
 
   const showHoverPreview = compact && showPreviewOnHover && !isTouchInput && !!preview?.content
+  // Non-null only while the quick-jump modifier is held and this row is one of
+  // the first nine. It takes over the "…" menu's slot below.
+  const quickJump = useQuickJumpSlot(streamWithPreview.id)
 
   // E2E and companion-on are mutually exclusive (INV-E1 forces companion off
   // server-side for encrypted streams), so a single decoration slot is enough
@@ -312,6 +316,7 @@ export function ScratchpadItem({
           <Link
             ref={itemRef}
             to={rowTo}
+            aria-keyshortcuts={quickJump?.keyshortcut}
             onClick={handleRowClick}
             onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
             onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
@@ -378,7 +383,13 @@ export function ScratchpadItem({
             />
           )}
 
-          <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
+          {/* The number cap takes the "…" menu's slot rather than adding one, so
+              a held modifier never reflows a row (INV-21). */}
+          {quickJump ? (
+            <QuickJumpCap slot={quickJump.slot} />
+          ) : (
+            <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
+          )}
         </div>
       </SidebarActionContextMenu>
       {labelPickerOpen && (

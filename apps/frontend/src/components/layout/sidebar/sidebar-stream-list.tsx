@@ -15,11 +15,12 @@ import { LabelChip } from "@/components/labels/label-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import type { CachedLabel } from "@/hooks"
-import { StreamSection, TieredStreamSection } from "./sections"
+import { StreamSection, TieredStreamSection, tieredVisibleItems } from "./sections"
 import { StreamDropZone } from "./sidebar-dnd"
 import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
+import { SidebarQuickJumpProvider, createQuickJumpCollector } from "./quick-jump"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
@@ -213,206 +214,224 @@ export function SidebarStreamList({
     return undefined
   }
 
+  // Filled as the sections below render, so the quick-jump numbering can never
+  // name a row the list didn't put on screen.
+  const quickJump = createQuickJumpCollector()
+
+  const sectionElements = resolvedSections.map(({ section, items }) => {
+    // The Quick Links block renders its own link list at this position. The
+    // slot owns its spacing (and may render null when every link is hidden),
+    // so it's not wrapped — a wrapper would leave a stray margin when empty.
+    if (section.spec.kind === "quicklinks") {
+      return quickLinksSlot ? <Fragment key={section.id}>{quickLinksSlot}</Fragment> : null
+    }
+
+    const presentation = sectionPresentation(section.spec)
+    if (presentation.hideWhenEmpty && items.length === 0) return null
+
+    // Label sections render a tinted chip header resolved from the labels
+    // cache; a section whose label was archived/deleted is an orphan — skip it.
+    const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
+    if (section.spec.kind === "label" && !label) return null
+    const isUnread = section.spec.kind === "unread"
+    const isEmptyUnread = isUnread && items.length === 0
+    // Unread's header is a gold dot + label (a colored emoji would break the
+    // gold-on-paper palette); label sections use their tinted chip. An empty
+    // Unread section mutes the dot + label so the caught-up header recedes.
+    let titleContent: ReactNode = undefined
+    if (label) titleContent = <LabelChip label={label} />
+    else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
+    // Label sections get an "open" affordance: the label landing page in
+    // chats mode, or — in board mode — the board's own label axis
+    // (`?label=<id>`), which stays live as assignments change (design doc
+    // § "Feature parity").
+    let titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
+    let titleActionLabel: string | undefined = undefined
+    // Board mode: the affordance is a FILTER, so it also un-toggles —
+    // when the board is already filtered to exactly this section's axis the
+    // link points at the clearing URL and the icon reads active.
+    let filterActive = false
+    if (label && boardMode) {
+      filterActive = isSoleValue(selection.scopeLabelIds, label.id)
+      titleHref = filterActive ? boardMode.clearAxisHref(BOARD_LABEL_PARAM) : boardMode.labelFocusHref(label.id)
+      titleActionLabel = filterActive ? `Clear board filter ${label.name}` : `Filter board by ${label.name}`
+    }
+    // Board mode only, mirroring the label case above: a type section
+    // (Channels/DMs/Scratchpads) focuses the board's type axis (`?is=`),
+    // and Unread focuses the unread axis (`?unread=true`) — both live
+    // aggregate filters, not a one-time snapshot of the current ids.
+    if (boardMode && section.spec.kind === "type") {
+      filterActive = isSoleValue(selection.scopeStreamTypes, section.spec.streamType)
+      titleHref = filterActive
+        ? boardMode.clearAxisHref(BOARD_TYPE_PARAM)
+        : boardMode.typeFocusHref(section.spec.streamType)
+      titleActionLabel = filterActive
+        ? `Clear board filter ${presentation.label}`
+        : `Filter board by ${presentation.label}`
+    } else if (boardMode && section.spec.kind === "unread") {
+      filterActive = unreadFilterOn
+      titleHref = filterActive ? boardMode.clearAxisHref(BOARD_UNREAD_PARAM) : boardMode.unreadFocusHref()
+      titleActionLabel = filterActive ? "Clear board unread filter" : "Filter board by unread"
+    }
+    const headerLabel = label ? label.name : presentation.label
+
+    // Board mode only: smart and custom-section headers gain a "Scope all"
+    // link that scopes `?in=` to every stream in the section at once. Rows
+    // resolve to their board scope id (threads → root), deduped/capped by
+    // the helper. Type/label/unread sections use a live aggregate filter
+    // (above) instead — their membership already has a query-language
+    // equivalent, so scoping to a frozen id snapshot would be a downgrade.
+    const canScopeAll =
+      !!boardMode && (section.spec.kind === "smart" || section.spec.kind === "custom") && items.length > 0
+    // Normalize exactly as scopeAllSearch does (dedupe, keep-first cap) so
+    // the active check compares against the ids the URL can actually hold —
+    // an uncapped comparison never matches for an oversized section.
+    const dedupedScopeIds = canScopeAll ? Array.from(new Set(items.map(boardScopeStreamId).filter(Boolean))) : []
+    const dedupedScopeIdCount = dedupedScopeIds.length
+    const scopeIds = dedupedScopeIds.slice(0, MAX_BOARD_SCOPE_STREAMS)
+    const scopeAllActive = canScopeAll && sameMembers(selection.scopeStreamIds, scopeIds)
+    if (scopeAllActive) filterActive = true
+    let scopeAllHref: string | undefined = undefined
+    if (canScopeAll) {
+      scopeAllHref = scopeAllActive ? boardMode.clearAxisHref(BOARD_SCOPE_PARAM) : boardMode.scopeAllHref(scopeIds)
+    }
+    // Active, the link CLEARS — name it for what it does. Otherwise the
+    // scope caps at MAX_BOARD_SCOPE_STREAMS; say so rather than silently
+    // scoping to a prefix of the section.
+    let scopeAllTitle: string | undefined = undefined
+    if (scopeAllActive) scopeAllTitle = `Clear board scope ${headerLabel}`
+    else if (canScopeAll && dedupedScopeIdCount > MAX_BOARD_SCOPE_STREAMS)
+      scopeAllTitle = `Scope board to the first ${MAX_BOARD_SCOPE_STREAMS} of ${dedupedScopeIdCount} streams`
+
+    const state = getSectionState(section.id, presentation.defaultCollapse)
+    const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
+    const add = addWiringFor(section.spec)
+    const moreState = getSectionState(moreKey(section.id), MORE_DEFAULT)
+    // Walk exactly what this section is about to render: a tiered section
+    // puts its active streams first and holds a quiet tail behind the "more"
+    // expander, so its raw items are not its rows.
+    if (state !== "collapsed") {
+      const rows = presentation.tiered
+        ? tieredVisibleItems(items, getUnreadCount, getMentionCount, moreState === "open").visible
+        : items
+      for (const row of rows) quickJump.add(row.id)
+    }
+    // The Unread section's status rides in its header (right side), not a
+    // footer row — so an empty section costs only the header, never a band
+    // of dead space. An empty section shows a quiet "All caught up" and
+    // drops its chevron (state/onToggle below): with no rows there's
+    // nothing to collapse, so the header reads as pure status, not a
+    // toggle. The header is always present, so showing/hiding the accessory
+    // never reflows the list (INV-21).
+    const unreadAccessory: ReactNode = isEmptyUnread ? (
+      <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
+    ) : undefined
+
+    const sectionEl = presentation.tiered ? (
+      <TieredStreamSection
+        sectionKey={section.id}
+        label={headerLabel}
+        titleContent={titleContent}
+        titleHref={titleHref}
+        titleActionLabel={titleActionLabel}
+        onTitleNavigate={collapseOnMobile}
+        scopeAllHref={scopeAllHref}
+        scopeAllTitle={scopeAllTitle}
+        filterAffordance={!!boardMode}
+        filterActive={filterActive}
+        icon={presentation.icon}
+        items={items}
+        allStreams={processedStreams}
+        workspaceId={workspaceId}
+        activeStreamId={activeStreamId}
+        getUnreadCount={getUnreadCount}
+        getMentionCount={getMentionCount}
+        state={state}
+        onToggle={onToggle}
+        moreState={moreState}
+        onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
+        compact={presentation.compact}
+        showPreviewOnHover={presentation.showPreviewOnHover}
+        onAdd={add?.onAdd}
+        addTooltip={add?.addTooltip}
+        addMenuActions={add?.addMenuActions}
+        streamDragEnabled={streamDragEnabled}
+        boardMode={boardMode}
+      />
+    ) : (
+      <StreamSection
+        label={headerLabel}
+        titleContent={titleContent}
+        titleHref={titleHref}
+        titleActionLabel={titleActionLabel}
+        onTitleNavigate={collapseOnMobile}
+        scopeAllHref={scopeAllHref}
+        scopeAllTitle={scopeAllTitle}
+        filterAffordance={!!boardMode}
+        filterActive={filterActive}
+        icon={presentation.icon}
+        items={items}
+        allStreams={processedStreams}
+        workspaceId={workspaceId}
+        activeStreamId={activeStreamId}
+        getUnreadCount={getUnreadCount}
+        getMentionCount={getMentionCount}
+        state={isEmptyUnread ? undefined : state}
+        onToggle={isEmptyUnread ? undefined : onToggle}
+        headerAccessory={unreadAccessory}
+        compact={presentation.compact}
+        showPreviewOnHover={presentation.showPreviewOnHover}
+        streamDragEnabled={streamDragEnabled}
+        homeHintFor={isUnread ? homeHintFor : undefined}
+        boardMode={boardMode}
+      />
+    )
+
+    // Custom and label sections are drop targets — a stream dragged onto a
+    // custom section is filed there; one dragged onto a label section is
+    // tagged with that label. Other section kinds render as-is.
+    if (section.spec.kind === "custom") {
+      const sectionId = section.spec.sectionId
+      return (
+        <StreamDropZone
+          key={section.id}
+          enabled={streamDragEnabled}
+          workspaceId={workspaceId}
+          onDropStream={(streamId) => handleDropIntoSection(streamId, sectionId)}
+        >
+          {sectionEl}
+        </StreamDropZone>
+      )
+    }
+    if (section.spec.kind === "label") {
+      const labelId = section.spec.labelId
+      return (
+        <StreamDropZone
+          key={section.id}
+          enabled={streamDragEnabled}
+          workspaceId={workspaceId}
+          onDropStream={(streamId) => handleDropOntoLabel(streamId, labelId)}
+        >
+          {sectionEl}
+        </StreamDropZone>
+      )
+    }
+    return <Fragment key={section.id}>{sectionEl}</Fragment>
+  })
+
   return (
     <SidebarLabelsProvider workspaceId={workspaceId}>
-      {/* A provided slot renders at its section's position below; when the user's
-          layout has NO quicklinks section it renders first instead of vanishing.
-          Chats mode never hits this (its slot is built only when the section
-          exists) — it exists for board mode, whose slot carries the board's
-          filters/views/lenses and must survive the section's removal. */}
-      {quickLinksSlot && !resolvedSections.some(({ section }) => section.spec.kind === "quicklinks")
-        ? quickLinksSlot
-        : null}
-      {resolvedSections.map(({ section, items }) => {
-        // The Quick Links block renders its own link list at this position. The
-        // slot owns its spacing (and may render null when every link is hidden),
-        // so it's not wrapped — a wrapper would leave a stray margin when empty.
-        if (section.spec.kind === "quicklinks") {
-          return quickLinksSlot ? <Fragment key={section.id}>{quickLinksSlot}</Fragment> : null
-        }
-
-        const presentation = sectionPresentation(section.spec)
-        if (presentation.hideWhenEmpty && items.length === 0) return null
-
-        // Label sections render a tinted chip header resolved from the labels
-        // cache; a section whose label was archived/deleted is an orphan — skip it.
-        const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
-        if (section.spec.kind === "label" && !label) return null
-        const isUnread = section.spec.kind === "unread"
-        const isEmptyUnread = isUnread && items.length === 0
-        // Unread's header is a gold dot + label (a colored emoji would break the
-        // gold-on-paper palette); label sections use their tinted chip. An empty
-        // Unread section mutes the dot + label so the caught-up header recedes.
-        let titleContent: ReactNode = undefined
-        if (label) titleContent = <LabelChip label={label} />
-        else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
-        // Label sections get an "open" affordance: the label landing page in
-        // chats mode, or — in board mode — the board's own label axis
-        // (`?label=<id>`), which stays live as assignments change (design doc
-        // § "Feature parity").
-        let titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
-        let titleActionLabel: string | undefined = undefined
-        // Board mode: the affordance is a FILTER, so it also un-toggles —
-        // when the board is already filtered to exactly this section's axis the
-        // link points at the clearing URL and the icon reads active.
-        let filterActive = false
-        if (label && boardMode) {
-          filterActive = isSoleValue(selection.scopeLabelIds, label.id)
-          titleHref = filterActive ? boardMode.clearAxisHref(BOARD_LABEL_PARAM) : boardMode.labelFocusHref(label.id)
-          titleActionLabel = filterActive ? `Clear board filter ${label.name}` : `Filter board by ${label.name}`
-        }
-        // Board mode only, mirroring the label case above: a type section
-        // (Channels/DMs/Scratchpads) focuses the board's type axis (`?is=`),
-        // and Unread focuses the unread axis (`?unread=true`) — both live
-        // aggregate filters, not a one-time snapshot of the current ids.
-        if (boardMode && section.spec.kind === "type") {
-          filterActive = isSoleValue(selection.scopeStreamTypes, section.spec.streamType)
-          titleHref = filterActive
-            ? boardMode.clearAxisHref(BOARD_TYPE_PARAM)
-            : boardMode.typeFocusHref(section.spec.streamType)
-          titleActionLabel = filterActive
-            ? `Clear board filter ${presentation.label}`
-            : `Filter board by ${presentation.label}`
-        } else if (boardMode && section.spec.kind === "unread") {
-          filterActive = unreadFilterOn
-          titleHref = filterActive ? boardMode.clearAxisHref(BOARD_UNREAD_PARAM) : boardMode.unreadFocusHref()
-          titleActionLabel = filterActive ? "Clear board unread filter" : "Filter board by unread"
-        }
-        const headerLabel = label ? label.name : presentation.label
-
-        // Board mode only: smart and custom-section headers gain a "Scope all"
-        // link that scopes `?in=` to every stream in the section at once. Rows
-        // resolve to their board scope id (threads → root), deduped/capped by
-        // the helper. Type/label/unread sections use a live aggregate filter
-        // (above) instead — their membership already has a query-language
-        // equivalent, so scoping to a frozen id snapshot would be a downgrade.
-        const canScopeAll =
-          !!boardMode && (section.spec.kind === "smart" || section.spec.kind === "custom") && items.length > 0
-        // Normalize exactly as scopeAllSearch does (dedupe, keep-first cap) so
-        // the active check compares against the ids the URL can actually hold —
-        // an uncapped comparison never matches for an oversized section.
-        const dedupedScopeIds = canScopeAll ? Array.from(new Set(items.map(boardScopeStreamId).filter(Boolean))) : []
-        const dedupedScopeIdCount = dedupedScopeIds.length
-        const scopeIds = dedupedScopeIds.slice(0, MAX_BOARD_SCOPE_STREAMS)
-        const scopeAllActive = canScopeAll && sameMembers(selection.scopeStreamIds, scopeIds)
-        if (scopeAllActive) filterActive = true
-        let scopeAllHref: string | undefined = undefined
-        if (canScopeAll) {
-          scopeAllHref = scopeAllActive ? boardMode.clearAxisHref(BOARD_SCOPE_PARAM) : boardMode.scopeAllHref(scopeIds)
-        }
-        // Active, the link CLEARS — name it for what it does. Otherwise the
-        // scope caps at MAX_BOARD_SCOPE_STREAMS; say so rather than silently
-        // scoping to a prefix of the section.
-        let scopeAllTitle: string | undefined = undefined
-        if (scopeAllActive) scopeAllTitle = `Clear board scope ${headerLabel}`
-        else if (canScopeAll && dedupedScopeIdCount > MAX_BOARD_SCOPE_STREAMS)
-          scopeAllTitle = `Scope board to the first ${MAX_BOARD_SCOPE_STREAMS} of ${dedupedScopeIdCount} streams`
-
-        const state = getSectionState(section.id, presentation.defaultCollapse)
-        const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
-        const add = addWiringFor(section.spec)
-        // The Unread section's status rides in its header (right side), not a
-        // footer row — so an empty section costs only the header, never a band
-        // of dead space. An empty section shows a quiet "All caught up" and
-        // drops its chevron (state/onToggle below): with no rows there's
-        // nothing to collapse, so the header reads as pure status, not a
-        // toggle. The header is always present, so showing/hiding the accessory
-        // never reflows the list (INV-21).
-        const unreadAccessory: ReactNode = isEmptyUnread ? (
-          <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
-        ) : undefined
-
-        const sectionEl = presentation.tiered ? (
-          <TieredStreamSection
-            sectionKey={section.id}
-            label={headerLabel}
-            titleContent={titleContent}
-            titleHref={titleHref}
-            titleActionLabel={titleActionLabel}
-            onTitleNavigate={collapseOnMobile}
-            scopeAllHref={scopeAllHref}
-            scopeAllTitle={scopeAllTitle}
-            filterAffordance={!!boardMode}
-            filterActive={filterActive}
-            icon={presentation.icon}
-            items={items}
-            allStreams={processedStreams}
-            workspaceId={workspaceId}
-            activeStreamId={activeStreamId}
-            getUnreadCount={getUnreadCount}
-            getMentionCount={getMentionCount}
-            state={state}
-            onToggle={onToggle}
-            moreState={getSectionState(moreKey(section.id), MORE_DEFAULT)}
-            onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
-            compact={presentation.compact}
-            showPreviewOnHover={presentation.showPreviewOnHover}
-            onAdd={add?.onAdd}
-            addTooltip={add?.addTooltip}
-            addMenuActions={add?.addMenuActions}
-            streamDragEnabled={streamDragEnabled}
-            boardMode={boardMode}
-          />
-        ) : (
-          <StreamSection
-            label={headerLabel}
-            titleContent={titleContent}
-            titleHref={titleHref}
-            titleActionLabel={titleActionLabel}
-            onTitleNavigate={collapseOnMobile}
-            scopeAllHref={scopeAllHref}
-            scopeAllTitle={scopeAllTitle}
-            filterAffordance={!!boardMode}
-            filterActive={filterActive}
-            icon={presentation.icon}
-            items={items}
-            allStreams={processedStreams}
-            workspaceId={workspaceId}
-            activeStreamId={activeStreamId}
-            getUnreadCount={getUnreadCount}
-            getMentionCount={getMentionCount}
-            state={isEmptyUnread ? undefined : state}
-            onToggle={isEmptyUnread ? undefined : onToggle}
-            headerAccessory={unreadAccessory}
-            compact={presentation.compact}
-            showPreviewOnHover={presentation.showPreviewOnHover}
-            streamDragEnabled={streamDragEnabled}
-            homeHintFor={isUnread ? homeHintFor : undefined}
-            boardMode={boardMode}
-          />
-        )
-
-        // Custom and label sections are drop targets — a stream dragged onto a
-        // custom section is filed there; one dragged onto a label section is
-        // tagged with that label. Other section kinds render as-is.
-        if (section.spec.kind === "custom") {
-          const sectionId = section.spec.sectionId
-          return (
-            <StreamDropZone
-              key={section.id}
-              enabled={streamDragEnabled}
-              workspaceId={workspaceId}
-              onDropStream={(streamId) => handleDropIntoSection(streamId, sectionId)}
-            >
-              {sectionEl}
-            </StreamDropZone>
-          )
-        }
-        if (section.spec.kind === "label") {
-          const labelId = section.spec.labelId
-          return (
-            <StreamDropZone
-              key={section.id}
-              enabled={streamDragEnabled}
-              workspaceId={workspaceId}
-              onDropStream={(streamId) => handleDropOntoLabel(streamId, labelId)}
-            >
-              {sectionEl}
-            </StreamDropZone>
-          )
-        }
-        return <Fragment key={section.id}>{sectionEl}</Fragment>
-      })}
+      <SidebarQuickJumpProvider workspaceId={workspaceId} order={quickJump.ids}>
+        {/* A provided slot renders at its section's position below; when the user's
+            layout has NO quicklinks section it renders first instead of vanishing.
+            Chats mode never hits this (its slot is built only when the section
+            exists) — it exists for board mode, whose slot carries the board's
+            filters/views/lenses and must survive the section's removal. */}
+        {quickLinksSlot && !resolvedSections.some(({ section }) => section.spec.kind === "quicklinks")
+          ? quickLinksSlot
+          : null}
+        {sectionElements}
+      </SidebarQuickJumpProvider>
     </SidebarLabelsProvider>
   )
 }

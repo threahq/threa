@@ -19,6 +19,14 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     global: true,
   },
   {
+    id: "sidebarQuickJump",
+    label: "Sidebar Quick Jump",
+    description: "Hold the modifier to number the first nine sidebar streams, then press a digit to open one",
+    defaultKey: "mod+1",
+    category: "navigation",
+    global: true,
+  },
+  {
     id: "searchInStream",
     label: "Search in Stream",
     description: "Search messages in the current stream",
@@ -168,8 +176,10 @@ export function detectConflicts(customBindings: Record<string, string> = {}): Ma
   for (const action of SHORTCUT_ACTIONS) {
     const key = getEffectiveKeyBinding(action.id, customBindings)
     if (!key) continue
-    const existing = keyToActions.get(key) || []
-    keyToActions.set(key, [...existing, action.id])
+    for (const occupied of occupiedBindings(action.id, key)) {
+      const existing = keyToActions.get(occupied) || []
+      keyToActions.set(occupied, [...existing, action.id])
+    }
   }
 
   const conflicts = new Map<string, string[]>()
@@ -363,6 +373,79 @@ export function keyEventToBinding(event: KeyboardEvent): string | null {
 
   const binding = parts.join("+")
   return isSafeShortcutBinding(binding) ? binding : null
+}
+
+/**
+ * Quick jump claims a RANGE of keys: its stored binding names slot 1, and the
+ * same modifiers with 2-9 open slots 2-9. Everything range-shaped about it
+ * (capture, matching, display) branches on this id.
+ */
+export const QUICK_JUMP_ACTION_ID = "sidebarQuickJump"
+
+/** Sidebar rows the quick jump can reach. */
+export const QUICK_JUMP_SLOT_COUNT = 9
+
+/** Every binding an action answers to. Quick jump stores slot 1 and owns nine,
+ *  so conflict detection has to see all of them. */
+export function occupiedBindings(actionId: string, binding: string): string[] {
+  if (actionId !== QUICK_JUMP_ACTION_ID) return [binding]
+  const prefix = binding.slice(0, binding.lastIndexOf("+") + 1)
+  return Array.from({ length: QUICK_JUMP_SLOT_COUNT }, (_, index) => `${prefix}${index + 1}`)
+}
+
+/** True for a keydown/keyup of a modifier key itself, which carries no binding. */
+export function isModifierKey(key: string): boolean {
+  return MODIFIER_KEYS.has(key)
+}
+
+/** 1-9 from the event, by character first and physical position second, so a
+ *  layout where the modifier rewrites the character (Alt+1 is "¡" on Mac) still
+ *  resolves. */
+function eventDigit(event: KeyboardEvent): number | null {
+  if (/^[1-9]$/.test(event.key)) return Number(event.key)
+  const positional = /^(?:Digit|Numpad)([1-9])$/.exec(event.code ?? "")
+  return positional ? Number(positional[1]) : null
+}
+
+/** The event's modifiers are exactly the binding's, whatever key it carries. */
+export function matchesBindingModifiers(event: KeyboardEvent, binding: string): boolean {
+  const parsed = parseKeyBinding(binding)
+  return (
+    (event.metaKey || event.ctrlKey) === parsed.mod && event.shiftKey === parsed.shift && event.altKey === parsed.alt
+  )
+}
+
+/** The slot a keydown selects under the quick-jump binding, or null. */
+export function quickJumpSlotFromEvent(event: KeyboardEvent, binding: string): number | null {
+  if (!matchesBindingModifiers(event, binding)) return null
+  return eventDigit(event)
+}
+
+/**
+ * Binding captured from a keypress in the settings capture UI. Quick jump
+ * normalizes whichever digit was pressed down to slot 1 (it owns all nine) and
+ * refuses a non-digit key.
+ */
+export function captureBindingForAction(actionId: string, event: KeyboardEvent): string | null {
+  if (actionId !== QUICK_JUMP_ACTION_ID) return keyEventToBinding(event)
+  if (isModifierKey(event.key)) return null
+  if (eventDigit(event) === null) return null
+
+  const parts: string[] = []
+  if (event.metaKey || event.ctrlKey) parts.push("mod")
+  if (event.shiftKey) parts.push("shift")
+  if (event.altKey) parts.push("alt")
+  parts.push("1")
+
+  const binding = parts.join("+")
+  return isSafeShortcutBinding(binding) ? binding : null
+}
+
+/** Display label for a binding in the context of its action — the quick jump
+ *  spans the digit range its single binding stands for. */
+export function formatActionBinding(actionId: string, binding: string): string {
+  const formatted = formatKeyBinding(binding)
+  return actionId === QUICK_JUMP_ACTION_ID ? `${formatted}–9` : formatted
 }
 
 export const EDITOR_SHORTCUT_IDS = [
