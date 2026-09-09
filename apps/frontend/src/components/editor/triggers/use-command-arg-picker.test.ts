@@ -115,6 +115,21 @@ describe("resolveActiveArg", () => {
     expect(resolveActiveArg(SPAWN_ARGS, "/model opus ")?.arg.suggestions).toEqual([{ value: "/thinking" }])
   })
 
+  it("never offers an override the runtime advertised no options for", () => {
+    // What production actually sends while a runtime advertises no per-runtime
+    // lists: `/model` and `/thinking` exist as arguments (the parser takes them)
+    // but carry nothing to pick, so offering them opens an empty popover.
+    const bare: CommandArgumentInfo[] = [
+      { name: "runtime", suggestions: [{ value: "claude" }, { value: "pi" }] },
+      { name: "/model", description: "Model for the spawned session" },
+      { name: "/thinking", description: "Thinking level for the spawned session" },
+      { name: "name", required: true },
+    ]
+    expect(resolveActiveArg(bare, "pi ")).toBeNull()
+    expect(resolveActiveArg(bare, "pi /model ")).toBeNull()
+    expect(resolveActiveArg(bare, "pi /mod")).toBeNull()
+  })
+
   it("closes once the session name starts, so free text lists nothing", () => {
     expect(resolveActiveArg(SPAWN_ARGS, "pi fix-the-")).toBeNull()
     expect(resolveActiveArg(SPAWN_ARGS, "pi fix the thing ")).toBeNull()

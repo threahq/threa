@@ -33,9 +33,13 @@ interface ActiveArg {
 }
 
 /**
- * The flag arguments in play, with a chosen positional value's own overriding
- * the command's where the names match — so `/spawn pi /model` offers Pi's
- * models and `/spawn claude /model` the desk's.
+ * The flag arguments worth offering, with a chosen positional value's own
+ * overriding the command's where the names match — so `/spawn pi /model` offers
+ * Pi's models and `/spawn claude /model` the desk's.
+ *
+ * A flag whose list came back empty is dropped: the runtime that would fill it
+ * never advertised one, and offering `/model` only to open nothing behind it is
+ * a dead end the user can't tell from a broken picker.
  */
 function flagArgs(
   args: readonly CommandArgumentInfo[],
@@ -44,7 +48,7 @@ function flagArgs(
   const merged = new Map<string, CommandArgumentInfo>()
   for (const arg of args) if (isFlagArg(arg)) merged.set(arg.name, arg)
   for (const arg of chosen?.args ?? []) if (isFlagArg(arg)) merged.set(arg.name, arg)
-  return [...merged.values()]
+  return [...merged.values()].filter((arg) => (arg.suggestions?.length ?? 0) > 0)
 }
 
 /** The name of the synthetic argument whose options are the flags themselves. */
