@@ -129,6 +129,7 @@ import {
   applyStreamsReadAllOrdinals,
   bootstrapActivityCacheFields,
   dropActivitiesById,
+  dropActivitiesForStream,
   mergeBootstrapUnreadFields,
   pruneCounterTouches,
   upsertActivity,
@@ -973,6 +974,11 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
+    // The server drops a sealed stream's rows from the feed and the badge
+    // counts; the held set follows so the badges fall with the sidebar entry.
+    commitCounter((state) => sealedIds.reduce(dropActivitiesForStream, state))
+    invalidateActivityFeed(true)
+
     // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
     // missing row (swept while archived) is restored rather than silently lost.
     await upsertStreamRow(payload.stream)
@@ -1015,6 +1021,9 @@ export function registerWorkspaceSocketHandlers(
     // descendants stay sealed, so the board verdicts and the descendants'
     // sealing-ancestor pointers keep standing.
     if (await hasArchivedAncestorInCache(workspaceId, payload.stream)) return
+    // Released rows come back through the feed refetch; the held set has no
+    // local copy of them, so badges for the released streams wait on it.
+    invalidateActivityFeed(true)
     const descendantIds = payload.threadStreamIds ?? []
     for (const id of descendantIds) {
       queryClient.setQueryData(streamKeys.bootstrap(workspaceId, id), (old: unknown) => {
