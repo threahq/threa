@@ -1083,7 +1083,7 @@ export class StreamService {
     // stream:created event only surfaces private streams for the creator, not
     // for other members).
     if (anchorActorType === "user" && anchorActorId !== null && anchorActorId !== params.createdBy) {
-      await this.addToStream(client, stream, anchorActorId, params.createdBy)
+      await this.addToStream(client, stream, anchorActorId, params.createdBy, params.createdByType ?? "user")
     }
 
     // "In this stream" landmark on the PARENT stream: a thread is an artifact of
@@ -2015,7 +2015,13 @@ export class StreamService {
     })
   }
 
-  private async addToStream(client: Querier, stream: Stream, memberId: string, actorId: string): Promise<StreamMember> {
+  private async addToStream(
+    client: Querier,
+    stream: Stream,
+    memberId: string,
+    actorId: string,
+    actorType: "user" | "bot" = "user"
+  ): Promise<StreamMember> {
     const existing = await StreamMemberRepository.findByStreamAndMember(client, stream.id, memberId)
     if (existing) return existing
 
@@ -2026,7 +2032,7 @@ export class StreamService {
       id: evtId,
       streamId: stream.id,
       eventType: "member_added",
-      payload: { addedBy: actorId },
+      payload: { addedBy: actorId, addedByType: actorType },
       actorId: memberId,
       actorType: "user",
     })

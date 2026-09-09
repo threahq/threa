@@ -1143,3 +1143,58 @@ describe("ActivityService activity:read emission", () => {
     expect(entries[0].payload.streamIds).toEqual([STREAM_ID])
   })
 })
+
+describe("ActivityService.processMemberAdded", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("resolves a bot adder through BotRepository and keeps the bot as the row's actor", async () => {
+    const service = setupService()
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ type: StreamTypes.THREAD }))
+    const findBot = spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Pi Remote" } as any)
+    const findUser = spyOn(UserRepository, "findById")
+    let captured: Record<string, unknown> | undefined
+    spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) => {
+      captured = params
+      return fakeActivity(params.context)
+    })
+
+    await service.processMemberAdded({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      memberId: TARGET_USER_ID,
+      event: { id: "event_1", payload: { addedBy: "bot_1", addedByType: "bot" }, actorType: "user" },
+    })
+
+    expect(findBot).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "bot_1")
+    expect(findUser).not.toHaveBeenCalled()
+    expect(captured).toMatchObject({
+      userIds: [TARGET_USER_ID],
+      activityType: ActivityTypes.MEMBER_ADDED,
+      actorId: "bot_1",
+      actorType: AuthorTypes.BOT,
+      context: { authorName: "Pi Remote" },
+    })
+  })
+
+  it("treats an event without addedByType as a user adder", async () => {
+    const service = setupService()
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
+    let captured: Record<string, unknown> | undefined
+    spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) => {
+      captured = params
+      return fakeActivity(params.context)
+    })
+
+    await service.processMemberAdded({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      memberId: TARGET_USER_ID,
+      event: { id: "event_1", payload: { addedBy: USER_ID }, actorType: "user" },
+    })
+
+    expect(captured).toMatchObject({ actorId: USER_ID, actorType: AuthorTypes.USER, context: { authorName: "Alice" } })
+  })
+})
