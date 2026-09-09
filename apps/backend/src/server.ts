@@ -7,7 +7,6 @@ import { DelegationService, createDelegationExpirySweep, validateDelegationConte
 import { SubagentService, createSubagentExpirySweep, startSubagent, resolveSubagentModels } from "./features/subagents"
 import { SubagentFailureReasons } from "@threahq/types"
 import { registerRoutes } from "./routes"
-import { errorHandler } from "./middleware/error-handler"
 import { registerSocketHandlers } from "./socket"
 import { createDatabasePools, warmPool, type DatabasePools } from "./db"
 import { runMigrations } from "./db/migrations"
@@ -957,8 +956,6 @@ export async function startServer(): Promise<ServerInstance> {
     analyticsReporter,
     posthog: config.posthog,
   })
-
-  app.use(errorHandler)
 
   const userSocketRegistry = new UserSocketRegistry()
   const botSocketRegistry = new BotSocketRegistry({

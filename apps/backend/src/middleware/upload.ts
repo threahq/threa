@@ -1,6 +1,7 @@
-import multer from "multer"
+import multer, { MulterError } from "multer"
 import multerS3 from "multer-s3"
 import { S3Client } from "@aws-sdk/client-s3"
+import { HttpError } from "@threahq/backend-common"
 import type { Request, RequestHandler } from "express"
 import type { S3Config } from "../lib/env"
 import { attachmentId } from "../lib/id"
@@ -31,6 +32,22 @@ export interface UploadMiddlewareConfig {
 }
 
 type MulterS3Client = NonNullable<Parameters<typeof multerS3>[0]>["s3"]
+
+/**
+ * A rejected upload is the caller's mistake, so it has to reach the error
+ * middleware as an `HttpError`; a bare `MulterError` is formatted as an
+ * unhandled 500 and reported as an exception.
+ */
+function asClientError(handler: RequestHandler): RequestHandler {
+  return (req, res, next) =>
+    handler(req, res, (err?: unknown) => {
+      if (err instanceof MulterError) {
+        next(new HttpError(err.message, { status: 400, code: err.code }))
+        return
+      }
+      next(err)
+    })
+}
 
 /**
  * Creates an upload middleware that streams files directly to S3.
@@ -85,7 +102,7 @@ export function createUploadMiddleware({ s3Config }: UploadMiddlewareConfig): Re
     },
   })
 
-  return upload.single("file")
+  return asClientError(upload.single("file"))
 }
 
 const AVATAR_MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
@@ -106,12 +123,17 @@ export function createAvatarUploadMiddleware(): RequestHandler {
       if (ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
         cb(null, true)
       } else {
-        cb(new Error(`Invalid file type: ${file.mimetype}. Allowed: JPEG, PNG, GIF, WebP`))
+        cb(
+          new HttpError(`Invalid file type: ${file.mimetype}. Allowed: JPEG, PNG, GIF, WebP`, {
+            status: 400,
+            code: "INVALID_FILE_TYPE",
+          })
+        )
       }
     },
   })
 
-  return upload.single("avatar")
+  return asClientError(upload.single("avatar"))
 }
 
 export { MAX_FILE_SIZE }
