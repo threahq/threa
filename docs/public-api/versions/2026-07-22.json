@@ -1647,7 +1647,7 @@
         "operationId": "endBotRuntimeSession",
         "summary": "End the runtime session link on purpose",
         "tags": ["Bot runtimes"],
-        "description": "Ends the link without archiving its scratchpad and frees the runtime identity for reuse. Cancels any pending invocation still routed at this runtime session, except the one named by `exceptInvocationId` so the command that ends the link can finish reporting on it.",
+        "description": "Ends the link and frees the runtime identity for reuse. A thread the bot opened for the session is archived with it; a desk link's scratchpad and a thread a user opened stay open. Cancels any pending invocation still routed at this runtime session, except the one named by `exceptInvocationId` so the command that ends the link can finish reporting on it.",
         "security": [{ "apiKey": ["bot-runtime:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },

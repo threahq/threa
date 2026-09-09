@@ -65,7 +65,11 @@ interface BotRuntimeServiceDeps {
   pool: Pool
   streamService?: Pick<
     StreamService,
-    "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
+    | "createScratchpadInTransaction"
+    | "addBotToStreamOn"
+    | "createThreadForPrincipalOn"
+    | "archiveStreamOn"
+    | "unarchiveStreamOn"
   >
   labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction" | "inheritInTransaction">
 }
@@ -98,7 +102,11 @@ export class BotRuntimeService {
   private readonly pool: Pool
   private readonly streamService?: Pick<
     StreamService,
-    "createScratchpadInTransaction" | "addBotToStreamOn" | "createThreadForPrincipalOn"
+    | "createScratchpadInTransaction"
+    | "addBotToStreamOn"
+    | "createThreadForPrincipalOn"
+    | "archiveStreamOn"
+    | "unarchiveStreamOn"
   >
   private readonly labelAssignmentService?: Pick<
     LabelAssignmentService,
@@ -433,7 +441,7 @@ export class BotRuntimeService {
         params.ownerUserId
       )
 
-      const thread = await streamService.createThreadForPrincipalOn(
+      const found = await streamService.createThreadForPrincipalOn(
         client,
         { kind: "bot", botId: params.botId },
         {
@@ -448,6 +456,11 @@ export class BotRuntimeService {
           createdByType: "bot",
         }
       )
+      // An anchor keeps its thread, so a spawn after `/done` finds the thread
+      // that command archived: reopen it rather than link a runtime to a
+      // read-only thread. Only the bot's own thread reopens this way; one a
+      // user closed stays closed.
+      const thread = await this.reopenOwnArchivedThread(client, params.workspaceId, params.botId, found)
       await labelAssignmentService.inheritInTransaction(client, {
         workspaceId: params.workspaceId,
         from: { resourceType: LabelableResourceTypes.STREAM, resourceId: params.rootStreamId },
@@ -495,6 +508,22 @@ export class BotRuntimeService {
       }
       return { link, stream: thread }
     })
+  }
+
+  private async reopenOwnArchivedThread(
+    client: Querier,
+    workspaceId: string,
+    botId: string,
+    thread: Stream
+  ): Promise<Stream> {
+    if (!thread.archivedAt) return thread
+    if (thread.createdBy !== botId) {
+      throw new HttpError("Thread is archived", { status: 409, code: "THREAD_ARCHIVED" })
+    }
+    if (!this.streamService) throw new Error("BotRuntimeService missing scratchpad session dependencies")
+    const reopened = await this.streamService.unarchiveStreamOn(client, workspaceId, thread.id, { kind: "bot", botId })
+    if (!reopened) throw new HttpError("Thread not found", { status: 404, code: "NOT_FOUND" })
+    return reopened
   }
 
   async createOrLinkPiRemoteSessionInTransaction(
@@ -789,6 +818,7 @@ export class BotRuntimeService {
       })
       await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
       await this.emitCancellationHints(db, cancelled)
+      const archivedThreadId = await this.archiveOwnEndedThread(db, params.workspaceId, params.botId, ended)
       logger.info(
         {
           workspaceId: params.workspaceId,
@@ -797,11 +827,34 @@ export class BotRuntimeService {
           activeStreamId: ended.activeStreamId,
           linkId: ended.id,
           cancelledInvocations: cancelled.length,
+          archivedThreadId,
         },
         "Ended runtime session link"
       )
       return ended
     })
+  }
+
+  /**
+   * A thread the bot opened for its session is finished work once the link
+   * ends, so it closes with the link: the archive greys its card and drops it
+   * from the sidebar. A desk link (active stream = root) and a thread a user
+   * opened are left alone — the bot closes only what it opened. The `/done`
+   * command that ends the link still lands its closing chip: a no-message
+   * completion is not gated on the thread being writable.
+   */
+  private async archiveOwnEndedThread(
+    db: Querier,
+    workspaceId: string,
+    botId: string,
+    link: BotRuntimeSessionLink
+  ): Promise<string | null> {
+    if (link.activeStreamId === link.rootStreamId) return null
+    const thread = await StreamRepository.findByIdForWorkspace(db, link.activeStreamId, workspaceId)
+    if (!thread || thread.type !== StreamTypes.THREAD || thread.createdBy !== botId || thread.archivedAt) return null
+    if (!this.streamService) throw new Error("BotRuntimeService missing scratchpad session dependencies")
+    await this.streamService.archiveStreamOn(db, workspaceId, thread.id, { kind: "bot", botId })
+    return thread.id
   }
 
   /**

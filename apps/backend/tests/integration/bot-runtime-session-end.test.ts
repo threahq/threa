@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture, botRuntimeServiceFor } from "./setup"
+import { StreamTypes, Visibilities } from "@threahq/types"
 import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { MessageRepository } from "../../src/features/messaging"
+import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
 import { botRuntimeSessionLinkId, messageId, streamId } from "../../src/lib/id"
 
 describe("endRuntimeSession", () => {
@@ -159,6 +161,91 @@ describe("endRuntimeSession", () => {
       runtimeSessionId: "reuse-session-2",
       status: "active",
     })
+
+    // The end archived the bot's thread; the fresh attach reopens it as the bot.
+    expect(second.stream.archivedAt).toBeNull()
+    const lifecycle = await StreamEventRepository.list(pool, first.stream.id, {
+      types: ["stream_archived", "stream_unarchived"],
+    })
+    expect(
+      lifecycle.map((event) => ({ type: event.eventType, actorId: event.actorId, actorType: event.actorType }))
+    ).toEqual([
+      { type: "stream_archived", actorId: bot, actorType: "bot" },
+      { type: "stream_unarchived", actorId: bot, actorType: "bot" },
+    ])
+  })
+
+  test("archives the thread the bot opened when its link ends, leaving the root open", async () => {
+    const { stream: thread } = await attachThread("close-instance", "close-session")
+
+    await service().endRuntimeSession({
+      workspaceId: workspace,
+      botId: bot,
+      instanceId: "close-instance",
+      runtimeSessionId: "close-session",
+    })
+
+    const [closed, rootStream] = await Promise.all([
+      StreamRepository.findByIdForWorkspace(pool, thread.id, workspace),
+      StreamRepository.findByIdForWorkspace(pool, root, workspace),
+    ])
+    expect({ thread: closed?.archivedAt !== null, root: rootStream?.archivedAt }).toEqual({ thread: true, root: null })
+    const [archived] = await StreamEventRepository.list(pool, thread.id, { types: ["stream_archived"] })
+    expect(archived).toMatchObject({ eventType: "stream_archived", actorId: bot, actorType: "bot" })
+  })
+
+  test("leaves a desk link's scratchpad and a user-opened thread open when their links end", async () => {
+    await service().createOrLinkPiRemoteSession({
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "pi-local",
+      instanceId: "desk-instance",
+      runtimeSessionId: "desk-session",
+      rootStreamId: root,
+      activeStreamId: root,
+      linkedBy: author,
+    })
+    const anchor = await anchorMessage()
+    const userThreadId = streamId()
+    await StreamRepository.insert(pool, {
+      id: userThreadId,
+      workspaceId: workspace,
+      type: StreamTypes.THREAD,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: root,
+      parentAnchorId: anchor.id,
+      rootStreamId: root,
+      createdBy: author,
+    })
+    await service().createOrLinkPiRemoteSession({
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "pi-local",
+      instanceId: "user-thread-instance",
+      runtimeSessionId: "user-thread-session",
+      rootStreamId: root,
+      activeStreamId: userThreadId,
+      linkedBy: author,
+    })
+
+    for (const [instanceId, runtimeSessionId] of [
+      ["desk-instance", "desk-session"],
+      ["user-thread-instance", "user-thread-session"],
+    ]) {
+      const ended = await service().endRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        instanceId,
+        runtimeSessionId,
+      })
+      expect(ended?.status).toBe("ended")
+    }
+
+    const archivedAt = await pool.query<{ id: string; archived_at: Date | null }>(
+      "SELECT id, archived_at FROM streams WHERE id = ANY($1) ORDER BY id",
+      [[root, userThreadId]]
+    )
+    expect(archivedAt.rows.map((row) => row.archived_at)).toEqual([null, null])
   })
 
   test("cancels pending invocations targeted at the ended session and leaves other pending rows alone", async () => {

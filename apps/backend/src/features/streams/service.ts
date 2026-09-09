@@ -280,14 +280,31 @@ async function lockLifecycleStreams(
 /**
  * Archive and unarchive are allowed to the stream's creator and to the creator
  * of its access root: the root owner runs the space, so a thread a bot or
- * another member opened there is theirs to close as well.
+ * another member opened there is theirs to close as well. A bot closes only
+ * the streams it opened itself.
  */
-function assertCanArchive(target: Stream, root: Stream, actorId: string): void {
-  if (target.createdBy === actorId || root.createdBy === actorId) return
+function assertCanArchive(target: Stream, root: Stream, principal: StreamWritePrincipal): void {
+  const actorId = principalActorId(principal)
+  if (target.createdBy === actorId || (principal.kind === "user" && root.createdBy === actorId)) return
   throw new HttpError("Only the creator of this stream or of its root can archive or unarchive it", {
     status: 403,
     code: "FORBIDDEN",
   })
+}
+
+function principalActorId(principal: StreamWritePrincipal): string {
+  return principal.kind === "user" ? principal.userId : principal.botId
+}
+
+async function lockPrincipalAccess(
+  client: Querier,
+  workspaceId: string,
+  root: Stream,
+  principal: StreamWritePrincipal
+): Promise<void> {
+  if (principal.kind === "user") return lockActorAccess(client, root, principal.userId)
+  const grants = await BotChannelAccessRepository.lockGrants(client, workspaceId, principal.botId, [root.id])
+  if (root.visibility !== Visibilities.PUBLIC && !grants.has(root.id)) throw new StreamNotFoundError()
 }
 
 async function lockActorAccess(
@@ -1233,11 +1250,33 @@ export class StreamService {
   }
 
   async archiveStream(streamId: string, workspaceId: string, archivedBy: string): Promise<Stream | null> {
-    return withTransaction(this.pool, (client) => this.setArchived(client, workspaceId, streamId, archivedBy, true))
+    return withTransaction(this.pool, (client) =>
+      this.archiveStreamOn(client, workspaceId, streamId, { kind: "user", userId: archivedBy })
+    )
   }
 
   async unarchiveStream(streamId: string, workspaceId: string, unarchivedBy: string): Promise<Stream | null> {
-    return withTransaction(this.pool, (client) => this.setArchived(client, workspaceId, streamId, unarchivedBy, false))
+    return withTransaction(this.pool, (client) =>
+      this.unarchiveStreamOn(client, workspaceId, streamId, { kind: "user", userId: unarchivedBy })
+    )
+  }
+
+  async archiveStreamOn(
+    client: Querier,
+    workspaceId: string,
+    streamId: string,
+    principal: StreamWritePrincipal
+  ): Promise<Stream | null> {
+    return this.setArchived(client, workspaceId, streamId, principal, true)
+  }
+
+  async unarchiveStreamOn(
+    client: Querier,
+    workspaceId: string,
+    streamId: string,
+    principal: StreamWritePrincipal
+  ): Promise<Stream | null> {
+    return this.setArchived(client, workspaceId, streamId, principal, false)
   }
 
   /**
@@ -1255,12 +1294,12 @@ export class StreamService {
     client: Querier,
     workspaceId: string,
     streamId: string,
-    actorId: string,
+    principal: StreamWritePrincipal,
     archived: boolean
   ): Promise<Stream | null> {
     const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
-    await lockActorAccess(client, root, actorId)
-    assertCanArchive(target, root, actorId)
+    await lockPrincipalAccess(client, workspaceId, root, principal)
+    assertCanArchive(target, root, principal)
     const stream = await StreamRepository.update(client, streamId, { archivedAt: archived ? new Date() : null })
     if (!stream) return stream
     const event = await StreamEventRepository.insert(client, {
@@ -1268,8 +1307,8 @@ export class StreamService {
       streamId: stream.id,
       eventType: archived ? "stream_archived" : "stream_unarchived",
       payload: archived ? { archivedAt: stream.archivedAt } : {},
-      actorId,
-      actorType: "user",
+      actorId: principalActorId(principal),
+      actorType: principal.kind,
     })
     await OutboxRepository.insert(client, archived ? "stream:archived" : "stream:unarchived", {
       workspaceId: stream.workspaceId,

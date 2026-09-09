@@ -183,7 +183,8 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
     },
     {
       name: "done",
-      description: "Wind down this thread's session: commit, push, remove the worktree, end the link",
+      description:
+        "Wind down this thread's session: commit, push, remove the worktree, end the link, archive the thread",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "--force", required: false, description: "Finish despite local runtime activity" }],
