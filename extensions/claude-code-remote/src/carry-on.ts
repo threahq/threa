@@ -10,7 +10,7 @@ import { classifyApiErrorText, type QuotaSignal } from "./quota-signal"
  * idle out as "ended without a reply", this controller:
  *
  *  1. holds the claim open (periodic keep-alive beats the idle reaper),
- *  2. posts one notice to the scratchpad with the resume time,
+ *  2. records the wait, and when it resumes, on the held turn's own trace,
  *  3. queues any `/carry-on <text>` (and `/steer`) messages the user sends
  *     while blocked, and
  *  4. at reset time pastes a continuation prompt into the idle TUI — the same
@@ -50,6 +50,12 @@ export const DEFAULT_CARRY_ON_TIMING: CarryOnTiming = {
 export interface CarryOnHost {
   isInflight(invocationId: string): boolean
   keepAlive(streamId: string): void
+  /**
+   * Record the wait on the held turn's own trace. The turn is still running, so
+   * what it is doing belongs in its activity — not in a message written about it.
+   */
+  reportHold(invocationId: string, content: string, statusText: string): Promise<unknown>
+  /** For texts that outlived the turn they were queued for: there is no invocation left to record them against. */
   postNotice(streamId: string, text: string): Promise<void>
   /** Close the held invocation with a final message (the SDK reply path). */
   closeTurn(invocationId: string, text: string): Promise<void>
@@ -218,13 +224,19 @@ export class CarryOnController {
     }
     this.host.log(`quota carry-on: holding ${invocationId} until ${new Date(resumeAt).toISOString()} (${signal.kind})`)
     const eta = `~${formatLocalTime(resumeAt)} (in ~${formatDuration(resumeAt - this.now())})`
-    const notice =
+    const held =
       signal.kind === "quota-reset"
-        ? `⏳ ${signal.summary}\n\nHolding this turn — resuming automatically ${eta}. Use \`/carry-on <message>\` to queue instructions for the resume, or \`/stop\` to drop the turn.`
-        : `⏳ Provider hiccup (${signal.summary}) — retrying ${eta}.`
+        ? {
+            content: `${signal.summary}\n\nHolding this turn — resuming automatically ${eta}. Use \`/carry-on <message>\` to queue instructions for the resume, or \`/stop\` to drop the turn.`,
+            statusText: `Rate limited — resuming ${eta}`,
+          }
+        : {
+            content: `Provider hiccup (${signal.summary}) — retrying ${eta}.`,
+            statusText: `Provider hiccup — retrying ${eta}`,
+          }
     void this.host
-      .postNotice(streamId, notice)
-      .catch((error) => this.host.log(`carry-on notice failed: ${String(error)}`))
+      .reportHold(invocationId, held.content, held.statusText)
+      .catch((error) => this.host.log(`carry-on hold step failed: ${String(error)}`))
   }
 
   private keepAliveTick(): void {

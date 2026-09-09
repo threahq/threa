@@ -20,6 +20,7 @@ const FAST: Partial<CarryOnTiming> = {
 }
 
 interface HostLog {
+  holds: Array<{ invocationId: string; content: string; statusText: string }>
   notices: Array<{ streamId: string; text: string }>
   closes: Array<{ invocationId: string; text: string }>
   injects: string[]
@@ -31,13 +32,16 @@ function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
   log: HostLog
   inflight: Set<string>
 } {
-  const log: HostLog = { notices: [], closes: [], injects: [], keepAlives: 0 }
+  const log: HostLog = { holds: [], notices: [], closes: [], injects: [], keepAlives: 0 }
   const inflight = new Set<string>()
   let closesToFail = options.failCloses ?? 0
   const host: CarryOnHost = {
     isInflight: (id) => inflight.has(id),
     keepAlive: () => {
       log.keepAlives += 1
+    },
+    reportHold: async (invocationId, content, statusText) => {
+      log.holds.push({ invocationId, content, statusText })
     },
     postNotice: async (streamId, text) => {
       log.notices.push({ streamId, text })
@@ -71,16 +75,30 @@ function startTurn(controller: CarryOnController, inflight: Set<string>, id = "b
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe("CarryOnController", () => {
-  it("holds a turn on a session-limit error: notice with the resume time, /carry-on queues, steer absorbs", () => {
+  it("holds a turn on a session-limit error: the wait lands on the turn's trace, /carry-on queues, steer absorbs", () => {
     const { host, log, inflight } = makeHost()
     const controller = new CarryOnController(host, FAST)
     const id = startTurn(controller, inflight)
 
     controller.onApiError(id, SESSION_LIMIT)
     expect(controller.holding).toBe(true)
-    expect(log.notices).toHaveLength(1)
-    expect(log.notices[0]!.text).toContain("session limit")
-    expect(log.notices[0]!.text).toContain("/carry-on")
+    expect({
+      holds: log.holds.length,
+      invocationId: log.holds[0]?.invocationId,
+      mentionsLimit: log.holds[0]?.content.includes("session limit"),
+      mentionsCarryOn: log.holds[0]?.content.includes("/carry-on"),
+      // The reset time renders in the machine's own zone, so only the parts
+      // that do not move with it are pinned.
+      statusText: log.holds[0]?.statusText.replace(/~\d\d:\d\d/, "~HH:MM"),
+      notices: log.notices.length,
+    }).toEqual({
+      holds: 1,
+      invocationId: id,
+      mentionsLimit: true,
+      mentionsCarryOn: true,
+      statusText: "Rate limited — resuming ~HH:MM (in ~2h 20m)",
+      notices: 0,
+    })
 
     expect(controller.enqueue("also bump the version").ok).toBe(true)
     expect(controller.enqueue("").summary).toContain("1 message(s) queued")
@@ -98,7 +116,7 @@ describe("CarryOnController", () => {
     inflight.delete(id)
     controller.onApiError(id, SESSION_LIMIT)
     expect(controller.holding).toBe(false)
-    expect(log.notices).toHaveLength(0)
+    expect({ holds: log.holds.length, notices: log.notices.length }).toEqual({ holds: 0, notices: 0 })
   })
 
   it("does not hold on non-retryable errors", () => {
