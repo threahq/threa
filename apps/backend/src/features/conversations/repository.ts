@@ -178,7 +178,7 @@ function boardArchivedExcludeSql(showArchived: boolean) {
     SELECT 1 FROM streams arch_s
     WHERE arch_s.id = conversations.stream_id
       AND arch_s.workspace_id = conversations.workspace_id
-      AND ${sql.raw(effectivelyArchivedSql("arch_s"))}
+      AND ${sql`${sql.raw(effectivelyArchivedSql("arch_s"))}`}
   )`
 }
 
@@ -682,7 +682,7 @@ export const ConversationRepository = {
           WHERE eff_s.id = conversations.stream_id
             AND eff_s.workspace_id = ${workspaceId}
             AND eff_root.id = ANY(${rootStreamIds}::text[])
-            AND NOT ${sql.raw(effectivelyArchivedSql("eff_s"))}
+            AND NOT ${sql`${sql.raw(effectivelyArchivedSql("eff_s"))}`}
         )
       ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC
       LIMIT ${limit}
