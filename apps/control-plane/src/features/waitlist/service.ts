@@ -40,17 +40,18 @@ export class WaitlistService {
     logger.info({ source: input.source }, "Waitlist signup")
 
     // Both side effects are best-effort: a failure must not fail the signup,
-    // which is already persisted. Log and move on.
+    // which is already persisted.
     try {
       await this.emailSender.sendConfirmation(email)
     } catch (err) {
       logger.error({ err }, "Waitlist confirmation email failed to send")
     }
 
-    try {
-      await this.notifier.notifySignup({ id, email, source: input.source })
-    } catch (err) {
+    // Announcing is deliberately not awaited: nothing in the response depends on
+    // it, and an unreachable Threa API would otherwise hold the signup response
+    // open for the notifier's request timeout.
+    void this.notifier.notifySignup({ id, email, source: input.source }).catch((err) => {
       logger.error({ err }, "Waitlist signup notification failed to post")
-    }
+    })
   }
 }
