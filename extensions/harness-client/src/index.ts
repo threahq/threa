@@ -38,7 +38,15 @@ export {
   type SpawnRuntimeOption,
 } from "./spawn-runtimes"
 export {
+  takeSessionWakeNote,
+  wakeNotesDir,
+  writeSessionWakeNote,
+  WAKE_NOTE_TTL_MS,
+  type SessionWakeNote,
+} from "./wake-note"
+export {
   BotSupervisorTransport,
+  type BotInvocationAvailablePayload,
   type BotSessionRestoredPayload,
   type BotSupervisorTransportOptions,
 } from "./supervisor"
