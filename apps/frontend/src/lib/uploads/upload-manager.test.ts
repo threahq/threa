@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { AuthErrorCodes } from "@threahq/types"
 import { attachmentsApi } from "@/api"
 import { ApiError } from "@/api/client"
+import { subscribeAccountMismatch } from "@/api/account-assertion"
 import { db } from "@/db"
 import { getAttachmentRef, clearAttachmentRefCache } from "@/lib/crypto/attachment-crypto"
 import * as xhrTransport from "./xhr-upload"
@@ -204,6 +206,53 @@ describe("upload-manager", () => {
     // (viewers of a message that bound the id see "Upload failed").
     expect(await db.uploadJobs.get("attach_fail")).toMatchObject({ status: "failed" })
     await vi.waitFor(() => expect(report).toHaveBeenCalledWith(WS, "attach_fail", "size mismatch"))
+  })
+
+  it("a reservation refused because the account moved leaves the file alone, not marked failed", async () => {
+    // The account that picked this file switched away mid-reservation. A 4xx is
+    // normally terminal, but this one says nothing about the payload: the bytes
+    // are still that account's to send, so its owner must not be shown a failed
+    // upload — and the server must not be told the upload failed.
+    vi.spyOn(attachmentsApi, "reserve").mockRejectedValue(
+      new ApiError(409, AuthErrorCodes.ACCOUNT_MISMATCH, "This browser is signed in as a different account")
+    )
+    const report = vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+
+    const job = startUpload(WS, makeFile())
+    await vi.waitFor(() => expect(attachmentsApi.reserve).toHaveBeenCalled())
+    await Promise.resolve()
+
+    expect({ job: findUploadJob(job.jobId), reports: report.mock.calls }).toEqual({
+      job: expect.objectContaining({ status: "reserving" }),
+      reports: [],
+    })
+  })
+
+  it("a byte transfer refused because the account moved keeps the durable job for its own account", async () => {
+    mockReserve("attach_moved")
+    vi.spyOn(xhrTransport, "xhrUpload").mockResolvedValue({
+      status: 409,
+      body: { error: "This browser is signed in as a different account", code: AuthErrorCodes.ACCOUNT_MISMATCH },
+    })
+    const report = vi.spyOn(attachmentsApi, "reportUploadFailure").mockResolvedValue(undefined)
+    const seen: string[] = []
+    const unsubscribe = subscribeAccountMismatch(() => seen.push("mismatch"))
+
+    const job = startUpload(WS, makeFile())
+    await vi.waitFor(() => expect(seen).toEqual(["mismatch"]))
+    unsubscribe()
+
+    // The row survives in this account's database, so the transfer resumes when
+    // that account is active again — and nothing read the refusal as "settled".
+    expect({
+      persisted: await db.uploadJobs.get("attach_moved"),
+      job: findUploadJob(job.jobId),
+      reports: report.mock.calls,
+    }).toEqual({
+      persisted: expect.objectContaining({ status: "pending" }),
+      job: expect.objectContaining({ status: "uploading" }),
+      reports: [],
+    })
   })
 
   it("network errors retry with backoff and can still succeed", async () => {

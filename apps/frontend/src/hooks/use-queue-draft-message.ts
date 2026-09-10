@@ -2,7 +2,14 @@ import { useCallback } from "react"
 import { usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import { db, sequenceToNum, type CachedStream, type PendingStreamCreation } from "@/db"
+import {
+  getActiveDb,
+  sequenceToNum,
+  type AccountWriteContext,
+  type CachedStream,
+  type PendingStreamCreation,
+} from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import { serializeToMarkdown } from "@threahq/prosemirror"
 import {
   StreamTypes,
@@ -83,6 +90,11 @@ export function useQueueDraftMessage(workspaceId: string) {
         throw new Error("Cannot send message: user identity not resolved yet")
       }
 
+      // Name the account this send belongs to before the first await. Sealing
+      // is a slow crypto path and the `db` proxy moves on an account switch, so
+      // everything after it — the optimistic row, the queue entry, the rail
+      // publish — would otherwise land under whoever is active when it returns.
+      const account: AccountWriteContext = { generation: getAccountGeneration(), database: getActiveDb() }
       const clientId = generateClientId()
       const now = new Date().toISOString()
       const contentMarkdown = serializeToMarkdown(input.contentJson)
@@ -134,6 +146,12 @@ export function useQueueDraftMessage(workspaceId: string) {
           contentMarkdown,
           attachmentIds: input.attachmentIds,
         })
+        // Nothing is persisted or shown yet, so a switch mid-seal fails the send
+        // outright rather than queueing the outgoing account's message under
+        // the incoming one. The composer keeps the content.
+        if (getAccountGeneration() !== account.generation) {
+          throw new Error("Cannot send message: the account that composed it is no longer active")
+        }
         e2eFields = sealed.e2eFields
         // Heal-on-send, best-effort: keep the root's actor wraps fresh so the
         // thread copies live wraps when the server seals it. Without this, an
@@ -179,12 +197,20 @@ export function useQueueDraftMessage(workspaceId: string) {
       })
 
       try {
-        await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+        const { database } = account
+        await database.transaction("rw", [database.pendingMessages, database.events], async () => {
+          // Both helpers read `events`, and both default to the *active*
+          // database — after a switch that is the replacement account's, outside
+          // this transaction, so the sequences would be allocated against the
+          // wrong tail and the generation check below would abort the send.
           const [anchorSequence, allocatedSequence] = await Promise.all([
-            getLatestPersistedSequence(params.streamId),
-            nextOptimisticSequence(params.streamId),
+            getLatestPersistedSequence(params.streamId, database),
+            nextOptimisticSequence(params.streamId, undefined, database),
           ])
-          await db.pendingMessages.add({
+          if (getAccountGeneration() !== account.generation) {
+            throw new Error("Cannot send message: the account that composed it is no longer active")
+          }
+          await database.pendingMessages.add({
             clientId,
             workspaceId: params.workspaceId,
             streamId: params.streamId,
@@ -204,7 +230,7 @@ export function useQueueDraftMessage(workspaceId: string) {
               : {}),
           })
 
-          await db.events.add({
+          await database.events.add({
             ...optimisticEvent,
             workspaceId: params.workspaceId,
             sequence: allocatedSequence,
@@ -227,7 +253,7 @@ export function useQueueDraftMessage(workspaceId: string) {
       // user can navigate back to it even before the real stream exists. The
       // promotion step will replace this entry with the server-assigned one.
       if (params.streamCreation?.type === StreamTypes.SCRATCHPAD) {
-        const draftScratchpad = params.draftId ? await db.draftScratchpads.get(params.draftId) : undefined
+        const draftScratchpad = params.draftId ? await account.database.draftScratchpads.get(params.draftId) : undefined
         const optimisticStream: CachedStream = {
           id: params.streamId,
           workspaceId: params.workspaceId,
@@ -253,13 +279,18 @@ export function useQueueDraftMessage(workspaceId: string) {
           },
           _cachedAt: Date.now(),
         }
-        await db.streams.put(optimisticStream)
+        if (getAccountGeneration() !== account.generation) return { clientId }
+        await account.database.streams.put(optimisticStream)
       }
 
       // For thread drafts, show a pending reply indicator on the anchor item by
       // temporarily setting the anchor's threadId to the draft panel ID and
       // bumping its replyCount. The promotion step swaps the threadId to the
       // real thread stream without re-incrementing.
+      // The queue entry is durable in the right database now; the rest is this
+      // account's own UI, so a switch that lands here just stops.
+      if (getAccountGeneration() !== account.generation) return { clientId }
+
       const anchorId = params.streamCreation?.parentAnchorId ?? params.streamCreation?.parentMessageId
       if (params.streamCreation?.type === StreamTypes.THREAD && params.streamCreation.parentStreamId && anchorId) {
         const draftPanelId = createDraftPanelId(params.streamCreation.parentStreamId, anchorId)

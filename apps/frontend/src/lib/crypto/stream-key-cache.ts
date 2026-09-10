@@ -37,6 +37,18 @@ const keys = new Map<string, Uint8Array>()
 const currentGenerations = new Map<string, number>()
 const inflight = new Map<string, Promise<Uint8Array | null>>()
 
+/**
+ * Bumped by {@link clearStreamKeyCache}, so a fetch or unwrap still in flight
+ * when the session locks or the account switches can tell that the lifecycle it
+ * belongs to has ended. Emptying the maps alone was not enough: every async path
+ * here writes back after an await, so a wrap fetched as account A repopulated
+ * the cache milliseconds after the switch and account B's tab held A's SSK. A
+ * stale path writes nothing and hands its caller `null` — the bytes never cross
+ * the boundary, in the cache or in a return value. Mirrors the lock-epoch guard
+ * in `decrypted-cache`.
+ */
+let lifecycle = 0
+
 function keySlot(workspaceId: string, streamId: string, keyGeneration: number): string {
   return `${workspaceId}:${streamId}:${keyGeneration}`
 }
@@ -92,6 +104,7 @@ export interface ProvisionOwnerStreamKeyInput {
  * possibly ciphertext sealed under a different SSK) would orphan that ciphertext.
  */
 export async function provisionOwnerStreamKey(input: ProvisionOwnerStreamKeyInput): Promise<void> {
+  const startLifecycle = lifecycle
   const ssk = generateStreamKey()
   const wrap = await wrapStreamKey({
     key: ssk,
@@ -102,6 +115,7 @@ export async function provisionOwnerStreamKey(input: ProvisionOwnerStreamKeyInpu
     wrapEnc: bytesToBase64(wrap.enc),
     wrapCt: bytesToBase64(wrap.ct),
   })
+  if (startLifecycle !== lifecycle) return
   putStreamKey(input.workspaceId, input.streamId, 0, ssk)
 }
 
@@ -132,6 +146,7 @@ export interface RekeyStreamInput {
  * any generation before this one.
  */
 export async function rekeyStream(input: RekeyStreamInput): Promise<void> {
+  const startLifecycle = lifecycle
   const ssk = generateStreamKey()
   const recipients = [
     { recipientKeyId: input.ownerKeyId, recipientKind: "user" as const, publicKey: input.ownerPublicKey },
@@ -163,6 +178,7 @@ export async function rekeyStream(input: RekeyStreamInput): Promise<void> {
   )
 
   await e2eKeyWrapsApi.roll(input.workspaceId, input.streamId, { keyGeneration: input.nextGeneration, wraps })
+  if (startLifecycle !== lifecycle) return
   putStreamKey(input.workspaceId, input.streamId, input.nextGeneration, ssk)
 }
 
@@ -177,7 +193,7 @@ export interface ReviveActorWrapsInput {
   ownerPrivateKey: CryptoKey
 }
 
-export type ReviveActorWrapsResult = "revived" | "none-missing" | "not-owner" | "no-key"
+export type ReviveActorWrapsResult = "revived" | "none-missing" | "not-owner" | "no-key" | "retired"
 
 /** One (live actor key, generation) slot whose SSK wrap is missing. */
 export interface MissingActorWrap {
@@ -250,25 +266,35 @@ const reviveInflight = new Map<string, Promise<ReviveActorWrapsResult>>()
  * Owner-only (the server enforces it; `"not-owner"` short-circuits everyone
  * else). Returns `"none-missing"` when every live actor key already has its
  * wraps, `"no-key"` when no missing generation's SSK can be recovered from
- * the owner's own wraps (nothing to re-wrap), `"revived"` after storing the
- * missing wraps.
+ * the owner's own wraps (nothing to re-wrap), `"retired"` when the session
+ * locked or the account switched mid-flight (the owner's key is no longer
+ * this tab's to use), `"revived"` after storing the missing wraps.
  */
 export async function reviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<ReviveActorWrapsResult> {
   const slot = streamSlot(input.workspaceId, input.streamId)
   const pending = reviveInflight.get(slot)
   if (pending) return pending
 
-  const promise = doReviveStaleActorWraps(input).finally(() => {
-    reviveInflight.delete(slot)
+  const startLifecycle = lifecycle
+  // A holder so the cleanup can compare promise identity: `clearStreamKeyCache`
+  // empties the map mid-flight, and a plain `delete` would then evict the
+  // replacement revive a later caller had already registered under this slot.
+  const holder: { promise?: Promise<ReviveActorWrapsResult> } = {}
+  holder.promise = doReviveStaleActorWraps(input, startLifecycle).finally(() => {
+    if (reviveInflight.get(slot) === holder.promise) reviveInflight.delete(slot)
   })
-  reviveInflight.set(slot, promise)
-  return promise
+  reviveInflight.set(slot, holder.promise)
+  return holder.promise
 }
 
-async function doReviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<ReviveActorWrapsResult> {
+async function doReviveStaleActorWraps(
+  input: ReviveActorWrapsInput,
+  startLifecycle: number
+): Promise<ReviveActorWrapsResult> {
   // Always a fresh fetch: the point is to see an EIK that registered after
   // whatever the UI has cached.
   const data = await e2eKeyWrapsApi.get(input.workspaceId, input.streamId)
+  if (startLifecycle !== lifecycle) return "retired"
   const { currentKeyGeneration, ownerUserId } = data
   currentGenerations.set(streamSlot(input.workspaceId, input.streamId), currentKeyGeneration)
 
@@ -283,7 +309,8 @@ async function doReviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<Re
   // unwrap failure — is skipped so it can't block healing the rest.
   const sskByGeneration = new Map<number, Uint8Array>()
   for (const keyGeneration of new Set(missing.map((m) => m.keyGeneration))) {
-    const ssk = await unwrapOwnerGeneration(input, data, keyGeneration)
+    const ssk = await unwrapOwnerGeneration(input, data, keyGeneration, startLifecycle)
+    if (startLifecycle !== lifecycle) return "retired"
     if (ssk) sskByGeneration.set(keyGeneration, ssk)
   }
   const wrappable = missing.filter((m) => sskByGeneration.has(m.keyGeneration))
@@ -310,6 +337,7 @@ async function doReviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<Re
     })
   )
 
+  if (startLifecycle !== lifecycle) return "retired"
   await e2eKeyWrapsApi.reviveActorWraps(input.workspaceId, input.streamId, {
     keyGeneration: currentKeyGeneration,
     wraps: rewraps,
@@ -326,7 +354,8 @@ async function doReviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<Re
 async function unwrapOwnerGeneration(
   input: ReviveActorWrapsInput,
   data: Pick<E2eKeyWrapsResponse, "wraps">,
-  keyGeneration: number
+  keyGeneration: number,
+  startLifecycle: number
 ): Promise<Uint8Array | null> {
   const cached = keys.get(keySlot(input.workspaceId, input.streamId, keyGeneration))
   if (cached) return cached
@@ -340,6 +369,7 @@ async function unwrapOwnerGeneration(
       recipientPrivateKey: input.ownerPrivateKey,
       aad: buildWrapAad({ streamId: input.streamId, keyGeneration, recipientKeyId: input.ownerKeyId }),
     })
+    if (startLifecycle !== lifecycle) return null
     keys.set(keySlot(input.workspaceId, input.streamId, keyGeneration), key)
     return key
   } catch {
@@ -362,14 +392,18 @@ export async function resolveStreamKey(input: ResolveStreamKeyInput): Promise<Ui
   const pending = inflight.get(slot)
   if (pending) return pending
 
-  const promise = fetchAndUnwrap(input, input.keyGeneration)
+  // A holder so the cleanup can compare promise identity: `clearStreamKeyCache`
+  // empties the map mid-flight, and a plain `delete` would then evict the fetch
+  // a later caller had already registered under this slot.
+  const holder: { promise?: Promise<Uint8Array | null> } = {}
+  holder.promise = fetchAndUnwrap(input, lifecycle, input.keyGeneration)
     .then((res) => res.key)
     .finally(() => {
-      inflight.delete(slot)
+      if (inflight.get(slot) === holder.promise) inflight.delete(slot)
     })
 
-  inflight.set(slot, promise)
-  return promise
+  inflight.set(slot, holder.promise)
+  return holder.promise
 }
 
 /**
@@ -388,7 +422,7 @@ export async function resolveCurrentStreamKey(
     if (cachedKey) return { keyGeneration: cachedGen, key: cachedKey }
   }
 
-  const { keyGeneration, key } = await fetchAndUnwrap(input)
+  const { keyGeneration, key } = await fetchAndUnwrap(input, lifecycle)
   return key ? { keyGeneration, key } : null
 }
 
@@ -400,9 +434,11 @@ export async function resolveCurrentStreamKey(
  */
 async function fetchAndUnwrap(
   input: Omit<ResolveStreamKeyInput, "keyGeneration">,
+  startLifecycle: number,
   keyGeneration?: number
 ): Promise<{ keyGeneration: number; key: Uint8Array | null }> {
   const { currentKeyGeneration, wraps } = await e2eKeyWrapsApi.get(input.workspaceId, input.streamId)
+  if (startLifecycle !== lifecycle) return { keyGeneration: keyGeneration ?? currentKeyGeneration, key: null }
   currentGenerations.set(streamSlot(input.workspaceId, input.streamId), currentKeyGeneration)
 
   const generation = keyGeneration ?? currentKeyGeneration
@@ -415,19 +451,25 @@ async function fetchAndUnwrap(
     recipientPrivateKey: input.privateKey,
     aad: buildWrapAad({ streamId: input.streamId, keyGeneration: generation, recipientKeyId: input.recipientKeyId }),
   })
+  if (startLifecycle !== lifecycle) return { keyGeneration: generation, key: null }
   keys.set(keySlot(input.workspaceId, input.streamId, generation), key)
   return { keyGeneration: generation, key }
 }
 
 /**
- * Drop every cached SSK and generation pointer. Call on session lock and
- * account switch so SSK material never outlives the unlocked session — the
- * same boundary `clearDecryptCache` enforces for decrypted plaintext.
+ * Drop every cached SSK and generation pointer, and end the lifecycle they
+ * belonged to. Call on session lock and account switch so SSK material never
+ * outlives the unlocked session — the same boundary `clearDecryptCache`
+ * enforces for decrypted plaintext. The generation bump is what makes the drop
+ * final: an unwrap already in flight resolves into the next lifecycle, and
+ * without it re-seeded the map it had just been emptied of.
  */
 export function clearStreamKeyCache(): void {
+  lifecycle++
   keys.clear()
   currentGenerations.clear()
   inflight.clear()
+  reviveInflight.clear()
 }
 
 // SSK material dies on the same lock boundary as decrypted plaintext, so the

@@ -360,6 +360,10 @@ export {
   VOICE_DRAFT_CONTEXT_MAX_CHARS,
   // Auth (social providers + magic auth)
   SOCIAL_PROVIDERS,
+  // Per-request assertion of which signed-in account formed the request
+  ACCOUNT_ASSERTION_HEADER,
+  ACCOUNT_ASSERTION_SOCKET_FIELD,
+  AuthErrorCodes,
   type SocialProvider,
   MAGIC_CODE_LENGTH,
   // E2E placeholder shared between backend insert and frontend encrypt/decrypt

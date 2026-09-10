@@ -1,4 +1,4 @@
-import { api, requestMultipart } from "./client"
+import { api, postAvatarUpload } from "./client"
 import { BOOTSTRAP_ACCOUNT_PARAM, BOOTSTRAP_FRESH_PARAM } from "@/lib/sw-bootstrap-prefetch"
 import type {
   Workspace,
@@ -143,13 +143,7 @@ export const workspacesApi = {
   },
 
   async uploadAvatar(workspaceId: string, file: File): Promise<User> {
-    const formData = new FormData()
-    formData.append("avatar", file)
-
-    const body = await requestMultipart<{ user?: User }>(`/api/workspaces/${workspaceId}/profile/avatar`, formData, {
-      code: "AVATAR_UPLOAD_ERROR",
-      message: "Avatar upload failed",
-    })
+    const body = await postAvatarUpload<{ user?: User }>(`/api/workspaces/${workspaceId}/profile/avatar`, file)
     if (!body.user) {
       throw new Error("Avatar response missing user payload")
     }

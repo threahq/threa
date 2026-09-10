@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { sharedMessageSlotKey, type StreamEvent } from "@threahq/types"
+import { ACCOUNT_ASSERTION_HEADER, sharedMessageSlotKey, type StreamEvent } from "@threahq/types"
 import { ThreaDatabase, accountDbName, db } from "@/db"
 import { parsePersistedSyncTarget, respondToBootstrapRequest, runBootstrapSync } from "./sw-bootstrap-prefetch"
 
@@ -201,6 +201,38 @@ describe("runBootstrapSync account routing", () => {
     expect(await accountDb.events.where("streamId").equals(streamId).toArray()).toEqual([])
     // Only the identity probe ran; no workspace or stream data was fetched.
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["/api/auth/me"])
+  })
+
+  it("states the recipient account on every prefetch request, so a switch after the owner check is refused", async () => {
+    // The owner check reads the cookie once; the account can move before the
+    // prefetch requests go out. They carry the recipient, so the server refuses
+    // them (409) instead of answering as whoever the cookie names now — and a
+    // refused response is never written under the recipient's key.
+    const workosUserId = "user_asserting"
+    const streamId = "stream_asserted"
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void init
+      const url = String(input)
+      if (url.includes("/api/auth/me")) {
+        return new Response(JSON.stringify({ id: workosUserId }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      return new Response(JSON.stringify({ error: "mismatch", code: "ACCOUNT_MISMATCH" }), { status: 409 })
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_a1", workosUserId })
+
+    const prefetchCalls = fetchMock.mock.calls.filter((call) => !String(call[0]).includes("/api/auth/me"))
+    expect(prefetchCalls.length).toBeGreaterThan(0)
+    for (const call of prefetchCalls) {
+      const headers = call[1]?.headers as Record<string, string> | undefined
+      expect(headers?.[ACCOUNT_ASSERTION_HEADER]).toBe(workosUserId)
+    }
+    const accountDb = new ThreaDatabase(accountDbName(workosUserId))
+    expect(await accountDb.events.where("streamId").equals(streamId).toArray()).toEqual([])
   })
 
   it("prefetches nothing when the target carries no account id", async () => {

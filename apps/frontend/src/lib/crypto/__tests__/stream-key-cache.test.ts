@@ -488,3 +488,174 @@ describe("reviveStaleActorWraps", () => {
     expect(revive).not.toHaveBeenCalled()
   })
 })
+
+describe("lifecycle guard (lock / account switch)", () => {
+  const OWNER = "user_owner"
+
+  async function wrapsResponse(uik: UserIdentityKey, ssk: Uint8Array) {
+    const wrap = await wrapStreamKey({
+      key: ssk,
+      recipientPublicKey: uik.publicKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 0, recipientKeyId: KEY_ID }),
+    })
+    return {
+      currentKeyGeneration: 0,
+      wraps: [
+        {
+          keyGeneration: 0,
+          recipientKeyId: KEY_ID,
+          recipientKind: "user" as const,
+          wrapEnc: bytesToBase64(wrap.enc),
+          wrapCt: bytesToBase64(wrap.ct),
+        },
+      ],
+      ownerUserId: OWNER,
+      liveActorRecipients: [],
+    }
+  }
+
+  /** A wrap fetch this test resolves by hand, so a clear can land mid-flight. */
+  function gatedGet<T>() {
+    let release!: (value: T) => void
+    const gate = new Promise<T>((resolve) => {
+      release = resolve
+    })
+    // Re-spying the same method returns the same spy, history and all — reset it
+    // so a count means "since this fetch was armed".
+    const spy = vi.spyOn(e2eKeyWrapsApi, "get").mockReturnValue(gate as never)
+    spy.mockClear()
+    return { release, spy }
+  }
+
+  it("returns no key and caches nothing when the fetch resolves after a clear", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    const payload = await wrapsResponse(uik, ssk)
+    const { release } = gatedGet<typeof payload>()
+
+    const pending = resolveStreamKey({
+      workspaceId: WS,
+      streamId: STREAM,
+      keyGeneration: 0,
+      recipientKeyId: KEY_ID,
+      privateKey: uik.privateKey,
+    })
+    clearStreamKeyCache()
+    release(payload)
+
+    expect(await pending).toBeNull()
+
+    // Nothing was written back, so the next resolve has to go to the network
+    // again — which now fails, proving the SSK did not survive the clear.
+    vi.spyOn(e2eKeyWrapsApi, "get").mockRejectedValue(new Error("offline"))
+    await expect(
+      resolveStreamKey({
+        workspaceId: WS,
+        streamId: STREAM,
+        keyGeneration: 0,
+        recipientKeyId: KEY_ID,
+        privateKey: uik.privateKey,
+      })
+    ).rejects.toThrow("offline")
+  })
+
+  it("returns no key when the unwrap resolves after a clear", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    const payload = await wrapsResponse(uik, ssk)
+    const { release } = gatedGet<typeof payload>()
+
+    const pending = resolveStreamKey({
+      workspaceId: WS,
+      streamId: STREAM,
+      keyGeneration: 0,
+      recipientKeyId: KEY_ID,
+      privateKey: uik.privateKey,
+    })
+    release(payload)
+    // Let the fetch settle so the unwrap is the leg still in flight.
+    await Promise.resolve()
+    clearStreamKeyCache()
+
+    expect(await pending).toBeNull()
+  })
+
+  it("does not re-seed the current-generation pointer from a fetch that outlived the clear", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    const payload = await wrapsResponse(uik, ssk)
+    const { release } = gatedGet<typeof payload>()
+
+    const pending = resolveCurrentStreamKey({
+      workspaceId: WS,
+      streamId: STREAM,
+      recipientKeyId: KEY_ID,
+      privateKey: uik.privateKey,
+    })
+    clearStreamKeyCache()
+    release(payload)
+
+    expect(await pending).toBeNull()
+
+    // A cached generation pointer would let the next current-key read serve
+    // account A's generation to account B without a fetch.
+    const refetch = vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue(payload as never)
+    refetch.mockClear()
+    await resolveCurrentStreamKey({
+      workspaceId: WS,
+      streamId: STREAM,
+      recipientKeyId: KEY_ID,
+      privateKey: uik.privateKey,
+    })
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("retires a revive whose wrap fetch resolves after a clear", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    const payload = await wrapsResponse(uik, ssk)
+    const { release } = gatedGet<typeof payload>()
+
+    const pending = reviveStaleActorWraps({
+      workspaceId: WS,
+      streamId: STREAM,
+      userId: OWNER,
+      ownerKeyId: KEY_ID,
+      ownerPrivateKey: uik.privateKey,
+    })
+    clearStreamKeyCache()
+    release(payload)
+
+    expect(await pending).toBe("retired")
+  })
+
+  it("keeps the replacement fetch registered when a cleared one settles under it", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    const payload = await wrapsResponse(uik, ssk)
+    const first = gatedGet<typeof payload>()
+
+    const input = {
+      workspaceId: WS,
+      streamId: STREAM,
+      keyGeneration: 0,
+      recipientKeyId: KEY_ID,
+      privateKey: uik.privateKey,
+    }
+    const stale = resolveStreamKey(input)
+    clearStreamKeyCache()
+
+    const second = gatedGet<typeof payload>()
+    const live = resolveStreamKey(input)
+    // A third caller must join the live fetch, not open a second one.
+    const joined = resolveStreamKey(input)
+
+    first.release(payload)
+    expect(await stale).toBeNull()
+
+    second.release(payload)
+    expect(await live).not.toBeNull()
+    expect(await joined).toBe(await live)
+    expect(second.spy).toHaveBeenCalledTimes(1)
+  })
+})

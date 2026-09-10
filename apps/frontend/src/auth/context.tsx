@@ -1,6 +1,7 @@
 import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { API_BASE } from "@/api/client"
+import { setAssertedAccount, subscribeAccountMismatch } from "@/api/account-assertion"
 import { clearAllCachedData } from "@/db"
 import {
   clearAllCachedIdentities,
@@ -74,6 +75,16 @@ const PUSH_CLEANUP_TIMEOUT_MS = 2000
 // 15000 (it can't import this constant) — keep the two in sync.
 const AUTH_REVALIDATE_TIMEOUT_MS = 15000
 
+// How long to give the cookie to catch up with an account this tab just
+// activated, and how many times to ask. A switch commits server-side before the
+// browser adopts it, so a `/api/auth/me` still naming the outgoing account is
+// normally a race of milliseconds. Past this budget it is not a race: the
+// switch did not take, and the account this browser actually is gets published
+// rather than leaving the destination unresolved until some later request
+// happens to be refused.
+const ACCOUNT_CONFIRM_RETRY_MS = 600
+const ACCOUNT_CONFIRM_ATTEMPTS = 2
+
 function isAccountAddedReturn(): boolean {
   return new URLSearchParams(window.location.search).get(ACCOUNT_ADDED_PARAM) === "1"
 }
@@ -101,132 +112,215 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // account, rather than mounting the outgoing account's storage scope under
     // the account that was just added.
     if (isAccountAddedReturn()) {
+      setAssertedAccount(null)
       return { activeWorkosUserId: null, user: null, loading: true, error: null }
     }
     const activeWorkosUserId = getActiveAccountId()
     const user = activeWorkosUserId ? getCachedIdentity(activeWorkosUserId) : null
+    // Published here, not from an effect: requests issued during the very
+    // first render must already state this account (see api/account-assertion).
+    setAssertedAccount(activeWorkosUserId)
     return { activeWorkosUserId, user, loading: !user, error: null }
   })
+
+  // The one publication point for a session: the account every request states
+  // moves with the identity, in the same statement, so the two can never
+  // disagree about which account this client is.
+  const publishSession = useCallback((session: AccountSession) => {
+    setAssertedAccount(session.activeWorkosUserId)
+    setState(session)
+  }, [])
 
   // Revalidation is only ever allowed to publish the account it was issued
   // for. `generation` retires every in-flight `/api/auth/me` the moment the
   // active account changes (a response from before a switch would otherwise
   // reinstate the outgoing account); `expectedId` additionally refuses a
   // response naming an account we did not activate, so a cookie that has not
-  // caught up leaves the destination unresolved instead of rolling back.
+  // caught up leaves the destination unresolved instead of rolling back — for a
+  // bounded number of retries, after which the server's answer is the truth.
   const generationRef = useRef(0)
   const expectedIdRef = useRef<string | null>(null)
   const activeIdRef = useRef<string | null>(state.activeWorkosUserId)
   activeIdRef.current = state.activeWorkosUserId
 
-  const fetchUser = useCallback(async () => {
-    const generation = generationRef.current
-
-    // A 401 is the only authoritative "you are signed out" signal: forget the
-    // active account's cached identity and drop to the login redirect. Other
-    // accounts parked on this browser keep theirs.
-    const onUnauthenticated = () => {
-      const active = activeIdRef.current
-      if (active) clearCachedIdentity(active)
-      expectedIdRef.current = null
-      setState({ activeWorkosUserId: null, user: null, loading: false, error: null })
-    }
-    // Network failure / timeout / 5xx during background revalidation must not
-    // sign a returning user out — keep the cached identity so the app stays
-    // usable offline. Only a visit with no cached identity for the active
-    // account falls through to login.
-    const onRevalidateFailure = (message: string) => {
-      const active = activeIdRef.current
-      const user = active ? getCachedIdentity(active) : null
-      setState({
-        activeWorkosUserId: active,
-        user,
-        loading: false,
-        error: user ? null : message,
-      })
-    }
-    const onResolved = (user: User) => {
-      setCachedIdentity(user)
-      // Server named an account we did not activate: keep the destination
-      // unresolved rather than publishing an identity the local scope does not
-      // belong to. The fetch `activateAccount` issues after the switch is the
-      // one that resolves it.
-      if (expectedIdRef.current && expectedIdRef.current !== user.id) return
-      expectedIdRef.current = null
-      setActiveAccountId(user.id)
-      setState({ activeWorkosUserId: user.id, user, loading: false, error: null })
-    }
-    const isStale = () => generationRef.current !== generation
-
-    try {
-      // Consume the eager auth promise started in index.html before the bundle
-      // loaded. It resolves to the User, or null on 401; it rejects on network
-      // error / 5xx, in which case we fall through to a fresh, bounded fetch.
-      const eagerPromise = window.__eagerAuthPromise
-      if (eagerPromise) {
-        window.__eagerAuthPromise = undefined
-        try {
-          const user = await eagerPromise
-          if (isStale()) return
-          if (user) {
-            onResolved(user)
-          } else {
-            onUnauthenticated()
-          }
-          return
-        } catch {
-          // Eager fetch failed — fall through to regular fetch
-        }
-      }
-
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), AUTH_REVALIDATE_TIMEOUT_MS)
-      let res: Response
-      try {
-        res = await fetch(`${API_BASE}/api/auth/me`, {
-          credentials: "include",
-          signal: controller.signal,
-        })
-      } finally {
-        clearTimeout(timeout)
-      }
-
-      if (isStale()) return
-
-      if (res.status === 401) {
-        onUnauthenticated()
-        return
-      }
-
-      if (!res.ok) {
-        throw new Error("Failed to fetch user")
-      }
-
-      const user: User = await res.json()
-      if (isStale()) return
-      onResolved(user)
-    } catch (err) {
-      if (isStale()) return
-      onRevalidateFailure(err instanceof Error ? err.message : "Unknown error")
-    }
+  // Bounded resolution for a pending expectation (see ACCOUNT_CONFIRM_*): the
+  // retries this tab owes itself before it accepts the server's answer.
+  const confirmAttemptsRef = useRef(0)
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearConfirmRetry = useCallback(() => {
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current)
+    confirmTimerRef.current = null
   }, [])
+  useEffect(() => clearConfirmRetry, [clearConfirmRetry])
+
+  /**
+   * `authoritative` means the caller already has proof the cookie is not the
+   * account this tab asserts (a 409 refusal), so `/api/auth/me` outranks a
+   * pending switch expectation. Without it a switch whose destination lost a
+   * race would assert an account the cookie never names, be refused, revalidate
+   * to the same answer, discard it, and spin.
+   */
+  const fetchUser = useCallback(
+    async (opts?: { authoritative?: boolean }) => {
+      const generation = generationRef.current
+
+      // A 401 is the only authoritative "you are signed out" signal: forget the
+      // active account's cached identity and drop to the login redirect. Other
+      // accounts parked on this browser keep theirs.
+      const onUnauthenticated = () => {
+        const active = activeIdRef.current
+        if (active) clearCachedIdentity(active)
+        clearConfirmRetry()
+        confirmAttemptsRef.current = 0
+        expectedIdRef.current = null
+        publishSession({ activeWorkosUserId: null, user: null, loading: false, error: null })
+      }
+      // Network failure / timeout / 5xx during background revalidation must not
+      // sign a returning user out — keep the cached identity so the app stays
+      // usable offline. Only a visit with no cached identity for the active
+      // account falls through to login.
+      const onRevalidateFailure = (message: string) => {
+        const active = activeIdRef.current
+        const user = active ? getCachedIdentity(active) : null
+        publishSession({
+          activeWorkosUserId: active,
+          user,
+          loading: false,
+          error: user ? null : message,
+        })
+      }
+      const onResolved = (user: User) => {
+        setCachedIdentity(user)
+        // Server named an account we did not activate. Publishing it would put
+        // the local scope under an identity it does not belong to, so ask
+        // again — but a bounded number of times. Nothing else in the app is
+        // guaranteed to issue a request that gets refused, so returning here
+        // forever is how a destination stayed unresolved with no way out.
+        const expected = expectedIdRef.current
+        if (!opts?.authoritative && expected && expected !== user.id) {
+          if (confirmAttemptsRef.current < ACCOUNT_CONFIRM_ATTEMPTS) {
+            confirmAttemptsRef.current += 1
+            clearConfirmRetry()
+            confirmTimerRef.current = setTimeout(() => {
+              confirmTimerRef.current = null
+              // Re-read: a switch or a refusal during the wait already moved on,
+              // and this retry belongs to an expectation that no longer exists.
+              if (expectedIdRef.current !== expected) return
+              void fetchUserRef.current?.()
+            }, ACCOUNT_CONFIRM_RETRY_MS)
+            return
+          }
+          // Out of budget: the cookie is not catching up, so the switch did not
+          // take. Say so — the user asked for a different account and is about
+          // to keep using this one (INV-63).
+          toast.error("Couldn't switch accounts. You're still signed in as this one.")
+        }
+        clearConfirmRetry()
+        confirmAttemptsRef.current = 0
+        expectedIdRef.current = null
+        setActiveAccountId(user.id)
+        publishSession({ activeWorkosUserId: user.id, user, loading: false, error: null })
+      }
+      const isStale = () => generationRef.current !== generation
+
+      try {
+        // Consume the eager auth promise started in index.html before the bundle
+        // loaded. It resolves to the User, or null on 401; it rejects on network
+        // error / 5xx, in which case we fall through to a fresh, bounded fetch.
+        const eagerPromise = window.__eagerAuthPromise
+        if (eagerPromise) {
+          window.__eagerAuthPromise = undefined
+          try {
+            const user = await eagerPromise
+            if (isStale()) return
+            if (user) {
+              onResolved(user)
+            } else {
+              onUnauthenticated()
+            }
+            return
+          } catch {
+            // Eager fetch failed — fall through to regular fetch
+          }
+        }
+
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), AUTH_REVALIDATE_TIMEOUT_MS)
+        let res: Response
+        try {
+          res = await fetch(`${API_BASE}/api/auth/me`, {
+            credentials: "include",
+            signal: controller.signal,
+          })
+        } finally {
+          clearTimeout(timeout)
+        }
+
+        if (isStale()) return
+
+        if (res.status === 401) {
+          onUnauthenticated()
+          return
+        }
+
+        if (!res.ok) {
+          throw new Error("Failed to fetch user")
+        }
+
+        const user: User = await res.json()
+        if (isStale()) return
+        onResolved(user)
+      } catch (err) {
+        if (isStale()) return
+        onRevalidateFailure(err instanceof Error ? err.message : "Unknown error")
+      }
+    },
+    [publishSession, clearConfirmRetry]
+  )
+
+  // The bounded retry above is scheduled from inside `fetchUser`, so it reads
+  // the callback through a ref rather than closing over the identity it is
+  // defined in.
+  const fetchUserRef = useRef<typeof fetchUser | null>(null)
+  fetchUserRef.current = fetchUser
 
   useEffect(() => {
     fetchUser()
   }, [fetchUser])
 
+  // A refusal (409 ACCOUNT_MISMATCH) is this tab learning the browser's active
+  // account moved without it — another tab switched while it was suspended, or
+  // a session rotated. `/api/auth/me` carries no assertion, so it is the one
+  // call that can still answer, and it moves this tab onto the account it is
+  // signed in as. One revalidation at a time: a stalled tab refuses many queued
+  // requests at once and they all report.
+  const revalidatingRef = useRef(false)
+  useEffect(
+    () =>
+      subscribeAccountMismatch(() => {
+        if (revalidatingRef.current) return
+        revalidatingRef.current = true
+        void fetchUser({ authoritative: true }).finally(() => {
+          revalidatingRef.current = false
+        })
+      }),
+    [fetchUser]
+  )
+
   const activateAccount = useCallback(
     (workosUserId: string, identity?: User | null) => {
       generationRef.current += 1
+      clearConfirmRetry()
+      confirmAttemptsRef.current = 0
       expectedIdRef.current = workosUserId
       const hint = identity && identity.id === workosUserId ? identity : null
       const known = hint ?? getCachedIdentity(workosUserId)
       if (hint) setCachedIdentity(hint)
       setActiveAccountId(workosUserId)
-      setState({ activeWorkosUserId: workosUserId, user: known, loading: !known, error: null })
+      publishSession({ activeWorkosUserId: workosUserId, user: known, loading: !known, error: null })
       void fetchUser()
     },
-    [fetchUser]
+    [fetchUser, clearConfirmRetry]
   )
 
   // AuthProvider sits above the router, so the add-account callback outcome

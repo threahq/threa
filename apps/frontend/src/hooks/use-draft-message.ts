@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react"
-import { db, generateLocalDraftId, type CachedDraft, type DraftAttachment } from "@/db"
+import { getAccountAssertionGeneration } from "@/api/account-assertion"
+import { db, generateLocalDraftId, getActiveDb, type CachedDraft, type DraftAttachment, type ThreaDatabase } from "@/db"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import {
   deleteDraftFromCache,
@@ -735,28 +736,35 @@ export async function restoreStashedDraftToComposer(
  * (`resolveLoadedDraft`'s `sentDraftId`), so a rescope that wins the race and
  * moves the sent row here is still found and resolved under the new scope.
  */
-export async function rescopeScopeDrafts(workspaceId: string, fromScope: string, toScope: string): Promise<void> {
-  const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
+export async function rescopeScopeDrafts(
+  workspaceId: string,
+  fromScope: string,
+  toScope: string,
+  database: ThreaDatabase = getActiveDb()
+): Promise<void> {
+  const accountGeneration = getAccountAssertionGeneration()
+  const rows = await database.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
   for (const row of rows) {
     // Move + enqueue in one txn so the re-scoped row is never visible without
     // its dirty bit (an inbound echo in that gap could overwrite the move). The
     // row is re-read inside the txn — writing the pre-read copy would drop a
     // save that committed in between.
-    await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
-      const live = await db.drafts.get(row.id)
+    await database.transaction("rw", database.drafts, database.composerLoaded, database.pendingOperations, async () => {
+      const live = await database.drafts.get(row.id)
       if (!live || live.scope !== fromScope) return
-      await migrateLocalDraftScope(workspaceId, fromScope, { ...live, scope: toScope })
+      await migrateLocalDraftScope(workspaceId, fromScope, { ...live, scope: toScope }, database)
       // forceNewOp: a push snapshotted before this move may be in flight with its
       // claim not yet visible — coalescing onto it would lose the scope move when
       // it completes (live repro: cancel-armed-reply left the server row branch-
       // scoped forever). The fresh op re-reads the moved row at drain.
-      await enqueueDraftUpsert(workspaceId, live.id, { forceNewOp: true })
+      await enqueueDraftUpsert(workspaceId, live.id, { forceNewOp: true }, database)
     })
   }
   // The crash-safe staging buffer (localStorage) must follow the move: a staged
   // entry left under the old scope no longer matches any IDB row there, so the
   // startup reconcile would "recover" it — resurrecting the draft under the
   // scope the user just moved it out of.
+  if (getActiveDb() !== database || getAccountAssertionGeneration() !== accountGeneration) return
   const staged = readStagedDraft(workspaceId, fromScope)
   if (staged) {
     stageDraftContent(workspaceId, toScope, staged.contentJson)

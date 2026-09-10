@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
+import Dexie from "dexie"
 import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threahq/types"
 import { db, type CachedDraft } from "@/db"
+import { bumpAccountGeneration } from "@/db/event-writes"
+import { setAssertedAccount } from "@/api/account-assertion"
 import * as draftStore from "@/stores/draft-store"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { markDraftResolved, resetDraftResolutionGuard } from "./draft-resolution-guard"
@@ -515,6 +518,45 @@ describe("executeDraftUpsert", () => {
     await executeDraftUpsert(workspaceId, "draft_x", "write_b", service(upsert), ["write_a"])
 
     expect(calls[0]).toMatchObject({ writeId: "write_b", priorWriteIds: ["write_a"] })
+  })
+
+  it.each(["database", "identity"])(
+    "should not upload an old draft when %s changes during its initial read",
+    async (change) => {
+      const row = localDraft({ id: "draft_x", contentJson: makeDoc("private A") })
+      setAssertedAccount("workos_a")
+      const read = vi.spyOn(db.drafts, "get").mockImplementationOnce(() => {
+        if (change === "database") bumpAccountGeneration()
+        else setAssertedAccount("workos_b")
+        return Dexie.Promise.resolve(row)
+      })
+      const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => ({ draft: wireDraft(), split: false }))
+      try {
+        await executeDraftUpsert(workspaceId, row.id, "write_a", service(upsert))
+        expect(upsert).not.toHaveBeenCalled()
+      } finally {
+        read.mockRestore()
+        setAssertedAccount(null)
+      }
+    }
+  )
+
+  it("writes nothing back when the account switched away while the push was on the wire", async () => {
+    // Past the switch's retire budget the shared `db` proxy already points at
+    // the account that replaced this one. Confirming the version, migrating an
+    // id or queueing a cleanup there would plant this account's draft in
+    // somebody else's storage; the op stays queued for its own account instead.
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 2, contentJson: makeDoc("typed") }))
+    const upsert = vi.fn(async (_w: string, id: string): Promise<UpsertDraftResponse> => {
+      bumpAccountGeneration()
+      return { draft: wireDraft({ id: "draft_new", version: 9 }), split: true, originalId: id }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    expect(await db.drafts.get("draft_new")).toBeUndefined()
+    expect(await db.drafts.get("draft_x")).toMatchObject({ baseVersion: 2, contentJson: makeDoc("typed") })
+    expect(await db.pendingOperations.where("type").equals("delete_draft").count()).toBe(0)
   })
 
   it("migrates the local id to the server-minted id on a split", async () => {

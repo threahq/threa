@@ -26,7 +26,9 @@
  */
 
 import { attachmentsApi } from "@/api"
-import { API_BASE, ApiError } from "@/api/client"
+import { AuthErrorCodes } from "@threahq/types"
+import { API_BASE, ApiError, isAccountMismatchError } from "@/api/client"
+import { reportAccountMismatch } from "@/api/account-assertion"
 import { db, type CachedUploadJob } from "@/db"
 import { encryptAttachmentBytes, rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { uploadGalleryType } from "@/components/gallery/upload-preview"
@@ -457,6 +459,10 @@ async function runReserveAndUpload(jobId: string, file: File, signal: AbortSigna
     await uploadBytes(jobId, signal)
   } catch (err) {
     if (isAbortError(err) || signal.aborted) return
+    // Refused because the active account moved. The file belongs to the account
+    // that picked it — the switch tears the in-memory state down and its bytes
+    // stay in that account's database, so don't mark it failed.
+    if (isAccountMismatchError(err)) return
     patchJob(jobId, { status: "error", error: err instanceof Error ? err.message : "Upload failed" })
   }
 }
@@ -546,6 +552,13 @@ async function uploadBytesLocked(
         retryDelay = RATE_LIMIT_RETRY_DELAYS_MS[rateLimitAttempt]
         rateLimitAttempt += 1
       } else if (response.status >= 400 && response.status < 500) {
+        // The transfer outlived its account: stop without touching the durable
+        // row or reporting a failure. It resumes from IDB when that account is
+        // active again.
+        if (body?.code === AuthErrorCodes.ACCOUNT_MISMATCH) {
+          reportAccountMismatch()
+          return
+        }
         terminalRetryable = false
         // A duplicate completion race (another tab/device already settled this
         // upload) surfaces as 404/409 here — that's a success, not a failure.

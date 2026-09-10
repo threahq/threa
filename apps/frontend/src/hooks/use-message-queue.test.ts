@@ -15,6 +15,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MessageErrorCodes, MessageReferenceErrorCodes } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
+import { retireAccountWork } from "@/sync/account-fence"
 import { createElement, type ReactNode } from "react"
 
 const useMessageQueue = (workspaceId = "ws_1") => useMessageQueueHook(workspaceId)
@@ -347,9 +348,116 @@ describe("useMessageQueue", () => {
       expect(useDraftMessageModule.rescopeScopeDrafts).toHaveBeenCalledWith(
         "ws_1",
         "thread:event_card",
-        "stream:stream_real_thread"
+        "stream:stream_real_thread",
+        dbModule.getActiveDb()
       )
     )
+  })
+
+  it("stops a promotion whose account switched away, keeping the created stream for the switch back", async () => {
+    let settleCreate: (value: unknown) => void = () => {}
+    mockStreamCreate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settleCreate = resolve
+        })
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_promote_switch",
+        workspaceId: "ws_1",
+        streamId: "draft:stream_parent:event_anchor",
+        draftId: "draft:stream_parent:event_anchor",
+        content: "Reply",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+        streamCreation: {
+          type: "thread",
+          parentStreamId: "stream_parent",
+          parentAnchorId: "event_anchor",
+        },
+      } as unknown as MockPendingMessage,
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await waitFor(() => expect(mockStreamCreate).toHaveBeenCalledTimes(1))
+
+    // The user switches accounts while the create is on the wire.
+    await act(async () => {
+      const retired = retireAccountWork(1000)
+      settleCreate({
+        id: "stream_real_switch",
+        workspaceId: "ws_1",
+        type: "thread",
+        parentStreamId: "stream_parent",
+        parentAnchorId: "event_anchor",
+      })
+      await retired
+    })
+
+    // The server-created id is durable in the composing account's database, so
+    // the retry after the switch back reuses that stream instead of minting a
+    // duplicate — and `streamCreation` is still set, so the rest of the
+    // promotion re-runs there.
+    expect(mockUpdate.mock.calls).toEqual([["temp_promote_switch", { promotedStreamId: "stream_real_switch" }]])
+    expect(mockPendingMessages).toEqual([
+      expect.objectContaining({ clientId: "temp_promote_switch", streamCreation: expect.any(Object) }),
+    ])
+
+    // Nothing published into the account that replaced it.
+    expect(mockSetQueryData).not.toHaveBeenCalled()
+    expect(mockSubscribeStream).not.toHaveBeenCalled()
+    expect(draftPromotionsModule.emitDraftPromoted).not.toHaveBeenCalled()
+    expect(streamSyncModule.setParentThreadId).not.toHaveBeenCalled()
+    expect(useDraftMessageModule.rescopeScopeDrafts).not.toHaveBeenCalled()
+    expect(draftStoreModule.deleteDraftScratchpadFromCache).not.toHaveBeenCalled()
+    // …and the message itself was never sent as the arriving user.
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(mockMarkSent).not.toHaveBeenCalled()
+    expect(mockMarkFailed).not.toHaveBeenCalled()
+  })
+
+  it("should stop promotion publication when the account retires during local event reads", async () => {
+    let releaseEvent!: () => void
+    const eventRead = new Promise<undefined>((resolve) => {
+      releaseEvent = () => resolve(undefined)
+    })
+    const read = vi.spyOn(dbModule.db.events, "get").mockReturnValue(eventRead as never)
+    mockStreamCreate.mockResolvedValue({ id: "stream_promoted", workspaceId: "ws_1", type: "thread" })
+    mockPendingMessages = [
+      {
+        clientId: "temp_delayed_event",
+        workspaceId: "ws_1",
+        streamId: "draft:stream_parent:event_anchor",
+        draftId: "draft:stream_parent:event_anchor",
+        content: "Reply",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+        streamCreation: { type: "thread", parentStreamId: "stream_parent", parentAnchorId: "event_anchor" },
+      } as unknown as MockPendingMessage,
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await waitFor(() => expect(read).toHaveBeenCalledWith("temp_delayed_event"))
+    await act(async () => {
+      const retired = retireAccountWork(1000)
+      releaseEvent()
+      await retired
+    })
+
+    expect({
+      updates: mockUpdate.mock.calls,
+      subscriptions: mockSubscribeStream.mock.calls,
+      promotions: vi.mocked(draftPromotionsModule.emitDraftPromoted).mock.calls,
+      sends: mockCreate.mock.calls,
+    }).toEqual({
+      updates: [["temp_delayed_event", { promotedStreamId: "stream_promoted" }]],
+      subscriptions: [],
+      promotions: [],
+      sends: [],
+    })
   })
 
   it("forwards atomic steer on the message request", async () => {
@@ -822,6 +930,8 @@ describe("useMessageQueue", () => {
 
     // The card reconciles to the real conversation + stream + message ids the
     // moment the scratchpad materializes.
+    // …into the database the drain captured, not whatever the `db` proxy points
+    // at by the time the send's round-trip returns.
     expect(reconcile).toHaveBeenCalledWith(
       "ws_1",
       expect.objectContaining({
@@ -832,7 +942,8 @@ describe("useMessageQueue", () => {
         contentMarkdown: "first note",
         rootStreamId: "stream_real",
         rootStreamType: "scratchpad",
-      })
+      }),
+      dbModule.getActiveDb()
     )
   })
 
@@ -857,5 +968,55 @@ describe("useMessageQueue", () => {
     })
 
     expect(reconcile).not.toHaveBeenCalled()
+  })
+
+  it("should leave a send that lands after its account switched away queued for that account", async () => {
+    let settleSend: (value: { id: string }) => void = () => {}
+    mockCreate.mockImplementation(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          settleSend = resolve
+        })
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_switch",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Composed by A",
+        contentFormat: "markdown",
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Composed by A" }] }],
+        },
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+
+    // The user switches accounts while the send is on the wire.
+    await act(async () => {
+      const retired = retireAccountWork(1000)
+      settleSend({ id: "msg_late" })
+      await retired
+    })
+
+    // The row and its optimistic event belong to the account that composed
+    // them: nothing was settled, failed or retried under the account that
+    // replaced it, so the outbox is intact for the switch back.
+    expect(mockDelete).not.toHaveBeenCalled()
+    expect(mockMarkSent).not.toHaveBeenCalled()
+    expect(mockMarkFailed).not.toHaveBeenCalled()
+    expect(mockEventsUpdate).not.toHaveBeenCalledWith(
+      "temp_switch",
+      expect.objectContaining({ _sentAt: expect.any(Number) })
+    )
+    expect(mockPendingMessages).toHaveLength(1)
   })
 })

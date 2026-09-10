@@ -12,6 +12,8 @@ import {
  * take minutes; the caller owns cancellation via `signal`.
  */
 
+import { accountAssertionHeaders } from "@/api/account-assertion"
+
 export interface XhrUploadParams {
   url: string
   /** The upload payload (original file, or ciphertext for E2E). */
@@ -67,6 +69,9 @@ export function xhrUpload({
     xhr.open("POST", url)
     xhr.withCredentials = true
     // No Content-Type header — the browser sets it with the multipart boundary.
+    // The account this transfer was formed for rides along as it does on `apiFetch`:
+    // the cookie alone can't say which signed-in account is streaming these bytes.
+    for (const [name, value] of Object.entries(accountAssertionHeaders())) xhr.setRequestHeader(name, value)
 
     const onAbort = () => xhr.abort()
     signal?.addEventListener("abort", onAbort, { once: true })

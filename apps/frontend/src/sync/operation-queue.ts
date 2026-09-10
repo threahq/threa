@@ -1,4 +1,5 @@
-import { db, sequenceToNum } from "@/db"
+import { db, getActiveDb, sequenceToNum, type ThreaDatabase } from "@/db"
+import { runAccountOwnedWork, type AccountWorkFence } from "./account-fence"
 import type { CachedEvent, PendingOperation } from "@/db/database"
 import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threahq/types"
 import { ApiError, commandsApi, isPermanentApiError } from "@/api"
@@ -41,21 +42,26 @@ interface ScheduledServiceLike {
  * a fresh op enqueues, and the queue grows a phantom-row loop). Scheduled ops
  * evict the local row — bootstrap/socket events restore the server's truth.
  */
-async function reconcileRejectedOperation(op: PendingOperation): Promise<void> {
+async function reconcileRejectedOperation(op: PendingOperation, database: ThreaDatabase): Promise<void> {
   switch (op.type) {
     case "schedule_message":
-      await removeScheduledRow(op.payload.placeholderId as string)
+      await removeScheduledRow(op.payload.placeholderId as string, database)
       break
     case "send_scheduled_now":
     case "cancel_scheduled_message":
-      await removeScheduledRow(op.payload.id as string)
+      await removeScheduledRow(op.payload.id as string, database)
       break
   }
 }
 
-async function markCommandDispatchFailed(workspaceId: string, optimisticEventId: string, error: Error): Promise<void> {
-  await db.transaction("rw", db.events, async () => {
-    const dispatched = await db.events.get(optimisticEventId)
+async function markCommandDispatchFailed(
+  database: ThreaDatabase,
+  workspaceId: string,
+  optimisticEventId: string,
+  error: Error
+): Promise<void> {
+  await database.transaction("rw", database.events, async () => {
+    const dispatched = await database.events.get(optimisticEventId)
     if (!dispatched) return
     const failedSequence = (Number(dispatched.sequence) + 1).toString()
     const failedEvent: CachedEvent = {
@@ -76,8 +82,8 @@ async function markCommandDispatchFailed(workspaceId: string, optimisticEventId:
       _status: "failed",
       _cachedAt: Date.now(),
     }
-    await db.events.update(optimisticEventId, { _status: "failed" })
-    await db.events.put(failedEvent)
+    await database.events.update(optimisticEventId, { _status: "failed" })
+    await database.events.put(failedEvent)
   })
 }
 
@@ -112,14 +118,19 @@ export async function processOperationQueue(
   draftsService: DraftsServiceLike | undefined,
   isOnline: () => boolean
 ): Promise<number | null> {
-  const processor = async () => {
+  // The queue belongs to the account that enqueued it: captured with the fence
+  // so a reply landing after a switch is still bookkept in that account's
+  // database, and the loop stops rather than replaying as its replacement.
+  const database = getActiveDb()
+  const processor = async (fence: AccountWorkFence) => {
     const now = Date.now()
     const skipped = new Set<string>()
 
     while (true) {
       if (!isOnline()) break
+      if (fence.isRetired()) break
 
-      const candidates = await db.pendingOperations.orderBy("createdAt").toArray()
+      const candidates = await database.pendingOperations.orderBy("createdAt").toArray()
       const next = candidates.find((op) => !skipped.has(op.id) && (op.retryAfter ?? 0) <= now)
       if (!next) break
 
@@ -128,21 +139,24 @@ export async function processOperationQueue(
         // device, a coalescing replace of this op must carry its idempotency
         // lineage (writeId) forward instead of minting a fresh one — otherwise
         // a committed-but-unacked write reads as drift and splits server-side.
-        const claimed = await db.pendingOperations.update(next.id, { startedAt: Date.now() })
+        const claimed = await database.pendingOperations.update(next.id, { startedAt: Date.now() })
         if (claimed === 0) continue
-        await executeOperation(next, messageService, reactionService, scheduledService, draftsService)
-        await db.pendingOperations.delete(next.id)
+        await executeOperation(next, messageService, reactionService, scheduledService, draftsService, database)
+        if (fence.isRetired()) return
+        await database.pendingOperations.delete(next.id)
       } catch (error) {
+        // Retired mid-flight: leave the op untouched for its own account.
+        if (fence.isRetired()) return
         if (isPermanentApiError(error)) {
           // A 4xx (minus 408/429) is the server's final answer for this
           // payload — replaying it can never succeed, so the op must die
           // here or it refires on every queue kick forever (the prod
           // send-now denial loop of 2026-07-19).
-          await reconcileRejectedOperation(next)
-          await db.pendingOperations.delete(next.id)
+          await reconcileRejectedOperation(next, database)
+          await database.pendingOperations.delete(next.id)
         } else {
           const retryCount = next.retryCount + 1
-          await db.pendingOperations.update(next.id, {
+          await database.pendingOperations.update(next.id, {
             retryCount,
             retryAfter: Date.now() + getRetryDelay(retryCount),
           })
@@ -152,17 +166,19 @@ export async function processOperationQueue(
     }
   }
 
-  if (navigator.locks) {
-    await navigator.locks.request(OPERATION_QUEUE_LOCK, { ifAvailable: true }, async (lock) => {
-      if (!lock) return
-      await processor()
-    })
-  } else {
-    await processor()
-  }
+  await runAccountOwnedWork(async (fence) => {
+    if (navigator.locks) {
+      await navigator.locks.request(OPERATION_QUEUE_LOCK, { ifAvailable: true }, async (lock) => {
+        if (!lock) return
+        await processor(fence)
+      })
+    } else {
+      await processor(fence)
+    }
+  })
 
   if (!isOnline()) return null
-  const remaining = await db.pendingOperations.toArray()
+  const remaining = await database.pendingOperations.toArray()
   if (remaining.length === 0) return null
   return remaining.reduce((next, operation) => Math.min(next, operation.retryAfter ?? Date.now()), Infinity)
 }
@@ -172,7 +188,8 @@ async function executeOperation(
   messageService: MessageServiceLike,
   reactionService: ReactionServiceLike,
   scheduledService: ScheduledServiceLike | undefined,
-  draftsService: DraftsServiceLike | undefined
+  draftsService: DraftsServiceLike | undefined,
+  database: ThreaDatabase
 ): Promise<void> {
   const { workspaceId, type, payload } = op
 
@@ -202,7 +219,7 @@ async function executeOperation(
       const created = await scheduledService.create(workspaceId, input)
       // Swap the local placeholder for the server row in one transaction so
       // the live Dexie query never observes a frame with neither row present.
-      await replaceLocalScheduledRow(placeholderId, created)
+      await replaceLocalScheduledRow(placeholderId, created, database)
       break
     }
 
@@ -215,7 +232,7 @@ async function executeOperation(
     case "send_scheduled_now": {
       if (!scheduledService) throw new Error("scheduledService is required to replay send_scheduled_now ops")
       const sent = await scheduledService.sendNow(workspaceId, payload.id as string)
-      await persistScheduledRows([sent])
+      await persistScheduledRows([sent], database)
       break
     }
 
@@ -237,28 +254,32 @@ async function executeOperation(
           ...(payload.conversationId ? { conversationId: payload.conversationId as string } : {}),
         })
         if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
-        await db.transaction("rw", [db.events, db.pendingOperations], async () => {
-          const optimistic = await db.events.get(optimisticEventId)
+        await database.transaction("rw", [database.events, database.pendingOperations], async () => {
+          const optimistic = await database.events.get(optimisticEventId)
           if (optimistic) {
             await bumpLaterOptimisticAnchors(
               optimistic.streamId,
               optimistic._sequenceNum,
               sequenceToNum(result.event.sequence),
-              optimistic.id
+              optimistic.id,
+              // The captured handle: the default resolves the *active* database,
+              // which after a switch is another account's — and another Dexie
+              // instance is outside this transaction besides.
+              database
             )
-            await db.events.delete(optimisticEventId)
-            await db.events.put({
+            await database.events.delete(optimisticEventId)
+            await database.events.put({
               ...result.event,
               workspaceId,
               _sequenceNum: sequenceToNum(result.event.sequence),
               _cachedAt: Date.now(),
             })
           }
-          await db.pendingOperations.delete(op.id)
+          await database.pendingOperations.delete(op.id)
         })
       } catch (error) {
         if (!isPermanentApiError(error)) throw error
-        await markCommandDispatchFailed(workspaceId, optimisticEventId, error)
+        await markCommandDispatchFailed(database, workspaceId, optimisticEventId, error)
       }
       break
     }
@@ -277,7 +298,12 @@ async function executeOperation(
         payload.draftId as string,
         payload.writeId as string,
         draftsService,
-        priorWriteIds
+        priorWriteIds,
+        // The captured handle rides all the way through the push's reconciliation
+        // — split migration, cleanup enqueues, the confirm transaction. The
+        // default resolves the *active* database, which after a switch is
+        // another account's.
+        database
       )
       break
     }

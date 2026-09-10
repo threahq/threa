@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react"
 import { io, Socket } from "socket.io-client"
-import { HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
+import { ACCOUNT_ASSERTION_SOCKET_FIELD, AuthErrorCodes, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
 import { api } from "@/api/client"
 import { useAccountScopeOptional } from "@/auth/account-scope"
+import { getAssertedAccount, reportAccountMismatch } from "@/api/account-assertion"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { setPreviewVisibilityEmitter } from "@/lib/preview-visibility"
 import { usePageActivity } from "@/hooks/use-page-activity"
@@ -91,6 +92,10 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       let connectionGeneration = 0
       const s = io(wsUrl, {
         path: "/socket.io/",
+        // The account this socket is built for. The shared session cookie can
+        // already name a different one (another tab switched); the backend then
+        // refuses rather than streaming that account's events into this page.
+        auth: { [ACCOUNT_ASSERTION_SOCKET_FIELD]: getAssertedAccount() },
         // Prefer a direct WebSocket so the socket skips Engine.IO's HTTP
         // long-polling handshake (several round-trips before it upgrades). On a
         // cold boot the workspace/stream bootstrap is gated on the socket
@@ -154,9 +159,14 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
         console.error("[Socket] Error:", error.message)
       })
 
-      s.on("connect_error", () => {
+      s.on("connect_error", (error: Error & { data?: { code?: string } }) => {
         if (isStale()) return
         recordConnectivityEvent("socket_error", { connectionId, generation: connectionGeneration, reason: "transport" })
+        // The handshake asserted an account the cookie no longer names. Retrying
+        // it can only fail again, so hand it to the identity owner: it
+        // revalidates and this subtree remounts under the account it becomes.
+        if (error.data?.code !== AuthErrorCodes.ACCOUNT_MISMATCH) return
+        reportAccountMismatch()
       })
 
       // Socket.io manager events for reconnection tracking
