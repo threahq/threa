@@ -11,7 +11,7 @@ import {
 // only assertable through the real call.
 import * as streamNameCache from "@/lib/crypto/stream-name-cache"
 import {
-  db,
+  getActiveDb,
   type CachedWorkspace,
   type CachedWorkspaceUser,
   type CachedStream,
@@ -168,6 +168,11 @@ export function resetWorkspaceStoreCache(): void {
  * Returns true if the cache was populated (IDB had workspace data), false otherwise.
  */
 export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
+  // Capture the account database before the reads, and read from IT rather than
+  // through the shared `db` proxy — the proxy is repointed the moment the
+  // account changes, so a read started under one account would finish against
+  // the other's tables.
+  const database = getActiveDb()
   // Capture version before async work. If applyWorkspaceBootstrap runs
   // concurrently and calls seedWorkspaceCache (which bumps the version),
   // we skip the write to avoid overwriting fresh data with stale IDB reads.
@@ -189,21 +194,28 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     sidebarConfig,
     metadata,
   ] = await Promise.all([
-    db.workspaces.get(workspaceId),
-    db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
-    db.streams.where("workspaceId").equals(workspaceId).toArray(),
-    db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
-    db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
-    db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
-    db.personas.where("workspaceId").equals(workspaceId).toArray(),
-    db.bots.where("workspaceId").equals(workspaceId).toArray(),
-    db.labels.where("workspaceId").equals(workspaceId).toArray(),
-    db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
-    db.unreadState.get(workspaceId),
-    db.userPreferences.get(workspaceId),
-    db.sidebarConfigs.get(workspaceId),
-    db.workspaceMetadata.get(workspaceId),
+    database.workspaces.get(workspaceId),
+    database.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
+    database.streams.where("workspaceId").equals(workspaceId).toArray(),
+    database.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+    database.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
+    database.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
+    database.personas.where("workspaceId").equals(workspaceId).toArray(),
+    database.bots.where("workspaceId").equals(workspaceId).toArray(),
+    database.labels.where("workspaceId").equals(workspaceId).toArray(),
+    database.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
+    database.unreadState.get(workspaceId),
+    database.userPreferences.get(workspaceId),
+    database.sidebarConfigs.get(workspaceId),
+    database.workspaceMetadata.get(workspaceId),
   ])
+
+  // The account moved while the reads were in flight. `cacheVersion` is reset
+  // per account, so the version guard below cannot see this: it reads 0 both
+  // before the switch and after (ABA), and would publish the outgoing account's
+  // rows into the incoming account's cache — same workspace, wrong viewer's
+  // names, streams and unread state. Ownership is the check that holds.
+  if (getActiveDb() !== database) return false
 
   if (!workspace) return false
 
@@ -496,7 +508,7 @@ export function upsertWorkspacePersonaCache(workspaceId: string, persona: Cached
   cache.personas.set(workspaceId, idx >= 0 ? rows.map((p) => (p.id === persona.id ? persona : p)) : [...rows, persona])
   cacheVersion.set(workspaceId, (cacheVersion.get(workspaceId) ?? 0) + 1)
   publishWorkspaceCache(workspaceId)
-  void db.personas.put(persona)
+  void getActiveDb().personas.put(persona)
 }
 
 export function useWorkspacePersonas(workspaceId: string | undefined): CachedPersona[] {

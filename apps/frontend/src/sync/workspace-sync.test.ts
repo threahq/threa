@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { db, getActiveDb, ThreaDatabase } from "@/db"
 import { setActiveDb } from "@/db/database"
 import { bumpAccountGeneration } from "@/db/event-writes"
-import { getActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
+import { getActiveCall, resetActiveCallsStore } from "@/stores/active-calls-store"
 import { liveQuery } from "dexie"
 import { QueryClient } from "@tanstack/react-query"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -41,7 +41,7 @@ import {
   getAgentActivityForAnchor,
   getAgentActivityForStream,
   getAgentSession,
-  __resetAgentActivityStore,
+  resetAgentActivityStore,
 } from "@/stores/agent-activity-store"
 import * as agentSubstep from "@/lib/crypto/agent-substep"
 import { getCachedWorkspaceTables, subscribeWorkspaceCache } from "@/stores/workspace-store"
@@ -749,7 +749,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     const switchDuringApply = vi.spyOn(accountA.events, "bulkGet").mockImplementationOnce((keys) => {
       bumpAccountGeneration()
       setActiveDb(accountB)
-      __resetActiveCallsStore()
+      resetActiveCallsStore()
       return bulkGet(keys)
     })
     try {
@@ -772,7 +772,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       switchDuringApply.mockRestore()
       setActiveDb(accountA)
       bumpAccountGeneration()
-      __resetActiveCallsStore()
+      resetActiveCallsStore()
       await accountB.delete()
     }
   })
@@ -4504,7 +4504,7 @@ describe("agent-activity sidebar socket handlers", () => {
   }
 
   beforeEach(async () => {
-    __resetAgentActivityStore()
+    resetAgentActivityStore()
     await db.streams.clear()
   })
 

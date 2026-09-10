@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
+import { accountStorageKey } from "@/lib/account-storage"
 import { render, screen, userEvent, waitFor, spyOnExport } from "@/test"
 import { StreamTypes } from "@threahq/types"
 import * as composerModule from "@/components/composer"
@@ -58,8 +59,8 @@ function draftComposerStub() {
 let mutateAsync: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
-  localStorage.removeItem("board:post-target-mru:workspace_1")
-  localStorage.removeItem("board:new-post:target:workspace_1")
+  localStorage.removeItem(accountStorageKey("board:post-target-mru:workspace_1")!)
+  localStorage.removeItem(accountStorageKey("board:new-post:target:workspace_1")!)
   Element.prototype.scrollIntoView ??= () => {}
   spyOnExport(composerModule, "MessageComposer").mockReturnValue(EditorStub as never)
   const stub = draftComposerStub()
@@ -110,7 +111,7 @@ describe("BoardOverlayComposer", () => {
   })
 
   it("seeds from a persisted in-progress draft target, so a restored draft keeps its target", () => {
-    localStorage.setItem("board:new-post:target:workspace_1", channel.id)
+    localStorage.setItem(accountStorageKey("board:new-post:target:workspace_1")!, channel.id)
     render(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={vi.fn()} />)
     expect(screen.getByRole("combobox")).toHaveTextContent("general")
   })
@@ -120,7 +121,7 @@ describe("BoardOverlayComposer", () => {
     // target persisted, opening fresh must start with nothing selected rather
     // than re-defaulting to wherever the last post went.
     const { rerender } = render(<BoardOverlayComposer workspaceId="workspace_1" open={false} onOpenChange={vi.fn()} />)
-    localStorage.setItem("board:post-target-mru:workspace_1", JSON.stringify([channel.id]))
+    localStorage.setItem(accountStorageKey("board:post-target-mru:workspace_1")!, JSON.stringify([channel.id]))
     rerender(<BoardOverlayComposer workspaceId="workspace_1" open onOpenChange={vi.fn()} />)
     expect(await screen.findByTestId("stub-send")).toBeDisabled()
     expect(screen.getByRole("combobox")).not.toHaveTextContent("general")

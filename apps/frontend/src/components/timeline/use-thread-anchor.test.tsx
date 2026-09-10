@@ -3,7 +3,7 @@ import { renderHook } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import type { ActiveAgentSession } from "@threahq/types"
 import { PanelProvider } from "@/contexts"
-import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { useThreadAnchor } from "./use-thread-anchor"
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -26,7 +26,7 @@ function session(overrides: Partial<ActiveAgentSession> = {}): ActiveAgentSessio
   }
 }
 
-beforeEach(() => __resetAgentActivityStore())
+beforeEach(() => resetAgentActivityStore())
 
 describe("useThreadAnchor", () => {
   it("points reply at the draft panel when no thread exists yet", () => {

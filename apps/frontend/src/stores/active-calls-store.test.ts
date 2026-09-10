@@ -6,7 +6,7 @@ import {
   updateCallParticipants,
   removeActiveCall,
   getActiveCall,
-  __resetActiveCallsStore,
+  resetActiveCallsStore,
 } from "./active-calls-store"
 
 function call(overrides: Partial<ActiveCall> = {}): ActiveCall {
@@ -20,7 +20,7 @@ function call(overrides: Partial<ActiveCall> = {}): ActiveCall {
   }
 }
 
-beforeEach(() => __resetActiveCallsStore())
+beforeEach(() => resetActiveCallsStore())
 
 describe("active-calls-store", () => {
   it("seed then read a live call by id", () => {

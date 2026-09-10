@@ -1,12 +1,14 @@
 import { useCallback } from "react"
-import { db } from "@/db"
+import { getActiveDb, type AccountWriteContext } from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import type { DraftAttachment } from "@/db/database"
 import type { JSONContent } from "@threahq/types"
 import { generateDraftId } from "@/hooks/use-draft-scratchpads"
 import { getDraftMessageKey, upsertLoadedDraft } from "@/hooks/use-draft-message"
 import { attachmentsApi } from "@/api/attachments"
 import { upsertDraftScratchpadInCache } from "@/stores/draft-store"
-import { SHARE_TARGET_CACHE } from "@/lib/sw-messages"
+
+export type { ShareMeta, ShareTargetRead } from "@/lib/share-target-storage"
 
 /** Data stashed by the service worker from a Web Share Target POST. */
 export interface ShareData {
@@ -16,72 +18,25 @@ export interface ShareData {
   files: File[]
 }
 
-/** Lightweight metadata passed via navigation state (no binary blobs). */
-export interface ShareMeta {
-  title: string | null
-  text: string | null
-  url: string | null
-  hasFiles: boolean
-}
-
 /**
- * Read only the text metadata from the share cache.
- * Safe to pass via `history.state` — no binary blobs.
+ * The account that received the share is no longer the active one, so the
+ * upload and the draft would land in somebody else's storage. Callers stop —
+ * the shared content stays stashed for the account it was addressed to.
  */
-export async function readShareTargetMeta(): Promise<ShareMeta | null> {
-  try {
-    const cache = await caches.open(SHARE_TARGET_CACHE)
-    const metaResponse = await cache.match("/_share/meta")
-    if (!metaResponse) return null
-
-    const meta = (await metaResponse.json()) as {
-      title: string | null
-      text: string | null
-      url: string | null
-      fileCount: number
-    }
-
-    return { title: meta.title, text: meta.text, url: meta.url, hasFiles: meta.fileCount > 0 }
-  } catch {
-    return null
+export class ShareAccountChangedError extends Error {
+  constructor() {
+    super("The account this content was shared to is no longer active")
+    this.name = "ShareAccountChangedError"
   }
 }
 
-/**
- * Read file blobs from the share cache. Call separately from
- * {@link readShareTargetMeta} — files must NOT go through `history.state`
- * because browsers enforce serialization size limits (~640 KB in Firefox).
- */
-export async function readShareTargetFiles(): Promise<File[]> {
-  try {
-    const cache = await caches.open(SHARE_TARGET_CACHE)
-    const metaResponse = await cache.match("/_share/meta")
-    if (!metaResponse) return []
-
-    const meta = (await metaResponse.json()) as { fileCount: number }
-    const files: File[] = []
-    for (let i = 0; i < meta.fileCount; i++) {
-      const fileResponse = await cache.match(`/_share/file/${i}`)
-      if (fileResponse) {
-        const blob = await fileResponse.blob()
-        const rawFilename = fileResponse.headers.get("X-Filename")
-        const filename = rawFilename ? decodeURIComponent(rawFilename) : `file-${i}`
-        files.push(new File([blob], filename, { type: blob.type }))
-      }
-    }
-    return files
-  } catch {
-    return []
-  }
+/** The account this share is being placed under, captured before the first await. */
+function captureAccount(): AccountWriteContext {
+  return { generation: getAccountGeneration(), database: getActiveDb() }
 }
 
-/** Remove stashed share data from the Cache API after it has been consumed. */
-export async function clearShareTargetCache(): Promise<void> {
-  try {
-    await caches.delete(SHARE_TARGET_CACHE)
-  } catch {
-    // Best-effort cleanup
-  }
+function assertSameAccount(account: AccountWriteContext): void {
+  if (getAccountGeneration() !== account.generation) throw new ShareAccountChangedError()
 }
 
 /**
@@ -156,19 +111,25 @@ async function uploadSharedFiles(workspaceId: string, files: File[]): Promise<Dr
 export function useShareTarget() {
   const createShareDraft = useCallback(
     async (workspaceId: string, shared: ShareData): Promise<{ draftId: string; path: string }> => {
+      // The upload is the long await here, and the `db` proxy moves under it on
+      // an account switch. Name the database and generation this share belongs
+      // to first, then refuse to write anything once they no longer match.
+      const account = captureAccount()
       const draftId = generateDraftId()
       const content = buildSharedContent(shared.title, shared.text, shared.url)
       const attachments = shared.files.length > 0 ? await uploadSharedFiles(workspaceId, shared.files) : undefined
-      const createdAt = Date.now()
+      assertSameAccount(account)
+
       const scratchpad = {
         id: draftId,
         workspaceId,
         displayName: shared.title || null,
         companionMode: "on" as const,
-        createdAt,
+        createdAt: Date.now(),
       }
 
-      await db.draftScratchpads.add(scratchpad)
+      await account.database.draftScratchpads.add(scratchpad)
+      assertSameAccount(account)
       upsertDraftScratchpadInCache(workspaceId, scratchpad)
 
       // The shared content becomes the scratchpad's loaded draft so the
@@ -185,13 +146,16 @@ export function useShareTarget() {
 
   const saveShareContent = useCallback(
     async (workspaceId: string, streamId: string, shared: ShareData): Promise<void> => {
+      const account = captureAccount()
       const content = buildSharedContent(shared.title, shared.text, shared.url)
       const uploadedAttachments = shared.files.length > 0 ? await uploadSharedFiles(workspaceId, shared.files) : []
+      assertSameAccount(account)
 
       // Merge the shared files into the scope's loaded draft (or mint one).
       const scope = getDraftMessageKey({ type: "stream", streamId })
-      const loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
-      const existing = loadedId ? await db.drafts.get(loadedId) : undefined
+      const loadedId = (await account.database.composerLoaded.get(scope))?.draftId ?? null
+      const existing = loadedId ? await account.database.drafts.get(loadedId) : undefined
+      assertSameAccount(account)
       const mergedAttachments = [...(existing?.attachments ?? []), ...uploadedAttachments]
       await upsertLoadedDraft(workspaceId, scope, {
         contentJson: content,

@@ -1,6 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
-import { db, type CachedDraft } from "@/db"
+import { type CachedDraft } from "@/db"
+import { createDbScopedRegistry } from "@/lib/db-scoped-registry"
 import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { parseBoardDraftKey, BOARD_DRAFT_SCOPE_PREFIX } from "@/lib/board/draft-keys"
@@ -173,51 +174,51 @@ function buildSnapshot(rows: CachedDraft[], loadedByScope: Map<string, string | 
 // the pills popped in a frame after the board revealed, shifting layout. The
 // registry resolves ONCE per workspace, the board's reveal gate waits on it
 // (`useBoardDraftsReady`), and every hook below reads the settled snapshot
-// synchronously. Mirrors `railRegistry` / `graphRegistry`.
-const boardDraftsRegistry = new Map<string, BoardDraftsEntry>()
+// synchronously. Mirrors `railRegistry` / `graphRegistry`, account scoping
+// included: a draft is the most personal thing this app holds, and a snapshot
+// keyed by workspace id alone was readable by the next account's first render
+// — same workspace, same scope keys, another person's unsent words.
+const boardDraftsRegistry = createDbScopedRegistry<BoardDraftsEntry>()
 
 function subscribeBoardDrafts(workspaceId: string, listener: () => void): () => void {
-  let entry = boardDraftsRegistry.get(workspaceId)
-  if (!entry) {
-    const created: BoardDraftsEntry = {
-      snapshot: EMPTY_SNAPSHOT,
-      resolved: false,
-      listeners: new Set(),
-      refCount: 0,
-      subscription: { unsubscribe() {} } as Subscription,
-    }
-    // Register BEFORE subscribing so `getSnapshot` observes the entry consistently;
-    // the callback re-reads the live entry so a late emission after teardown no-ops.
-    boardDraftsRegistry.set(workspaceId, created)
-    created.subscription = liveQuery(async () => {
+  // Captured for this subscription's whole life — the query, the emission and
+  // the teardown act on the (database, entry) pair that was live at attach.
+  const { database, entry, isNew } = boardDraftsRegistry.acquire(workspaceId, () => ({
+    snapshot: EMPTY_SNAPSHOT,
+    resolved: false,
+    listeners: new Set<() => void>(),
+    refCount: 0,
+    subscription: { unsubscribe() {} } as Subscription,
+  }))
+  if (isNew) {
+    entry.subscription = liveQuery(async () => {
       // The workspace's pointers are read as a whole (workspaceId index) rather
       // than bulkGet on the scopes with rows, so a pointer-only change (a stash
       // detaching the loaded pointer) re-fires the query too.
       const [rows, pointers] = await Promise.all([
-        db.drafts.where("workspaceId").equals(workspaceId).toArray(),
-        db.composerLoaded.where("workspaceId").equals(workspaceId).toArray(),
+        database.drafts.where("workspaceId").equals(workspaceId).toArray(),
+        database.composerLoaded.where("workspaceId").equals(workspaceId).toArray(),
       ])
       return { rows, pointers }
     }).subscribe(({ rows, pointers }) => {
-      const live = boardDraftsRegistry.get(workspaceId)
-      if (!live) return
+      if (!boardDraftsRegistry.holds(database, workspaceId, entry)) return
       const loadedByScope = new Map(pointers.map((p) => [p.scope, p.draftId]))
-      live.snapshot = buildSnapshot(rows, loadedByScope)
-      live.resolved = true
-      for (const notify of live.listeners) notify()
+      entry.snapshot = buildSnapshot(rows, loadedByScope)
+      entry.resolved = true
+      for (const notify of entry.listeners) notify()
     })
-    entry = created
   }
   entry.listeners.add(listener)
   entry.refCount += 1
+  let released = false
   return () => {
-    const current = boardDraftsRegistry.get(workspaceId)
-    if (!current) return
-    current.listeners.delete(listener)
-    current.refCount -= 1
-    if (current.refCount <= 0) {
-      current.subscription.unsubscribe()
-      boardDraftsRegistry.delete(workspaceId)
+    if (released) return
+    released = true
+    entry.listeners.delete(listener)
+    entry.refCount -= 1
+    if (entry.refCount <= 0) {
+      entry.subscription.unsubscribe()
+      boardDraftsRegistry.remove(database, workspaceId, entry)
     }
   }
 }
@@ -243,7 +244,7 @@ export function useScopeDraftPreview(workspaceId: string, scope: string): ScopeD
   }
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(
-    () => boardDraftsRegistry.get(workspaceId)?.snapshot.previewByScope.get(scope) ?? null,
+    () => boardDraftsRegistry.peek(workspaceId)?.snapshot.previewByScope.get(scope) ?? null,
     [workspaceId, scope]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
@@ -269,7 +270,7 @@ export function useThreadDraft(
 ): ScopeDraftPreview | null {
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(() => {
-    const snapshot = boardDraftsRegistry.get(workspaceId)?.snapshot
+    const snapshot = boardDraftsRegistry.peek(workspaceId)?.snapshot
     if (!snapshot) return null
     const byStream = threadId ? snapshot.threadDraftByStreamId.get(threadId) : undefined
     return byStream ?? snapshot.threadDraftByAnchorId.get(anchorId) ?? null
@@ -285,7 +286,7 @@ export function useThreadDraft(
 export function useBoardScopeDraftIndex(workspaceId: string): Map<string, ScopeDraftPreview> {
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(
-    () => boardDraftsRegistry.get(workspaceId)?.snapshot.previewByScope ?? EMPTY_SNAPSHOT.previewByScope,
+    () => boardDraftsRegistry.peek(workspaceId)?.snapshot.previewByScope ?? EMPTY_SNAPSHOT.previewByScope,
     [workspaceId]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
@@ -300,7 +301,7 @@ export function useBoardScopeDraftIndex(workspaceId: string): Map<string, ScopeD
 export function useBoardSubtopicDraftIndex(workspaceId: string): Map<string, SubtopicDraftEntry> {
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(
-    () => boardDraftsRegistry.get(workspaceId)?.snapshot.subtopicByMessageId ?? EMPTY_SNAPSHOT.subtopicByMessageId,
+    () => boardDraftsRegistry.peek(workspaceId)?.snapshot.subtopicByMessageId ?? EMPTY_SNAPSHOT.subtopicByMessageId,
     [workspaceId]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
@@ -316,7 +317,7 @@ export function useBoardSubtopicDraftIndex(workspaceId: string): Map<string, Sub
 export function useBoardCheckedOutDraftScopes(workspaceId: string): ReadonlySet<string> {
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(
-    () => boardDraftsRegistry.get(workspaceId)?.snapshot.checkedOutScopes ?? EMPTY_SNAPSHOT.checkedOutScopes,
+    () => boardDraftsRegistry.peek(workspaceId)?.snapshot.checkedOutScopes ?? EMPTY_SNAPSHOT.checkedOutScopes,
     [workspaceId]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
@@ -332,7 +333,7 @@ export function useBoardCheckedOutDraftScopes(workspaceId: string): ReadonlySet<
 export function useBoardDraftPayloadScopes(workspaceId: string): ReadonlySet<string> {
   const subscribe = useBoardDraftsSubscription(workspaceId)
   const getSnapshot = useCallback(
-    () => boardDraftsRegistry.get(workspaceId)?.snapshot.payloadScopes ?? EMPTY_SNAPSHOT.payloadScopes,
+    () => boardDraftsRegistry.peek(workspaceId)?.snapshot.payloadScopes ?? EMPTY_SNAPSHOT.payloadScopes,
     [workspaceId]
   )
   return useSyncExternalStore(subscribe, getSnapshot)
@@ -344,13 +345,13 @@ export function useBoardDraftPayloadScopes(workspaceId: string): ReadonlySet<str
  *  below it (the timeline's no-shift rule, Kris 2026-07-13). */
 export function useBoardDraftsReady(workspaceId: string): boolean {
   const subscribe = useBoardDraftsSubscription(workspaceId)
-  const getSnapshot = useCallback(() => boardDraftsRegistry.get(workspaceId)?.resolved ?? false, [workspaceId])
+  const getSnapshot = useCallback(() => boardDraftsRegistry.peek(workspaceId)?.resolved ?? false, [workspaceId])
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
 /** Tear down every shared board-drafts subscription — for tests, so a
  *  module-level registry can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearBoardDraftsRegistry(): void {
-  for (const entry of boardDraftsRegistry.values()) entry.subscription.unsubscribe()
+  for (const entry of boardDraftsRegistry.all()) entry.subscription.unsubscribe()
   boardDraftsRegistry.clear()
 }

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
+import { accountStorageKey } from "@/lib/account-storage"
 import { saveTimelineAnchor, loadTimelineAnchor, clearTimelineAnchor } from "./timeline-anchor-storage"
 
-const STORAGE_KEY = "threa:timeline-anchors"
+const storageKey = () => accountStorageKey("timeline-anchors")!
 
 describe("timeline-anchor-storage", () => {
   beforeEach(() => {
@@ -50,11 +51,11 @@ describe("timeline-anchor-storage", () => {
   })
 
   it("survives corrupt storage", () => {
-    localStorage.setItem(STORAGE_KEY, "{not json")
+    localStorage.setItem(storageKey(), "{not json")
     expect(loadTimelineAnchor("stream_a")).toBeNull()
     saveTimelineAnchor("stream_a", { targetId: "msg_1", offsetPx: 4 })
     expect(loadTimelineAnchor("stream_a")).toEqual({ targetId: "msg_1", offsetPx: 4 })
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ stream_b: { targetId: 7, offsetPx: "x", at: "y" } }))
+    localStorage.setItem(storageKey(), JSON.stringify({ stream_b: { targetId: 7, offsetPx: "x", at: "y" } }))
     expect(loadTimelineAnchor("stream_b")).toBeNull()
   })
 })

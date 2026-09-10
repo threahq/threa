@@ -10,6 +10,7 @@ import { ThreaDatabase, accountDbName } from "@/db"
 // sole writer of the active-db pointer, so the mutator is intentionally kept
 // off the shared barrel (INV-9 — single-owner scope bridge).
 import { setActiveDb } from "@/db/database"
+import { setStorageAccount } from "@/lib/account-storage"
 import { makeQueryClient } from "@/contexts/query-client"
 import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
@@ -33,6 +34,9 @@ import { clearCallLifecycleLog } from "@/calls/lifecycle-log"
 import { resetIncomingCallStoreCache } from "@/stores/incoming-call-store"
 import { resetFloatingSurfaceGeometryStoreCache } from "@/stores/floating-surface-geometry-store"
 import { resetRevealGate } from "@/sync/reveal-gate"
+import { resetActiveCallsStore } from "@/stores/active-calls-store"
+import { resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { resetApplyWindow } from "@/stores/apply-window"
 import { resetUploadManager } from "@/lib/uploads/upload-manager"
 import { isRetirementCurrent, retireAccountWork } from "@/sync/account-fence"
 import { resetRowConfirmations } from "@/sync/bootstrap-diff"
@@ -84,8 +88,6 @@ export interface AccountScopeValue {
    * SyncEngine swap atomically, and broadcasts to other tabs.
    */
   switchAccount: (targetUserId: string, opts?: SwitchAccountOptions) => Promise<void>
-  /** Namespace a storage key to the active account. */
-  scopedKey: (suffix: string) => string
 }
 
 const AccountScopeContext = createContext<AccountScopeValue | null>(null)
@@ -137,8 +139,14 @@ function flushModuleStoreCaches(): void {
   resetCallStoreCache()
   clearCallLifecycleLog()
   resetIncomingCallStoreCache()
+  resetActiveCallsStore()
   resetFloatingSurfaceGeometryStoreCache()
+  // Agent sessions and calls arrived over the outgoing account's socket; the
+  // next account re-subscribes for its own. A non-zero apply-window depth left
+  // behind by the outgoing sync run holds the next account's reveal closed.
+  resetAgentActivityStore()
   resetRevealGate()
+  resetApplyWindow()
   // Aborts live transfers and drops the in-memory jobs; the persisted bytes
   // stay in the outgoing account's database and resume when it returns.
   resetUploadManager()
@@ -197,7 +205,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   const resolveDb = useCallback((id: string): ThreaDatabase => {
     let inst = dbRegistry.current.get(id)
     if (!inst) {
-      inst = new ThreaDatabase(accountDbName(id))
+      inst = new ThreaDatabase(accountDbName(id), id)
       dbRegistry.current.set(id, inst)
     }
     return inst
@@ -244,10 +252,12 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
         setLandingFailed(false)
       }
     }
-    // Redirect the shared `db` proxy at the active account before the keyed
-    // subtree (and its useLiveQuery / SyncEngine) mounts. Pre-auth keeps the
-    // default "threa" handle in place.
+    // Redirect the shared `db` proxy and the account-owned localStorage
+    // namespace before the keyed subtree (and its useLiveQuery / SyncEngine)
+    // mounts. Pre-auth keeps the default "threa" handle, and the storage
+    // namespace resolves to nothing rather than to whoever was here last.
     if (effectiveId) setActiveDb(resolveDb(effectiveId))
+    setStorageAccount(effectiveId)
     setAdopted({ id: effectiveId })
   }, [adopted, effectiveId, resolveDb])
 
@@ -335,10 +345,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
         }
         const { activeUserId } = (await res.json()) as { activeUserId: string }
         adoptAccount(activeUserId, opts?.identity ?? null, opts?.landing ?? "account-home")
-        channelRef.current?.postMessage({
-          type: "switched",
-          activeWorkosUserId: activeUserId,
-        } satisfies SwitchedMessage)
+        channelRef.current?.postMessage({ type: "switched", activeWorkosUserId: activeUserId } satisfies SwitchedMessage)
       } catch (err) {
         // The account never moved, but its work is already retired: the queue
         // and outbox processors returned and their rows sit pending with
@@ -359,14 +366,12 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   const registryId = effectiveId ?? PRE_AUTH_ID
   const getDb = useCallback(() => resolveDb(registryId), [resolveDb, registryId])
   const getQueryClient = useCallback(() => resolveQueryClient(registryId), [resolveQueryClient, registryId])
-  const scopedKey = useCallback((suffix: string) => `${effectiveId ?? NO_ACCOUNT_KEY}:${suffix}`, [effectiveId])
 
   const value: AccountScopeValue = {
     activeWorkosUserId: effectiveId,
     getDb,
     getQueryClient,
     switchAccount,
-    scopedKey,
   }
 
   // Keyed remount boundary: changing the active account (or bumping the resume

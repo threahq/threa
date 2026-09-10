@@ -24,7 +24,7 @@ import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { applyStreamReadOrdinal } from "./unread-counters"
 import { sharedMessageSlotKey } from "@threahq/types"
 import {
-  __resetAgentActivityStore,
+  resetAgentActivityStore,
   getAgentActivityForAnchor,
   getAgentActivityForStream,
   getAgentSession,
@@ -92,7 +92,7 @@ function makeBootstrap(events: StreamEvent[], streamId: string): StreamBootstrap
 
 describe("applyStreamBootstrap (real IndexedDB)", () => {
   beforeEach(async () => {
-    __resetAgentActivityStore()
+    resetAgentActivityStore()
     await db.events.clear()
     await db.streams.clear()
     await db.pendingMessages.clear()

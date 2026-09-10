@@ -27,7 +27,6 @@ function installSpies() {
         getQueryClient: () => {
           throw new Error("not used")
         },
-        scopedKey: (s: string) => s,
       }) satisfies AccountScopeValue
   )
   vi.spyOn(authModule, "useAuth").mockReturnValue({

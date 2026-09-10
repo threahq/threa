@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
+import { accountStorageKey } from "@/lib/account-storage"
 import type { JSONContent } from "@threahq/types"
 import { clearStagedDraft, listStagedDrafts, readStagedDraft, stageDraftContent } from "./draft-staging"
 
@@ -52,7 +53,7 @@ describe("stageDraftContent / readStagedDraft", () => {
   })
 
   it("returns null for a corrupt entry", () => {
-    localStorage.setItem(`threa:draft-stage:${workspaceId}:${scope}`, "{not json")
+    localStorage.setItem(accountStorageKey(`draft-stage:${workspaceId}:${scope}`)!, "{not json")
     expect(readStagedDraft(workspaceId, scope)).toBeNull()
   })
 })

@@ -7,11 +7,7 @@ import type { StreamEvent } from "@threahq/types"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
-import {
-  upsertAgentSession,
-  updateAgentSessionProgress,
-  __resetAgentActivityStore,
-} from "@/stores/agent-activity-store"
+import { upsertAgentSession, updateAgentSessionProgress, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import * as workspacesModule from "@/hooks/use-workspaces"
 import * as relativeTimeModule from "@/components/relative-time"
 import { BoardEventRowItem } from "./board-row-item"
@@ -107,7 +103,7 @@ describe("BoardEventRowItem running session", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
-    __resetAgentActivityStore()
+    resetAgentActivityStore()
     vi.spyOn(contextsModule, "useTrace").mockReturnValue({
       getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
     } as ReturnType<typeof contextsModule.useTrace>)

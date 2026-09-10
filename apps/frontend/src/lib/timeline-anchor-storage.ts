@@ -13,7 +13,12 @@
  * worth remembering.
  */
 
-const STORAGE_KEY = "threa:timeline-anchors"
+import { accountStorageKey } from "@/lib/account-storage"
+
+// Where a reader is parked, in streams only that reader can see, so the map
+// hangs off the active account. Anchors saved under the old
+// `threa:timeline-anchors` key stay there, unreachable from here.
+const STORAGE_SUFFIX = "timeline-anchors"
 const ANCHOR_TTL_MS = 12 * 60 * 60 * 1000
 const MAX_ENTRIES = 50
 
@@ -30,8 +35,10 @@ interface StoredAnchor extends TimelineAnchor {
 
 function readAll(): Record<string, StoredAnchor> {
   if (typeof localStorage === "undefined") return {}
+  const key = accountStorageKey(STORAGE_SUFFIX)
+  if (key === null) return {}
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(key)
     if (!raw) return {}
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {}
@@ -43,8 +50,10 @@ function readAll(): Record<string, StoredAnchor> {
 
 function writeAll(map: Record<string, StoredAnchor>): void {
   if (typeof localStorage === "undefined") return
+  const key = accountStorageKey(STORAGE_SUFFIX)
+  if (key === null) return
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(map))
+    localStorage.setItem(key, JSON.stringify(map))
   } catch {
     // Storage quota / private-mode failures must not break scrolling.
   }

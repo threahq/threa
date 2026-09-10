@@ -10,9 +10,11 @@ import {
   PENDING_SYNC_CACHE,
   PENDING_SYNC_KEY,
   PUSH_BOOTSTRAP_CACHE,
+  pruneUnownedBootstrapSnapshots,
   WORKSPACE_BOOTSTRAP_PATH_RE,
   parsePersistedSyncTarget,
   queueBootstrapSync,
+  resolveCredentialOwner,
   respondToBootstrapRequest,
   runBootstrapSync,
 } from "./lib/sw-bootstrap-prefetch"
@@ -29,8 +31,8 @@ import {
   SW_MSG_BUILD_REPLY,
   SW_MSG_RUN_GC,
   SW_MSG_GC_REPLY,
-  SHARE_TARGET_CACHE,
 } from "./lib/sw-messages"
+import { stashShareTarget } from "./lib/share-target-storage"
 
 declare const self: ServiceWorkerGlobalScope
 declare const __APP_VERSION__: string
@@ -79,6 +81,7 @@ self.addEventListener("activate", (event) => {
       // bucket itself is build-scoped, so there is no old build precache here
       // to wipe. Keep the first-install/push clients.claim behavior.
       await precacheController.activate(event)
+      await pruneUnownedBootstrapSnapshots(await caches.open(PUSH_BOOTSTRAP_CACHE))
       await self.clients.claim()
     })()
   )
@@ -399,34 +402,17 @@ self.addEventListener("fetch", (event) => {
     (async () => {
       try {
         const formData = await event.request.formData()
-        const title = formData.get("title") as string | null
-        const text = formData.get("text") as string | null
-        const sharedUrl = formData.get("url") as string | null
-        const files = formData.getAll("files") as File[]
-
-        const cache = await caches.open(SHARE_TARGET_CACHE)
-        const keys = await cache.keys()
-        for (const key of keys) await cache.delete(key)
-
-        let storedFileCount = 0
-        for (let i = 0; i < files.length; i++) {
-          await cache.put(
-            new Request(`/_share/file/${i}`),
-            new Response(files[i], {
-              headers: {
-                "Content-Type": files[i].type,
-                "X-Filename": encodeURIComponent(files[i].name),
-                "X-Size": String(files[i].size),
-              },
-            })
-          )
-          storedFileCount++
-        }
-
-        await cache.put(
-          new Request("/_share/meta"),
-          new Response(JSON.stringify({ title, text, url: sharedUrl, fileCount: storedFileCount }))
-        )
+        // The stash belongs to whichever account this worker's cookie actually
+        // authenticates as. Without that name the share is stored with no
+        // content at all rather than left for whoever opens /share next.
+        const owner = await resolveCredentialOwner()
+        await stashShareTarget({
+          title: formData.get("title") as string | null,
+          text: formData.get("text") as string | null,
+          url: formData.get("url") as string | null,
+          files: formData.getAll("files") as File[],
+          owner,
+        })
       } catch {
         // Best-effort stash.
       }

@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react"
 import { Navigate, useNavigate } from "react-router-dom"
 import { useAuth } from "@/auth"
 import { useWorkspaces } from "@/hooks"
-import { readShareTargetMeta } from "@/hooks/use-share-target"
+import { readShareStash } from "@/lib/share-target-storage"
 import { ThreaLogo } from "@/components/threa-logo"
 
 /**
@@ -14,7 +14,7 @@ import { ThreaLogo } from "@/components/threa-logo"
  * the workspace-scoped share picker at `/w/:workspaceId/share`.
  */
 export function ShareTargetPage() {
-  const { user, loading: authLoading } = useAuth()
+  const { user, activeWorkosUserId, loading: authLoading } = useAuth()
   const { workspaces, isLoading: workspacesLoading } = useWorkspaces()
   const navigate = useNavigate()
   const hasNavigated = useRef(false)
@@ -36,18 +36,20 @@ export function ShareTargetPage() {
     // Pass only lightweight text metadata via navigation state.
     // Files stay in the Cache API — passing File blobs through history.state
     // would hit browser serialization limits (~640 KB in Firefox).
-    readShareTargetMeta().then((shareMeta) => {
+    // The stash is read as this account and no other: a share addressed to the
+    // account that was signed in when it arrived is not this one's to open.
+    readShareStash(activeWorkosUserId).then((shareRead) => {
       if (cancelled) return
       navigate(`/w/${workspaceId}/share`, {
         replace: true,
-        state: { shareMeta },
+        state: { shareRead },
       })
     })
 
     return () => {
       cancelled = true
     }
-  }, [authLoading, workspacesLoading, user, workspaces, navigate])
+  }, [authLoading, workspacesLoading, user, activeWorkosUserId, workspaces, navigate])
 
   // Redirect to login if not authenticated — preserve /share as the return destination
   if (!authLoading && !user) {

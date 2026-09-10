@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import Dexie from "dexie"
+import { accountStorageKey } from "@/lib/account-storage"
 import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threahq/types"
 import { db, type CachedDraft } from "@/db"
 import { bumpAccountGeneration } from "@/db/event-writes"
@@ -1150,7 +1151,7 @@ describe("reconcileStagedDrafts", () => {
   it("clears a staged entry whose content is empty without creating a draft", async () => {
     // Write an empty-content buffer directly (the public stage helper refuses to).
     localStorage.setItem(
-      `threa:draft-stage:${workspaceId}:${loadedScope}`,
+      accountStorageKey(`draft-stage:${workspaceId}:${loadedScope}`)!,
       JSON.stringify({ contentJson: { type: "doc", content: [{ type: "paragraph" }] }, clientUpdatedAt: Date.now() })
     )
 

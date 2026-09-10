@@ -2,8 +2,8 @@ import { liveQuery, type Subscription } from "dexie"
 import { semanticEqual } from "@/sync/bootstrap-diff"
 // Namespace import so a test can spy the facade against the module (INV-48).
 import * as perfCapture from "@/lib/perf/capture"
+import { createDbScopedRegistry } from "@/lib/db-scoped-registry"
 import {
-  db,
   type CachedBot,
   type CachedDmPeer,
   type CachedLabel,
@@ -18,6 +18,7 @@ import {
   type CachedWorkspace,
   type CachedWorkspaceMetadata,
   type CachedWorkspaceUser,
+  type ThreaDatabase,
 } from "@/db"
 
 /** The row type each table key resolves to (INV-31: the key union is derived from it). */
@@ -44,27 +45,32 @@ interface IdentifiedRow {
   id: string
 }
 
-type TableQuery = (workspaceId: string) => Promise<IdentifiedRow[]>
+type TableQuery = (database: ThreaDatabase, workspaceId: string) => Promise<IdentifiedRow[]>
 
 function oneRow<T extends IdentifiedRow>(row: T | undefined): T[] {
   return row ? [row] : []
 }
 
+// Every query takes the entry's OWN database rather than reading the shared
+// `db` proxy: a liveQuery re-runs on any storage mutation, so a proxy read
+// would re-execute a subscription opened by one account against whichever
+// account is active when it fires.
 const WORKSPACE_TABLE_QUERIES: Record<WorkspaceTableKey, TableQuery> = {
-  users: (workspaceId) => db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
-  streams: (workspaceId) => db.streams.where("workspaceId").equals(workspaceId).toArray(),
-  memberships: (workspaceId) => db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
-  readStates: (workspaceId) => db.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
-  dmPeers: (workspaceId) => db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
-  personas: (workspaceId) => db.personas.where("workspaceId").equals(workspaceId).toArray(),
-  bots: (workspaceId) => db.bots.where("workspaceId").equals(workspaceId).toArray(),
-  labels: (workspaceId) => db.labels.where("workspaceId").equals(workspaceId).toArray(),
-  labelAssignments: (workspaceId) => db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
-  workspace: async (workspaceId) => oneRow(await db.workspaces.get(workspaceId)),
-  unreadState: async (workspaceId) => oneRow(await db.unreadState.get(workspaceId)),
-  userPreferences: async (workspaceId) => oneRow(await db.userPreferences.get(workspaceId)),
-  sidebarConfig: async (workspaceId) => oneRow(await db.sidebarConfigs.get(workspaceId)),
-  metadata: async (workspaceId) => oneRow(await db.workspaceMetadata.get(workspaceId)),
+  users: (database, workspaceId) => database.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
+  streams: (database, workspaceId) => database.streams.where("workspaceId").equals(workspaceId).toArray(),
+  memberships: (database, workspaceId) => database.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+  readStates: (database, workspaceId) => database.streamReadState.where("workspaceId").equals(workspaceId).toArray(),
+  dmPeers: (database, workspaceId) => database.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
+  personas: (database, workspaceId) => database.personas.where("workspaceId").equals(workspaceId).toArray(),
+  bots: (database, workspaceId) => database.bots.where("workspaceId").equals(workspaceId).toArray(),
+  labels: (database, workspaceId) => database.labels.where("workspaceId").equals(workspaceId).toArray(),
+  labelAssignments: (database, workspaceId) =>
+    database.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
+  workspace: async (database, workspaceId) => oneRow(await database.workspaces.get(workspaceId)),
+  unreadState: async (database, workspaceId) => oneRow(await database.unreadState.get(workspaceId)),
+  userPreferences: async (database, workspaceId) => oneRow(await database.userPreferences.get(workspaceId)),
+  sidebarConfig: async (database, workspaceId) => oneRow(await database.sidebarConfigs.get(workspaceId)),
+  metadata: async (database, workspaceId) => oneRow(await database.workspaceMetadata.get(workspaceId)),
 }
 
 interface WorkspaceTableEntry {
@@ -73,22 +79,12 @@ interface WorkspaceTableEntry {
   rows: IdentifiedRow[] | undefined
   byId: Map<string, IdentifiedRow>
   resolved: boolean
-  emissionSeq: number
   listeners: Set<() => void>
   keyListeners: Map<string, Set<() => void>>
   refCount: number
   subscription: Subscription
   teardown: ReturnType<typeof setTimeout> | null
 }
-
-interface RegistrationBase {
-  workspaceId: string
-  tableKey: WorkspaceTableKey
-  listener: () => void
-  entryKey: string
-}
-
-type Registration = (RegistrationBase & { kind: "table" }) | (RegistrationBase & { kind: "row"; rowId: string })
 
 // INV-9 exception, the same one `railRegistry`/`threadIndexRegistry` carry
 // (`hooks/use-board-card-messages.ts`): one module-level `liveQuery` per
@@ -97,16 +93,19 @@ type Registration = (RegistrationBase & { kind: "table" }) | (RegistrationBase &
 // subscription, so a rendered timeline opened ~50 identical reads of the same
 // rows. A context provider would re-render its whole subtree on every table
 // change — which is the cost this exists to remove.
-const entries = new Map<string, WorkspaceTableEntry>()
-// Keyed by an internal registration id: one consumer can hold several
-// registrations, and `unsubscribe` must resolve ITS entry here at call time.
-const registrations = new Map<number, Registration>()
+//
+// Scoped to the account database the entry read from. Two accounts can be
+// members of one workspace, so (workspace, table) alone is a key they SHARE:
+// the outgoing account's rows answered the incoming account's reads, and its
+// teardown timer — armed for longer than the switch takes — fired against the
+// replacement entry. Subscribers capture their (database, entry) pair and act
+// on it directly, so nothing resolves a key a second time.
+const registry = createDbScopedRegistry<WorkspaceTableEntry>()
 
 // Matches `RAIL_TEARDOWN_GRACE_MS`: a remount unsubscribes before it
 // re-subscribes, and tearing the query down in between would re-read the table.
 const TABLE_TEARDOWN_GRACE_MS = 5_000
 
-let nextRegistrationId = 1
 let lastMarkedLiveEntries = -1
 
 /**
@@ -117,16 +116,11 @@ let lastMarkedLiveEntries = -1
  */
 const COMPARE_ALL_KEYS: ReadonlySet<string> = new Set()
 
-let emissionCounter = 0
-
 function entryKeyFor(workspaceId: string, tableKey: WorkspaceTableKey): string {
   return `${workspaceId}|${tableKey}`
 }
 
-function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
-  const entry = entries.get(entryKey)
-  if (!entry) return
-
+function applyEmission(entry: WorkspaceTableEntry, incoming: IdentifiedRow[]): void {
   const previous = entry.rows
   const byId = new Map<string, IdentifiedRow>()
   const changedIds: string[] = []
@@ -153,7 +147,6 @@ function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
   const wasResolved = entry.resolved
   entry.byId = byId
   entry.resolved = true
-  entry.emissionSeq = ++emissionCounter
   // A snapshot reference that survives an emission is what keeps array
   // consumers from re-rendering when nothing they read changed.
   if (changed) entry.rows = next
@@ -171,7 +164,7 @@ function applyEmission(entryKey: string, incoming: IdentifiedRow[]): void {
 /** Entries holding a Dexie subscription that is not already scheduled for teardown. */
 function liveEntryCount(): number {
   let count = 0
-  for (const entry of entries.values()) {
+  for (const entry of registry.all()) {
     if (!entry.teardown) count += 1
   }
   return count
@@ -184,51 +177,50 @@ function markLiveEntries(): void {
   perfCapture.getPerfCapture().mark("store.tableSubscriptions", count)
 }
 
-function ensureEntry(entryKey: string, workspaceId: string, tableKey: WorkspaceTableKey): WorkspaceTableEntry {
-  const existing = entries.get(entryKey)
-  if (existing) {
-    if (existing.teardown) {
-      clearTimeout(existing.teardown)
-      existing.teardown = null
-      markLiveEntries()
-    }
-    return existing
-  }
+interface HeldEntry {
+  database: ThreaDatabase
+  entry: WorkspaceTableEntry
+  entryKey: string
+}
 
-  const created: WorkspaceTableEntry = {
+function ensureEntry(workspaceId: string, tableKey: WorkspaceTableKey): HeldEntry {
+  const entryKey = entryKeyFor(workspaceId, tableKey)
+  const { database, entry, isNew } = registry.acquire(entryKey, () => ({
     workspaceId,
     tableKey,
     rows: undefined,
     byId: new Map(),
     resolved: false,
-    emissionSeq: 0,
-    listeners: new Set(),
+    listeners: new Set<() => void>(),
     keyListeners: new Map(),
     refCount: 0,
     subscription: { unsubscribe() {} } as Subscription,
     teardown: null,
+  }))
+  if (isNew) {
+    entry.subscription = liveQuery(() => WORKSPACE_TABLE_QUERIES[tableKey](database, workspaceId)).subscribe((rows) => {
+      // The captured entry, checked against the registry: an emission that
+      // arrives after this entry was torn down (or after its account was
+      // replaced) has nowhere to land.
+      if (!registry.holds(database, entryKey, entry)) return
+      applyEmission(entry, rows)
+    })
+    markLiveEntries()
+  } else if (entry.teardown) {
+    clearTimeout(entry.teardown)
+    entry.teardown = null
+    markLiveEntries()
   }
-  // Register BEFORE subscribing so a synchronous first emission finds the entry;
-  // the callback re-reads it from the map, so a late emission after teardown is
-  // a no-op.
-  entries.set(entryKey, created)
-  created.subscription = liveQuery(() => WORKSPACE_TABLE_QUERIES[tableKey](workspaceId)).subscribe((rows) =>
-    applyEmission(entryKey, rows)
-  )
-  markLiveEntries()
-  return created
+  return { database, entry, entryKey }
 }
 
-function releaseEntry(entryKey: string): void {
-  const entry = entries.get(entryKey)
-  if (!entry) return
+function releaseEntry({ database, entry, entryKey }: HeldEntry): void {
   if (entry.refCount > 0 || entry.listeners.size > 0 || entry.keyListeners.size > 0) return
   if (entry.teardown) return
   entry.teardown = setTimeout(() => {
-    const live = entries.get(entryKey)
-    if (!live || live.refCount > 0 || live.listeners.size > 0 || live.keyListeners.size > 0) return
-    live.subscription.unsubscribe()
-    entries.delete(entryKey)
+    if (entry.refCount > 0 || entry.listeners.size > 0 || entry.keyListeners.size > 0) return
+    entry.subscription.unsubscribe()
+    registry.remove(database, entryKey, entry)
     markLiveEntries()
   }, TABLE_TEARDOWN_GRACE_MS)
   markLiveEntries()
@@ -240,22 +232,18 @@ export function subscribeWorkspaceTable(
   tableKey: WorkspaceTableKey,
   listener: () => void
 ): () => void {
-  const entryKey = entryKeyFor(workspaceId, tableKey)
-  const entry = ensureEntry(entryKey, workspaceId, tableKey)
+  const held = ensureEntry(workspaceId, tableKey)
+  const { entry } = held
   entry.listeners.add(listener)
   entry.refCount += 1
-  const registrationId = nextRegistrationId++
-  registrations.set(registrationId, { kind: "table", workspaceId, tableKey, listener, entryKey })
 
+  let released = false
   return () => {
-    const registration = registrations.get(registrationId)
-    if (!registration) return
-    registrations.delete(registrationId)
-    const current = entries.get(registration.entryKey)
-    if (!current) return
-    current.listeners.delete(listener)
-    current.refCount -= 1
-    if (current.refCount <= 0) releaseEntry(registration.entryKey)
+    if (released) return
+    released = true
+    entry.listeners.delete(listener)
+    entry.refCount -= 1
+    if (entry.refCount <= 0) releaseEntry(held)
   }
 }
 
@@ -266,8 +254,8 @@ export function subscribeWorkspaceTableRow(
   rowId: string,
   listener: () => void
 ): () => void {
-  const entryKey = entryKeyFor(workspaceId, tableKey)
-  const entry = ensureEntry(entryKey, workspaceId, tableKey)
+  const held = ensureEntry(workspaceId, tableKey)
+  const { entry } = held
   let keyed = entry.keyListeners.get(rowId)
   if (!keyed) {
     keyed = new Set()
@@ -275,22 +263,18 @@ export function subscribeWorkspaceTableRow(
   }
   keyed.add(listener)
   entry.refCount += 1
-  const registrationId = nextRegistrationId++
-  registrations.set(registrationId, { kind: "row", workspaceId, tableKey, rowId, listener, entryKey })
 
+  let released = false
   return () => {
-    const registration = registrations.get(registrationId)
-    if (!registration) return
-    registrations.delete(registrationId)
-    const current = entries.get(registration.entryKey)
-    if (!current) return
-    const set = current.keyListeners.get(rowId)
+    if (released) return
+    released = true
+    const set = entry.keyListeners.get(rowId)
     if (set) {
       set.delete(listener)
-      if (set.size === 0) current.keyListeners.delete(rowId)
+      if (set.size === 0) entry.keyListeners.delete(rowId)
     }
-    current.refCount -= 1
-    if (current.refCount <= 0) releaseEntry(registration.entryKey)
+    entry.refCount -= 1
+    if (entry.refCount <= 0) releaseEntry(held)
   }
 }
 
@@ -299,7 +283,7 @@ export function getWorkspaceTableSnapshot<K extends WorkspaceTableKey>(
   workspaceId: string,
   tableKey: K
 ): WorkspaceTableRowTypes[K][] | undefined {
-  const entry = entries.get(entryKeyFor(workspaceId, tableKey))
+  const entry = registry.peek(entryKeyFor(workspaceId, tableKey))
   return entry?.rows as WorkspaceTableRowTypes[K][] | undefined
 }
 
@@ -308,7 +292,7 @@ export function getWorkspaceTableRow<K extends WorkspaceTableKey>(
   tableKey: K,
   rowId: string
 ): WorkspaceTableRowTypes[K] | undefined {
-  const entry = entries.get(entryKeyFor(workspaceId, tableKey))
+  const entry = registry.peek(entryKeyFor(workspaceId, tableKey))
   return entry?.byId.get(rowId) as WorkspaceTableRowTypes[K] | undefined
 }
 
@@ -318,7 +302,9 @@ export function getWorkspaceTableRow<K extends WorkspaceTableKey>(
  * For consumers that know a row id but not its workspace (`useStreamFromStore`).
  */
 export function findSharedRowWorkspace(tableKey: WorkspaceTableKey, rowId: string): string | undefined {
-  for (const entry of entries.values()) {
+  // The ACTIVE account's entries only: another account's cached row must never
+  // answer "which workspace owns this stream" for this one.
+  for (const [, entry] of registry.activeEntries()) {
     if (entry.tableKey !== tableKey) continue
     if (entry.byId.has(rowId)) return entry.workspaceId
   }
@@ -333,21 +319,20 @@ export function findSharedRowWorkspace(tableKey: WorkspaceTableKey, rowId: strin
  * reader's route to it went away.
  */
 export function hasResolvedSharedEntry(workspaceId: string, tableKey: WorkspaceTableKey): boolean {
-  const entry = entries.get(entryKeyFor(workspaceId, tableKey))
+  const entry = registry.peek(entryKeyFor(workspaceId, tableKey))
   return Boolean(entry?.resolved && !entry.teardown)
 }
 
 /** Live Dexie subscriptions on workspace tables, teardown-grace ones included. */
 export function activeWorkspaceSubscriptionCount(): number {
-  return entries.size
+  return registry.size()
 }
 
 export function resetWorkspaceTableRegistry(): void {
-  for (const entry of entries.values()) {
+  for (const entry of registry.all()) {
     if (entry.teardown) clearTimeout(entry.teardown)
     entry.subscription.unsubscribe()
   }
-  entries.clear()
-  registrations.clear()
+  registry.clear()
   lastMarkedLiveEntries = -1
 }

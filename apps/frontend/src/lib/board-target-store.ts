@@ -1,3 +1,5 @@
+import { accountStorageKey } from "@/lib/account-storage"
+
 // Per-workspace persistence for the board overlay composer's target, in two roles:
 //
 //  - the **current draft target** (`board:new-post:target:<ws>`) pairs with the
@@ -12,14 +14,19 @@
 // All best-effort: localStorage can throw (private mode / quota), so every read
 // falls back and every write no-ops on failure — this is convenience, not state.
 
+// Both values name streams, and which streams a viewer can see is their own, so
+// both keys hang off the active account. With none resolved there is no key, so
+// nothing to read and nothing to write.
 const MRU_CAP = 5
-const mruStorageKey = (workspaceId: string) => `board:post-target-mru:${workspaceId}`
-const draftTargetKey = (workspaceId: string) => `board:new-post:target:${workspaceId}`
+const mruStorageKey = (workspaceId: string) => accountStorageKey(`board:post-target-mru:${workspaceId}`)
+const draftTargetKey = (workspaceId: string) => accountStorageKey(`board:new-post:target:${workspaceId}`)
 
 /** The in-progress draft's target (a stream id / `new:*` sentinel), or "" if none. */
 export function readDraftTarget(workspaceId: string): string {
+  const key = draftTargetKey(workspaceId)
+  if (key === null) return ""
   try {
-    return localStorage.getItem(draftTargetKey(workspaceId)) ?? ""
+    return localStorage.getItem(key) ?? ""
   } catch {
     return ""
   }
@@ -27,9 +34,11 @@ export function readDraftTarget(workspaceId: string): string {
 
 /** Persist (or, with "", clear) the in-progress draft's target. */
 export function writeDraftTarget(workspaceId: string, value: string): void {
+  const key = draftTargetKey(workspaceId)
+  if (key === null) return
   try {
-    if (value) localStorage.setItem(draftTargetKey(workspaceId), value)
-    else localStorage.removeItem(draftTargetKey(workspaceId))
+    if (value) localStorage.setItem(key, value)
+    else localStorage.removeItem(key)
   } catch {
     /* ignore */
   }
@@ -37,8 +46,10 @@ export function writeDraftTarget(workspaceId: string, value: string): void {
 
 /** The workspace's recently-posted-to target values, newest first (capped). */
 export function readTargetMru(workspaceId: string): string[] {
+  const key = mruStorageKey(workspaceId)
+  if (key === null) return []
   try {
-    const raw = localStorage.getItem(mruStorageKey(workspaceId))
+    const raw = localStorage.getItem(key)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -51,9 +62,11 @@ export function readTargetMru(workspaceId: string): string[] {
 /** Promote a target to the front of the MRU (dedup, cap). */
 export function pushTargetMru(workspaceId: string, value: string): void {
   if (!value) return
+  const key = mruStorageKey(workspaceId)
+  if (key === null) return
   try {
     const next = [value, ...readTargetMru(workspaceId).filter((v) => v !== value)].slice(0, MRU_CAP)
-    localStorage.setItem(mruStorageKey(workspaceId), JSON.stringify(next))
+    localStorage.setItem(key, JSON.stringify(next))
   } catch {
     /* ignore */
   }

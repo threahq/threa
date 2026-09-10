@@ -15,7 +15,7 @@ import {
 } from "@/contexts"
 import { AuthContext } from "@/auth/context"
 import { SyncStatusContext, SyncStatusStore } from "@/sync/sync-status"
-import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { spyOnExport } from "@/test"
 import * as timelineModule from "@/components/timeline"
 import { StreamPanel } from "./stream-panel"
@@ -42,7 +42,7 @@ function session(overrides: Partial<ActiveAgentSession> = {}): ActiveAgentSessio
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   // The panel body is a whole timeline (socket, preferences, virtualizer); the
   // header is what's under test, so the body renders as a marker.
   spyOnExport(timelineModule, "StreamContent").mockReturnValue((() => <div data-testid="panel-body" />) as never)

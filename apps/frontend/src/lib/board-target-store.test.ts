@@ -1,15 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest"
+import { accountStorageKey } from "@/lib/account-storage"
 import { readTargetMru, pushTargetMru, readDraftTarget, writeDraftTarget } from "./board-target-store"
 
 const WS = "workspace_1"
 
 beforeEach(() => {
-  for (const key of [
-    "board:post-target-mru:workspace_1",
-    "board:post-target-mru:workspace_2",
-    "board:new-post:target:workspace_1",
-  ])
-    localStorage.removeItem(key)
+  localStorage.clear()
 })
 
 describe("board draft target", () => {
@@ -51,7 +47,7 @@ describe("board target MRU", () => {
   })
 
   it("survives malformed stored JSON", () => {
-    localStorage.setItem("board:post-target-mru:workspace_1", "{not json")
+    localStorage.setItem(accountStorageKey("board:post-target-mru:workspace_1")!, "{not json")
     expect(readTargetMru(WS)).toEqual([])
   })
 })

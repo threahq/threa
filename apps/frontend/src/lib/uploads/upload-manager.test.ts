@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import Dexie from "dexie"
 import { AuthErrorCodes } from "@threahq/types"
 import { attachmentsApi } from "@/api"
 import { ApiError } from "@/api/client"
 import { subscribeAccountMismatch } from "@/api/account-assertion"
-import { db } from "@/db"
+import { ThreaDatabase, accountDbName, db, getActiveDb } from "@/db"
+import { setActiveDb } from "@/db/database"
 import { getAttachmentRef, clearAttachmentRefCache } from "@/lib/crypto/attachment-crypto"
 import * as xhrTransport from "./xhr-upload"
 import { XhrNetworkError } from "./xhr-upload"
@@ -516,5 +518,66 @@ describe("upload-manager", () => {
     expect(row).toBeUndefined() // settled — deleted
     const ref = getAttachmentRef("attach_e2e")
     expect(ref).toMatchObject({ filename: "plans.txt", sizeBytes: plaintext.length })
+  })
+})
+
+describe("upload-manager across an account switch", () => {
+  const ACCOUNT_A = "workos_upload_a"
+  const ACCOUNT_B = "workos_upload_b"
+  const opened: ThreaDatabase[] = []
+  let originalDb: ThreaDatabase
+
+  function openAccountDatabase(owner: string): ThreaDatabase {
+    const database = new ThreaDatabase(accountDbName(owner), owner)
+    opened.push(database)
+    return database
+  }
+
+  beforeEach(() => {
+    originalDb = getActiveDb()
+    resetUploadManager()
+  })
+
+  afterEach(async () => {
+    setActiveDb(originalDb)
+    resetUploadManager()
+    vi.restoreAllMocks()
+    for (const database of opened.splice(0)) {
+      database.close()
+      await Dexie.delete(database.name)
+    }
+  })
+
+  it("leaves a half-sent transfer in its own account's database and resumes it on the way back", async () => {
+    mockReserve("attach_switch")
+    // Never settles and ignores the abort: the transfer is still mid-stream when
+    // the account leaves, which is the case the switch has to survive.
+    const xhr = vi.spyOn(xhrTransport, "xhrUpload").mockImplementation(() => new Promise(() => {}))
+
+    const accountA = openAccountDatabase(ACCOUNT_A)
+    setActiveDb(accountA)
+    const job = startUpload(WS, makeFile("half-sent.txt"))
+    await waitForReservation(job.jobId)
+    await vi.waitFor(async () => expect(await accountA.uploadJobs.get("attach_switch")).toBeDefined())
+
+    // Away to B — the switch's teardown, then B's own connect resume. B has no
+    // row to find: A's bytes are in A's database, not in the one B is reading.
+    resetUploadManager()
+    setActiveDb(openAccountDatabase(ACCOUNT_B))
+    await resumeWorkspaceUploads(WS)
+    expect(getUploadJobByAttachmentId("attach_switch")).toBeUndefined()
+    expect(await db.uploadJobs.toArray()).toEqual([])
+    expect(xhr).toHaveBeenCalledTimes(1)
+
+    // Back to A: the row was A's the whole time, and the transfer restarts.
+    resetUploadManager()
+    setActiveDb(accountA)
+    await resumeWorkspaceUploads(WS)
+    await vi.waitFor(() => expect(xhr).toHaveBeenCalledTimes(2))
+    expect(getUploadJobByAttachmentId("attach_switch")).toMatchObject({
+      workspaceId: WS,
+      attachmentId: "attach_switch",
+      filename: "half-sent.txt",
+    })
   })
 })

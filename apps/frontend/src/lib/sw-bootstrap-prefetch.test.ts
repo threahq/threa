@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ACCOUNT_ASSERTION_HEADER, sharedMessageSlotKey, type StreamEvent } from "@threahq/types"
 import { ThreaDatabase, accountDbName, db } from "@/db"
-import { parsePersistedSyncTarget, respondToBootstrapRequest, runBootstrapSync } from "./sw-bootstrap-prefetch"
+import {
+  parsePersistedSyncTarget,
+  pruneUnownedBootstrapSnapshots,
+  respondToBootstrapRequest,
+  runBootstrapSync,
+} from "./sw-bootstrap-prefetch"
 
 const missingSlot = (messageId: string) => ({ type: "sharedMessage", state: "missing", messageId }) as const
 
@@ -467,5 +472,25 @@ describe("respondToBootstrapRequest", () => {
 
     expect(await res.text()).toBe("network")
     expect(cache.store.has(keyFor("user_a"))).toBe(false)
+  })
+})
+
+describe("pruneUnownedBootstrapSnapshots", () => {
+  const PATH = "https://app.threa.io/api/workspaces/ws_1/bootstrap"
+
+  it("should drop snapshots captured before the key named an owner, and keep the owned ones", async () => {
+    const store = new Map<string, Response>([
+      [PATH, new Response("captured by an unknown account")],
+      [`${PATH}?account=user_a`, new Response("A's snapshot")],
+      [`https://app.threa.io/api/workspaces/ws_2/bootstrap`, new Response("also unowned")],
+    ])
+    const cache = {
+      keys: async () => [...store.keys()].map((url) => new Request(url)),
+      delete: async (request: Request) => store.delete(request.url),
+    } as unknown as Cache
+
+    await pruneUnownedBootstrapSnapshots(cache)
+
+    expect([...store.keys()]).toEqual([`${PATH}?account=user_a`])
   })
 })

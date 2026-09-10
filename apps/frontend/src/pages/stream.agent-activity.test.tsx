@@ -16,7 +16,7 @@ import {
 import { AuthContext } from "@/auth/context"
 import { UserProfileProvider } from "@/components/user-profile"
 import { SyncStatusContext, SyncStatusStore } from "@/sync/sync-status"
-import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { spyOnExport } from "@/test"
 import * as timelineModule from "@/components/timeline"
 import * as syncEngineModule from "@/sync/sync-engine"
@@ -44,7 +44,7 @@ function session(overrides: Partial<ActiveAgentSession> = {}): ActiveAgentSessio
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
     joinStream: vi.fn(),
     leaveStream: vi.fn(),
