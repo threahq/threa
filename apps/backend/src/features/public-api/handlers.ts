@@ -2440,6 +2440,14 @@ export function createPublicApiHandlers({
           })
           if (!completed) throw invocationClaimNotFound()
           const runtimeCommand = parseRuntimeCommandInvocationMetadata(completed.metadata)
+          // A summary has nowhere to render without a command chip; dropping it
+          // would lose the only account of a reply-less turn (INV-11).
+          if (data.summary && !runtimeCommand) {
+            throw new HttpError("A summary requires a slash-command invocation", {
+              status: 400,
+              code: "SUMMARY_WITHOUT_COMMAND",
+            })
+          }
           if (runtimeCommand) {
             await insertCommandCompletedEvent(client, {
               workspaceId: req.workspaceId!,
@@ -2450,6 +2458,7 @@ export function createPublicApiHandlers({
                 invocationId: completed.id,
                 ...(message && { messageId: message.id }),
               },
+              ...(data.summary && { summary: data.summary }),
             })
           }
           const session = denialSession ?? (await AgentSessionRepository.findById(client, completed.id))

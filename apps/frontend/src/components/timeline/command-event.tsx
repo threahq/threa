@@ -71,6 +71,7 @@ export function CommandEvent({ events }: CommandEventProps) {
               <StatusLabel
                 status={status}
                 step={latestStep}
+                completedPayload={completedEvent?.payload as CommandCompletedPayload | undefined}
                 failedPayload={failedEvent?.payload as CommandFailedPayload | undefined}
               />
             </span>
@@ -114,17 +115,23 @@ function StatusIcon({ status }: { status: CommandStatus }) {
 function StatusLabel({
   status,
   step,
+  completedPayload,
   failedPayload,
 }: {
   status: CommandStatus
   step?: string
+  completedPayload?: CommandCompletedPayload
   failedPayload?: CommandFailedPayload
 }) {
   switch (status) {
     case "running":
       return <span className="text-muted-foreground/70 ml-2">{step ? stripMarkdownToInline(step) : "running"}...</span>
     case "completed":
-      return <span className="text-green-600 ml-2">completed</span>
+      return (
+        <span className="text-green-600 ml-2">
+          {completedPayload?.summary ? oneLine(completedPayload.summary) : "completed"}
+        </span>
+      )
     case "failed":
       return <span className="text-destructive ml-2">failed: {failureSummary(failedPayload?.error)}</span>
   }
@@ -159,11 +166,11 @@ function TimelineEntry({ event, formatTime }: { event: StreamEvent; formatTime: 
 
     case "command_completed": {
       const p = event.payload as CommandCompletedPayload
-      const resultText = p.result ? formatResult(p.result) : null
+      const detail = p.summary ? stripMarkdownToInline(p.summary) : formatResult(p.result)
       return (
         <div className="flex items-center gap-2 text-xs text-green-600">
           <span className="w-12 text-muted-foreground/50">{time}</span>
-          <span>Completed{resultText && `: ${resultText}`}</span>
+          <span>Completed{detail && `: ${detail}`}</span>
         </div>
       )
     }
@@ -194,11 +201,14 @@ function truncateArgs(args: string, maxLength = 50): string {
   return inline.slice(0, maxLength) + "..."
 }
 
-// The header keeps one line; the expanded entry renders the whole reason.
-function failureSummary(error: string | undefined, maxLength = 120): string {
-  const firstLine = stripMarkdownToInline(error?.split("\n")[0] ?? "").trim()
-  if (!firstLine) return "unknown error"
+// The header keeps one line; the expanded entry renders the whole text.
+function oneLine(text: string, maxLength = 120): string {
+  const firstLine = stripMarkdownToInline(text.split("\n")[0] ?? "").trim()
   return firstLine.length <= maxLength ? firstLine : firstLine.slice(0, maxLength) + "..."
+}
+
+function failureSummary(error: string | undefined, maxLength = 120): string {
+  return oneLine(error ?? "", maxLength) || "unknown error"
 }
 
 function formatResult(result: unknown): string {

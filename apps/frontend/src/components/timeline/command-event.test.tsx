@@ -84,6 +84,46 @@ describe("CommandEvent", () => {
     expect(screen.getByText("Removing the worktree")).toBeInTheDocument()
   })
 
+  it('shows a summarized completion instead of a bare "completed"', async () => {
+    render(
+      <MemoryRouter>
+        <CommandEvent
+          events={[
+            event("1", "command_dispatched", { commandId: "cmd_1", name: "stop", args: "" }),
+            event("2", "command_completed", {
+              commandId: "cmd_1",
+              result: { invocationId: "binv_1" },
+              summary: "Interrupted the running turn",
+            }),
+          ]}
+        />
+      </MemoryRouter>
+    )
+
+    const header = screen.getByRole("button", { name: /stop/ })
+    expect(header.textContent).toContain("Interrupted the running turn")
+    expect(header.textContent).not.toContain("completed")
+
+    await userEvent.click(header)
+
+    expect(screen.getByText("Completed: Interrupted the running turn")).toBeInTheDocument()
+  })
+
+  it('falls back to "completed" when the command sent no summary', () => {
+    render(
+      <MemoryRouter>
+        <CommandEvent
+          events={[
+            event("1", "command_dispatched", { commandId: "cmd_1", name: "invite", args: "@ada" }),
+            event("2", "command_completed", { commandId: "cmd_1" }),
+          ]}
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByRole("button", { name: /invite/ }).textContent).toContain("completed")
+  })
+
   it("keeps the header to the first line of a multi-line reason", () => {
     render(
       <MemoryRouter>
