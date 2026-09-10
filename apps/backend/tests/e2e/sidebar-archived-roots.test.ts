@@ -101,7 +101,7 @@ describe("Workspace bootstrap excludes threads rooted in archived streams", () =
     expect(streamIds.has(activeThread.id)).toBe(true)
   })
 
-  test("per-stream bootstrap surfaces rootArchivedAt for a thread under an archived root", async () => {
+  test("per-stream bootstrap names the archived ancestor for a thread under an archived root", async () => {
     const client = new TestClient()
     await loginAs(client, testEmail("root-archived-at"), "Root ArchivedAt Test")
     const workspace = await createWorkspace(client, `Root ArchivedAt WS ${testRunId}`)
@@ -113,11 +113,11 @@ describe("Workspace bootstrap excludes threads rooted in archived streams", () =
 
     const threadBootstrap = await getBootstrap(client, workspace.id, thread.id)
     expect(threadBootstrap.stream.id).toBe(thread.id)
-    // The thread is active on its own row; the bootstrap carries the root's
-    // archived timestamp so the client can hide the composer without the root
-    // being resident in the workspace stream cache.
+    // The thread is active on its own row; the bootstrap names the sealing
+    // ancestor so the client can hide the composer and link to it without the
+    // root being resident in the workspace stream cache.
     expect(threadBootstrap.stream.archivedAt).toBeNull()
-    expect(threadBootstrap.rootArchivedAt).not.toBeNull()
+    expect(threadBootstrap.archivedAncestor).toEqual({ streamId: root.id, archivedAt: expect.any(String) })
   })
 
   test("sending to a thread under an archived root is rejected with 403", async () => {

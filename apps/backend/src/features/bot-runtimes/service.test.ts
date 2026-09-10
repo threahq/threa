@@ -863,13 +863,13 @@ describe("BotRuntimeService outbox emission", () => {
 
     it("endSessionsForArchivedStream marks links archived and emits bot:session_archived per link", async () => {
       patchWithTransaction()
-      spyOn(BotRuntimeSessionLinkRepository, "archiveActiveByRootStream").mockResolvedValue([
+      spyOn(BotRuntimeSessionLinkRepository, "archiveActiveByStreams").mockResolvedValue([
         makeLink({ status: "archived" }),
       ])
       const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
       const service = new BotRuntimeService({ pool: fakePool })
-      const count = await service.endSessionsForArchivedStream({ workspaceId: "ws_1", rootStreamId: "stream_root" })
+      const count = await service.endSessionsForArchivedStream({ workspaceId: "ws_1", streamIds: ["stream_root"] })
 
       expect(count).toBe(1)
       expect(insertSpy.mock.calls[0]?.[1]).toBe("bot:session_archived")
@@ -884,7 +884,7 @@ describe("BotRuntimeService outbox emission", () => {
 
     it("restoreSessionsForUnarchivedStream revives archive-ended links and emits bot:session_restored per link", async () => {
       patchWithTransaction()
-      const reactivateSpy = spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRootStream").mockResolvedValue([
+      const reactivateSpy = spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByStreams").mockResolvedValue([
         makeLink({ status: "active" }),
       ])
       const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
@@ -892,11 +892,11 @@ describe("BotRuntimeService outbox emission", () => {
       const service = new BotRuntimeService({ pool: fakePool })
       const count = await service.restoreSessionsForUnarchivedStream({
         workspaceId: "ws_1",
-        rootStreamId: "stream_root",
+        streamIds: ["stream_root"],
       })
 
       expect(count).toBe(1)
-      expect(reactivateSpy.mock.calls[0]?.[1]).toEqual({ workspaceId: "ws_1", rootStreamId: "stream_root" })
+      expect(reactivateSpy.mock.calls[0]?.[1]).toEqual({ workspaceId: "ws_1", streamIds: ["stream_root"] })
       expect(insertSpy.mock.calls[0]?.[1]).toBe("bot:session_restored")
       expect(insertSpy.mock.calls[0]?.[2]).toEqual({
         workspaceId: "ws_1",
@@ -909,13 +909,13 @@ describe("BotRuntimeService outbox emission", () => {
 
     it("restoreSessionsForUnarchivedStream emits nothing when no archived links exist (normal-shutdown links stay dead)", async () => {
       patchWithTransaction()
-      spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByRootStream").mockResolvedValue([])
+      spyOn(BotRuntimeSessionLinkRepository, "reactivateArchivedByStreams").mockResolvedValue([])
       const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
       const service = new BotRuntimeService({ pool: fakePool })
       const count = await service.restoreSessionsForUnarchivedStream({
         workspaceId: "ws_1",
-        rootStreamId: "stream_root",
+        streamIds: ["stream_root"],
       })
 
       expect(count).toBe(0)

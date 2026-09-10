@@ -224,17 +224,15 @@ export interface StreamBootstrap {
   /** Bot IDs that have been granted access to this stream. */
   botMemberIds: string[]
   /**
-   * For a thread whose root stream is archived: the root's `archivedAt`
-   * (ISO). Absent for non-threads and for threads whose root is active.
-   * Archiving marks only the root row, so the thread itself stays "active"
-   * and the client can't tell from the thread's own `archivedAt` that it
-   * is sealed. The composer uses this to hide and the sidebar's workspace
-   * bootstrap already excludes these threads (listWithPreviews), but a
-   * deep link loads the thread via per-stream bootstrap — this field is
-   * the reliable signal there, since the archived root is not in the
-   * client's stream cache.
+   * The nearest archived ancestor up `parentStreamId`, or null when none is.
+   * Archiving writes only the target row, so a stream sealed by an ancestor
+   * still carries `archivedAt: null`. The workspace bootstrap excludes sealed
+   * streams from the sidebar, but a deep link loads through this per-stream
+   * bootstrap and the sealing ancestor may not be in the client's cache; this
+   * is the reliable signal there, and names the ancestor so the client can
+   * say which one sealed the stream.
    */
-  rootArchivedAt?: string | null
+  archivedAncestor?: { streamId: string; archivedAt: string } | null
   botRuntimePresence?: Record<string, BotRuntimePresenceSummary | null>
   /** Complete slash-command list effective for this stream. Live backend returns this. */
   commands?: CommandInfo[]

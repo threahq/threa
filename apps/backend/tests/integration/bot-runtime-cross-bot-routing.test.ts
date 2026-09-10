@@ -376,7 +376,10 @@ describe("cross-bot linked scratchpad routing", () => {
       scenario.workspace,
       scenario.root,
     ])
-    await service.endSessionsForArchivedStream({ workspaceId: scenario.workspace, rootStreamId: scenario.root })
+    await service.endSessionsForArchivedStream({
+      workspaceId: scenario.workspace,
+      streamIds: [scenario.root, scenario.thread],
+    })
     await pool.query("UPDATE streams SET archived_at = NULL WHERE workspace_id = $1 AND id = $2", [
       scenario.workspace,
       scenario.root,

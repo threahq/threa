@@ -8,7 +8,7 @@ import {
   type JSONContent,
   type StreamType,
 } from "@threahq/types"
-import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
+import { archiveStatusSql, type ArchiveStatus } from "../../lib/sql-filters"
 import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
 import { streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
@@ -261,7 +261,7 @@ export const SearchRepository = {
     const hasParticipantFilter = userIds && userIds.length > 0
     const hasTypeFilter = streamTypes && streamTypes.length > 0
 
-    const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
+    const archiveCondition = sql`${sql.raw(archiveStatusSql("s", archiveStatus, { archivedIncludesSealed: true }))}`
 
     if (!hasParticipantFilter) {
       const result = await db.query<{ id: string }>(composeSql`
@@ -270,7 +270,7 @@ export const SearchRepository = {
         WHERE s.workspace_id = ${workspaceId}
           AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
           AND (${!hasTypeFilter} OR s.type = ANY(${streamTypes ?? []}))
-          AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+          AND ${archiveCondition}
       `)
       return result.rows.map((r) => r.id)
     }
@@ -283,7 +283,7 @@ export const SearchRepository = {
         WHERE s.workspace_id = ${workspaceId}
           AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
           AND (${!hasTypeFilter} OR s.type = ANY(${streamTypes ?? []}))
-          AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+          AND ${archiveCondition}
       ),
       member_streams AS (
         SELECT stream_id
@@ -736,7 +736,7 @@ export const SearchRepository = {
     options?: { streamTypes?: StreamType[]; archiveStatus?: ArchiveStatus[] }
   ): Promise<string[]> {
     const hasTypeFilter = options?.streamTypes && options.streamTypes.length > 0
-    const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(options?.archiveStatus)
+    const archiveCondition = sql.raw(archiveStatusSql("s", options?.archiveStatus, { archivedIncludesSealed: true }))
 
     const result = await db.query<{ id: string }>(sql`
       SELECT s.id FROM streams s
@@ -744,7 +744,7 @@ export const SearchRepository = {
       WHERE s.workspace_id = ${workspaceId}
         AND root.visibility = ${Visibilities.PUBLIC}
         AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
-        AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+        AND ${archiveCondition}
     `)
 
     return result.rows.map((r) => r.id)
@@ -824,7 +824,9 @@ export const SearchRepository = {
       case "user_intersection": {
         const userIds = getValidatedUserIntersectionUserIds(spec.userIds)
         const hasTypeFilter = options?.streamTypes && options.streamTypes.length > 0
-        const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(options?.archiveStatus)
+        const archiveCondition = sql.raw(
+          archiveStatusSql("s", options?.archiveStatus, { archivedIncludesSealed: true })
+        )
 
         const result = await db.query<{ id: string }>(sql`
           WITH requested_users AS (
@@ -848,7 +850,7 @@ export const SearchRepository = {
                 )
               )
               AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
-              AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+              AND ${archiveCondition}
           )
           SELECT id
           FROM shared_access

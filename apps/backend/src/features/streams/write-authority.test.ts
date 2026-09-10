@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { HttpError } from "@threahq/backend-common"
 import { StreamErrorCodes, StreamReadOnlyReasons } from "@threahq/types"
 import type { Querier } from "../../db"
@@ -48,15 +48,15 @@ describe("deriveStreamViewerState", () => {
   test("derives writable participation and every reason with fixed precedence", () => {
     const writable = stream()
     expect([
-      deriveStreamViewerState({ target: writable, root: writable, participates: true }),
+      deriveStreamViewerState({ target: writable, ancestorArchived: false, participates: true }),
       deriveStreamViewerState({
         target: stream({ archivedAt: new Date(0), type: "system" }),
-        root: writable,
+        ancestorArchived: false,
         participates: false,
       }),
-      deriveStreamViewerState({ target: writable, root: stream({ archivedAt: new Date(0) }), participates: true }),
-      deriveStreamViewerState({ target: stream({ type: "system" }), root: writable, participates: false }),
-      deriveStreamViewerState({ target: writable, root: writable, participates: false }),
+      deriveStreamViewerState({ target: writable, ancestorArchived: true, participates: true }),
+      deriveStreamViewerState({ target: stream({ type: "system" }), ancestorArchived: false, participates: false }),
+      deriveStreamViewerState({ target: writable, ancestorArchived: false, participates: false }),
     ]).toEqual([
       { readOnly: false, readOnlyReason: null },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
@@ -68,6 +68,10 @@ describe("deriveStreamViewerState", () => {
 })
 
 describe("viewer projection", () => {
+  beforeEach(() => {
+    spyOn(StreamRepository, "filterEffectivelyArchivedIds").mockResolvedValue([])
+  })
+
   test("single public descendant without root membership is read-only", async () => {
     const root = stream({ id: "stream_public" })
     const thread = stream({ id: "stream_thread", type: "thread", rootStreamId: root.id })
@@ -183,23 +187,64 @@ describe("viewer projection", () => {
     expect(await projectStreamsForUser(db, { workspaceId: "ws_1", streams: [thread], userId: "usr_1" })).toEqual([])
     expect(memberships).toHaveBeenCalledWith(db, [], "usr_1")
   })
+
+  test("a live thread sealed by an archived ancestor projects as archived, its own flag untouched", async () => {
+    const root = stream({ id: "stream_root" })
+    const parent = stream({ id: "stream_parent", type: "thread", parentStreamId: root.id, rootStreamId: root.id })
+    const thread = stream({ id: "stream_thread", type: "thread", parentStreamId: parent.id, rootStreamId: root.id })
+    spyOn(StreamRepository, "findById").mockResolvedValue(root)
+    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([root])
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    spyOn(StreamMemberRepository, "findByStreamsAndMember").mockResolvedValue([
+      { streamId: root.id, memberId: "usr_1", notificationLevel: null, joinedAt: new Date(0) },
+    ])
+    const sealed = spyOn(StreamRepository, "filterEffectivelyArchivedIds").mockResolvedValue([thread.id])
+
+    const single = await projectStreamForUser(db, { workspaceId: "ws_1", stream: thread, userId: "usr_1" })
+    const batch = await projectStreamsForUser(db, { workspaceId: "ws_1", streams: [thread, root], userId: "usr_1" })
+
+    expect({
+      single,
+      batch: batch.map(({ id, readOnlyReason, archivedAt }) => ({ id, readOnlyReason, archivedAt })),
+    }).toEqual({
+      single: { ...thread, readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
+      batch: [
+        { id: thread.id, readOnlyReason: StreamReadOnlyReasons.ARCHIVED, archivedAt: null },
+        { id: root.id, readOnlyReason: null, archivedAt: null },
+      ],
+    })
+    expect(sealed).toHaveBeenLastCalledWith(db, "ws_1", [thread.id, root.id])
+  })
 })
 
 describe("transactional write authority", () => {
+  const archivedRoot = stream({ id: "stream_archived_root", archivedAt: new Date(0) })
+  const liveRoot = stream({ id: "stream_live_root" })
+  const archivedMiddle = stream({
+    id: "stream_middle",
+    type: "thread",
+    parentStreamId: liveRoot.id,
+    rootStreamId: liveRoot.id,
+    archivedAt: new Date(0),
+  })
   test.each([
-    [stream({ archivedAt: new Date(0) }), stream(), "archived"],
+    [stream({ archivedAt: new Date(0) }), [], "archived"],
     [
-      stream({ id: "stream_thread", type: "thread", rootStreamId: "stream_archived_root" }),
-      stream({ id: "stream_archived_root", archivedAt: new Date(0) }),
+      stream({ id: "stream_thread", type: "thread", parentStreamId: archivedRoot.id, rootStreamId: archivedRoot.id }),
+      [archivedRoot],
       "archived",
     ],
-    [stream({ type: "system" }), stream(), "system_stream"],
-    [stream(), stream(), "not_a_member"],
-  ] as const)("returns the exact denial reason", async (target, root, reason) => {
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([target])
-    spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue(
-      target.id === root.id ? [target] : [target, root]
-    )
+    [
+      stream({ id: "stream_leaf", type: "thread", parentStreamId: archivedMiddle.id, rootStreamId: liveRoot.id }),
+      [archivedMiddle, liveRoot],
+      "archived",
+    ],
+    [stream({ type: "system" }), [], "system_stream"],
+    [stream(), [], "not_a_member"],
+  ] as const)("returns the exact denial reason", async (target, ancestors, reason) => {
+    const chain = [target, ...ancestors]
+    spyOn(StreamRepository, "listAncestorChainIds").mockResolvedValue(chain.map((row) => row.id))
+    spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue(chain)
     spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set())
     await expect(
       assertStreamWritable(db, {
@@ -212,23 +257,24 @@ describe("transactional write authority", () => {
 
   test("hides missing, cross-workspace, dangling-root, and private nonparticipant targets", async () => {
     const cases = [
-      { initial: [], locked: [] },
-      { initial: [stream({ workspaceId: "ws_other" })], locked: [] },
+      { streamId: "missing", chain: [], locked: [] },
+      { streamId: "stream_root", chain: ["stream_root"], locked: [stream({ workspaceId: "ws_other" })] },
       {
-        initial: [stream({ id: "thread", type: "thread", rootStreamId: "missing" })],
-        locked: [stream({ id: "thread", type: "thread", rootStreamId: "missing" })],
+        streamId: "thread",
+        chain: ["thread", "missing"],
+        locked: [stream({ id: "thread", type: "thread", parentStreamId: "missing", rootStreamId: "missing" })],
       },
-      { initial: [stream({ visibility: "private" })], locked: [stream({ visibility: "private" })] },
+      { streamId: "stream_root", chain: ["stream_root"], locked: [stream({ visibility: "private" })] },
     ]
     for (const item of cases) {
       mock.restore()
-      spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue(item.initial)
+      spyOn(StreamRepository, "listAncestorChainIds").mockResolvedValue(item.chain)
       spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue(item.locked)
       spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set())
       await expect(
         assertStreamWritable(db, {
           workspaceId: "ws_1",
-          streamId: item.initial[0]?.id ?? "missing",
+          streamId: item.streamId,
           principal: { kind: "user", userId: "usr_1" },
         })
       ).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
@@ -237,9 +283,9 @@ describe("transactional write authority", () => {
 
   test("locks user membership and bot grants at a thread's effective root", async () => {
     const root = stream({ visibility: "private" })
-    const thread = stream({ id: "thread", type: "thread", rootStreamId: root.id })
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([thread])
-    spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue([root, thread])
+    const thread = stream({ id: "thread", type: "thread", parentStreamId: root.id, rootStreamId: root.id })
+    const chain = spyOn(StreamRepository, "listAncestorChainIds").mockResolvedValue([root.id, thread.id])
+    const locks = spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue([root, thread])
     const members = spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set([root.id]))
     expect(
       (
@@ -251,8 +297,10 @@ describe("transactional write authority", () => {
       ).root.id
     ).toBe(root.id)
     expect(members).toHaveBeenCalledWith(db, [root.id], "usr_1")
+    expect(chain).toHaveBeenCalledWith(db, "ws_1", [thread.id])
+    expect(locks).toHaveBeenCalledWith(db, "ws_1", [root.id, thread.id])
     mock.restore()
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([thread])
+    spyOn(StreamRepository, "listAncestorChainIds").mockResolvedValue([root.id, thread.id])
     spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue([root, thread])
     const grants = spyOn(BotChannelAccessRepository, "lockGrants").mockResolvedValue(new Set([root.id]))
     expect(

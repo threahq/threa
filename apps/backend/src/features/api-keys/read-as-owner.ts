@@ -34,18 +34,14 @@ export async function isStreamReadableAsOwner(
 
   const stream = await StreamRepository.findByIdForWorkspace(db, streamId, workspaceId)
   if (!stream) return false
-  if (stream.archivedAt && !options.allowArchived) return false
+  // Archived anywhere up the parent chain counts: the owner can still read a
+  // sealed thread, this arm must not.
+  if (!options.allowArchived && (await StreamRepository.isEffectivelyArchived(db, workspaceId, stream.id))) {
+    return false
+  }
 
   const readable = await checkStreamAccess(db, streamId, workspaceId, ownerUserId)
   if (!readable) return false
-
-  // The root's archived_at matters on its own: a thread stays unarchived when
-  // its root archives, and the owner can still read it — this arm must not.
-  if (readable.rootStreamId) {
-    const root = await StreamRepository.findById(db, readable.rootStreamId)
-    if (!root) return false
-    if (root.archivedAt && !options.allowArchived) return false
-  }
 
   return !(await E2eStreamsRepository.isE2eStream(db, workspaceId, readable.rootStreamId ?? readable.id))
 }

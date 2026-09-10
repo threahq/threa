@@ -13,7 +13,12 @@ import type {
   TitleSource,
 } from "@threahq/types"
 import { StreamTypes, TitleSources } from "@threahq/types"
-import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
+import {
+  archiveStatusSql,
+  effectivelyArchivedSql,
+  MAX_STREAM_CHAIN_DEPTH,
+  type ArchiveStatus,
+} from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, MemoryMode, ArchiveStatus }
 
@@ -307,6 +312,11 @@ const SELECT_FIELDS_WITH_E2E = `
 
 const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
 
+/** `SELECT_FIELDS` qualified with the `s` alias, for queries that correlate on `s`. */
+const SELECT_FIELDS_ALIASED = SELECT_FIELDS.split(",")
+  .map((field) => `s.${field.trim()}`)
+  .join(", ")
+
 /**
  * System-purpose streams (e.g. a persona-editor test scratchpad) are real,
  * fully-functional streams but not user-facing channels — every workspace
@@ -399,20 +409,96 @@ export const StreamRepository = {
   },
 
   /**
-   * The subset of `ids` whose EFFECTIVE ROOT (`COALESCE(root_stream_id, id)`,
-   * INV-62) is a live row — a thread stays unarchived when its root archives,
-   * so filtering on the target's own `archived_at` alone leaks those threads.
-   * Ids with no `streams` row or a dangling root drop out.
+   * The subset of `ids` not sealed anywhere up the parent chain. A row's own
+   * `archived_at` is not enough: archiving writes only the target row and its
+   * descendants inherit the state on read. Ids with no `streams` row drop out.
    */
-  async filterIdsWithActiveRoot(db: Querier, workspaceId: string, ids: readonly string[]): Promise<string[]> {
+  async filterEffectivelyActiveIds(db: Querier, workspaceId: string, ids: readonly string[]): Promise<string[]> {
     if (ids.length === 0) return []
     const result = await db.query<{ id: string }>(sql`
       SELECT s.id
       FROM streams s
-      JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
       WHERE s.workspace_id = ${workspaceId}
         AND s.id = ANY(${ids as string[]})
-        AND root.archived_at IS NULL
+        AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
+    `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /** Whether `streamId` is archived itself or sealed by an ancestor. */
+  async isEffectivelyArchived(db: Querier, workspaceId: string, streamId: string): Promise<boolean> {
+    return (await this.filterEffectivelyArchivedIds(db, workspaceId, [streamId])).length > 0
+  },
+
+  /** The subset of `ids` that are archived themselves or sealed by an ancestor. */
+  async filterEffectivelyArchivedIds(db: Querier, workspaceId: string, ids: readonly string[]): Promise<string[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
+      SELECT s.id
+      FROM streams s
+      WHERE s.workspace_id = ${workspaceId}
+        AND s.id = ANY(${ids as string[]})
+        AND ${sql.raw(effectivelyArchivedSql("s"))}
+    `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
+   * The nearest archived strict ancestor of `streamId` up `parent_stream_id`,
+   * or null when no ancestor is archived. Names the row that seals the stream
+   * so a client can say which one, and tells a cold-loaded deep link the
+   * stream is sealed when the sealing row is not in its cache.
+   */
+  async findNearestArchivedAncestor(
+    db: Querier,
+    workspaceId: string,
+    streamId: string
+  ): Promise<{ streamId: string; archivedAt: Date } | null> {
+    const result = await db.query<{ id: string; archived_at: Date }>(sql`
+      WITH RECURSIVE chain AS (
+        SELECT p.id, p.parent_stream_id, p.archived_at, 0 AS depth
+        FROM streams s
+        JOIN streams p ON p.id = s.parent_stream_id
+        WHERE s.id = ${streamId} AND s.workspace_id = ${workspaceId}
+        UNION ALL
+        SELECT p.id, p.parent_stream_id, p.archived_at, c.depth + 1
+        FROM chain c
+        JOIN streams p ON p.id = c.parent_stream_id
+        WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
+      )
+      SELECT id, archived_at FROM chain
+      WHERE archived_at IS NOT NULL
+      ORDER BY depth
+      LIMIT 1
+    `)
+    const row = result.rows[0]
+    return row ? { streamId: row.id, archivedAt: row.archived_at } : null
+  },
+
+  /**
+   * Every stream on the parent chains of `ids`: the ids themselves, each
+   * ancestor up `parent_stream_id`, and each row's `root_stream_id` (INV-62).
+   * Unknown ids contribute nothing. Read without locks so the caller can lock
+   * the whole set in one id-ordered statement; `parent_stream_id` and
+   * `root_stream_id` never change after insert, so the set cannot go stale
+   * between this read and that lock.
+   */
+  async listAncestorChainIds(db: Querier, workspaceId: string, ids: readonly string[]): Promise<string[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
+      WITH RECURSIVE chain AS (
+        SELECT id, parent_stream_id, root_stream_id, 0 AS depth
+        FROM streams
+        WHERE workspace_id = ${workspaceId} AND id = ANY(${ids as string[]})
+        UNION ALL
+        SELECT p.id, p.parent_stream_id, p.root_stream_id, c.depth + 1
+        FROM chain c
+        JOIN streams p ON p.id = c.parent_stream_id
+        WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
+      )
+      SELECT DISTINCT x.id
+      FROM chain, LATERAL (VALUES (chain.id), (chain.root_stream_id)) AS x(id)
+      WHERE x.id IS NOT NULL
     `)
     return result.rows.map((row) => row.id)
   },
@@ -466,20 +552,25 @@ export const StreamRepository = {
   },
 
   /**
-   * Active thread ids whose top-level root is `rootStreamId` (any nesting
-   * depth — `root_stream_id` points at the non-thread ancestor, INV-62).
-   * Used to route root lifecycle events (`stream:archived` / `stream:unarchived`)
-   * to descendant thread rooms so clients viewing a thread receive them and
-   * resolve the inherited archived state live, without a refresh.
+   * The descendants whose effective archived state flips with `streamId`:
+   * everything below it down `parent_stream_id`, stopping at (and excluding)
+   * any row archived in its own right, since that row seals its subtree
+   * regardless of what happens above it. Routes `stream:archived` /
+   * `stream:unarchived` to the rooms that change and scopes the runtime
+   * session cascade to exactly those streams. Never includes `streamId`.
    */
-  async listThreadIdsByRoot(db: Querier, workspaceId: string, rootStreamId: string): Promise<string[]> {
-    const result = await db.query<{ id: string }>(
-      sql`SELECT id FROM streams
-          WHERE workspace_id = ${workspaceId}
-            AND root_stream_id = ${rootStreamId}
-            AND type = ${StreamTypes.THREAD}
-            AND archived_at IS NULL`
-    )
+  async listArchivalCascadeIds(db: Querier, workspaceId: string, streamId: string): Promise<string[]> {
+    const result = await db.query<{ id: string }>(sql`
+      WITH RECURSIVE subtree AS (
+        SELECT id FROM streams WHERE id = ${streamId} AND workspace_id = ${workspaceId}
+        UNION ALL
+        SELECT s.id
+        FROM streams s
+        JOIN subtree t ON s.parent_stream_id = t.id
+        WHERE s.workspace_id = ${workspaceId} AND s.archived_at IS NULL
+      )
+      SELECT id FROM subtree WHERE id != ${streamId}
+    `)
     return result.rows.map((row) => row.id)
   },
 
@@ -503,42 +594,32 @@ export const StreamRepository = {
     if (ids.length === 0) return []
 
     const limit = filters?.limit ?? 50
-    const conditions = [`id = ANY($1)`, `workspace_id = $2`, purposeIsNull()]
-    if (!filters?.includeArchived) {
-      // A live thread under an archived root is invisible in the app's stream
-      // lists, so hide it here too — the row's own archived_at is not enough.
-      conditions.push(
-        `archived_at IS NULL`,
-        `NOT EXISTS (
-          SELECT 1 FROM streams root
-          WHERE root.id = streams.root_stream_id AND root.archived_at IS NOT NULL
-        )`
-      )
-    }
+    const conditions = [`s.id = ANY($1)`, `s.workspace_id = $2`, purposeIsNull("s")]
+    if (!filters?.includeArchived) conditions.push(`NOT ${effectivelyArchivedSql("s")}`)
     const values: unknown[] = [ids, workspaceId]
     let paramIndex = 3
 
     if (filters?.types?.length) {
-      conditions.push(`type = ANY($${paramIndex++})`)
+      conditions.push(`s.type = ANY($${paramIndex++})`)
       values.push(filters.types)
     }
     if (filters?.query) {
       const pattern = `%${filters.query}%`
-      conditions.push(`(display_name ILIKE $${paramIndex} OR slug ILIKE $${paramIndex})`)
+      conditions.push(`(s.display_name ILIKE $${paramIndex} OR s.slug ILIKE $${paramIndex})`)
       paramIndex++
       values.push(pattern)
     }
     if (filters?.cursorCreatedAt && filters?.cursorId) {
-      conditions.push(`(created_at, id) < ($${paramIndex}, $${paramIndex + 1})`)
+      conditions.push(`(s.created_at, s.id) < ($${paramIndex}, $${paramIndex + 1})`)
       values.push(filters.cursorCreatedAt, filters.cursorId)
       paramIndex += 2
     }
     values.push(limit)
 
     const result = await db.query<StreamRow>(
-      `SELECT ${SELECT_FIELDS} FROM streams
+      `SELECT ${SELECT_FIELDS_ALIASED} FROM streams s
         WHERE ${conditions.join(" AND ")}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY s.created_at DESC, s.id DESC
         LIMIT $${paramIndex}`,
       values
     )
@@ -638,16 +719,16 @@ export const StreamRepository = {
     const userMembershipStreamIds = filters?.userMembershipStreamIds
     const archiveStatus = filters?.archiveStatus
 
-    const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
+    const archiveCondition = sql.raw(archiveStatusSql("s", archiveStatus))
 
     if (parentStreamId) {
       const result = await db.query<StreamRow>(
-        sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
-            WHERE workspace_id = ${workspaceId}
-              AND parent_stream_id = ${parentStreamId}
-              AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
-              AND ${sql.raw(purposeIsNull())}
-            ORDER BY created_at DESC`
+        sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
+            WHERE s.workspace_id = ${workspaceId}
+              AND s.parent_stream_id = ${parentStreamId}
+              AND ${archiveCondition}
+              AND ${sql.raw(purposeIsNull("s"))}
+            ORDER BY s.created_at DESC`
       )
       return result.rows.map(mapRowToStream)
     }
@@ -655,18 +736,18 @@ export const StreamRepository = {
     if (userMembershipStreamIds !== undefined) {
       if (types && types.length > 0) {
         const result = await db.query<StreamRow>(
-          sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
-              WHERE workspace_id = ${workspaceId}
-                AND type = ANY(${types})
-                AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
+          sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
+              WHERE s.workspace_id = ${workspaceId}
+                AND s.type = ANY(${types})
+                AND ${archiveCondition}
                 AND (
-                  visibility = 'public'
-                  OR id = ANY(${userMembershipStreamIds})
+                  s.visibility = 'public'
+                  OR s.id = ANY(${userMembershipStreamIds})
                   OR (
-                    type = 'thread'
+                    s.type = 'thread'
                     AND EXISTS (
                       SELECT 1 FROM streams access_root
-                      WHERE access_root.id = streams.root_stream_id
+                      WHERE access_root.id = s.root_stream_id
                         AND access_root.workspace_id = ${workspaceId}
                         AND (
                           access_root.visibility = 'public'
@@ -675,24 +756,24 @@ export const StreamRepository = {
                     )
                   )
                 )
-                AND ${sql.raw(purposeIsNull())}
-              ORDER BY created_at DESC`
+                AND ${sql.raw(purposeIsNull("s"))}
+              ORDER BY s.created_at DESC`
         )
         return result.rows.map(mapRowToStream)
       }
 
       const result = await db.query<StreamRow>(
-        sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
-            WHERE workspace_id = ${workspaceId}
-              AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
+        sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
+            WHERE s.workspace_id = ${workspaceId}
+              AND ${archiveCondition}
               AND (
-                visibility = 'public'
-                OR id = ANY(${userMembershipStreamIds})
+                s.visibility = 'public'
+                OR s.id = ANY(${userMembershipStreamIds})
                 OR (
-                  type = 'thread'
+                  s.type = 'thread'
                   AND EXISTS (
                     SELECT 1 FROM streams access_root
-                    WHERE access_root.id = streams.root_stream_id
+                    WHERE access_root.id = s.root_stream_id
                       AND access_root.workspace_id = ${workspaceId}
                       AND (
                         access_root.visibility = 'public'
@@ -701,30 +782,30 @@ export const StreamRepository = {
                   )
                 )
               )
-              AND ${sql.raw(purposeIsNull())}
-            ORDER BY created_at DESC`
+              AND ${sql.raw(purposeIsNull("s"))}
+            ORDER BY s.created_at DESC`
       )
       return result.rows.map(mapRowToStream)
     }
 
     if (types && types.length > 0) {
       const result = await db.query<StreamRow>(
-        sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
-            WHERE workspace_id = ${workspaceId}
-              AND type = ANY(${types})
-              AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
-              AND ${sql.raw(purposeIsNull())}
-            ORDER BY created_at DESC`
+        sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
+            WHERE s.workspace_id = ${workspaceId}
+              AND s.type = ANY(${types})
+              AND ${archiveCondition}
+              AND ${sql.raw(purposeIsNull("s"))}
+            ORDER BY s.created_at DESC`
       )
       return result.rows.map(mapRowToStream)
     }
 
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
-          WHERE workspace_id = ${workspaceId}
-            AND (${filterAll} OR (${includeArchived} AND archived_at IS NOT NULL) OR (${!includeArchived} AND archived_at IS NULL))
-            AND ${sql.raw(purposeIsNull())}
-          ORDER BY created_at DESC`
+      sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
+          WHERE s.workspace_id = ${workspaceId}
+            AND ${archiveCondition}
+            AND ${sql.raw(purposeIsNull("s"))}
+          ORDER BY s.created_at DESC`
     )
     return result.rows.map(mapRowToStream)
   },
@@ -746,22 +827,7 @@ export const StreamRepository = {
     const userMembershipStreamIds = filters?.userMembershipStreamIds
     const archiveStatus = filters?.archiveStatus
 
-    const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
-
-    // A thread inherits its top-level ancestor via `root_stream_id` (INV-62).
-    // Archiving marks only the root row, so an active-only filter still returns
-    // a thread whose root scratchpad/channel was archived — and the sidebar
-    // (this bootstrap's consumer) would show it, since the frontend can't tell
-    // the root is archived once it's pruned from the client cache. Exclude
-    // active threads whose root is archived so they never enter the sidebar.
-    // Applies in every branch because `listWithPreviews` is workspace-bootstrap
-    // only, and a thread under an archived root is clutter in every view that
-    // reads the bootstrap streams.
-    const EXCLUDE_ARCHIVED_ROOT_THREADS = `AND NOT (
-        s.type = '${StreamTypes.THREAD}'
-        AND s.root_stream_id IS NOT NULL
-        AND EXISTS (SELECT 1 FROM streams root WHERE root.id = s.root_stream_id AND root.archived_at IS NOT NULL)
-      )`
+    const archiveCondition = sql.raw(archiveStatusSql("s", archiveStatus))
 
     const EXCLUDE_PURPOSED_STREAMS = `AND ${purposeIsNull("s")}`
 
@@ -812,7 +878,7 @@ export const StreamRepository = {
           sql`${sql.raw(SELECT_WITH_PREVIEW)}
               WHERE s.workspace_id = ${workspaceId}
                 AND s.type = ANY(${types})
-                AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+                AND ${archiveCondition}
                 AND (
                   s.visibility = 'public'
                   OR s.id = ANY(${userMembershipStreamIds})
@@ -829,7 +895,6 @@ export const StreamRepository = {
                     )
                   )
                 )
-                ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
               ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
               ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
         )
@@ -839,7 +904,7 @@ export const StreamRepository = {
       const result = await db.query<StreamWithPreviewRow>(
         sql`${sql.raw(SELECT_WITH_PREVIEW)}
             WHERE s.workspace_id = ${workspaceId}
-              AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+              AND ${archiveCondition}
               AND (
                 s.visibility = 'public'
                 OR s.id = ANY(${userMembershipStreamIds})
@@ -856,7 +921,6 @@ export const StreamRepository = {
                   )
                 )
               )
-              ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
               ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
@@ -868,8 +932,7 @@ export const StreamRepository = {
         sql`${sql.raw(SELECT_WITH_PREVIEW)}
             WHERE s.workspace_id = ${workspaceId}
               AND s.type = ANY(${types})
-              AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
-              ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
+              AND ${archiveCondition}
               ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
@@ -879,8 +942,7 @@ export const StreamRepository = {
     const result = await db.query<StreamWithPreviewRow>(
       sql`${sql.raw(SELECT_WITH_PREVIEW)}
           WHERE s.workspace_id = ${workspaceId}
-            AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
-            ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
+            AND ${archiveCondition}
               ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
           ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
     )
@@ -888,26 +950,28 @@ export const StreamRepository = {
   },
 
   /**
-   * Archived root streams visible to the viewer, as slim `Stream` rows (no
-   * preview/membership/unread joins). `archived_at` is only ever set on root
-   * rows (archiving marks only the root — see `resolveWritableMessageStream`
-   * in the service), so this needs no thread→root resolution; threads are
-   * excluded outright. Visibility mirrors `listWithPreviews`: public streams
-   * plus streams the viewer is a member of, workspace-scoped (INV-8). Feeds
-   * the bootstrap `archivedStreams` index so the client retains knowledge of
-   * archival across reloads (drafts filters, saved/activity name resolution).
+   * Streams archived in their own right (threads included) that the viewer
+   * can read, as slim `Stream` rows. Rows sealed only by an ancestor are not
+   * listed: the client derives their state by walking `parentStreamId` into
+   * this index. Access is the INV-62 rule: the stream or its access root is
+   * public, or the viewer is a member of the access root. Feeds the bootstrap
+   * `archivedStreams` index so archival survives reloads and the client can
+   * name the ancestor that seals a stream.
    */
-  async listArchivedRoots(db: Querier, workspaceId: string, userId: string): Promise<Stream[]> {
+  async listArchivedStreams(db: Querier, workspaceId: string, userId: string): Promise<Stream[]> {
     const result = await db.query<StreamRow>(
       sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)}
           WHERE s.workspace_id = ${workspaceId}
             AND s.archived_at IS NOT NULL
-            AND s.type != ${StreamTypes.THREAD}
             AND (
               s.visibility = 'public'
               OR EXISTS (
+                SELECT 1 FROM streams access_root
+                WHERE access_root.id = s.root_stream_id AND access_root.visibility = 'public'
+              )
+              OR EXISTS (
                 SELECT 1 FROM stream_members m
-                WHERE m.stream_id = s.id AND m.member_id = ${userId}
+                WHERE m.stream_id = COALESCE(s.root_stream_id, s.id) AND m.member_id = ${userId}
               )
             )
             AND ${sql.raw(purposeIsNull("s"))}

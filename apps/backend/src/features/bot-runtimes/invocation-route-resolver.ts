@@ -165,7 +165,8 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
   // runtime the same text a second time as an ordinary turn.
   if (source.metadata[MESSAGE_METADATA_COMMAND_KEY]) return []
   const stream = await StreamRepository.findByIdForWorkspace(db, source.streamId, source.workspaceId)
-  if (!stream || stream.workspaceId !== source.workspaceId || stream.archivedAt) return []
+  if (!stream || stream.workspaceId !== source.workspaceId) return []
+  if (await StreamRepository.isEffectivelyArchived(db, source.workspaceId, stream.id)) return []
   const rootId = stream.rootStreamId ?? stream.id
   const root =
     rootId === stream.id ? stream : await StreamRepository.findByIdForWorkspace(db, rootId, source.workspaceId)
@@ -196,7 +197,7 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
       missingLinkNotice: null,
     })
   }
-  if (!root || root.type !== StreamTypes.SCRATCHPAD || root.archivedAt) return routes
+  if (!root || root.type !== StreamTypes.SCRATCHPAD) return routes
   const runtimeTarget = await resolveLinkedRuntimeRouteTarget(db, {
     workspaceId: source.workspaceId,
     rootStreamId: root.id,

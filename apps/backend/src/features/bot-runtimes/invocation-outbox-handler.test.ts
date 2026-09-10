@@ -76,6 +76,7 @@ const activeBot = {
 
 beforeEach(() => {
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  spyOn(StreamRepository, "filterEffectivelyArchivedIds").mockResolvedValue([])
   spyOn(streamsModule, "projectStreamForBot").mockImplementation((async (
     _db: unknown,
     params: { stream: unknown }
@@ -450,12 +451,16 @@ describe("BotInvocationOutboxHandler stream lifecycle", () => {
       processStreamUnarchived(payload: unknown): Promise<void>
     }
 
-    await privateHandler.processStreamArchived({ workspaceId: "ws_1", streamId: "stream_root" })
+    await privateHandler.processStreamArchived({
+      workspaceId: "ws_1",
+      streamId: "stream_root",
+      threadStreamIds: ["stream_thread", "stream_nested"],
+    })
     await privateHandler.processStreamUnarchived({ workspaceId: "ws_1", streamId: "stream_root" })
 
     expect({ end: end.mock.calls[0]?.[0], restore: restore.mock.calls[0]?.[0] }).toEqual({
-      end: { workspaceId: "ws_1", rootStreamId: "stream_root" },
-      restore: { workspaceId: "ws_1", rootStreamId: "stream_root" },
+      end: { workspaceId: "ws_1", streamIds: ["stream_root", "stream_thread", "stream_nested"] },
+      restore: { workspaceId: "ws_1", streamIds: ["stream_root"] },
     })
   })
 })

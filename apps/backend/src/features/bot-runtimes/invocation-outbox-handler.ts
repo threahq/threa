@@ -87,15 +87,17 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   }
 
   /**
-   * Archiving a scratchpad ends its runtime session links and notifies each
-   * linked runtime so it can shut itself down. The service call is idempotent
-   * (set-based end of still-active links), so a retried batch is a no-op.
+   * Archiving a stream ends the runtime session links attached to it and to
+   * every descendant that inherits the archive (`threadStreamIds`), and
+   * notifies each linked runtime so it can shut itself down. The service call
+   * is idempotent (set-based end of still-active links), so a retried batch
+   * is a no-op.
    */
   private async processStreamArchived(payload: StreamArchivedOutboxPayload): Promise<void> {
     if (!payload?.workspaceId || !payload?.streamId) return
     await this.service.endSessionsForArchivedStream({
       workspaceId: payload.workspaceId,
-      rootStreamId: payload.streamId,
+      streamIds: [payload.streamId, ...(payload.threadStreamIds ?? [])],
     })
   }
 
@@ -109,7 +111,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     if (!payload?.workspaceId || !payload?.streamId) return
     await this.service.restoreSessionsForUnarchivedStream({
       workspaceId: payload.workspaceId,
-      rootStreamId: payload.streamId,
+      streamIds: [payload.streamId, ...(payload.threadStreamIds ?? [])],
     })
   }
 

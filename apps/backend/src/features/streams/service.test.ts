@@ -29,6 +29,18 @@ spyOn(StreamRepository, "findByIdsInWorkspace").mockImplementation(async (client
   const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
   return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
 })
+spyOn(StreamRepository, "listAncestorChainIds").mockImplementation(async (client, _workspaceId, ids) => {
+  const chain = new Set<string>()
+  const pending = [...ids]
+  for (let id = pending.shift(); id; id = pending.shift()) {
+    if (chain.has(id)) continue
+    chain.add(id)
+    const stream = await mockFindById(client, id)
+    if (stream?.parentStreamId) pending.push(stream.parentStreamId)
+    if (stream?.rootStreamId) pending.push(stream.rootStreamId)
+  }
+  return [...chain].sort()
+})
 const mockFindByIdsForUpdateBlocking = spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockImplementation(
   async (client, _workspaceId, ids) => {
     const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
@@ -331,6 +343,7 @@ describe("StreamService.resolveWritableMessageStream", () => {
   })
 
   test("should throw 403 when stream is archived", async () => {
+    spyOn(StreamRepository, "findNearestArchivedAncestor").mockResolvedValue(null)
     spyOn(service, "getStreamById").mockResolvedValue({
       id: "stream_1",
       workspaceId: "ws_1",
@@ -355,6 +368,7 @@ describe("StreamService.resolveWritableMessageStream", () => {
   })
 
   test("should throw 403 when member cannot write to stream", async () => {
+    spyOn(StreamRepository, "findNearestArchivedAncestor").mockResolvedValue(null)
     spyOn(service, "getStreamById").mockResolvedValue({
       id: "stream_1",
       workspaceId: "ws_1",
@@ -378,25 +392,29 @@ describe("StreamService.resolveWritableMessageStream", () => {
     expect((error as HttpError).details).toEqual({ reason: "not_a_member" })
   })
 
-  test("should throw 403 when a thread's root stream is archived", async () => {
-    const getStreamByIdSpy = spyOn(service, "getStreamById")
-    // First call resolves the target thread (active itself); second call
-    // resolves its root, which is archived — the thread inherits the seal.
-    getStreamByIdSpy
-      .mockResolvedValueOnce({
+  test("should throw 403 when a thread sits under an archived ancestor", async () => {
+    const rows: Record<string, unknown> = {
+      stream_thread: {
         id: "stream_thread",
         workspaceId: "ws_1",
         type: "thread",
+        parentStreamId: "stream_parent",
         rootStreamId: "stream_root",
         archivedAt: null,
-      } as never)
-      .mockResolvedValueOnce({
+      },
+      stream_root: {
         id: "stream_root",
         workspaceId: "ws_1",
         type: "scratchpad",
         visibility: "private",
-        archivedAt: new Date(),
-      } as never)
+        archivedAt: null,
+      },
+    }
+    spyOn(service, "getStreamById").mockImplementation((async (id: string) => rows[id] ?? null) as never)
+    const sealedBy = spyOn(StreamRepository, "findNearestArchivedAncestor").mockResolvedValue({
+      streamId: "stream_parent",
+      archivedAt: new Date(),
+    })
     const isMemberSpy = spyOn(service, "isMember").mockResolvedValue(true)
 
     const error = await service
@@ -412,6 +430,7 @@ describe("StreamService.resolveWritableMessageStream", () => {
     expect((error as HttpError).code).toBe("STREAM_READ_ONLY")
     expect((error as HttpError).details).toEqual({ reason: "archived" })
     expect(isMemberSpy).toHaveBeenCalledWith("stream_root", "usr_1")
+    expect(sealedBy).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_thread")
   })
 })
 
@@ -2445,20 +2464,17 @@ describe("StreamService.addBotToStream", () => {
   })
 
   test("redirects a thread grant to its root channel", async () => {
-    mockFindById
-      .mockResolvedValueOnce({
+    const rows: Record<string, unknown> = {
+      stream_thread: {
         id: "stream_thread",
         workspaceId: "ws_1",
         type: "thread",
+        parentStreamId: "stream_root",
         rootStreamId: "stream_root",
-      } as never)
-      .mockResolvedValueOnce({
-        id: "stream_thread",
-        workspaceId: "ws_1",
-        type: "thread",
-        rootStreamId: "stream_root",
-      } as never)
-      .mockResolvedValueOnce({ id: "stream_root", workspaceId: "ws_1", type: "channel" } as never)
+      },
+      stream_root: { id: "stream_root", workspaceId: "ws_1", type: "channel" },
+    }
+    mockFindById.mockImplementation((async (_client: unknown, id: string) => rows[id] ?? null) as never)
 
     await service.addBotToStream("stream_thread", "bot_1", "ws_1", "usr_1")
 

@@ -385,7 +385,7 @@ describe("endRuntimeSession", () => {
     expect(unknown).toBeNull()
   })
 
-  test("an ended link is not revived by reactivateArchivedByRootStream", async () => {
+  test("an ended link is not revived by reactivateArchivedByStreams", async () => {
     const { stream: thread } = await attachThread("archive-check-instance", "archive-check-session")
     await service().endRuntimeSession({
       workspaceId: workspace,
@@ -394,9 +394,9 @@ describe("endRuntimeSession", () => {
       runtimeSessionId: "archive-check-session",
     })
 
-    await BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream(pool, {
+    await BotRuntimeSessionLinkRepository.reactivateArchivedByStreams(pool, {
       workspaceId: workspace,
-      rootStreamId: root,
+      streamIds: [root, thread.id],
     })
 
     const revived = await BotRuntimeSessionLinkRepository.findActiveByStream(pool, {

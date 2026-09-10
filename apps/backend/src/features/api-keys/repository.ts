@@ -1,5 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
+import { effectivelyArchivedSql } from "../../lib/sql-filters"
 
 export const BotChannelAccessRepository = {
   async filterGrantedStreamIds(
@@ -25,7 +26,7 @@ export const BotChannelAccessRepository = {
       JOIN streams s ON s.id = a.stream_id
       WHERE a.workspace_id = ${workspaceId}
         AND a.bot_id = ${botId}
-        AND s.archived_at IS NULL
+        AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
     `)
     return result.rows.map((r) => r.stream_id)
   },
@@ -149,7 +150,7 @@ export const BotChannelAccessRepository = {
       JOIN streams s ON s.id = a.stream_id
       WHERE a.workspace_id = ${workspaceId}
         AND a.bot_id = ${botId}
-        AND s.archived_at IS NULL
+        AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
       ORDER BY a.granted_at DESC
     `)
     return result.rows.map((r) => ({ streamId: r.stream_id, grantedBy: r.granted_by, grantedAt: r.granted_at }))

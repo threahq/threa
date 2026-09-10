@@ -9,7 +9,7 @@ import { AgentSessionRepository } from "../agents"
 // Following INV-48 the statics are stubbed via `spyOn` against the namespace
 // import; the injected services are minimal benign stubs. The point of this
 // test is the new `archivedStreams` field: the handler must call
-// `streamService.listArchivedRoots` and surface the result in `data`.
+// `streamService.listArchivedStreams` and surface the result in `data`.
 
 function makeStreamService(archivedStreams: unknown[]) {
   return {
@@ -26,7 +26,7 @@ function makeStreamService(archivedStreams: unknown[]) {
     getUnreadCounts: async () => new Map(),
     getReadOverlayForMember: async () => new Map(),
     getSequencesByEventIds: async () => new Map(),
-    listArchivedRoots: async () => archivedStreams,
+    listArchivedStreams: async () => archivedStreams,
   }
 }
 

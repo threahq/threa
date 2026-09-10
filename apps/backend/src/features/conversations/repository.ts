@@ -1,4 +1,5 @@
 import { sql, composeSql, type Querier } from "../../db"
+import { effectivelyArchivedSql } from "../../lib/sql-filters"
 import { streamAccessPredicateSql } from "../streams"
 import {
   ActivityTypes,
@@ -175,10 +176,9 @@ function boardArchivedExcludeSql(showArchived: boolean) {
   if (showArchived) return sql``
   return composeSql`AND NOT EXISTS (
     SELECT 1 FROM streams arch_s
-    JOIN streams arch_root ON arch_root.id = COALESCE(arch_s.root_stream_id, arch_s.id)
     WHERE arch_s.id = conversations.stream_id
       AND arch_s.workspace_id = conversations.workspace_id
-      AND arch_root.archived_at IS NOT NULL
+      AND ${sql`${sql.raw(effectivelyArchivedSql("arch_s"))}`}
   )`
 }
 
@@ -682,7 +682,7 @@ export const ConversationRepository = {
           WHERE eff_s.id = conversations.stream_id
             AND eff_s.workspace_id = ${workspaceId}
             AND eff_root.id = ANY(${rootStreamIds}::text[])
-            AND eff_root.archived_at IS NULL
+            AND NOT ${sql`${sql.raw(effectivelyArchivedSql("eff_s"))}`}
         )
       ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC
       LIMIT ${limit}

@@ -326,6 +326,9 @@ export class ConversationService {
     for (const root of missingRootIds.length > 0 ? await StreamRepository.findByIds(this.pool, missingRootIds) : []) {
       streamById.set(root.id, root)
     }
+    const sealedAnchorIds = new Set(
+      await StreamRepository.filterEffectivelyArchivedIds(this.pool, workspaceId, streamIds)
+    )
 
     // Fetch every member message row (opening + all replies) in one batch
     // (INV-56) so the recent window is chosen by `createdAt`, not by `message_ids`
@@ -441,11 +444,11 @@ export class ConversationService {
         // The root row's type is one of the scope grains by construction (a root
         // is never a thread); the cast narrows the broader StreamType.
         rootStreamType: streamById.get(rootStreamId)?.type as BoardScopeStreamType | undefined,
-        // Archived state of the effective root — matches `boardArchivedExcludeSql`
-        // (archiving marks only the root row, INV-62). Only ever true for a card
-        // seeded under `?archived=true`; the client uses it to re-hide the card
-        // when archived is toggled back off. Missing root row (deleted) → false.
-        rootArchived: streamById.get(rootStreamId)?.archivedAt != null,
+        // Archived anywhere up the anchor's parent chain — matches
+        // `boardArchivedExcludeSql`. Only ever true for a card seeded under
+        // `?archived=true`; the client uses it to re-hide the card when
+        // archived is toggled back off.
+        rootArchived: sealedAnchorIds.has(conversation.streamId),
       }
     })
 

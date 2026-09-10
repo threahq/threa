@@ -617,28 +617,29 @@ export class BotRuntimeService {
   }
 
   /**
-   * A scratchpad was archived: end every active runtime link rooted at it and
+   * A stream was archived: end every active runtime link attached to it or to
+   * a descendant that inherits the archive (the payload's cascade ids), and
    * tell each linked runtime over the /bot socket so it can wind itself down
    * (the Claude channel pushes its branch and kills its own tmux window). Link
    * ending and the notify events commit together (INV-4/INV-7); the set-based
    * UPDATE makes consumer retries idempotent — already-ended links return no
    * rows, so nothing re-notifies.
    */
-  async endSessionsForArchivedStream(params: { workspaceId: string; rootStreamId: string }): Promise<number> {
+  async endSessionsForArchivedStream(params: { workspaceId: string; streamIds: readonly string[] }): Promise<number> {
     return withTransaction(this.pool, async (db) => {
-      const ended = await BotRuntimeSessionLinkRepository.archiveActiveByRootStream(db, params)
+      const ended = await BotRuntimeSessionLinkRepository.archiveActiveByStreams(db, params)
       for (const link of ended) {
         await OutboxRepository.insert(db, "bot:session_archived", {
           workspaceId: params.workspaceId,
           botId: link.botId,
           instanceId: link.instanceId,
           runtimeSessionId: link.runtimeSessionId,
-          rootStreamId: params.rootStreamId,
+          rootStreamId: link.rootStreamId,
         })
       }
       if (ended.length > 0) {
         logger.info(
-          { workspaceId: params.workspaceId, rootStreamId: params.rootStreamId, endedLinks: ended.length },
+          { workspaceId: params.workspaceId, streamIds: params.streamIds, endedLinks: ended.length },
           "Ended runtime session links for archived stream"
         )
       }
@@ -654,21 +655,24 @@ export class BotRuntimeService {
    * the notify events commit together, and the set-based UPDATE makes consumer
    * retries idempotent.
    */
-  async restoreSessionsForUnarchivedStream(params: { workspaceId: string; rootStreamId: string }): Promise<number> {
+  async restoreSessionsForUnarchivedStream(params: {
+    workspaceId: string
+    streamIds: readonly string[]
+  }): Promise<number> {
     return withTransaction(this.pool, async (db) => {
-      const restored = await BotRuntimeSessionLinkRepository.reactivateArchivedByRootStream(db, params)
+      const restored = await BotRuntimeSessionLinkRepository.reactivateArchivedByStreams(db, params)
       for (const link of restored) {
         await OutboxRepository.insert(db, "bot:session_restored", {
           workspaceId: params.workspaceId,
           botId: link.botId,
           instanceId: link.instanceId,
           runtimeSessionId: link.runtimeSessionId,
-          rootStreamId: params.rootStreamId,
+          rootStreamId: link.rootStreamId,
         })
       }
       if (restored.length > 0) {
         logger.info(
-          { workspaceId: params.workspaceId, rootStreamId: params.rootStreamId, restoredLinks: restored.length },
+          { workspaceId: params.workspaceId, streamIds: params.streamIds, restoredLinks: restored.length },
           "Restored runtime session links for unarchived stream"
         )
       }

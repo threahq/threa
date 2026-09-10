@@ -572,7 +572,7 @@ export const sqlTextAssertionAllowlist = {
   "apps/backend/src/features/streams/effective-read-state.test.ts": 1,
   "apps/backend/src/features/streams/policy-repository.test.ts": 10,
   "apps/backend/src/features/streams/read-state-repository.test.ts": 27,
-  "apps/backend/src/features/streams/repository.test.ts": 2,
+  "apps/backend/src/features/streams/repository.test.ts": 1,
   "apps/backend/src/features/user-e2e-keys/repository.test.ts": 10,
   "apps/backend/src/features/workspace-integrations/installation-routes.test.ts": 3,
   "apps/backend/src/features/workspace-integrations/linear-write-guards.test.ts": 2,
