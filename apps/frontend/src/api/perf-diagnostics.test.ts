@@ -17,6 +17,7 @@ function mockResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: new Headers(),
     json: async () => body,
   } as Response
 }
