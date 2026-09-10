@@ -2,7 +2,13 @@ import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import type { CommandArgumentInfo, CommandArgumentSuggestion } from "@threahq/types"
 import { createEditorExtensions } from "../editor-extensions"
-import { pickableArgs, resolveActiveArg, resolveArgSession, filterArgSuggestions } from "./use-command-arg-picker"
+import {
+  defersSelection,
+  pickableArgs,
+  resolveActiveArg,
+  resolveArgSession,
+  filterArgSuggestions,
+} from "./use-command-arg-picker"
 import type { CommandItem } from "./types"
 
 const MODEL_SUGGESTIONS: CommandArgumentSuggestion[] = [
@@ -91,6 +97,29 @@ describe("resolveActiveArg", () => {
   it("opens on the positional argument before anything is typed", () => {
     const active = resolveActiveArg(SPAWN_ARGS, "")
     expect(active).toEqual({ arg: SPAWN_ARGS[0], query: "" })
+  })
+
+  it("arms a row as soon as the argument is filtered, and none before", () => {
+    // None of `/spawn`'s option-bearing arguments is required, so without the
+    // query half of the rule the whole command typed unarmed: Enter sent the
+    // half-written line and Tab reached the editor's indent keymap.
+    const armed = ["", "p", "pi ", "pi /mod", "pi /model ", "pi /model gpt"].map((text) => {
+      const active = resolveActiveArg(SPAWN_ARGS, text)
+      return [text, active ? !defersSelection(active) : null]
+    })
+    expect(armed).toEqual([
+      ["", false],
+      ["p", true],
+      ["pi ", false],
+      ["pi /mod", true],
+      ["pi /model ", false],
+      ["pi /model gpt", true],
+    ])
+  })
+
+  it("arms a required argument even before anything is typed for it", () => {
+    const active = resolveActiveArg(MODEL_COMMAND.args!, "")
+    expect(active && defersSelection(active)).toBe(false)
   })
 
   it("filters the positional argument by the first word", () => {

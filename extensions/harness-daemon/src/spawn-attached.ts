@@ -28,12 +28,17 @@ const reason = (error: unknown) => (error instanceof Error ? error.message : Str
  * The brief that stands in for a missing `/spawn` prompt. Its reply is the
  * thread's first message, so the card opens on the agent introducing itself
  * rather than on a notice written about it.
+ *
+ * It says where the greeting goes because "say hello" alone reads as an
+ * instruction to the terminal: a session briefed with the earlier wording
+ * answered in its own pane and left the spawn request open until it timed out.
  */
 function greetingBrief(options: SpawnOptions, result: SpawnResult): string {
   return [
     `You were just started as \`${options.name}\` and nobody has asked you for anything yet.`,
     `You are working in \`${result.worktree}\` on branch \`${result.branch}\` (tmux window \`${result.tmuxWindow}\`).`,
     "Say hello in a sentence or two, name where you are, and ask what they want done. Do not start any work yet.",
+    "Send it with the channel `reply` tool, passing this event's `invocation_id`. Text you write in the terminal never reaches the person who spawned you, and this request stays open until you reply.",
   ].join("\n\n")
 }
 

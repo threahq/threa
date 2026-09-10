@@ -26,7 +26,7 @@ function isFlagArg(arg: CommandArgumentInfo): boolean {
   return arg.name.startsWith("/") || arg.name.startsWith("-")
 }
 
-interface ActiveArg {
+export interface ActiveArg {
   arg: CommandArgumentInfo
   /** The word being typed for it, which filters the options. */
   query: string
@@ -116,6 +116,18 @@ export function resolveActiveArg(args: readonly CommandArgumentInfo[], text: str
   if (awaitingValue) return { arg: awaitingValue, query }
   const offersFlags = query.startsWith("/") || (!freeText && query === "")
   return offersFlags ? flagChoice(flags, used, query) : null
+}
+
+/**
+ * Whether the list opens with no row armed, leaving Enter to the editor.
+ *
+ * A typed filter arms its best match, so Enter picks what the list is showing;
+ * an untouched menu arms nothing, so Enter still sends what is written. Only an
+ * optional argument gets that second half — a required one has nothing sensible
+ * to send yet.
+ */
+export function defersSelection(active: ActiveArg): boolean {
+  return !active.arg.required && active.query.trim() === ""
 }
 
 /** Rank the option list by the text typed after the command, label first. */
@@ -293,7 +305,7 @@ export function useCommandArgPicker(
         items={items}
         clientRect={() => posClientRect(editorRef.current, session.anchorPos)}
         command={(suggestion) => select(suggestion.value, active.query, session.anchorPos)}
-        deferSelection={!active.arg.required}
+        deferSelection={defersSelection(active)}
       />,
       document.body
     )
