@@ -385,8 +385,6 @@ export async function runClaudeCommand(
       // The thread hangs off the `/spawn` the user typed, so the agent's first
       // message is a reply to it rather than to a separate "Starting…" post.
       const anchorId = invocationContext.sourceMessageId
-      // harnessd dies on a blank brief, so an empty prompt gets no file at all.
-      const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
       // harnessd drives the command from here: provisioning, briefing and a
       // failed launch land on the user's own `/spawn` entry. Nothing is posted
       // in the scratchpad — the thread appearing under it is the reply. This
@@ -395,6 +393,10 @@ export async function runClaudeCommand(
         ok: true,
         handoffKeepsSessionRunning: true,
         handoff: async (claim) => {
+          // Written on the handoff, not while the outcome is built: a handoff
+          // the session abandons must leave nothing behind. harnessd dies on a
+          // blank brief, so an empty prompt gets no file at all.
+          const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
           const claimFile = writeCommandClaim({ runtime: "claude", ...claim })
           try {
             spawnLauncher({
