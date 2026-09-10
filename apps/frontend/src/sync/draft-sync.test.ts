@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
+import Dexie from "dexie"
 import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threahq/types"
 import { db, type CachedDraft } from "@/db"
 import { bumpAccountGeneration } from "@/db/event-writes"
+import { setAssertedAccount } from "@/api/account-assertion"
 import * as draftStore from "@/stores/draft-store"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { markDraftResolved, resetDraftResolutionGuard } from "./draft-resolution-guard"
@@ -517,6 +519,27 @@ describe("executeDraftUpsert", () => {
 
     expect(calls[0]).toMatchObject({ writeId: "write_b", priorWriteIds: ["write_a"] })
   })
+
+  it.each(["database", "identity"])(
+    "should not upload an old draft when %s changes during its initial read",
+    async (change) => {
+      const row = localDraft({ id: "draft_x", contentJson: makeDoc("private A") })
+      setAssertedAccount("workos_a")
+      const read = vi.spyOn(db.drafts, "get").mockImplementationOnce(() => {
+        if (change === "database") bumpAccountGeneration()
+        else setAssertedAccount("workos_b")
+        return Dexie.Promise.resolve(row)
+      })
+      const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => ({ draft: wireDraft(), split: false }))
+      try {
+        await executeDraftUpsert(workspaceId, row.id, "write_a", service(upsert))
+        expect(upsert).not.toHaveBeenCalled()
+      } finally {
+        read.mockRestore()
+        setAssertedAccount(null)
+      }
+    }
+  )
 
   it("writes nothing back when the account switched away while the push was on the wire", async () => {
     // Past the switch's retire budget the shared `db` proxy already points at

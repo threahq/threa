@@ -30,6 +30,7 @@ import {
 } from "@threahq/types"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { clearStagedDraft, listStagedDrafts, type StagedDraft } from "@/lib/drafts/draft-staging"
+import { getAccountAssertionGeneration } from "@/api/account-assertion"
 import { isResolvedDraftEcho, markDraftMigrated } from "./draft-resolution-guard"
 
 /**
@@ -889,8 +890,11 @@ export async function executeDraftUpsert(
   priorWriteIds: string[] = [],
   database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
+  const account = getAccountGeneration()
+  const assertion = getAccountAssertionGeneration()
+  const retired = () => getAccountGeneration() !== account || getAccountAssertionGeneration() !== assertion
   const row = await database.drafts.get(draftId)
-  if (!row) return // discarded locally after the op was enqueued — nothing to push
+  if (!row || retired()) return
 
   const isE2e = row.ciphertext != null
   // A sealed row never ships attachment linkage: v1 is body-only, and an E2E row
@@ -931,9 +935,8 @@ export async function executeDraftUpsert(
   // stays queued for its own account, and a replay that splits server-side is
   // this module's documented, recoverable outcome — rows in the wrong account
   // are not.
-  const account = getAccountGeneration()
   const res = await service.upsert(workspaceId, draftId, input)
-  if (getAccountGeneration() !== account) return
+  if (retired()) return
 
   if (res.split) {
     // The server kept the existing row (the other device's content) under

@@ -209,6 +209,29 @@ describe("AccountScope", () => {
     )
   })
 
+  it("should replace a stale landing when authoritative revalidation changes the account", async () => {
+    setLastWorkspaceId("workos_A", "ws_a")
+    setLastWorkspaceId("workos_B", "ws_b")
+    const landAt = vi.fn((path: string) => (path === "/w/ws_b" ? new Promise<void>(() => {}) : undefined))
+    const { handle, utils } = mountScopeTree({ landAt, children: <span data-testid="active-subtree">Ready</span> })
+    await waitForActive(handle, "workos_A")
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B")
+    })
+    await waitFor(() => expect(landAt).toHaveBeenCalledWith("/w/ws_b"))
+    expect(utils.queryByTestId("active-subtree")).toBeNull()
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => meResponse("workos_A"))
+    )
+    await act(async () => {
+      reportAccountMismatch()
+    })
+    await waitFor(() => expect(utils.getByTestId("active-subtree")).toBeVisible())
+    expect(landAt.mock.calls).toEqual([["/w/ws_b"], ["/w/ws_a"]])
+  })
+
   it("isolates db, query cache, and stores across an in-place switch (no reload)", async () => {
     const { handle } = mountScopeTree()
     await waitForActive(handle, "workos_A")

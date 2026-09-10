@@ -181,7 +181,8 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   // account render under the previous account's display identity.
   const { activeWorkosUserId: effectiveId, activateAccount } = useAuth()
 
-  const [pendingLanding, setPendingLanding] = useState<string | null>(null)
+  const [pendingLanding, setPendingLanding] = useState<{ owner: string; path: string } | null>(null)
+  const landingOwner = useRef<string | null>(null)
   const [landingFailed, setLandingFailed] = useState(false)
   const [landingAttempt, setLandingAttempt] = useState(0)
   // The account whose subtree is currently mounted, and a nonce that lets the
@@ -237,6 +238,11 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
       // this is purely to stop wasted work.
       qcRegistry.current.get(outgoing)?.cancelQueries()
       flushModuleStoreCaches()
+      if (landingOwner.current !== effectiveId) {
+        landingOwner.current = effectiveId
+        setPendingLanding(effectiveId ? { owner: effectiveId, path: accountHomePath(effectiveId) } : null)
+        setLandingFailed(false)
+      }
     }
     // Redirect the shared `db` proxy at the active account before the keyed
     // subtree (and its useLiveQuery / SyncEngine) mounts. Pre-auth keeps the
@@ -257,9 +263,12 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
    */
   const adoptAccount = useCallback(
     (targetUserId: string, identity: User | null, landing: "account-home" | "keep-location") => {
+      landingOwner.current = targetUserId
       activateAccount(targetUserId, identity)
       setLandingFailed(false)
-      if (landing === "account-home") setPendingLanding(accountHomePath(targetUserId))
+      setPendingLanding(
+        landing === "account-home" ? { owner: targetUserId, path: accountHomePath(targetUserId) } : null
+      )
     },
     [activateAccount]
   )
@@ -283,7 +292,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   }, [adoptAccount])
 
   useEffect(() => {
-    if (!pendingLanding) return
+    if (!pendingLanding || pendingLanding.owner !== effectiveId) return
     let settled = false
     const finish = (landed: boolean) => {
       if (settled) return
@@ -292,7 +301,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
       else setLandingFailed(true)
     }
     const timer = setTimeout(() => finish(false), LANDING_TIMEOUT_MS)
-    void Promise.resolve(landAt(pendingLanding)).then(
+    void Promise.resolve(landAt(pendingLanding.path)).then(
       () => finish(true),
       () => finish(false)
     )
@@ -300,7 +309,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
       settled = true
       clearTimeout(timer)
     }
-  }, [pendingLanding, landAt, landingAttempt])
+  }, [pendingLanding, landAt, landingAttempt, effectiveId])
 
   const retryLanding = useCallback(() => {
     setLandingFailed(false)
