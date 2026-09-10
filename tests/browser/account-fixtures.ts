@@ -172,7 +172,8 @@ export async function openAccountPicker(page: Page, currentProfileName: string):
     await switchEntry.click()
     await expect(dialog).toBeVisible({ timeout: 15_000 })
 
-    if (!(await loadFailed.isVisible().catch(() => false))) return
+    await expect(dialog.getByLabel("Current account").or(loadFailed)).toBeVisible({ timeout: 15_000 })
+    if (!(await loadFailed.isVisible())) return
     await page.keyboard.press("Escape")
     await expect(dialog).toHaveCount(0, { timeout: 10_000 })
   }
