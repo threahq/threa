@@ -17,6 +17,7 @@ import { SocketEventGate } from "./socket-event-gate"
 import { resetRowConfirmations, rowConfirmedAt } from "./bootstrap-diff"
 import { PerfCapture, armPerfCapture, NO_CAPTURE } from "@/lib/perf/capture"
 import { savedKeys } from "@/hooks/use-saved"
+import { activityKeys } from "@/hooks/use-activity"
 import { scheduledKeys } from "@/hooks/use-scheduled"
 import { memoKeys } from "@/hooks/use-memos"
 import { conversationKeys } from "@/hooks/use-conversations"
@@ -3603,12 +3604,28 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
-  it("cascades stream:archived over threadStreamIds: board rows, sidebar cache, and descendant bootstraps", async () => {
+  it("cascades stream:archived over threadStreamIds: board rows, sidebar cache, held activity, and descendant bootstraps", async () => {
     await db.conversations.clear()
     await seedBoardRow("conv_in_thread", "ws_1", "thread_deep", "chan_root")
     await seedBoardRow("conv_elsewhere", "ws_1", "chan_other", "chan_other")
 
+    const heldActivity = (id: string, streamId: string): Activity => ({
+      id,
+      workspaceId: "ws_1",
+      userId: "member_1",
+      activityType: "mention",
+      streamId,
+      messageId: `msg_${id}`,
+      actorId: "member_2",
+      actorType: "user",
+      context: {},
+      readAt: null,
+      createdAt: new Date().toISOString(),
+      isSelf: false,
+      emoji: null,
+    })
     const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     queryClient.setQueryData(
       workspaceKeys.bootstrap("ws_1"),
       makeBootstrap({
@@ -3617,6 +3634,10 @@ describe("registerWorkspaceSocketHandlers", () => {
           { ...makeStream("thread_deep"), lastMessagePreview: null },
           { ...makeStream("chan_other"), lastMessagePreview: null },
         ],
+        unreadActivities: [heldActivity("act_deep", "thread_deep"), heldActivity("act_other", "chan_other")],
+        activityCounts: { thread_deep: 1, chan_other: 1 },
+        mentionCounts: { thread_deep: 1, chan_other: 1 },
+        unreadActivityCount: 2,
       })
     )
     queryClient.setQueryData(
@@ -3644,6 +3665,13 @@ describe("registerWorkspaceSocketHandlers", () => {
     expect((await db.conversations.get("conv_elsewhere"))?.rootArchived).toBeUndefined()
     const sidebar = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(sidebar?.streams.map((s) => s.id)).toEqual(["chan_other"])
+    expect({
+      held: sidebar?.unreadActivities?.map((a) => a.id),
+      mentionCounts: sidebar?.mentionCounts,
+      unreadActivityCount: sidebar?.unreadActivityCount,
+    }).toEqual({ held: ["act_other"], mentionCounts: { chan_other: 1 }, unreadActivityCount: 1 })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: activityKeys.list("ws_1") })
+    invalidate.mockClear()
     expect(
       queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_deep"))?.archivedAncestor
     ).toEqual({ streamId: "thread_top", archivedAt: "2026-01-01T00:00:00Z" })
@@ -3666,6 +3694,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     expect(
       queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_nearer"))?.archivedAncestor
     ).toEqual(nearer)
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: activityKeys.list("ws_1") })
 
     cleanup()
   })
@@ -3681,6 +3710,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     await db.conversations.update("conv_inert", { rootArchived: true })
 
     const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     queryClient.setQueryData(
       streamKeys.bootstrap("ws_1", "thread_inert_child"),
       makeStreamBootstrap("thread_inert_child", {
@@ -3709,6 +3739,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     expect(
       queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_inert_child"))?.archivedAncestor
     ).toEqual({ streamId: "thread_inert", archivedAt: "2026-02-01T00:00:00Z" })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: activityKeys.list("ws_1") })
 
     cleanup()
   })

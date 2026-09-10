@@ -1,6 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { activityId } from "../../lib/id"
+import { effectivelyArchivedSql } from "../../lib/sql-filters"
 import { ActivityTypes } from "@threahq/types"
 
 interface ActivityRow {
@@ -109,6 +110,16 @@ function mapRowToActivity(row: ActivityRow): Activity {
     emoji: row.emoji,
   }
 }
+
+/**
+ * Rows whose stream is sealed (archived itself or under an archived ancestor)
+ * leave the feed and the badge counts while the seal holds, and come back
+ * when it lifts: archival writes nothing to `user_activity`. Rows with no
+ * stream (standalone saved reminders) always pass.
+ */
+const STREAM_NOT_SEALED = sql.raw(`(user_activity.stream_id IS NULL OR NOT EXISTS (
+  SELECT 1 FROM streams s WHERE s.id = user_activity.stream_id AND ${effectivelyArchivedSql("s")}
+))`)
 
 /**
  * Pick the ON CONFLICT target for the given activity type. Reactions dedup by
@@ -237,6 +248,7 @@ export const ActivityRepository = {
         AND (${!unreadOnly} OR read_at IS NULL)
         AND (${!mineOnly} OR is_self = TRUE)
         AND (${!othersOnly} OR is_self = FALSE)
+        AND ${STREAM_NOT_SEALED}
         AND (${!hasCursor} OR created_at < (
           SELECT created_at FROM user_activity
           WHERE id = ${cursor} AND user_id = ${userId} AND workspace_id = ${workspaceId}
@@ -269,6 +281,7 @@ export const ActivityRepository = {
         AND workspace_id = ${workspaceId}
         AND read_at IS NULL
         AND is_self = FALSE
+        AND ${STREAM_NOT_SEALED}
       GROUP BY stream_id
     `)
     const mentionsByStream = new Map<string, number>()

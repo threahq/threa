@@ -11,8 +11,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { HttpError } from "@threahq/backend-common"
-import { StreamTypes, Visibilities } from "@threahq/types"
+import { ActivityTypes, StreamTypes, Visibilities } from "@threahq/types"
 import { addTestMember, setupTestDatabase, withTransaction } from "./setup"
+import { ActivityRepository } from "../../src/features/activity"
 import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import {
   assertStreamWritable,
@@ -100,6 +101,7 @@ describe("thread archival chain", () => {
   }, 30_000)
 
   beforeEach(async () => {
+    await pool.query("DELETE FROM user_activity WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM bot_runtime_session_links WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM outbox WHERE payload->>'workspaceId' = $1", [workspace])
     await pool.query("DELETE FROM stream_events WHERE stream_id IN (SELECT id FROM streams WHERE workspace_id = $1)", [
@@ -116,6 +118,7 @@ describe("thread archival chain", () => {
   })
 
   afterAll(async () => {
+    await pool.query("DELETE FROM user_activity WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM bot_runtime_session_links WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM outbox WHERE payload->>'workspaceId' = $1", [workspace])
     await pool.query("DELETE FROM stream_members WHERE stream_id = $1", [ids.A])
@@ -242,6 +245,45 @@ describe("thread archival chain", () => {
       previews: [ids.A, ids.E].sort(),
       archivedForMember: [ids.B, ids.F].sort(),
     })
+  })
+
+  test("the activity feed and unread counts skip rows in sealed streams and readmit them on unarchive", async () => {
+    const insertActivity = (streamId: string, activityType: string) =>
+      ActivityRepository.insert(pool, {
+        workspaceId: workspace,
+        userId: owner,
+        activityType,
+        streamId,
+        messageId: `msg_${streamId.slice(-10)}`,
+        actorId: author,
+        actorType: "user",
+      })
+    const inD = await insertActivity(ids.D, ActivityTypes.MENTION)
+    const inE = await insertActivity(ids.E, ActivityTypes.MESSAGE)
+    const inG = await insertActivity(ids.G, ActivityTypes.MENTION)
+    const feedIds = () =>
+      ActivityRepository.listByUser(pool, owner, workspace).then((rows) => rows.map(({ id }) => id).sort())
+    const countedStreams = () =>
+      ActivityRepository.countUnreadGrouped(pool, owner, workspace).then((counts) => ({
+        streams: [...counts.totalByStream.keys()].sort(),
+        mentions: [...counts.mentionsByStream.keys()].sort(),
+        total: counts.total,
+      }))
+
+    expect({ feed: await feedIds(), counts: await countedStreams() }).toEqual({
+      feed: [inD!.id, inE!.id].sort(),
+      counts: { streams: [ids.D, ids.E].sort(), mentions: [ids.D], total: 2 },
+    })
+
+    await service.archiveStream(ids.B, workspace, author)
+    expect({ feed: await feedIds(), counts: await countedStreams() }).toEqual({
+      feed: [inE!.id],
+      counts: { streams: [ids.E], mentions: [], total: 1 },
+    })
+
+    await service.unarchiveStream(ids.B, workspace, author)
+    expect(await feedIds()).toEqual([inD!.id, inE!.id].sort())
+    expect(inG).not.toBeNull()
   })
 
   test("archive and unarchive are open to the thread creator and the root creator, nobody else", async () => {
