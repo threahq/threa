@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import type { Pool } from "pg"
 import type { StreamType } from "@threahq/types"
 import { AuthorTypes, StreamTypes } from "@threahq/types"
@@ -7,6 +6,7 @@ import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository } from "../streams"
 import { logger } from "../../lib/logger"
 import type { EmbeddingServiceLike } from "./embedding-service"
+import { writeEmbeddingWithSourceHashGuard } from "./embedding-write-guard"
 
 export const ANCHOR_MAX_CHARS = 300
 export const PRECEDING_MAX_CHARS = 200
@@ -14,7 +14,6 @@ const PRECEDING_MAX_COUNT = 3
 export const CONTENT_MAX_CHARS = 8000
 export const TOPIC_MAX_CHARS = 200
 export const SUMMARY_MAX_CHARS = 400
-const EMBED_WRITE_ATTEMPTS = 3
 
 interface MessageEmbeddingTextInput {
   streamType: StreamType
@@ -53,10 +52,6 @@ export function buildMessageEmbeddingText(input: MessageEmbeddingTextInput): str
   lines.push(input.content.slice(0, CONTENT_MAX_CHARS))
 
   return lines.join("\n")
-}
-
-export function hashEmbeddingText(text: string): string {
-  return createHash("sha256").update(text).digest("hex")
 }
 
 interface EmbedMessageWithContextDeps {
@@ -125,39 +120,16 @@ export async function embedMessageWithContext(
 ): Promise<void> {
   const { pool, embeddingService } = deps
 
-  // A message is embedded twice in quick succession (once on creation, again
-  // with conversation context once assigned), so losing the hash guard to the
-  // other job is the common case, not an anomaly. The loser re-reads the text
-  // and hash and reuses its embedding when the text has not moved; only a
-  // guard that keeps losing is handed back to the queue.
-  let embedded = null as { sourceHash: string; embedding: number[] } | null
-  for (let attempt = 1; attempt <= EMBED_WRITE_ATTEMPTS; attempt++) {
-    const text = await loadMessageEmbeddingText(pool, workspaceId, message)
-    if (text === null) {
-      logger.warn({ messageId: message.id, streamId: message.streamId }, "Skipping embedding: stream not found")
-      return
-    }
+  const outcome = await writeEmbeddingWithSourceHashGuard({
+    subject: message.id,
+    loadText: () => loadMessageEmbeddingText(pool, workspaceId, message),
+    readExpectedHash: async () =>
+      (await MessageRepository.findEmbeddingSourceHashes(pool, [message.id])).get(message.id) ?? null,
+    embed: (text) => embeddingService.embed(text, { workspaceId, functionId: "message-embedding" }),
+    write: (row) => MessageRepository.updateEmbeddings(pool, [{ id: message.id, ...row }]),
+  })
 
-    const sourceHash = hashEmbeddingText(text)
-    const expectedSourceHash =
-      (await MessageRepository.findEmbeddingSourceHashes(pool, [message.id])).get(message.id) ?? null
-    if (expectedSourceHash === sourceHash) {
-      logger.debug({ messageId: message.id }, "Skipping embedding: text unchanged since last embed")
-      return
-    }
-
-    if (embedded?.sourceHash !== sourceHash) {
-      const embedding = await embeddingService.embed(text, { workspaceId, functionId: "message-embedding" })
-      embedded = { sourceHash, embedding }
-    }
-
-    const written = await MessageRepository.updateEmbeddings(pool, [
-      { id: message.id, embedding: embedded.embedding, sourceHash, expectedSourceHash },
-    ])
-    if (written > 0) return
-
-    logger.debug({ messageId: message.id, attempt }, "Embedding lost to a concurrent write; re-reading the text")
+  if (outcome === "text-missing") {
+    logger.warn({ messageId: message.id, streamId: message.streamId }, "Skipping embedding: stream not found")
   }
-
-  throw new Error(`Embedding for ${message.id} lost to a concurrent write ${EMBED_WRITE_ATTEMPTS} times`)
 }

@@ -10,11 +10,8 @@ import { setupIsolatedTestDatabase, withTransaction, addTestMember, testMessageC
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { EventService, MessageRepository, type Message } from "../../src/features/messaging"
-import {
-  embedMessageWithContext,
-  hashEmbeddingText,
-  loadMessageEmbeddingText,
-} from "../../src/features/memos/message-embedding-text"
+import { embedMessageWithContext, loadMessageEmbeddingText } from "../../src/features/memos/message-embedding-text"
+import { hashEmbeddingText } from "../../src/features/memos/embedding-write-guard"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { workspaceId } from "../../src/lib/id"
 import { AuthorTypes, StreamTypes, Visibilities } from "@threahq/types"
