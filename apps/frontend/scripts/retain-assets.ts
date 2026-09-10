@@ -98,8 +98,10 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
   }
 
   // Age alone doesn't bound the store (see maxFiles); the ceiling applies to
-  // what survived the age prune, newest kept first.
-  survivors.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  // what survived the age prune. Current-build files outrank every stale one
+  // regardless of mtime — losing a live chunk's retained copy is what breaks an
+  // old tab on the *next* deploy. Stale files then go newest-first.
+  survivors.sort((a, b) => Number(currentNames.has(b.name)) - Number(currentNames.has(a.name)) || b.mtimeMs - a.mtimeMs)
   for (const file of survivors.slice(options.maxFiles ?? DEFAULT_MAX_FILES)) {
     await rm(path.join(retainDir, file.name))
     pruned++

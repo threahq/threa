@@ -106,6 +106,19 @@ describe("retainAssets", () => {
     expect((await readdir(retainDir)).sort()).toEqual(["index-005.js", "newer-003.js", "newest-004.js"])
   })
 
+  it("keeps the current build's chunks when the cap ties on mtime", async () => {
+    const start = Date.now()
+    // Stale copies stamped at the same instant the current build will be stamped.
+    await writeAsset(retainDir, "stale-a.js", "old", start)
+    await writeAsset(retainDir, "stale-b.js", "old", start)
+    await writeAsset(distAssetsDir, "live-c.js", "entry")
+
+    const result = await retainAssets({ distAssetsDir, retainDir, now: start, maxFiles: 1 })
+
+    expect(result.pruned).toBe(2)
+    expect(await readdir(retainDir)).toEqual(["live-c.js"])
+  })
+
   it("creates the retain store on first run and folds the build into it", async () => {
     await writeAsset(distAssetsDir, "index-BBB.js", "new-entry")
     await writeAsset(distAssetsDir, "vendor-FFF.js", "vendor")
